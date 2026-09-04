@@ -18,6 +18,8 @@ export default {
     '^@renkei/agents/event-fanout$': '<rootDir>/../../packages/agents/src/event-fanout.ts',
     '^@renkei/agent-llm$': '<rootDir>/../../packages/agent-llm/src/index.ts',
     '^@renkei/worker-loop$': '<rootDir>/../../packages/worker-loop/src/index.ts',
+    '^@renkei/mcp-client$': '<rootDir>/../../packages/mcp-client/src/index.ts',
+    '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
   },
   // The engine tests hit a real database through kysely, whose published
   // build is ESM-only — so unlike the sibling worker's config, kysely is

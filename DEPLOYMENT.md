@@ -153,8 +153,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   moved embedding work off the interactive queue — so it never sits in
   front of a webhook reply either. Reaches `worker-fileshares` and
   `worker-sandbox` directly (`FILESHARES_WORKER_URL`/`SANDBOX_WORKER_URL`
-  + their bearer keys, same as the web app uses) to read source documents
-  and stage OCR results. Entrypoint: `pnpm --filter @renkei/worker start:batch-jobs`.
+  - their bearer keys, same as the web app uses) to read source documents
+    and stage OCR results. Entrypoint: `pnpm --filter @renkei/worker start:batch-jobs`.
 - `worker-fileshares` — not a queue consumer but an internal HTTP service,
   and not on the shared worker image: it ships as its **own image**
   (`renkei-fileshares`, the `fileshares` target in `docker/Dockerfile`,
@@ -660,3 +660,30 @@ For issues:
 2. Verify config: `echo $DATABASE_URL` (never commit .env files)
 3. Test connectivity: `curl -v https://yourdomain.com/api/health`
 4. Check database: `psql $DATABASE_URL -c "\dt"`
+
+## Chat attachments (object storage)
+
+Files people upload into the chat (`/[slug]/chat`) are the one thing the
+web app stores as bytes at rest, and they live in an object store behind
+`packages/blob-store`, never on the app's disk. The store is chosen by
+`BLOB_STORE_PROVIDER`; today the only backend is Azure Blob Storage
+(`azure`), spoken directly over its REST API with Shared Key auth:
+
+- `AZURE_BLOB_ACCOUNT` — the storage account name
+- `AZURE_BLOB_KEY` — one of the account's access keys (base64, as the
+  portal shows it)
+- `AZURE_BLOB_CONTAINER` — container name, default `renkei-chat`; created
+  on first use if it does not exist
+- `AZURE_BLOB_ENDPOINT` — optional, default
+  `https://{account}.blob.core.windows.net`
+
+Set them in `.env`: the web app reads them to accept uploads and serve
+downloads (always through the app, under the caller's session — no
+public or signed URLs), and `worker-agents` reads them because the chat
+retention sweep (the org's **Chat retention** setting, default keep
+forever) deletes attachment blobs before it deletes the rows. Unset, chat
+uploads are simply off — closed, never open, like the worker keys above.
+
+`docker-compose.yml` (dev) runs the Azurite emulator instead of a real
+account, with Azurite's published development account and key; nothing in
+that configuration is a secret.

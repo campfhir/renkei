@@ -51,6 +51,8 @@ const NUMERIC_BOUNDS = {
   // The usage ledgers hold ids, integers, and on failure a step name and a
   // clipped error — no arguments or results; five years is the typo guard.
   agentUsageRetentionDays: [1, 1_825],
+  // 0 = keep chats until their owners delete them; ten years is the typo guard.
+  chatRetentionDays: [0, 3_650],
   // The optimizer's evidence window. A year is the typo guard; below a
   // day there is nothing to analyze.
   agentOptimizerWindowDays: [1, 365],
@@ -78,6 +80,7 @@ const NUMERIC_KEYS = [
   'logRetentionDays',
   'agentNotificationRetentionDays',
   'agentUsageRetentionDays',
+  'chatRetentionDays',
   'agentOptimizerWindowDays',
   'knowledgeKeywordMinChars',
 ] as const;
@@ -107,6 +110,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
     agentUsageRetentionDays: settings.agentUsageRetentionDays,
+    chatRetentionDays: settings.chatRetentionDays,
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,

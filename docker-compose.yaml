@@ -245,6 +245,14 @@ services:
       # service AND worker-sandbox) additionally registers the
       # sandbox_browser_* tools; unset, they don't exist.
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
+      # The chat calls the app's OWN MCP endpoint for tool calls, the same
+      # way the agents worker does; loopback inside the container.
+      RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000
+      # Chat attachments live in Azure Blob Storage: BLOB_STORE_PROVIDER=azure
+      # plus AZURE_BLOB_ACCOUNT / AZURE_BLOB_KEY / AZURE_BLOB_CONTAINER (and
+      # AZURE_BLOB_ENDPOINT for a non-default endpoint) come from .env, read
+      # by this service AND worker-agents (whose retention sweep deletes
+      # blobs). Unset, chat uploads are simply off.
       # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
       # the address registered with every OAuth provider. Without it, the app
       # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it

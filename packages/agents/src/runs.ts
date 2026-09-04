@@ -311,7 +311,7 @@ export interface RecordLlmCallInput {
   agentId: string | null;
   runId?: string | null;
   stepId?: string | null;
-  purpose: 'run' | 'optimize';
+  purpose: 'run' | 'optimize' | 'chat';
   inputTokens: number;
   outputTokens: number;
 }

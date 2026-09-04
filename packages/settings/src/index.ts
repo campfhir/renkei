@@ -87,6 +87,11 @@ export interface OrgSettings {
    */
   agentUsageRetentionDays: number;
   /**
+   * Days to keep a chat (its messages and attachments) after its last
+   * activity; 0 keeps everything. Enforced by the agents worker's sweep.
+   */
+  chatRetentionDays: number;
+  /**
    * How far back the agent optimizer looks when it gathers evidence —
    * captured failures, per-step token spend, recent failed runs. Wider
    * sees more history; narrower reflects the agent as it is now after an
@@ -189,6 +194,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentRunRetentionDays: 30,
   agentNotificationRetentionDays: 14,
   agentUsageRetentionDays: 365,
+  chatRetentionDays: 0,
   agentOptimizerWindowDays: 30,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
@@ -287,6 +293,7 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     agentUsageRetentionDays: Number(
       coerce(stored.get('agent_usage_retention_days'), d.agentUsageRetentionDays)
     ),
+    chatRetentionDays: Number(coerce(stored.get('chat_retention_days'), d.chatRetentionDays)),
     agentOptimizerWindowDays: Number(
       coerce(stored.get('agent_optimizer_window_days'), d.agentOptimizerWindowDays)
     ),
@@ -344,6 +351,7 @@ export async function setOrgSettings(
     ['agent_run_retention_days', updates.agentRunRetentionDays],
     ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
     ['agent_usage_retention_days', updates.agentUsageRetentionDays],
+    ['chat_retention_days', updates.chatRetentionDays],
     ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],

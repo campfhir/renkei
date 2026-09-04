@@ -42,6 +42,8 @@ export default {
     '^@renkei/document-text$': '<rootDir>/../../packages/document-text/src/index.ts',
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
+    '^@renkei/mcp-client$': '<rootDir>/../../packages/mcp-client/src/index.ts',
+    '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
   },
   // kysely's published build is ESM-only, and quickjs-emscripten's CJS
   // build keeps a dynamic import() for its wasm variant; suites importing

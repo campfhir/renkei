@@ -23,7 +23,9 @@
       "@renkei/agents/runs": ["../../packages/agents/src/runs.ts"],
       "@renkei/agents/event-fanout": ["../../packages/agents/src/event-fanout.ts"],
       "@renkei/agent-llm": ["../../packages/agent-llm/src/index.ts"],
-      "@renkei/worker-loop": ["../../packages/worker-loop/src/index.ts"]
+      "@renkei/worker-loop": ["../../packages/worker-loop/src/index.ts"],
+      "@renkei/mcp-client": ["../../packages/mcp-client/src/index.ts"],
+      "@renkei/blob-store": ["../../packages/blob-store/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

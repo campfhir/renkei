@@ -121,6 +121,8 @@ export const EXPECTED_MIGRATIONS = [
   '089-batch-processed-files',
   '090-sandbox-secrets',
   '091-mcp-token-roles',
+  '092-chat',
+  '093-prompt-libraries',
 ];
 
 export interface MigrationStatus {

@@ -42,13 +42,38 @@ services:
       # On in dev so the sandbox_browser_* tools are there to try; must
       # match worker-sandbox's setting below.
       SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
+      # The chat calls the app's OWN MCP endpoint for tool calls, the same
+      # way the agents worker does; loopback inside the container.
+      RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000
+      # Chat attachments: the Azurite emulator below stands in for Azure
+      # Blob Storage in dev. The account and key are Azurite's published
+      # development defaults, not secrets.
+      BLOB_STORE_PROVIDER: azure
+      AZURE_BLOB_ACCOUNT: devstoreaccount1
+      AZURE_BLOB_KEY: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+      AZURE_BLOB_ENDPOINT: http://azurite:10000/devstoreaccount1
+      AZURE_BLOB_CONTAINER: renkei-chat
     ports:
       - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
+      # Azure Blob Storage emulator for chat attachments (packages/blob-store).
+  # Production points AZURE_BLOB_* at a real storage account instead; the
+  # container is created on first use, so no init step is needed here.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: renkei-azurite
+    command: ['azurite-blob', '--blobHost', '0.0.0.0', '--skipApiVersionCheck', '--location', '/data']
+    ports:
+      - "10000:10000"
+    volumes:
+      - azurite_data:/data
+
+  migrate:
         condition: service_completed_successfully
+      azurite:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 10s
@@ -111,6 +136,13 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       RENKEI_WEB_INTERNAL_URL: http://app:3000
+      # The chat retention sweep deletes attachment blobs; same emulator
+      # settings as the app service.
+      BLOB_STORE_PROVIDER: azure
+      AZURE_BLOB_ACCOUNT: devstoreaccount1
+      AZURE_BLOB_KEY: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+      AZURE_BLOB_ENDPOINT: http://azurite:10000/devstoreaccount1
+      AZURE_BLOB_CONTAINER: renkei-chat
       NODE_ENV: production
     depends_on:
       postgres:
@@ -249,3 +281,4 @@ services:
 volumes:
   postgres_data:
   sandbox_data:
+  azurite_data:
