@@ -375,6 +375,20 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(page.getByRole('heading', { name: 'Resend this message?' })).toBeVisible();
     await page.getByRole('button', { name: 'Cancel' }).click();
 
+    // On a phone every field is set at 16px or more, so focusing one never
+    // zooms the page (iOS Safari zooms for anything smaller).
+    if (mobile) {
+      const fontSize = (selector: string) =>
+        page
+          .locator(selector)
+          .first()
+          .evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+      expect(await fontSize('textarea[aria-label="Message"]')).toBeGreaterThanOrEqual(16);
+      await page.getByRole('button', { name: 'Open menu' }).click();
+      expect(await fontSize('input[aria-label="Find a chat"]')).toBeGreaterThanOrEqual(16);
+      await page.keyboard.press('Escape');
+    }
+
     // Nothing spills horizontally.
     const fits = await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth

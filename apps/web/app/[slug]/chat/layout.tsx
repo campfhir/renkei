@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
+import ChatFrame from './_components/chat-frame';
 
 /**
  * The chat pages' frame: the page fills the main column edge to edge, its
@@ -25,10 +26,10 @@ export default async function ChatLayout({
   const session = await getSessionFromCookies(tenant.id);
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/chat`));
   return (
-    <div data-wide-page data-flush-page className="h-[calc(100vh-3.5rem)] min-h-[24rem]">
+    <ChatFrame>
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-gray-950">
         {children}
       </div>
-    </div>
+    </ChatFrame>
   );
 }

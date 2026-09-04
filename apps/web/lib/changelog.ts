@@ -93,6 +93,18 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           'Chat in the menu opens your most recent chat; the “+ New” beside it starts a fresh one. With no chats yet, Chat starts a new one.',
       },
+      {
+        kind: 'fixed',
+        title: 'Fields no longer zoom the page on a phone',
+        detail:
+          'Tapping into a search box, a form field or the chat’s message box on an iPhone used to zoom the whole page in and leave it there. Every field is now set at a size the phone does not zoom for.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The chat’s message box stays above the keyboard',
+        detail:
+          'On a phone the on-screen keyboard used to cover the message box and the end of the conversation. The chat now shrinks to the space above the keys, so what you are typing and the latest reply stay in view.',
+      },
     ],
   },
   {
