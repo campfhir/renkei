@@ -4,17 +4,41 @@
  * The admin route (apps/web …/connectors/embeddings/reindex) creates a
  * `knowledge_reindex_runs` row and enqueues the first batch; each batch
  * does a bounded slice of the work (packages/knowledge/src/reindex.ts),
- * records progress on the row, and enqueues the next link on the same
- * ordering key until the batch reports nothing left. Short links, so a
- * run of any size never outlives a delivery lease and any number of
+ * records progress AND THE CURSOR on the row, and enqueues the next link on
+ * the same ordering key until the batch reports nothing left. Short links,
+ * so a run of any size never outlives a delivery lease and any number of
  * embedding workers can share the chain.
+ *
+ * The stored cursor is what makes a stopped run resumable instead of a
+ * do-over: the admin route's `action: 'resume'` re-enqueues one link
+ * carrying the row's own cursor, so `embed` — the one kind where later rows
+ * are not distinguishable from already-done ones by content, only by having
+ * already been walked past — picks back up instead of recomputing every
+ * chunk from the start. `action: 'pause'` sets the row's status away from
+ * "running"; this handler re-checks that status right before enqueuing the
+ * NEXT link (below), so a pause takes effect after at most the in-flight
+ * link rather than the chain running to completion regardless.
  *
  * Failure policy departs from the ingest handlers on purpose: a failing
  * batch marks the RUN failed with the reason and completes the job rather
  * than throwing. A retry loop here would repeat the same provider call
  * against the same failing endpoint while the admin's status read
- * "running"; a failed run with its error visible, and a button that starts
- * a fresh (idempotent) run once the cause is fixed, is the honest shape.
+ * "running"; a failed run with its error visible, and a button that resumes
+ * from its cursor once the cause is fixed, is the honest shape.
+ *
+ * A rate limit (429) is the one exception: unlike a broken endpoint or bad
+ * config, it is expected to clear on its own. That case throws instead,
+ * same as knowledge-ingest.ts, and lets the queue's own backoff (packages/
+ * queue's retry policy) redeliver this one link — the run stays "running",
+ * the cursor is untouched because nothing here was persisted, and the chain
+ * picks back up once the provider does. If throttling outlasts the queue's
+ * own retry budget and the link dead-letters, the run is left "running"
+ * forever with nothing left to redeliver it — resume only accepts a
+ * "paused" or "failed" row, so recovering a run stuck this way is
+ * pause-then-resume: pausing a "running" row is allowed unconditionally
+ * (there is no live link to race against once the dead-letter has already
+ * happened), and resuming it from there re-arms the chain from the row's
+ * own cursor exactly as it would for any other stopped run.
  */
 
 import { sql } from 'kysely';
@@ -139,6 +163,13 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
       }
       const batch = await reembedBatch(tenantId, embedder, key, cursor, BATCH_LIMIT.embed);
       if (!batch.ok) {
+        if (batch.err.type === 'EMBEDDING_FAILED' && batch.err.cause === 429) {
+          // Rate limited — nack for the queue's own retry/backoff rather
+          // than failing the run; see the module doc comment.
+          throw new Error(
+            `embeddings endpoint rate limited (429): ${batch.err.message ?? 'unknown'}`
+          );
+        }
         await fail(
           batch.err.type === 'EMBEDDING_FAILED'
             ? `the embeddings endpoint failed: ${batch.err.message ?? 'unknown'}`
@@ -191,6 +222,29 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
 
     if (outcome.done) {
       logger.info('reindex {kind} run {runId} finished', {
+        component: COMPONENT,
+        tenantId,
+        kind,
+        runId,
+      });
+      return;
+    }
+
+    // A pause (POST .../reindex { action: 'pause' }) can land between this
+    // link's own status check at the top of the handler and here — re-read
+    // rather than trust the value from before this batch ran, so a pause
+    // always takes effect after at most the in-flight link instead of the
+    // chain running to completion regardless. What this link already did is
+    // kept either way (the update above already committed it); pausing only
+    // stops the NEXT link from being enqueued. Resuming re-arms the chain
+    // from the row's own cursor.
+    const current = await db
+      .selectFrom('knowledge_reindex_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirst();
+    if (current?.status !== 'running') {
+      logger.info('reindex {kind} run {runId} paused', {
         component: COMPONENT,
         tenantId,
         kind,

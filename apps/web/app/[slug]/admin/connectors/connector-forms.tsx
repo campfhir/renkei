@@ -1320,6 +1320,11 @@ function isActive(run: ReindexRun | undefined): boolean {
   return run?.status === 'queued' || run?.status === 'running';
 }
 
+/** Paused or failed: stopped, but its cursor makes it resumable rather than a do-over. */
+function isResumable(run: ReindexRun | undefined): boolean {
+  return run?.status === 'paused' || run?.status === 'failed';
+}
+
 function relativeTime(iso: string | null): string {
   if (!iso) return '';
   const ms = Date.now() - new Date(iso).getTime();
@@ -1348,21 +1353,37 @@ function runSummary(run: ReindexRun | undefined, unit: string): string {
       );
     case 'failed':
       return `Failed ${relativeTime(run.finishedAt ?? run.createdAt)} after ${count}: ${run.lastError ?? 'unknown error'}`;
+    case 'paused':
+      return `Paused — ${count} so far`;
     default:
       return run.status;
   }
 }
+
+type ReindexAction = 'start' | 'pause' | 'resume';
+
+const primaryButtonClass =
+  'rounded-md border border-gray-300 bg-white px-3 py-1 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800';
+const secondaryButtonClass =
+  'rounded-md px-3 py-1 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-800';
 
 /**
  * The reindex buttons. Each starts a queue-driven run the worker chains
  * through in short batches; this panel only asks and watches. Polls while
  * anything is running, and stops when nothing is — a page left open does
  * not keep hitting the server for a run that ended an hour ago.
+ *
+ * A run's own stored cursor is what lets Resume pick up a paused or failed
+ * run instead of redoing it: Pause (shown next to an active run) stops the
+ * chain after its current in-flight link; Resume (shown for a paused or
+ * failed run) re-arms it from where it stopped; Start fresh discards that
+ * history and begins a brand new run at the top.
  */
+
 function ReindexPanel({ slug }: { slug: string }) {
   const url = `/api/admin/${slug}/connectors/embeddings/reindex`;
   const [runs, setRuns] = useState<ReindexRun[] | null>(null);
-  const [starting, setStarting] = useState<ReindexKind | null>(null);
+  const [busy, setBusy] = useState<{ kind: ReindexKind; action: ReindexAction } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const latest = new Map<ReindexKind, ReindexRun>();
@@ -1389,14 +1410,14 @@ function ReindexPanel({ slug }: { slug: string }) {
     };
   }, [url, anyActive]);
 
-  async function start(kind: ReindexKind) {
-    setStarting(kind);
+  async function act(kind: ReindexKind, action: ReindexAction, runId?: string) {
+    setBusy({ kind, action });
     setError(null);
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind }),
+        body: JSON.stringify({ kind, action, ...(runId ? { runId } : {}) }),
       });
       const body: unknown = await response.json().catch(() => null);
       const record: Record<string, unknown> =
@@ -1411,7 +1432,7 @@ function ReindexPanel({ slug }: { slug: string }) {
     } catch {
       setError('Could not reach the server');
     } finally {
-      setStarting(null);
+      setBusy(null);
     }
   }
 
@@ -1427,6 +1448,10 @@ function ReindexPanel({ slug }: { slug: string }) {
         {REINDEX_ACTIONS.map((action) => {
           const run = latest.get(action.kind);
           const active = isActive(run);
+          const resumable = isResumable(run);
+          const disabled = busy !== null || runs === null;
+          const busyWith = (a: ReindexAction) =>
+            busy?.kind === action.kind && busy.action === a;
           return (
             <div
               key={action.kind}
@@ -1439,7 +1464,7 @@ function ReindexPanel({ slug }: { slug: string }) {
                   className={`mt-0.5 text-xs ${
                     run?.status === 'failed'
                       ? 'text-red-700 dark:text-red-300'
-                      : active
+                      : active || run?.status === 'paused'
                         ? 'text-blue-700 dark:text-blue-400'
                         : 'text-gray-500 dark:text-gray-400'
                   }`}
@@ -1447,14 +1472,46 @@ function ReindexPanel({ slug }: { slug: string }) {
                   {runs === null ? 'Loading…' : runSummary(run, action.unit)}
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={active || starting !== null || runs === null}
-                onClick={() => void start(action.kind)}
-                className="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
-              >
-                {active ? 'Running…' : starting === action.kind ? 'Starting…' : 'Run'}
-              </button>
+              <div className="flex shrink-0 gap-2">
+                {active && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => void act(action.kind, 'pause', run?.id)}
+                    className={secondaryButtonClass}
+                  >
+                    {busyWith('pause') ? 'Pausing…' : 'Pause'}
+                  </button>
+                )}
+                {resumable && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => void act(action.kind, 'start')}
+                    className={secondaryButtonClass}
+                  >
+                    {busyWith('start') ? 'Starting…' : 'Start fresh'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={active || disabled}
+                  onClick={() =>
+                    void act(action.kind, resumable ? 'resume' : 'start', run?.id)
+                  }
+                  className={primaryButtonClass}
+                >
+                  {active
+                    ? 'Running…'
+                    : resumable
+                      ? busyWith('resume')
+                        ? 'Resuming…'
+                        : 'Resume'
+                      : busyWith('start')
+                        ? 'Starting…'
+                        : 'Run'}
+                </button>
+              </div>
             </div>
           );
         })}

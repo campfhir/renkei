@@ -14,6 +14,7 @@
 
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
+import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -26,6 +27,29 @@ export const EMBEDDINGS_CONNECTOR = 'embeddings';
  * unbounded hang here once wedged the worker's whole event loop.
  */
 const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Process-scoped, split by lane like every other connector client (see
+ * connector-webex's client.ts): a bulk reindex link embeds up to 128 rows
+ * (two 64-text requests) with nothing between links pacing the next one, so
+ * a large run can fire requests at the provider far faster than a query
+ * purpose — the live search path (searchKnowledge) — ever would, and faster
+ * than most providers' embeddings-endpoint rate limits allow. `query` maps
+ * to the interactive lane, `passage` (ingest and reindex, both background
+ * work) to the background one, so a bulk run cannot queue behind a person's
+ * live search the way a webhook flood must not either. Capacity is sized
+ * above any single test file's call count, not as a tuned production
+ * ceiling — the number that actually matters is the background refill
+ * rate, which is the one worth raising or lowering per provider.
+ */
+const limiter = new LaneLimiter({
+  interactive: { capacity: 20, refillPerSecond: 10 },
+  background: { capacity: 20, refillPerSecond: 3 },
+});
+
+function laneOf(purpose: EmbeddingPurpose): RequestLane {
+  return purpose === 'query' ? 'interactive' : 'background';
+}
 
 /** pgvector input literal: '[0.1,0.2,…]'. */
 export function vectorLiteral(vector: readonly number[]): string {
@@ -85,6 +109,7 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
     const prefix = purpose === 'query' ? this.queryPrefix : this.passagePrefix;
     const input = prefix ? texts.map((text) => `${prefix}${text}`) : [...texts];
 
+    await limiter.take(laneOf(purpose));
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/embeddings`, {
@@ -106,8 +131,14 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
     }
 
     if (!response.ok) {
+      // The status rides in `cause` (typed `unknown`, so it fits without
+      // widening the shared Err type) so a caller that cares — the reindex
+      // handler, to tell a transient 429 from a broken endpoint — can
+      // branch on the real code instead of parsing it back out of the
+      // message.
       return err('EMBEDDING_FAILED' as const, {
         message: `embeddings endpoint returned ${response.status}`,
+        cause: response.status,
       });
     }
 
