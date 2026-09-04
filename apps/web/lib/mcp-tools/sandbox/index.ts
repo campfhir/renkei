@@ -25,13 +25,23 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
+import {
+  PAGE_TEXT_DEFAULT_CHARS,
+  PAGE_TEXT_MAX_CHARS,
+  looksLikeHtml,
+  pageToText,
+  validateFilename,
+} from '@renkei/connector-sandbox';
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { registerSandboxBrowserTools } from './browser';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
 import { completeUploadSlot, finalizeUploadSlot } from '@/lib/upload-executors';
 import { getDatabase } from '@renkei/db';
-import { fsReadFile, clientFailure as fileshareClientFailure } from '@/lib/file-shares/service-client';
+import {
+  fsReadFile,
+  clientFailure as fileshareClientFailure,
+} from '@/lib/file-shares/service-client';
 import {
   sbFetchUrl,
   sbListFiles,
@@ -51,6 +61,19 @@ export const SANDBOX_MCP_CONNECTOR = 'sandbox';
 export function sandboxWorkerConfigured(): boolean {
   return sandboxConfig() !== null;
 }
+
+/** A display name for what a URL points at; the worker validates it again. */
+function filenameOfUrl(url: string): string {
+  try {
+    const last = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() ?? '');
+    if (last.includes('.') && validateFilename(last).ok) return last;
+  } catch {
+    // Fall through to the default.
+  }
+  return 'page.html';
+}
+
+const TEXT_TYPES = /^(text\/|application\/(json|xml|x-yaml|yaml|javascript|ld\+json))/i;
 
 export function registerSandboxTools(server: McpServer, context: MCPToolContext): void {
   // The browser verbs register only where the worker actually runs one
@@ -84,6 +107,108 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
       });
       if (!fetched.ok) return errText(clientFailure(fetched.err).message);
       return textResult(`Staged ${fileLine(fetched.val)}`);
+    }
+  );
+
+  server.registerTool(
+    'sandbox_fetch_page',
+    {
+      title: 'Sandbox · Read — Read a web page or a file at a URL as text',
+      description:
+        'Fetch an https:// URL and answer with its readable text: the page’s title and main ' +
+        'content — headings, lists, tables, and links written as "text (URL)" so you can follow ' +
+        'one with another call — or, for a PDF, Word, Excel or PowerPoint file at that address, ' +
+        'its extracted text. This is the fast way to read a public page or document; the ' +
+        'sandbox_browser_* tools are for pages that need a login, a click or a script. The ' +
+        'WORKER fetches the URL (private and internal addresses are refused) and nothing is ' +
+        'kept afterwards — use sandbox_download_url when you need the bytes staged. Answers ' +
+        'up to maxChars characters and says when the page was cut.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        url: z.string().url().describe('An https:// URL to read.'),
+        maxChars: z
+          .number()
+          .int()
+          .positive()
+          .max(PAGE_TEXT_MAX_CHARS)
+          .optional()
+          .describe(
+            `Cap on returned characters (default ${PAGE_TEXT_DEFAULT_CHARS}, at most ${PAGE_TEXT_MAX_CHARS}).`
+          ),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const target = targetOf(context);
+      if (typeof target === 'string') return errText(target);
+      const url = str(args.url);
+      const maxChars =
+        typeof args.maxChars === 'number'
+          ? Math.min(PAGE_TEXT_MAX_CHARS, Math.max(1, Math.floor(args.maxChars)))
+          : PAGE_TEXT_DEFAULT_CHARS;
+      const filename = filenameOfUrl(url);
+
+      const fetched = await sbFetchUrl(target, { url, filename });
+      if (!fetched.ok) return errText(clientFailure(fetched.err).message);
+      const read = await sbReadFile(target, fetched.val.id);
+      // The page was only ever passing through: it leaves the scratch space
+      // whatever happened to the read.
+      await sbDeleteFile(target, fetched.val.id);
+      if (!read.ok) return errText(clientFailure(read.err).message);
+
+      const contentType = (read.val.contentType || fetched.val.contentType || '')
+        .split(';')[0]!
+        .trim()
+        .toLowerCase();
+      const bytes = read.val.bytes;
+      const maxBytes = Math.min(
+        DEFAULT_MAX_INPUT_BYTES,
+        context.maxAttachmentBytes ?? DEFAULT_MAX_INPUT_BYTES
+      );
+      if (bytes.byteLength > maxBytes) {
+        return errText(
+          `What is at ${url} is too large to read here (${bytes.byteLength} bytes); sandbox_download_url stages it if you need the bytes.`
+        );
+      }
+      const head = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, 4096));
+      const isHtml =
+        contentType === 'text/html' ||
+        contentType === 'application/xhtml+xml' ||
+        ((contentType === '' || contentType === 'application/octet-stream') && looksLikeHtml(head));
+
+      if (isHtml) {
+        const page = pageToText(new TextDecoder('utf-8').decode(bytes), { maxChars, baseUrl: url });
+        return textResult(
+          `Page: ${page.title ?? '(untitled)'}\nURL: ${url}\n---\n${page.text || '(no readable text on this page)'}`
+        );
+      }
+      if (TEXT_TYPES.test(contentType)) {
+        const text = new TextDecoder('utf-8').decode(bytes);
+        const cut = text.length > maxChars;
+        return textResult(
+          `URL: ${url}\nType: ${contentType}\n---\n${cut ? `${text.slice(0, maxChars)}\n\n[cut at ${maxChars} characters; ${text.length - maxChars} more]` : text}`
+        );
+      }
+      if (/^(image|audio|video|font)\//.test(contentType)) {
+        return errText(
+          `What is at ${url} is ${contentType}, not something readable as text; sandbox_download_url stages it if you need the bytes.`
+        );
+      }
+      const extracted = await extractText(bytes, {
+        fileName: read.val.filename,
+        ...(contentType ? { contentType } : {}),
+        maxChars,
+      });
+      if (!extracted.ok) {
+        return errText(
+          extracted.err.type === 'UNSUPPORTED_FORMAT'
+            ? `What is at ${url} (${contentType || 'unknown type'}) is not readable as text; sandbox_download_url stages it if you need the bytes.`
+            : `Could not extract text from ${url} (${extracted.err.type}).`
+        );
+      }
+      const notes = extracted.val.notes.length ? `\n[note: ${extracted.val.notes.join('; ')}]` : '';
+      return textResult(
+        `URL: ${url}\nType: ${contentType || 'unknown'}\n---\n${extracted.val.text}${notes}`
+      );
     }
   );
 
@@ -139,7 +264,11 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
         'narrow to one batch job (from batch_start_document_pipeline or similar).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        batchId: z.string().uuid().optional().describe('Narrow to one batch job, if you have its id.'),
+        batchId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe('Narrow to one batch job, if you have its id.'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -183,7 +312,12 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         fileId: z.string().uuid().describe('From sandbox_list_files or a stage tool.'),
-        maxChars: z.number().int().positive().optional().describe('Cap on returned characters (default 60000).'),
+        maxChars: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Cap on returned characters (default 60000).'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -197,10 +331,15 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
         context.maxAttachmentBytes ?? DEFAULT_MAX_INPUT_BYTES
       );
       if (read.val.bytes.byteLength > maxBytes) {
-        return errText(`"${read.val.filename}" is too large to read here — try sandbox_send_to_upload instead.`);
+        return errText(
+          `"${read.val.filename}" is too large to read here — try sandbox_send_to_upload instead.`
+        );
       }
       const maxChars = typeof args.maxChars === 'number' ? args.maxChars : 60_000;
-      const extracted = await extractText(read.val.bytes, { fileName: read.val.filename, maxChars });
+      const extracted = await extractText(read.val.bytes, {
+        fileName: read.val.filename,
+        maxChars,
+      });
       if (!extracted.ok) {
         return errText(
           extracted.err.type === 'UNSUPPORTED_FORMAT'
@@ -245,7 +384,10 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         fileId: z.string().uuid().describe('From sandbox_list_files or a stage tool.'),
-        uploadId: z.string().uuid().describe('From the *_request_*_upload tool that started this upload.'),
+        uploadId: z
+          .string()
+          .uuid()
+          .describe('From the *_request_*_upload tool that started this upload.'),
       }),
     },
     async (args: Record<string, unknown>) => {

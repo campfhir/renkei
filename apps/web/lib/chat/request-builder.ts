@@ -69,11 +69,15 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   if (input.hasTools) {
     sections.push(
       input.hasSandbox
-        ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches."
+        ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches; to read a public web page or a document at a URL, sandbox_fetch_page is one call and needs no browser."
         : "Tools act with this person's own permissions in the organization's systems."
     );
   }
-  if (!input.filesAllowed) {
+  if (input.filesAllowed) {
+    sections.push(
+      'To hand the person a file, write it with chat_write_file; it appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. You write text and the extension decides the file: .csv, .md, .txt, .json and other text formats are kept as written; .docx and .pdf are rendered from your Markdown; .pptx from Markdown with a # or ## heading per slide; .xlsx from CSV, JSON sheets or Markdown tables. So an Excel workbook, a Word document, a PDF or a slide deck is yours to make — write the content, never bytes or base64. A file another tool hands back (a screenshot, a mail attachment) is kept there the same way.'
+    );
+  } else {
     sections.push(
       'This organization has no file storage set up. Do not produce files of any kind — no screenshots, exports, rendered documents or downloads — and do not offer to; answer in text. If a task needs a file, say that file storage is not set up and an operator can add it under Organization → Storage.'
     );

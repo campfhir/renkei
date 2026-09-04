@@ -279,8 +279,9 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       projectId: input.chat.projectId,
       readOnly,
     };
+    const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     const localTools = createLocalToolSet(
-      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig))
+      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed))
     );
 
     const [rows, person] = await Promise.all([
@@ -304,7 +305,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
-      filesAllowed: await tenantBlobStoreConfigured(input.tenantId),
+      filesAllowed,
       now: new Date(),
     });
 

@@ -135,8 +135,15 @@ const EXTENSION_BY_MEDIA_TYPE: Record<string, string> = {
   'image/webp': '.webp',
   'text/plain': '.txt',
   'text/csv': '.csv',
+  'text/tab-separated-values': '.tsv',
   'text/markdown': '.md',
+  'text/html': '.html',
   'application/json': '.json',
+  'application/xml': '.xml',
+  'application/yaml': '.yaml',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
 };
 
 /**
@@ -170,7 +177,11 @@ export function artifactsOfMeta(
 
 /**
  * Document/image blocks a tool handed back in `_meta.renkeiDocuments` —
- * the agents engine's rule, under the chat's smaller budget.
+ * the agents engine's rule, under the chat's smaller budget. A tool that
+ * sets `renkeiDocumentsShown: false` keeps its files (artifactsOfMeta
+ * still sees them) without the model reading them back: the file the
+ * model itself just wrote is the case, and re-reading it on every later
+ * turn would be tokens for nothing.
  */
 export function attachmentBlocksOfMeta(
   meta: Record<string, unknown>,
@@ -179,6 +190,7 @@ export function attachmentBlocksOfMeta(
 ): LlmContentBlock[] {
   const raw = meta.renkeiDocuments;
   if (!Array.isArray(raw)) return [];
+  if (meta.renkeiDocumentsShown === false) return [];
   const out: LlmContentBlock[] = [];
   for (const entry of raw) {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;

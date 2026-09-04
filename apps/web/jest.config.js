@@ -28,8 +28,10 @@ export default {
     '^@renkei/fileshares-client$': '<rootDir>/../../packages/fileshares-client/src/index.ts',
     '^@renkei/sandbox-client$': '<rootDir>/../../packages/sandbox-client/src/index.ts',
     '^@renkei/batch-jobs-store$': '<rootDir>/../../packages/batch-jobs-store/src/index.ts',
-    '^@renkei/connector-mistral-ocr$': '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
+    '^@renkei/connector-mistral-ocr$':
+      '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
     '^@renkei/connector-onbase$': '<rootDir>/../../packages/connector-onbase/src/index.ts',
+    '^@renkei/connector-sandbox$': '<rootDir>/../../packages/connector-sandbox/src/index.ts',
     '^@renkei/connector-fileshares/pure$':
       '<rootDir>/../../packages/connector-fileshares/src/pure.ts',
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
@@ -46,10 +48,10 @@ export default {
     '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
   },
   // kysely's published build is ESM-only, and quickjs-emscripten's CJS
-  // build keeps a dynamic import() for its wasm variant; suites importing
-  // package barrels that reach either need them transformed to CJS rather
-  // than ignored — the worker-agents pattern.
-  transformIgnorePatterns: ['/node_modules/(?!.*(kysely|quickjs))'],
+  // build keeps a dynamic import() for its wasm variant (pptxgenjs's, for
+  // node:fs); suites importing package barrels that reach any of them need
+  // them transformed to CJS rather than ignored — the worker-agents pattern.
+  transformIgnorePatterns: ['/node_modules/(?!.*(kysely|quickjs|pptxgenjs))'],
   transform: {
     '^.+\\.(t|j)sx?$': [
       'ts-jest',

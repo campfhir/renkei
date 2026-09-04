@@ -3,7 +3,8 @@
  * filename hygiene, quota/TTL constants, the SSRF egress guard
  * `sandbox_download_url` and every browser navigation run their target
  * through, the browser snapshot vocabulary the sandbox_browser_* tools
- * read (browser.ts), and how a browser secret is sealed and scoped
+ * read (browser.ts), a fetched page's text for `sandbox_fetch_page`
+ * (page-text.ts), and how a browser secret is sealed and scoped
  * (secrets.ts).
  *
  * Deliberately dependency- and I/O-free, the connector-onbase shape: the
@@ -97,6 +98,17 @@ export {
   type SandboxSecretSummary,
   type SecretRef,
 } from './secrets';
+
+export {
+  PAGE_TEXT_DEFAULT_CHARS,
+  PAGE_TEXT_MAX_CHARS,
+  pageToText,
+  pageTitle,
+  decodeEntities,
+  looksLikeHtml,
+  type PageText,
+  type PageTextOptions,
+} from './page-text';
 
 export {
   assertPublicHttpsUrl,
