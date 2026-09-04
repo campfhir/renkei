@@ -136,6 +136,36 @@ export const projectKeySchema = z
   .string()
   .regex(/^[A-Z][A-Z0-9_]*$/, 'must be an uppercase project key, e.g. SCRUM');
 
+const KEYWORD_MAX_CHARS = 60;
+const MAX_KEYWORDS = 20;
+
+/**
+ * Up to 20 short search keywords/phrases, submitted by the calling model
+ * itself (knowledge/agent notes). A model asked for "keywords" sometimes
+ * writes one comma-separated string instead of a JSON array — the same
+ * shape mismatch `arrayValue` in jira/field-schema.ts normalizes for Jira's
+ * multi-value fields. Left unhandled, that string reaches the array schema
+ * as the wrong top-level type; zod's `.max()` on the array then also
+ * evaluates against the string's own `.length` (a real quirk, not a typo)
+ * and reports a second, misleading "<=20 characters" issue alongside it.
+ * Splitting a string into members before the array schema ever sees it
+ * avoids both, and accepts what the model actually sent.
+ */
+export function keywordsFieldSchema(description: string) {
+  return z
+    .preprocess(
+      (value) =>
+        typeof value === 'string'
+          ? value
+              .split(',')
+              .map((part) => part.trim())
+              .filter(Boolean)
+          : value,
+      z.array(z.string().min(1).max(KEYWORD_MAX_CHARS)).max(MAX_KEYWORDS).optional()
+    )
+    .describe(description);
+}
+
 export interface MCPToolResult {
   type: 'text' | 'image' | 'resource';
   text?: string;

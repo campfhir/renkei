@@ -141,21 +141,17 @@ export async function reembedBatch(
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const rowsResult = await wrapAsync(
-    () =>
-      db
-        .selectFrom('knowledge_chunks')
-        .select(['id', 'content', 'metadata'])
-        .where('tenant_id', '=', tenantId)
-        // Only multi-chunk rows carry a header; ingest stamps `chunkCount`
-        // on exactly those.
-        .where(sql<boolean>`(metadata ->> 'chunkCount')::int > 1`)
-        .where('id', '>', cursor ?? '')
-        .orderBy('id')
-        .limit(limit)
-        .execute(),
-    'DB_ERROR' as const
-  );
+  const rowsResult = await wrapAsync(() => {
+    let query = db
+      .selectFrom('knowledge_chunks')
+      .select(['id', 'content', 'metadata'])
+      .where('tenant_id', '=', tenantId)
+      // Only multi-chunk rows carry a header; ingest stamps `chunkCount`
+      // on exactly those.
+      .where(sql<boolean>`(metadata ->> 'chunkCount')::int > 1`);
+    if (cursor) query = query.where('id', '>', cursor);
+    return query.orderBy('id').limit(limit).execute();
+  }, 'DB_ERROR' as const);
   if (!rowsResult.ok) return rowsResult;
   const rows = rowsResult.val;
 
