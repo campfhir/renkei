@@ -173,6 +173,23 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('sandbox_*');
     expect(prompt).toContain('2026-09-04T10:00:00.000Z');
   });
+
+  it('says how to hand the person a file, and which formats it can be', () => {
+    const prompt = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: null,
+      chatFiles: [],
+      hasTools: true,
+      hasSandbox: false,
+      filesAllowed: true,
+      now: new Date('2026-09-04T10:00:00Z'),
+    });
+    expect(prompt).toContain('chat_write_file');
+    expect(prompt).toMatch(/Artifacts/);
+    expect(prompt).toMatch(/Only text-based files/);
+    expect(prompt).not.toMatch(/Do not produce files/);
+  });
 });
 
 describe('buildSystemPrompt without file storage', () => {

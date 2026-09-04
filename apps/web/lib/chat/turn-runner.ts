@@ -135,8 +135,12 @@ const EXTENSION_BY_MEDIA_TYPE: Record<string, string> = {
   'image/webp': '.webp',
   'text/plain': '.txt',
   'text/csv': '.csv',
+  'text/tab-separated-values': '.tsv',
   'text/markdown': '.md',
+  'text/html': '.html',
   'application/json': '.json',
+  'application/xml': '.xml',
+  'application/yaml': '.yaml',
 };
 
 /**

@@ -73,7 +73,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         : "Tools act with this person's own permissions in the organization's systems."
     );
   }
-  if (!input.filesAllowed) {
+  if (input.filesAllowed) {
+    sections.push(
+      'To hand the person a file — a CSV export, a Markdown or plain-text document, JSON, HTML — write it with chat_write_file; it appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. Only text-based files can be written: offer CSV where a spreadsheet is wanted and Markdown where a document is, and do not promise a Word, Excel, PowerPoint or PDF file. A file another tool hands back (a screenshot, a mail attachment) is kept there the same way.'
+    );
+  } else {
     sections.push(
       'This organization has no file storage set up. Do not produce files of any kind — no screenshots, exports, rendered documents or downloads — and do not offer to; answer in text. If a task needs a file, say that file storage is not set up and an operator can add it under Organization → Storage.'
     );
