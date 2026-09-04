@@ -78,6 +78,8 @@ export interface ChatView {
   updatedAt: string;
   /** The running turn, if one is in flight when the page loads. */
   activeTurn: TurnView | null;
+  /** Files tools produced in this chat, oldest first. */
+  artifacts: AttachmentView[];
 }
 
 export interface ChatListItem {

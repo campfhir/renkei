@@ -34,6 +34,7 @@ function fakeStore() {
   let outcome: TurnOutcome | null = null;
   let cancelOnHeartbeat = false;
   const usage: number[] = [];
+  const artifacts: { messageId: string; filename: string }[] = [];
   const store: TurnStore = {
     async appendMessage(input) {
       seq += 1;
@@ -75,11 +76,22 @@ function fakeStore() {
     async recordUsage(u) {
       usage.push(u.outputTokens);
     },
+    async storeArtifacts(messageId, files) {
+      artifacts.push(...files.map((file) => ({ messageId, filename: file.filename })));
+      return files.map((file, index) => ({
+        id: `artifact-${artifacts.length}-${index}`,
+        filename: file.filename,
+        contentType: file.mediaType,
+        sizeBytes: file.dataBase64.length,
+        extractStatus: 'none',
+      }));
+    },
   };
   return {
     store,
     rows,
     usage,
+    artifacts,
     outcome: () => outcome,
     setCancelOnHeartbeat(value: boolean) {
       cancelOnHeartbeat = value;
@@ -266,6 +278,55 @@ describe('runChatTurn', () => {
     });
     expect(state.messages[4].blocks).toEqual([{ type: 'text', text: 'Done' }]);
     expect(watched.events.some((event) => event.type === 'tool_call_start')).toBe(true);
+  });
+
+  it('keeps the files a tool hands back and announces them on the stream', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-2b');
+    const watched = watch(channel);
+    const mcp: McpClient = {
+      async initialize() {},
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {
+          content: [{ type: 'text', text: 'captured' }],
+          isError: false,
+          meta: {
+            renkeiDocuments: [
+              { mediaType: 'image/png', dataBase64: 'aGVsbG8=', title: 'page.png' },
+              { mediaType: 'application/pdf', dataBase64: 'aGVsbG8=' },
+            ],
+          },
+        };
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('sandbox_browser_screenshot', {}), text('Here you go')])),
+        tools: [{ name: 'sandbox_browser_screenshot', description: '', inputSchema: {} }],
+        mcp,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-2b')
+    );
+    expect(outcome.status).toBe('completed');
+    const resultsRow = [...fake.rows.values()].find((row) => row.kind === 'tool_results');
+    expect(fake.artifacts).toEqual([
+      { messageId: resultsRow?.id, filename: 'page.png' },
+      { messageId: resultsRow?.id, filename: 'sandbox_browser_screenshot-1-2.pdf' },
+    ]);
+    const announced = watched.events.filter((event) => event.type === 'artifact');
+    expect(announced).toHaveLength(2);
+    expect(watched.state().artifacts.map((artifact) => artifact.filename)).toEqual([
+      'page.png',
+      'sandbox_browser_screenshot-1-2.pdf',
+    ]);
   });
 
   it('answers a tool the chat cannot reach with an error result rather than failing', async () => {

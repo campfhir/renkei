@@ -35,6 +35,7 @@ import type { McpClient, McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext, LocalToolSet } from './local-tools';
 import type { ChatStreamEvent } from './stream-events';
 import type { TurnChannel } from './turn-events';
+import type { AttachmentView } from './views';
 import { toChatBlock } from './views';
 import type { MessageStatus, TurnStatus } from './views';
 
@@ -60,6 +61,18 @@ export interface TurnStore {
   heartbeat(iterations: number): Promise<boolean>;
   finishTurn(outcome: TurnOutcome): Promise<void>;
   recordUsage(usage: LlmUsage): Promise<void>;
+  /**
+   * Keeps the files a tool round handed back, hung off the results row;
+   * returns what was kept (an unconfigured store keeps nothing).
+   */
+  storeArtifacts(messageId: string, files: ArtifactFile[]): Promise<AttachmentView[]>;
+}
+
+/** A file a tool produced, as it came back in `_meta.renkeiDocuments`. */
+export interface ArtifactFile {
+  filename: string;
+  mediaType: string;
+  dataBase64: string;
 }
 
 export interface TurnOutcome {
@@ -113,6 +126,47 @@ export interface TurnInput {
 }
 
 const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+const EXTENSION_BY_MEDIA_TYPE: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'text/plain': '.txt',
+  'text/csv': '.csv',
+  'text/markdown': '.md',
+  'application/json': '.json',
+};
+
+/**
+ * Every file a tool handed back in `_meta.renkeiDocuments`, for keeping —
+ * unlike `attachmentBlocksOfMeta`, which picks what the model gets to see
+ * under the turn's budget. A file without a title is named after the tool.
+ */
+export function artifactsOfMeta(
+  meta: Record<string, unknown>,
+  toolName: string,
+  ordinal: number
+): ArtifactFile[] {
+  const raw = meta.renkeiDocuments;
+  if (!Array.isArray(raw)) return [];
+  const out: ArtifactFile[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const record: { mediaType?: unknown; dataBase64?: unknown; title?: unknown } = entry;
+    if (typeof record.mediaType !== 'string' || typeof record.dataBase64 !== 'string') continue;
+    if (!record.dataBase64) continue;
+    const title = typeof record.title === 'string' && record.title.trim() ? record.title : null;
+    const extension = EXTENSION_BY_MEDIA_TYPE[record.mediaType] ?? '';
+    out.push({
+      filename: title ?? `${toolName}-${ordinal}-${out.length + 1}${extension}`,
+      mediaType: record.mediaType,
+      dataBase64: record.dataBase64,
+    });
+  }
+  return out;
+}
 
 /**
  * Document/image blocks a tool handed back in `_meta.renkeiDocuments` —
@@ -435,6 +489,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       // what the next one reads.
       const results: LlmContentBlock[] = [];
       const attachments: LlmContentBlock[] = [];
+      const produced: ArtifactFile[] = [];
       for (const use of toolUses) {
         if (cancelRequested || channel.cancelRequested) break;
         emit({
@@ -480,6 +535,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           ...(outcome.isError ? { isError: true } : {}),
         });
         attachments.push(...attachmentBlocksOfMeta(outcome.meta, attachmentBudget, limits));
+        produced.push(...artifactsOfMeta(outcome.meta, use.name, iterations));
       }
       if (cancelRequested || channel.cancelRequested) {
         // Whatever ran, ran; the transcript keeps the calls without answers
@@ -525,6 +581,18 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         error: null,
       });
       messages.push({ role: 'user', content: resultBlocks });
+      if (produced.length > 0) {
+        try {
+          for (const artifact of await store.storeArtifacts(resultsRow.id, produced)) {
+            emit({ type: 'artifact', messageId: resultsRow.id, attachment: artifact });
+          }
+        } catch (error) {
+          // A file that could not be kept is not a reason to stop answering.
+          log('chat artifact not stored: {message}', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       const nextRow = await store.appendMessage({
         role: 'assistant',

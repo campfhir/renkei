@@ -19,6 +19,12 @@ import type { ChatBlock, ChatMessageView, TurnView } from '@/lib/chat/views';
 import AttachmentChip from './attachment-chip';
 import Markdown from './markdown';
 
+/** What the owner may do to a prompt of theirs while nothing is running. */
+export interface PromptActions {
+  onResend: (message: ChatMessageView) => void;
+  onEdit: (message: ChatMessageView) => void;
+}
+
 export default function MessageList({
   tenantId,
   messages,
@@ -26,6 +32,7 @@ export default function MessageList({
   running,
   turn,
   empty,
+  promptActions,
 }: {
   tenantId: string;
   messages: ChatMessageView[];
@@ -33,6 +40,7 @@ export default function MessageList({
   running: boolean;
   turn: TurnView | null;
   empty: ReactNode;
+  promptActions: PromptActions | null;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -72,7 +80,12 @@ export default function MessageList({
         {turns.map((group) => (
           <div key={group.key} className="flex flex-col gap-5">
             {group.prompts.map((message) => (
-              <UserMessage key={message.id} tenantId={tenantId} message={message} />
+              <UserMessage
+                key={message.id}
+                tenantId={tenantId}
+                message={message}
+                actions={promptActions}
+              />
             ))}
             {group.replies.length > 0 ? (
               <Reply
@@ -180,7 +193,15 @@ function segment(messages: ChatMessageView[], results: Map<string, ToolResult>):
   return out;
 }
 
-function UserMessage({ tenantId, message }: { tenantId: string; message: ChatMessageView }) {
+function UserMessage({
+  tenantId,
+  message,
+  actions,
+}: {
+  tenantId: string;
+  message: ChatMessageView;
+  actions: PromptActions | null;
+}) {
   const text = message.blocks
     .flatMap((block) => (block.type === 'text' ? [block.text] : []))
     .join('\n')
@@ -189,7 +210,7 @@ function UserMessage({ tenantId, message }: { tenantId: string; message: ChatMes
     .replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '')
     .trim();
   return (
-    <div className="flex justify-end">
+    <div className="group flex flex-col items-end">
       <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 text-sm whitespace-pre-wrap text-white">
         {text}
         {message.attachments.length > 0 ? (
@@ -200,6 +221,28 @@ function UserMessage({ tenantId, message }: { tenantId: string; message: ChatMes
           </div>
         ) : null}
       </div>
+      {actions ? (
+        // Shown on hover where there is a pointer to hover with; always on
+        // a touch screen, where there is not.
+        <div className="mt-1 flex gap-1 text-xs text-gray-500 transition-opacity lg:opacity-0 lg:group-focus-within:opacity-100 lg:group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={() => actions.onEdit(message)}
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.pencil} className="h-3.5 w-3.5" />
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={() => actions.onResend(message)}
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.loop} className="h-3.5 w-3.5" />
+            Resend
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

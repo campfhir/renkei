@@ -44,6 +44,29 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    entries: [
+      {
+        kind: 'added',
+        title: 'Resend or edit a message you sent',
+        detail:
+          'Under any of your messages in a chat: Resend sends it again as it was, Edit puts it back in the box to change first. Either way the replies after it are removed and the model answers afresh.',
+      },
+      {
+        kind: 'added',
+        title: 'An Artifacts button for the files the assistant produces',
+        detail:
+          'Whenever a tool the assistant used hands back a file — a screenshot, a rendered PDF, a download — it is kept with the chat. An Artifacts button in the chat’s title bar lists them, each ready to download.',
+      },
+      {
+        kind: 'changed',
+        title: 'Chat picks up where you left off',
+        detail:
+          'Chat in the menu opens your most recent chat; the “+ New” beside it starts a fresh one. With no chats yet, Chat starts a new one.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: "Chat with your organization's models",
     entries: [
       {

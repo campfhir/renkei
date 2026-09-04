@@ -23,6 +23,9 @@ import {
   type ChatStreamEvent,
 } from '@/lib/chat/stream-events';
 import type { AttachmentView, ChatMessageView, ChatView, ModelOption } from '@/lib/chat/views';
+import Modal from '@/components/modal';
+import ArtifactsMenu from './artifacts-menu';
+import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
 import ModelSelect from './model-select';
@@ -37,6 +40,15 @@ interface ThreadProps {
   initialMessages: ChatMessageView[];
   models: ModelOption[];
   newChatProject: { id: string; name: string } | null;
+}
+
+/** The typed text of a prompt row, without the attachment excerpts the model saw. */
+function promptTextOf(message: ChatMessageView): string {
+  return message.blocks
+    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+    .join('\n')
+    .replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '')
+    .trim();
 }
 
 function parseEvent(data: string): ChatStreamEvent | null {
@@ -65,7 +77,7 @@ export default function ChatThread({
   const [chat, setChat] = useState<ChatView | null>(initialChat);
   const [state, dispatch] = useReducer(
     applyStreamEvent,
-    initialThreadState(initialMessages, initialChat?.activeTurn ?? null)
+    initialThreadState(initialMessages, initialChat?.activeTurn ?? null, initialChat?.artifacts)
   );
   const [activeTurnId, setActiveTurnId] = useState<string | null>(
     initialChat?.activeTurn?.status === 'running' ? initialChat.activeTurn.id : null
@@ -73,6 +85,8 @@ export default function ChatThread({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [share, setShare] = useState(false);
+  const [editing, setEditing] = useState<ChatMessageView | null>(null);
+  const [confirmResend, setConfirmResend] = useState<ChatMessageView | null>(null);
   const [modelId, setModelId] = useState<string | null>(
     initialChat?.llmModelId ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null
   );
@@ -125,6 +139,43 @@ export default function ChatThread({
     return loaded.data.chat;
   }, [chat, tenantId, newChatProject, modelId, thinking]);
 
+  /** The optimistic prompt row and the turn to follow: the stream only carries the reply. */
+  const begin = useCallback(
+    (started: { turnId: string; userMessageId: string }, input: ComposerSubmit, seq: number) => {
+      dispatch({
+        type: 'snapshot',
+        turn: {
+          id: started.turnId,
+          status: 'running',
+          error: null,
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+        },
+        messages: [
+          {
+            id: started.userMessageId,
+            turnId: started.turnId,
+            seq,
+            role: 'user',
+            kind: 'prompt',
+            status: 'complete',
+            blocks: input.text ? [{ type: 'text', text: input.text }] : [],
+            llmModelId: null,
+            provider: null,
+            model: null,
+            stopReason: null,
+            usage: null,
+            error: null,
+            createdAt: new Date().toISOString(),
+            attachments: input.attachments,
+          },
+        ],
+      });
+      setActiveTurnId(started.turnId);
+    },
+    []
+  );
+
   const submit = useCallback(
     async (input: ComposerSubmit): Promise<boolean> => {
       setError(null);
@@ -145,41 +196,53 @@ export default function ChatThread({
         return false;
       }
       lastPrompt.current = input;
-      // Optimistic prompt row: the stream only carries the reply.
-      dispatch({
-        type: 'snapshot',
-        turn: {
-          id: started.data.turnId,
-          status: 'running',
-          error: null,
-          startedAt: new Date().toISOString(),
-          finishedAt: null,
-        },
-        messages: [
-          {
-            id: started.data.userMessageId,
-            turnId: started.data.turnId,
-            seq: (state.messages[state.messages.length - 1]?.seq ?? 0) + 1,
-            role: 'user',
-            kind: 'prompt',
-            status: 'complete',
-            blocks: input.text ? [{ type: 'text', text: input.text }] : [],
-            llmModelId: null,
-            provider: null,
-            model: null,
-            stopReason: null,
-            usage: null,
-            error: null,
-            createdAt: new Date().toISOString(),
-            attachments: input.attachments,
-          },
-        ],
-      });
-      setActiveTurnId(started.data.turnId);
+      begin(started.data, input, (state.messages[state.messages.length - 1]?.seq ?? 0) + 1);
       if (!chat) router.replace(`/${slug}/chat/${target.id}`);
       return true;
     },
-    [ensureChat, tenantId, modelId, state.messages, chat, router, slug]
+    [ensureChat, tenantId, modelId, state.messages, chat, router, slug, begin]
+  );
+
+  /**
+   * Resend a prompt as it was, or with the text now in the box: the server
+   * removes that row and everything after it, then starts a turn; the
+   * page drops the same rows and follows the new turn as after Send.
+   */
+  const resend = useCallback(
+    async (message: ChatMessageView, input: ComposerSubmit | null): Promise<boolean> => {
+      if (!chat) return false;
+      setError(null);
+      setSending(true);
+      const resent = await chatClient.resend(tenantId, chat.id, message.id, {
+        text: input ? input.text : null,
+        attachmentIds: input ? input.attachments.map((attachment) => attachment.id) : [],
+        llmModelId: modelId,
+      });
+      setSending(false);
+      if (resent.error || !resent.data) {
+        setError(resent.error ?? 'The message could not be resent.');
+        return false;
+      }
+      const prompt: ComposerSubmit = {
+        text: input ? input.text : promptTextOf(message),
+        attachments: [...message.attachments, ...(input?.attachments ?? [])],
+      };
+      lastPrompt.current = prompt;
+      setEditing(null);
+      dispatch({
+        type: 'truncate',
+        fromSeq: resent.data.fromSeq,
+        removedArtifactIds: resent.data.removedArtifactIds,
+      });
+      begin(resent.data, prompt, resent.data.fromSeq);
+      return true;
+    },
+    [chat, tenantId, modelId, begin]
+  );
+
+  const onComposerSubmit = useCallback(
+    (input: ComposerSubmit) => (editing ? resend(editing, input) : submit(input)),
+    [editing, resend, submit]
   );
 
   const stop = useCallback(async () => {
@@ -236,6 +299,7 @@ export default function ChatThread({
             </p>
           ) : null}
         </div>
+        <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
         {isOwner ? (
           <>
             <ToolsPopover tenantId={tenantId} selected={connectors} onChange={changeConnectors} />
@@ -266,6 +330,11 @@ export default function ChatThread({
         pendingToolCalls={state.pendingToolCalls}
         running={running}
         turn={state.turn}
+        promptActions={
+          isOwner && chat && !running && !sending
+            ? { onResend: setConfirmResend, onEdit: setEditing }
+            : null
+        }
         empty={
           chat === null && state.messages.length === 0 ? (
             <EmptyState hasModel={currentModel !== null} />
@@ -297,7 +366,9 @@ export default function ChatThread({
           ensureChatId={async () => (await ensureChat())?.id ?? null}
           disabled={sending || models.length === 0}
           running={running}
-          onSubmit={submit}
+          onSubmit={onComposerSubmit}
+          editing={editing ? { text: promptTextOf(editing) } : null}
+          onCancelEdit={() => setEditing(null)}
           onStop={stop}
           modelControl={
             <ModelSelect
@@ -310,6 +381,25 @@ export default function ChatThread({
             />
           }
         />
+      ) : null}
+      {confirmResend ? (
+        <Modal title="Resend this message?" onClose={() => setConfirmResend(null)}>
+          <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">
+            The message is sent again as it was. Every reply after it, and any files those replies
+            produced, are removed.
+          </p>
+          <DialogFooter
+            busy={sending}
+            error={null}
+            label="Resend"
+            onCancel={() => setConfirmResend(null)}
+            onConfirm={() => {
+              const message = confirmResend;
+              setConfirmResend(null);
+              void resend(message, null);
+            }}
+          />
+        </Modal>
       ) : null}
       {share && chat ? (
         <ShareModal

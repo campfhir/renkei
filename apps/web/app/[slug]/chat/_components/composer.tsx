@@ -40,6 +40,8 @@ export default function Composer({
   onSubmit,
   onStop,
   modelControl,
+  editing,
+  onCancelEdit,
 }: {
   tenantId: string;
   chatId: string | null;
@@ -50,6 +52,9 @@ export default function Composer({
   onSubmit: (input: ComposerSubmit) => Promise<boolean>;
   onStop: () => Promise<void>;
   modelControl: ReactNode;
+  /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
+  editing: { text: string } | null;
+  onCancelEdit: () => void;
 }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -58,6 +63,17 @@ export default function Composer({
   const [dragging, setDragging] = useState(false);
   const [prompts, setPrompts] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Editing starts with the old text in the box and the cursor at its end.
+  useEffect(() => {
+    if (!editing) return;
+    setText(editing.text);
+    const element = textareaRef.current;
+    if (element) {
+      element.focus();
+      element.setSelectionRange(editing.text.length, editing.text.length);
+    }
+  }, [editing]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const grow = useCallback(() => {
@@ -132,6 +148,24 @@ export default function Composer({
 
   return (
     <div className="shrink-0 border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/60">
+      {editing ? (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+          <Icon path={ICONS.pencil} className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            Editing an earlier message. Sending it replaces every reply after it.
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setText('');
+              onCancelEdit();
+            }}
+            className="rounded px-1.5 py-0.5 font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
       <div
         onDragOver={(event) => {
           event.preventDefault();

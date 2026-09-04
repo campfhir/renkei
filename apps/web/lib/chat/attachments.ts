@@ -48,6 +48,8 @@ export interface AttachmentRow {
   contentType: string;
   sizeBytes: number;
   extractStatus: string;
+  /** `upload` (a person's file) or `model` (a file a tool handed back). */
+  origin: string;
   createdAt: Date;
 }
 
@@ -62,6 +64,7 @@ const COLUMNS = [
   'content_type',
   'size_bytes',
   'extract_status',
+  'origin',
   'created_at',
 ] as const;
 
@@ -76,6 +79,7 @@ function rowOf(raw: {
   content_type: string;
   size_bytes: string | number | bigint;
   extract_status: string;
+  origin: string;
   created_at: Date;
 }): AttachmentRow {
   return {
@@ -89,6 +93,7 @@ function rowOf(raw: {
     contentType: raw.content_type,
     sizeBytes: Number(raw.size_bytes),
     extractStatus: raw.extract_status,
+    origin: raw.origin,
     createdAt: raw.created_at,
   };
 }
@@ -163,6 +168,9 @@ export async function createAttachment(
     bytes: Uint8Array;
     maxBytes: number;
     redactor: OutboundRedactor | null;
+    /** A file a tool produced hangs off the tool-results row it came with. */
+    origin?: 'upload' | 'model';
+    messageId?: string | null;
   }
 ): Promise<Result<AttachmentRow, AttachmentError>> {
   if (input.bytes.byteLength > input.maxBytes) return err('TOO_LARGE' as const);
@@ -194,6 +202,8 @@ export async function createAttachment(
         owner_subject: input.ownerSubject,
         chat_id: input.chatId,
         project_id: input.projectId,
+        message_id: input.messageId ?? null,
+        origin: input.origin ?? 'upload',
         blob_key: key.val,
         filename,
         content_type: contentType,
@@ -211,6 +221,24 @@ export async function createAttachment(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/** The files tools produced in this chat — what the Artifacts button lists. */
+export async function listArtifacts(
+  db: Kysely<DB>,
+  tenantId: string,
+  chatId: string
+): Promise<AttachmentRow[]> {
+  if (!isUuid(chatId)) return [];
+  const rows = await db
+    .selectFrom('chat_attachments')
+    .select(COLUMNS)
+    .where('tenant_id', '=', tenantId)
+    .where('chat_id', '=', chatId)
+    .where('origin', '=', 'model')
+    .orderBy('created_at', 'asc')
+    .execute();
+  return rows.map(rowOf);
 }
 
 export async function getAttachment(

@@ -392,6 +392,7 @@ export interface ChatAttachments {
   filename: string;
   id: Generated<string>;
   message_id: string | null;
+  origin: Generated<string>;
   owner_subject: string;
   project_id: string | null;
   size_bytes: Int8;

@@ -157,7 +157,7 @@ export default function ProjectView({
           </button>
         ) : null}
         <Link
-          href={`/${slug}/chat?project=${project.id}`}
+          href={`/${slug}/chat/new?project=${project.id}`}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           New chat

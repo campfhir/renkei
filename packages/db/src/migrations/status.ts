@@ -123,6 +123,7 @@ export const EXPECTED_MIGRATIONS = [
   '091-mcp-token-roles',
   '092-chat',
   '093-prompt-libraries',
+  '094-chat-attachment-origin',
 ];
 
 export interface MigrationStatus {
