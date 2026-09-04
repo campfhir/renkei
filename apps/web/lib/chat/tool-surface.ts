@@ -11,6 +11,16 @@
  *
  * Nothing is minted when the toolset yields no MCP tools — a chat about
  * nothing in particular costs no token row.
+ *
+ * The result is split in two rather than handed over whole. `tools` (the
+ * CORE connectors plus the always-on set) is small and offered up front on
+ * every turn. Everything else the person turned on — a chat can have a
+ * dozen connectors enabled at once — becomes `discoverable`: schemas the
+ * model never sees until it asks for them (tool-discovery.ts's find_tools),
+ * because handing every enabled connector's full tool list to the model on
+ * every turn both bloats the prompt and, on providers with a hard cap on
+ * the tools array (OpenAI's chat-completions dialect: 128), can overflow it
+ * outright once enough connectors are on.
  */
 
 import type { Kysely } from 'kysely';
@@ -26,14 +36,29 @@ import { CHAT_ALWAYS_TOOLS, CHAT_CORE_CONNECTORS, type ChatToolConfig } from './
 /** Tool names the chat never offers, whatever the toolset. */
 const EXCLUDED_SUFFIX = '_preview';
 
-export function selectChatTools(
+/** A tool not offered up front — find_tools searches these by name. */
+export interface DiscoverableTool {
+  connector: string;
+  def: LlmToolDef;
+}
+
+export interface PartitionedChatTools {
+  /** Offered on every turn: the always-on set plus the core connectors. */
+  eager: LlmToolDef[];
+  /** Offered only once find_tools surfaces them for the rest of the turn. */
+  discoverable: DiscoverableTool[];
+}
+
+export function partitionChatTools(
   catalog: ToolDescriptor[],
   mcpTools: McpToolInfo[],
   config: ChatToolConfig
-): LlmToolDef[] {
+): PartitionedChatTools {
   const wanted = new Set(config.connectors);
+  const core = new Set(CHAT_CORE_CONNECTORS);
   const byName = new Map(mcpTools.map((tool) => [tool.name, tool]));
-  const selected: LlmToolDef[] = [];
+  const eager: LlmToolDef[] = [];
+  const discoverable: DiscoverableTool[] = [];
   for (const descriptor of catalog) {
     if (descriptor.appOnly) continue;
     if (descriptor.name.endsWith(EXCLUDED_SUFFIX)) continue;
@@ -41,14 +66,23 @@ export function selectChatTools(
     if (!always && (!descriptor.connector || !wanted.has(descriptor.connector))) continue;
     const live = byName.get(descriptor.name);
     if (!live) continue;
-    selected.push({
+    const def: LlmToolDef = {
       name: live.name,
       description: live.description || descriptor.description || descriptor.title || live.name,
       inputSchema: live.inputSchema,
-    });
+    };
+    if (always || (descriptor.connector !== null && core.has(descriptor.connector))) {
+      eager.push(def);
+    } else if (descriptor.connector !== null) {
+      // Reached only when !always, which the filter above already requires
+      // a non-null connector for — this narrows the type, not the set.
+      discoverable.push({ connector: descriptor.connector, def });
+    }
   }
   // Stable order: the tool list is part of the cached prompt prefix.
-  return selected.sort((a, b) => a.name.localeCompare(b.name));
+  eager.sort((a, b) => a.name.localeCompare(b.name));
+  discoverable.sort((a, b) => a.def.name.localeCompare(b.def.name));
+  return { eager, discoverable };
 }
 
 /**
@@ -88,8 +122,11 @@ export async function listChatConnectors(
 }
 
 export interface ChatToolSurface {
+  /** Offered up front on every turn. */
   tools: LlmToolDef[];
-  /** The subset of `tools` that only read — see readOnlyToolNames. */
+  /** Not offered up front; find_tools (tool-discovery.ts) searches these. */
+  discoverable: DiscoverableTool[];
+  /** The subset of `tools` and `discoverable` that only read — see readOnlyToolNames. */
   readOnlyTools: ReadonlySet<string>;
   mcp: McpClient | null;
   /** Revokes the turn's token; safe to call more than once. */
@@ -115,7 +152,13 @@ export async function resolveChatToolSurface(
         (descriptor.connector !== null && input.config.connectors.includes(descriptor.connector)))
   );
   if (candidates.length === 0) {
-    return { tools: [], readOnlyTools: new Set(), mcp: null, release: async () => {} };
+    return {
+      tools: [],
+      discoverable: [],
+      readOnlyTools: new Set(),
+      mcp: null,
+      release: async () => {},
+    };
   }
 
   const token = await mintRunToken(db, {
@@ -137,8 +180,15 @@ export async function resolveChatToolSurface(
   try {
     await mcp.initialize();
     const live = await mcp.listTools();
-    const tools = selectChatTools(candidates, live, input.config);
-    return { tools, readOnlyTools: readOnlyToolNames(candidates, tools), mcp, release };
+    const { eager, discoverable } = partitionChatTools(candidates, live, input.config);
+    const allOffered = [...eager, ...discoverable.map((entry) => entry.def)];
+    return {
+      tools: eager,
+      discoverable,
+      readOnlyTools: readOnlyToolNames(candidates, allOffered),
+      mcp,
+      release,
+    };
   } catch (error) {
     // The endpoint being unreachable is a deployment fault, not the
     // person's: the turn proceeds without tools and says so in the log.
@@ -148,6 +198,12 @@ export async function resolveChatToolSurface(
       error: error instanceof Error ? error.message : String(error),
     });
     await release();
-    return { tools: [], readOnlyTools: new Set(), mcp: null, release: async () => {} };
+    return {
+      tools: [],
+      discoverable: [],
+      readOnlyTools: new Set(),
+      mcp: null,
+      release: async () => {},
+    };
   }
 }

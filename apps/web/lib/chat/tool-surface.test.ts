@@ -1,4 +1,4 @@
-import { readOnlyToolNames, selectChatTools } from './tool-surface';
+import { partitionChatTools, readOnlyToolNames } from './tool-surface';
 import { effectiveToolConfig, parseToolConfig } from './tool-config';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 
@@ -22,9 +22,9 @@ const live = (name: string) => ({
   inputSchema: { type: 'object' },
 });
 
-describe('selectChatTools', () => {
-  it('keeps always-on tools, the chosen connectors, and nothing app-only or preview', () => {
-    const tools = selectChatTools(
+describe('partitionChatTools', () => {
+  it('keeps always-on and core-connector tools eager; a non-core connector becomes discoverable', () => {
+    const { eager, discoverable } = partitionChatTools(
       [
         descriptor({ name: 'whoami', connector: 'jira' }),
         descriptor({ name: 'jira_search_issues', connector: 'jira' }),
@@ -44,22 +44,33 @@ describe('selectChatTools', () => {
       ],
       { connectors: ['knowledge', 'jira'] }
     );
-    expect(tools.map((tool) => tool.name)).toEqual([
-      'jira_search_issues',
-      'search_knowledge',
-      'whoami',
-    ]);
-    expect(tools[0].description).toBe('live jira_search_issues');
-    expect(tools[0].inputSchema).toEqual({ type: 'object' });
+    // knowledge is a core connector (always eager); jira is not, so its
+    // tools are discoverable even though the chat has it turned on.
+    expect(eager.map((tool) => tool.name)).toEqual(['search_knowledge', 'whoami']);
+    expect(discoverable.map((entry) => entry.def.name)).toEqual(['jira_search_issues']);
+    expect(discoverable[0].connector).toBe('jira');
+    expect(discoverable[0].def.description).toBe('live jira_search_issues');
+    expect(discoverable[0].def.inputSchema).toEqual({ type: 'object' });
   });
 
   it('offers only whoami for an empty toolset', () => {
-    const tools = selectChatTools(
+    const { eager, discoverable } = partitionChatTools(
       [descriptor({ name: 'whoami' }), descriptor({ name: 'jira_search_issues' })],
       [live('whoami'), live('jira_search_issues')],
       { connectors: [] }
     );
-    expect(tools.map((tool) => tool.name)).toEqual(['whoami']);
+    expect(eager.map((tool) => tool.name)).toEqual(['whoami']);
+    expect(discoverable).toEqual([]);
+  });
+
+  it('keeps a core connector eager even when it is not sandbox/knowledge by name coincidence', () => {
+    const { eager, discoverable } = partitionChatTools(
+      [descriptor({ name: 'sandbox_run', connector: 'sandbox' })],
+      [live('sandbox_run')],
+      { connectors: ['sandbox'] }
+    );
+    expect(eager.map((tool) => tool.name)).toEqual(['sandbox_run']);
+    expect(discoverable).toEqual([]);
   });
 });
 

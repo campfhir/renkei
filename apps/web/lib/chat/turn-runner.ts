@@ -190,6 +190,29 @@ export function artifactsOfMeta(
 }
 
 /**
+ * Tool schemas a discovery tool (tool-discovery.ts's find_tools) handed
+ * back via `_meta.discoveredTools` — new tools the model may call for the
+ * rest of this turn, folded into the active tool set below rather than
+ * offered on every turn from the start.
+ */
+export function discoveredToolsOfMeta(meta: Record<string, unknown>): LlmToolDef[] {
+  const raw = meta.discoveredTools;
+  if (!Array.isArray(raw)) return [];
+  const out: LlmToolDef[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const record: { name?: unknown; description?: unknown; inputSchema?: unknown } = entry;
+    if (typeof record.name !== 'string' || typeof record.description !== 'string') continue;
+    if (typeof record.inputSchema !== 'object' || record.inputSchema === null) continue;
+    if (Array.isArray(record.inputSchema)) continue;
+    const inputSchema: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record.inputSchema)) inputSchema[key] = value;
+    out.push({ name: record.name, description: record.description, inputSchema });
+  }
+  return out;
+}
+
+/**
  * Document/image blocks a tool handed back in `_meta.renkeiDocuments` —
  * the agents engine's rule, under the chat's smaller budget. A tool that
  * sets `renkeiDocumentsShown: false` keeps its files (artifactsOfMeta
@@ -320,6 +343,11 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   let blocks: LlmContentBlock[] = [];
   let dirty = false;
   let iterations = 0;
+  // Grows as find_tools (tool-discovery.ts) surfaces more of the chat's
+  // enabled connectors; every discovery is callable from the very next
+  // model reply onward, for the rest of this turn.
+  const activeTools: LlmToolDef[] = [...deps.tools];
+  const activeToolNames = new Set(activeTools.map((tool) => tool.name));
   const totals = { inputTokens: 0, outputTokens: 0 };
   const attachmentBudget = { blocks: 0, base64Chars: 0 };
   let cancelRequested = false;
@@ -481,8 +509,8 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         {
           system: input.system,
           messages,
-          tools: deps.tools,
-          ...(deps.tools.length > 0 ? { toolChoice: 'auto' as const } : {}),
+          tools: activeTools,
+          ...(activeTools.length > 0 ? { toolChoice: 'auto' as const } : {}),
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
           ...(input.thinkingBudget ? { thinking: { budgetTokens: input.thinkingBudget } } : {}),
@@ -616,6 +644,11 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           });
           attachments.push(...attachmentBlocksOfMeta(outcome.meta, attachmentBudget, limits));
           produced.push(...artifactsOfMeta(outcome.meta, use.name, iterations));
+          for (const discovered of discoveredToolsOfMeta(outcome.meta)) {
+            if (activeToolNames.has(discovered.name)) continue;
+            activeToolNames.add(discovered.name);
+            activeTools.push(discovered);
+          }
         }
       }
       if (cancelRequested || channel.cancelRequested) {

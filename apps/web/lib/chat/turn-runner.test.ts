@@ -312,6 +312,53 @@ describe('runChatTurn', () => {
     expect(watched.events.some((event) => event.type === 'tool_call_start')).toBe(true);
   });
 
+  it('adds a discovery tool result\'s discoveredTools to the active set for later turns', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-2d');
+    const requests: string[][] = [];
+    const captureProvider: LlmProvider = {
+      async complete(request) {
+        requests.push(request.tools.map((tool) => tool.name));
+        if (requests.length === 1) return ok(toolCall('find_tools', { query: 'jira' }));
+        if (requests.length === 2) return ok(toolCall('jira_search_issues', { jql: 'a' }));
+        return ok(text('Done'));
+      },
+    };
+    const discover: LocalTool = {
+      def: { name: 'find_tools', description: 'find tools', inputSchema: { type: 'object' } },
+      readOnly: true,
+      async execute() {
+        return textResult('Found 1 tool(s), now callable:\n- jira_search_issues: search', {
+          discoveredTools: [
+            { name: 'jira_search_issues', description: 'search', inputSchema: { type: 'object' } },
+          ],
+        });
+      },
+    };
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(captureProvider),
+        tools: [{ name: 'find_tools', description: 'find tools', inputSchema: {} }],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([discover]),
+        localContext,
+        readOnlyTools: new Set(['find_tools', 'jira_search_issues']),
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-2d')
+    );
+    expect(outcome.status).toBe('completed');
+    // Round 1 offers only find_tools; round 2, after discovery, also offers
+    // jira_search_issues — never sent up front, only once find_tools surfaced it.
+    expect(requests[0]).toEqual(['find_tools']);
+    expect(requests[1].sort()).toEqual(['find_tools', 'jira_search_issues']);
+    expect(requests[2].sort()).toEqual(['find_tools', 'jira_search_issues']);
+    expect(calls).toEqual(['jira_search_issues:{"jql":"a"}']);
+  });
+
   it('runs read-only calls of a round together, acts alone, and keeps the order', async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-2c');

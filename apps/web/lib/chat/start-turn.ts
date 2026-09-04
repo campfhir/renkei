@@ -39,6 +39,7 @@ import { effectiveToolConfig } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { resolveChatToolSurface } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
+import { findToolsTool } from './tool-discovery';
 import { openTurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS } from './turn-runner';
@@ -291,8 +292,11 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       readOnly,
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
+    const baseLocalTools =
+      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed));
+    const discoveryTool = findToolsTool(surface.discoverable);
     const localTools = createLocalToolSet(
-      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed))
+      discoveryTool ? [...baseLocalTools, discoveryTool] : baseLocalTools
     );
 
     const [rows, person] = await Promise.all([

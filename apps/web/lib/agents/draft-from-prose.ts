@@ -57,7 +57,16 @@ import {
   type TriggerDraft,
   type Weekday,
 } from '@renkei/agents';
-import { resolveAgentLlm, type LlmMessage, type ResolvedLlm } from '@renkei/agent-llm';
+import {
+  resolveAgentLlm,
+  type LlmContentBlock,
+  type LlmErrorKind,
+  type LlmMessage,
+  type LlmResponse,
+  type LlmToolDef,
+  type ResolvedLlm,
+} from '@renkei/agent-llm';
+import type { Result } from '@campfhir/safe-functions/types';
 import { getOrgSettings } from '@renkei/settings';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
@@ -173,6 +182,40 @@ interface TriggerOffer {
   otherAgents: AgentOption[];
 }
 
+/**
+ * One tool's full account of itself — description and failure codes — the
+ * only line format the drafting model ever sees for a tool, whether that
+ * arrives via find_tools (tool-search.ts) or, in the past, the whole
+ * catalog up front.
+ */
+function toolDetailLine(tool: ToolDescriptor): string {
+  return (
+    // The FULL description, deliberately: the drafting model never sees
+    // input schemas, so a tool's description is its only account of what
+    // the tool needs and offers. This used to clip at 100 characters, which
+    // cut most descriptions mid-sentence — steps were drafted against tools
+    // whose requirements (a reporter input, a bulk variant, a "prefer X
+    // over Y" rule) lived in the part the model never read. Whitespace
+    // flattens so each tool stays one line.
+    `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ` +
+    `${(tool.description ?? '').replace(/\s+/g, ' ').trim()}` +
+    ` | failure codes: ${tool.outcomes.failures.map((failure) => failure.code).join(', ')}`
+  );
+}
+
+/** Connector name -> how many model-facing tools it offers, "a (3), b (12)". */
+function connectorSummaryOf(tools: ToolDescriptor[]): string {
+  const counts = new Map<string, number>();
+  for (const tool of tools) {
+    if (tool.appOnly || !tool.connector) continue;
+    counts.set(tool.connector, (counts.get(tool.connector) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([connector, count]) => `${connector} (${count})`)
+    .join(', ');
+}
+
 function promptOf(
   text: string,
   tools: ToolDescriptor[],
@@ -183,22 +226,7 @@ function promptOf(
   offerGuardrails: boolean,
   maxSteps: number
 ): string {
-  const toolLines = tools
-    .filter((tool) => !tool.appOnly)
-    .map(
-      (tool) =>
-        // The FULL description, deliberately: the drafting model never sees
-        // input schemas, so a tool's description is its only account of what
-        // the tool needs and offers. This used to clip at 100 characters,
-        // which cut most descriptions mid-sentence — steps were drafted
-        // against tools whose requirements (a reporter input, a bulk
-        // variant, a "prefer X over Y" rule) lived in the part the model
-        // never read. Whitespace flattens so each tool stays one line.
-        `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ` +
-        `${(tool.description ?? '').replace(/\s+/g, ' ').trim()}` +
-        ` | failure codes: ${tool.outcomes.failures.map((failure) => failure.code).join(', ')}`
-    )
-    .join('\n');
+  const toolSummary = connectorSummaryOf(tools);
   const varLines = [
     ...BUILTIN_VARIABLES.map((variable) => `- ${variable.name}: ${variable.description}`),
     ...triggerVars.map((variable) => `- ${variable.name}: ${variable.description}`),
@@ -225,9 +253,9 @@ function promptOf(
         ]
       : []),
     'Rules:',
-    '- Each step does ONE thing and may use AT MOST ONE tool from the list below (a step may also be pure reasoning with no tool).',
-    '- When a step covers MANY items (a sprint of issues, a folder of mail, a search result set), choose the bulk tool (named *_bulk_*) or a single search over per-item tools — one step, one call, never one step per item.',
-    '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY tools and variables from the lists.',
+    '- Each step does ONE thing and may use AT MOST ONE tool, looked up with find_tools (a step may also be pure reasoning with no tool).',
+    '- When a step covers MANY items (a sprint of issues, a folder of mail, a search result set), choose the bulk tool (named *_bulk_*) or a single search over per-item tools — one step, one call, never one step per item. Search find_tools for the task first; it surfaces bulk variants alongside the per-item ones.',
+    '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY a tool name find_tools actually returned to you, and ONLY variables from the list below.',
     '- When a later step needs an earlier step\'s result, give the earlier step a short "saveAs" name (starts with a letter; then letters, numbers, spaces, ".", "-" or "_"; at most 64 characters — e.g. "the ticket") and reference it as {{var:the ticket}}.',
     '- Every "saveAs" name must be UNIQUE — never reuse a name across steps. Later references use the exact earlier name.',
     '- When the description says the flow ENDS at a step on success, set that step\'s "onSuccess" to "stop"; when it should end silently doing nothing (no reply, no follow-up — e.g. "if it\'s not relevant, ignore it"), use "stop-quiet". For CONDITIONAL endings keep the condition in the instruction words ("If …, … and stop here" / "…stop silently") — the runner honors those at runtime.',
@@ -336,8 +364,14 @@ function promptOf(
         ]
       : []),
     '',
-    'Available tools:',
-    toolLines,
+    `Connectors enabled for this automation: ${toolSummary || 'none'}. Their tools are not ` +
+      'listed here — call the find_tools function with a short query (a task in plain words, a ' +
+      'guessed tool name, or a connector name) to see the actual tools it offers, with full ' +
+      'descriptions and failure codes. Call it as many times as you need, for as many ' +
+      'connectors as the automation touches, BEFORE writing any {{tool:...}} token — a tool you ' +
+      "have not looked up is a tool you cannot know exists. Once you have everything you need, " +
+      'stop calling find_tools and reply with the JSON object described below (never call it in ' +
+      'the same turn as your final JSON answer).',
     '',
     "Available variables (trigger.* variables describe the event that starts the automation — pass the id-shaped ones to the matching connector tool to act on that item, e.g. reply where a message came from by giving its space/room id variable to that connector's send tool). Use ONLY these variable names. Never invent trigger.* names: if the described automation reacts to an event but no matching trigger.* variable is listed, write the step in plain words instead — the user must attach that trigger in the builder before its data exists:",
     varLines,
@@ -1679,6 +1713,157 @@ function parseActionEntry(
   };
 }
 
+const FIND_TOOLS_NAME = 'find_tools';
+/** Enough for a real need without dumping most of a large connector back. */
+const MAX_TOOL_MATCHES = 20;
+/** A runaway search loop still ends in a final, tool-less call — never a hang. */
+const MAX_TOOL_SEARCH_ROUNDS = 6;
+
+function findToolsDef(): LlmToolDef {
+  return {
+    name: FIND_TOOLS_NAME,
+    description:
+      'Look up the real tools available before referencing one with {{tool:...}} — this ' +
+      "automation's connectors are summarized, not listed in full, above. Call with a short " +
+      'query — a task in plain words, a guessed tool name, or a connector name — and get back ' +
+      'matching tools with their full description and failure codes. Call it again with ' +
+      'different words for a different need; stop calling it once you have everything the ' +
+      'steps require, and reply with the JSON object.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A task, a guessed tool name, or a connector name.' },
+      },
+      required: ['query'],
+    },
+  };
+}
+
+function findToolsQueryOf(input: unknown): string {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return '';
+  const record: { query?: unknown } = input;
+  return typeof record.query === 'string' ? record.query.trim() : '';
+}
+
+/** Plain substring scoring over name, connector and description — see tool-discovery.ts's
+ *  chat-side twin; a small per-chat/per-draft catalog does not earn embeddings. */
+function searchTools(tools: ToolDescriptor[], query: string): ToolDescriptor[] {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+  return tools
+    .filter((tool) => !tool.appOnly)
+    .map((tool) => {
+      const haystack = `${tool.connector ?? ''} ${tool.name} ${tool.description ?? ''}`.toLowerCase();
+      const score = terms.reduce((sum, term) => sum + (haystack.includes(term) ? 1 : 0), 0);
+      return { tool, score };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || a.tool.name.localeCompare(b.tool.name))
+    .slice(0, MAX_TOOL_MATCHES)
+    .map((row) => row.tool);
+}
+
+/** A completion raced against the shared deadline — 'timeout' when it loses. */
+async function completeWithDeadline(
+  llm: ResolvedLlm,
+  request: {
+    system: string;
+    messages: LlmMessage[];
+    tools: LlmToolDef[];
+    toolChoice?: 'auto' | 'any' | { name: string };
+    maxTokens: number;
+  },
+  deadline: number
+): Promise<Result<LlmResponse, LlmErrorKind> | 'timeout'> {
+  const remaining = deadline - Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    llm.provider.complete({ ...request, timeoutMs: Math.max(10_000, remaining - 5_000) }),
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), remaining);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * One drafting or refinement call, plus whatever find_tools round trips the
+ * model needs first — the prompt shows only connector names and counts, so
+ * a model that wants to reference a tool must ask for its real schema
+ * before it can name it in {{tool:...}}. Returns exactly what a bare
+ * complete() would (a Result, or the 'timeout' sentinel): the search
+ * rounds are invisible past this function, and `messages` is left holding
+ * the full back-and-forth (search calls included) so the conversation
+ * continues correctly on the next outer round (a retry, or refinement).
+ */
+async function completeDraftTurn(
+  llm: ResolvedLlm,
+  messages: LlmMessage[],
+  toolCatalog: ToolDescriptor[],
+  system: string,
+  maxTokens: number,
+  deadline: number,
+  onRound: (usage: { inputTokens: number; outputTokens: number } | null) => void
+): Promise<Result<LlmResponse, LlmErrorKind> | 'timeout'> {
+  const toolDef = findToolsDef();
+  for (let round = 0; round < MAX_TOOL_SEARCH_ROUNDS; round += 1) {
+    const searchOffered = round === 0 || deadline - Date.now() >= 15_000;
+    const result = await completeWithDeadline(
+      llm,
+      {
+        system,
+        messages,
+        tools: searchOffered ? [toolDef] : [],
+        ...(searchOffered ? { toolChoice: 'auto' as const } : {}),
+        maxTokens,
+      },
+      deadline
+    );
+    if (result === 'timeout') return result;
+    onRound(result.ok ? result.val.usage : null);
+    if (!result.ok) return result;
+
+    const toolUses = result.val.content.filter(
+      (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> => block.type === 'tool_use'
+    );
+    if (toolUses.length === 0 || !searchOffered) return result;
+
+    messages.push({ role: 'assistant', content: result.val.content });
+    const resultBlocks: LlmContentBlock[] = toolUses.map((use) => {
+      if (use.name !== FIND_TOOLS_NAME) {
+        return {
+          type: 'tool_result',
+          toolUseId: use.id,
+          content: `"${use.name}" is not something you can call here — only find_tools.`,
+          isError: true,
+        };
+      }
+      const query = findToolsQueryOf(use.input);
+      if (!query) {
+        return {
+          type: 'tool_result',
+          toolUseId: use.id,
+          content: 'Give a query: a task, a guessed tool name, or a connector name.',
+          isError: true,
+        };
+      }
+      const matches = searchTools(toolCatalog, query);
+      return matches.length > 0
+        ? { type: 'tool_result', toolUseId: use.id, content: matches.map(toolDetailLine).join('\n') }
+        : {
+            type: 'tool_result',
+            toolUseId: use.id,
+            content: `No tools matched "${query}". Try different words, or a connector name.`,
+            isError: true,
+          };
+    });
+    messages.push({ role: 'user', content: resultBlocks });
+  }
+  // Round cap hit: one more call with no tool access, so a model stuck
+  // searching still lands on something to parse or fail on rather than
+  // looping in silence until the outer deadline cuts it off mid-search.
+  return completeWithDeadline(llm, { system, messages, tools: [], maxTokens }, deadline);
+}
+
 /**
  * Run the save-time critic (describe.ts's reviewer — the SAME rules the
  * "Worth checking" panel applies) against a draft that only exists in
@@ -1772,6 +1957,8 @@ async function closeReviewGaps(context: {
   deadline: number;
   /** The drafting conversation so far — refinement continues it. */
   messages: LlmMessage[];
+  /** The org's full tool catalog — find_tools (via completeDraftTurn) searches it. */
+  toolCatalog: ToolDescriptor[];
   currentSteps: AgentStepNode[];
   validTools: Set<string>;
   outcomesByTool: Map<string, Set<string>>;
@@ -1816,19 +2003,15 @@ async function closeReviewGaps(context: {
       { role: 'assistant', content: [{ type: 'text', text: currentRaw.slice(0, 8_000) }] },
       { role: 'user', content: [{ type: 'text', text: refineFeedbackText(concerns) }] }
     );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const completion = await Promise.race([
-      llm.provider.complete({
-        system: DRAFT_SYSTEM,
-        messages,
-        tools: [],
-        maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
-        timeoutMs: Math.max(10_000, remaining - 5_000),
-      }),
-      new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), remaining);
-      }),
-    ]).finally(() => clearTimeout(timer));
+    const completion = await completeDraftTurn(
+      llm,
+      messages,
+      context.toolCatalog,
+      DRAFT_SYSTEM,
+      Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
+      deadline,
+      () => {}
+    );
     if (completion === 'timeout' || !completion.ok) break;
 
     const raw = completion.val.content
@@ -1994,34 +2177,30 @@ export async function draftAgentFromProse(
     const remaining = deadline - Date.now();
     if (remaining < 15_000) break; // not enough budget for a useful call
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const completion = await Promise.race([
-      llm.provider.complete({
-        system: DRAFT_SYSTEM,
-        messages,
-        tools: [],
-        // The model config's own ceiling when it is higher: reasoning
-        // deployments spend completion tokens on thinking first, and 4096
-        // can be ALL reasoning with no JSON left.
-        maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
-        // Just under the outer race so the HTTP call, not the race, decides.
-        timeoutMs: Math.max(10_000, remaining - 5_000),
-      }),
-      new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), remaining);
-      }),
-    ]).finally(() => clearTimeout(timer));
+    const completion = await completeDraftTurn(
+      llm,
+      messages,
+      tools,
+      DRAFT_SYSTEM,
+      // The model config's own ceiling when it is higher: reasoning
+      // deployments spend completion tokens on thinking first, and 4096
+      // can be ALL reasoning with no JSON left.
+      Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
+      deadline,
+      (usage) => {
+        modelCalls += 1;
+        if (usage) {
+          inputTokens += usage.inputTokens;
+          outputTokens += usage.outputTokens;
+        }
+      }
+    );
     if (completion === 'timeout') {
       reportTiming('timed out');
       return {
         error:
           'The model took over five minutes and was cut off — try again, or try a shorter description.',
       };
-    }
-    modelCalls += 1;
-    if (completion.ok) {
-      inputTokens += completion.val.usage.inputTokens;
-      outputTokens += completion.val.usage.outputTokens;
     }
     if (!completion.ok) {
       logger.warn('prose draft failed: {kind} {message}', {
@@ -2123,6 +2302,7 @@ export async function draftAgentFromProse(
       tenantId,
       deadline,
       messages,
+      toolCatalog: tools,
       currentSteps,
       validTools,
       outcomesByTool,
