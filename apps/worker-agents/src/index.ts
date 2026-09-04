@@ -21,6 +21,12 @@ import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentRunHandler } from './engine';
 import { createDraftHandler } from './draft';
 import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
+import {
+  createChatRetentionSweep,
+  createChatTurnJanitor,
+  CHAT_JANITOR_INTERVAL_MS,
+  CHAT_RETENTION_INTERVAL_MS,
+} from './chat-sweep';
 import { createOptimizeHandler } from './optimize';
 import { createOptimizationSweep, OPTIMIZATION_SWEEP_INTERVAL_MS } from './optimization-sweep';
 import { createFinalizeHook } from './finalize';
@@ -97,6 +103,22 @@ async function main(): Promise<void> {
       'worker-agents/retention',
       RETENTION_SWEEP_MS,
       createRetentionSweep(db)
+    ),
+    // Chat turns whose runner died, and the org's chat retention (bytes
+    // before rows). Both idempotent.
+    schedulePeriodicSweep(
+      logger,
+      'chat turn janitor',
+      'worker-agents/chat-janitor',
+      CHAT_JANITOR_INTERVAL_MS,
+      createChatTurnJanitor(db)
+    ),
+    schedulePeriodicSweep(
+      logger,
+      'chat retention',
+      'worker-agents/chat-retention',
+      CHAT_RETENTION_INTERVAL_MS,
+      createChatRetentionSweep(db)
     ),
     schedulePeriodicSweep(
       logger,
