@@ -882,13 +882,16 @@ input[type='number']::-webkit-inner-spin-button {
   border-radius: 0.5rem;
   font-size: 0.8125rem;
 }
-.chat-fold > summary {
+.chat-fold > summary,
+.chat-fold > .chat-fold-static {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  cursor: pointer;
   padding: 0.35rem 0.6rem;
   color: var(--color-gray-600);
+}
+.chat-fold > summary {
+  cursor: pointer;
   list-style: none;
 }
 .chat-fold > summary::-webkit-details-marker {
@@ -921,7 +924,8 @@ input[type='number']::-webkit-inner-spin-button {
   .chat-fold {
     border-color: var(--color-gray-800);
   }
-  .chat-fold > summary {
+  .chat-fold > summary,
+  .chat-fold > .chat-fold-static {
     color: var(--color-gray-400);
   }
   .chat-fold[open] > summary {

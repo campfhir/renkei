@@ -154,9 +154,13 @@ describe('AnthropicProvider.stream', () => {
     expect(body.stream).toBe(true);
   });
 
+  // The budget rules belong to the generation that takes one; the 4.6+
+  // shapes are covered in anthropic.test.ts.
+  const budgetProvider = new AnthropicProvider({ apiKey: 'sk-test', model: 'claude-haiku-4-5' });
+
   it('requests thinking and prompt caching the way the API insists on', async () => {
     fetchSpy.mockResolvedValue(sse(happyPath));
-    await provider.stream(
+    await budgetProvider.stream(
       { ...request, thinking: { budgetTokens: 100_000 }, promptCache: true },
       { onEvent: () => {} }
     );
@@ -173,7 +177,7 @@ describe('AnthropicProvider.stream', () => {
 
   it('omits thinking when max_tokens cannot hold it or a tool is forced', async () => {
     fetchSpy.mockResolvedValue(sse(happyPath));
-    await provider.stream(
+    await budgetProvider.stream(
       { ...request, maxTokens: 1500, thinking: { budgetTokens: 4000 } },
       {
         onEvent: () => {},
@@ -184,7 +188,7 @@ describe('AnthropicProvider.stream', () => {
     expect(body.temperature).toBe(0.2);
 
     fetchSpy.mockResolvedValue(sse(happyPath));
-    await provider.stream(
+    await budgetProvider.stream(
       { ...request, toolChoice: 'any', thinking: { budgetTokens: 4000 } },
       {
         onEvent: () => {},

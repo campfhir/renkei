@@ -127,16 +127,81 @@ function toolChoiceOf(request: LlmRequest): Record<string, unknown> | undefined 
 }
 
 /**
- * The thinking parameter, or nothing when the request cannot carry one:
- * the API requires budget_tokens ≥ 1024 and < max_tokens, refuses a
- * temperature other than 1 alongside it, and only allows an `auto`
- * tool_choice — so a forced tool call (the engine's finish_step) and a
- * max_tokens too small to hold both the thinking and an answer simply
- * think in the open, as before.
+ * What the Messages API accepts changed across model generations, and a
+ * request shaped for the wrong one is a 400 with no partial answer:
+ *
+ *  - Up to Sonnet 4.5 / Haiku 4.5 (`budget`): thinking is
+ *    `{type: 'enabled', budget_tokens}`, and sampling knobs are allowed.
+ *  - Opus 4.6 / Sonnet 4.6 (`adaptive`): `{type: 'adaptive'}` — the model
+ *    decides how much to think; a budget is deprecated. Sampling knobs are
+ *    still allowed, and the thinking text comes back summarized.
+ *  - Opus 4.7 and later — Opus 5, Sonnet 5, the Fable/Mythos line
+ *    (`adaptive`, `display` required, no sampling): budget_tokens and
+ *    temperature are REJECTED, and the thinking text is omitted (empty
+ *    blocks) unless `display: 'summarized'` asks for it.
+ *
+ * The generation is read from the model id; a vendor prefix or a date
+ * suffix around it (`anthropic.claude-sonnet-5`,
+ * `claude-sonnet-4-20250514`, `claude-opus-4-5@20251101`) is tolerated.
+ * An id that names no known family (a custom gateway deployment name)
+ * gets the oldest shape, which is what every id got before this existed.
  */
-function thinkingOf(request: LlmRequest): { type: 'enabled'; budget_tokens: number } | undefined {
+export interface AnthropicGeneration {
+  thinking: 'budget' | 'adaptive';
+  /** `thinking.display` exists and defaults to omitting the text. */
+  thinkingDisplay: boolean;
+  /** temperature / top_p / top_k are accepted. */
+  sampling: boolean;
+}
+
+const LEGACY_GENERATION: AnthropicGeneration = {
+  thinking: 'budget',
+  thinkingDisplay: false,
+  sampling: true,
+};
+
+export function anthropicGeneration(model: string): AnthropicGeneration {
+  // The minor is a single digit so a date suffix (`-4-20250514`) is not
+  // mistaken for one.
+  const match = /claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d)(?!\d))?/i.exec(model);
+  if (!match) return LEGACY_GENERATION;
+  const family = match[1].toLowerCase();
+  const major = Number(match[2]);
+  const minor = match[3] === undefined ? 0 : Number(match[3]);
+  if (family === 'fable' || family === 'mythos' || major >= 5) {
+    return { thinking: 'adaptive', thinkingDisplay: true, sampling: false };
+  }
+  if (major === 4 && minor >= 7) {
+    return { thinking: 'adaptive', thinkingDisplay: true, sampling: false };
+  }
+  if (major === 4 && minor === 6) {
+    return { thinking: 'adaptive', thinkingDisplay: false, sampling: true };
+  }
+  return LEGACY_GENERATION;
+}
+
+/**
+ * The thinking parameter, or nothing when the request cannot carry one:
+ * thinking only allows an `auto` tool_choice, so a forced tool call (the
+ * engine's finish_step) thinks in the open, as before. On the budget
+ * generation the API also requires budget_tokens ≥ 1024 and < max_tokens,
+ * so a max_tokens too small to hold both the thinking and an answer goes
+ * without. On the adaptive generations the budget is not sent at all;
+ * where the API would otherwise omit the text, `display: 'summarized'`
+ * asks for the summary the chat shows.
+ */
+function thinkingOf(
+  request: LlmRequest,
+  generation: AnthropicGeneration
+): Record<string, unknown> | undefined {
   if (!request.thinking) return undefined;
   if (request.toolChoice !== undefined && request.toolChoice !== 'auto') return undefined;
+  if (generation.thinking === 'adaptive') {
+    return {
+      type: 'adaptive',
+      ...(generation.thinkingDisplay ? { display: 'summarized' } : {}),
+    };
+  }
   const ceiling = request.maxTokens - MIN_THINKING_BUDGET;
   if (ceiling < MIN_THINKING_BUDGET) return undefined;
   const budget = Math.floor(Math.min(Math.max(request.thinking.budgetTokens, 0), ceiling));
@@ -241,7 +306,8 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   private body(request: LlmRequest, stream: boolean): Record<string, unknown> {
-    const thinking = thinkingOf(request);
+    const generation = anthropicGeneration(this.config.model);
+    const thinking = thinkingOf(request, generation);
     const tools = request.tools.map((tool, index) => ({
       name: tool.name,
       description: tool.description,
@@ -256,9 +322,10 @@ export class AnthropicProvider implements LlmProvider {
     return {
       model: this.config.model,
       max_tokens: request.maxTokens,
-      // Extended thinking only runs at temperature 1, so the knob is
-      // dropped rather than the request rejected.
-      ...(request.temperature !== undefined && !thinking
+      // Extended thinking only runs at temperature 1, and the newest
+      // generation rejects the knob outright, so it is dropped rather
+      // than the request rejected.
+      ...(request.temperature !== undefined && !thinking && generation.sampling
         ? { temperature: request.temperature }
         : {}),
       ...(thinking ? { thinking } : {}),

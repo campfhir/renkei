@@ -78,10 +78,13 @@ export interface LlmRequest {
    */
   timeoutMs?: number;
   /**
-   * Ask for extended thinking with this token budget. Anthropic honors it
-   * (`thinking: {type: 'enabled', budget_tokens}`); the OpenAI dialect has
-   * no per-request equivalent — reasoning effort is a per-model-config
-   * setting there — so the adapter ignores it.
+   * Ask for extended thinking, with its text returned so it can be shown.
+   * The budget is honored where the model takes one (Anthropic's
+   * `{type: 'enabled', budget_tokens}` on models through Sonnet 4.5 and
+   * Haiku 4.5); the 4.6-and-later generations decide their own depth
+   * (`{type: 'adaptive'}`) and ignore it. The OpenAI dialect has no
+   * per-request equivalent — reasoning effort is a per-model-config
+   * setting there — so that adapter ignores it altogether.
    */
   thinking?: { budgetTokens: number };
   /**
