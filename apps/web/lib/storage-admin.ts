@@ -161,23 +161,41 @@ export async function testStorage(
   if (!config.ok)
     return { ok: false, detail: config.err.message ?? 'The configuration is incomplete.' };
   const store = blobStoreFor(config.val);
+  const host = (() => {
+    try {
+      return new URL(config.val.endpoint).host;
+    } catch {
+      return config.val.endpoint;
+    }
+  })();
+  const at = `Tested ${host} as account "${config.val.account}", container "${config.val.container}".`;
+  const why = (error: { type: string; message?: string }) => error.message ?? error.type;
+
   const container = await store.ensureContainer();
   if (!container.ok) {
     return {
       ok: false,
-      detail: `The container could not be reached or created (${container.err.type}).`,
+      detail: `Creating or reaching the container failed: ${why(container.err)} ${at}`,
     };
   }
   const probeKey = `probe/${tenantId}/${Date.now()}`;
   const probe = new TextEncoder().encode('renkei storage probe');
   const put = await store.putObject(probeKey, probe, 'text/plain');
-  if (!put.ok) return { ok: false, detail: `Writing to the container failed (${put.err.type}).` };
+  if (!put.ok) return { ok: false, detail: `Writing a probe failed: ${why(put.err)} ${at}` };
   const got = await store.getObject(probeKey);
-  await store.deleteObject(probeKey);
-  if (!got.ok)
-    return { ok: false, detail: `Reading back from the container failed (${got.err.type}).` };
+  // Whatever the read said, the probe was written: never leave it behind.
+  const removed = await store.deleteObject(probeKey);
+  if (!got.ok) {
+    return { ok: false, detail: `Writing worked, reading back failed: ${why(got.err)} ${at}` };
+  }
+  if (!removed.ok && removed.err.type !== 'NOT_FOUND') {
+    return {
+      ok: false,
+      detail: `Wrote and read a probe, deleting it failed: ${why(removed.err)} ${at}`,
+    };
+  }
   return {
     ok: true,
-    detail: `Wrote, read and removed a probe in "${config.val.container}" on ${config.val.account}.`,
+    detail: `Wrote, read and removed a probe in "${config.val.container}" on ${config.val.account} via ${host}.`,
   };
 }
