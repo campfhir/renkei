@@ -11,8 +11,7 @@ import Modal from '@/components/modal';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
-import { useChatShell } from './chat-shell';
-import { DialogFooter } from './chat-sidebar';
+import { DialogFooter } from './chat-nav';
 import ShareModal from './share-modal';
 
 interface PromptItem {
@@ -43,7 +42,6 @@ export default function LibraryView({
   prompts: PromptItem[];
 }) {
   const router = useRouter();
-  const { openSidebar } = useChatShell();
   const canEdit = library.role !== 'viewer';
   const base = `/api/tenant/${tenantId}/chat/prompt-libraries/${library.id}`;
   const [editing, setEditing] = useState<PromptItem | 'new' | null>(null);
@@ -110,14 +108,6 @@ export default function LibraryView({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex items-center gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-800">
-        <button
-          type="button"
-          onClick={openSidebar}
-          aria-label="Open chat list"
-          className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 lg:hidden dark:hover:bg-gray-900"
-        >
-          <Icon path={ICONS.menu} className="h-5 w-5" />
-        </button>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold">{library.name}</h1>
           <p className="truncate text-xs text-gray-500">

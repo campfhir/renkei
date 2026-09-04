@@ -5,13 +5,14 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
-import ChatShell from './_components/chat-shell';
+import ChatNavSection from './_components/chat-nav';
 
 /**
- * The chat's two-column shell: the sidebar (chats, projects, prompts)
- * beside whatever page is open. Signed-out visitors go to sign-in from
- * here; every page under it still checks the session for itself, since a
- * layout check does not re-run on partial navigations.
+ * The chat pages' frame: the page fills the main column (the app menu
+ * beside it carries the chat list, registered from here). Signed-out
+ * visitors go to sign-in from here; every page under it still checks the
+ * session for itself, since a layout check does not re-run on partial
+ * navigations.
  */
 export default async function ChatLayout({
   children,
@@ -31,9 +32,10 @@ export default async function ChatLayout({
   const sidebar = await loadChatSidebar(dbResult.val, tenant.id, session.subject);
   return (
     <div data-wide-page className="h-[calc(100vh-6.5rem)] min-h-[24rem]">
-      <ChatShell slug={slug} tenantId={tenant.id} sidebar={sidebar} subject={session.subject}>
+      <ChatNavSection slug={slug} tenantId={tenant.id} data={sidebar} />
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
         {children}
-      </ChatShell>
+      </div>
     </div>
   );
 }

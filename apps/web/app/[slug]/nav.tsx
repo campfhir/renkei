@@ -1,10 +1,20 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import RenkeiMark from '@/components/renkei-mark';
+import { Icon, ICONS } from '@/components/icons';
 import { useNotifications } from '@/components/notification-center';
+import { useMediaQuery } from '@/lib/use-media-query';
 
 interface NavProps {
   slug: string;
@@ -14,7 +24,28 @@ interface NavProps {
   userEmail: string | null;
   isOperator: boolean;
   signInHref: string;
+  children: ReactNode;
 }
+
+/**
+ * A page can hang its own list under the menu's Chat section — the chat
+ * layout does, with the person's recent chats — without the menu knowing
+ * about chats. Registered from an effect, cleared on unmount, so the list
+ * shows only while a chat page is open.
+ */
+interface NavExtras {
+  setChatExtra: (node: ReactNode) => void;
+}
+
+const NavExtrasContext = createContext<NavExtras>({ setChatExtra: () => {} });
+
+export function useNavExtras(): NavExtras {
+  return useContext(NavExtrasContext);
+}
+
+/** The same breakpoint collapsible-section.tsx flips on, so the app moves together. */
+const NARROW = '(max-width: 1023.98px)';
+const PINNED_KEY = 'renkei:nav-pinned';
 
 /** "Ada Lovelace" → "AL"; single word or an email → its first letter. */
 function initialsOf(name: string): string {
@@ -27,18 +58,28 @@ function initialsOf(name: string): string {
 interface NavItem {
   href: string;
   label: string;
+  /** Paths under `href` that belong to a sibling item, not this one. */
+  except?: string[];
+  /** Only the exact path counts — Home, whose prefix is every page. */
+  exact?: boolean;
 }
 
 interface NavGroup {
   label: string;
   items: NavItem[];
+  /** Rendered under the items — the Chat section's recent chats. */
+  extra?: ReactNode;
 }
 
 /**
- * The app-wide navigation: a top bar with the hamburger, org name, and the
- * user; a drawer that slides in from the left edge with the sections stacked.
- * Admin entries appear only for operators — the pages behind them still guard
- * themselves, the nav just does not advertise doors the user cannot open.
+ * The app-wide navigation and the frame around every page: a top bar with
+ * the hamburger, org name, a Chat shortcut and the user; the menu itself,
+ * with the sections stacked. On a wide screen the menu is a column that
+ * stays open beside the page (the hamburger tucks it away, and the choice
+ * is remembered in this browser); below `lg` it is the drawer that slides
+ * in from the left edge. Admin entries appear only for operators — the
+ * pages behind them still guard themselves, the nav just does not
+ * advertise doors the user cannot open.
  */
 export default function AppNav({
   slug,
@@ -47,8 +88,13 @@ export default function AppNav({
   userEmail,
   isOperator,
   signInHref,
+  children,
 }: NavProps) {
+  const isNarrow = useMediaQuery(NARROW);
   const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(true);
+  const [chatExtra, setChatExtraState] = useState<ReactNode>(null);
+  const setChatExtra = useCallback((node: ReactNode) => setChatExtraState(node), []);
   const [menuOpen, setMenuOpen] = useState(false);
   // Reads the layout's poller. Outside a NotificationCenter — the
   // signed-out shell — the context default is 0, so the badge simply
@@ -80,6 +126,26 @@ export default function AppNav({
     };
   }, [menuOpen]);
 
+  // Whether the column stays open on a wide screen is this browser's
+  // choice; read after mount, as the server cannot know it.
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(PINNED_KEY) === '0') setPinned(false);
+    } catch {
+      // No storage: the column simply starts open every visit.
+    }
+  }, []);
+  const togglePinned = () => {
+    setPinned((value) => {
+      try {
+        window.localStorage.setItem(PINNED_KEY, value ? '0' : '1');
+      } catch {
+        // Not remembered, still toggled.
+      }
+      return !value;
+    });
+  };
+
   // The drawer closes on navigation, on Escape, and traps initial focus so a
   // keyboard user is not left tabbing through content hidden behind it.
   useEffect(() => setOpen(false), [pathname]);
@@ -97,13 +163,35 @@ export default function AppNav({
     {
       label: 'Workspace',
       items: [
-        { href: `/${slug}`, label: 'Home' },
-        { href: `/${slug}/chat`, label: 'Chat' },
+        { href: `/${slug}`, label: 'Home', exact: true },
         { href: `/${slug}/connectors`, label: 'Connectors' },
         { href: `/${slug}/files`, label: 'Files' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
+      ],
+    },
+    {
+      label: 'Chat',
+      items: [
+        {
+          href: `/${slug}/chat`,
+          label: 'Chat',
+          except: [`/${slug}/chat/projects`, `/${slug}/chat/prompts`],
+        },
+        { href: `/${slug}/chat/projects`, label: 'Projects' },
+        { href: `/${slug}/chat/prompts`, label: 'Prompt libraries' },
+      ],
+      extra: chatExtra,
+    },
+    {
+      label: 'Automation',
+      items: [
         { href: `/${slug}/agents`, label: 'Agents' },
         { href: `/${slug}/batch-jobs`, label: 'Batch Jobs' },
+      ],
+    },
+    {
+      label: 'Insight',
+      items: [
         { href: `/${slug}/usage`, label: 'Tools' },
         { href: `/${slug}/utilization`, label: 'My usage' },
         // Mail review is deliberately unlinked, not removed: it is the only
@@ -152,14 +240,61 @@ export default function AppNav({
 
   const initials = userName ? initialsOf(userName) : '?';
 
-  return (
+  const menu = (
     <>
+      {groups.map((group) => (
+        <div key={group.label} className="mb-5">
+          <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {group.label}
+          </p>
+          <ul className="space-y-1">
+            {group.items.map((item) => {
+              const under =
+                pathname === item.href ||
+                (!item.exact && pathname.startsWith(`${item.href}/`));
+              const here =
+                under && !(item.except ?? []).some((path) => pathname.startsWith(path));
+              return (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    aria-current={here ? 'page' : undefined}
+                    className={`block rounded-lg px-3 py-2 text-sm ${
+                      here
+                        ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                        : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          {group.extra ? <div className="mt-2">{group.extra}</div> : null}
+        </div>
+      ))}
+
+      {userName && (
+        <p className="mt-auto truncate px-2 text-xs text-gray-500" title={userName}>
+          {userName}
+        </p>
+      )}
+    </>
+  );
+
+  // Below lg the column does not exist, so the hamburger opens the drawer;
+  // above it, the same button shows or hides the column.
+  const columnOpen = pinned && !isNarrow;
+
+  return (
+    <NavExtrasContext.Provider value={{ setChatExtra }}>
       <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-gray-200 bg-white/90 px-4 backdrop-blur dark:border-gray-800 dark:bg-black/80">
         <button
           type="button"
-          aria-label="Open menu"
-          aria-expanded={open}
-          onClick={() => setOpen(true)}
+          aria-label={columnOpen ? 'Hide menu' : 'Open menu'}
+          aria-expanded={isNarrow ? open : columnOpen}
+          onClick={() => (isNarrow ? setOpen(true) : togglePinned())}
           className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900"
         >
           <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
@@ -172,6 +307,20 @@ export default function AppNav({
           Renkei
           <span className="text-sm font-normal text-gray-500 dark:text-gray-400">{slug}</span>
         </Link>
+
+        {userName ? (
+          <Link
+            href={`/${slug}/chat`}
+            className={`ml-1 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium ${
+              pathname.startsWith(`/${slug}/chat`)
+                ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
+            }`}
+          >
+            <Icon path={ICONS.chat} className="h-4 w-4" />
+            Chat
+          </Link>
+        ) : null}
 
         <div className="ml-auto flex items-center gap-2">
           {userName ? (
@@ -265,21 +414,21 @@ export default function AppNav({
         </div>
       </header>
 
-      {/* Backdrop */}
+      {/* Backdrop, below lg only */}
       <div
         onClick={() => setOpen(false)}
-        className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${
+        className={`fixed inset-0 z-40 bg-black/40 transition-opacity lg:hidden ${
           open ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
         aria-hidden="true"
       />
 
-      {/* Drawer — slides in from the left edge */}
+      {/* Drawer — slides in from the left edge, below lg only */}
       <nav
         ref={drawerRef}
         tabIndex={-1}
         aria-label="Application"
-        className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-transform duration-200 ease-out dark:border-gray-800 dark:bg-gray-950 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-transform duration-200 ease-out lg:hidden dark:border-gray-800 dark:bg-gray-950 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -297,40 +446,25 @@ export default function AppNav({
             ✕
           </button>
         </div>
-
-        {groups.map((group) => (
-          <div key={group.label} className="mb-6">
-            <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              {group.label}
-            </p>
-            <ul className="space-y-1">
-              {group.items.map((item) => {
-                const here = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      className={`block rounded-lg px-3 py-2 text-sm ${
-                        here
-                          ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                          : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
-                      }`}
-                    >
-                      {item.label}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
-
-        {userName && (
-          <p className="mt-auto truncate px-2 text-xs text-gray-500" title={userName}>
-            {userName}
-          </p>
-        )}
+        {menu}
       </nav>
-    </>
+
+      <div className="flex items-start">
+        {/* The column — the same menu, standing beside the page from lg up */}
+        {pinned ? (
+          <nav
+            aria-label="Application"
+            className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-72 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 lg:flex dark:border-gray-800 dark:bg-gray-950"
+          >
+            {menu}
+          </nav>
+        ) : null}
+        {/* Wide enough for the log and grant tables; narrow pages center a
+            max-w-3xl block of their own inside it. */}
+        <main className="mx-auto w-full min-w-0 max-w-6xl flex-1 px-4 py-6 sm:px-6">
+          {children}
+        </main>
+      </div>
+    </NavExtrasContext.Provider>
   );
 }

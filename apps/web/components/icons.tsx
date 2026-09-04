@@ -48,6 +48,7 @@ export const ICONS = {
   /** The chat: a plus for "new", a hamburger for the drawer, and the composer's verbs. */
   plus: 'M12 5v14M5 12h14',
   menu: 'M4 7h16M4 12h16M4 17h16',
+  chat: 'M4 5h16v11H9l-5 4z',
   send: 'M4 12l16-8-6 16-2.5-6.5z',
   stop: 'M7 7h10v10H7z',
   paperclip: 'M20 11.5l-8 8a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8',

@@ -16,8 +16,7 @@ import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { chatClient } from '@/lib/chat/client';
 import type { ProjectView as ProjectViewData } from '@/lib/chat/project-view';
-import { useChatShell } from './chat-shell';
-import { DialogFooter } from './chat-sidebar';
+import { DialogFooter } from './chat-nav';
 import AttachmentChip from './attachment-chip';
 import ShareModal from './share-modal';
 import ToolsPopover from './tools-popover';
@@ -36,7 +35,6 @@ export default function ProjectView({
   initial: ProjectViewData;
 }) {
   const router = useRouter();
-  const { openSidebar } = useChatShell();
   const { project, role, files, memory, chats } = initial;
   const canEdit = role !== 'viewer';
   const base = `/api/tenant/${tenantId}/chat/projects/${project.id}`;
@@ -125,14 +123,6 @@ export default function ProjectView({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex items-center gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-800">
-        <button
-          type="button"
-          onClick={openSidebar}
-          aria-label="Open chat list"
-          className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 lg:hidden dark:hover:bg-gray-900"
-        >
-          <Icon path={ICONS.menu} className="h-5 w-5" />
-        </button>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold">{project.name}</h1>
           <p className="truncate text-xs text-gray-500">

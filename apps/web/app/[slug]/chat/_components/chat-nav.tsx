@@ -1,22 +1,43 @@
 'use client';
 
 /**
- * The chat list: mine (grouped by day), shared with me, projects, and the
- * way to the prompt libraries. Row actions live behind a "⋯" menu — the
- * notifications list's idiom — and every mutation goes through a route
- * and then router.refresh(), so the layout's server data is the truth.
+ * The chat list that hangs under the app menu's Chat section while a chat
+ * page is open: mine grouped by day, then the ones shared with me. The
+ * chat layout renders `ChatNavSection`, which registers the list with the
+ * menu and withdraws it on the way out — the menu itself knows nothing
+ * about chats. Row actions live behind a "⋯" menu — the notifications
+ * list's idiom — and every mutation goes through a route and then
+ * router.refresh(), so the layout's server data is the truth.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import Modal from '@/components/modal';
 import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
+import { useNavExtras } from '../../nav';
 import ShareModal from './share-modal';
+
+export default function ChatNavSection({
+  slug,
+  tenantId,
+  data,
+}: {
+  slug: string;
+  tenantId: string;
+  data: ChatSidebarData;
+}) {
+  const { setChatExtra } = useNavExtras();
+  useEffect(() => {
+    setChatExtra(<ChatList slug={slug} tenantId={tenantId} data={data} />);
+    return () => setChatExtra(null);
+  }, [setChatExtra, slug, tenantId, data]);
+  return null;
+}
 
 function dayGroup(iso: string, now: Date): string {
   const date = new Date(iso);
@@ -32,18 +53,16 @@ const rowClass =
   'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-900';
 const activeClass = 'bg-gray-100 font-medium dark:bg-gray-900';
 
-export default function ChatSidebar({
+export function ChatList({
   slug,
   tenantId,
   data,
-  currentPath,
 }: {
   slug: string;
   tenantId: string;
-  subject: string;
   data: ChatSidebarData;
-  currentPath: string;
 }) {
+  const currentPath = usePathname();
   const [filter, setFilter] = useState('');
   const mine = useMemo(
     () => data.chats.filter((chat) => chat.via === 'owner' && matches(chat, filter)),
@@ -63,64 +82,23 @@ export default function ChatSidebar({
     return [...out.entries()];
   }, [mine]);
 
+  if (data.chats.length === 0) {
+    return <p className="px-3 text-xs text-gray-500">Your chats will appear here.</p>;
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-gray-200 p-3 dark:border-gray-800">
-        <Link
-          href={`/${slug}/chat`}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          <Icon path={ICONS.plus} className="h-4 w-4" /> New chat
-        </Link>
-      </div>
-      <div className="px-3 pt-3">
-        <input
-          type="search"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Find a chat"
-          aria-label="Find a chat"
-          className="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
-        />
-      </div>
-      <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label="Chats">
-        <div className="mb-3">
-          <SectionTitle>
-            <Link href={`/${slug}/chat/projects`} className="hover:underline">
-              Projects
-            </Link>
-            <Link
-              href={`/${slug}/chat/projects?new=1`}
-              className="ml-auto text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-              aria-label="New project"
-              title="New project"
-            >
-              <Icon path={ICONS.folderPlus} className="h-4 w-4" />
-            </Link>
-          </SectionTitle>
-          {data.projects.length === 0 ? (
-            <p className="px-2 text-xs text-gray-500">No projects yet.</p>
-          ) : (
-            data.projects.map((project) => (
-              <ProjectRow
-                key={project.id}
-                slug={slug}
-                project={project}
-                currentPath={currentPath}
-              />
-            ))
-          )}
-          <Link
-            href={`/${slug}/chat/prompts`}
-            className={`${rowClass} mt-1 text-gray-700 dark:text-gray-300`}
-          >
-            <Icon path={ICONS.sparkle} className="h-4 w-4 text-gray-400" /> Prompt libraries
-          </Link>
-        </div>
+    <div className="border-t border-gray-200 pt-2 dark:border-gray-800">
+      <input
+        type="search"
+        value={filter}
+        onChange={(event) => setFilter(event.target.value)}
+        placeholder="Find a chat"
+        aria-label="Find a chat"
+        className="mb-2 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+      />
+      <nav aria-label="Chats">
         {groups.length === 0 && shared.length === 0 ? (
-          <p className="px-2 text-xs text-gray-500">
-            {filter ? 'No chats match.' : 'Your chats will appear here.'}
-          </p>
+          <p className="px-2 text-xs text-gray-500">No chats match.</p>
         ) : null}
         {groups.map(([label, chats]) => (
           <div key={label} className="mb-3">
@@ -168,31 +146,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
     <div className="mb-1 flex items-center px-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
       {children}
     </div>
-  );
-}
-
-function ProjectRow({
-  slug,
-  project,
-  currentPath,
-}: {
-  slug: string;
-  project: ProjectListItem;
-  currentPath: string;
-}) {
-  const href = `/${slug}/chat/projects/${project.id}`;
-  return (
-    <Link
-      href={href}
-      className={`${rowClass} ${currentPath.startsWith(href) ? activeClass : ''}`}
-      title={project.ownerName ? `Shared by ${project.ownerName}` : undefined}
-    >
-      <Icon path={ICONS.folder} className="h-4 w-4 shrink-0 text-gray-400" />
-      <span className="truncate">{project.name}</span>
-      {project.role === 'member' ? (
-        <span className="ml-auto text-[10px] uppercase text-gray-400">shared</span>
-      ) : null}
-    </Link>
   );
 }
 

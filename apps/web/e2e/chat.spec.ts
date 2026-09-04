@@ -174,12 +174,14 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
     await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
 
-    // The sidebar lists the chat (behind the drawer button on a phone).
+    // The app menu's Chat section lists the chat: in the column beside the
+    // page on a desktop, behind the hamburger on a phone.
     const mobile = testInfo.project.name === 'mobile';
-    if (mobile) await page.getByRole('button', { name: 'Open chat list' }).click();
+    if (mobile) await page.getByRole('button', { name: 'Open menu' }).click();
     await expect(
       page.getByRole('navigation', { name: 'Chats' }).getByRole('link', { name: CHAT_TITLE })
     ).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Prompt libraries' })).toBeVisible();
     if (mobile) await page.keyboard.press('Escape');
 
     // The prompt, the thought, the tool call and the Markdown reply.

@@ -6,8 +6,7 @@ import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
-import { useChatShell } from './chat-shell';
-import { DialogFooter } from './chat-sidebar';
+import { DialogFooter } from './chat-nav';
 
 export interface LibraryListItem {
   id: string;
@@ -27,7 +26,6 @@ export default function LibrariesIndex({
   libraries: LibraryListItem[];
 }) {
   const router = useRouter();
-  const { openSidebar } = useChatShell();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -57,14 +55,6 @@ export default function LibrariesIndex({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex items-center gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-800">
-        <button
-          type="button"
-          onClick={openSidebar}
-          aria-label="Open chat list"
-          className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 lg:hidden dark:hover:bg-gray-900"
-        >
-          <Icon path={ICONS.menu} className="h-5 w-5" />
-        </button>
         <h1 className="flex-1 text-sm font-semibold">Prompt libraries</h1>
         <button
           type="button"
