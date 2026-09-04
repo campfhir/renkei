@@ -24,12 +24,19 @@ export interface LocalToolContext {
 
 export interface LocalTool {
   def: LlmToolDef;
+  /**
+   * The tool changes nothing — the runner may run it beside other reads
+   * of the same round instead of waiting its turn. Absent means it acts.
+   */
+  readOnly?: boolean;
   execute(input: Record<string, unknown>, context: LocalToolContext): Promise<McpToolResult>;
 }
 
 export interface LocalToolSet {
   has(name: string): boolean;
   defs(): LlmToolDef[];
+  /** The names of the tools declared read-only. */
+  readOnlyNames(): string[];
   run(name: string, input: unknown, context: LocalToolContext): Promise<McpToolResult>;
 }
 
@@ -46,6 +53,8 @@ export function createLocalToolSet(tools: LocalTool[]): LocalToolSet {
   return {
     has: (name) => byName.has(name),
     defs: () => [...byName.values()].map((tool) => tool.def),
+    readOnlyNames: () =>
+      [...byName.values()].filter((tool) => tool.readOnly === true).map((tool) => tool.def.name),
     async run(name, input, context) {
       const tool = byName.get(name);
       if (!tool) return errorResult(`Unknown tool ${name}.`);

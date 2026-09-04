@@ -125,6 +125,16 @@ export interface KnowledgeHit {
   sourceAt: string | null;
 }
 
+/** Where a search's time went, in milliseconds per phase. */
+export interface SearchTimings {
+  /** Embedding the query at the org's endpoint; 0 for a browse, which needs none. */
+  embedMs: number;
+  /** The candidate query against Postgres. */
+  queryMs: number;
+  /** The live access gate, bounded by its budget. */
+  verifyMs: number;
+}
+
 export interface KnowledgeSearchResult {
   hits: KnowledgeHit[];
   /** Candidates withheld by the gate — reported, never silently dropped. */
@@ -143,6 +153,12 @@ export interface KnowledgeSearchResult {
    * matches" instead of presenting nothing as if nothing were near.
    */
   weak: number;
+  /**
+   * How long each phase took. Retrieval is three round trips of very
+   * different kinds, and a slow search is fixed differently depending on
+   * which one it was — so callers can log the split, not just the sum.
+   */
+  timings: SearchTimings;
 }
 
 export interface SearchOptions {
@@ -404,9 +420,12 @@ export async function listRecentKnowledge(
         )} ORDER BY source_at DESC`
       : sql<CandidateRow>`${branch(filters.source)}`;
 
+  const queryStarted = Date.now();
   const rowsResult = await wrapAsync(() => query.execute(dbResult.val), 'DB_ERROR' as const);
   if (!rowsResult.ok) return rowsResult;
+  const queryMs = Date.now() - queryStarted;
 
+  const verifyStarted = Date.now();
   const outcome = await verifyCandidates(
     options.verifiers,
     options.userEmail,
@@ -414,6 +433,7 @@ export async function listRecentKnowledge(
     (row) => ({ provider: row.provider, refId: row.ref_id }),
     { budgetMs: options.budgetMs ?? 3_000 }
   );
+  const verifyMs = Date.now() - verifyStarted;
 
   // The quota is applied AFTER the gate: culling first and slicing second
   // would let withheld rows eat a source's whole allowance and leave it
@@ -436,6 +456,7 @@ export async function listRecentKnowledge(
     elided: outcome.elided,
     unverified: outcome.unverified,
     weak: 0,
+    timings: { embedMs: 0, queryMs, verifyMs },
   });
 }
 
@@ -466,8 +487,10 @@ function documentKeyOf(row: CandidateRow): string {
 export async function searchKnowledge(
   options: SearchOptions
 ): Promise<Result<KnowledgeSearchResult, 'EMBEDDING_FAILED' | 'DB_ERROR'>> {
+  const embedStarted = Date.now();
   const embedded = await options.embedder.embed([options.query], 'query');
   if (!embedded.ok) return embedded;
+  const embedMs = Date.now() - embedStarted;
   const vector = vectorLiteral(embedded.val[0] ?? []);
 
   const dbResult = getDatabase();
@@ -497,6 +520,7 @@ export async function searchKnowledge(
   // backfill has not reached (search_text NULL) simply never match that
   // arm. The fused score is RRF over the two rank positions; a row only one
   // arm proposed scores as if the other ranked it nowhere.
+  const queryStarted = Date.now();
   const rowsResult = await wrapAsync(
     () =>
       sql<CandidateRow>`
@@ -537,6 +561,7 @@ export async function searchKnowledge(
     'DB_ERROR' as const
   );
   if (!rowsResult.ok) return rowsResult;
+  const queryMs = Date.now() - queryStarted;
 
   const maxDistance =
     typeof options.maxDistance === 'number' &&
@@ -570,6 +595,7 @@ export async function searchKnowledge(
     return true;
   });
 
+  const verifyStarted = Date.now();
   const outcome = await verifyCandidates(
     options.verifiers,
     options.userEmail,
@@ -577,6 +603,7 @@ export async function searchKnowledge(
     (row) => ({ provider: row.provider, refId: row.ref_id }),
     { budgetMs: options.budgetMs ?? 3_000 }
   );
+  const verifyMs = Date.now() - verifyStarted;
 
   const contentKey = contentKeyOrNull();
   return ok({
@@ -584,6 +611,7 @@ export async function searchKnowledge(
     elided: outcome.elided,
     unverified: outcome.unverified,
     weak,
+    timings: { embedMs, queryMs, verifyMs },
   });
 }
 

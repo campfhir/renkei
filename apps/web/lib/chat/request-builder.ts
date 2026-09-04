@@ -24,6 +24,8 @@ export interface SystemPromptInput {
   } | null;
   chatFiles: { id: string; filename: string; contentType: string; sizeBytes: number }[];
   hasTools: boolean;
+  /** search_knowledge is among the tools; the prompt then says when it is worth a call. */
+  hasKnowledge: boolean;
   hasSandbox: boolean;
   /** The org has somewhere to keep files; false means none can be made or attached. */
   filesAllowed: boolean;
@@ -31,6 +33,16 @@ export interface SystemPromptInput {
 }
 
 const STANDING_BRIEF = `You are Renkei, an assistant inside an organization's own workspace. You answer in the person's language, plainly and specifically. When a tool would ground an answer in the organization's real data — a ticket, a document, a message, a file — use it rather than guessing; say what you looked at. Never invent identifiers, links or quotes. Format replies in Markdown: short paragraphs, lists for parallel items, fenced code for code, tables only for tabular data. Do not narrate your process or restate the question.`;
+
+/**
+ * When search_knowledge is on offer. Each search is an embedding call, a
+ * database query and a live access check against the source systems, so
+ * a reply that searches four times before answering is slow for the
+ * person and no better informed; and a model left to its own devices
+ * searches for things it already knows or was just told. Said only when
+ * the tool is there, so a chat without it carries no dead advice.
+ */
+const KNOWLEDGE_BRIEF = `search_knowledge finds what the organization has indexed from its own systems — mail, tickets, pages, documents, meetings and notes. Use it when the answer depends on the organization's own people, work or records. Do not use it for general knowledge, for reasoning, or for anything this conversation already contains, and do not use it to confirm what another tool just returned. Make one well-aimed search — a specific query, k up to 10, sources when you know the kind of item — and answer from what comes back, saying what you looked at and what was not there. Search again only for a genuinely different question, not a rephrasing of the same one.`;
 
 function fileLine(file: { id: string; filename: string; contentType: string; sizeBytes: number }) {
   return `- ${file.filename} (${file.contentType}, ${Math.round(file.sizeBytes / 1024)} KB, attachment id ${file.id})`;
@@ -72,6 +84,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches; to read a public web page or a document at a URL, sandbox_fetch_page is one call and needs no browser."
         : "Tools act with this person's own permissions in the organization's systems."
     );
+  }
+  if (input.hasKnowledge) {
+    sections.push(KNOWLEDGE_BRIEF);
   }
   if (input.filesAllowed) {
     sections.push(

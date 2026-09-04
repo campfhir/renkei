@@ -10,9 +10,10 @@
  *
  *   stream the reply into the current assistant row, mirroring every
  *   event to the channel and flushing the row on a timer;
- *   if the reply ended with tool calls, run them one by one, store the
- *   results as a user-role `tool_results` row, open a fresh assistant
- *   row, and go again;
+ *   if the reply ended with tool calls, run them — reads side by side,
+ *   anything that acts alone and in order — store the results as a
+ *   user-role `tool_results` row, open a fresh assistant row, and go
+ *   again;
  *   otherwise finish.
  *
  * Cancel is checked between chunks (the channel aborts the in-flight
@@ -88,6 +89,12 @@ export interface TurnLimits {
   maxIterations: number;
   flushMs: number;
   toolTimeoutMs: number;
+  /**
+   * How many read-only tool calls of one round run at once. A reply that
+   * searches three ways at once waits for the slowest search, not the sum;
+   * calls that act never share a slot (see toolGroups).
+   */
+  toolConcurrency: number;
   /** Tool results longer than this are clipped before they reach the model. */
   toolResultMaxChars: number;
   attachmentMaxBlocks: number;
@@ -99,6 +106,7 @@ export const DEFAULT_TURN_LIMITS: TurnLimits = {
   maxIterations: 25,
   flushMs: 250,
   toolTimeoutMs: 120_000,
+  toolConcurrency: 4,
   toolResultMaxChars: 60_000,
   attachmentMaxBlocks: 2,
   attachmentMaxBase64Chars: 6_000_000,
@@ -110,6 +118,12 @@ export interface TurnRunnerDeps {
   mcp: McpClient | null;
   localTools: LocalToolSet;
   localContext: LocalToolContext;
+  /**
+   * Tool names that only read (the catalog's `kind`, a local tool's
+   * `readOnly`). Only these may run beside each other; a name absent here
+   * is taken to act, and runs alone. Omitted means every call runs alone.
+   */
+  readOnlyTools?: ReadonlySet<string>;
   channel: TurnChannel;
   store: TurnStore;
   now?: () => number;
@@ -216,6 +230,41 @@ export function attachmentBlocksOfMeta(
     budget.base64Chars += record.dataBase64.length;
   }
   return out;
+}
+
+/**
+ * The order a round's tool calls run in: each inner array runs at once,
+ * the arrays one after another. Consecutive read-only calls share an
+ * array, cut at `width`; every other call — anything that acts, or that
+ * the caller could not vouch for — gets an array of its own, so its
+ * effect is complete before the next call that might read it. The
+ * model's order is kept within and across arrays, so results can be
+ * assembled in the order the calls were made whatever order they finish.
+ */
+export function toolGroups<T>(
+  uses: readonly T[],
+  isReadOnly: (use: T) => boolean,
+  width: number
+): T[][] {
+  const groups: T[][] = [];
+  let run: T[] = [];
+  for (const use of uses) {
+    if (width > 1 && isReadOnly(use)) {
+      if (run.length >= width) {
+        groups.push(run);
+        run = [];
+      }
+      run.push(use);
+      continue;
+    }
+    if (run.length > 0) {
+      groups.push(run);
+      run = [];
+    }
+    groups.push([use]);
+  }
+  if (run.length > 0) groups.push(run);
+  return groups;
 }
 
 export function textOfResult(result: McpToolResult): string {
@@ -497,57 +546,77 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         return outcome;
       }
 
-      // Tool round: sequential, like the engine — a tool's effect may be
-      // what the next one reads.
+      // Tool round. Calls that only read run side by side: a reply that
+      // searches knowledge three ways is the common case, and each search
+      // is an embedding call, a query and a live access check that none
+      // of the others waits on. Anything that acts runs alone and in
+      // order, like the engine — its effect may be what the next call
+      // reads. Results are assembled in the model's order whatever order
+      // the calls finish in, and the attachment budget is spent in that
+      // order too, so the transcript reads the same as when they ran one
+      // by one.
       const results: LlmContentBlock[] = [];
       const attachments: LlmContentBlock[] = [];
       const produced: ArtifactFile[] = [];
-      for (const use of toolUses) {
-        if (cancelRequested || channel.cancelRequested) break;
-        emit({
-          type: 'tool_call_start',
-          messageId: assistant.id,
-          toolUseId: use.id,
-          name: use.name,
-        });
-        let outcome: McpToolResult;
+      const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
+      const runTool = async (use: (typeof toolUses)[number]): Promise<McpToolResult> => {
         try {
           if (deps.localTools.has(use.name)) {
-            outcome = await deps.localTools.run(use.name, use.input, deps.localContext);
-          } else if (deps.mcp) {
-            outcome = await deps.mcp.callTool(use.name, argsOf(use.input), limits.toolTimeoutMs);
-          } else {
-            outcome = {
-              content: [
-                { type: 'text', text: `The tool ${use.name} is not available in this chat.` },
-              ],
-              isError: true,
-              meta: {},
-            };
+            return await deps.localTools.run(use.name, use.input, deps.localContext);
           }
+          if (deps.mcp) {
+            return await deps.mcp.callTool(use.name, argsOf(use.input), limits.toolTimeoutMs);
+          }
+          return {
+            content: [
+              { type: 'text', text: `The tool ${use.name} is not available in this chat.` },
+            ],
+            isError: true,
+            meta: {},
+          };
         } catch (error) {
           log('chat tool call failed: {tool} {message}', {
             tool: use.name,
             message: error instanceof Error ? error.message : String(error),
           });
-          outcome = {
+          return {
             content: [{ type: 'text', text: 'The tool could not be reached.' }],
             isError: true,
             meta: {},
           };
         }
-        const text = textOfResult(outcome);
-        results.push({
-          type: 'tool_result',
-          toolUseId: use.id,
-          content: clip(
-            text || (outcome.isError ? 'The tool failed.' : '(no output)'),
-            limits.toolResultMaxChars
-          ),
-          ...(outcome.isError ? { isError: true } : {}),
-        });
-        attachments.push(...attachmentBlocksOfMeta(outcome.meta, attachmentBudget, limits));
-        produced.push(...artifactsOfMeta(outcome.meta, use.name, iterations));
+      };
+      const groups = toolGroups(
+        toolUses,
+        (use) => readOnlyTools.has(use.name),
+        limits.toolConcurrency
+      );
+      for (const group of groups) {
+        if (cancelRequested || channel.cancelRequested) break;
+        for (const use of group) {
+          emit({
+            type: 'tool_call_start',
+            messageId: assistant.id,
+            toolUseId: use.id,
+            name: use.name,
+          });
+        }
+        const outcomes = await Promise.all(group.map(runTool));
+        for (const [index, use] of group.entries()) {
+          const outcome = outcomes[index];
+          const text = textOfResult(outcome);
+          results.push({
+            type: 'tool_result',
+            toolUseId: use.id,
+            content: clip(
+              text || (outcome.isError ? 'The tool failed.' : '(no output)'),
+              limits.toolResultMaxChars
+            ),
+            ...(outcome.isError ? { isError: true } : {}),
+          });
+          attachments.push(...attachmentBlocksOfMeta(outcome.meta, attachmentBudget, limits));
+          produced.push(...artifactsOfMeta(outcome.meta, use.name, iterations));
+        }
       }
       if (cancelRequested || channel.cancelRequested) {
         // Whatever ran, ran; the transcript keeps the calls without answers

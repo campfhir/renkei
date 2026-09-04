@@ -13,7 +13,13 @@ import type { LlmContentBlock, LlmProvider, LlmResponse, ResolvedLlm } from '@re
 import type { McpClient } from '@renkei/mcp-client';
 import { createLocalToolSet, textResult, type LocalTool } from './local-tools';
 import { openTurnChannel, resetTurnChannels, type TurnChannel } from './turn-events';
-import { runChatTurn, type TurnInput, type TurnOutcome, type TurnStore } from './turn-runner';
+import {
+  runChatTurn,
+  toolGroups,
+  type TurnInput,
+  type TurnOutcome,
+  type TurnStore,
+} from './turn-runner';
 import { applyStreamEvent, initialThreadState, type ThreadState } from './stream-events';
 import type { ChatStreamEvent } from './stream-events';
 import type { LocalToolContext } from './local-tools';
@@ -182,6 +188,32 @@ beforeEach(() => {
   resetTurnChannels();
 });
 
+describe('toolGroups', () => {
+  const isRead = (use: string) => use.startsWith('r');
+
+  it('batches consecutive reads up to the width and isolates every act', () => {
+    expect(toolGroups(['r1', 'r2', 'a1', 'r3', 'a2', 'a3', 'r4'], isRead, 4)).toEqual([
+      ['r1', 'r2'],
+      ['a1'],
+      ['r3'],
+      ['a2'],
+      ['a3'],
+      ['r4'],
+    ]);
+    expect(toolGroups(['r1', 'r2', 'r3', 'r4', 'r5'], isRead, 2)).toEqual([
+      ['r1', 'r2'],
+      ['r3', 'r4'],
+      ['r5'],
+    ]);
+  });
+
+  it('runs everything alone at width 1 or with nothing vouched for', () => {
+    expect(toolGroups(['r1', 'r2', 'a1'], isRead, 1)).toEqual([['r1'], ['r2'], ['a1']]);
+    expect(toolGroups(['r1', 'r2'], () => false, 4)).toEqual([['r1'], ['r2']]);
+    expect(toolGroups([], isRead, 4)).toEqual([]);
+  });
+});
+
 describe('runChatTurn', () => {
   it('streams a plain reply into the assistant row and completes', async () => {
     const fake = fakeStore();
@@ -278,6 +310,76 @@ describe('runChatTurn', () => {
     });
     expect(state.messages[4].blocks).toEqual([{ type: 'text', text: 'Done' }]);
     expect(watched.events.some((event) => event.type === 'tool_call_start')).toBe(true);
+  });
+
+  it('runs read-only calls of a round together, acts alone, and keeps the order', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-2c');
+    // Each call records when it started and finished against a shared
+    // counter, so overlap is observable without timers.
+    let clock = 0;
+    const spans = new Map<string, { started: number; finished: number }>();
+    const gates = new Map<string, () => void>();
+    const mcp: McpClient = {
+      async initialize() {},
+      async listTools() {
+        return [];
+      },
+      async callTool(name) {
+        spans.set(name, { started: clock++, finished: -1 });
+        await new Promise<void>((resolve) => gates.set(name, resolve));
+        spans.get(name)!.finished = clock++;
+        return { content: [{ type: 'text', text: `result of ${name}` }], isError: false, meta: {} };
+      },
+    };
+    const reply: LlmResponse = {
+      content: [
+        { type: 'tool_use', id: 'tu_a', name: 'search_knowledge', input: { query: 'a' } },
+        { type: 'tool_use', id: 'tu_b', name: 'jira_search_issues', input: { jql: 'b' } },
+        { type: 'tool_use', id: 'tu_c', name: 'jira_create_issue', input: {} },
+        { type: 'tool_use', id: 'tu_d', name: 'confluence_get_page', input: { id: 'd' } },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 20, outputTokens: 8 },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(provider([reply, text('Done')])),
+        tools: [],
+        mcp,
+        localTools: createLocalToolSet([]),
+        localContext,
+        readOnlyTools: new Set(['search_knowledge', 'jira_search_issues', 'confluence_get_page']),
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-2c')
+    );
+    // Both reads of the first group are in flight before either answers;
+    // the act has not started.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect([...gates.keys()].sort()).toEqual(['jira_search_issues', 'search_knowledge']);
+    // Finishing them out of order changes nothing about the transcript.
+    gates.get('jira_search_issues')!();
+    gates.get('search_knowledge')!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(gates.has('jira_create_issue')).toBe(true);
+    expect(gates.has('confluence_get_page')).toBe(false);
+    gates.get('jira_create_issue')!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    gates.get('confluence_get_page')!();
+    const outcome = await run;
+
+    expect(outcome.status).toBe('completed');
+    const act = spans.get('jira_create_issue')!;
+    expect(act.started).toBeGreaterThan(spans.get('search_knowledge')!.finished);
+    expect(act.started).toBeGreaterThan(spans.get('jira_search_issues')!.finished);
+    expect(spans.get('confluence_get_page')!.started).toBeGreaterThan(act.finished);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(
+      rows[1].blocks.map((block) => (block.type === 'tool_result' ? block.toolUseId : ''))
+    ).toEqual(['tu_a', 'tu_b', 'tu_c', 'tu_d']);
   });
 
   it('keeps the files a tool hands back and announces them on the stream', async () => {

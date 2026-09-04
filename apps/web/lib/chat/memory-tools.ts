@@ -67,6 +67,7 @@ export function memoryTools(): LocalTool[] {
         description: "List this project's memory notes with their ids and when they were written.",
         inputSchema: { type: 'object', properties: {} },
       },
+      readOnly: true,
       async execute(_input, context) {
         if (!context.projectId) return errorResult('This chat is not in a project.');
         const memory = await readProjectMemory(context.db, context.tenantId, context.projectId, {

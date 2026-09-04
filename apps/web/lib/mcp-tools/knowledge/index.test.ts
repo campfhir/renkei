@@ -150,6 +150,39 @@ describe('registerKnowledgeTools', () => {
     expect(searchArgs.k).toBe(3);
   });
 
+  it('counts weaker matches beside hits, and advises rephrasing only with none', async () => {
+    mockResolveEmbedder.mockResolvedValue({
+      embedder: { embed: async () => ({ ok: true, val: [[0.1]] }) },
+      maxDistance: 0.5,
+    });
+    const hit = {
+      provider: 'confluence',
+      refId: '123#0001',
+      content: 'The on-call rota is on the Ops page.',
+      metadata: { title: 'On-call' },
+      distance: 0.2,
+      matched: 'both',
+    };
+    mockSearch.mockResolvedValueOnce({
+      ok: true,
+      val: { hits: [hit], elided: 0, unverified: 0, weak: 3 },
+    });
+    const { handler } = await register({ userEmail: 'sam@example.com' });
+
+    const withHits = (await handler({ query: 'on-call rota' })).content[0]?.text ?? '';
+    expect(withHits).toContain('3 weaker match(es) omitted');
+    expect(withHits).not.toContain('Rephrase');
+
+    mockSearch.mockResolvedValueOnce({
+      ok: true,
+      val: { hits: [], elided: 0, unverified: 0, weak: 3 },
+    });
+    const withoutHits = (await handler({ query: 'on-call rota' })).content[0]?.text ?? '';
+    expect(withoutHits).toContain('No accessible results.');
+    expect(withoutHits).toContain('3 weaker match(es) omitted');
+    expect(withoutHits).toContain('Rephrase, quote an exact identifier');
+  });
+
   it('says "no accessible results" when the gate clears nothing', async () => {
     mockResolveEmbedder.mockResolvedValue({
       embedder: { embed: async () => ({ ok: true, val: [[0.1]] }) },

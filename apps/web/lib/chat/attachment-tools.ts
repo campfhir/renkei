@@ -77,6 +77,7 @@ export function attachmentTools(toolConfig: ChatToolConfig): LocalTool[] {
           required: ['attachmentId'],
         },
       },
+      readOnly: true,
       async execute(input, context) {
         const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
         const attachment = await findAttachment(context, id);
