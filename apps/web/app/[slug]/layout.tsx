@@ -6,6 +6,8 @@ import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getNotificationPrefs } from '@renkei/user-prefs';
+import { getDatabase } from '@renkei/db';
+import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { NotificationCenter } from '@/components/notification-center';
 import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
@@ -45,6 +47,11 @@ export default async function TenantLayout({
     ? await getNotificationPrefs(tenant.id, session.subject, { fresh: true })
     : null;
 
+  // The menu carries the person's chats on every page.
+  const dbResult = getDatabase();
+  const chats =
+    session && dbResult.ok ? await loadChatSidebar(dbResult.val, tenant.id, session.subject) : null;
+
   /*
     The notification centre wraps the nav AND the page, because both read
     the same poll: the nav wants the unread count, the toast stack wants
@@ -65,6 +72,7 @@ export default async function TenantLayout({
         userEmail={identity?.email ?? null}
         isOperator={isOperator}
         signInHref={signInUrl(tenant.id, `/${tenant.slug}`)}
+        chats={chats}
       >
         {children}
       </AppNav>

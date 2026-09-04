@@ -37,8 +37,8 @@ export default function HylandConnector({
 
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
         Separate connections per product — OnBase document access and OnBase configuration are
-        different Hyland OAuth clients. Connect each you want; they are independent, and
-        connecting one does not affect the other.
+        different Hyland OAuth clients. Connect each you want; they are independent, and connecting
+        one does not affect the other.
       </p>
 
       <div className="mt-3 space-y-3">

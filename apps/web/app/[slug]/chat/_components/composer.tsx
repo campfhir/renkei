@@ -37,6 +37,7 @@ export default function Composer({
   ensureChatId,
   disabled,
   running,
+  uploads,
   onSubmit,
   onStop,
   modelControl,
@@ -49,6 +50,8 @@ export default function Composer({
   ensureChatId: () => Promise<string | null>;
   disabled: boolean;
   running: boolean;
+  /** Files can be attached at all — false when the org has no storage. */
+  uploads: boolean;
   onSubmit: (input: ComposerSubmit) => Promise<boolean>;
   onStop: () => Promise<void>;
   modelControl: ReactNode;
@@ -143,7 +146,7 @@ export default function Composer({
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setDragging(false);
-    if (event.dataTransfer.files?.length) void upload(event.dataTransfer.files);
+    if (uploads && event.dataTransfer.files?.length) void upload(event.dataTransfer.files);
   };
 
   return (
@@ -169,7 +172,7 @@ export default function Composer({
       <div
         onDragOver={(event) => {
           event.preventDefault();
-          setDragging(true);
+          if (uploads) setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
@@ -203,7 +206,7 @@ export default function Composer({
           onKeyDown={onKeyDown}
           onPaste={(event) => {
             const files = [...event.clipboardData.files];
-            if (files.length > 0) {
+            if (uploads && files.length > 0) {
               event.preventDefault();
               void upload(files);
             }
@@ -215,16 +218,18 @@ export default function Composer({
           className="block w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none disabled:opacity-60"
         />
         <div className="flex items-center gap-1 px-2 pb-2">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach a file"
-            title="Attach a file"
-            disabled={disabled}
-            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
-            <Icon path={ICONS.paperclip} className="h-5 w-5" />
-          </button>
+          {uploads ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Attach a file"
+              title="Attach a file"
+              disabled={disabled}
+              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              <Icon path={ICONS.paperclip} className="h-5 w-5" />
+            </button>
+          ) : null}
           <input
             ref={fileInputRef}
             type="file"

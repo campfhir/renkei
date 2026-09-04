@@ -40,6 +40,8 @@ export interface UtilizationReport {
 const ZERO: UtilizationTotals = {
   inputTokens: 0,
   outputTokens: 0,
+  chatInputTokens: 0,
+  chatOutputTokens: 0,
   runs: 0,
   failures: 0,
   toolCalls: 0,

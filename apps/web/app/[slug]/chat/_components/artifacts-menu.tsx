@@ -2,15 +2,17 @@
 
 /**
  * The files tools produced in this chat — a screenshot, a rendered PDF, a
- * download — behind one button in the title bar, each a download link
- * through the app (attachments stream under a session check, never via
- * a signed URL). Appears only once there is something to list.
+ * download — behind one button in the title bar. Each opens a small
+ * modal to save it to this device or copy it to a share of the person's
+ * own; bytes always stream through the app under a session check, never
+ * via a signed URL. Appears only once there is something to list.
  */
 
 import { useCallback, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import type { AttachmentView } from '@/lib/chat/views';
+import ArtifactModal from './artifact-modal';
 
 function iconFor(contentType: string): string {
   if (contentType.startsWith('image/')) return ICONS.fileImage;
@@ -33,6 +35,7 @@ export default function ArtifactsMenu({
   artifacts: AttachmentView[];
 }) {
   const [open, setOpen] = useState(false);
+  const [chosen, setChosen] = useState<AttachmentView | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, ref, close);
@@ -64,10 +67,14 @@ export default function ArtifactsMenu({
           <ul className="max-h-80 overflow-y-auto">
             {[...artifacts].reverse().map((artifact) => (
               <li key={artifact.id}>
-                <a
-                  href={`/api/tenant/${tenantId}/chat/attachments/${artifact.id}`}
+                <button
+                  type="button"
                   role="menuitem"
-                  className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  onClick={() => {
+                    setOpen(false);
+                    setChosen(artifact);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
                 >
                   <Icon
                     path={iconFor(artifact.contentType)}
@@ -79,12 +86,15 @@ export default function ArtifactsMenu({
                       {sizeOf(artifact.sizeBytes)} · {artifact.contentType}
                     </span>
                   </span>
-                  <Icon path={ICONS.download} className="h-4 w-4 shrink-0 text-gray-400" />
-                </a>
+                  <Icon path={ICONS.chevron} className="h-4 w-4 shrink-0 text-gray-400" />
+                </button>
               </li>
             ))}
           </ul>
         </div>
+      ) : null}
+      {chosen ? (
+        <ArtifactModal tenantId={tenantId} artifact={chosen} onClose={() => setChosen(null)} />
       ) : null}
     </div>
   );

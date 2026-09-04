@@ -29,6 +29,7 @@ test.use({
 function idsFor(project: string): {
   chatId: string;
   projectId: string;
+  archivedId: string;
   turnId: string;
   modelId: string;
   title: string;
@@ -38,6 +39,7 @@ function idsFor(project: string): {
   return {
     chatId: `77777777-7777-4777-8777-7777777777${digit}1`,
     projectId: `77777777-7777-4777-8777-7777777777${digit}4`,
+    archivedId: `77777777-7777-4777-8777-7777777777${digit}5`,
     turnId: `77777777-7777-4777-8777-7777777777${digit}2`,
     modelId: `77777777-7777-4777-8777-7777777777${digit}3`,
     // The menu lists every project's chat; a shared title would match twice.
@@ -101,7 +103,15 @@ const REPLY_MARKDOWN = [
 
 async function seedChat(
   client: Client,
-  { chatId: CHAT_ID, projectId, turnId: TURN_ID, modelId: MODEL_ID, title, modelLabel }: Ids
+  {
+    chatId: CHAT_ID,
+    projectId,
+    archivedId,
+    turnId: TURN_ID,
+    modelId: MODEL_ID,
+    title,
+    modelLabel,
+  }: Ids
 ): Promise<void> {
   await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [MODEL_ID]);
@@ -181,6 +191,13 @@ async function seedChat(
       blocks: [{ type: 'text', text: REPLY_MARKDOWN }],
     },
   ];
+  // An archived chat of the same person: hidden until "Show archived".
+  await client.query('DELETE FROM chats WHERE id = $1', [archivedId]);
+  await client.query(
+    `INSERT INTO chats (id, tenant_id, owner_subject, title, archived_at, last_message_at)
+     VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+    [archivedId, E2E_TENANT_ID, E2E_SUBJECT, `${title} (archived)`]
+  );
   // A file a tool produced, as the runner keeps it: metadata under origin
   // 'model' (the bytes would sit in the blob store, which the list never
   // reads).
@@ -241,16 +258,31 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     // The project the chat sits in reads as a subheading under the name.
-    await expect(page.getByRole('link', { name: 'Sprint hygiene' })).toBeVisible();
+    await expect(
+      page.locator('header').getByRole('link', { name: 'Sprint hygiene' })
+    ).toBeVisible();
 
     // The app menu's Chat section lists the chat: in the column beside the
     // page on a desktop, behind the hamburger on a phone.
     const mobile = testInfo.project.name === 'mobile';
     if (mobile) await page.getByRole('button', { name: 'Open menu' }).click();
-    await expect(
-      page.getByRole('navigation', { name: 'Chats' }).getByRole('link', { name: title })
-    ).toBeVisible();
+    // The row's name runs on into its project line, and the archived twin's
+    // into "(archived)": anchor the title and rule the twin out.
+    const rowName = new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?! \\(archived)`);
+    const row = page
+      .getByRole('navigation', { name: 'Chats' })
+      .getByRole('link', { name: rowName });
+    await expect(row).toBeVisible();
+    // The row names the chat's project underneath.
+    await expect(row.getByText('Sprint hygiene')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Prompt libraries' })).toBeVisible();
+    const archivedRow = page
+      .getByRole('navigation', { name: 'Chats' })
+      .getByRole('link', { name: `${title} (archived)` });
+    await expect(archivedRow).toBeHidden();
+    await page.getByRole('checkbox', { name: /Show archived/ }).check();
+    await expect(archivedRow).toBeVisible();
+    await page.getByRole('checkbox', { name: /Show archived/ }).uncheck();
     if (mobile) await page.keyboard.press('Escape');
 
     // The prompt, then the reply's work — thinking and the tool call in one
@@ -296,9 +328,15 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await page.getByRole('button', { name: /Artifacts/ }).click();
     const artifact = page.getByRole('menuitem', { name: /sprint-report\.pdf/ });
     await expect(artifact).toBeVisible();
-    await expect(artifact).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
     await shot(page, testInfo, 'chat-artifacts.png');
+    // Picking one opens the modal: save it here, or copy it to a share.
+    await artifact.click();
+    const download = page.getByRole('link', { name: 'Download' });
+    await expect(download).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
+    await expect(page.getByText('A network share')).toBeVisible();
+    await shot(page, testInfo, 'chat-artifact-modal.png');
     await page.keyboard.press('Escape');
+    await expect(download).toBeHidden();
 
     // The owner gets a composer with the model menu, thinking switch inside.
     await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
@@ -345,6 +383,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(page.getByRole('heading', { level: 1, name: 'New chat' })).toBeVisible();
   } finally {
     await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
+    await client.query('DELETE FROM chats WHERE id = $1', [ids.archivedId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
     await client.end();

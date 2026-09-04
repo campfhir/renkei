@@ -41,6 +41,8 @@ interface ThreadProps {
   initialMessages: ChatMessageView[];
   models: ModelOption[];
   newChatProject: { id: string; name: string } | null;
+  /** The org has file storage; without it the composer offers no uploads. */
+  uploadsEnabled: boolean;
 }
 
 /** The typed text of a prompt row, without the attachment excerpts the model saw. */
@@ -73,6 +75,7 @@ export default function ChatThread({
   initialMessages,
   models,
   newChatProject,
+  uploadsEnabled,
 }: ThreadProps) {
   const router = useRouter();
   const [chat, setChat] = useState<ChatView | null>(initialChat);
@@ -394,6 +397,7 @@ export default function ChatThread({
           ensureChatId={async () => (await ensureChat())?.id ?? null}
           disabled={sending || models.length === 0}
           running={running}
+          uploads={uploadsEnabled}
           onSubmit={onComposerSubmit}
           editing={editing ? { text: promptTextOf(editing) } : null}
           onCancelEdit={() => setEditing(null)}

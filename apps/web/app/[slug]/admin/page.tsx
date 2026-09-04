@@ -50,6 +50,11 @@ function adminSections(slug: string): AdminSection[] {
           label: 'Models',
           detail: 'The language models agents and the chat run on, and the default.',
         },
+        {
+          href: `${admin}/storage`,
+          label: 'Storage',
+          detail: 'Where chat uploads and the files the assistant produces are kept.',
+        },
       ],
     },
     {

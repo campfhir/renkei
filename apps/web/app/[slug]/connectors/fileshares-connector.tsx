@@ -202,9 +202,9 @@ export default function FilesharesConnector({
     <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
       <h2 className="text-base font-semibold">File shares</h2>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
-        Org network shares (SMB/SFTP). Connect each with your own file-server account — what you
-        can reach there is what that account can. The checkboxes are what your LLM&apos;s tools may
-        do; the servers still have the final say.
+        Org network shares (SMB/SFTP). Connect each with your own file-server account — what you can
+        reach there is what that account can. The checkboxes are what your LLM&apos;s tools may do;
+        the servers still have the final say.
       </p>
 
       <ul className="mt-3 space-y-3">
@@ -248,8 +248,7 @@ export default function FilesharesConnector({
             {share.connection ? (
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Connected as{' '}
-                  <span className="font-mono">{share.connection.username}</span>
+                  Connected as <span className="font-mono">{share.connection.username}</span>
                 </span>
                 <span className="flex items-center gap-2">
                   <span className="text-xs text-gray-500 dark:text-gray-400">LLM tools:</span>

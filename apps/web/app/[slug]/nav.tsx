@@ -1,20 +1,14 @@
 'use client';
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import RenkeiMark from '@/components/renkei-mark';
 import { Icon, ICONS } from '@/components/icons';
 import { useNotifications } from '@/components/notification-center';
 import { useMediaQuery } from '@/lib/use-media-query';
+import type { ChatSidebarData } from '@/lib/chat/sidebar';
+import { ChatList } from './chat/_components/chat-nav';
 
 interface NavProps {
   slug: string;
@@ -24,23 +18,9 @@ interface NavProps {
   userEmail: string | null;
   isOperator: boolean;
   signInHref: string;
+  /** The person's chats, for the Chat section's list; null when signed out. */
+  chats: ChatSidebarData | null;
   children: ReactNode;
-}
-
-/**
- * A page can hang its own list under the menu's Chat section — the chat
- * layout does, with the person's recent chats — without the menu knowing
- * about chats. Registered from an effect, cleared on unmount, so the list
- * shows only while a chat page is open.
- */
-interface NavExtras {
-  setChatExtra: (node: ReactNode) => void;
-}
-
-const NavExtrasContext = createContext<NavExtras>({ setChatExtra: () => {} });
-
-export function useNavExtras(): NavExtras {
-  return useContext(NavExtrasContext);
 }
 
 /** The same breakpoint collapsible-section.tsx flips on, so the app moves together. */
@@ -91,13 +71,12 @@ export default function AppNav({
   userEmail,
   isOperator,
   signInHref,
+  chats,
   children,
 }: NavProps) {
   const isNarrow = useMediaQuery(NARROW);
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(true);
-  const [chatExtra, setChatExtraState] = useState<ReactNode>(null);
-  const setChatExtra = useCallback((node: ReactNode) => setChatExtraState(node), []);
   const [menuOpen, setMenuOpen] = useState(false);
   // Reads the layout's poller. Outside a NotificationCenter — the
   // signed-out shell — the context default is 0, so the badge simply
@@ -187,7 +166,7 @@ export default function AppNav({
         { href: `/${slug}/chat/projects`, label: 'Projects' },
         { href: `/${slug}/chat/prompts`, label: 'Prompt libraries' },
       ],
-      extra: chatExtra,
+      extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
     },
   ];
 
@@ -239,10 +218,8 @@ export default function AppNav({
           <ul className="space-y-1">
             {group.items.map((item) => {
               const under =
-                pathname === item.href ||
-                (!item.exact && pathname.startsWith(`${item.href}/`));
-              const here =
-                under && !(item.except ?? []).some((path) => pathname.startsWith(path));
+                pathname === item.href || (!item.exact && pathname.startsWith(`${item.href}/`));
+              const here = under && !(item.except ?? []).some((path) => pathname.startsWith(path));
               return (
                 <li key={item.href} className="flex items-center gap-1">
                   <Link
@@ -288,7 +265,7 @@ export default function AppNav({
   const columnOpen = pinned && !isNarrow;
 
   return (
-    <NavExtrasContext.Provider value={{ setChatExtra }}>
+    <>
       <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-gray-200 bg-white/90 px-4 backdrop-blur dark:border-gray-800 dark:bg-black/80">
         <button
           type="button"
@@ -449,6 +426,6 @@ export default function AppNav({
           {children}
         </main>
       </div>
-    </NavExtrasContext.Provider>
+    </>
   );
 }

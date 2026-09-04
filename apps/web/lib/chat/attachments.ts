@@ -10,7 +10,7 @@ import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmContentBlock } from '@renkei/agent-llm';
-import { chatAttachmentKey, getBlobStore } from '@renkei/blob-store';
+import { chatAttachmentKey, resolveTenantBlobStore } from '@renkei/blob-store';
 import { extractText, isExtractableCandidate } from '@renkei/document-text';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
@@ -174,7 +174,7 @@ export async function createAttachment(
   }
 ): Promise<Result<AttachmentRow, AttachmentError>> {
   if (input.bytes.byteLength > input.maxBytes) return err('TOO_LARGE' as const);
-  const store = getBlobStore();
+  const store = await resolveTenantBlobStore(input.tenantId);
   if (!store.ok) return err('UNCONFIGURED' as const);
   const id = randomUUID();
   const key = chatAttachmentKey(input.tenantId, id);
@@ -282,7 +282,7 @@ export async function deleteAttachment(
     .where('id', '=', row.id)
     .executeTakeFirst();
   if (Number(result.numDeletedRows) === 0) return false;
-  const store = getBlobStore();
+  const store = await resolveTenantBlobStore(tenantId);
   if (store.ok) await store.val.deleteObject(row.blobKey);
   return true;
 }
@@ -313,7 +313,7 @@ export async function attachmentPromptBlocks(
     .orderBy('created_at', 'asc')
     .execute();
   const blocks: LlmContentBlock[] = [];
-  const store = getBlobStore();
+  const store = await resolveTenantBlobStore(tenantId);
   for (const raw of rows) {
     const row = rowOf(raw);
     const text = raw.extracted_text ? openText(raw.extracted_text) : null;

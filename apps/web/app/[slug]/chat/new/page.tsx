@@ -4,6 +4,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listChatModels } from '@/lib/chat/models';
+import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import ChatThread from '../_components/chat-thread';
@@ -42,7 +43,10 @@ export default async function NewChatPage({
     const row = access ? await getProjectRow(db, tenant.id, projectId) : null;
     if (row) project = { id: row.id, name: row.name };
   }
-  const models = await listChatModels(db, tenant.id);
+  const [models, uploadsEnabled] = await Promise.all([
+    listChatModels(db, tenant.id),
+    tenantBlobStoreConfigured(tenant.id),
+  ]);
   return (
     <ChatThread
       slug={slug}
@@ -51,6 +55,7 @@ export default async function NewChatPage({
       initialChat={null}
       initialMessages={[]}
       models={models}
+      uploadsEnabled={uploadsEnabled}
       newChatProject={project}
     />
   );

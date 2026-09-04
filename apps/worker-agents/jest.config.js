@@ -10,6 +10,7 @@ export default {
     '^\\./logger$': '<rootDir>/src/test-support/logger-mock.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
+    '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
     '^@renkei/agents$': '<rootDir>/../../packages/agents/src/index.ts',

@@ -66,6 +66,30 @@ export const chatClient = {
       input
     ),
 
+  /** The person's connected network shares, for copying a file out. */
+  shares: (tenantId: string) =>
+    getJson<{
+      shares: {
+        id: string;
+        name: string;
+        protocol: string;
+        host: string;
+        shareName: string;
+        connection: { username: string } | null;
+      }[];
+    }>(`/api/tenant/${tenantId}/fileshares`),
+
+  copyAttachment: (
+    tenantId: string,
+    attachmentId: string,
+    destination: { kind: 'fileshare-file'; shareId: string; path: string }
+  ) =>
+    sendJsonFull<{ ok: boolean; detail: string }>(
+      `${base(tenantId)}/attachments/${attachmentId}/copy`,
+      'POST',
+      destination
+    ),
+
   cancelTurn: (tenantId: string, chatId: string, turnId: string) =>
     sendJsonFull(`${base(tenantId)}/chats/${chatId}/turns/${turnId}/cancel`, 'POST'),
 

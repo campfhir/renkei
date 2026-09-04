@@ -11,29 +11,15 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { getBlobStore } from '@renkei/blob-store';
+import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
-import { resolveChatAccess, resolveResourceAccess } from '@/lib/chat/access';
+import { resolveResourceAccess } from '@/lib/chat/access';
 import { deleteAttachment, getAttachment, type AttachmentRow } from '@/lib/chat/attachments';
+import { mayReadAttachment } from '@/lib/chat/attachment-access';
 
 export const runtime = 'nodejs';
 
 const SAFE_INLINE = /^(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain)$/;
-
-async function mayRead(
-  db: Kysely<DB>,
-  tenantId: string,
-  subject: string,
-  row: AttachmentRow
-): Promise<boolean> {
-  if (row.chatId) return (await resolveChatAccess(db, tenantId, subject, row.chatId)) !== null;
-  if (row.projectId) {
-    return (
-      (await resolveResourceAccess(db, tenantId, subject, 'chat_project', row.projectId)) !== null
-    );
-  }
-  return false;
-}
 
 async function mayDelete(
   db: Kysely<DB>,
@@ -64,10 +50,10 @@ export async function GET(
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const row = await getAttachment(db, tenantId, attachmentId);
-  if (!row || !(await mayRead(db, tenantId, session.subject, row))) {
+  if (!row || !(await mayReadAttachment(db, tenantId, session.subject, row))) {
     return jsonError(404, 'not-found', 'No such file');
   }
-  const store = getBlobStore();
+  const store = await resolveTenantBlobStore(tenantId);
   if (!store.ok) return jsonError(503, 'uploads-off', 'The file store is not configured.');
   const object = await store.val.getObjectStream(row.blobKey);
   if (!object.ok) {

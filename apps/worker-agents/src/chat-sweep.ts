@@ -20,7 +20,7 @@
 
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { getBlobStore, type BlobStore } from '@renkei/blob-store';
+import { resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { logger } from './logger';
 
@@ -63,7 +63,7 @@ export function createChatTurnJanitor(db: Kysely<DB>) {
 
 export function createChatRetentionSweep(
   db: Kysely<DB>,
-  store: () => BlobStore | null = blobStore
+  store: (tenantId: string) => Promise<BlobStore | null> = blobStore
 ) {
   return async function sweep(): Promise<void> {
     const tenants = await db.selectFrom('tenants').select('id').execute();
@@ -80,7 +80,7 @@ export function createChatRetentionSweep(
         .execute();
       if (expired.length === 0) continue;
       const chatIds = expired.map((row) => row.id);
-      const deletable = await deleteAttachmentBlobs(db, tenant.id, chatIds, store());
+      const deletable = await deleteAttachmentBlobs(db, tenant.id, chatIds, await store(tenant.id));
       if (deletable.length === 0) continue;
       await db
         .deleteFrom('chats')
@@ -147,7 +147,7 @@ async function pruneOrphanGrants(db: Kysely<DB>): Promise<void> {
   `.execute(db);
 }
 
-function blobStore(): BlobStore | null {
-  const store = getBlobStore();
+async function blobStore(tenantId: string): Promise<BlobStore | null> {
+  const store = await resolveTenantBlobStore(tenantId);
   return store.ok ? store.val : null;
 }

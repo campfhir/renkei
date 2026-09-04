@@ -74,9 +74,8 @@ export default function OnBaseAdminConnector({
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
         {connected && displayName ? (
           <>
-            Connected as <strong>{displayName}</strong>. MCP tools can create and configure
-            document types, keyword types and their assignments in your organization&apos;s
-            OnBase as you.
+            Connected as <strong>{displayName}</strong>. MCP tools can create and configure document
+            types, keyword types and their assignments in your organization&apos;s OnBase as you.
           </>
         ) : (
           "Grant Renkei access to configure your organization's OnBase as you: create and update " +

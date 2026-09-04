@@ -1,16 +1,15 @@
 'use client';
 
 /**
- * The chat list that hangs under the app menu's Chat section while a chat
- * page is open: mine grouped by day, then the ones shared with me. The
- * chat layout renders `ChatNavSection`, which registers the list with the
- * menu and withdraws it on the way out — the menu itself knows nothing
- * about chats. Row actions live behind a "⋯" menu — the notifications
- * list's idiom — and every mutation goes through a route and then
- * router.refresh(), so the layout's server data is the truth.
+ * The chat list under the app menu's Chat section, on every page: mine
+ * grouped by day (archived ones behind a switch), then the ones shared
+ * with me; each row names its project underneath. Row actions live
+ * behind a "⋯" menu — the notifications list's idiom — and every
+ * mutation goes through a route and then router.refresh(), so the
+ * layout's server data is the truth.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -19,25 +18,7 @@ import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
-import { useNavExtras } from '../../nav';
 import ShareModal from './share-modal';
-
-export default function ChatNavSection({
-  slug,
-  tenantId,
-  data,
-}: {
-  slug: string;
-  tenantId: string;
-  data: ChatSidebarData;
-}) {
-  const { setChatExtra } = useNavExtras();
-  useEffect(() => {
-    setChatExtra(<ChatList slug={slug} tenantId={tenantId} data={data} />);
-    return () => setChatExtra(null);
-  }, [setChatExtra, slug, tenantId, data]);
-  return null;
-}
 
 function dayGroup(iso: string, now: Date): string {
   const date = new Date(iso);
@@ -64,13 +45,24 @@ export function ChatList({
 }) {
   const currentPath = usePathname();
   const [filter, setFilter] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const archivedCount = useMemo(
+    () => data.chats.filter((chat) => chat.via === 'owner' && chat.archived).length,
+    [data.chats]
+  );
   const mine = useMemo(
-    () => data.chats.filter((chat) => chat.via === 'owner' && matches(chat, filter)),
-    [data.chats, filter]
+    () =>
+      data.chats.filter(
+        (chat) => chat.via === 'owner' && (showArchived || !chat.archived) && matches(chat, filter)
+      ),
+    [data.chats, filter, showArchived]
   );
   const shared = useMemo(
-    () => data.chats.filter((chat) => chat.via !== 'owner' && matches(chat, filter)),
-    [data.chats, filter]
+    () =>
+      data.chats.filter(
+        (chat) => chat.via !== 'owner' && (showArchived || !chat.archived) && matches(chat, filter)
+      ),
+    [data.chats, filter, showArchived]
   );
   const groups = useMemo(() => {
     const now = new Date();
@@ -82,10 +74,6 @@ export function ChatList({
     return [...out.entries()];
   }, [mine]);
 
-  if (data.chats.length === 0) {
-    return <p className="px-3 text-xs text-gray-500">Your chats will appear here.</p>;
-  }
-
   return (
     <div className="border-t border-gray-200 pt-2 dark:border-gray-800">
       <input
@@ -96,9 +84,25 @@ export function ChatList({
         aria-label="Find a chat"
         className="mb-2 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
       />
+      {archivedCount > 0 ? (
+        <label className="mb-2 flex items-center gap-1.5 px-2 text-xs text-gray-500">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+          />
+          Show archived ({archivedCount})
+        </label>
+      ) : null}
       <nav aria-label="Chats">
         {groups.length === 0 && shared.length === 0 ? (
-          <p className="px-2 text-xs text-gray-500">No chats match.</p>
+          <p className="px-2 text-xs text-gray-500">
+            {filter
+              ? 'No chats match.'
+              : data.chats.length === 0
+                ? 'Your chats will appear here.'
+                : 'No active chats.'}
+          </p>
         ) : null}
         {groups.map(([label, chats]) => (
           <div key={label} className="mb-3">
@@ -187,12 +191,31 @@ function ChatRow({
 
   return (
     <div className={`${rowClass} ${active ? activeClass : ''}`}>
-      <Link href={`/${slug}/chat/${chat.id}`} className="min-w-0 flex-1 truncate">
+      <Link
+        href={`/${slug}/chat/${chat.id}`}
+        className={`min-w-0 flex-1 truncate ${chat.archived ? 'text-gray-500' : ''}`}
+      >
         {chat.title ?? 'New chat'}
-        {chat.ownerName ? (
-          <span className="block truncate text-[11px] font-normal text-gray-500">
-            {chat.via === 'project' ? 'In project · ' : 'Shared by '}
-            {chat.ownerName}
+        {chat.archived ? (
+          <span className="ml-1.5 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+            archived
+          </span>
+        ) : null}
+        {chat.projectName || chat.ownerName ? (
+          <span className="flex items-center gap-1 truncate text-[11px] font-normal text-gray-500">
+            {chat.projectName ? (
+              <>
+                <Icon path={ICONS.folder} className="h-3 w-3 shrink-0" />
+                <span className="truncate">{chat.projectName}</span>
+              </>
+            ) : null}
+            {chat.ownerName ? (
+              <span className="truncate">
+                {chat.projectName ? '· ' : ''}
+                {chat.via === 'project' ? 'by ' : 'Shared by '}
+                {chat.ownerName}
+              </span>
+            ) : null}
           </span>
         ) : null}
       </Link>
@@ -208,12 +231,18 @@ function ChatRow({
           </button>
           {menuOpen ? (
             <div className="absolute right-0 z-40 mt-1 w-40 overflow-hidden rounded-md border border-gray-200 bg-white text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
-              {(['rename', 'move', 'share', 'delete'] as const).map((item) => (
+              {(['rename', 'move', 'share', 'archive', 'delete'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
+                    if (item === 'archive') {
+                      void run(() =>
+                        chatClient.updateChat(tenantId, chat.id, { archived: !chat.archived })
+                      );
+                      return;
+                    }
                     setDialog(item);
                   }}
                   className={`block w-full px-3 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800 ${item === 'delete' ? 'text-red-600 dark:text-red-400' : ''}`}
@@ -224,7 +253,11 @@ function ChatRow({
                       ? 'Move to project…'
                       : item === 'share'
                         ? 'Share…'
-                        : 'Delete'}
+                        : item === 'archive'
+                          ? chat.archived
+                            ? 'Unarchive'
+                            : 'Archive'
+                          : 'Delete'}
                 </button>
               ))}
             </div>

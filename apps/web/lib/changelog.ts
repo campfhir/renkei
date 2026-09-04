@@ -58,6 +58,36 @@ export const CHANGELOG: ChangelogRelease[] = [
           'Whenever a tool the assistant used hands back a file — a screenshot, a rendered PDF, a download — it is kept with the chat. An Artifacts button in the chat’s title bar lists them, each ready to download.',
       },
       {
+        kind: 'added',
+        title: 'Set up file storage for the organization',
+        detail:
+          'Operators configure the Azure Blob Storage account that holds chat uploads and the files the assistant produces under Organization → Storage, with a connection test before saving. Without storage, the chat offers no uploads and the assistant is told not to produce files.',
+      },
+      {
+        kind: 'added',
+        title: 'Save or copy a produced file',
+        detail:
+          'Pick a file under Artifacts to download it, or copy it to a network share you have connected, written with your own credentials.',
+      },
+      {
+        kind: 'added',
+        title: 'Archive chats',
+        detail:
+          'Archive a chat from its row menu to tuck it away without deleting it; a "Show archived" switch in the chat list brings archived chats back into view, and Unarchive restores one.',
+      },
+      {
+        kind: 'changed',
+        title: 'Your chats are always a click away',
+        detail:
+          'The chat list and its search now sit in the menu on every page, and each chat shows the project it belongs to underneath its name.',
+      },
+      {
+        kind: 'changed',
+        title: 'My usage counts your chats',
+        detail:
+          'Tokens spent in the chat were already part of your totals; the Tokens card now says how many of them the chat accounted for.',
+      },
+      {
         kind: 'changed',
         title: 'Chat picks up where you left off',
         detail:

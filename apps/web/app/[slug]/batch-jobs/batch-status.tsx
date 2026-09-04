@@ -24,7 +24,9 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function batchStatusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? (status ? status.charAt(0).toUpperCase() + status.slice(1) : status);
+  return (
+    STATUS_LABELS[status] ?? (status ? status.charAt(0).toUpperCase() + status.slice(1) : status)
+  );
 }
 
 function statusTone(status: string): string {

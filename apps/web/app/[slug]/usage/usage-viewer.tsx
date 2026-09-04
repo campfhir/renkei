@@ -696,9 +696,7 @@ export default function UsageViewer({
             By agent
           </h2>
           <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
-            {report.scope === 'tenant'
-              ? 'Every agent in this organization.'
-              : 'Your own agents.'}{' '}
+            {report.scope === 'tenant' ? 'Every agent in this organization.' : 'Your own agents.'}{' '}
             Open an agent for its full usage dashboard.
           </p>
           <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">

@@ -117,7 +117,11 @@ export default function EditScheduleForm({
   }
 
   async function remove() {
-    if (!window.confirm(`Delete the schedule "${name}"? This does not affect batches it already started.`)) {
+    if (
+      !window.confirm(
+        `Delete the schedule "${name}"? This does not affect batches it already started.`
+      )
+    ) {
       return;
     }
     setDeleting(true);

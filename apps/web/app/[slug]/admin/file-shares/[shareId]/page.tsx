@@ -59,8 +59,8 @@ export default async function AdminFileSharePage({
       <section>
         <h2 className="mb-1 text-lg font-semibold">Connection</h2>
         <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
-          Where the share lives. Who can use it is not decided here: everyone connects it with
-          their own credentials from the Connectors page, and the file server judges each account.
+          Where the share lives. Who can use it is not decided here: everyone connects it with their
+          own credentials from the Connectors page, and the file server judges each account.
         </p>
         <ShareConfigForm slug={slug} shareId={shareId} />
       </section>

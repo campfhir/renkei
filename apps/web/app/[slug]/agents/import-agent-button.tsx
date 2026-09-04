@@ -10,13 +10,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-export default function ImportAgentButton({
-  slug,
-  tenantId,
-}: {
-  slug: string;
-  tenantId: string;
-}) {
+export default function ImportAgentButton({ slug, tenantId }: { slug: string; tenantId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [markdown, setMarkdown] = useState('');
@@ -68,9 +62,9 @@ export default function ImportAgentButton({
           >
             <h2 className="text-base font-semibold">Import an agent</h2>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Paste a document exported with “Copy as Markdown”. The definition block at its
-              end is what imports — the agent is created off, under a new name if the old one
-              is taken, for you to review and turn on.
+              Paste a document exported with “Copy as Markdown”. The definition block at its end is
+              what imports — the agent is created off, under a new name if the old one is taken, for
+              you to review and turn on.
             </p>
             <textarea
               value={markdown}

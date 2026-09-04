@@ -122,9 +122,9 @@ export function TerminalEditor({
         <FieldIssues messages={messageIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           Shown on the run&rsquo;s own timeline, with saved details filled in from this run — so it
-          carries real context (which ticket, which email, what failed), not just “an agent
-          failed”. Whether anyone is told about this run at all is controlled in that person&rsquo;s
-          own Preferences, not here.
+          carries real context (which ticket, which email, what failed), not just “an agent failed”.
+          Whether anyone is told about this run at all is controlled in that person&rsquo;s own
+          Preferences, not here.
         </p>
       </div>
 
