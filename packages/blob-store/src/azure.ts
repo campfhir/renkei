@@ -8,6 +8,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { authorizationHeader } from './azure-sign';
+import { describeRefusal } from './azure-errors';
 import type { AzureBlobConfig } from './config';
 import type { BlobError, BlobObject, BlobObjectStream, BlobStore } from './contract';
 
@@ -21,14 +22,11 @@ function encodePath(key: string): string {
     .join('/');
 }
 
-function errorOf(status: number, text: string): Result<never, BlobError> {
-  if (status === 404) return err('NOT_FOUND' as const, { message: 'No such object.' });
-  if (status === 401 || status === 403) {
-    return err('AUTH' as const, { message: `Azure Blob refused the credentials (${status}).` });
-  }
-  return err('PROVIDER_ERROR' as const, {
-    message: `Azure Blob ${status}: ${text.slice(0, 300)}`,
-  });
+/** A non-2xx answer, told apart by who sent it (azure-errors.ts). */
+async function refused(response: Response): Promise<Result<never, BlobError>> {
+  const body = await response.text().catch(() => '');
+  const refusal = describeRefusal(response.status, response.headers, body);
+  return err(refusal.kind, { message: refusal.message });
 }
 
 export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
@@ -97,7 +95,7 @@ export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
         containerReady = true;
         return ok(undefined);
       }
-      return errorOf(sent.val.status, await sent.val.text().catch(() => ''));
+      return refused(sent.val);
     },
 
     async putObject(key, bytes, contentType) {
@@ -114,7 +112,7 @@ export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
         bytes
       );
       if (!sent.ok) return sent;
-      if (!sent.val.ok) return errorOf(sent.val.status, await sent.val.text().catch(() => ''));
+      if (!sent.val.ok) return refused(sent.val);
       return ok(undefined);
     },
 
@@ -135,7 +133,7 @@ export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
     async getObjectStream(key) {
       const sent = await send('GET', blobPath(key), {}, {});
       if (!sent.ok) return sent;
-      if (!sent.val.ok) return errorOf(sent.val.status, await sent.val.text().catch(() => ''));
+      if (!sent.val.ok) return refused(sent.val);
       if (!sent.val.body) {
         return err('PROVIDER_ERROR' as const, { message: 'Azure Blob returned no body.' });
       }
@@ -151,7 +149,7 @@ export function createAzureBlobStore(config: AzureBlobConfig): BlobStore {
     async deleteObject(key) {
       const sent = await send('DELETE', blobPath(key), {}, {});
       if (!sent.ok) return sent;
-      if (!sent.val.ok) return errorOf(sent.val.status, await sent.val.text().catch(() => ''));
+      if (!sent.val.ok) return refused(sent.val);
       return ok(undefined);
     },
   };

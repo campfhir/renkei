@@ -185,9 +185,20 @@ export default function StorageForm({
         >
           {busy === 'test' ? 'Testing…' : 'Test connection'}
         </button>
-        {notice && <span className="text-sm text-green-700 dark:text-green-300">{notice}</span>}
-        {error && <span className="text-sm text-red-700 dark:text-red-300">{error}</span>}
       </div>
+      {notice ? (
+        <p className="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 dark:border-green-900/60 dark:bg-green-950/30 dark:text-green-300">
+          {notice}
+        </p>
+      ) : null}
+      {error ? (
+        <p
+          role="alert"
+          className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm break-words text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+        >
+          {error}
+        </p>
+      ) : null}
     </form>
   );
 }
