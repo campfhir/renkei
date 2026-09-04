@@ -531,7 +531,8 @@ const handler = async (
             'no free-text search: queries scope to a document type or saved custom query ' +
             'and constrain keyword values — the tools resolve keyword/document-type NAMES ' +
             'to ids themselves), plus search_knowledge (org knowledge, access-verified ' +
-            'per user), ' +
+            "per user), web_search (the public web through the org's Azure OpenAI web " +
+            'search, with citations — for current or external facts, never org content), ' +
             'analyze_transcript (meeting transcript to suggested Jira actions) and whoami. ' +
             'Read tools are safe anywhere; Act tools change systems and are disabled in org ' +
             'read-only mode. Some Act tools have *_preview variants that render an ' +

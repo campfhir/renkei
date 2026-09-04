@@ -54,6 +54,9 @@ const BRAND: Record<string, string> = {
   // below carries the colour.
   onbase: '#78BE20',
   knowledge: '#7C3AED',
+  // A neutral sky blue: no vendor mark is shipped (GLYPH_ONLY), so the
+  // globe below carries the colour.
+  'web-search': '#0284C7',
 };
 
 /** Fallback: the connector's initial on a neutral tile. */
@@ -212,6 +215,21 @@ function glyphFor(logo: string, label: string) {
           <path d="M7 5h7l3 3v11H7z" fill="#fff" opacity="0.95" />
           <path d="M14 5v3h3" fill="none" stroke={color} strokeWidth="1.2" />
           <path d="M9 12h6M9 15h6" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+        </>
+      );
+    // Web search: a globe — a search surface over the public web, not a product.
+    case 'web-search':
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <circle cx="12" cy="12" r="6.5" stroke="#fff" strokeWidth="1.6" fill="none" />
+          <path
+            d="M5.5 12h13M12 5.5c-2.4 2.2-2.4 10.8 0 13M12 5.5c2.4 2.2 2.4 10.8 0 13"
+            stroke="#fff"
+            strokeWidth="1.3"
+            fill="none"
+            opacity="0.85"
+          />
         </>
       );
     default:
