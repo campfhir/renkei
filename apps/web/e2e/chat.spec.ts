@@ -28,6 +28,7 @@ test.use({
  */
 function idsFor(project: string): {
   chatId: string;
+  projectId: string;
   turnId: string;
   modelId: string;
   title: string;
@@ -36,6 +37,7 @@ function idsFor(project: string): {
   const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
   return {
     chatId: `77777777-7777-4777-8777-7777777777${digit}1`,
+    projectId: `77777777-7777-4777-8777-7777777777${digit}4`,
     turnId: `77777777-7777-4777-8777-7777777777${digit}2`,
     modelId: `77777777-7777-4777-8777-7777777777${digit}3`,
     // The menu lists every project's chat; a shared title would match twice.
@@ -99,7 +101,7 @@ const REPLY_MARKDOWN = [
 
 async function seedChat(
   client: Client,
-  { chatId: CHAT_ID, turnId: TURN_ID, modelId: MODEL_ID, title, modelLabel }: Ids
+  { chatId: CHAT_ID, projectId, turnId: TURN_ID, modelId: MODEL_ID, title, modelLabel }: Ids
 ): Promise<void> {
   await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [MODEL_ID]);
@@ -110,10 +112,16 @@ async function seedChat(
     // seed side by side; the chat pins its model, so none need be default.
     [MODEL_ID, E2E_TENANT_ID, sealSecret(JSON.stringify({ apiKey: 'e2e' })), modelLabel]
   );
+  await client.query('DELETE FROM chat_projects WHERE id = $1', [projectId]);
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, thinking_enabled, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, true, NOW())`,
-    [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, title, MODEL_ID]
+    `INSERT INTO chat_projects (id, tenant_id, owner_subject, name)
+     VALUES ($1, $2, $3, 'Sprint hygiene')`,
+    [projectId, E2E_TENANT_ID, E2E_SUBJECT]
+  );
+  await client.query(
+    `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, llm_model_id, thinking_enabled, last_message_at)
+     VALUES ($1, $2, $3, $6, $4, $5, true, NOW())`,
+    [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, title, MODEL_ID, projectId]
   );
   await client.query(
     `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)
@@ -232,6 +240,8 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
 
     await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+    // The project the chat sits in reads as a subheading under the name.
+    await expect(page.getByRole('link', { name: 'Sprint hygiene' })).toBeVisible();
 
     // The app menu's Chat section lists the chat: in the column beside the
     // page on a desktop, behind the hamburger on a phone.
@@ -265,6 +275,22 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(markdown.getByRole('table')).toBeVisible();
     await expect(markdown.locator('pre code')).toContainText('closedSprints()');
     await expect(markdown.locator('strong', { hasText: 'move them' })).toBeVisible();
+
+    // The owner renames the chat in place; the menu follows.
+    await page.getByRole('button', { name: 'Rename chat' }).click();
+    const nameField = page.getByRole('textbox', { name: 'Chat name' });
+    await nameField.fill(`${title} — renamed`);
+    await nameField.press('Enter');
+    await expect(page.getByRole('heading', { level: 1, name: `${title} — renamed` })).toBeVisible();
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Chats' })
+        .getByRole('link', { name: `${title} — renamed` })
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Rename chat' }).click();
+    await page.getByRole('textbox', { name: 'Chat name' }).fill(title);
+    await page.getByRole('textbox', { name: 'Chat name' }).press('Enter');
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
 
     // Files the assistant produced sit behind Artifacts, each a download.
     await page.getByRole('button', { name: /Artifacts/ }).click();
@@ -319,6 +345,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(page.getByRole('heading', { level: 1, name: 'New chat' })).toBeVisible();
   } finally {
     await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
+    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
     await client.end();
   }

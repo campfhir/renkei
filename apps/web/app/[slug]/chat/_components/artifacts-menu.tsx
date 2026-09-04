@@ -45,10 +45,12 @@ export default function ArtifactsMenu({
         onClick={() => setOpen((state) => !state)}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={`Artifacts (${artifacts.length})`}
+        title="Files the assistant produced"
         className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
       >
         <Icon path={ICONS.file} className="h-4 w-4" />
-        Artifacts
+        <span className="hidden sm:inline">Artifacts</span>
         <span className="text-gray-400">{artifacts.length}</span>
       </button>
       {open ? (

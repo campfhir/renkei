@@ -25,6 +25,7 @@ import {
 import type { AttachmentView, ChatMessageView, ChatView, ModelOption } from '@/lib/chat/views';
 import Modal from '@/components/modal';
 import ArtifactsMenu from './artifacts-menu';
+import ChatTitle from './chat-title';
 import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
@@ -245,6 +246,22 @@ export default function ChatThread({
     [editing, resend, submit]
   );
 
+  const rename = useCallback(
+    async (next: string): Promise<string | null> => {
+      if (!chat) return null;
+      const result = await chatClient.updateChat(tenantId, chat.id, { title: next });
+      if (result.error) {
+        setError(result.error);
+        return null;
+      }
+      setChat({ ...chat, title: next });
+      // The menu's list carries the name too.
+      router.refresh();
+      return next;
+    },
+    [chat, tenantId, router]
+  );
+
   const stop = useCallback(async () => {
     if (!chat || !activeTurnId) return;
     await chatClient.cancelTurn(tenantId, chat.id, activeTurnId);
@@ -288,17 +305,26 @@ export default function ChatThread({
   return (
     <>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold">{title}</h1>
-          {chat?.projectName ? (
-            <p className="truncate text-xs text-gray-500">
-              in project{' '}
-              <a href={`/${slug}/chat/projects/${chat.projectId}`} className="hover:underline">
-                {chat.projectName}
-              </a>
-            </p>
-          ) : null}
-        </div>
+        <ChatTitle
+          title={title}
+          project={
+            chat?.projectId && chat.projectName
+              ? {
+                  id: chat.projectId,
+                  name: chat.projectName,
+                  href: `/${slug}/chat/projects/${chat.projectId}`,
+                }
+              : newChatProject
+                ? {
+                    id: newChatProject.id,
+                    name: newChatProject.name,
+                    href: `/${slug}/chat/projects/${newChatProject.id}`,
+                  }
+                : null
+          }
+          canRename={isOwner && chat !== null}
+          onRename={chat ? rename : null}
+        />
         <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
         {isOwner ? (
           <>
@@ -307,10 +333,12 @@ export default function ChatThread({
               <button
                 type="button"
                 onClick={() => setShare(true)}
+                aria-label="Share chat"
+                title="Share"
                 className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
               >
                 <Icon path={ICONS.share} className="h-4 w-4" />
-                Share
+                <span className="hidden sm:inline">Share</span>
               </button>
             ) : null}
           </>
