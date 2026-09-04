@@ -341,7 +341,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await artifact.click();
     const download = page.getByRole('link', { name: 'Download' });
     await expect(download).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
-    await expect(page.getByText('A network share')).toBeVisible();
+    await expect(page.getByText('Copy to a network share')).toBeVisible();
     await shot(page, testInfo, 'chat-artifact-modal.png');
     await page.keyboard.press('Escape');
     await expect(download).toBeHidden();

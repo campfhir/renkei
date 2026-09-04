@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * One file the assistant produced: save it to this device, or copy it to
- * a network share the person has connected (written with their own
- * credentials). The working copy in the org's store stays where it is.
+ * One file the assistant produced: its name and size with a download
+ * button beside them, and below, a way to copy it to a network share the
+ * person has connected (written with their own credentials). The working
+ * copy in the org's store stays where it is.
  * OneDrive and SharePoint need a folder picker before they can join the
  * list; the share path is a typed folder for now.
  */
@@ -20,6 +21,13 @@ interface Share {
   host: string;
   shareName: string;
   connected: boolean;
+}
+
+function iconFor(contentType: string): string {
+  if (contentType.startsWith('image/')) return ICONS.fileImage;
+  if (contentType === 'text/csv' || contentType.includes('spreadsheet')) return ICONS.fileSheet;
+  if (contentType.startsWith('text/') || contentType === 'application/pdf') return ICONS.fileText;
+  return ICONS.file;
 }
 
 function sizeOf(bytes: number): string {
@@ -80,71 +88,75 @@ export default function ArtifactModal({
   };
 
   return (
-    <Modal title={artifact.filename} onClose={onClose}>
-      <p className="mb-4 text-xs text-gray-500">
-        {sizeOf(artifact.sizeBytes)} · {artifact.contentType}
-      </p>
-      <div className="space-y-4">
-        <section>
-          <h3 className="mb-1 text-sm font-medium">This device</h3>
-          <a
-            href={`/api/tenant/${tenantId}/chat/attachments/${artifact.id}`}
-            download={artifact.filename}
-            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            <Icon path={ICONS.download} className="h-4 w-4" />
-            Download
-          </a>
-        </section>
-        <section>
-          <h3 className="mb-1 text-sm font-medium">A network share</h3>
-          {shares === null ? (
-            <p className="text-xs text-gray-500">Looking up your shares…</p>
-          ) : connected.length === 0 ? (
-            <p className="text-xs text-gray-500">
-              You have no connected file shares. Connect one under Files to copy there.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              <select
-                value={shareId}
-                onChange={(event) => setShareId(event.target.value)}
-                aria-label="Share"
-                className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
-              >
-                {connected.map((share) => (
-                  <option key={share.id} value={share.id}>
-                    {share.name} ({share.host}/{share.shareName})
-                  </option>
-                ))}
-              </select>
-              <input
-                value={path}
-                onChange={(event) => setPath(event.target.value)}
-                aria-label="Folder on the share"
-                placeholder="/"
-                className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
-              />
-              <button
-                type="button"
-                onClick={() => void copy()}
-                disabled={busy || !shareId}
-                className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
-              >
-                <Icon path={ICONS.copy} className="h-4 w-4" />
-                {busy ? 'Copying…' : 'Copy to the share'}
-              </button>
-            </div>
-          )}
-          {outcome ? (
-            <p
-              className={`mt-2 text-xs ${outcome.ok ? 'text-green-700 dark:text-green-300' : 'text-red-600 dark:text-red-400'}`}
-            >
-              {outcome.detail}
-            </p>
-          ) : null}
-        </section>
+    <Modal title="Artifact" onClose={onClose}>
+      <div className="flex items-center gap-3">
+        <Icon path={iconFor(artifact.contentType)} className="h-8 w-8 shrink-0 text-gray-400" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium" title={artifact.filename}>
+            {artifact.filename}
+          </p>
+          <p className="text-xs text-gray-500">
+            {sizeOf(artifact.sizeBytes)} · {artifact.contentType}
+          </p>
+        </div>
+        <a
+          href={`/api/tenant/${tenantId}/chat/attachments/${artifact.id}`}
+          download={artifact.filename}
+          aria-label="Download"
+          title="Download to this device"
+          className="shrink-0 rounded-md border border-gray-300 p-2 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+        >
+          <Icon path={ICONS.download} className="h-5 w-5" />
+        </a>
       </div>
+      <section className="mt-5 border-t border-gray-200 pt-4 dark:border-gray-800">
+        <h3 className="mb-2 text-sm font-medium">Copy to a network share</h3>
+        {shares === null ? (
+          <p className="text-xs text-gray-500">Looking up your shares…</p>
+        ) : connected.length === 0 ? (
+          <p className="text-xs text-gray-500">
+            You have no connected file shares. Connect one under Files to copy there.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              value={shareId}
+              onChange={(event) => setShareId(event.target.value)}
+              aria-label="Share"
+              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+            >
+              {connected.map((share) => (
+                <option key={share.id} value={share.id}>
+                  {share.name} ({share.host}/{share.shareName})
+                </option>
+              ))}
+            </select>
+            <input
+              value={path}
+              onChange={(event) => setPath(event.target.value)}
+              aria-label="Folder on the share"
+              placeholder="/"
+              className="min-w-0 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm sm:w-40 dark:border-gray-700 dark:bg-gray-900"
+            />
+            <button
+              type="button"
+              onClick={() => void copy()}
+              disabled={busy || !shareId}
+              className="inline-flex items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <Icon path={ICONS.copy} className="h-4 w-4" />
+              {busy ? 'Copying…' : 'Copy'}
+            </button>
+          </div>
+        )}
+        {outcome ? (
+          <p
+            className={`mt-2 text-xs ${outcome.ok ? 'text-green-700 dark:text-green-300' : 'text-red-600 dark:text-red-400'}`}
+          >
+            {outcome.detail}
+          </p>
+        ) : null}
+      </section>
     </Modal>
   );
 }
