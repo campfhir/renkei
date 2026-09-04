@@ -23,6 +23,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { togglableConnectors } from '@/lib/connector-catalog';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 
 export async function GET(
   _request: NextRequest,
@@ -76,5 +77,8 @@ export async function PUT(
   if (!saved.ok) {
     return NextResponse.json({ error: 'Could not save org settings' }, { status: 500 });
   }
+  // Org-wide, not one caller's own — every cached catalog in this tenant
+  // may now be wrong about which tools are registered.
+  invalidateToolCatalogCache(tenantRef.id);
   return NextResponse.json({ disabledConnectors });
 }

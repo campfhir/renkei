@@ -3,6 +3,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { grantProviderLabel, GRANT_PROVIDER_LABELS } from '@/lib/provider-labels';
 
 /**
@@ -72,6 +73,10 @@ export async function POST(
     // things the person will ask when their tools stop working.
     details: { byAdmin: true, subject: grant.subject, account: grant.display_name },
   });
+  // The GRANT's own subject lost the connector, not the admin who revoked it.
+  // A pre-per-user-ownership grant can carry no subject at all, in which
+  // case there is no cached caller to invalidate.
+  if (grant.subject) invalidateToolCatalogCache(tenantRef.id, grant.subject);
 
   return NextResponse.json({
     success: true,

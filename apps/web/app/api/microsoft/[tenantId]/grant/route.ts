@@ -15,6 +15,7 @@ import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { deleteGrant, getGrant, MICROSOFT } from '@renkei/provider-grants';
 import { deleteGraphSubscription } from '@renkei/connector-microsoft';
 import { deleteObjectChunks } from '@renkei/knowledge';
@@ -111,5 +112,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: MICROSOFT,
   });
+  invalidateToolCatalogCache(tenantId, session.subject);
   return NextResponse.json({ message: 'Microsoft disconnected' });
 }

@@ -45,6 +45,8 @@ export default function ToolsPopover({
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<ConnectorOption[] | null>(null);
   const [core, setCore] = useState<string[]>([]);
+  const [userDefault, setUserDefault] = useState<string[] | null>(null);
+  const [savingDefault, setSavingDefault] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(open, ref, () => setOpen(false));
 
@@ -54,6 +56,7 @@ export default function ToolsPopover({
       if (result.data) {
         setOptions(result.data.connectors);
         setCore(result.data.core);
+        setUserDefault(result.data.userDefault?.connectors ?? null);
       } else {
         setOptions([]);
       }
@@ -117,6 +120,42 @@ export default function ToolsPopover({
             >
               Reset to defaults
             </button>
+          ) : null}
+          {options !== null && options.length > 0 ? (
+            <div className="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 text-xs dark:border-gray-700">
+              <button
+                type="button"
+                disabled={savingDefault}
+                onClick={() => {
+                  setSavingDefault(true);
+                  void chatClient
+                    .setDefaultTools(tenantId, [...effective].sort())
+                    .then((result) => {
+                      if (result.data) setUserDefault(result.data.userDefault?.connectors ?? null);
+                      setSavingDefault(false);
+                    });
+                }}
+                className="text-blue-600 hover:underline disabled:opacity-50"
+              >
+                Save as my default
+              </button>
+              {userDefault ? (
+                <button
+                  type="button"
+                  disabled={savingDefault}
+                  onClick={() => {
+                    setSavingDefault(true);
+                    void chatClient.setDefaultTools(tenantId, null).then(() => {
+                      setUserDefault(null);
+                      setSavingDefault(false);
+                    });
+                  }}
+                  className="text-gray-500 hover:underline disabled:opacity-50"
+                >
+                  Clear my default
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { deleteGrant, ATLASSIAN_JSM } from '@renkei/provider-grants';
 
 export async function DELETE(
@@ -47,5 +48,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_JSM,
   });
+  invalidateToolCatalogCache(tenantId, session.subject);
   return NextResponse.json({ message: 'Service Management disconnected' });
 }

@@ -36,6 +36,7 @@ import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
 import { buildHistory, buildSystemPrompt } from './request-builder';
 import { effectiveToolConfig } from './tool-config';
+import { getDefaultChatTools } from './tool-prefs';
 import { resolveChatToolSurface } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
 import { openTurnChannel } from './turn-events';
@@ -260,7 +261,17 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const project = input.chat.projectId
       ? await getProjectRow(db, input.tenantId, input.chat.projectId)
       : null;
-    const toolConfig = effectiveToolConfig(input.chat.toolConfig, project?.toolConfig ?? null);
+    // Only consulted when neither the chat nor the project has its own
+    // toolset, so a cache miss here never costs a chat that already has one.
+    const userDefault =
+      input.chat.toolConfig || project?.toolConfig
+        ? null
+        : await getDefaultChatTools(input.tenantId, input.session.subject);
+    const toolConfig = effectiveToolConfig(
+      input.chat.toolConfig,
+      project?.toolConfig ?? null,
+      userDefault
+    );
     const surface = await resolveChatToolSurface(db, {
       tenantId: input.tenantId,
       subject: input.session.subject,

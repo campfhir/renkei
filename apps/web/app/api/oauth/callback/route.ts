@@ -31,6 +31,7 @@ import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
 import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 interface JiraTokenResponse {
@@ -510,6 +511,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       targetKind: 'connector',
       targetLabel: 'atlassian',
     });
+    invalidateToolCatalogCache(tenant.id, pendingSignIn.subject);
     // Back to the connectors page, which shows the fresh connection status.
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
@@ -677,6 +679,7 @@ async function handleWebexUserCallback(
     targetKind: 'connector',
     targetLabel: WEBEX_USER,
   });
+  invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -882,6 +885,7 @@ async function handleMicrosoftCallback(
     targetKind: 'connector',
     targetLabel: MICROSOFT,
   });
+  invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -1066,6 +1070,7 @@ async function handleZoomCallback(
     targetKind: 'connector',
     targetLabel: ZOOM,
   });
+  invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -1221,6 +1226,7 @@ async function handleAtlassianJsmCallback(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_JSM,
   });
+  invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -1385,6 +1391,7 @@ async function handleAtlassianConfluenceCallback(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_CONFLUENCE,
   });
+  invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -1523,6 +1530,7 @@ async function handleAtlassianBitbucketCallback(
     targetKind: 'connector',
     targetLabel: ATLASSIAN_BITBUCKET,
   });
+  invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -1710,5 +1718,6 @@ async function handleOnBaseCallback(
     targetKind: 'connector',
     targetLabel: spec.grantProvider,
   });
+  invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }

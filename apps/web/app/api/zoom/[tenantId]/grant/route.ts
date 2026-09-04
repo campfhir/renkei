@@ -13,6 +13,7 @@ import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { deleteGrant, getGrant, ZOOM } from '@renkei/provider-grants';
 import { deleteObjectChunks } from '@renkei/knowledge';
 import { getZoomApp } from '@/lib/zoom-app';
@@ -106,5 +107,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: ZOOM,
   });
+  invalidateToolCatalogCache(tenantId, session.subject);
   return NextResponse.json({ message: 'Zoom disconnected' });
 }
