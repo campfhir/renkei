@@ -16,13 +16,14 @@
  * future tool to do exactly that. Scopes ARE real, because the scope gates read
  * them at registration time and a faithful list depends on them.
  *
- * A caller's list is cached briefly (see the `fresh` option below): building
- * it walks every connector's availability plus the full registration pass,
- * and this is called on every chat turn and every render of the tools
- * picker. The cache is invalidated explicitly wherever a person's own
- * connectors change (every connect/disconnect route calls
- * `invalidateToolCatalogCache`) and self-heals within the TTL otherwise —
- * same discipline as @renkei/connector-config's readConnectorConfigCached.
+ * A caller's list is cached (see the `fresh` option below): building it
+ * walks every connector's availability plus the full registration pass, and
+ * this is called on every chat turn and every render of the tools picker.
+ * The cache is invalidated explicitly wherever a person's own connectors
+ * change (every connect/disconnect route calls `invalidateToolCatalogCache`)
+ * — the TTL is only a self-heal fallback for whatever that explicit call
+ * doesn't cover, so it can afford to be long. Same discipline as
+ * @renkei/connector-config's readConnectorConfigCached, longer TTL.
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -157,7 +158,12 @@ async function jsmGrantScopesFor(
   };
 }
 
-const CACHE_TTL_MS = 60_000;
+// Long-lived: every connect/disconnect path already calls
+// invalidateToolCatalogCache explicitly (see the grant routes and the OAuth
+// callback), so this TTL is only the self-heal fallback for whatever isn't
+// wired up yet — an org-wide connector toggle or read-only flip, or a
+// process that never got the invalidation. Those propagate on this clock.
+const CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 
 interface CacheEntry {
   value: ToolDescriptor[];
