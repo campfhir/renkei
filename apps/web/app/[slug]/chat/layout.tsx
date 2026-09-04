@@ -5,6 +5,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
+import ChatFrame from './_components/chat-frame';
 import ChatNavSection from './_components/chat-nav';
 
 /**
@@ -32,11 +33,11 @@ export default async function ChatLayout({
 
   const sidebar = await loadChatSidebar(dbResult.val, tenant.id, session.subject);
   return (
-    <div data-wide-page data-flush-page className="h-[calc(100vh-3.5rem)] min-h-[24rem]">
+    <ChatFrame>
       <ChatNavSection slug={slug} tenantId={tenant.id} data={sidebar} />
       <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-gray-950">
         {children}
       </div>
-    </div>
+    </ChatFrame>
   );
 }
