@@ -6,7 +6,7 @@ Everything here lives in `apps/web`. See [`architecture.md`](./architecture.md) 
 
 Route: `app/api/mcp/[tenantId]/[transport]/route.ts`, built on `mcp-handler`'s `createMcpHandler`. Per request:
 
-1. Resolve the bearer token to a caller — either an MCP-client subject or an agent-run token — via `lib/mcp-token.ts`.
+1. Resolve the bearer token to a caller — either an MCP-client subject or an agent-run token — via `lib/mcp-token.ts`. The first-party chat is a third caller in the second shape: each turn mints a short-lived `agent` token with no agent id and the person's own roles (`@renkei/mcp-client`), and the web process calls this endpoint over loopback with it, so a chat is gated exactly like any external MCP client (see [`chat.md`](./chat.md)).
 2. Load the caller's connector grants (Jira/JSM, Microsoft, WebEx, Zoom, OnBase, Bitbucket — whichever are provisioned).
 3. Apply org settings (`@renkei/settings`: read-only mode, disabled connectors) and the per-user capability projection (`@renkei/capability-registry`, see [`knowledge-and-security.md`](./knowledge-and-security.md)).
 4. `registerRenkeiTools` (`lib/mcp-tools/registry.ts`) registers only the tools that survive that projection — the tool list returned to a given MCP client is a genuine per-user, per-org filter, never a static catalog.
