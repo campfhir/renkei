@@ -129,7 +129,12 @@ async function seedChat(client: Client): Promise<void> {
           type: 'tool_result',
           toolUseId: TOOL_USE_ID,
           content: JSON.stringify(
-            { issues: [{ key: 'OPS-41', status: 'In Progress' }, { key: 'OPS-44', status: 'To Do' }] },
+            {
+              issues: [
+                { key: 'OPS-41', status: 'In Progress' },
+                { key: 'OPS-44', status: 'To Do' },
+              ],
+            },
             null,
             2
           ),
@@ -165,6 +170,24 @@ async function seedChat(client: Client): Promise<void> {
   }
 }
 
+function shot(
+  page: import('@playwright/test').Page,
+  testInfo: import('@playwright/test').TestInfo,
+  name: string
+): Promise<Buffer> {
+  return page.screenshot({
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      name
+    ),
+    fullPage: true,
+  });
+}
+
 test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testInfo) => {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
@@ -184,43 +207,50 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(page.getByRole('link', { name: 'Prompt libraries' })).toBeVisible();
     if (mobile) await page.keyboard.press('Escape');
 
-    // The prompt, the thought, the tool call and the Markdown reply.
+    // The prompt, then the reply's work — thinking and the tool call in one
+    // collapsed line — and the Markdown answer.
     await expect(page.getByText('Which issues slipped out of the last OPS sprint?')).toBeVisible();
-    const thought = page.locator('details.chat-fold', { hasText: 'Thought process' });
-    await expect(thought).toBeVisible();
-    await thought.locator('summary').click();
-    await expect(thought.getByText(/closed sprint is the one to search/)).toBeVisible();
+    const work = page.locator('details.chat-fold', { hasText: 'Thought · 1 tool call' });
+    await expect(work).toBeVisible();
+    await expect(work.getByText(/closed sprint is the one to search/)).toBeHidden();
+    await work.locator('> summary').click();
+    await expect(work.getByText(/closed sprint is the one to search/)).toBeVisible();
 
-    const call = page.locator('details.chat-fold', { hasText: 'Called' });
+    const call = work.locator('details.chat-fold', { hasText: 'Called' });
     await expect(call).toBeVisible();
-    await call.locator('summary').click();
+    await call.locator('> summary').click();
     await expect(call.getByText('Input')).toBeVisible();
     await expect(call.getByText('Result')).toBeVisible();
     await expect(call.getByText(/OPS-44/)).toBeVisible();
+    await shot(page, testInfo, 'chat-work-open.png');
+    await work.locator('> summary').click();
 
     const markdown = page.locator('.chat-markdown').last();
     await expect(markdown.getByRole('table')).toBeVisible();
     await expect(markdown.locator('pre code')).toContainText('closedSprints()');
     await expect(markdown.locator('strong', { hasText: 'move them' })).toBeVisible();
 
-    // The owner gets a composer; nothing spills horizontally.
+    // The owner gets a composer with the model menu, thinking switch inside.
     await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
+    await page.getByRole('button', { name: 'Model' }).click();
+    await expect(page.getByRole('menuitemradio', { name: /E2E model/ })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await expect(page.getByRole('menuitemcheckbox', { name: /Extended thinking/ })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await shot(page, testInfo, 'chat-model-menu.png');
+    await page.keyboard.press('Escape');
+
+    // Nothing spills horizontally.
     const fits = await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
     );
     expect(fits).toBe(true);
 
-    await page.screenshot({
-      path: path.join(
-        import.meta.dirname,
-        '..',
-        'test-results',
-        'screens',
-        testInfo.project.name,
-        'chat-thread.png'
-      ),
-      fullPage: true,
-    });
+    await shot(page, testInfo, 'chat-thread.png');
   } finally {
     await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
     await client.query('DELETE FROM llm_model_configs WHERE id = $1', [MODEL_ID]);

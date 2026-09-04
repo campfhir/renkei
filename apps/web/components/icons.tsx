@@ -55,7 +55,7 @@ export const ICONS = {
   sparkle:
     'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
   /** A wrench — the tools a chat may use. */
-  tool: 'M14.5 4.5a4 4 0 0 0-4.6 5.4L4 15.8V20h4.2l5.9-5.9a4 4 0 0 0 5.4-4.6l-2.6 2.6-2.4-2.4z',
+  tool: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
   /** Plain sheet with a folded corner — the fallback file glyph. */
   file: 'M6 21V3h8l4 4v14zM14 3v4h4',
   fileText: 'M6 21V3h8l4 4v14zM14 3v4h4M9 12h6M9 16h6',

@@ -2,10 +2,14 @@
 
 /**
  * The messages, rendered as a person expects to read them: a prompt, then
- * the reply's blocks in order — thinking folded, a tool call folded with
- * its result inside it, text as Markdown — with a cursor while streaming.
- * The tool_results rows the runner stores are not shown on their own;
- * each result is looked up by id and shown under the call that made it.
+ * the reply. A reply is read across every assistant row of its turn as
+ * one sequence of blocks; text is Markdown, and every run of thinking and
+ * tool calls between texts folds into ONE collapsed "worked" span, so a
+ * reply that called ten tools reads as a line, not a wall. Inside the
+ * span the steps are listed in order, each tool call folded again with
+ * its result under it. The tool_results rows the runner stores are not
+ * shown on their own; each result is looked up by id and shown under the
+ * call that made it. A cursor marks the streaming end.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -51,8 +55,8 @@ export default function MessageList({
     return map;
   }, [messages]);
 
-  const visible = messages.filter((message) => message.kind !== 'tool_results');
-  const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
+  const turns = useMemo(() => groupTurns(messages), [messages]);
+  const lastTurnKey = turns.length > 0 ? turns[turns.length - 1].key : null;
 
   return (
     <div
@@ -63,21 +67,23 @@ export default function MessageList({
       }}
       className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4"
     >
-      {visible.length === 0 ? empty : null}
+      {turns.length === 0 ? empty : null}
       <div className="mx-auto flex max-w-3xl flex-col gap-5">
-        {visible.map((message) =>
-          message.role === 'user' ? (
-            <UserMessage key={message.id} tenantId={tenantId} message={message} />
-          ) : (
-            <AssistantMessage
-              key={message.id}
-              message={message}
-              results={results}
-              pendingToolCalls={pendingToolCalls}
-              streaming={running && message.id === lastAssistant?.id}
-            />
-          )
-        )}
+        {turns.map((group) => (
+          <div key={group.key} className="flex flex-col gap-5">
+            {group.prompts.map((message) => (
+              <UserMessage key={message.id} tenantId={tenantId} message={message} />
+            ))}
+            {group.replies.length > 0 ? (
+              <Reply
+                messages={group.replies}
+                results={results}
+                pendingToolCalls={pendingToolCalls}
+                streaming={running && group.key === lastTurnKey}
+              />
+            ) : null}
+          </div>
+        ))}
         {turn && turn.status !== 'running' && turn.status !== 'completed' && turn.error ? (
           <p className="text-xs text-gray-500">{turn.error}</p>
         ) : null}
@@ -97,6 +103,81 @@ export default function MessageList({
       ) : null}
     </div>
   );
+}
+
+interface TurnGroup {
+  key: string;
+  prompts: ChatMessageView[];
+  replies: ChatMessageView[];
+}
+
+/** Consecutive rows of one turn, prompts apart from the reply's rows. */
+function groupTurns(messages: ChatMessageView[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const message of messages) {
+    const key = message.turnId ?? message.id;
+    let group = groups[groups.length - 1];
+    if (!group || group.key !== key) {
+      group = { key, prompts: [], replies: [] };
+      groups.push(group);
+    }
+    if (message.kind === 'prompt') group.prompts.push(message);
+    else group.replies.push(message);
+  }
+  return groups;
+}
+
+type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
+
+/** A reply, read across its rows: prose, and the work between the prose. */
+type Segment =
+  | { kind: 'text'; text: string }
+  | { kind: 'note'; text: string }
+  | { kind: 'work'; steps: WorkStep[] };
+
+type WorkStep =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'redacted' }
+  | { kind: 'call'; block: Extract<ChatBlock, { type: 'tool_use' }>; result: ToolResult | null };
+
+function segment(messages: ChatMessageView[], results: Map<string, ToolResult>): Segment[] {
+  const out: Segment[] = [];
+  const work = (): Extract<Segment, { kind: 'work' }> => {
+    const last = out[out.length - 1];
+    if (last && last.kind === 'work') return last;
+    const created: Extract<Segment, { kind: 'work' }> = { kind: 'work', steps: [] };
+    out.push(created);
+    return created;
+  };
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue;
+    for (const block of message.blocks) {
+      switch (block.type) {
+        case 'text':
+          if (block.text.trim()) out.push({ kind: 'text', text: block.text });
+          break;
+        case 'thinking':
+          work().steps.push({ kind: 'thinking', text: block.thinking });
+          break;
+        case 'redacted_thinking':
+          work().steps.push({ kind: 'redacted' });
+          break;
+        case 'tool_use':
+          work().steps.push({ kind: 'call', block, result: results.get(block.id) ?? null });
+          break;
+        case 'tool_result':
+          break;
+        case 'document':
+        case 'image':
+          out.push({
+            kind: 'note',
+            text: `${block.type === 'document' ? (block.title ?? 'Document') : 'Image'} attached`,
+          });
+          break;
+      }
+    }
+  }
+  return out;
 }
 
 function UserMessage({ tenantId, message }: { tenantId: string; message: ChatMessageView }) {
@@ -123,106 +204,169 @@ function UserMessage({ tenantId, message }: { tenantId: string; message: ChatMes
   );
 }
 
-function AssistantMessage({
-  message,
+function Reply({
+  messages,
   results,
   pendingToolCalls,
   streaming,
 }: {
-  message: ChatMessageView;
-  results: Map<string, Extract<ChatBlock, { type: 'tool_result' }>>;
+  messages: ChatMessageView[];
+  results: Map<string, ToolResult>;
   pendingToolCalls: string[];
   streaming: boolean;
 }) {
-  const blocks = message.blocks;
-  const lastIndex = blocks.length - 1;
+  const segments = useMemo(() => segment(messages, results), [messages, results]);
+  const last = messages[messages.length - 1];
+  const lastIndex = segments.length - 1;
   return (
     <div className="min-w-0 text-sm">
-      {blocks.map((block, index) => {
-        const last = index === lastIndex;
-        switch (block.type) {
+      {segments.map((part, index) => {
+        const tail = streaming && index === lastIndex;
+        switch (part.kind) {
           case 'text':
             return (
               <div key={index}>
-                <Markdown text={block.text} />
-                {streaming && last ? <Cursor /> : null}
+                <Markdown text={part.text} />
+                {tail ? <Cursor /> : null}
               </div>
             );
-          case 'thinking':
-            return (
-              <details key={index} open={streaming && last} className="chat-fold">
-                <summary>
-                  <Icon path={ICONS.sparkle} className="h-3.5 w-3.5" />
-                  {streaming && last ? 'Thinking…' : 'Thought process'}
-                </summary>
-                <div className="whitespace-pre-wrap text-gray-600 dark:text-gray-400">
-                  {block.thinking}
-                  {streaming && last ? <Cursor /> : null}
-                </div>
-              </details>
-            );
-          case 'redacted_thinking':
+          case 'note':
             return (
               <p key={index} className="text-xs text-gray-400">
-                (some reasoning was withheld by the model provider)
+                {part.text}
               </p>
             );
-          case 'tool_use': {
-            const result = results.get(block.id);
-            const pending = pendingToolCalls.includes(block.id) || (!result && streaming);
-            const args = block.partialJson ?? JSON.stringify(block.input, null, 2);
+          case 'work':
             return (
-              <details
+              <WorkFold
                 key={index}
-                className={`chat-fold ${result?.isError ? 'chat-fold-error' : ''}`}
-              >
-                <summary>
-                  <Icon path={ICONS.tool} className="h-3.5 w-3.5" />
-                  {pending ? 'Calling ' : result?.isError ? 'Failed: ' : 'Called '}
-                  <span className="font-medium" title={block.name}>
-                    {friendlyToolName(block.name, null)}
-                  </span>
-                  {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
-                </summary>
-                <div className="space-y-2">
-                  <div>
-                    <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Input</p>
-                    <pre className="chat-pre">{args}</pre>
-                  </div>
-                  {result ? (
-                    <div>
-                      <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
-                        {result.isError ? 'Error' : 'Result'}
-                      </p>
-                      <pre className="chat-pre">{result.content}</pre>
-                    </div>
-                  ) : null}
-                </div>
-              </details>
-            );
-          }
-          case 'tool_result':
-            return null;
-          case 'document':
-          case 'image':
-            return (
-              <p key={index} className="text-xs text-gray-400">
-                {block.type === 'document' ? (block.title ?? 'Document') : 'Image'} attached
-              </p>
+                steps={part.steps}
+                pendingToolCalls={pendingToolCalls}
+                live={tail}
+              />
             );
         }
       })}
-      {blocks.length === 0 && streaming ? <Cursor /> : null}
-      {message.status === 'failed' && message.error ? (
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{message.error}</p>
+      {segments.length === 0 && streaming ? <Cursor /> : null}
+      {last.status === 'failed' && last.error ? (
+        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{last.error}</p>
       ) : null}
-      {message.status === 'canceled' ? (
-        <p className="mt-1 text-xs text-gray-400">Stopped.</p>
-      ) : null}
-      {message.status === 'interrupted' ? (
+      {last.status === 'canceled' ? <p className="mt-1 text-xs text-gray-400">Stopped.</p> : null}
+      {last.status === 'interrupted' ? (
         <p className="mt-1 text-xs text-gray-400">Interrupted.</p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * One collapsed line for a run of thinking and tool calls. Shut by
+ * default — the reply is what the person came for — but while the run is
+ * still live the line itself says what is happening right now.
+ */
+function WorkFold({
+  steps,
+  pendingToolCalls,
+  live,
+}: {
+  steps: WorkStep[];
+  pendingToolCalls: string[];
+  live: boolean;
+}) {
+  const calls = steps.filter((step) => step.kind === 'call');
+  const thought = steps.some((step) => step.kind !== 'call');
+  const failed = calls.some((step) => step.result?.isError);
+  const isPending = (step: Extract<WorkStep, { kind: 'call' }>) =>
+    !step.result && (live || pendingToolCalls.includes(step.block.id));
+  const current = steps[steps.length - 1];
+
+  let label: ReactNode;
+  if (live && current) {
+    label =
+      current.kind === 'call' && isPending(current) ? (
+        <>
+          Calling{' '}
+          <span className="font-medium" title={current.block.name}>
+            {friendlyToolName(current.block.name, null)}
+          </span>
+          <span className="chat-dots" aria-hidden="true" />
+        </>
+      ) : (
+        <>
+          Thinking
+          <span className="chat-dots" aria-hidden="true" />
+        </>
+      );
+  } else {
+    const parts: string[] = [];
+    if (thought) parts.push('Thought');
+    if (calls.length > 0) parts.push(`${calls.length} tool call${calls.length === 1 ? '' : 's'}`);
+    label = parts.join(' · ');
+  }
+
+  return (
+    <details className={`chat-fold ${failed ? 'chat-fold-error' : ''}`}>
+      <summary>
+        <Icon
+          path={thought && calls.length === 0 ? ICONS.sparkle : ICONS.tool}
+          className="h-3.5 w-3.5"
+        />
+        {label}
+      </summary>
+      <ol className="space-y-2">
+        {steps.map((step, index) => {
+          switch (step.kind) {
+            case 'thinking':
+              return (
+                <li key={index} className="whitespace-pre-wrap text-gray-600 dark:text-gray-400">
+                  {step.text}
+                  {live && index === steps.length - 1 ? <Cursor /> : null}
+                </li>
+              );
+            case 'redacted':
+              return (
+                <li key={index} className="text-xs text-gray-400">
+                  (some reasoning was withheld by the model provider)
+                </li>
+              );
+            case 'call': {
+              const pending = isPending(step);
+              const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
+              return (
+                <li key={index}>
+                  <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
+                    <summary>
+                      <Icon path={ICONS.tool} className="h-3.5 w-3.5" />
+                      {pending ? 'Calling ' : step.result?.isError ? 'Failed: ' : 'Called '}
+                      <span className="font-medium" title={step.block.name}>
+                        {friendlyToolName(step.block.name, null)}
+                      </span>
+                      {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
+                    </summary>
+                    <div className="space-y-2">
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+                          Input
+                        </p>
+                        <pre className="chat-pre">{args}</pre>
+                      </div>
+                      {step.result ? (
+                        <div>
+                          <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+                            {step.result.isError ? 'Error' : 'Result'}
+                          </p>
+                          <pre className="chat-pre">{step.result.content}</pre>
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
+                </li>
+              );
+            }
+          }
+        })}
+      </ol>
+    </details>
   );
 }
 
