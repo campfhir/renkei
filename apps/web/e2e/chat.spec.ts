@@ -280,9 +280,17 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
       .getByRole('navigation', { name: 'Chats' })
       .getByRole('link', { name: `${title} (archived)` });
     await expect(archivedRow).toBeHidden();
-    await page.getByRole('checkbox', { name: /Show archived/ }).check();
+    // The funnel in the search box picks the states shown: active, archived, or both.
+    await page.getByRole('button', { name: 'Filter chats' }).click();
+    const archivedOption = page.getByRole('menuitemcheckbox', { name: /Archived/ });
+    await expect(archivedOption).toHaveAttribute('aria-checked', 'false');
+    await archivedOption.click();
     await expect(archivedRow).toBeVisible();
-    await page.getByRole('checkbox', { name: /Show archived/ }).uncheck();
+    await expect(row).toBeVisible();
+    if (!mobile) await shot(page, testInfo, 'chat-filter.png');
+    await archivedOption.click();
+    await expect(archivedRow).toBeHidden();
+    await page.keyboard.press('Escape');
     if (mobile) await page.keyboard.press('Escape');
 
     // The prompt, then the reply's work — thinking and the tool call in one

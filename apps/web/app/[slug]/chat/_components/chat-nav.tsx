@@ -9,7 +9,7 @@
  * layout's server data is the truth.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -45,24 +45,27 @@ export function ChatList({
 }) {
   const currentPath = usePathname();
   const [filter, setFilter] = useState('');
-  const [showArchived, setShowArchived] = useState(false);
+  // Which states the list shows; active only, until the funnel says otherwise.
+  const [states, setStates] = useState<{ active: boolean; archived: boolean }>({
+    active: true,
+    archived: false,
+  });
   const archivedCount = useMemo(
-    () => data.chats.filter((chat) => chat.via === 'owner' && chat.archived).length,
+    () => data.chats.filter((chat) => chat.archived).length,
     [data.chats]
   );
+  const shown = useCallback(
+    (chat: ChatListItem) =>
+      (chat.archived ? states.archived : states.active) && matches(chat, filter),
+    [states, filter]
+  );
   const mine = useMemo(
-    () =>
-      data.chats.filter(
-        (chat) => chat.via === 'owner' && (showArchived || !chat.archived) && matches(chat, filter)
-      ),
-    [data.chats, filter, showArchived]
+    () => data.chats.filter((chat) => chat.via === 'owner' && shown(chat)),
+    [data.chats, shown]
   );
   const shared = useMemo(
-    () =>
-      data.chats.filter(
-        (chat) => chat.via !== 'owner' && (showArchived || !chat.archived) && matches(chat, filter)
-      ),
-    [data.chats, filter, showArchived]
+    () => data.chats.filter((chat) => chat.via !== 'owner' && shown(chat)),
+    [data.chats, shown]
   );
   const groups = useMemo(() => {
     const now = new Date();
@@ -76,24 +79,17 @@ export function ChatList({
 
   return (
     <div className="border-t border-gray-200 pt-2 dark:border-gray-800">
-      <input
-        type="search"
-        value={filter}
-        onChange={(event) => setFilter(event.target.value)}
-        placeholder="Find a chat"
-        aria-label="Find a chat"
-        className="mb-2 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
-      />
-      {archivedCount > 0 ? (
-        <label className="mb-2 flex items-center gap-1.5 px-2 text-xs text-gray-500">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(event) => setShowArchived(event.target.checked)}
-          />
-          Show archived ({archivedCount})
-        </label>
-      ) : null}
+      <div className="mb-2 flex items-center rounded-md border border-gray-300 bg-white pr-1 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900 dark:focus-within:border-blue-700">
+        <input
+          type="search"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder="Find a chat"
+          aria-label="Find a chat"
+          className="min-w-0 flex-1 bg-transparent px-2 py-1 text-sm outline-none"
+        />
+        <StateFilter states={states} onChange={setStates} archivedCount={archivedCount} />
+      </div>
       <nav aria-label="Chats">
         {groups.length === 0 && shared.length === 0 ? (
           <p className="px-2 text-xs text-gray-500">
@@ -101,7 +97,11 @@ export function ChatList({
               ? 'No chats match.'
               : data.chats.length === 0
                 ? 'Your chats will appear here.'
-                : 'No active chats.'}
+                : !states.active && !states.archived
+                  ? 'Nothing to show — pick Active or Archived.'
+                  : states.active
+                    ? 'No active chats.'
+                    : 'No archived chats.'}
           </p>
         ) : null}
         {groups.map(([label, chats]) => (
@@ -135,6 +135,75 @@ export function ChatList({
           </div>
         ) : null}
       </nav>
+    </div>
+  );
+}
+
+/**
+ * The funnel in the search box: which states the list shows, each on its
+ * own switch, in the same menu idiom as the model picker. A dot on the
+ * funnel says the list is not showing the default (active only).
+ */
+function StateFilter({
+  states,
+  onChange,
+  archivedCount,
+}: {
+  states: { active: boolean; archived: boolean };
+  onChange: (states: { active: boolean; archived: boolean }) => void;
+  archivedCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, ref, close);
+  const custom = !states.active || states.archived;
+  const option = (key: 'active' | 'archived', label: string, count: number | null) => (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={states[key]}
+      onClick={() => onChange({ ...states, [key]: !states[key] })}
+      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-blue-600 dark:text-blue-400">
+        {states[key] ? <Icon path={ICONS.check} className="h-4 w-4" strokeWidth={2.4} /> : null}
+      </span>
+      <span className="flex-1">{label}</span>
+      {count !== null ? <span className="text-xs text-gray-400">{count}</span> : null}
+    </button>
+  );
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Filter chats"
+        title="Which chats to show"
+        className="relative rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+      >
+        <Icon path={ICONS.filter} className="h-4 w-4" />
+        {custom ? (
+          <span
+            aria-hidden="true"
+            className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-blue-600"
+          />
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-0 z-40 mt-1 w-44 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+        >
+          <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+            Show
+          </p>
+          {option('active', 'Active', null)}
+          {option('archived', 'Archived', archivedCount)}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -73,7 +73,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'Archive chats',
         detail:
-          'Archive a chat from its row menu to tuck it away without deleting it; a "Show archived" switch in the chat list brings archived chats back into view, and Unarchive restores one.',
+          'Archive a chat from its row menu to tuck it away without deleting it. The funnel in the chat list’s search box chooses whether you see active chats, archived ones, or both; Unarchive restores one.',
       },
       {
         kind: 'changed',
