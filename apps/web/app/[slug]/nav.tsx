@@ -20,6 +20,8 @@ interface NavProps {
   signInHref: string;
   /** The person's chats, for the Chat section's list; null when signed out. */
   chats: ChatSidebarData | null;
+  /** Version + commit hash for display in sidebar. */
+  version: string;
   children: ReactNode;
 }
 
@@ -72,6 +74,7 @@ export default function AppNav({
   isOperator,
   signInHref,
   chats,
+  version,
   children,
 }: NavProps) {
   const isNarrow = useMediaQuery(NARROW);
@@ -252,11 +255,9 @@ export default function AppNav({
         </div>
       ))}
 
-      {userName && (
-        <p className="mt-auto truncate px-2 text-xs text-gray-500" title={userName}>
-          {userName}
-        </p>
-      )}
+      <p className="mt-auto truncate px-2 text-xs text-gray-500" title={version}>
+        {version}
+      </p>
     </>
   );
 
