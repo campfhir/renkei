@@ -58,6 +58,9 @@ export async function GET(
     idpScopeName: setting('idpScopeName'),
     allowInsecureHttp: config?.settings.allowInsecureHttp === true,
     hasClientSecret: Boolean(config?.secrets.clientSecret),
+    // Optional: unset means the onbase_admin_* tools are unavailable for
+    // this tenant, never a broken Document API connection.
+    adminApiBaseUrl: setting('adminApiBaseUrl'),
   });
 }
 
@@ -97,7 +100,7 @@ export async function PUT(
     return NextResponse.json({ error: 'JSON body required' }, { status: 400 });
   }
   const allowInsecureHttp = body.allowInsecureHttp === true;
-  const { apiBaseUrl, idpIssuer, clientId, idpScopeName, clientSecret } = body;
+  const { apiBaseUrl, idpIssuer, clientId, idpScopeName, clientSecret, adminApiBaseUrl } = body;
   if (!validBaseUrl(apiBaseUrl, allowInsecureHttp)) {
     return NextResponse.json(
       { error: 'apiBaseUrl must be an absolute https URL (or http with insecure HTTP allowed)' },
@@ -107,6 +110,21 @@ export async function PUT(
   if (!validBaseUrl(idpIssuer, allowInsecureHttp)) {
     return NextResponse.json(
       { error: 'idpIssuer must be an absolute https URL (or http with insecure HTTP allowed)' },
+      { status: 400 }
+    );
+  }
+  // Optional — omitted or blank simply leaves the onbase_admin_* tools
+  // unavailable for this tenant.
+  if (
+    typeof adminApiBaseUrl === 'string' &&
+    adminApiBaseUrl.length > 0 &&
+    !validBaseUrl(adminApiBaseUrl, allowInsecureHttp)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          'adminApiBaseUrl must be an absolute https URL (or http with insecure HTTP allowed), or omitted',
+      },
       { status: 400 }
     );
   }
@@ -143,7 +161,16 @@ export async function PUT(
     ONBASE_CONNECTOR,
     {
       enabled,
-      settings: { apiBaseUrl, idpIssuer, clientId, idpScopeName, allowInsecureHttp },
+      settings: {
+        apiBaseUrl,
+        idpIssuer,
+        clientId,
+        idpScopeName,
+        allowInsecureHttp,
+        ...(typeof adminApiBaseUrl === 'string' && adminApiBaseUrl.length > 0
+          ? { adminApiBaseUrl }
+          : {}),
+      },
       secrets,
     },
     keyResult.val

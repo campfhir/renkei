@@ -16,6 +16,8 @@ import type { OnBaseTenantConfig } from './config';
 
 const API_KEY = 'test-worker-key';
 const TENANT = '11111111-1111-1111-1111-111111111111';
+/** Configured like TENANT but with no Administration API base URL. */
+const TENANT_NO_ADMIN = '33333333-3333-3333-3333-333333333333';
 
 function listen(server: Server): Promise<string> {
   return new Promise((resolve) => {
@@ -89,6 +91,7 @@ function fakeIdp(): Server {
 }
 
 const cookiesSeen: (string | null)[] = [];
+let lastContentType: string | null = null;
 
 function fakeOnBase(): Server {
   return createServer((request, response) => {
@@ -138,6 +141,27 @@ function fakeOnBase(): Server {
       });
       return;
     }
+    if (url.pathname === '/onbase/administration/api/document-types/901' && request.method === 'PATCH') {
+      lastContentType = request.headers['content-type'] ?? null;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ id: '901' }));
+      return;
+    }
+    if (url.pathname === '/onbase/administration/api/document-types' && request.method === 'POST') {
+      if (!authenticated) {
+        response.writeHead(401, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({}));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(chunk));
+      request.on('end', () => {
+        const posted: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ id: '901', ...(typeof posted === 'object' ? posted : {}) }));
+      });
+      return;
+    }
     response.writeHead(404, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ detail: 'no such route' }));
     return;
@@ -161,8 +185,19 @@ describe('worker-onbase server', () => {
               clientSecret: 'shh',
               idpScopeName: 'onbase-api',
               allowInsecureHttp: true,
+              adminApiBaseUrl: `${onbaseUrl}/onbase/administration`,
             })
-          : err('not_configured' as const)
+          : tenantId === TENANT_NO_ADMIN
+            ? ok<OnBaseTenantConfig>({
+                apiBaseUrl: `${onbaseUrl}/onbase/core`,
+                idpIssuer: `${idpUrl}/identity`,
+                clientId: 'renkei-client',
+                clientSecret: 'shh',
+                idpScopeName: 'onbase-api',
+                allowInsecureHttp: true,
+                adminApiBaseUrl: null,
+              })
+            : err('not_configured' as const)
       ),
   });
 
@@ -463,5 +498,66 @@ describe('worker-onbase server', () => {
       accessToken: 'good-token',
     });
     expect(await second.json()).toEqual({ disconnected: false });
+  });
+
+  it('proxies an admin call against the Administration API base, not the Document API', async () => {
+    const response = await post('admin', {
+      tenantId: TENANT,
+      accessToken: 'good-token',
+      method: 'POST',
+      path: '/api/document-types',
+      body: { name: 'Employee Profile' },
+    });
+    expect(response.status).toBe(200);
+    const envelope = (await response.json()) as { status: number; body: string };
+    expect(envelope.status).toBe(200);
+    expect(JSON.parse(envelope.body)).toMatchObject({ id: '901', name: 'Employee Profile' });
+  });
+
+  it('sends no OnBase session cookie on an admin call, even for a subject with a live session', async () => {
+    // Prime a Document API session for this subject first.
+    await post('api', {
+      tenantId: TENANT,
+      subject: 'subject-admin',
+      accessToken: 'good-token',
+      method: 'GET',
+      path: '/document-types',
+    });
+    cookiesSeen.length = 0;
+    await post('admin', {
+      tenantId: TENANT,
+      subject: 'subject-admin',
+      accessToken: 'good-token',
+      method: 'POST',
+      path: '/api/document-types',
+      body: { name: 'No Cookie Here' },
+    });
+    expect(cookiesSeen[0]).toBeNull();
+  });
+
+  it('sends PATCH bodies as application/json-patch+json, not plain JSON', async () => {
+    lastContentType = null;
+    const response = await post('admin', {
+      tenantId: TENANT,
+      accessToken: 'good-token',
+      method: 'PATCH',
+      path: '/api/document-types/901',
+      body: [{ op: 'replace', path: '/name', value: 'Renamed' }],
+    });
+    expect(response.status).toBe(200);
+    expect(lastContentType).toBe('application/json-patch+json');
+  });
+
+  it('refuses admin calls for a tenant with no Administration API configured', async () => {
+    const response = await post('admin', {
+      tenantId: TENANT_NO_ADMIN,
+      accessToken: 'good-token',
+      method: 'GET',
+      path: '/api/document-types',
+    });
+    expect(response.status).toBe(503);
+    expect(((await response.json()) as { error: { type: string } }).error.type).toBe(
+      'not_configured'
+    );
   });
 });

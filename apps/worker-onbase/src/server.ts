@@ -20,6 +20,12 @@
  *   token           — authorization-code (PKCE) exchange or refresh.
  *   revoke          — best-effort token revocation on disconnect.
  *   api             — one Document API request; JSON envelope back.
+ *   admin           — one Administration API request; same envelope as
+ *                     `api`, against the tenant's separately-configured
+ *                     adminApiBaseUrl. No document session cookie: the
+ *                     Administration API is a different product with no
+ *                     such session/licence concept, so this never calls
+ *                     rememberSession/forgetSession.
  *   content         — rendition bytes, streamed within the org's cap.
  *   put-bytes       — one file part into an OnBase upload staging slot.
  *   test-connection — reachability of IdP and API server, saved or unsaved.
@@ -281,6 +287,88 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     };
   }
 
+  /**
+   * The shared body of `api` and `admin`: validate method/path, forward to
+   * `baseUrl + path` with the caller's bearer token, and envelope the
+   * upstream status back (never passthrough — the web side's 401
+   * refresh-and-retry depends on seeing the real upstream status rather
+   * than this worker's own). `withSession` is false for `admin`: the
+   * Administration API has no document-session/licence concept, so no
+   * cookie is read, sent, or remembered for it.
+   */
+  async function callUpstreamApi(
+    baseUrl: string,
+    body: Record<string, unknown>,
+    response: ServerResponse,
+    withSession: boolean
+  ): Promise<void> {
+    const accessToken = str(body.accessToken);
+    const method = str(body.method).toUpperCase();
+    const path = str(body.path);
+    if (!accessToken) return sendError(response, 'bad_request', 'accessToken is required');
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      return sendError(response, 'bad_request', 'method is not one of GET/POST/PUT/PATCH/DELETE');
+    }
+    if (!validApiPath(path))
+      return sendError(response, 'bad_request', 'path is not a usable API path');
+
+    const url = new URL(baseUrl + path);
+    if (isRecord(body.query)) {
+      for (const [key, value] of Object.entries(body.query)) {
+        if (typeof value === 'string') url.searchParams.append(key, value);
+        else if (Array.isArray(value)) {
+          for (const item of value)
+            if (typeof item === 'string') url.searchParams.append(key, item);
+        }
+      }
+    }
+
+    // The session cookie is what stops every call building a NEW OnBase
+    // session and taking another license — see sessions.ts. Absent
+    // `subject` the cookie cannot be attributed safely, so the call goes
+    // out without one rather than risk reusing someone else's session.
+    const subject = withSession ? str(body.subject) : '';
+    const cookie = subject ? sessionCookie(str(body.tenantId), subject) : undefined;
+
+    const upstream = await timedFetch(
+      url.toString(),
+      {
+        method,
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          accept: str(body.accept) || 'application/json',
+          ...(cookie ? { cookie } : {}),
+          // PATCH bodies are JSON Patch documents; OnBase requires that
+          // media type explicitly, not plain application/json.
+          ...(body.body !== undefined
+            ? { 'content-type': method === 'PATCH' ? 'application/json-patch+json' : 'application/json' }
+            : {}),
+        },
+        ...(body.body !== undefined ? { body: JSON.stringify(body.body) } : {}),
+      },
+      API_TIMEOUT_MS
+    );
+    if ('failed' in upstream) {
+      return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+    }
+    if (withSession && subject) {
+      // 401 is ambiguous between a dead token and a dead session; dropping
+      // the cookie makes the web side's retry build a fresh session rather
+      // than present a stale one again.
+      if (upstream.status === 401) forgetSession(str(body.tenantId), subject);
+      else rememberSession(str(body.tenantId), subject, setCookies(upstream));
+    }
+    // An envelope, not passthrough: the web side needs the upstream status
+    // (401 drives its refresh-and-retry) without confusing it with this
+    // worker's own statuses.
+    const text = await upstream.text();
+    sendJson(response, 200, {
+      status: upstream.status,
+      contentType: upstream.headers.get('content-type'),
+      body: text,
+    });
+  }
+
   type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
 
   const handlers: Record<string, Handler> = {
@@ -467,67 +555,20 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     async api(body, response) {
       const config = await configFor(body, response);
       if (!config) return;
-      const accessToken = str(body.accessToken);
-      const method = str(body.method).toUpperCase();
-      const path = str(body.path);
-      if (!accessToken) return sendError(response, 'bad_request', 'accessToken is required');
-      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-        return sendError(response, 'bad_request', 'method is not one of GET/POST/PUT/PATCH/DELETE');
-      }
-      if (!validApiPath(path))
-        return sendError(response, 'bad_request', 'path is not a usable API path');
+      await callUpstreamApi(config.apiBaseUrl, body, response, true);
+    },
 
-      const url = new URL(config.apiBaseUrl + path);
-      if (isRecord(body.query)) {
-        for (const [key, value] of Object.entries(body.query)) {
-          if (typeof value === 'string') url.searchParams.append(key, value);
-          else if (Array.isArray(value)) {
-            for (const item of value)
-              if (typeof item === 'string') url.searchParams.append(key, item);
-          }
-        }
+    async admin(body, response) {
+      const config = await configFor(body, response);
+      if (!config) return;
+      if (!config.adminApiBaseUrl) {
+        return sendError(
+          response,
+          'not_configured',
+          'The OnBase Administration API is not configured for this organization.'
+        );
       }
-
-      // The session cookie is what stops every call building a NEW OnBase
-      // session and taking another license — see sessions.ts. Absent
-      // `subject` the cookie cannot be attributed safely, so the call goes
-      // out without one rather than risk reusing someone else's session.
-      const subject = str(body.subject);
-      const cookie = subject ? sessionCookie(str(body.tenantId), subject) : undefined;
-
-      const upstream = await timedFetch(
-        url.toString(),
-        {
-          method,
-          headers: {
-            authorization: `Bearer ${accessToken}`,
-            accept: str(body.accept) || 'application/json',
-            ...(cookie ? { cookie } : {}),
-            ...(body.body !== undefined ? { 'content-type': 'application/json' } : {}),
-          },
-          ...(body.body !== undefined ? { body: JSON.stringify(body.body) } : {}),
-        },
-        API_TIMEOUT_MS
-      );
-      if ('failed' in upstream) {
-        return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
-      }
-      if (subject) {
-        // 401 is ambiguous between a dead token and a dead session; dropping
-        // the cookie makes the web side's retry build a fresh session rather
-        // than present a stale one again.
-        if (upstream.status === 401) forgetSession(str(body.tenantId), subject);
-        else rememberSession(str(body.tenantId), subject, setCookies(upstream));
-      }
-      // An envelope, not passthrough: the web side needs the upstream status
-      // (401 drives its refresh-and-retry) without confusing it with this
-      // worker's own statuses.
-      const text = await upstream.text();
-      sendJson(response, 200, {
-        status: upstream.status,
-        contentType: upstream.headers.get('content-type'),
-        body: text,
-      });
+      await callUpstreamApi(config.adminApiBaseUrl, body, response, false);
     },
 
     async content(body, response) {

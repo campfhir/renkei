@@ -351,3 +351,91 @@ because a balancer cookie alone is routing, not a session.
 Hyland Cloud handles balancer configuration centrally, so sticky sessions are
 not something a customer can enable themselves — correct cookie handling on
 our side is the whole of our contribution.
+
+## Admin tools (onbase_admin_*, added after v1)
+
+Everything above wraps the **Document API** (`docs/onbase-rest-api-openapi-spec.json`)
+— filing and finding documents. It has no way to create a document type or a
+keyword type: every `document-types`/`keyword-types`/etc. path in that spec
+is `GET` only. The endpoints that configure OnBase — `POST`/`PATCH`/`PUT` on
+document types, keyword types, keyword-type assignments, document/keyword
+type groups, file types, plus users, user groups, password policies, EVM,
+Insight Discovery, key providers and the change-control audit log — live on
+a **different product**: the Administration API
+(`docs/onbase-administration-openapi-spec.json`, `{server}/onbase/administration`,
+sibling to the Document API's `{server}/onbase/core`). Same Bearer auth,
+same IdP, different base URL.
+
+### What shipped
+
+`onbase_admin_*` tools for the slice that answers "creating document types,
+keywords for those document types": document types, keyword types, the
+keyword types assigned to a document type, document/keyword type groups,
+file types, and the change-control audit log (read). Deliberately **not**
+in this cut, matching the Document API tools' own restraint:
+
+- **No deletes anywhere.** A document type or keyword type deleted on a
+  model's say-so is not a v1 capability, same reasoning as the Document
+  API's own "no `DELETE /documents/{id}`".
+- **No users or user groups.** Creating accounts and editing rights is
+  identity management — a different risk class from document
+  configuration, and it wants its own considered story rather than riding
+  in on this one.
+- **No password policies, EVM, Insight Discovery, key providers, or
+  security keywords.** None of it is "document types and keywords"; each
+  is its own surface with its own risk profile.
+- **Disk groups and file types are read-only reference data**, not
+  created here — an admin sets up storage infrastructure and viewer file
+  types deliberately, not as a side effect of configuring a document type.
+- **No PATCH update for document type groups or file types** — only
+  document types and keyword types, the two things this cut is for.
+
+### Reachability: a second, optional base URL
+
+`connector_configs` settings gained one field, `adminApiBaseUrl` — optional,
+because a tenant that connects OnBase for document retrieval need not also
+grant configuration access. Unset, the `onbase_admin_*` tools answer a plain
+refusal ("The OnBase Administration API is not configured for this
+organization") the same way any other missing-config path does; nothing
+about the Document API tools changes. `apps/worker-onbase` gained one op,
+`admin`, sharing its request-forwarding with `api` (factored into
+`callUpstreamApi`) but never touching the document-session cookie —
+the Administration API is a different product with no such session/licence
+concept, so `admin` calls carry a bearer token and nothing else.
+
+One correctness fix rode in with this: PATCH bodies are JSON Patch documents,
+and OnBase requires `Content-Type: application/json-patch+json` for them —
+plain `application/json` was what the worker sent before, because nothing
+had called PATCH yet. `callUpstreamApi` now switches on method.
+
+### Name resolution stays cheap
+
+Document types, keyword types, document/keyword type groups and file types
+are all things the **Document API already lists** (`GET /document-types`,
+`/keyword-types`, `/document-type-groups`, `/keyword-type-groups`,
+`/file-types` — same ids as the Administration API's own). The admin tools
+resolve names against those existing `loadCatalog`/`resolveRef` calls in
+`index.ts` rather than requiring the admin base URL just to turn "Vendor"
+into an id — only the actual write, and disk groups/display types (which
+have no Document API equivalent), touch `adminApi`. A create or rename
+invalidates the shared cache for that catalog kind, so a document type
+created this turn resolves by name on the very next tool call.
+
+### The same trap, twice
+
+`PUT /api/document-types/{id}/keyword-types` **replaces every keyword
+assignment** on the document type and reports success either way — the
+Administration API's version of the Document API's `PUT
+/documents/{id}/keywords` trap. `onbase_admin_assign_keyword_types` applies
+the identical fix: read the current assignments, merge the caller's changes
+in by keyword type id (an unnamed assignment survives untouched; `remove:
+true` drops one explicitly), write the whole collection back.
+
+### Unverified, same caveat as v1
+
+No real Foundation server to test against, still. `keywordTypeGroupId: '0'`
+in `onbase_admin_create_keyword_type_group`'s payload is a guess at how the
+API resolves the circularity of naming a group's own id while creating that
+group — informed by the "0 = ungrouped" convention used elsewhere in this
+API family, not confirmed against a live server. First deployment is first
+contact for this surface too.

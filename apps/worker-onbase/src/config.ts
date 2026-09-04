@@ -23,6 +23,15 @@ export interface OnBaseTenantConfig {
   clientSecret: string | null;
   idpScopeName: string;
   allowInsecureHttp: boolean;
+  /**
+   * The OnBase Administration API base (`{server}/onbase/administration`,
+   * sibling to the Document API's `{server}/onbase/core`) — optional and
+   * separately configured, since a tenant that connects OnBase for document
+   * retrieval need not also grant configuration access. Null means the
+   * onbase_admin_* tools are unavailable for this tenant; the same Bearer
+   * token authenticates both APIs, so no separate grant is needed once set.
+   */
+  adminApiBaseUrl: string | null;
 }
 
 export type ConfigError = 'not_configured' | 'store';
@@ -64,6 +73,9 @@ export async function resolveOnBaseConfig(
   if (!apiBaseUrl || !idpIssuer || !clientId || !idpScopeName) {
     return err('not_configured' as const);
   }
+  // Optional: an operator who has not set it simply has no onbase_admin_*
+  // tools, never a broken Document API connection.
+  const adminApiBaseUrl = parseHttpUrl(settings.adminApiBaseUrl, allowInsecureHttp);
   return ok({
     apiBaseUrl,
     idpIssuer,
@@ -71,5 +83,6 @@ export async function resolveOnBaseConfig(
     clientSecret: config.val.secrets.clientSecret || null,
     idpScopeName,
     allowInsecureHttp,
+    adminApiBaseUrl,
   });
 }

@@ -1604,6 +1604,7 @@ interface OnBaseConfig {
   idpScopeName: string | null;
   allowInsecureHttp: boolean;
   hasClientSecret: boolean;
+  adminApiBaseUrl: string | null;
 }
 
 interface OnBaseTestResult {
@@ -1615,6 +1616,7 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
   const url = `/api/admin/${slug}/connectors/onbase`;
   const [state, reload] = useConnectorConfig<OnBaseConfig>(url);
   const [apiBaseUrl, setApiBaseUrl] = useState('');
+  const [adminApiBaseUrl, setAdminApiBaseUrl] = useState('');
   const [idpIssuer, setIdpIssuer] = useState('');
   const [clientId, setClientId] = useState('');
   const [idpScopeName, setIdpScopeName] = useState('');
@@ -1630,6 +1632,7 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
   useEffect(() => {
     if (!state.data) return;
     setApiBaseUrl(state.data.apiBaseUrl ?? '');
+    setAdminApiBaseUrl(state.data.adminApiBaseUrl ?? '');
     setIdpIssuer(state.data.idpIssuer ?? '');
     setClientId(state.data.clientId ?? '');
     setIdpScopeName(state.data.idpScopeName ?? '');
@@ -1644,6 +1647,7 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
     setError(null);
     const failure = await putJson(url, {
       apiBaseUrl: apiBaseUrl.trim(),
+      adminApiBaseUrl: adminApiBaseUrl.trim(),
       idpIssuer: idpIssuer.trim(),
       clientId: clientId.trim(),
       idpScopeName: idpScopeName.trim(),
@@ -1750,6 +1754,23 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
           <p className={hintClass}>
             The Document Management API base — the paths under it are e.g. /documents,
             /document-types.
+          </p>
+        </div>
+        <div>
+          <label htmlFor="ob-admin-api" className={labelClass}>
+            Administration API base URL (optional)
+          </label>
+          <input
+            id="ob-admin-api"
+            value={adminApiBaseUrl}
+            onChange={(e) => setAdminApiBaseUrl(e.target.value)}
+            placeholder="https://onbase.example.com/apiserver/onbase/administration"
+            className={`${inputClass} font-mono`}
+          />
+          <p className={hintClass}>
+            Enables the onbase_admin_* tools (creating document types, keyword types, and
+            assigning keywords to document types). Same server, same Hyland client — leave blank
+            to keep configuration access out of Renkei entirely.
           </p>
         </div>
         <div>

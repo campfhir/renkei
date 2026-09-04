@@ -51,24 +51,24 @@ import type { OnBaseAuth } from './onbase-auth';
 /** The connector key the OnBase capabilities register under. */
 export const ONBASE_MCP_CONNECTOR = 'onbase';
 
-function textResult(text: string) {
+export function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
 }
 
-function errText(text: string) {
+export function errText(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true as const };
 }
 
-function str(value: unknown): string {
+export function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** A documentId safe to place in an API path. */
-function idSegment(value: unknown): string | null {
+/** A documentId (or any other API-path segment) safe to place in a path. */
+export function idSegment(value: unknown): string | null {
   const id = str(value).trim();
   if (!id || /[/?#\s]/.test(id)) return null;
   return encodeURIComponent(id);
@@ -80,12 +80,15 @@ function idSegment(value: unknown): string | null {
  * carrying the server's problem+json detail — OnBase's own words beat a
  * generic failure.
  */
-async function apiJson(
-  auth: OnBaseAuth,
+export async function apiJson(
+  // Structural, not OnBaseAuth itself, so the admin tools can pass
+  // `{ api: auth.adminApi }` and reuse this exact envelope/error handling
+  // against the Administration API instead of the Document API.
+  caller: Pick<OnBaseAuth, 'api'>,
   request: Parameters<OnBaseAuth['api']>[0],
   what: string
 ): Promise<{ status: number; json: unknown } | string> {
-  const response = await auth.api(request);
+  const response = await caller.api(request);
   if (typeof response === 'string') return response;
   let json: unknown = null;
   if (response.body) {
@@ -111,13 +114,16 @@ async function apiJson(
   return `Could not ${what}: OnBase answered ${response.status}${detail ? ` — ${detail}` : ''}.`;
 }
 
-interface NamedThing {
+export interface NamedThing {
   id: string;
   name?: string;
   systemName?: string;
 }
 
-function namedList(value: unknown, extra?: (item: Record<string, unknown>) => NamedThing): NamedThing[] {
+export function namedList(
+  value: unknown,
+  extra?: (item: Record<string, unknown>) => NamedThing
+): NamedThing[] {
   if (!isRecord(value) || !Array.isArray(value.items)) return [];
   const out: NamedThing[] = [];
   for (const item of value.items) {
@@ -133,7 +139,7 @@ function namedList(value: unknown, extra?: (item: Record<string, unknown>) => Na
   return out;
 }
 
-function displayName(thing: NamedThing): string {
+export function displayName(thing: NamedThing): string {
   return thing.name ?? thing.systemName ?? '(unnamed)';
 }
 
@@ -141,13 +147,27 @@ function displayName(thing: NamedThing): string {
  * Vocabulary caches, per tenant per kind. Five minutes of staleness on
  * admin-curated configuration is a fine trade against a catalog fetch on
  * every search. Only successes are cached (the CatalogCache contract).
+ *
+ * 'keyword-type-groups' and 'file-types' are read here even though the
+ * onbase_admin_* tools are the main consumer of them by name — both are
+ * plain GETs already exposed on the Document API (same ids as the
+ * Administration API's own), so resolving them costs no admin-base-URL
+ * dependency and reuses this one cache and this one merge/candidate-listing
+ * behavior instead of a second implementation.
  */
 const catalogCache = new CatalogCache<NamedThing[]>();
 
-async function loadCatalog(
+export async function loadCatalog(
   context: MCPToolContext,
   auth: OnBaseAuth,
-  kind: 'keyword-types' | 'document-types' | 'document-type-groups' | 'custom-queries' | 'note-types'
+  kind:
+    | 'keyword-types'
+    | 'document-types'
+    | 'document-type-groups'
+    | 'keyword-type-groups'
+    | 'file-types'
+    | 'custom-queries'
+    | 'note-types'
 ): Promise<NamedThing[] | string> {
   const cacheKey = `${context.tenantId}:${kind}`;
   const cached = catalogCache.get(cacheKey);
@@ -159,7 +179,17 @@ async function loadCatalog(
   return items;
 }
 
-async function resolveRef(
+/**
+ * Drop a cached catalog page so the next resolveRef re-fetches it. The
+ * onbase_admin_* create/update tools call this after writing, so a document
+ * type or keyword type created this turn resolves by name on the very next
+ * tool call instead of waiting out the cache's five minutes.
+ */
+export function invalidateCatalog(context: MCPToolContext, kind: Parameters<typeof loadCatalog>[2]): void {
+  catalogCache.invalidate(`${context.tenantId}:${kind}`);
+}
+
+export async function resolveRef(
   context: MCPToolContext,
   auth: OnBaseAuth,
   kind: Parameters<typeof loadCatalog>[2],

@@ -254,6 +254,38 @@ export async function obApi(input: {
   };
 }
 
+/**
+ * One Administration API request — same envelope as `obApi`, against the
+ * tenant's separately-configured Administration API base. No `subject`: the
+ * worker never attaches a document-session cookie for this op (the
+ * Administration API has no such session/licence concept), so there is
+ * nothing to key a cookie on.
+ */
+export async function obAdminApi(input: {
+  tenantId: string;
+  accessToken: string;
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  path: string;
+  query?: Record<string, string | string[]>;
+  body?: unknown;
+  accept?: string;
+}): Promise<OnBaseClientResult<WireApiResponse>> {
+  const result = await callJson('admin', input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || typeof value.status !== 'number' || typeof value.body !== 'string') {
+    return malformed();
+  }
+  return {
+    ok: true,
+    val: {
+      status: value.status,
+      contentType: optStr(value.contentType) ?? null,
+      body: value.body,
+    },
+  };
+}
+
 export async function obContent(input: {
   tenantId: string;
   /** See obApi: keys the worker's session cookie. */

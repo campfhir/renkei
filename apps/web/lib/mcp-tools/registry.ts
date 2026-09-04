@@ -53,6 +53,7 @@ import { resolveToolExposure } from '@renkei/connector-fileshares';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
 import { registerOnbaseTools, ONBASE_MCP_CONNECTOR } from '@/lib/mcp-tools/onbase';
+import { registerOnbaseAdminTools } from '@/lib/mcp-tools/onbase/admin-tools';
 import { oauthOnbaseAuth } from '@/lib/mcp-tools/onbase/onbase-auth';
 import {
   registerSandboxTools,
@@ -494,11 +495,14 @@ export async function registerRenkeiTools(
     // No scope gate: the Hyland IdP mints one opaque Document Management
     // scope, so there is nothing finer to gate on — document-level
     // authorization is OnBase's own, per request under the user's token.
-    registerOnbaseTools(
-      withCapabilityGate(server, projection, ONBASE_MCP_CONNECTOR),
-      context,
-      oauthOnbaseAuth(context)
-    );
+    const gatedOnbase = withCapabilityGate(server, projection, ONBASE_MCP_CONNECTOR);
+    const onbaseAuth = oauthOnbaseAuth(context);
+    registerOnbaseTools(gatedOnbase, context, onbaseAuth);
+    // onbase_admin_* tools too: same capability gate and grant, same auth —
+    // adminApi itself answers a plain refusal when the tenant has not
+    // configured an Administration API base URL, so there is nothing
+    // further to check before registering them.
+    registerOnbaseAdminTools(gatedOnbase, context, onbaseAuth);
   }
   if (sandboxAvailable) {
     // No scope gate and no per-caller grant to check: every signed-in

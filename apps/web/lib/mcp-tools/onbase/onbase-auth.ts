@@ -28,6 +28,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import {
+  obAdminApi,
   obApi,
   obContent,
   obRefreshToken,
@@ -151,6 +152,14 @@ export interface OnBaseAuth {
    * envelope carries the upstream status and raw body text.
    */
   api(request: OnBaseApiRequest): Promise<WireApiResponse | string>;
+  /**
+   * One Administration API request via the worker — same shape as `api`,
+   * against the tenant's separately-configured admin base URL. A string
+   * result covers both "the caller was refused" and "no Administration API
+   * is configured for this org", so onbase_admin_* tools surface either the
+   * same way the Document API tools already surface a refusal.
+   */
+  adminApi(request: OnBaseApiRequest): Promise<WireApiResponse | string>;
   /** Rendition bytes via the worker, within the org's transfer cap. */
   content(path: string, accept?: string): Promise<WireContentResponse | string>;
   /** The caller's live token, for the upload path that streams bytes. */
@@ -207,6 +216,21 @@ export function oauthOnbaseAuth(context: MCPToolContext): OnBaseAuth {
         (value) => value.status
       );
     },
+    adminApi(request) {
+      return withRetry(
+        (accessToken) =>
+          obAdminApi({
+            tenantId: context.tenantId,
+            accessToken,
+            method: request.method,
+            path: request.path,
+            ...(request.query ? { query: request.query } : {}),
+            ...(request.body !== undefined ? { body: request.body } : {}),
+            ...(request.accept ? { accept: request.accept } : {}),
+          }),
+        (value) => value.status
+      );
+    },
     content(path, accept) {
       return withRetry(
         (accessToken) =>
@@ -238,6 +262,7 @@ export function deniedOnbaseAuth(): OnBaseAuth {
   return {
     kind: 'denied',
     api: () => Promise.resolve(refusal),
+    adminApi: () => Promise.resolve(refusal),
     content: () => Promise.resolve(refusal),
     access: () => Promise.resolve(refusal),
   };

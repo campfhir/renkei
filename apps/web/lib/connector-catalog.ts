@@ -98,7 +98,9 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     capabilityKey: 'onbase',
     configKey: 'onbase',
     label: 'OnBase',
-    summary: "Documents, keywords and custom queries on your organization's Hyland OnBase.",
+    summary:
+      "Documents, keywords and custom queries on your organization's Hyland OnBase, plus " +
+      'admin configuration (document types, keyword types) where the operator has enabled it.',
     toolPrefix: 'onbase_*',
   },
   {
