@@ -65,6 +65,11 @@ import {
   sandboxWorkerConfigured,
 } from '@/lib/mcp-tools/sandbox';
 import { registerBatchJobTools, BATCH_JOBS_MCP_CONNECTOR } from '@/lib/mcp-tools/batch-jobs';
+import {
+  registerWebSearchTools,
+  webSearchConfigured,
+  WEB_SEARCH_CONNECTOR,
+} from '@/lib/mcp-tools/web-search';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
 import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
 import { collectSprint, collectWorkItems } from '@/lib/mcp-tools/summary/collect-jira';
@@ -99,6 +104,8 @@ export interface ConnectorAvailability {
   /** A SEPARATE connector/grant from onbaseAvailable — see registerRenkeiTools. */
   onbaseAdminAvailable: boolean;
   sandboxAvailable: boolean;
+  /** Org-wide, like knowledge: provisioned when an admin configured the web-search connector. */
+  webSearchAvailable: boolean;
 }
 
 async function grantRow(
@@ -216,6 +223,11 @@ export async function resolveConnectorAvailability(
   // worker at all (a deployment-level env check, not a per-caller lookup).
   const sandboxAvailable = sandboxWorkerConfigured();
 
+  // Web search is provisioned org-wide, the embeddings/knowledge shape: an
+  // admin configures one Azure OpenAI deployment and key, and the tool
+  // registers for everyone — there is no per-user account to grant.
+  const webSearchAvailable = await webSearchConfigured(tenantId);
+
   return {
     knowledgeAvailable,
     webexAvailable,
@@ -236,6 +248,7 @@ export async function resolveConnectorAvailability(
     onbaseAvailable,
     onbaseAdminAvailable,
     sandboxAvailable,
+    webSearchAvailable,
   };
 }
 
@@ -271,6 +284,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
     ...(availability.onbaseAdminAvailable ? [ONBASE_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.sandboxAvailable ? [SANDBOX_MCP_CONNECTOR] : []),
+    ...(availability.webSearchAvailable ? [WEB_SEARCH_CONNECTOR] : []),
   ];
 }
 
@@ -310,6 +324,7 @@ export async function registerRenkeiTools(
     onbaseAvailable,
     onbaseAdminAvailable,
     sandboxAvailable,
+    webSearchAvailable,
   } = availability;
 
   await registerAllTools(withCapabilityGate(server, projection), context);
@@ -531,5 +546,11 @@ export async function registerRenkeiTools(
     // caller on a deployment that runs worker-sandbox gets the same
     // scratch space, scoped to their own (tenantId, subject).
     registerSandboxTools(withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR), context);
+  }
+  if (webSearchAvailable) {
+    // No scope gate and no per-caller grant: one org-wide deployment and
+    // key serve every caller, and the tool re-resolves that config per call
+    // so an admin's rotation or disable bites within the config cache TTL.
+    registerWebSearchTools(withCapabilityGate(server, projection, WEB_SEARCH_CONNECTOR), context);
   }
 }

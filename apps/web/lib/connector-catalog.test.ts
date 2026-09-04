@@ -43,6 +43,7 @@ describe('connector catalog', () => {
       'zoom',
       'atlassian-confluence',
       'onbase',
+      'web-search',
     ]) {
       expect(keys).toContain(registered);
     }

@@ -157,6 +157,15 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
       'Semantic search over everything indexed, access-checked per reader — plus personal notes.',
     toolPrefix: 'search_knowledge, knowledge_*',
   },
+  {
+    capabilityKey: 'web-search',
+    configKey: 'web-search',
+    label: 'Web search',
+    summary:
+      "Public-web search with citations through the org's Azure OpenAI deployment and its " +
+      'built-in web_search tool (Grounding with Bing). One org-wide endpoint and key.',
+    toolPrefix: 'web_search',
+  },
 ];
 
 /**

@@ -22,6 +22,9 @@ const EXACT: Record<string, string> = {
   jira_connect: 'jira',
   analyze_transcript: 'jira',
   search_knowledge: 'knowledge',
+  // No underscore-prefixed family of its own; listed exactly so it can never
+  // fall through to the `webex_` prefix or read as an unknown namespace.
+  web_search: 'web-search',
   // Cross-connector upload-slot status; grouped with Jira like whoami.
   check_file_upload: 'jira',
   // The orchestrator and the two Jira periods it loops over.
