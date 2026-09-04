@@ -15,6 +15,7 @@ import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { deleteGrant, getGrant, ONBASE_ADMIN } from '@renkei/provider-grants';
 import { obRevoke } from '@/lib/onbase/service-client';
 import { logger } from '@/lib/logger';
@@ -82,5 +83,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: ONBASE_ADMIN,
   });
+  invalidateToolCatalogCache(tenantId, session.subject);
   return NextResponse.json({ message: 'OnBase Administration disconnected' });
 }

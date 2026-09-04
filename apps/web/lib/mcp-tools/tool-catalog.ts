@@ -15,6 +15,14 @@
  * never transact with a provider, and giving it a real token would invite a
  * future tool to do exactly that. Scopes ARE real, because the scope gates read
  * them at registration time and a faithful list depends on them.
+ *
+ * A caller's list is cached briefly (see the `fresh` option below): building
+ * it walks every connector's availability plus the full registration pass,
+ * and this is called on every chat turn and every render of the tools
+ * picker. The cache is invalidated explicitly wherever a person's own
+ * connectors change (every connect/disconnect route calls
+ * `invalidateToolCatalogCache`) and self-heals within the TTL otherwise —
+ * same discipline as @renkei/connector-config's readConnectorConfigCached.
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -149,6 +157,35 @@ async function jsmGrantScopesFor(
   };
 }
 
+const CACHE_TTL_MS = 60_000;
+
+interface CacheEntry {
+  value: ToolDescriptor[];
+  expiresAt: number;
+}
+
+const catalogCache = new Map<string, CacheEntry>();
+
+const cacheKey = (tenantId: string, subject: string) => `${tenantId} ${subject}`;
+
+/**
+ * Drop cached catalogs — used after a connector connects or disconnects for
+ * some caller, and by tests. Omitting `subject` clears every cached caller
+ * in that tenant; omitting `tenantId` too clears everything.
+ */
+export function invalidateToolCatalogCache(tenantId?: string, subject?: string): void {
+  if (!tenantId) {
+    catalogCache.clear();
+    return;
+  }
+  const prefix = `${tenantId} `;
+  for (const key of catalogCache.keys()) {
+    if (key.startsWith(prefix) && (!subject || key === cacheKey(tenantId, subject))) {
+      catalogCache.delete(key);
+    }
+  }
+}
+
 /**
  * Every tool this caller would be offered over MCP right now.
  *
@@ -157,11 +194,21 @@ async function jsmGrantScopesFor(
  * connector's availability is its own question. (This used to return [] to
  * mirror the MCP route's jira_connect stub; the agent builder needs the
  * honest per-connector answer instead, and the gates already give it.)
+ *
+ * Cached for `CACHE_TTL_MS`; pass `{ fresh: true }` for a caller that must
+ * see the effect of a connector change it just made itself. Only a
+ * successful enumeration is cached — a page that fails to build the catalog
+ * must not have that failure remembered as "this caller has no tools".
  */
 export async function listAvailableTools(
   tenantId: string,
-  subject: string
+  subject: string,
+  options: { fresh?: boolean } = {}
 ): Promise<ToolDescriptor[]> {
+  const key = cacheKey(tenantId, subject);
+  const cached = catalogCache.get(key);
+  if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
+
   const dbResult = getDatabase();
   if (!dbResult.ok) return [];
   const db = dbResult.val;
@@ -224,5 +271,7 @@ export async function listAvailableTools(
     return [];
   }
 
-  return tools.sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = tools.sort((a, b) => a.name.localeCompare(b.name));
+  catalogCache.set(key, { value: sorted, expiresAt: Date.now() + CACHE_TTL_MS });
+  return sorted;
 }

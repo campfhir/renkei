@@ -104,7 +104,7 @@ jest.mock('@renkei/knowledge', () => ({
   listRecentKnowledge: jest.fn(),
 }));
 
-import { listAvailableTools } from './tool-catalog';
+import { listAvailableTools, invalidateToolCatalogCache } from './tool-catalog';
 
 // Granular scopes, not the classic `read:jira-work` pair: the Jira tools gate
 // on the granular catalog, so classic scopes would register nothing and the
@@ -127,6 +127,9 @@ beforeEach(() => {
   fileshareConnections = [];
   fetchSpy.mockReset();
   global.fetch = fetchSpy as unknown as typeof fetch;
+  // Every test below reuses the same tenant/subject with different mocked
+  // state, so a cached result from the previous test must not leak in.
+  invalidateToolCatalogCache();
 });
 
 const namesOf = (tools: { name: string }[]) => tools.map((tool) => tool.name);
@@ -323,11 +326,11 @@ describe('listAvailableTools', () => {
       atlassian: ATLASSIAN_GRANT,
       microsoft: { requested_scopes: ['Mail.Read'], granted_scopes: null },
     };
-    const enabled = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const enabled = namesOf(await listAvailableTools('tenant-1', 'subject-1', { fresh: true }));
     expect(enabled).toContain('outlook_mail_summary');
 
     disabledConnectors = ['microsoft'];
-    const disabled = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    const disabled = namesOf(await listAvailableTools('tenant-1', 'subject-1', { fresh: true }));
     expect(disabled).not.toContain('outlook_mail_summary');
     // The orchestrator itself is Jira-gated and stays.
     expect(disabled).toContain('daily_summary');

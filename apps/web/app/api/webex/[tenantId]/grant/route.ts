@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { deleteGrant, WEBEX_USER } from '@renkei/provider-grants';
 
 export async function DELETE(
@@ -48,5 +49,6 @@ export async function DELETE(
     targetKind: 'connector',
     targetLabel: WEBEX_USER,
   });
+  invalidateToolCatalogCache(tenantId, session.subject);
   return NextResponse.json({ message: 'WebEx disconnected' });
 }

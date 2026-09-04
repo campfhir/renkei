@@ -3,6 +3,7 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 
 /**
  * Disconnect the caller's own Jira account.
@@ -88,6 +89,7 @@ export async function DELETE(
       targetKind: 'connector',
       targetLabel: 'atlassian',
     });
+    invalidateToolCatalogCache(tenantId, session.subject);
 
     return NextResponse.json({
       revoked: true,

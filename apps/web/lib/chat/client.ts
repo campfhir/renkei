@@ -99,7 +99,19 @@ export const chatClient = {
   models: (tenantId: string) => getJson<{ models: ModelOption[] }>(`${base(tenantId)}/models`),
 
   connectors: (tenantId: string) =>
-    getJson<{ connectors: ConnectorOption[]; core: string[] }>(`${base(tenantId)}/tools`),
+    getJson<{
+      connectors: ConnectorOption[];
+      core: string[];
+      userDefault: { connectors: string[] } | null;
+    }>(`${base(tenantId)}/tools`),
+
+  /** Save (or, with null, clear) this person's default chat toolset. */
+  setDefaultTools: (tenantId: string, connectors: string[] | null) =>
+    sendJsonFull<{ userDefault: { connectors: string[] } | null }>(
+      `${base(tenantId)}/tools`,
+      'PUT',
+      { userDefault: connectors ? { connectors } : null }
+    ),
 
   uploadAttachment: async (
     tenantId: string,

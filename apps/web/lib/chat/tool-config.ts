@@ -1,10 +1,13 @@
 /**
  * Which connectors a chat offers the model — the per-chat/per-project
  * toolset. Stored as jsonb on the chat and the project; the chat's own
- * setting wins, the project's applies to chats without one, and neither
- * means the core set.
+ * setting wins, the project's applies to chats without one, the person's
+ * own saved default (tool-prefs.ts) applies when neither does, and no
+ * preference at all means the core set.
  *
  * Pure: the tool catalog and the MCP list are joined in tool-surface.ts.
+ * The person's saved default is resolved by the caller (it needs the
+ * database) and passed in, same as chat and project here.
  */
 
 /** On by default: the org's knowledge, the agent scratch space. */
@@ -43,9 +46,10 @@ export function defaultToolConfig(): ChatToolConfig {
 
 export function effectiveToolConfig(
   chat: ChatToolConfig | null,
-  project: ChatToolConfig | null
+  project: ChatToolConfig | null,
+  userDefault: ChatToolConfig | null = null
 ): ChatToolConfig {
-  return chat ?? project ?? defaultToolConfig();
+  return chat ?? project ?? userDefault ?? defaultToolConfig();
 }
 
 /** The jsonb form — a fresh literal, since the pg driver serializes objects itself. */
