@@ -44,13 +44,13 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
-    heading: 'Chat with your organization\'s models',
+    heading: "Chat with your organization's models",
     entries: [
       {
         kind: 'added',
-        title: 'A chat, under "Chat" in the top bar',
+        title: 'A chat, under "Chat" in the menu',
         detail:
-          "Talk to the models your organization has configured, with your own tool access: the model's reply streams in as it is written, its reasoning and every tool call it makes show up inline, and you can stop it mid-answer. Chats are kept, grouped by day in the sidebar, and can be renamed, archived or deleted. Switch models at any point in a conversation.",
+          "Talk to the models your organization has configured, with your own tool access: the model's reply streams in as it is written, its reasoning and every tool call it makes show up inline, and you can stop it mid-answer. Chats are kept, grouped by day in the menu, and can be renamed, archived or deleted. Switch models at any point in a conversation.",
       },
       {
         kind: 'added',
@@ -87,6 +87,36 @@ export const CHANGELOG: ChangelogRelease[] = [
         title: 'A retention window for chats',
         detail:
           'Admins can set how many days chats are kept (Settings). The default keeps them until deleted.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-04',
+    heading: 'OnBase Administration joins the connectors',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Create and configure document types and keyword types',
+        detail:
+          'New tools create document types, keyword types, and the groups they belong to, and change which keywords a document type has — reading current values first and merging your change in, so naming one keyword to update never erases the others.',
+      },
+      {
+        kind: 'added',
+        title: 'A configuration change history',
+        detail:
+          'See who changed what and when — a document type renamed, a keyword type’s settings adjusted — filterable by item, person, or date.',
+      },
+      {
+        kind: 'added',
+        title: 'Connect with your own OnBase Administration account',
+        detail:
+          'A separate connection from OnBase document access above, on its own card under Hyland: sign in on your organization’s identity provider and every configuration change is made as you. Connecting one does not connect the other.',
+      },
+      {
+        kind: 'added',
+        title: 'OnBase Administration setup for administrators',
+        detail:
+          'Operators register a second Hyland client for configuration access, alongside the one for documents, with the same connection test before saving.',
       },
     ],
   },

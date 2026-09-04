@@ -50,6 +50,8 @@ Knowledge indexing is explicitly deferred — this connector is retrieval-only i
 
 Exports: `parseDiscoveryDocument`/`oidcDiscoveryUrl`, `resolveKeywordTypeRef`/`mergeKeywordCollections`, `buildQueryInformation`, `CatalogCache`. See [`onbase-connector-design.md`](./onbase-connector-design.md), which has an "As built (v1)" section documenting the final decisions.
 
+`onbase_admin_*` tools (`apps/web/lib/mcp-tools/onbase/admin-tools.ts`) wrap a SECOND, SEPARATE connector — `onbase-admin` — for OnBase's Administration API (`docs/onbase-administration-openapi-spec.json`), which is where document types and keyword types are actually created and configured; the Document API above only ever reads that vocabulary. Same relationship as Jira/JSM/Confluence/Bitbucket under `connector-atlassian`: a different Hyland OAuth client, its own `connector_configs` row, its own `provider_grants` provider (`ONBASE_ADMIN`), its own capability gate — connecting `onbase` does not connect `onbase-admin`, or the reverse. `apps/worker-onbase` serves both from the same process; every op takes an optional `connector` field naming which row to resolve. See the design doc's "Admin tools" section.
+
 ## connector-sandbox
 
 A per-caller scratch space for staging a file mid-task — the piece that lets an agent move a file from a connector that only offers a download link (`connector-fileshares`) to one that only accepts staged upload bytes (`connector-onbase`, Jira attachments) without a human relaying it by hand. Unlike every connector above, there is no external account behind this one: "auth" is simply the caller's own `(tenantId, subject)`, scoped exactly like `upload_slots`.

@@ -351,3 +351,120 @@ because a balancer cookie alone is routing, not a session.
 Hyland Cloud handles balancer configuration centrally, so sticky sessions are
 not something a customer can enable themselves — correct cookie handling on
 our side is the whole of our contribution.
+
+## Admin tools (onbase_admin_*, added after v1)
+
+Everything above wraps the **Document API** (`docs/onbase-rest-api-openapi-spec.json`)
+— filing and finding documents. It has no way to create a document type or a
+keyword type: every `document-types`/`keyword-types`/etc. path in that spec
+is `GET` only. The endpoints that configure OnBase — `POST`/`PATCH`/`PUT` on
+document types, keyword types, keyword-type assignments, document/keyword
+type groups, file types, plus users, user groups, password policies, EVM,
+Insight Discovery, key providers and the change-control audit log — live on
+a **different product**: the Administration API
+(`docs/onbase-administration-openapi-spec.json`, `{server}/onbase/administration`,
+sibling to the Document API's `{server}/onbase/core`). Same Hyland IdP
+mechanism, but ordinarily registered as its own OAuth client — so it shipped
+as its own connector, `onbase-admin`, not a mode of the existing `onbase`
+one. See "Reachability" below for what that means concretely.
+
+### What shipped
+
+`onbase_admin_*` tools for the slice that answers "creating document types,
+keywords for those document types": document types, keyword types, the
+keyword types assigned to a document type, document/keyword type groups,
+file types, and the change-control audit log (read). Deliberately **not**
+in this cut, matching the Document API tools' own restraint:
+
+- **No deletes anywhere.** A document type or keyword type deleted on a
+  model's say-so is not a v1 capability, same reasoning as the Document
+  API's own "no `DELETE /documents/{id}`".
+- **No users or user groups.** Creating accounts and editing rights is
+  identity management — a different risk class from document
+  configuration, and it wants its own considered story rather than riding
+  in on this one.
+- **No password policies, EVM, Insight Discovery, key providers, or
+  security keywords.** None of it is "document types and keywords"; each
+  is its own surface with its own risk profile.
+- **Disk groups and file types are read-only reference data**, not
+  created here — an admin sets up storage infrastructure and viewer file
+  types deliberately, not as a side effect of configuring a document type.
+- **No PATCH update for document type groups or file types** — only
+  document types and keyword types, the two things this cut is for.
+
+### Reachability: a SEPARATE connector, not a bolt-on field
+
+The first pass of this work tried a shortcut — one extra `adminApiBaseUrl`
+setting on the existing `onbase` connector row, reusing its grant and
+worker op. That was wrong: a document-access consent and a
+configuration-access consent are different things to authorize, on Hyland
+IdPs commonly registered as different OAuth clients entirely — exactly the
+shape `connector-atlassian` already solved by treating Jira, JSM,
+Confluence and Bitbucket as four separate connectors rather than one (see
+`docs/connectors.md`). So `onbase-admin` shipped as its own connector,
+mirroring that precedent line for line:
+
+- its own `connector_configs` row (`onbase-admin`, same shape as `onbase`:
+  `apiBaseUrl`, `idpIssuer`, `clientId`, `clientSecret`, `idpScopeName`,
+  `allowInsecureHttp`) and its own admin-UI card
+  (`OnBaseAdminForm`/`.../connectors/onbase-admin/route.ts`);
+- its own `provider_grants` provider (`ONBASE_ADMIN` /
+  `OnBaseAdminAdapter` in `@renkei/provider-grants`) and its own connect
+  flow (`/api/onbase-admin/[tenantId]/authorize` and `/grant`, dispatched
+  in the shared `/api/oauth/callback` route by `pendingSignIn.provider`);
+  its own capability gate (`onbase-admin`, `registerOnbaseAdminTools`
+  registered separately in `registry.ts`, gated on its own grant);
+  its own card on the Connectors page, grouped with OnBase under one
+  "Hyland" heading (`hyland-connector.tsx`, mirroring
+  `atlassian-connector.tsx`) — connect/disconnect stays on each product,
+  never a shared suite-level control, for the same reason Atlassian's does.
+
+`apps/worker-onbase` did NOT grow a second op for this. Every existing op
+(`api`, `content`, `discover`, `token`, `revoke`, `test-connection`) gained
+one optional field, `connector` (default `onbase`), naming which
+`connector_configs` row to resolve — `resolveOnBaseConfig` and
+`OnBaseServerDeps.resolveConfig` both take it as a second parameter. The
+one behavioral difference the worker still encodes: the OnBase
+document-session cookie is read/sent/remembered only when `connector` is
+`onbase` — the Administration API has no such session/licence concept.
+
+One correctness fix rode in with this: PATCH bodies are JSON Patch
+documents, and OnBase requires `Content-Type: application/json-patch+json`
+for them — plain `application/json` was what the worker sent before,
+because nothing had called PATCH yet. `callUpstreamApi` now switches on
+method.
+
+### Name resolution is self-contained, per connector
+
+Because `onbase` and `onbase-admin` are independent connectors — a caller
+may have one without the other — `onbase_admin_*` tools do NOT resolve
+names through the Document API tools' cache in `index.ts`. Document types,
+keyword types, document/keyword type groups, file types and disk groups all
+resolve against the Administration API's own `GET /api/{kind}` listings, in
+`admin-tools.ts`'s own `loadAdminCatalog`/`resolveAdminRef`, with its own
+`CatalogCache` instance. This cost two extra Read tools
+(`onbase_admin_list_document_types`, `onbase_admin_list_keyword_types`)
+that the Document API tools already had equivalents of, but a caller who
+only ever connects `onbase-admin` — never `onbase` — still gets a fully
+working connector. A create or rename invalidates this file's own cache for
+that catalog kind, so a document type created this turn resolves by name on
+the very next tool call.
+
+### The same trap, twice
+
+`PUT /api/document-types/{id}/keyword-types` **replaces every keyword
+assignment** on the document type and reports success either way — the
+Administration API's version of the Document API's `PUT
+/documents/{id}/keywords` trap. `onbase_admin_assign_keyword_types` applies
+the identical fix: read the current assignments, merge the caller's changes
+in by keyword type id (an unnamed assignment survives untouched; `remove:
+true` drops one explicitly), write the whole collection back.
+
+### Unverified, same caveat as v1
+
+No real Foundation server to test against, still. `keywordTypeGroupId: '0'`
+in `onbase_admin_create_keyword_type_group`'s payload is a guess at how the
+API resolves the circularity of naming a group's own id while creating that
+group — informed by the "0 = ungrouped" convention used elsewhere in this
+API family, not confirmed against a live server. First deployment is first
+contact for this surface too.

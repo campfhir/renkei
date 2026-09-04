@@ -15,6 +15,7 @@ export const GRANT_PROVIDER_LABELS: Record<string, string> = {
   webex: 'WebEx',
   zoom: 'Zoom',
   onbase: 'OnBase',
+  'onbase-admin': 'OnBase Administration',
 };
 
 export function grantProviderLabel(provider: string): string {
