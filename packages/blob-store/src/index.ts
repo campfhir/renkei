@@ -19,6 +19,7 @@ export { blobStoreConfig, type AzureBlobConfig, type BlobStoreConfig } from './c
 export { chatAttachmentKey } from './keys';
 export { createAzureBlobStore } from './azure';
 export { stringToSign, sharedKeySignature, authorizationHeader } from './azure-sign';
+export { describeRefusal, type Refusal } from './azure-errors';
 export {
   BLOB_STORAGE_CONNECTOR,
   blobStoreConfigOfRow,

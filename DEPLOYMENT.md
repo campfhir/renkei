@@ -750,3 +750,28 @@ rule); a 5xx points at the origin or private link (pending approval, wrong
 sub-resource, or a health probe left on). From a machine outside the
 allow-list, `curl -I https://files.<your-domain>/renkei-chat/` must come
 back blocked by Front Door.
+
+**Reading a failed test.** The Storage page's Test connection names the
+step that failed and who refused it:
+
+- _Blocked before reaching Azure Blob (403 from the edge; x-azure-ref …)_
+  — a Front Door WAF rule or route on that host refused the request
+  before it reached the account. Look the reference up in the profile's
+  WAF logs (Front Door → Monitoring → Logs, or the policy's diagnostics)
+  to see the rule id; then either exclude that rule for the storage domain
+  or, the usual fix, move storage to its own domain and policy as above.
+  This is also what you get when the endpoint is the **app's own Front
+  Door host**: that host's default route and WAF policy apply to storage
+  traffic too, and the app's browser-oriented rules refuse the server's
+  requests. The endpoint must be a route that forwards to the account.
+- _Azure Blob 403 AuthenticationFailed: … string to sign …_ — the account
+  answered and rejected the signature, so the request was altered on the
+  way: a rewritten path (an origin path on the route), a stripped or added
+  `x-ms-*` header, or caching on the route. The quoted string-to-sign is
+  what the service saw; compare it with the path Renkei sent
+  (`/{container}/probe/{tenant}/{time}` for the test).
+- _Azure Blob 403 AuthorizationFailure_ — the account's network rules
+  refused the source (public access off without the private link
+  approved, or the wrong sub-resource).
+- A 5xx _from the edge_ — the route's origin is unhealthy or unreachable:
+  a pending private-endpoint approval, or a health probe left on.
