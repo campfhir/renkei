@@ -48,6 +48,15 @@ const STREAM_IDLE_MS = 90_000;
 const TEXT_INDEX = 0;
 const REASONING_INDEX = 1;
 const TOOL_INDEX_BASE = 100;
+/**
+ * OpenAI's chat-completions dialect rejects a `tools` array longer than
+ * this with a 400 (`array_above_max_length`) — Azure AI Foundry's v1
+ * surface and other OpenAI-compatible gateways inherit the same cap. The
+ * engine's tool surface is assembled provider-agnostically (a person can
+ * turn on enough connectors to pass this easily), so the adapter enforces
+ * the wire limit itself rather than letting every such turn fail outright.
+ */
+const MAX_TOOLS = 128;
 
 export interface OpenAiConfig {
   apiKey: string;
@@ -233,7 +242,7 @@ export class OpenAiProvider implements LlmProvider {
       ],
       ...(request.tools.length > 0
         ? {
-            tools: request.tools.map((tool) => ({
+            tools: request.tools.slice(0, MAX_TOOLS).map((tool) => ({
               type: 'function',
               function: {
                 name: tool.name,

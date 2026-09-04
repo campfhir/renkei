@@ -70,6 +70,23 @@ describe('OpenAiProvider.complete', () => {
     expect(body.tool_choice).toBe('required');
   });
 
+  it('caps the tools array at 128 — the dialect rejects a longer one', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(200, okBody));
+    const manyTools: LlmRequest = {
+      ...request,
+      tools: Array.from({ length: 158 }, (_, i) => ({
+        name: `tool_${i}`,
+        description: 'One of many.',
+        inputSchema: { type: 'object', properties: {} },
+      })),
+    };
+    await provider.complete(manyTools);
+    const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.tools).toHaveLength(128);
+    expect(body.tools[0].function.name).toBe('tool_0');
+    expect(body.tools[127].function.name).toBe('tool_127');
+  });
+
   it('tolerates a pasted full endpoint as the base URL', async () => {
     const pasted = new OpenAiProvider({
       apiKey: 'azure-key',

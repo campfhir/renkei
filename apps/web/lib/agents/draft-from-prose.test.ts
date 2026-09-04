@@ -20,7 +20,10 @@ jest.mock('@renkei/settings', () => ({
 
 import type { LlmRequest } from '@renkei/agent-llm';
 
-let replies: string[] = [];
+/** A plain reply renders as text; `{ tool, input }` renders as a tool_use
+ *  (find_tools), for tests that exercise the tool-search round trip. */
+type MockReply = string | { tool: string; input?: unknown };
+let replies: MockReply[] = [];
 const requests: LlmRequest[] = [];
 jest.mock('@renkei/agent-llm', () => ({
   resolveAgentLlm: jest.fn(async () => ({
@@ -29,10 +32,23 @@ jest.mock('@renkei/agent-llm', () => ({
       provider: {
         complete: async (request: LlmRequest) => {
           requests.push(request);
+          const reply = replies[requests.length - 1];
+          if (reply && typeof reply === 'object') {
+            return {
+              ok: true,
+              val: {
+                content: [
+                  { type: 'tool_use', id: `tu_${requests.length}`, name: reply.tool, input: reply.input ?? {} },
+                ],
+                stopReason: 'tool_use',
+                usage: { inputTokens: 10, outputTokens: 10 },
+              },
+            };
+          }
           return {
             ok: true,
             val: {
-              content: [{ type: 'text', text: replies[requests.length - 1] ?? '{}' }],
+              content: [{ type: 'text', text: reply ?? '{}' }],
               stopReason: 'end_turn',
               usage: { inputTokens: 10, outputTokens: 10 },
             },
@@ -871,7 +887,22 @@ describe('draftAgentFromProse retry loop', () => {
     expect(prompt).toContain('trigger.roomId: Pass it to webex_send_message to reply.');
   });
 
-  it('renders each tool description in FULL — never clipped', async () => {
+  it('does not list tool descriptions up front — only connector names and counts', async () => {
+    // The full catalog used to ride in every drafting prompt; now the
+    // prompt only names the enabled connectors, and find_tools (searched
+    // below) is where a tool's actual description shows up.
+    replies = [GOOD_REPLY];
+    const result = await draftAgentFromProse(db, 't1', 'file tickets from messages', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const prompt = JSON.stringify(requests[0].messages);
+    // The old rendering listed every tool's own failure codes inline; that
+    // only shows up now once find_tools surfaces the specific tool.
+    expect(prompt).not.toContain('not-found');
+    expect(prompt).toContain('jira (1)');
+    expect(prompt).toContain('find_tools');
+  });
+
+  it('find_tools renders a matched tool\'s description in FULL — never clipped', async () => {
     // The drafting model never sees input schemas, so the description is
     // its only account of a tool's requirements. This used to clip at 100
     // characters, cutting most descriptions mid-sentence — the part that
@@ -892,14 +923,23 @@ describe('draftAgentFromProse retry loop', () => {
       appOnly: false,
       outcomes: { success: { label: 'ok' }, failures: [] },
     };
-    replies = [GOOD_REPLY];
+    replies = [{ tool: 'find_tools', input: { query: 'jsm create request' } }, GOOD_REPLY];
     const result = await draftAgentFromProse(db, 't1', 'file tickets from messages', [
       ...TOOLS,
       longTool,
     ]);
     if ('error' in result) throw new Error(result.error);
-    const prompt = JSON.stringify(requests[0].messages);
-    expect(prompt).toContain(longTail);
+    expect(requests).toHaveLength(2);
+    const conversation = JSON.stringify(requests[1].messages);
+    expect(conversation).toContain(longTail);
+  });
+
+  it('a find_tools call that matches nothing says so, and the model still finishes', async () => {
+    replies = [{ tool: 'find_tools', input: { query: 'nonexistent widget' } }, GOOD_REPLY];
+    const result = await draftAgentFromProse(db, 't1', 'file tickets from messages', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    expect(requests).toHaveLength(2);
+    expect(JSON.stringify(requests[1].messages)).toContain('No tools matched');
   });
 });
 
