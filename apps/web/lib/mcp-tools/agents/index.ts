@@ -90,7 +90,7 @@ import {
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { sql } from 'kysely';
-import type { MCPToolContext } from '../common';
+import { keywordsFieldSchema, type MCPToolContext } from '../common';
 import { listAgents, type TriggerPayload } from '@/lib/agents/store';
 import {
   resolveAgentAccess,
@@ -1638,15 +1638,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             z.object({
               title: z.string().min(1).max(MAX_AGENT_NOTE_TITLE_CHARS),
               content: z.string().min(1).max(MAX_AGENT_NOTE_CHARS),
-              keywords: z
-                .array(z.string().min(1).max(60))
-                .max(20)
-                .optional()
-                .describe(
-                  'Up to 20 search keywords/phrases for this note: proper nouns, identifiers ' +
-                    '(ticket keys, file names, versions), specific topic phrases of 1–4 words. ' +
-                    'Indexed above the body text for keyword matching.'
-                ),
+              keywords: keywordsFieldSchema(
+                'Up to 20 search keywords/phrases for this note: proper nouns, identifiers ' +
+                  '(ticket keys, file names, versions), specific topic phrases of 1–4 words. ' +
+                  'Indexed above the body text for keyword matching.'
+              ),
             })
           )
           .min(1)
@@ -1727,13 +1723,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         noteId: z.string().min(1).describe('From agent_knowledge_list'),
         title: z.string().min(1).max(MAX_AGENT_NOTE_TITLE_CHARS).optional(),
         content: z.string().min(1).max(MAX_AGENT_NOTE_CHARS).optional(),
-        keywords: z
-          .array(z.string().min(1).max(60))
-          .max(20)
-          .optional()
-          .describe(
-            'Replacement search keywords/phrases (up to 20); omitted keeps the current ones'
-          ),
+        keywords: keywordsFieldSchema(
+          'Replacement search keywords/phrases (up to 20); omitted keeps the current ones'
+        ),
       }),
     },
     async (args: Record<string, unknown>) => {

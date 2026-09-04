@@ -37,7 +37,7 @@ import {
   searchTextFragment,
   normalizeKeywords,
 } from '@renkei/knowledge';
-import type { MCPToolContext } from '../common';
+import { keywordsFieldSchema, type MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 
 /** Generous for notes, far below anything that would strain the embedder. */
@@ -114,15 +114,11 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       inputSchema: z.object({
         title: z.string().min(1).max(MAX_TITLE_CHARS).describe('Short human title for the note'),
         content: z.string().min(1).max(MAX_NOTE_CHARS).describe('The note body (plain text)'),
-        keywords: z
-          .array(z.string().min(1).max(60))
-          .max(20)
-          .optional()
-          .describe(
-            'Up to 20 search keywords/phrases: proper nouns, identifiers, specific topic ' +
-              'phrases of 1–4 words. Indexed above the body for keyword matching — supply ' +
-              'them; you are the model, so no other model is asked.'
-          ),
+        keywords: keywordsFieldSchema(
+          'Up to 20 search keywords/phrases: proper nouns, identifiers, specific topic ' +
+            'phrases of 1–4 words. Indexed above the body for keyword matching — supply ' +
+            'them; you are the model, so no other model is asked.'
+        ),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -196,13 +192,9 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       inputSchema: z.object({
         noteId: z.string().min(1).describe('The noteId returned by knowledge_create_note'),
         title: z.string().min(1).max(MAX_TITLE_CHARS).optional().describe('New title'),
-        keywords: z
-          .array(z.string().min(1).max(60))
-          .max(20)
-          .optional()
-          .describe(
-            'Replacement search keywords/phrases (up to 20); omitted keeps the current ones'
-          ),
+        keywords: keywordsFieldSchema(
+          'Replacement search keywords/phrases (up to 20); omitted keeps the current ones'
+        ),
         content: z.string().min(1).max(MAX_NOTE_CHARS).optional().describe('New body'),
       }),
     },
