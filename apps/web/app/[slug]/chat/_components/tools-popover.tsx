@@ -68,12 +68,13 @@ export default function ToolsPopover({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        aria-label="Tools"
+        aria-expanded={open}
         title="Which tools the assistant may use"
-        className="flex items-center gap-1 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+        className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
       >
-        <Icon path={ICONS.tool} className="h-5 w-5" />
-        {count !== null ? <span className="text-xs">{count}</span> : null}
+        <Icon path={ICONS.tool} className="h-4 w-4" />
+        Tools
+        {count !== null ? <span className="text-gray-400">{count}</span> : null}
       </button>
       {open ? (
         <div className="absolute right-0 z-40 mt-1 w-64 rounded-md border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">

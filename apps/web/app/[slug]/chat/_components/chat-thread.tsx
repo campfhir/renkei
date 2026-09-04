@@ -224,7 +224,7 @@ export default function ChatThread({
 
   return (
     <>
-      <header className="flex items-center gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-800">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold">{title}</h1>
           {chat?.projectName ? (
@@ -243,11 +243,10 @@ export default function ChatThread({
               <button
                 type="button"
                 onClick={() => setShare(true)}
-                aria-label="Share chat"
-                title="Share"
-                className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
               >
-                <Icon path={ICONS.share} className="h-5 w-5" />
+                <Icon path={ICONS.share} className="h-4 w-4" />
+                Share
               </button>
             ) : null}
           </>

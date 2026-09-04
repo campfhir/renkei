@@ -8,8 +8,9 @@ import { loadChatSidebar } from '@/lib/chat/sidebar';
 import ChatNavSection from './_components/chat-nav';
 
 /**
- * The chat pages' frame: the page fills the main column (the app menu
- * beside it carries the chat list, registered from here). Signed-out
+ * The chat pages' frame: the page fills the main column edge to edge, its
+ * title bar directly under the top bar (the app menu beside it carries
+ * the chat list, registered from here). Signed-out
  * visitors go to sign-in from here; every page under it still checks the
  * session for itself, since a layout check does not re-run on partial
  * navigations.
@@ -31,9 +32,9 @@ export default async function ChatLayout({
 
   const sidebar = await loadChatSidebar(dbResult.val, tenant.id, session.subject);
   return (
-    <div data-wide-page className="h-[calc(100vh-6.5rem)] min-h-[24rem]">
+    <div data-wide-page data-flush-page className="h-[calc(100vh-3.5rem)] min-h-[24rem]">
       <ChatNavSection slug={slug} tenantId={tenant.id} data={sidebar} />
-      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-gray-950">
         {children}
       </div>
     </div>

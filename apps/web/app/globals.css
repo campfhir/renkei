@@ -555,6 +555,15 @@ main:has([data-wide-page]) {
   max-width: min(100%, 120rem);
 }
 
+/*
+ * A page that draws its own frame — the chat, whose title bar sits right
+ * under the top bar and whose composer sits on the bottom edge — asks for
+ * the column with no padding at all.
+ */
+main:has([data-flush-page]) {
+  padding: 0;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Agent builder chip editor (app/[slug]/agents).                            */
 /*                                                                           */

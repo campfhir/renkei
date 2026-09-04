@@ -131,7 +131,7 @@ export default function Composer({
   };
 
   return (
-    <div className="border-t border-gray-200 p-3 dark:border-gray-800">
+    <div className="shrink-0 border-t border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900/60">
       <div
         onDragOver={(event) => {
           event.preventDefault();

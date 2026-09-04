@@ -62,6 +62,8 @@ interface NavItem {
   except?: string[];
   /** Only the exact path counts — Home, whose prefix is every page. */
   exact?: boolean;
+  /** A small "+" link at the row's right edge — New chat, beside Chat. */
+  plus?: { href: string; label: string };
 }
 
 interface NavGroup {
@@ -73,7 +75,7 @@ interface NavGroup {
 
 /**
  * The app-wide navigation and the frame around every page: a top bar with
- * the hamburger, org name, a Chat shortcut and the user; the menu itself,
+ * the hamburger, org name and the user; the menu itself,
  * with the sections stacked. On a wide screen the menu is a column that
  * stays open beside the page (the hamburger tucks it away, and the choice
  * is remembered in this browser); below `lg` it is the drawer that slides
@@ -180,6 +182,7 @@ export default function AppNav({
           href: `/${slug}/chat`,
           label: 'Chat',
           except: [`/${slug}/chat/projects`, `/${slug}/chat/prompts`],
+          plus: { href: `/${slug}/chat`, label: 'New chat' },
         },
         { href: `/${slug}/chat/projects`, label: 'Projects' },
         { href: `/${slug}/chat/prompts`, label: 'Prompt libraries' },
@@ -241,11 +244,11 @@ export default function AppNav({
               const here =
                 under && !(item.except ?? []).some((path) => pathname.startsWith(path));
               return (
-                <li key={item.href}>
+                <li key={item.href} className="flex items-center gap-1">
                   <Link
                     href={item.href}
                     aria-current={here ? 'page' : undefined}
-                    className={`block rounded-lg px-3 py-2 text-sm ${
+                    className={`block min-w-0 flex-1 rounded-lg px-3 py-2 text-sm ${
                       here
                         ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                         : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
@@ -253,6 +256,17 @@ export default function AppNav({
                   >
                     {item.label}
                   </Link>
+                  {item.plus ? (
+                    <Link
+                      href={item.plus.href}
+                      aria-label={item.plus.label}
+                      title={item.plus.label}
+                      className="flex items-center gap-0.5 rounded-md border border-gray-300 px-1.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+                    >
+                      <Icon path={ICONS.plus} className="h-3.5 w-3.5" strokeWidth={2.4} />
+                      New
+                    </Link>
+                  ) : null}
                 </li>
               );
             })}
@@ -293,20 +307,6 @@ export default function AppNav({
           Renkei
           <span className="text-sm font-normal text-gray-500 dark:text-gray-400">{slug}</span>
         </Link>
-
-        {userName ? (
-          <Link
-            href={`/${slug}/chat`}
-            className={`ml-1 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium ${
-              pathname.startsWith(`/${slug}/chat`)
-                ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
-            }`}
-          >
-            <Icon path={ICONS.chat} className="h-4 w-4" />
-            Chat
-          </Link>
-        ) : null}
 
         <div className="ml-auto flex items-center gap-2">
           {userName ? (
