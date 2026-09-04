@@ -25,6 +25,8 @@ export interface SystemPromptInput {
   chatFiles: { id: string; filename: string; contentType: string; sizeBytes: number }[];
   hasTools: boolean;
   hasSandbox: boolean;
+  /** The org has somewhere to keep files; false means none can be made or attached. */
+  filesAllowed: boolean;
   now: Date;
 }
 
@@ -69,6 +71,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       input.hasSandbox
         ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches."
         : "Tools act with this person's own permissions in the organization's systems."
+    );
+  }
+  if (!input.filesAllowed) {
+    sections.push(
+      'This organization has no file storage set up. Do not produce files of any kind — no screenshots, exports, rendered documents or downloads — and do not offer to; answer in text. If a task needs a file, say that file storage is not set up and an operator can add it under Organization → Storage.'
     );
   }
   return sections.join('\n\n');

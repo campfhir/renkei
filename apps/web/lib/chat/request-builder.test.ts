@@ -162,6 +162,7 @@ describe('buildSystemPrompt', () => {
       chatFiles: [],
       hasTools: true,
       hasSandbox: true,
+      filesAllowed: true,
       now: new Date('2026-09-04T10:00:00Z'),
     });
     expect(prompt).toContain('Dana');
@@ -171,5 +172,23 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('plan.pdf');
     expect(prompt).toContain('sandbox_*');
     expect(prompt).toContain('2026-09-04T10:00:00.000Z');
+  });
+});
+
+describe('buildSystemPrompt without file storage', () => {
+  it('tells the model not to produce files, and where storage is set up', () => {
+    const prompt = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: null,
+      chatFiles: [],
+      hasTools: true,
+      hasSandbox: true,
+      filesAllowed: false,
+      now: new Date('2026-09-04T00:00:00Z'),
+    });
+    expect(prompt).toMatch(/no file storage set up/);
+    expect(prompt).toMatch(/Do not produce files/);
+    expect(prompt).toMatch(/Organization → Storage/);
   });
 });

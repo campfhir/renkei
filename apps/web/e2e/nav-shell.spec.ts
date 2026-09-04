@@ -22,7 +22,14 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
   const mobile = testInfo.project.name === 'mobile';
   const shot = (name: string) =>
     page.screenshot({
-      path: path.join(import.meta.dirname, '..', 'test-results', 'screens', testInfo.project.name, name),
+      path: path.join(
+        import.meta.dirname,
+        '..',
+        'test-results',
+        'screens',
+        testInfo.project.name,
+        name
+      ),
       fullPage: false,
     });
 
@@ -41,6 +48,8 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
 
   await expect(column).toBeVisible();
   await expect(column.getByRole('link', { name: 'Projects' })).toBeVisible();
+  // The chat list and its search live in the menu on every page, not just the chat's.
+  await expect(column.getByRole('searchbox', { name: 'Find a chat' })).toBeVisible();
   await expect(column.getByRole('link', { name: 'Connectors' })).toHaveCount(0);
   await expect(column.getByRole('link', { name: 'New chat' })).toBeVisible();
   await shot('nav-column.png');
@@ -56,6 +65,14 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
   await expect(page.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
   await expect(page.getByRole('link', { name: /Agent oversight/ })).toBeVisible();
   await shot('organization.png');
+
+  // Storage has its own page, and a test that says what is wrong before saving.
+  await page.getByRole('link', { name: /^Storage/ }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Storage' })).toBeVisible();
+  await page.getByLabel('Storage account').fill('devstoreaccount1');
+  await page.getByRole('button', { name: 'Test connection' }).click();
+  await expect(page.getByText('Enter the account key to test.')).toBeVisible();
+  await shot('storage.png');
 
   await page.getByRole('button', { name: 'Hide menu' }).click();
   await expect(column).toBeHidden();

@@ -2012,10 +2012,10 @@ function OnBaseAdminForm({ slug, origin }: { slug: string; origin: string | null
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         A SEPARATE Hyland client from OnBase above — the Administration API, which creates and
-        configures document types and keyword types rather than filing documents. Register a
-        second client for Renkei on the Hyland IdP with redirect URI <CallbackUrl origin={origin} />
-        , then enter its details below. Optional: leave this card unconfigured to keep
-        configuration access out of Renkei entirely while still using OnBase for documents.
+        configures document types and keyword types rather than filing documents. Register a second
+        client for Renkei on the Hyland IdP with redirect URI <CallbackUrl origin={origin} />, then
+        enter its details below. Optional: leave this card unconfigured to keep configuration access
+        out of Renkei entirely while still using OnBase for documents.
       </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>

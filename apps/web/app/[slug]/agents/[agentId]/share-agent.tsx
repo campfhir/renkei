@@ -270,9 +270,10 @@ export default function ShareAgentButton({
                 revoke, and imports on the other side as a disabled agent
                 on THEIR connections. */}
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              To give someone a copy of this agent, use <span className="font-medium">Copy as
-              Markdown</span> in the header and send them the document — they import it from
-              the agents page and get their own disabled copy, running on their connections.
+              To give someone a copy of this agent, use{' '}
+              <span className="font-medium">Copy as Markdown</span> in the header and send them the
+              document — they import it from the agents page and get their own disabled copy,
+              running on their connections.
             </p>
             <PeopleWithAccess tenantId={tenantId} agentId={agentId} />
           </div>

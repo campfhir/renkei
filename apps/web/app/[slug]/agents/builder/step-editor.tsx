@@ -99,7 +99,14 @@ export function StepEditor({
   const failureIssues = issues.filter(
     (issue) => issue.field === 'failureHandling' || issue.field.startsWith('failureHandling.')
   );
-  const otherIssues = exceptFields(issues, 'name', 'instruction', 'tool', 'saveAs', 'failureHandling');
+  const otherIssues = exceptFields(
+    issues,
+    'name',
+    'instruction',
+    'tool',
+    'saveAs',
+    'failureHandling'
+  );
   const failureIssuePresent = failureIssues.length > 0 && step.failureHandling.length > 0;
   const failureHint = (() => {
     const retries = step.failureHandling.filter((entry) => entry.action === 'retry').length;

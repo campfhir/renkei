@@ -295,7 +295,12 @@ export async function getUsageReport(
       .sort((left, right) => right.errors - left.errors)
       .slice(0, TOP_TOOLS);
 
-    const byAgent = await getAgentUsageSummaries(db, tenantId, tenantWide ? null : ownSubject, days);
+    const byAgent = await getAgentUsageSummaries(
+      db,
+      tenantId,
+      tenantWide ? null : ownSubject,
+      days
+    );
 
     return {
       scope,

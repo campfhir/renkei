@@ -104,8 +104,7 @@ export default function OnBaseConnector({
         (confirming ? (
           <div className="mt-3 rounded-lg border border-red-300 p-3 dark:border-red-800">
             <p className="mb-3 text-sm">
-              Disconnect your OnBase account? The OnBase MCP tools stop working until you
-              reconnect.
+              Disconnect your OnBase account? The OnBase MCP tools stop working until you reconnect.
             </p>
             <div className="flex gap-3">
               <button

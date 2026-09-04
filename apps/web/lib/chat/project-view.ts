@@ -101,6 +101,7 @@ export async function loadProjectView(
       id: chat.id,
       title: chat.title,
       projectId: chat.projectId,
+      projectName: project.name,
       updatedAt: chat.updatedAt.toISOString(),
       lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
       archived: chat.archivedAt !== null,

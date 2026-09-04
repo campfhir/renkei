@@ -7,8 +7,9 @@
  * own (the action pins it from the session before calling in). Sources:
  *
  *   - `llm_calls` (migration 085): one row per model call, attributed to
- *     the person whose spend it was — a run's owner, or whoever asked for
- *     an optimization pass.
+ *     the person whose spend it was — a run's owner, whoever asked for an
+ *     optimization pass, or the person chatting (purpose 'chat', which
+ *     the totals also report on its own).
  *   - `agent_run_log` (migration 083): one row per run of an agent this
  *     person OWNS, with its outcome and, on failure, the step and kind.
  *   - `tool_calls` (migration 032, agent stamped by 086): every MCP tool
@@ -32,6 +33,9 @@ import type { DB } from '@renkei/db';
 export interface UtilizationTotals {
   inputTokens: number;
   outputTokens: number;
+  /** The part of the tokens spent in the chat (llm_calls.purpose = 'chat'). */
+  chatInputTokens: number;
+  chatOutputTokens: number;
   runs: number;
   failures: number;
   toolCalls: number;
@@ -116,6 +120,12 @@ export async function getUtilizationTotals(
       .select(({ fn }) => [
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
+        sql<string>`COALESCE(SUM(input_tokens) FILTER (WHERE purpose = 'chat'), 0)`.as(
+          'chat_input_tokens'
+        ),
+        sql<string>`COALESCE(SUM(output_tokens) FILTER (WHERE purpose = 'chat'), 0)`.as(
+          'chat_output_tokens'
+        ),
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
@@ -145,6 +155,8 @@ export async function getUtilizationTotals(
   return {
     inputTokens: Number(tokens?.input_tokens ?? 0),
     outputTokens: Number(tokens?.output_tokens ?? 0),
+    chatInputTokens: Number(tokens?.chat_input_tokens ?? 0),
+    chatOutputTokens: Number(tokens?.chat_output_tokens ?? 0),
     runs: Number(runs?.runs ?? 0),
     failures: Number(runs?.failures ?? 0),
     toolCalls: Number(calls?.calls ?? 0),

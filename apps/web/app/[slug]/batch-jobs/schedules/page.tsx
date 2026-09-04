@@ -25,7 +25,9 @@ export default async function BatchJobSchedulesPage({
   }
 
   const dbResult = getDatabase();
-  const schedules = dbResult.ok ? await listSchedules(dbResult.val, tenant.id, session.subject) : [];
+  const schedules = dbResult.ok
+    ? await listSchedules(dbResult.val, tenant.id, session.subject)
+    : [];
 
   return (
     <div className="mx-auto max-w-3xl">

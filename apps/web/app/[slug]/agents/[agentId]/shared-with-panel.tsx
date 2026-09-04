@@ -51,13 +51,14 @@ export default function SharedWithPanel({
   if (grants.length === 0) {
     return (
       <p className="text-sm text-gray-500 dark:text-gray-400">
-        Nobody has access yet. Use the <span className="font-medium">Share</span> button above to grant access.
+        Nobody has access yet. Use the <span className="font-medium">Share</span> button above to
+        grant access.
       </p>
     );
   }
 
   const personLabel = (name: string | null, email: string | null): string => {
-    return name ? `${name} (${email ?? '?'})` : email ?? '?';
+    return name ? `${name} (${email ?? '?'})` : (email ?? '?');
   };
 
   return (
@@ -65,7 +66,8 @@ export default function SharedWithPanel({
       {activeGrants.length > 0 ? (
         <div>
           <p className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400">
-            {activeGrants.length} {activeGrants.length === 1 ? 'colleague' : 'colleagues'} can read and edit this agent
+            {activeGrants.length} {activeGrants.length === 1 ? 'colleague' : 'colleagues'} can read
+            and edit this agent
           </p>
           <ul className="divide-y divide-gray-100 dark:divide-gray-900">
             {activeGrants.map((grant) => (

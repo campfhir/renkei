@@ -9,7 +9,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
-import { blobStoreConfigured } from '@renkei/blob-store';
+import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { resolveResourceAccess } from '@/lib/chat/access';
@@ -27,8 +27,12 @@ export async function PUT(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  if (!blobStoreConfigured()) {
-    return jsonError(503, 'uploads-off', 'File uploads are not configured for this deployment.');
+  if (!(await tenantBlobStoreConfigured(tenantId))) {
+    return jsonError(
+      503,
+      'uploads-off',
+      'File storage is not set up for this organization. An operator can add it under Organization → Storage.'
+    );
   }
 
   const url = new URL(request.url);

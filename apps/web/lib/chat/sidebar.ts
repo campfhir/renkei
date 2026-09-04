@@ -1,7 +1,8 @@
 /**
- * The sidebar's data: the viewer's chats, the chats shared with them by
- * name, the chats in the projects they belong to, and those projects —
- * fetched once for the chat layout and again for the list route.
+ * The menu's chat list: the viewer's chats (archived ones too, flagged),
+ * the chats shared with them by name, the chats in the projects they
+ * belong to, and those projects — loaded by the tenant layout for every
+ * page, since the list sits in the app menu.
  */
 
 import type { Kysely } from 'kysely';
@@ -25,11 +26,17 @@ export interface ChatSidebarData {
   projects: ProjectListItem[];
 }
 
-function item(chat: ChatRow, via: ChatListItem['via'], ownerName: string | null): ChatListItem {
+function item(
+  chat: ChatRow,
+  via: ChatListItem['via'],
+  ownerName: string | null,
+  projectName: string | null
+): ChatListItem {
   return {
     id: chat.id,
     title: chat.title,
     projectId: chat.projectId,
+    projectName,
     updatedAt: chat.updatedAt.toISOString(),
     lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
     archived: chat.archivedAt !== null,
@@ -61,7 +68,8 @@ export async function loadChatSidebar(
   subject: string
 ): Promise<ChatSidebarData> {
   const [owned, grants, projectIds] = await Promise.all([
-    listOwnedChats(db, tenantId, subject),
+    // Archived chats ride along, flagged; the list hides them by default.
+    listOwnedChats(db, tenantId, subject, { includeArchived: true }),
     listGrantedResources(db, tenantId, subject, 'chat'),
     listAccessibleProjectIds(db, tenantId, subject),
   ]);
@@ -80,13 +88,20 @@ export async function loadChatSidebar(
     ...inProjects.map((chat) => chat.ownerSubject),
     ...projects.map((project) => project.ownerSubject),
   ]);
+  const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+  const projectNameOf = (chat: ChatRow) =>
+    chat.projectId ? (projectNames.get(chat.projectId) ?? null) : null;
   return {
     chats: [
-      ...owned.map((chat) => item(chat, 'owner', null)),
-      ...granted.map((chat) => item(chat, 'grant', names.get(chat.ownerSubject) ?? null)),
+      ...owned.map((chat) => item(chat, 'owner', null, projectNameOf(chat))),
+      ...granted.map((chat) =>
+        item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
+      ),
       ...inProjects
         .filter((chat) => !grantedIds.has(chat.id))
-        .map((chat) => item(chat, 'project', names.get(chat.ownerSubject) ?? null)),
+        .map((chat) =>
+          item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
+        ),
     ],
     projects: projects.map((project) => ({
       id: project.id,

@@ -19,6 +19,16 @@ export { blobStoreConfig, type AzureBlobConfig, type BlobStoreConfig } from './c
 export { chatAttachmentKey } from './keys';
 export { createAzureBlobStore } from './azure';
 export { stringToSign, sharedKeySignature, authorizationHeader } from './azure-sign';
+export {
+  BLOB_STORAGE_CONNECTOR,
+  blobStoreConfigOfRow,
+  blobStoreFor,
+  resolveTenantBlobConfig,
+  resolveTenantBlobStore,
+  tenantBlobStoreConfigured,
+  resetTenantBlobStores,
+  type StoredBlobSettings,
+} from './tenant';
 
 interface BlobStoreState {
   store: BlobStore | null;

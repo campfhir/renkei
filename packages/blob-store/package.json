@@ -10,7 +10,10 @@
     "test": "jest"
   },
   "dependencies": {
-    "@campfhir/safe-functions": "^0.1.3"
+    "@campfhir/safe-functions": "^0.1.3",
+    "@renkei/connector-config": "workspace:*",
+    "@renkei/crypto": "workspace:*",
+    "@renkei/db": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

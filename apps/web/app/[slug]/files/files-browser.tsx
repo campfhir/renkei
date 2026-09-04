@@ -209,7 +209,12 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden rounded-md border border-gray-200 px-1 py-0.5 dark:border-gray-800">
-      <button type="button" aria-label="Share root" onClick={() => onNavigate('/')} className={chip}>
+      <button
+        type="button"
+        aria-label="Share root"
+        onClick={() => onNavigate('/')}
+        className={chip}
+      >
         /
       </button>
       {hidden > 0 ? (
@@ -515,7 +520,9 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
           <>
             {/* Desktop: a sortable table. */}
             <div className="mt-2 hidden sm:block">
-              <div className={`${rowGrid} border-b border-gray-200 px-2 pb-1.5 dark:border-gray-800`}>
+              <div
+                className={`${rowGrid} border-b border-gray-200 px-2 pb-1.5 dark:border-gray-800`}
+              >
                 {headerButton('Name', 'name')}
                 {headerButton('Size', 'size', 'justify-end')}
                 {headerButton('Modified', 'modified')}
@@ -1108,8 +1115,8 @@ function MoveModal({
       >
         <label className="block text-sm">
           <span className="mb-1 block text-gray-600 dark:text-gray-400">
-            Move <span className="font-medium">{entry.name}</span> to which folder? (path from
-            the share root)
+            Move <span className="font-medium">{entry.name}</span> to which folder? (path from the
+            share root)
           </span>
           <input
             autoFocus
@@ -1165,10 +1172,7 @@ function DeleteModal({
   };
 
   return (
-    <Modal
-      title={entry.kind === 'dir' ? 'Delete folder' : 'Delete file'}
-      onClose={onClose}
-    >
+    <Modal title={entry.kind === 'dir' ? 'Delete folder' : 'Delete file'} onClose={onClose}>
       <p className="text-sm">
         Delete <span className="font-mono">{entry.path}</span> permanently?
       </p>
@@ -1180,7 +1184,12 @@ function DeleteModal({
       <ModalFooter
         onClose={onClose}
         action={
-          <button type="button" disabled={busy} onClick={() => void remove()} className={dangerButton}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void remove()}
+            className={dangerButton}
+          >
             {busy ? 'Deleting…' : 'Delete permanently'}
           </button>
         }

@@ -28,7 +28,13 @@ function sourceValueOf(config: Record<string, unknown>): SourceValue {
     afterProcessing: afterProcessingValueOf(config),
   };
   if (str(grouping.strategy) === 'filename-pattern') {
-    return { shareId, path, strategy: 'filename-pattern', pattern: str(grouping.pattern), ...options };
+    return {
+      shareId,
+      path,
+      strategy: 'filename-pattern',
+      pattern: str(grouping.pattern),
+      ...options,
+    };
   }
   return { shareId, path, strategy: 'whole-file', pattern: '', ...options };
 }
@@ -53,7 +59,10 @@ export default async function EditBatchJobSchedulePage({
   if (!schedule || schedule.subject !== session.subject) notFound();
 
   const calendars = await loadCalendarOptions(dbResult.val, tenant.id);
-  const fallbackScheduleConfig: ScheduleConfig = { recurrences: [{ every: 'day', at: '09:00' }], timezone: 'UTC' };
+  const fallbackScheduleConfig: ScheduleConfig = {
+    recurrences: [{ every: 'day', at: '09:00' }],
+    timezone: 'UTC',
+  };
   const scheduleConfig = parseScheduleConfig(schedule.schedule_config) ?? fallbackScheduleConfig;
 
   return (

@@ -168,6 +168,7 @@ export default function UtilizationViewer({
 
   const { totals } = report;
   const totalTokens = totals.inputTokens + totals.outputTokens;
+  const chatTokens = totals.chatInputTokens + totals.chatOutputTokens;
   const perRun = tokensPerRun(totals.inputTokens, totals.outputTokens, totals.runs);
   const failureRate = totals.runs > 0 ? (totals.failures / totals.runs) * 100 : 0;
   const toolErrorRate = totals.toolCalls > 0 ? (totals.toolErrors / totals.toolCalls) * 100 : 0;
@@ -186,9 +187,9 @@ export default function UtilizationViewer({
           Tools
         </Link>
         <p className="w-full text-sm text-gray-500 dark:text-gray-400">
-          Everything done as you: the tokens your agents spend, their runs, and every tool call made
-          under your account — from a chat client or by an agent acting for you. Counts only, never
-          content.
+          Everything done as you: the tokens your agents and your chats spend, agent runs, and every
+          tool call made under your account — from a chat client, the chat here, or by an agent
+          acting for you. Counts only, never content.
         </p>
       </header>
 
@@ -222,7 +223,11 @@ export default function UtilizationViewer({
         <Stat
           label="Tokens"
           value={formatTokens(totalTokens)}
-          hint={`${formatTokens(totals.inputTokens)} in · ${formatTokens(totals.outputTokens)} out`}
+          hint={
+            chatTokens > 0
+              ? `${formatTokens(totals.inputTokens)} in · ${formatTokens(totals.outputTokens)} out · ${formatTokens(chatTokens)} in chat`
+              : `${formatTokens(totals.inputTokens)} in · ${formatTokens(totals.outputTokens)} out`
+          }
         />
         <Stat
           label="Agent runs"

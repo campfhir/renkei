@@ -23,6 +23,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxConfig } from '@renkei/sandbox-client';
+import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
@@ -298,6 +299,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
+      filesAllowed: await tenantBlobStoreConfigured(input.tenantId),
       now: new Date(),
     });
 

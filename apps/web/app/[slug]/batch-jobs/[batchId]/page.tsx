@@ -62,7 +62,9 @@ export default async function BatchJobDetailPage({
   const items = await listItems(dbResult.val, batch.id, { limit: 200, status: filter });
 
   const tabHref = (tabStatus?: string) =>
-    tabStatus ? `/${slug}/batch-jobs/${batchId}?status=${tabStatus}` : `/${slug}/batch-jobs/${batchId}`;
+    tabStatus
+      ? `/${slug}/batch-jobs/${batchId}?status=${tabStatus}`
+      : `/${slug}/batch-jobs/${batchId}`;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -99,8 +101,7 @@ export default async function BatchJobDetailPage({
           <span className="font-medium">After processing:</span> {afterProcessingLine(batch.config)}
         </p>
         <p>
-          <span className="font-medium">Started:</span>{' '}
-          <LocalTime at={batch.created_at} />
+          <span className="font-medium">Started:</span> <LocalTime at={batch.created_at} />
         </p>
         {batch.finished_at ? (
           <p>
@@ -135,15 +136,23 @@ export default async function BatchJobDetailPage({
 
       {items.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          {filter ? 'No items match.' : batch.total === null ? 'Still discovering the source folder…' : 'No items.'}
+          {filter
+            ? 'No items match.'
+            : batch.total === null
+              ? 'Still discovering the source folder…'
+              : 'No items.'}
         </p>
       ) : (
         <ul className="space-y-2">
           {items.map((item) => {
             const documentKey = str(item.payload.documentKey) || item.id;
             const sandboxFileId = item.result ? str(item.result.sandboxFileId) : '';
-            const skipReason = item.status === 'skipped' && item.result ? str(item.result.reason) : '';
-            const after = item.result && isRecord(item.result.afterProcessing) ? item.result.afterProcessing : null;
+            const skipReason =
+              item.status === 'skipped' && item.result ? str(item.result.reason) : '';
+            const after =
+              item.result && isRecord(item.result.afterProcessing)
+                ? item.result.afterProcessing
+                : null;
             const afterLine = after
               ? str(after.error)
                 ? ''

@@ -18,7 +18,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { getBlobStore } from '@renkei/blob-store';
+import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
@@ -133,7 +133,7 @@ export async function resendFromMessage(
     }
   });
   if (removedBlobKeys.length > 0) {
-    const store = getBlobStore();
+    const store = await resolveTenantBlobStore(input.tenantId);
     if (store.ok) {
       for (const key of removedBlobKeys) {
         const deleted = await store.val.deleteObject(key);

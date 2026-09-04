@@ -8,7 +8,7 @@
  */
 
 import { sbWriteFile, sandboxConfig } from '@renkei/sandbox-client';
-import { getBlobStore } from '@renkei/blob-store';
+import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { openText } from './content-crypto';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import type { ChatToolConfig } from './tool-config';
@@ -119,7 +119,7 @@ export function attachmentTools(toolConfig: ChatToolConfig): LocalTool[] {
         const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
         const attachment = await findAttachment(context, id);
         if (!attachment) return errorResult('No such attachment in this chat.');
-        const store = getBlobStore();
+        const store = await resolveTenantBlobStore(context.tenantId);
         if (!store.ok) return errorResult('No file store is configured.');
         const object = await store.val.getObject(attachment.blobKey);
         if (!object.ok) return errorResult(`The file could not be read (${object.err.type}).`);

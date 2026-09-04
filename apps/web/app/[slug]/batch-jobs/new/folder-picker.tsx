@@ -133,7 +133,10 @@ export default function FolderPicker({
       )}
 
       <div className="mt-4 flex items-center justify-between gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
-        <p className="min-w-0 truncate font-mono text-xs text-gray-500 dark:text-gray-400" title={path}>
+        <p
+          className="min-w-0 truncate font-mono text-xs text-gray-500 dark:text-gray-400"
+          title={path}
+        >
           {path}
         </p>
         <div className="flex shrink-0 items-center gap-2">
