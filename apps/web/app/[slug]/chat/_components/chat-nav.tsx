@@ -50,8 +50,11 @@ export function ChatList({
     active: true,
     archived: false,
   });
-  const archivedCount = useMemo(
-    () => data.chats.filter((chat) => chat.archived).length,
+  const counts = useMemo(
+    () => ({
+      active: data.chats.filter((chat) => !chat.archived).length,
+      archived: data.chats.filter((chat) => chat.archived).length,
+    }),
     [data.chats]
   );
   const shown = useCallback(
@@ -88,7 +91,7 @@ export function ChatList({
           aria-label="Find a chat"
           className="min-w-0 flex-1 bg-transparent px-2 py-1 text-sm outline-none"
         />
-        <StateFilter states={states} onChange={setStates} archivedCount={archivedCount} />
+        <StateFilter states={states} onChange={setStates} counts={counts} />
       </div>
       <nav aria-label="Chats">
         {groups.length === 0 && shared.length === 0 ? (
@@ -147,18 +150,18 @@ export function ChatList({
 function StateFilter({
   states,
   onChange,
-  archivedCount,
+  counts,
 }: {
   states: { active: boolean; archived: boolean };
   onChange: (states: { active: boolean; archived: boolean }) => void;
-  archivedCount: number;
+  counts: { active: number; archived: number };
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, ref, close);
   const custom = !states.active || states.archived;
-  const option = (key: 'active' | 'archived', label: string, count: number | null) => (
+  const option = (key: 'active' | 'archived', label: string) => (
     <button
       type="button"
       role="menuitemcheckbox"
@@ -170,7 +173,7 @@ function StateFilter({
         {states[key] ? <Icon path={ICONS.check} className="h-4 w-4" strokeWidth={2.4} /> : null}
       </span>
       <span className="flex-1">{label}</span>
-      {count !== null ? <span className="text-xs text-gray-400">{count}</span> : null}
+      <span className="text-xs text-gray-400">{counts[key]}</span>
     </button>
   );
   return (
@@ -200,8 +203,8 @@ function StateFilter({
           <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
             Show
           </p>
-          {option('active', 'Active', null)}
-          {option('archived', 'Archived', archivedCount)}
+          {option('active', 'Active')}
+          {option('archived', 'Archived')}
         </div>
       ) : null}
     </div>
