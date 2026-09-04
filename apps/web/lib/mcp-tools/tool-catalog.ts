@@ -158,11 +158,13 @@ async function jsmGrantScopesFor(
   };
 }
 
-// Long-lived: every connect/disconnect path already calls
-// invalidateToolCatalogCache explicitly (see the grant routes and the OAuth
-// callback), so this TTL is only the self-heal fallback for whatever isn't
-// wired up yet — an org-wide connector toggle or read-only flip, or a
-// process that never got the invalidation. Those propagate on this clock.
+// Long-lived: every path that can change what this returns already calls
+// invalidateToolCatalogCache explicitly — the per-connector grant routes,
+// the OAuth callback, and the org-admin connector-availability/org-settings
+// routes (disabledConnectors, readOnly). This cache is per-process, so the
+// TTL is only the self-heal fallback for a sibling apps/web instance that
+// invalidated its own copy but not this one (multi-instance deployment,
+// a rolling deploy) — it can afford to be long.
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 
 interface CacheEntry {

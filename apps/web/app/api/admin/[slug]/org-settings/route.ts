@@ -14,6 +14,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getOrgSettings, setOrgSettings, type OrgSettings } from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 
 /** key → [min, max]; the UI states the same ranges. */
 const NUMERIC_BOUNDS = {
@@ -201,6 +202,10 @@ export async function PUT(
       // "who set read-only, and when" is precisely an audit question.
       details: { changed },
     });
+    // readOnly is the one editable setting here the tool catalog reads (the
+    // scope gate strips mutating tools org-wide); every other key is inert
+    // to it, so only invalidate when it actually moved.
+    if ('readOnly' in changed) invalidateToolCatalogCache(tenantRef.id);
   }
 
   const after = await getOrgSettings(tenantRef.id);
