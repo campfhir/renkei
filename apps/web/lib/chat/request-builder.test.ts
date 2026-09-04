@@ -187,7 +187,8 @@ describe('buildSystemPrompt', () => {
     });
     expect(prompt).toContain('chat_write_file');
     expect(prompt).toMatch(/Artifacts/);
-    expect(prompt).toMatch(/Only text-based files/);
+    expect(prompt).toMatch(/\.xlsx from CSV/);
+    expect(prompt).toMatch(/never bytes or base64/);
     expect(prompt).not.toMatch(/Do not produce files/);
   });
 });

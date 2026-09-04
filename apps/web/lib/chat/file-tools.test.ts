@@ -1,14 +1,16 @@
+/* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for a tool that never touches it */
 /**
  * chat_write_file's promises: the content comes back as a document the
  * runner keeps as an artifact, named as asked and typed by its extension
- * or the caller's word; a path, a control character, a binary format or
- * an oversized body is refused with the reason.
+ * or the caller's word; a document extension is rendered from the text
+ * (the renderers' own promises are in render/*.test.ts); a path, a
+ * control character, a format nothing can produce or an oversized body
+ * is refused with the reason.
  */
 
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { checkFilename, fileTools, resolveMediaType, WRITE_FILE_MAX_CHARS } from './file-tools';
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- never touches the db
 const context: LocalToolContext = {
   db: null as unknown as LocalToolContext['db'],
   tenantId: 't1',
@@ -18,10 +20,25 @@ const context: LocalToolContext = {
   readOnly: false,
 };
 
-function documentsOf(meta: Record<string, unknown>) {
+interface Doc {
+  mediaType: string;
+  dataBase64: string;
+  title: string;
+}
+
+function isDoc(value: unknown): value is Doc {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'mediaType' in value &&
+    'dataBase64' in value &&
+    'title' in value
+  );
+}
+
+function documentsOf(meta: Record<string, unknown>): Doc[] {
   const raw = meta.renkeiDocuments;
-  if (!Array.isArray(raw)) return [];
-  return raw as { mediaType: string; dataBase64: string; title: string }[];
+  return Array.isArray(raw) ? raw.filter(isDoc) : [];
 }
 
 describe('chat_write_file', () => {
@@ -40,7 +57,7 @@ describe('chat_write_file', () => {
       context
     );
     expect(result.isError).toBe(false);
-    expect(result.content[0]?.text).toMatch(/Wrote addresses\.csv \(text\/csv, 22 bytes\)/);
+    expect(result.content[0]?.text).toMatch(/Wrote addresses\.csv \(text\/csv, 21 bytes\)/);
     const [doc] = documentsOf(result.meta);
     expect(doc).toEqual({
       mediaType: 'text/csv',
@@ -68,14 +85,46 @@ describe('chat_write_file', () => {
     expect(documentsOf(bare.meta)[0]?.mediaType).toBe('text/plain');
   });
 
-  it('refuses a binary format and says what to write instead', async () => {
+  it('renders a document format from the text and keeps it without showing it back', async () => {
     const result = await tools.run(
       'chat_write_file',
-      { filename: 'report.xlsx', content: 'a,b' },
+      { filename: 'report.xlsx', content: 'name,total\nAda,12\n' },
+      context
+    );
+    expect(result.isError).toBe(false);
+    expect(result.content[0]?.text).toMatch(
+      /Wrote report\.xlsx \(application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet, \d+ bytes\)/
+    );
+    const [doc] = documentsOf(result.meta);
+    expect(doc?.title).toBe('report.xlsx');
+    // A zip, as every Office file is.
+    expect(Buffer.from(doc!.dataBase64, 'base64').subarray(0, 2).toString('latin1')).toBe('PK');
+    expect(result.meta.renkeiDocumentsShown).toBe(false);
+  });
+
+  it('passes a renderer’s note on to the model', async () => {
+    const result = await tools.run(
+      'chat_write_file',
+      { filename: 'memo.pdf', content: '# 連携\n\nLinkage.' },
+      context
+    );
+    expect(result.isError).toBe(false);
+    expect(result.content[0]?.text).toMatch(/Note: The PDF fonts cover Latin text only/);
+    expect(
+      Buffer.from(documentsOf(result.meta)[0]!.dataBase64, 'base64').subarray(0, 4).toString()
+    ).toBe('%PDF');
+  });
+
+  it('refuses a format nothing here can produce and says what to write instead', async () => {
+    const result = await tools.run(
+      'chat_write_file',
+      { filename: 'report.xls', content: 'a,b' },
       context
     );
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toMatch(/\.xlsx files cannot be written here: write the data as CSV/);
+    expect(result.content[0]?.text).toMatch(
+      /\.xls files cannot be written here: write it as \.xlsx instead/
+    );
     expect(documentsOf(result.meta)).toEqual([]);
   });
 
@@ -107,7 +156,7 @@ describe('chat_write_file', () => {
       context
     );
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toMatch(/at most 1000000 characters/);
+    expect(result.content[0]?.text).toMatch(/at most 1000000 can be written/);
   });
 });
 
@@ -119,7 +168,10 @@ describe('checkFilename / resolveMediaType', () => {
   });
 
   it('types by extension, case-insensitively, and falls back to plain text', () => {
-    expect(resolveMediaType('A.JSON', undefined)).toEqual({ ok: true, mediaType: 'application/json' });
+    expect(resolveMediaType('A.JSON', undefined)).toEqual({
+      ok: true,
+      mediaType: 'application/json',
+    });
     expect(resolveMediaType('a.tsv', undefined)).toEqual({
       ok: true,
       mediaType: 'text/tab-separated-values',

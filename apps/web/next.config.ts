@@ -53,11 +53,18 @@ const nextConfig: NextConfig = {
   // are require()d CJS the bundler has no reason to touch — which is why
   // apps/web declares them directly (the pdfjs rule: a transpiled
   // package's bare specifier resolves from the app at runtime).
+  // The chat's document renderers stay external as well: pdfkit reads
+  // its font metrics off disk at runtime, and the office writers are
+  // CJS with their own zip machinery — nothing a server bundle improves.
   serverExternalPackages: [
     'quickjs-emscripten',
     'esbuild',
     'ssh2-sftp-client',
     '@tryjsky/v9u-smb2',
+    'pdfkit',
+    'exceljs',
+    'pptxgenjs',
+    'docx',
   ],
   async rewrites() {
     return [

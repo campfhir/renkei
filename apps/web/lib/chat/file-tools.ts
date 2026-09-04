@@ -2,24 +2,30 @@
  * chat_write_file — the model's way to hand the person a file. Every
  * other file a chat keeps came from a tool (a screenshot, a mail
  * attachment) via `_meta.renkeiDocuments`; this tool puts the model's own
- * text through the same door, so a CSV, a Markdown document or a JSON
- * export lands under the chat's Artifacts like any other, for download
- * or copying to a network share. Text-based formats only: the content is
- * the tool argument, and a binary document would have to travel as
- * base64 the model wrote — the one thing the platform's byte paths never
- * do. Offered only when the organization has a store to keep files in
- * (chat-local-tools.ts), so the model is never given a verb that can only
- * fail.
+ * writing through the same door, so it lands under the chat's Artifacts
+ * like any other, for download or copying to a network share.
+ *
+ * The model only ever writes text. A text format (CSV, Markdown, JSON,
+ * …) is kept as written; a document format (.docx, .pdf, .pptx, .xlsx)
+ * is RENDERED here from that text — Markdown for the three documents,
+ * CSV / JSON / Markdown tables for the workbook — by a library that
+ * produces a valid file deterministically (./render). Bytes never travel
+ * as tool arguments, which is the platform's rule everywhere, and the
+ * model's cost is the same whether the result is a .csv or an .xlsx.
+ * Offered only when the organization has a store to keep files in
+ * (chat-local-tools.ts), so the model is never given a verb that can
+ * only fail.
  */
 
 import { errorResult, textResult, type LocalTool } from './local-tools';
+import { isRenderedExtension, renderDocument, RENDERED_MEDIA_TYPES } from './render';
 
 /** More than any model writes in one call; the artifact store's own cap is far above it. */
 export const WRITE_FILE_MAX_CHARS = 1_000_000;
 
 const FILENAME_MAX = 255;
 
-/** Extension → media type, for the formats the tool writes. */
+/** Extension → media type, for the formats kept as the text written. */
 const MEDIA_TYPE_BY_EXTENSION: Record<string, string> = {
   txt: 'text/plain',
   text: 'text/plain',
@@ -47,22 +53,22 @@ const WRITABLE_MEDIA_TYPES = new Set([
   'text/x-markdown',
 ]);
 
-/** Formats people ask for that this tool cannot produce, with what to do instead. */
-const BINARY_EXTENSIONS: Record<string, string> = {
-  xlsx: 'write the data as CSV (.csv) instead — it opens in Excel',
-  xls: 'write the data as CSV (.csv) instead — it opens in Excel',
-  docx: 'write the document as Markdown (.md) or plain text (.txt) instead',
-  doc: 'write the document as Markdown (.md) or plain text (.txt) instead',
-  pptx: 'write the outline as Markdown (.md) instead',
-  pdf: 'write the document as Markdown (.md) or plain text (.txt) instead',
+/** Formats people ask for that cannot be produced from text, with what to do instead. */
+const REFUSED_EXTENSIONS: Record<string, string> = {
+  xls: 'write it as .xlsx instead',
+  doc: 'write it as .docx instead',
+  ppt: 'write it as .pptx instead',
   zip: 'write the files one at a time instead',
-  png: 'only text-based files can be written',
-  jpg: 'only text-based files can be written',
-  jpeg: 'only text-based files can be written',
-  gif: 'only text-based files can be written',
+  png: 'only text-based and document files can be written',
+  jpg: 'only text-based and document files can be written',
+  jpeg: 'only text-based and document files can be written',
+  gif: 'only text-based and document files can be written',
 };
 
-export const WRITABLE_EXTENSIONS: readonly string[] = Object.keys(MEDIA_TYPE_BY_EXTENSION);
+export const WRITABLE_EXTENSIONS: readonly string[] = [
+  ...Object.keys(MEDIA_TYPE_BY_EXTENSION),
+  ...Object.keys(RENDERED_MEDIA_TYPES),
+];
 
 export type FilenameCheck = { ok: true; filename: string } | { ok: false; reason: string };
 
@@ -74,7 +80,8 @@ export function checkFilename(raw: unknown): FilenameCheck {
   if (filename.length > FILENAME_MAX) {
     return { ok: false, reason: `filename must be at most ${FILENAME_MAX} characters.` };
   }
-  if (filename === '.' || filename === '..') return { ok: false, reason: 'filename is not a name.' };
+  if (filename === '.' || filename === '..')
+    return { ok: false, reason: 'filename is not a name.' };
   if (/[/\\]/.test(filename)) {
     return { ok: false, reason: 'filename must be a name, not a path.' };
   }
@@ -94,16 +101,17 @@ export function extensionOf(filename: string): string | null {
 export type MediaTypeCheck = { ok: true; mediaType: string } | { ok: false; reason: string };
 
 /**
- * The media type a file is written as: the caller's, when it names one the
- * tool can write; else the one its extension implies; else plain text.
- * A binary extension is refused with the text format to use instead.
+ * The media type a text file is written as: the caller's, when it names
+ * one the tool can write; else the one its extension implies; else plain
+ * text. An extension nothing here can produce is refused with what to
+ * write instead. (Rendered formats never reach this — see execute.)
  */
 export function resolveMediaType(filename: string, requested: unknown): MediaTypeCheck {
   const extension = extensionOf(filename);
-  if (extension && BINARY_EXTENSIONS[extension]) {
+  if (extension && REFUSED_EXTENSIONS[extension]) {
     return {
       ok: false,
-      reason: `.${extension} files cannot be written here: ${BINARY_EXTENSIONS[extension]}.`,
+      reason: `.${extension} files cannot be written here: ${REFUSED_EXTENSIONS[extension]}.`,
     };
   }
   if (typeof requested === 'string' && requested.trim()) {
@@ -119,32 +127,38 @@ export function resolveMediaType(filename: string, requested: unknown): MediaTyp
   return { ok: true, mediaType: (extension && MEDIA_TYPE_BY_EXTENSION[extension]) || 'text/plain' };
 }
 
+const KEPT_LINE =
+  'It is under this chat’s Artifacts, where the person can download it or copy it to a network share; tell them so, and do not repeat the content.';
+
 export function fileTools(): LocalTool[] {
   return [
     {
       def: {
         name: 'chat_write_file',
         description:
-          'Write a text-based file for the person to keep — a CSV export, a Markdown or plain-text document, JSON, HTML, XML, YAML. ' +
-          'The file appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. ' +
-          'Pass the full content as text (never base64). Only text formats can be written: for a spreadsheet write CSV, for a document write Markdown. ' +
-          'Each call writes one file; write again with the same name to hand over a corrected version.',
+          'Write a file for the person to keep. It appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. ' +
+          'Pass the whole content as text, never base64; the extension decides what is made. ' +
+          'Text formats (.csv, .tsv, .md, .txt, .json, .html, .xml, .yaml) are kept exactly as written. ' +
+          'Document formats are rendered from your text: .docx (Word) and .pdf from Markdown — headings, paragraphs, bullet and numbered lists, tables, code blocks, quotes; ' +
+          '.pptx (PowerPoint) from Markdown where every # or ## heading starts a slide and what follows is its body; ' +
+          '.xlsx (Excel) from CSV, or JSON {"sheets":[{"name":…,"rows":[[…],…]}]} for several sheets, or Markdown tables (one sheet each, named by the heading above). ' +
+          'Numbers and dates in a workbook are typed as such. Each call writes one file; write again with the same name to hand over a corrected version.',
         inputSchema: {
           type: 'object',
           properties: {
             filename: {
               type: 'string',
               description:
-                'The name to save as, with an extension (report.csv, notes.md, export.json). A name, not a path.',
+                'The name to save as, with an extension (report.xlsx, brief.docx, deck.pptx, summary.pdf, data.csv, notes.md). A name, not a path.',
             },
             content: {
               type: 'string',
-              description: `The complete file content, as text (at most ${WRITE_FILE_MAX_CHARS} characters).`,
+              description: `The complete content, as text (at most ${WRITE_FILE_MAX_CHARS} characters): Markdown for .docx/.pdf/.pptx, CSV or JSON or Markdown tables for .xlsx, the file itself for a text format.`,
             },
             contentType: {
               type: 'string',
               description:
-                'Media type, when the extension does not say (default: implied by the extension, else text/plain).',
+                'For text formats only: the media type, when the extension does not say (default: implied by the extension, else text/plain).',
             },
           },
           required: ['filename', 'content'],
@@ -161,11 +175,30 @@ export function fileTools(): LocalTool[] {
             `content is ${input.content.length} characters; at most ${WRITE_FILE_MAX_CHARS} can be written in one file.`
           );
         }
+        const extension = extensionOf(name.filename);
+        if (extension && isRenderedExtension(extension)) {
+          const rendered = await renderDocument(extension, name.filename, input.content);
+          const notes = rendered.notes.length ? `\n\nNote: ${rendered.notes.join(' ')}` : '';
+          return textResult(
+            `Wrote ${name.filename} (${rendered.mediaType}, ${rendered.bytes.byteLength} bytes). ${KEPT_LINE}${notes}`,
+            {
+              renkeiDocuments: [
+                {
+                  mediaType: rendered.mediaType,
+                  dataBase64: rendered.bytes.toString('base64'),
+                  title: name.filename,
+                },
+              ],
+              // The model wrote this; it does not need to read it back.
+              renkeiDocumentsShown: false,
+            }
+          );
+        }
         const type = resolveMediaType(name.filename, input.contentType);
         if (!type.ok) return errorResult(type.reason);
         const bytes = Buffer.from(input.content, 'utf8');
         return textResult(
-          `Wrote ${name.filename} (${type.mediaType}, ${bytes.byteLength} bytes). It is under this chat’s Artifacts, where the person can download it or copy it to a network share; tell them so, and do not repeat the content.`,
+          `Wrote ${name.filename} (${type.mediaType}, ${bytes.byteLength} bytes). ${KEPT_LINE}`,
           {
             renkeiDocuments: [
               {
@@ -174,6 +207,7 @@ export function fileTools(): LocalTool[] {
                 title: name.filename,
               },
             ],
+            renkeiDocumentsShown: false,
           }
         );
       },

@@ -75,7 +75,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   }
   if (input.filesAllowed) {
     sections.push(
-      'To hand the person a file — a CSV export, a Markdown or plain-text document, JSON, HTML — write it with chat_write_file; it appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. Only text-based files can be written: offer CSV where a spreadsheet is wanted and Markdown where a document is, and do not promise a Word, Excel, PowerPoint or PDF file. A file another tool hands back (a screenshot, a mail attachment) is kept there the same way.'
+      'To hand the person a file, write it with chat_write_file; it appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. You write text and the extension decides the file: .csv, .md, .txt, .json and other text formats are kept as written; .docx and .pdf are rendered from your Markdown; .pptx from Markdown with a # or ## heading per slide; .xlsx from CSV, JSON sheets or Markdown tables. So an Excel workbook, a Word document, a PDF or a slide deck is yours to make — write the content, never bytes or base64. A file another tool hands back (a screenshot, a mail attachment) is kept there the same way.'
     );
   } else {
     sections.push(
