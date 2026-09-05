@@ -132,7 +132,8 @@ function validateOne(draft: TriggerDraft, index: number): TriggerIssue[] {
           issues.push({
             index,
             message:
-              'An active-hours window needs a "start" before its "end", both "HH:MM" ("end" may be "24:00").',
+              'An active-hours window needs a "start" before its "end", both "HH:MM" ("end" may ' +
+              'be "24:00"), and an optional "weekdays" (1-7 integers 0-6, Sunday=0).',
           });
         }
       }
