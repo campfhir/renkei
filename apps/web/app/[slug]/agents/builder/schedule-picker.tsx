@@ -32,6 +32,8 @@ const selectClass =
   'rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900';
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const ALL_WEEKDAYS: Weekday[] = [0, 1, 2, 3, 4, 5, 6];
 
 function ordinal(day: number): string {
   const tail = day % 10;
@@ -335,11 +337,36 @@ function formatClock(hhmm: string): string {
   );
 }
 
-function describeWindow(window: ActiveHoursWindow): string {
-  return `${formatClock(window.start)} – ${formatClock(window.end)}`;
+/** Consecutive days collapse to a range: Mon,Tue,Wed,Fri → "Mon–Wed, Fri". */
+function describeWeekdays(weekdays: Weekday[]): string {
+  const sorted = [...weekdays].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  let rangeStart = sorted[0];
+  let prev = sorted[0];
+  for (let index = 1; index <= sorted.length; index += 1) {
+    const day = sorted[index];
+    if (day === prev + 1) {
+      prev = day;
+      continue;
+    }
+    ranges.push(
+      rangeStart === prev
+        ? WEEKDAY_ABBR[rangeStart]
+        : `${WEEKDAY_ABBR[rangeStart]}–${WEEKDAY_ABBR[prev]}`
+    );
+    rangeStart = day;
+    prev = day;
+  }
+  return ranges.join(', ');
 }
 
-/** The active-hours chip editor: start/end time pickers, capped, removable. */
+function describeWindow(window: ActiveHoursWindow): string {
+  const clock = `${formatClock(window.start)} – ${formatClock(window.end)}`;
+  if (!window.weekdays || window.weekdays.length === 7) return clock;
+  return `${clock} · ${describeWeekdays(window.weekdays)}`;
+}
+
+/** The active-hours chip editor: start/end time pickers, day toggles, capped, removable. */
 function ActiveHoursEditor({
   windows,
   onChange,
@@ -350,12 +377,24 @@ function ActiveHoursEditor({
   const [start, setStart] = useState('09:00');
   const [end, setEnd] = useState('17:00');
   const [untilMidnight, setUntilMidnight] = useState(false);
+  const [days, setDays] = useState<Weekday[]>(ALL_WEEKDAYS);
+
+  const toggleDay = (day: Weekday) => {
+    setDays((current) =>
+      current.includes(day)
+        ? current.filter((value) => value !== day)
+        : [...current, day].sort((a, b) => a - b)
+    );
+  };
 
   const add = () => {
     const effectiveEnd = untilMidnight ? '24:00' : end;
-    if (!start || !effectiveEnd || start >= effectiveEnd) return;
-    onChange([...windows, { start, end: effectiveEnd }]);
+    if (!start || !effectiveEnd || start >= effectiveEnd || days.length === 0) return;
+    const window: ActiveHoursWindow =
+      days.length === 7 ? { start, end: effectiveEnd } : { start, end: effectiveEnd, weekdays: days };
+    onChange([...windows, window]);
     setUntilMidnight(false);
+    setDays(ALL_WEEKDAYS);
   };
 
   return (
@@ -363,7 +402,7 @@ function ActiveHoursEditor({
       <div className="flex flex-wrap items-center gap-1">
         {windows.map((window, index) => (
           <span
-            key={`${window.start}-${window.end}-${index}`}
+            key={`${window.start}-${window.end}-${(window.weekdays ?? []).join('')}-${index}`}
             className="inline-flex items-center gap-1 rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-xs text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"
           >
             {describeWindow(window)}
@@ -403,6 +442,29 @@ function ActiveHoursEditor({
             />
             Until midnight
           </label>
+          <div role="group" aria-label="Days of the week" className="flex items-center gap-0.5">
+            {WEEKDAY_ABBR.map((label, weekday) => {
+              // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- index into a fixed 7-entry array
+              const day = weekday as Weekday;
+              const active = days.includes(day);
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={active}
+                  aria-label={WEEKDAYS[weekday]}
+                  onClick={() => toggleDay(day)}
+                  className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                    active
+                      ? 'bg-sky-600 text-white'
+                      : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
           <button
             type="button"
             onClick={add}
@@ -552,7 +614,7 @@ export function ScheduleEditor({
           <p className="text-xs font-semibold text-sky-700 dark:text-sky-400">Active hours</p>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
             Constrains &ldquo;every hour&rdquo; rules to these windows. Leave empty to run around
-            the clock.
+            the clock; toggle off days to skip them, e.g. weekends.
           </p>
           <ActiveHoursEditor
             windows={value.activeHours ?? []}

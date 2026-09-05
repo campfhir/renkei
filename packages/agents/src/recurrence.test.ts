@@ -325,6 +325,20 @@ describe('isActiveHoursWindow', () => {
     expect(isActiveHoursWindow({ start: '08:00', end: '25:00' })).toBe(false);
     expect(isActiveHoursWindow({ start: '08:00' })).toBe(false);
   });
+
+  it('accepts an optional weekdays scope', () => {
+    expect(isActiveHoursWindow({ start: '08:00', end: '20:00', weekdays: [1, 2, 3, 4, 5] })).toBe(
+      true
+    );
+    expect(isActiveHoursWindow({ start: '08:00', end: '20:00', weekdays: [0] })).toBe(true);
+  });
+
+  it('rejects a malformed weekdays scope', () => {
+    expect(isActiveHoursWindow({ start: '08:00', end: '20:00', weekdays: [] })).toBe(false);
+    expect(isActiveHoursWindow({ start: '08:00', end: '20:00', weekdays: [7] })).toBe(false);
+    expect(isActiveHoursWindow({ start: '08:00', end: '20:00', weekdays: ['1'] })).toBe(false);
+    expect(isActiveHoursWindow({ start: '08:00', end: '20:00', weekdays: 'mon' })).toBe(false);
+  });
 });
 
 describe('isBlackoutEntry / blackoutPredicate', () => {
@@ -506,6 +520,24 @@ describe('computeNextRunForSchedule', () => {
     expect(next.toISOString()).toBe('2026-08-16T22:00:00.000Z');
   });
 
+  it('active hours scoped to weekdays skip the weekend', () => {
+    const config: ScheduleConfig = {
+      recurrences: [{ every: 'hour' }],
+      timezone: 'UTC',
+      // 2026-08-14 is a Friday; the 15th/16th are Sat/Sun.
+      activeHours: [{ start: '08:00', end: '18:00', weekdays: [1, 2, 3, 4, 5] }],
+    };
+    // Friday 09:30Z is in-window on an allowed weekday — next top of hour.
+    expect(computeNextRunForSchedule(config, new Date('2026-08-14T09:30:00Z')).toISOString()).toBe(
+      '2026-08-14T10:00:00.000Z'
+    );
+    // Friday 17:30Z: window closes at 18:00, and Sat/Sun are excluded —
+    // next in-window hour is Monday 08:00.
+    expect(computeNextRunForSchedule(config, new Date('2026-08-14T17:30:00Z')).toISOString()).toBe(
+      '2026-08-17T08:00:00.000Z'
+    );
+  });
+
   it('active hours compose with blackout dates', () => {
     const config: ScheduleConfig = {
       recurrences: [{ every: 'hour' }],
@@ -567,6 +599,23 @@ describe('describeRecurrence / describeSchedule', () => {
         ],
       })
     ).toBe('Every hour — active 00:00–08:00, 19:00–24:00');
+  });
+
+  it('names a weekday-scoped active-hours window, but not one covering every day', () => {
+    expect(
+      describeSchedule({
+        recurrences: [{ every: 'hour' }],
+        timezone: 'UTC',
+        activeHours: [{ start: '08:00', end: '18:00', weekdays: [1, 2, 3, 4, 5] }],
+      })
+    ).toBe('Every hour — active 08:00–18:00 Mon/Tue/Wed/Thu/Fri');
+    expect(
+      describeSchedule({
+        recurrences: [{ every: 'hour' }],
+        timezone: 'UTC',
+        activeHours: [{ start: '08:00', end: '18:00', weekdays: [0, 1, 2, 3, 4, 5, 6] }],
+      })
+    ).toBe('Every hour — active 08:00–18:00');
   });
 });
 

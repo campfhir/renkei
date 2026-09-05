@@ -34,9 +34,10 @@
  * at a chosen time, so active hours do not apply to them: pick an `at`
  * inside the desired range instead. An overnight window is two entries
  * rather than one that wraps midnight (e.g. 00:00-08:00 and 19:00-24:00) —
- * `end` may be "24:00" to mean the end of the day. Empty/absent
- * `activeHours` means unrestricted, so every existing row keeps its exact
- * behavior.
+ * `end` may be "24:00" to mean the end of the day. A window may also carry
+ * `weekdays` to scope it to particular days (e.g. business hours Mon-Fri) —
+ * omitted means every day, so every existing row keeps its exact behavior.
+ * Empty/absent `activeHours` means unrestricted.
  */
 
 export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -61,10 +62,15 @@ export type BlackoutEntry =
 
 export type BlackoutPolicy = 'skip' | 'before' | 'after';
 
-/** A wall-clock window, 'HH:MM'; `end` may be "24:00" for the end of day. */
+/**
+ * A wall-clock window, 'HH:MM'; `end` may be "24:00" for the end of day.
+ * `weekdays` (0-6, Sunday=0) scopes the window to those days; omitted means
+ * every day.
+ */
 export interface ActiveHoursWindow {
   start: string;
   end: string;
+  weekdays?: Weekday[];
 }
 
 export interface ScheduleConfig {
@@ -222,21 +228,45 @@ export function isBlackoutEntry(value: unknown): value is BlackoutEntry {
 
 export function isActiveHoursWindow(value: unknown): value is ActiveHoursWindow {
   if (typeof value !== 'object' || value === null) return false;
-  const window: { start?: unknown; end?: unknown } = value;
+  const window: { start?: unknown; end?: unknown; weekdays?: unknown } = value;
   if (typeof window.start !== 'string' || !TIME_PATTERN.test(window.start)) return false;
   if (typeof window.end !== 'string' || !END_TIME_PATTERN.test(window.end)) return false;
-  return window.start < window.end;
+  if (window.start >= window.end) return false;
+  if (window.weekdays !== undefined) {
+    if (
+      !Array.isArray(window.weekdays) ||
+      window.weekdays.length === 0 ||
+      window.weekdays.length > 7 ||
+      !window.weekdays.every(
+        (day) => typeof day === 'number' && Number.isInteger(day) && day >= 0 && day <= 6
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
- * Does the wall-clock time `hour:minute` fall in one of `windows`? No
- * windows means unrestricted. `end` is exclusive, so a window ending
- * "20:00" covers up to 19:59 and "24:00" covers through 23:59.
+ * Does the wall-clock time `hour:minute` on `weekday` (0-6, Sunday=0) fall
+ * in one of `windows`? No windows means unrestricted. `end` is exclusive,
+ * so a window ending "20:00" covers up to 19:59 and "24:00" covers through
+ * 23:59. A window's `weekdays`, if set, further restricts it to those days.
  */
-function inActiveHours(hour: number, minute: number, windows?: ActiveHoursWindow[]): boolean {
+function inActiveHours(
+  hour: number,
+  minute: number,
+  weekday: number,
+  windows?: ActiveHoursWindow[]
+): boolean {
   if (!windows || windows.length === 0) return true;
   const hhmm = `${pad2(hour)}:${pad2(minute)}`;
-  return windows.some((window) => window.start <= hhmm && hhmm < window.end);
+  return windows.some(
+    (window) =>
+      window.start <= hhmm &&
+      hhmm < window.end &&
+      (window.weekdays === undefined || window.weekdays.some((day) => day === weekday))
+  );
 }
 
 /**
@@ -507,7 +537,9 @@ function nextRunOfRule(
     for (let hops = 0; hops <= (SHIFT_CAP_DAYS + 2) * 24; hops += 1) {
       const wall = wallClockAt(next, timezone);
       const clear = !isBlackout(dateStringOf(wall.year, wall.month, wall.day));
-      if (clear && inActiveHours(wall.hour, wall.minute, options.activeHours)) return next;
+      if (clear && inActiveHours(wall.hour, wall.minute, wall.weekday, options.activeHours)) {
+        return next;
+      }
       next.setUTCHours(next.getUTCHours() + 1);
     }
     return null;
@@ -681,7 +713,17 @@ export function describeSchedule(config: ScheduleConfig): string {
     );
   }
   if (config.activeHours && config.activeHours.length > 0) {
-    const windows = config.activeHours.map((window) => `${window.start}–${window.end}`).join(', ');
+    const windows = config.activeHours
+      .map((window) => {
+        const clock = `${window.start}–${window.end}`;
+        if (!window.weekdays || window.weekdays.length === 7) return clock;
+        const days = [...window.weekdays]
+          .sort((a, b) => a - b)
+          .map((day) => WEEKDAY_NAMES[day].slice(0, 3))
+          .join('/');
+        return `${clock} ${days}`;
+      })
+      .join(', ');
     extras.push(`active ${windows}`);
   }
   return extras.length > 0 ? `${sentence} — ${extras.join(', ')}` : sentence;
