@@ -385,13 +385,17 @@ export default function AppNav({
         aria-hidden="true"
       />
 
-      {/* Drawer — slides in from the left edge, below lg only */}
+      {/* Slides in from the left edge via `left`, not `transform` — a
+          transform on this ancestor would create a new containing block
+          for any `position: fixed` dialog opened from within it (e.g. the
+          chat list's rename modal), clipping it to the drawer's own
+          narrow, scrollable box instead of the viewport. */}
       <nav
         ref={drawerRef}
         tabIndex={-1}
         aria-label="Application"
-        className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-transform duration-200 ease-out lg:hidden dark:border-gray-800 dark:bg-gray-950 ${
-          open ? 'translate-x-0' : '-translate-x-full'
+        className={`fixed inset-y-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-[left] duration-200 ease-out lg:hidden dark:border-gray-800 dark:bg-gray-950 ${
+          open ? 'left-0' : '-left-full'
         }`}
       >
         <div className="mb-4 flex items-center justify-between">
