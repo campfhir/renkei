@@ -12,25 +12,12 @@ import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ConnectorOption } from '@/lib/chat/tool-surface';
+import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 
-const LABELS: Record<string, string> = {
-  knowledge: 'Knowledge',
-  sandbox: 'Sandbox',
-  jira: 'Jira',
-  jsm: 'Service Management',
-  confluence: 'Confluence',
-  bitbucket: 'Bitbucket',
-  webex: 'WebEx',
-  outlook: 'Outlook',
-  sharepoint: 'SharePoint',
-  onedrive: 'OneDrive',
-  zoom: 'Zoom',
-  fileshares: 'File shares',
-  onbase: 'OnBase',
-  agents: 'Agents',
-  cards: 'Cards',
-  batch: 'Batch jobs',
-};
+/** Catalog label for a capability key, falling back to the key itself. */
+function connectorLabel(key: string): string {
+  return CONNECTOR_CATALOG.find((entry) => entry.capabilityKey === key)?.label ?? key;
+}
 
 export default function ToolsPopover({
   tenantId,
@@ -107,7 +94,7 @@ export default function ToolsPopover({
                     onChange([...next].sort());
                   }}
                 />
-                <span className="flex-1">{LABELS[option.key] ?? option.key}</span>
+                <span className="flex-1">{connectorLabel(option.key)}</span>
                 <span className="text-xs text-gray-400">{option.count}</span>
               </label>
             ))
