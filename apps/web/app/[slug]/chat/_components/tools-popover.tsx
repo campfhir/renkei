@@ -23,11 +23,25 @@ export default function ToolsPopover({
   tenantId,
   selected,
   onChange,
+  context = 'chat',
+  slug,
 }: {
   tenantId: string;
   /** null = the core set. */
   selected: string[] | null;
   onChange: (next: string[] | null) => void;
+  /**
+   * 'chat' (the default) offers "Save as my default" / "Clear my default" —
+   * both write the person's own cross-chat preference. 'project' hides
+   * them: a project's toolset is its own stored setting (already saved the
+   * moment a box here is toggled), not a stand-in for that personal
+   * default, and letting this popover write the user-level preference from
+   * inside a project's settings reads as "set this project's default" when
+   * it is actually changing something else entirely.
+   */
+  context?: 'chat' | 'project';
+  /** Only used in project context, to link out to where the personal default lives. */
+  slug?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<ConnectorOption[] | null>(null);
@@ -70,7 +84,9 @@ export default function ToolsPopover({
       {open ? (
         <div className="absolute right-0 z-40 mt-1 w-64 rounded-md border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
           <p className="mb-1 px-1 text-xs text-gray-500">
-            Connectors the assistant may use in this chat.
+            {context === 'project'
+              ? 'Connectors chats in this project start with, unless a chat picks its own.'
+              : 'Connectors the assistant may use in this chat.'}
           </p>
           {options === null ? (
             <p className="px-1 text-xs text-gray-500">Loading…</p>
@@ -108,7 +124,7 @@ export default function ToolsPopover({
               Reset to defaults
             </button>
           ) : null}
-          {options !== null && options.length > 0 ? (
+          {context === 'chat' && options !== null && options.length > 0 ? (
             <div className="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 text-xs dark:border-gray-700">
               <button
                 type="button"
@@ -143,6 +159,23 @@ export default function ToolsPopover({
                 </button>
               ) : null}
             </div>
+          ) : null}
+          {context === 'project' && options !== null && options.length > 0 ? (
+            <p className="mt-2 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              This is saved on the project as soon as you toggle it. Your personal default for new
+              chats outside this project lives in{' '}
+              {slug ? (
+                <a
+                  href={`/${slug}/preferences`}
+                  className="text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Preferences
+                </a>
+              ) : (
+                'Preferences'
+              )}
+              .
+            </p>
           ) : null}
         </div>
       ) : null}

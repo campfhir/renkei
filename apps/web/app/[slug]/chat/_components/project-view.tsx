@@ -143,6 +143,8 @@ export default function ProjectView({
               });
               router.refresh();
             }}
+            context="project"
+            slug={slug}
           />
         ) : null}
         {role === 'owner' ? (
