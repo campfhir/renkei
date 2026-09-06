@@ -8,7 +8,10 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { getChannelAvailability } from '@/lib/notification-channels';
+import { listChatConnectors } from '@/lib/chat/tool-surface';
+import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
 import PreferencesForm from './preferences-form';
+import DefaultToolsForm from './default-tools-form';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -28,7 +31,7 @@ export default async function PreferencesPage({
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
 
   const dbResult = getDatabase();
-  const [notifications, channels, myAgents] = await Promise.all([
+  const [notifications, channels, myAgents, chatConnectors, chatDefault] = await Promise.all([
     getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
     getChannelAvailability(tenant.id, session.subject),
     // Just id + name: the overrides picker names an agent, it doesn't need
@@ -43,7 +46,17 @@ export default async function PreferencesPage({
           .orderBy('name')
           .execute()
       : [],
+    listChatConnectors(tenant.id, session.subject),
+    getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
   ]);
+
+  const chatToolOptions = chatConnectors.map((option) => ({
+    key: option.key,
+    label:
+      CONNECTOR_CATALOG.find((entry) => entry.capabilityKey === option.key)?.label ?? option.key,
+    count: option.count,
+    core: option.core,
+  }));
 
   /*
     The CATEGORIES each connector's acts fall into, resolved HERE rather
@@ -93,6 +106,13 @@ export default async function PreferencesPage({
         Yours alone — nobody else sees these, and they change nothing about what your agents are
         allowed to do.
       </p>
+      <div className="mb-6">
+        <DefaultToolsForm
+          tenantId={tenant.id}
+          connectors={chatToolOptions}
+          initialDefault={chatDefault?.connectors ?? null}
+        />
+      </div>
       <PreferencesForm
         tenantId={tenant.id}
         slug={slug}
