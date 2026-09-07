@@ -68,7 +68,15 @@ describe('windowDayOf / webexWindowRefId', () => {
   });
 
   it('falls back to today for an unparseable timestamp', () => {
-    expect(windowDayOf('nonsense')).toBe(new Date().toISOString().slice(0, 10));
+    // Pin "now" so the impl's own `new Date()` and this assertion's can't
+    // land on opposite sides of a UTC midnight and disagree by a day.
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-09-02T12:00:00.000Z'));
+    try {
+      expect(windowDayOf('nonsense')).toBe(new Date().toISOString().slice(0, 10));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
