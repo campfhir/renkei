@@ -131,7 +131,16 @@ function redactionReason(status: string): string {
   }
 }
 
-function AttemptDetail({ attempt }: { attempt: AttemptView }) {
+/**
+ * True when this is the last attempt the run ever recorded — i.e. nothing
+ * ran after it, whatever the run's eventual status (a plain success's own
+ * onSuccess: 'stop' ends the run as 'succeeded' too, not only 'stopped'). A
+ * declared skip does NOT imply this on its own anymore (see engine.ts's
+ * decideOutcome): most of the time later steps ran fine and this flag is
+ * false, so the wording below must not claim the run ended here unless it
+ * actually did.
+ */
+function AttemptDetail({ attempt, endedRunHere }: { attempt: AttemptView; endedRunHere: boolean }) {
   if (attempt.redacted) {
     return (
       <p className="mt-1 text-xs italic text-gray-400 dark:text-gray-500">
@@ -151,12 +160,18 @@ function AttemptDetail({ attempt }: { attempt: AttemptView }) {
           Took path: {detail.chosenPathName}
         </p>
       ) : null}
-      {/* A skip ends the WHOLE run from inside a "Succeeded" attempt —
-          say so, or the timeline shows a green pill and an unexplained
-          stop ('nothing-to-do' is the pre-rename stored spelling). */}
+      {/* A skip is step-local: no tool was called, nothing was saved here,
+          and by itself it does NOT end the run — later steps still ran
+          unless this happens to be the run's very last recorded attempt (a
+          step statically configured to stop on success/skip, or a failure
+          the owner marked benign, reaching the end here). Say which
+          happened, or the wording reads as a contradiction either way.
+          ('nothing-to-do' is the pre-rename stored spelling.) */}
       {detail.declaredOutcome === 'skipped' || detail.declaredOutcome === 'nothing-to-do' ? (
         <p className="font-medium text-amber-700 dark:text-amber-300">
-          Declared skipped — the automation does not apply to this input; the run stopped here.
+          {endedRunHere
+            ? 'Declared skipped — this action did not apply to this input; the run ended here.'
+            : 'Declared skipped — this action did not apply to this input; no tool was called and the automation moved on to the next step.'}
         </p>
       ) : null}
       {typeof detail.llmSummary === 'string' && detail.llmSummary ? (
@@ -231,6 +246,12 @@ export function RunTimeline({ run }: { run: RunDetail }) {
     list.push(attempt);
     byStep.set(attempt.stepId, list);
   }
+  // Attempts arrive in execution order (runs-view.ts orders by step_index,
+  // iteration, attempt), so the last one is where the run actually ended —
+  // whatever its eventual status (a plain success's own onSuccess: 'stop'
+  // ends the run as 'succeeded' too, not only 'stopped'). That is the one
+  // case a declared skip's wording may say the run ended here.
+  const lastAttempt = run.attempts[run.attempts.length - 1];
 
   return (
     <ol className="space-y-3">
@@ -268,7 +289,7 @@ export function RunTimeline({ run }: { run: RunDetail }) {
                     </span>
                   ) : null}
                 </p>
-                <AttemptDetail attempt={attempt} />
+                <AttemptDetail attempt={attempt} endedRunHere={attempt === lastAttempt} />
               </li>
             ))}
           </ul>

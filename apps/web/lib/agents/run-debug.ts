@@ -172,7 +172,7 @@ function snapshotLines(run: RunDetail): string[] {
   return lines;
 }
 
-function attemptLines(attempt: AttemptView): string[] {
+function attemptLines(attempt: AttemptView, endedRunHere: boolean): string[] {
   const heading =
     `- ${attempt.iteration > 0 ? `Iteration ${attempt.iteration}, attempt` : 'Attempt'} ${attempt.attempt}: ${statusLabel(attempt.status)}` +
     (attempt.outcomeCode ? ` (${outcomeCodeLabel(attempt.outcomeCode)})` : '') +
@@ -198,13 +198,17 @@ function attemptLines(attempt: AttemptView): string[] {
     );
   }
   if (str(detail.chosenPathName)) lines.push(`  Took path: ${str(detail.chosenPathName)}`);
-  // A skip ends the WHOLE run from inside a "Succeeded" attempt — without
-  // this line the debug paste shows a green attempt and then an
-  // unexplained stop ('nothing-to-do' is the pre-rename stored spelling).
+  // A skip is step-local — it does NOT by itself end the run (see
+  // engine.ts's decideOutcome) — but without this line a "Succeeded"
+  // attempt that made no tool call and saved nothing reads as unexplained.
+  // Only claim the run ended here when it actually did ('nothing-to-do' is
+  // the pre-rename stored spelling).
   const declared = str(detail.declaredOutcome);
   if (declared === 'skipped' || declared === 'nothing-to-do') {
     lines.push(
-      '  Declared skipped — the step judged the automation does not apply; the run stopped here.'
+      endedRunHere
+        ? '  Declared skipped — this action did not apply to this input; the run ended here.'
+        : '  Declared skipped — this action did not apply to this input; no tool was called and the automation moved on.'
     );
   }
   if (str(detail.llmSummary)) lines.push(`  Summary: ${str(detail.llmSummary)}`);
@@ -258,9 +262,17 @@ export function renderRunDebugMarkdown(agentName: string, run: RunDetail): strin
     list.push(attempt);
     byStep.set(attempt.stepId, list);
   }
+  // Attempts arrive in execution order (runs-view.ts orders by step_index,
+  // iteration, attempt), so the last one is where the run actually ended —
+  // whatever its eventual status (a plain success's own onSuccess: 'stop'
+  // ends the run as 'succeeded' too, not only 'stopped'). That is the one
+  // case a declared skip's line may say the run ended here.
+  const lastAttempt = run.attempts[run.attempts.length - 1];
   for (const [stepId, attempts] of byStep) {
     lines.push(`### ${stepNameOf(run, stepId, attempts[0]?.stepIndex ?? 0)}`);
-    for (const attempt of attempts) lines.push(...attemptLines(attempt));
+    for (const attempt of attempts) {
+      lines.push(...attemptLines(attempt, attempt === lastAttempt));
+    }
     lines.push('');
   }
   if (run.attempts.length === 0) lines.push('(no steps ran)');
