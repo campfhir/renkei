@@ -177,20 +177,28 @@ describe('retryWithBackoff', () => {
     });
 
     it('gives up within the custom timeout rather than running all retries', async () => {
-      const fn = jest.fn().mockRejectedValue(new Error('fail'));
-      const startTime = Date.now();
+      // Fake time makes "bounded by the timeout" an exact check instead of a
+      // generous real-clock bound that a loaded CI box could still blow
+      // through, and costs the suite nothing instead of ~150ms.
+      jest.useFakeTimers();
+      try {
+        const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
-      await expect(
-        retryWithBackoff(fn, {
-          timeout: 300,
-          maxRetries: 10, // 10 retries at these delays would far outlast 300ms
-          backoffOffset: 50,
-        })
-      ).rejects.toThrow(RetryExhaustedError);
+        const assertion = expect(
+          retryWithBackoff(fn, {
+            timeout: 300,
+            maxRetries: 10, // 10 retries at these delays would far outlast 300ms
+            backoffOffset: 50,
+          })
+        ).rejects.toThrow(RetryExhaustedError);
+        await jest.runAllTimersAsync();
+        await assertion;
 
-      // Bounded by the timeout, not by maxRetries. Generous upper bound so a
-      // loaded CI box doesn't turn this into a flake.
-      expect(Date.now() - startTime).toBeLessThan(800);
+        // Bounded by the timeout, not by maxRetries.
+        expect(fn.mock.calls.length).toBeLessThan(10);
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 
@@ -209,54 +217,64 @@ describe('retryWithBackoff', () => {
     });
 
     it('aborts during backoff delay', async () => {
-      const controller = new AbortController();
-      const fn = jest.fn().mockRejectedValue(new Error('fail'));
+      // Fake time proves the abort cuts the wait short without actually
+      // paying any of the 1000ms backoff.
+      jest.useFakeTimers();
+      try {
+        const controller = new AbortController();
+        const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
-      // A long backoff so the abort lands squarely inside the wait.
-      const promise = retryWithBackoff(fn, {
-        timeout: 10000,
-        maxRetries: 5,
-        backoffOffset: 1000,
-        signal: controller.signal,
-      });
+        // A long backoff so the abort lands squarely inside the wait.
+        const promise = retryWithBackoff(fn, {
+          timeout: 10000,
+          maxRetries: 5,
+          backoffOffset: 1000,
+          signal: controller.signal,
+        });
 
-      const startTime = Date.now();
-      setTimeout(() => controller.abort(), 30);
+        setTimeout(() => controller.abort(), 30);
+        const assertion = expect(promise).rejects.toThrow(OperationAbortedError);
+        await jest.advanceTimersByTimeAsync(30);
+        await assertion;
 
-      await expect(promise).rejects.toThrow(OperationAbortedError);
-
-      // Cut the wait short instead of serving all 1000ms of it.
-      expect(Date.now() - startTime).toBeLessThan(500);
-      // Attempted once, then interrupted during the first backoff
-      expect(fn).toHaveBeenCalledTimes(1);
+        // Attempted once, then interrupted during the first backoff
+        expect(fn).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('aborts while an attempt is still running, without waiting it out', async () => {
-      const controller = new AbortController();
-      // Settles far later than the abort: if the signal were only consulted
-      // between attempts, this would take the full second.
-      let settle: ReturnType<typeof setTimeout> | undefined;
-      const fn = jest.fn(
-        () =>
-          new Promise((resolve) => {
-            settle = setTimeout(() => resolve('success'), 1000);
-          })
-      );
+      // Fake time proves the abort wins even though the operation itself
+      // won't settle until far later: if the signal were only consulted
+      // between attempts, advancing just 30ms would leave the promise
+      // pending and this test would time out.
+      jest.useFakeTimers();
+      try {
+        const controller = new AbortController();
+        let settle: ReturnType<typeof setTimeout> | undefined;
+        const fn = jest.fn(
+          () =>
+            new Promise((resolve) => {
+              settle = setTimeout(() => resolve('success'), 1000);
+            })
+        );
 
-      const promise = retryWithBackoff(fn, {
-        timeout: 10000,
-        maxRetries: 5,
-        signal: controller.signal,
-      });
+        const promise = retryWithBackoff(fn, {
+          timeout: 10000,
+          maxRetries: 5,
+          signal: controller.signal,
+        });
 
-      const startTime = Date.now();
-      setTimeout(() => controller.abort(), 30);
+        setTimeout(() => controller.abort(), 30);
+        const assertion = expect(promise).rejects.toThrow(OperationAbortedError);
+        await jest.advanceTimersByTimeAsync(30);
+        await assertion;
 
-      await expect(promise).rejects.toThrow(OperationAbortedError);
-
-      // Rejected on the abort, not on the operation's own completion.
-      expect(Date.now() - startTime).toBeLessThan(500);
-      if (settle) clearTimeout(settle);
+        if (settle) clearTimeout(settle);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('leaves no pending timer behind on success', async () => {
@@ -396,20 +414,27 @@ describe('retryWithBackoff', () => {
     });
 
     it('defaults to a 1s backoff offset', async () => {
-      const fn = jest.fn().mockRejectedValue(new Error('fail'));
-      const delays: number[] = [];
+      // Fake time observes the same schedule (onRetry still reports the
+      // real computed delay) without paying the 1s it names.
+      jest.useFakeTimers();
+      try {
+        const fn = jest.fn().mockRejectedValue(new Error('fail'));
+        const delays: number[] = [];
 
-      // The one test that must pay real time: the default offset can only be
-      // observed by letting the module actually schedule it. One retry, 1s.
-      await rejection(
-        retryWithBackoff(fn, {
-          timeout: 10000,
-          maxRetries: 1,
-          onRetry: (attempt, error, delay) => delays.push(delay),
-        })
-      );
+        const settled = rejection(
+          retryWithBackoff(fn, {
+            timeout: 10000,
+            maxRetries: 1,
+            onRetry: (attempt, error, delay) => delays.push(delay),
+          })
+        );
+        await jest.runAllTimersAsync();
+        await settled;
 
-      expect(delays).toEqual([1000]);
+        expect(delays).toEqual([1000]);
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 });
