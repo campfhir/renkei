@@ -110,6 +110,8 @@ describe('tool config', () => {
       connectors: ['a'],
     });
     expect(effectiveToolConfig(null, { connectors: ['b'] })).toEqual({ connectors: ['b'] });
-    expect(effectiveToolConfig(null, null)).toEqual({ connectors: ['knowledge', 'sandbox'] });
+    expect(effectiveToolConfig(null, null)).toEqual({
+      connectors: ['agents', 'cards', 'knowledge', 'sandbox'],
+    });
   });
 });

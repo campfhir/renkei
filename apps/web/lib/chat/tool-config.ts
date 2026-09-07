@@ -10,8 +10,12 @@
  * database) and passed in, same as chat and project here.
  */
 
-/** On by default: the org's knowledge, the agent scratch space. */
-export const CHAT_CORE_CONNECTORS: readonly string[] = ['knowledge', 'sandbox'];
+/**
+ * On by default: the renkei platform tools (agents, cards, knowledge) plus
+ * the agent scratch space. `logs` is deliberately left out — it's not
+ * something a chat should reach for without the person opting in.
+ */
+export const CHAT_CORE_CONNECTORS: readonly string[] = ['agents', 'cards', 'knowledge', 'sandbox'];
 
 /** Always offered whatever the toolset, because they carry no connector risk. */
 export const CHAT_ALWAYS_TOOLS: readonly string[] = ['whoami'];
