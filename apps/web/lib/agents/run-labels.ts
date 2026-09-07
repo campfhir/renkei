@@ -15,9 +15,9 @@ const STATUS_LABELS: Record<string, string> = {
   succeeded: 'Succeeded',
   failed: 'Failed',
   canceled: 'Canceled',
-  // A graceful early end — a step judged the automation does not apply to
-  // this input, so the rest was skipped. Deliberately not a failure and
-  // not a plain success.
+  // A graceful early end — a step statically configured to stop here (on
+  // success or a declared skip), or a failure the owner marked benign.
+  // Deliberately not a failure and not a plain success.
   stopped: 'Skipped',
   // Parked behind an approval card on the home page — the run continues
   // when the owner acts (or its wait ceiling routes the timeout path).

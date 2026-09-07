@@ -845,8 +845,20 @@ maybe('agent run engine', () => {
       .select(['status', 'error_kind'])
       .where('id', '=', runId)
       .executeTakeFirstOrThrow();
-    expect(run.status).toBe('stopped');
+    // A skip is a no-op, not a run-ending event — the single step was the
+    // last one anyway, so the run simply finishes normally.
+    expect(run.status).toBe('succeeded');
     expect(run.error_kind).toBeNull();
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['status', 'detail'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).toBe('succeeded');
+    // Still recorded as a skip in the timeline detail, legacy spelling included.
+    expect(JSON.stringify(attempts[0].detail)).toContain('skipped');
   });
 
   it('ends the run early — and quietly — when finish_step declares stop', async () => {
@@ -904,29 +916,91 @@ maybe('agent run engine', () => {
     expect(finalized[0]).toMatchObject({ status: 'succeeded', quiet: true });
   });
 
-  it('ends the run as stopped — not failed — when finish_step declares skipped', async () => {
+  it('a declared skip is a no-op for its own step — later steps still run', async () => {
+    // Regression for a step whose OWN instruction conditionally skips its
+    // tool call (e.g. "skip entirely for X"): the model reasonably
+    // declares finish_step's outcome 'skipped' for that step alone, and the
+    // rest of the automation must still run exactly as if it had not — the
+    // engine used to treat any declared skip as "the whole run does not
+    // apply" and end everything right there, silently dropping every step
+    // after it.
     const twoSteps: AgentStepsDoc = {
       version: 1,
       steps: [
         {
           id: randomUUID(),
-          name: 'Classify ticket type',
-          instruction: [{ t: 'text', v: 'Pick the target project, or conclude none applies.' }],
+          name: 'Look up component if needed',
+          instruction: [{ t: 'text', v: 'Skip entirely when no component change applies.' }],
           tool: null,
+          saveAs: 'component update',
           maxAttempts: 1,
           failureHandling: [],
         },
         {
           id: randomUUID(),
-          name: 'Never reached',
-          instruction: [{ t: 'text', v: 'Create the ticket.' }],
+          name: 'Update the ticket',
+          instruction: [{ t: 'text', v: 'Do the update.' }],
           tool: null,
+          saveAs: 'update outcome',
           maxAttempts: 1,
           failureHandling: [],
         },
       ],
     };
     const { runId } = await seedRun(twoSteps);
+    const finalized: unknown[] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => stubMcp([], () => okToolResult),
+      resolveLlm: async () =>
+        ok(
+          stubLlm((_request, call) =>
+            call === 0 ? finish('skipped') : finish('success', { saveValue: 'ticket updated' })
+          )
+        ),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      onFinalized: async (run) => {
+        finalized.push(run);
+      },
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    // The run finished normally — a step-local skip is not a run-ending event.
+    expect(run.status).toBe('succeeded');
+    expect(run.error_kind).toBeNull();
+    expect(run.error).toBeNull();
+
+    // BOTH steps ran: the second was never reachable under the old bug.
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_index', 'status', 'detail'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].status).toBe('succeeded');
+    // Still recorded as a skip for the timeline, just not run-terminal.
+    expect(JSON.stringify(attempts[0].detail)).toContain('skipped');
+    expect(attempts[1].status).toBe('succeeded');
+    expect(JSON.stringify(attempts[1].detail)).toContain('ticket updated');
+
+    expect(finalized[0]).toMatchObject({ status: 'succeeded' });
+  });
+
+  it("a step's static onSuccess stop still applies when it declares skipped", async () => {
+    // Ending the run on a skip is still available — an author opts in
+    // explicitly via the step's own onSuccess, exactly like a plain
+    // success would (see the earlier "ends the run early — and quietly"
+    // test), rather than it being every skip's default behavior.
+    const doc = singleStep({ tool: null, onSuccess: 'stop-quiet', failureHandling: [] });
+    const { runId } = await seedRun(doc);
     const finalized: unknown[] = [];
     const handler = createAgentRunHandler({
       db,
@@ -946,27 +1020,23 @@ maybe('agent run engine', () => {
       .select(['status', 'error_kind', 'error'])
       .where('id', '=', runId)
       .executeTakeFirstOrThrow();
-    // A graceful terminal: no error, no failure taxonomy, nothing red.
-    expect(run.status).toBe('stopped');
+    // A statically configured stop is the SAME graceful, quiet ending a
+    // plain success would get from onSuccess: 'stop-quiet' — a declared
+    // skip does not get its own special run status here.
+    expect(run.status).toBe('succeeded');
     expect(run.error_kind).toBeNull();
     expect(run.error).toBeNull();
+    expect(finalized[0]).toMatchObject({ status: 'succeeded', quiet: true });
 
-    // Step 2 never ran; the attempt records as a succeeded judgment whose
-    // detail carries the why for the run timeline.
     const attempts = await db
       .selectFrom('agent_run_steps')
-      .select(['status', 'outcome', 'detail'])
+      .select(['status', 'detail'])
       .where('run_id', '=', runId)
       .execute();
     expect(attempts).toHaveLength(1);
-    expect(attempts[0].status).toBe('succeeded');
     expect(JSON.stringify(attempts[0].detail)).toContain('skipped');
 
-    // The finalize hook sees the graceful status, marked quiet: no
-    // notification, no chained agents.
-    expect(finalized[0]).toMatchObject({ status: 'stopped', quiet: true });
-
-    // Redelivering a stopped run is a no-op.
+    // Redelivering a terminal run is a no-op.
     await handler({ payload: { runId } });
     const attemptsAfter = await db
       .selectFrom('agent_run_steps')

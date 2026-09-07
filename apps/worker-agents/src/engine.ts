@@ -233,17 +233,30 @@ const NO_TOOL_CALLS: ToolCallRecord[] = [];
 interface AttemptOutcome {
   succeeded: boolean;
   /**
-   * Set when finish_step declared the whole run over: 'done'/'quiet' from a
-   * success's stop flags, 'skip' from outcome 'skipped' — the step judged
-   * the automation does not apply to this input at all.
+   * Set when a SUCCESS declared the whole run over: 'done' from the plain
+   * stop flag, 'quiet' when it also asked for silence. This is the runtime
+   * override of the step's own static `onSuccess`, which `finishAttempt`
+   * falls back to when this is absent — see the header note on
+   * `decideOutcome`'s 'skipped' branch for why a declared skip does NOT set
+   * this itself.
    */
-  stopRun?: 'done' | 'quiet' | 'skip';
+  stopRun?: 'done' | 'quiet';
   outcome: 'tool_ok' | 'llm_declared' | 'tool_error' | 'llm_error' | 'guard';
   outcomeCode: string | null;
   summary: string;
   saveValue: string | null;
   /** finish_step's saveItems, when the step saved a LIST. */
   saveItems: string[] | null;
+  /**
+   * Set when finish_step declared 'skipped': THIS STEP's action does not
+   * apply to this input — no tool call, nothing saved — recorded for the
+   * run timeline. It is otherwise treated exactly like a no-op success: the
+   * run continues to the next step unless the step's own static
+   * `onSuccess` says to stop, same as it would for a plain success. A
+   * skipped step never halts the run on its own — see the header note on
+   * `decideOutcome`.
+   */
+  declaredSkip?: boolean;
   /** A note finish_step asked to carry into future runs (agent memory). */
   remember: string | null;
   toolCalls: ToolCallRecord[];
@@ -1568,8 +1581,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
           ? { promptText: clip(outcome.promptText, PROMPT_DETAIL_CHARS) }
           : {}),
         llmSummary: clip(outcome.summary, PREVIEW_CHARS),
-        declaredOutcome:
-          outcome.stopRun === 'skip' ? 'skipped' : outcome.succeeded ? 'success' : 'failure',
+        declaredOutcome: outcome.declaredSkip
+          ? 'skipped'
+          : outcome.succeeded
+            ? 'success'
+            : 'failure',
         ...(outcome.saveValue !== null
           ? { saveValue: clip(outcome.saveValue, PREVIEW_CHARS) }
           : {}),
@@ -1621,11 +1637,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       if (outcome.succeeded) {
-        // A 'skipped' declaration ends the run gracefully — its own
-        // terminal, distinct from success, never a failure.
-        if (outcome.stopRun === 'skip') {
-          return { kind: 'stop', reason: clip(outcome.summary, 300) };
-        }
+        // A 'skipped' declaration never binds saveValue/saveItems (both are
+        // always null on that path — see decideOutcome), so a step with a
+        // saveAs simply keeps whatever it was already bound to (or stays
+        // unbound) and the run falls through to the next step exactly as a
+        // no-op success would.
         if (step.saveAs && outcome.saveItems !== null) {
           // A saved LIST: bind both representations — the list for loops,
           // the joined text for var chips.
@@ -1652,13 +1668,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       lastFailureCode = outcome.outcomeCode ?? 'other';
       const handling = handlingFor(step, lastFailureCode);
       // The owner declared this outcome NOT an error ("ticket not found" is
-      // sometimes a reason to skip the rest) — the same graceful terminal
-      // as a declared skip. The attempt row keeps its outcome code (the
-      // timeline still says exactly what happened) but its STATUS becomes
-      // 'stopped', matching the run: left 'failed', the timeline showed a
-      // red Failed pill inside a skipped run, and the admin redaction
-      // rule (step content is visible on failures, for troubleshooting)
-      // exposed content of a step the owner explicitly declared benign.
+      // sometimes a reason to skip the rest) — the same graceful terminal a
+      // step's own `onSuccess: 'stop-quiet'` produces on success. The
+      // attempt row keeps its outcome code (the timeline still says exactly
+      // what happened) but its STATUS becomes 'stopped', matching the run:
+      // left 'failed', the timeline showed a red Failed pill inside a
+      // gracefully-ended run, and the admin redaction rule (step content is
+      // visible on failures, for troubleshooting) exposed content of a step
+      // the owner explicitly declared benign.
       if (handling?.action === 'stop-quiet') {
         await db
           .updateTable('agent_run_steps')
@@ -3726,13 +3743,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
     >
   ): AttemptOutcome {
     if (finish.outcome === 'skipped') {
-      // The step judged the automation does not apply to this input — a
-      // judgment call, not an error, so the attempt records as succeeded
-      // (its summary carries the why) and the run ends gracefully.
+      // THIS STEP's action does not apply to this input — a judgment call,
+      // not an error, so the attempt records as succeeded (its summary
+      // carries the why) with nothing saved. It is NOT, on its own, a
+      // reason to end the whole run: an author's own conditional skip
+      // language ("skip entirely for X") describes this one step, and
+      // every later step must still run exactly as if this one had done
+      // nothing. A step meant to end the run when its own condition fails
+      // says so explicitly — a branch's stop-quiet path, a terminal node,
+      // or this step's own static `onSuccess` — which `finishAttempt`
+      // still honors here (see its succeeded-handling below), same as it
+      // would for a plain success.
       return {
         ...base,
         succeeded: true,
-        stopRun: 'skip',
+        declaredSkip: true,
         outcome: primaryResults.length > 0 ? 'tool_ok' : 'llm_declared',
         outcomeCode: null,
         summary: finish.summary,
