@@ -10,8 +10,10 @@ import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { getChannelAvailability } from '@/lib/notification-channels';
 import { listChatConnectors } from '@/lib/chat/tool-surface';
 import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
+import { readUserMemory } from '@/lib/chat/user-memory';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
+import ChatMemoryPanel from './chat-memory-panel';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -31,24 +33,28 @@ export default async function PreferencesPage({
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
 
   const dbResult = getDatabase();
-  const [notifications, channels, myAgents, chatConnectors, chatDefault] = await Promise.all([
-    getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
-    getChannelAvailability(tenant.id, session.subject),
-    // Just id + name: the overrides picker names an agent, it doesn't need
-    // its steps — listAgents()'s full parse would be work spent for nothing
-    // this page shows.
-    dbResult.ok
-      ? dbResult.val
-          .selectFrom('agents')
-          .select(['id', 'name'])
-          .where('tenant_id', '=', tenant.id)
-          .where('owner_subject', '=', session.subject)
-          .orderBy('name')
-          .execute()
-      : [],
-    listChatConnectors(tenant.id, session.subject),
-    getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
-  ]);
+  const [notifications, channels, myAgents, chatConnectors, chatDefault, chatMemory] =
+    await Promise.all([
+      getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
+      getChannelAvailability(tenant.id, session.subject),
+      // Just id + name: the overrides picker names an agent, it doesn't need
+      // its steps — listAgents()'s full parse would be work spent for nothing
+      // this page shows.
+      dbResult.ok
+        ? dbResult.val
+            .selectFrom('agents')
+            .select(['id', 'name'])
+            .where('tenant_id', '=', tenant.id)
+            .where('owner_subject', '=', session.subject)
+            .orderBy('name')
+            .execute()
+        : [],
+      listChatConnectors(tenant.id, session.subject),
+      getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
+      dbResult.ok
+        ? readUserMemory(dbResult.val, tenant.id, session.subject, { maxEntries: 300 })
+        : { summary: null, entries: [] },
+    ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
     key: option.key,
@@ -106,11 +112,21 @@ export default async function PreferencesPage({
         Yours alone — nobody else sees these, and they change nothing about what your agents are
         allowed to do.
       </p>
-      <div className="mb-6">
+      <div className="mb-6 space-y-6">
         <DefaultToolsForm
           tenantId={tenant.id}
           connectors={chatToolOptions}
           initialDefault={chatDefault?.connectors ?? null}
+        />
+        <ChatMemoryPanel
+          tenantId={tenant.id}
+          initialSummary={chatMemory.summary}
+          initialEntries={chatMemory.entries.map((entry) => ({
+            id: entry.id,
+            content: entry.content,
+            chatId: entry.chatId,
+            createdAt: entry.createdAt.toISOString(),
+          }))}
         />
       </div>
       <PreferencesForm
