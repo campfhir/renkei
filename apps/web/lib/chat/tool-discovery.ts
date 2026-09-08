@@ -13,6 +13,7 @@
  * request-scoped closure below.
  */
 
+import { z } from 'zod';
 import type { LlmToolDef } from '@renkei/agent-llm';
 import type { DiscoverableTool } from './tool-surface';
 import { errorResult, textResult, type LocalTool } from './local-tools';
@@ -39,6 +40,70 @@ function scoreOf(haystack: string, terms: string[]): number {
     if (term.length > 0 && haystack.includes(term)) score += 1;
   }
   return score;
+}
+
+const jsonObjectSchema = z.record(z.string(), z.unknown());
+
+/** A plain object view of an unknown value, or null — validated by zod, no type assertion needed. */
+function rec(value: unknown): Record<string, unknown> | null {
+  const result = jsonObjectSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
+
+/** A JSON Schema node's type(s) as a short label — "number|string", "array", "any". */
+function jsonSchemaTypeLabel(schema: Record<string, unknown>): string {
+  if (Array.isArray(schema.type)) {
+    return schema.type.filter((entry): entry is string => typeof entry === 'string').join('|');
+  }
+  if (typeof schema.type === 'string') return schema.type;
+  const variants = schema.anyOf ?? schema.oneOf;
+  if (Array.isArray(variants)) {
+    const labels = variants
+      .map(rec)
+      .filter((entry): entry is Record<string, unknown> => entry !== null)
+      .map(jsonSchemaTypeLabel)
+      .filter(Boolean);
+    return [...new Set(labels)].join('|') || 'any';
+  }
+  if (Array.isArray(schema.enum)) return 'enum';
+  return 'any';
+}
+
+function summarizeProperty(
+  name: string,
+  schema: Record<string, unknown>,
+  required: boolean
+): string {
+  const type = jsonSchemaTypeLabel(schema);
+  const items = type === 'array' ? rec(schema.items) : null;
+  const typeLabel = items ? `${jsonSchemaTypeLabel(items)}[]` : type;
+  const description = typeof schema.description === 'string' ? schema.description : '';
+  return (
+    `${name} (${typeLabel}${required ? '' : ', optional'})` +
+    (description ? `: ${description}` : '')
+  );
+}
+
+/**
+ * A one-line parameter listing for a tool's JSON Schema — so a model that
+ * just discovered a tool through find_tools sees its shape (name, type,
+ * required-ness, description) right in the search result text, not only
+ * through whatever native tool-calling schema the provider surfaces once
+ * the tool joins the active set. Empty for a tool with no properties.
+ */
+function summarizeInputSchema(schema: Record<string, unknown>): string {
+  const properties = rec(schema.properties);
+  if (!properties) return '';
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter((entry): entry is string => typeof entry === 'string')
+      : []
+  );
+  return Object.entries(properties)
+    .map(([name, propertySchema]) => [name, rec(propertySchema)] as const)
+    .filter((entry): entry is [string, Record<string, unknown>] => entry[1] !== null)
+    .map(([name, propertySchema]) => summarizeProperty(name, propertySchema, required.has(name)))
+    .join('; ');
 }
 
 /**
@@ -89,7 +154,14 @@ export function findToolsTool(discoverable: DiscoverableTool[]): LocalTool | nul
       const matches: LlmToolDef[] = scored.map((row) => row.entry.def);
       return textResult(
         `Found ${matches.length} tool(s), now callable:\n` +
-          matches.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n'),
+          matches
+            .map((tool) => {
+              const params = summarizeInputSchema(tool.inputSchema);
+              return (
+                `- ${tool.name}: ${tool.description}` + (params ? `\n  Parameters: ${params}` : '')
+              );
+            })
+            .join('\n'),
         { discoveredTools: matches }
       );
     },

@@ -36,6 +36,29 @@ const sharepointSearch: DiscoverableTool = {
     inputSchema: { type: 'object', properties: {} },
   },
 };
+const outlookFindMeetingTimes: DiscoverableTool = {
+  connector: 'outlook',
+  def: {
+    name: 'outlook_find_meeting_times',
+    description: 'Suggest meeting slots within a window.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        durationMinutes: {
+          anyOf: [{ type: 'number' }, { type: 'string' }],
+          description: 'Meeting length in minutes, 5-1440',
+        },
+        requiredAttendees: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Required attendee email addresses',
+        },
+        max: { type: 'number', description: 'How many suggestions (default 10)' },
+      },
+      required: ['durationMinutes'],
+    },
+  },
+};
 
 describe('findToolsTool', () => {
   it('is null when nothing is discoverable — no dead-end tool offered', () => {
@@ -81,5 +104,23 @@ describe('findToolsTool', () => {
     const tools = createLocalToolSet([findToolsTool([jiraSearch])!]);
     const result = await tools.run(FIND_TOOLS_NAME, { query: '   ' }, context);
     expect(result.isError).toBe(true);
+  });
+
+  it('describes each matched tool’s parameters, not just its name and description', async () => {
+    const tools = createLocalToolSet([findToolsTool([outlookFindMeetingTimes])!]);
+    const result = await tools.run(FIND_TOOLS_NAME, { query: 'meeting times' }, context);
+
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('durationMinutes (number|string)');
+    expect(text).toContain('Meeting length in minutes, 5-1440');
+    expect(text).toContain('requiredAttendees (string[], optional)');
+    expect(text).toContain('max (number, optional)');
+  });
+
+  it('adds no parameter line for a tool with an empty schema', async () => {
+    const tools = createLocalToolSet([findToolsTool([jiraSearch])!]);
+    const result = await tools.run(FIND_TOOLS_NAME, { query: 'search' }, context);
+
+    expect(result.content[0]?.text).not.toContain('Parameters:');
   });
 });
