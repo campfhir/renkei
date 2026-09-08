@@ -64,7 +64,7 @@ export default function ToolsPopover({
     });
   }, [open, options, tenantId]);
 
-  const effective = new Set(selected ?? core);
+  const effective = new Set(selected ?? userDefault ?? core);
   const count = selected ? selected.length : null;
 
   return (
