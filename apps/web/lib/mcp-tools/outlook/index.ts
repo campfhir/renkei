@@ -3015,11 +3015,10 @@ export async function registerOutlookTools(
           .describe('Optional attendee email addresses — availability that is nice to have')
           .optional(),
         durationMinutes: z
-          .number()
-          .int()
-          .min(5)
-          .max(24 * 60)
-          .describe('Meeting length in minutes'),
+          .union([z.number(), z.string()])
+          .describe(
+            'Meeting length in minutes, 5-1440 (numeric strings such as "30" are also accepted)'
+          ),
         earliestStart: z
           .string()
           .min(1)
@@ -3047,8 +3046,19 @@ export async function registerOutlookTools(
       const optionalAttendees = Array.isArray(args.optionalAttendees)
         ? args.optionalAttendees.map(String).filter(Boolean)
         : [];
-      const durationMinutes = typeof args.durationMinutes === 'number' ? args.durationMinutes : 0;
-      if (durationMinutes <= 0) return errText('durationMinutes is required');
+      const durationMinutesRaw = args.durationMinutes;
+      const durationMinutes =
+        typeof durationMinutesRaw === 'number'
+          ? durationMinutesRaw
+          : typeof durationMinutesRaw === 'string' && durationMinutesRaw.trim() !== ''
+            ? Number(durationMinutesRaw)
+            : NaN;
+      if (!Number.isFinite(durationMinutes) || !Number.isInteger(durationMinutes)) {
+        return errText('durationMinutes is required');
+      }
+      if (durationMinutes < 5 || durationMinutes > 24 * 60) {
+        return errText('durationMinutes must be between 5 and 1440');
+      }
       const earliestStart = str(args.earliestStart);
       const latestEnd = str(args.latestEnd);
       if (!earliestStart || !latestEnd) return errText('earliestStart and latestEnd are required');
