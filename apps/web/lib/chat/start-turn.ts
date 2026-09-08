@@ -45,6 +45,7 @@ import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
 import { readProjectMemory, renderProjectMemory } from './memory';
+import { readUserMemory, renderUserMemory } from './user-memory';
 
 export const USER_MESSAGE_MAX_CHARS = 100_000;
 
@@ -317,6 +318,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       personName: person?.displayName ?? person?.email ?? null,
       orgName: null,
       project: context.project,
+      userMemoryText: context.userMemoryText,
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
@@ -386,6 +388,7 @@ export async function chatPromptContext(
   project: Awaited<ReturnType<typeof getProjectRow>>
 ): Promise<{
   project: Parameters<typeof buildSystemPrompt>[0]['project'];
+  userMemoryText: Parameters<typeof buildSystemPrompt>[0]['userMemoryText'];
   chatFiles: Parameters<typeof buildSystemPrompt>[0]['chatFiles'];
 }> {
   const files = await db
@@ -412,6 +415,9 @@ export async function chatPromptContext(
           files: files.filter((row) => row.project_id === project.id).map(shape),
         }
       : null,
+    userMemoryText: project
+      ? null
+      : renderUserMemory(await readUserMemory(db, tenantId, chat.ownerSubject)),
     chatFiles: files.filter((row) => row.chat_id === chat.id).map(shape),
   };
 }

@@ -1,10 +1,13 @@
 /**
  * The chat's own tools, chosen per turn from what the chat has: reading
- * and staging its attachments, writing a file for the person to keep, and
- * remembering things for its project. Each is registered only when it can
- * do something — no project, no memory tools; no attachments, no
- * attachment tools; no file store, no writing — so the model is never
- * offered a verb that can only fail.
+ * and staging its attachments, writing a file for the person to keep,
+ * remembering things for its project or (outside a project) for the
+ * person across every chat they own, and recalling their other chats.
+ * Each is registered only when it can do something — no project, no
+ * project memory tools; a chat in a project, no personal memory or recall
+ * tools either, since a project is self-contained and does not reach
+ * outside itself; no attachments, no attachment tools; no file store, no
+ * writing — so the model is never offered a verb that can only fail.
  */
 
 import type { Kysely } from 'kysely';
@@ -14,6 +17,8 @@ import type { ChatToolConfig } from './tool-config';
 import { attachmentTools } from './attachment-tools';
 import { fileTools } from './file-tools';
 import { memoryTools } from './memory-tools';
+import { userMemoryTools } from './user-memory-tools';
+import { recallTools } from './recall-tools';
 
 export async function chatLocalTools(
   db: Kysely<DB>,
@@ -37,6 +42,11 @@ export async function chatLocalTools(
     .executeTakeFirst();
   if (hasFiles) tools.push(...attachmentTools(toolConfig));
   if (filesAllowed) tools.push(...fileTools());
-  if (context.projectId && !context.readOnly) tools.push(...memoryTools());
+  if (context.projectId) {
+    if (!context.readOnly) tools.push(...memoryTools());
+  } else {
+    if (!context.readOnly) tools.push(...userMemoryTools());
+    tools.push(...recallTools());
+  }
   return tools;
 }

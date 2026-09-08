@@ -476,6 +476,17 @@ export interface ChatTurns {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ChatUserMemories {
+  chat_id: string | null;
+  content: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  kind: Generated<string>;
+  owner_subject: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ConnectorConfigs {
   connector: string;
   created_at: Generated<Timestamp>;
@@ -1134,6 +1145,7 @@ export interface DB {
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;
   chat_turns: ChatTurns;
+  chat_user_memories: ChatUserMemories;
   chats: Chats;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;

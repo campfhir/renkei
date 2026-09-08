@@ -19,6 +19,19 @@ import type { ChatBlock, ChatMessageView, TurnView } from '@/lib/chat/views';
 import AttachmentChip from './attachment-chip';
 import Markdown from './markdown';
 
+/**
+ * A tool call's icon, by name: memory tools get the bookmark, recalling
+ * another chat gets the history glyph, everything else the plain wrench —
+ * so the two verbs a person actually cares about (something was
+ * remembered, an old chat was reached into) stand out from the general
+ * run of tool calls at a glance.
+ */
+function toolIconFor(name: string): string {
+  if (name.startsWith('project_memory_') || name.startsWith('chat_memory_')) return ICONS.memory;
+  if (name === 'chat_recall_chats') return ICONS.history;
+  return ICONS.tool;
+}
+
 /** What the owner may do to a prompt of theirs while nothing is running. */
 export interface PromptActions {
   onResend: (message: ChatMessageView) => void;
@@ -407,7 +420,7 @@ function WorkFold({
                 <li key={index}>
                   <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
                     <summary>
-                      <Icon path={ICONS.tool} className="h-3.5 w-3.5" />
+                      <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
                       {pending ? 'Calling ' : step.result?.isError ? 'Failed: ' : 'Called '}
                       <span className="font-medium" title={step.block.name}>
                         {friendlyToolName(step.block.name, null)}

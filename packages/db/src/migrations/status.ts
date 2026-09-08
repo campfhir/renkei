@@ -124,6 +124,7 @@ export const EXPECTED_MIGRATIONS = [
   '092-chat',
   '093-prompt-libraries',
   '094-chat-attachment-origin',
+  '095-chat-user-memories',
 ];
 
 export interface MigrationStatus {
