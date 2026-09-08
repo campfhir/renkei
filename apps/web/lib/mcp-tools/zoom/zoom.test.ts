@@ -133,6 +133,35 @@ describe('zoom_create_meeting', () => {
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({ topic: 'Planning', type: 2, duration: 30 });
   });
+
+  it('accepts durationMinutes as a numeric string', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ id: 999, topic: 'Planning', start_time: 't' }));
+    const tools = await toolsOf();
+
+    await tools.get('zoom_create_meeting')!({
+      topic: 'Planning',
+      startTime: '2026-08-20T15:00:00Z',
+      durationMinutes: '30',
+    });
+
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({ duration: 30 });
+  });
+
+  it('rejects a non-numeric durationMinutes cleanly', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_create_meeting')!({
+      topic: 'Planning',
+      startTime: '2026-08-20T15:00:00Z',
+      durationMinutes: 'soon',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('durationMinutes');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
 });
 
 describe('zoom_update_meeting', () => {
@@ -143,6 +172,30 @@ describe('zoom_update_meeting', () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('Nothing to update');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('accepts durationMinutes as a numeric string', async () => {
+    mockCall.mockResolvedValue(jsonResponse({}));
+    const tools = await toolsOf();
+
+    await tools.get('zoom_update_meeting')!({ meetingId: '123', durationMinutes: '45' });
+
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({ duration: 45 });
+  });
+
+  it('rejects an out-of-range durationMinutes string cleanly', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_update_meeting')!({
+      meetingId: '123',
+      durationMinutes: '0',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('durationMinutes');
     expect(mockCall).not.toHaveBeenCalled();
   });
 });

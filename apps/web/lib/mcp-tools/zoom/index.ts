@@ -147,6 +147,19 @@ function num(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/** Meeting length, 1-1440 minutes — also accepts a numeric string like "30". */
+function parseDurationMinutes(value: unknown): number | null {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : NaN;
+  return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 1 && parsed <= 1440
+    ? parsed
+    : null;
+}
+
 function rec(value: unknown): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
@@ -303,7 +316,9 @@ export async function registerZoomTools(
           .string()
           .min(1)
           .describe('Start, ISO-8601 (e.g. 2026-08-12T15:00:00Z or local with timezone below)'),
-        durationMinutes: z.number().int().min(1).max(1440).describe('Length in minutes'),
+        durationMinutes: z
+          .union([z.number(), z.string()])
+          .describe('Length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'),
         timezone: z
           .string()
           .describe('IANA timezone for startTime (e.g. America/Chicago)')
@@ -312,6 +327,10 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const durationMinutes = parseDurationMinutes(args.durationMinutes);
+      if (durationMinutes === null) {
+        return errText('durationMinutes must be a whole number between 1 and 1440');
+      }
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_create_meeting'),
@@ -322,7 +341,7 @@ export async function registerZoomTools(
             topic: str(args.topic),
             type: 2, // scheduled
             start_time: str(args.startTime),
-            duration: args.durationMinutes,
+            duration: durationMinutes,
             ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
             ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
           },
@@ -464,7 +483,12 @@ export async function registerZoomTools(
         meetingId: z.string().min(1).describe('Meeting id to update'),
         topic: z.string().describe('New topic').optional(),
         startTime: z.string().describe('New start, ISO-8601').optional(),
-        durationMinutes: z.number().int().min(1).max(1440).describe('New length').optional(),
+        durationMinutes: z
+          .union([z.number(), z.string()])
+          .describe(
+            'New length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'
+          )
+          .optional(),
         timezone: z.string().describe('IANA timezone for startTime').optional(),
         agenda: z.string().describe('New agenda').optional(),
       }),
@@ -475,7 +499,13 @@ export async function registerZoomTools(
       const patch: Record<string, unknown> = {};
       if (str(args.topic)) patch.topic = str(args.topic);
       if (str(args.startTime)) patch.start_time = str(args.startTime);
-      if (typeof args.durationMinutes === 'number') patch.duration = args.durationMinutes;
+      if (args.durationMinutes !== undefined) {
+        const durationMinutes = parseDurationMinutes(args.durationMinutes);
+        if (durationMinutes === null) {
+          return errText('durationMinutes must be a whole number between 1 and 1440');
+        }
+        patch.duration = durationMinutes;
+      }
       if (str(args.timezone)) patch.timezone = str(args.timezone);
       if (str(args.agenda)) patch.agenda = str(args.agenda);
       if (Object.keys(patch).length === 0) return errText('Nothing to update.');
