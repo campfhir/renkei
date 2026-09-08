@@ -200,6 +200,66 @@ describe('zoom_update_meeting', () => {
   });
 });
 
+describe('zoom_create_meeting_preview', () => {
+  it('normalizes a numeric-string durationMinutes to a number on the card', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_create_meeting_preview')!({
+      topic: 'Planning',
+      startTime: '2026-08-20T15:00:00Z',
+      durationMinutes: '30',
+    });
+
+    expect(result.isError).toBeFalsy();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((result as any).structuredContent).toMatchObject({ durationMinutes: 30 });
+  });
+
+  it('rejects a non-numeric durationMinutes cleanly', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_create_meeting_preview')!({
+      topic: 'Planning',
+      startTime: '2026-08-20T15:00:00Z',
+      durationMinutes: 'soon',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('durationMinutes');
+  });
+});
+
+describe('zoom_create_meeting_confirm', () => {
+  it('accepts durationMinutes as a numeric string', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ id: 999, topic: 'Planning', start_time: 't' }));
+    const tools = await toolsOf();
+
+    await tools.get('zoom_create_meeting_confirm')!({
+      topic: 'Planning',
+      startTime: '2026-08-20T15:00:00Z',
+      durationMinutes: '30',
+    });
+
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({ duration: 30 });
+  });
+
+  it('rejects a non-numeric durationMinutes cleanly', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_create_meeting_confirm')!({
+      topic: 'Planning',
+      startTime: '2026-08-20T15:00:00Z',
+      durationMinutes: 'soon',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('durationMinutes');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
 describe('a failed call', () => {
   it('surfaces Zoom’s own message, not a bare status', async () => {
     mockCall.mockResolvedValue(

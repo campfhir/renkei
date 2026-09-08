@@ -390,7 +390,9 @@ export async function registerZoomTools(
           .string()
           .min(1)
           .describe('Start, ISO-8601 (e.g. 2026-08-12T15:00:00Z or local with timezone below)'),
-        durationMinutes: z.number().int().min(1).max(1440).describe('Length in minutes'),
+        durationMinutes: z
+          .union([z.number(), z.string()])
+          .describe('Length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'),
         timezone: z
           .string()
           .describe('IANA timezone for startTime (e.g. America/Chicago)')
@@ -403,6 +405,10 @@ export async function registerZoomTools(
       const startTime = str(args.startTime);
       if (!topic) return errText('topic is required');
       if (!startTime) return errText('startTime is required');
+      const durationMinutes = parseDurationMinutes(args.durationMinutes);
+      if (durationMinutes === null) {
+        return errText('durationMinutes must be a whole number between 1 and 1440');
+      }
       return {
         ...textResult(
           `The meeting "${topic}" (${startTime}) is awaiting the user's decision on the ` +
@@ -415,7 +421,7 @@ export async function registerZoomTools(
           kind: 'zoom',
           topic,
           startTime,
-          durationMinutes: args.durationMinutes,
+          durationMinutes,
           ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
           ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
         },
@@ -435,12 +441,18 @@ export async function registerZoomTools(
       inputSchema: z.object({
         topic: z.string().min(1).describe('Meeting topic/title'),
         startTime: z.string().min(1).describe('Start, ISO-8601'),
-        durationMinutes: z.number().int().min(1).max(1440).describe('Length in minutes'),
+        durationMinutes: z
+          .union([z.number(), z.string()])
+          .describe('Length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'),
         timezone: z.string().describe('IANA timezone for startTime').optional(),
         agenda: z.string().describe('Agenda text shown on the invite').optional(),
       }),
     },
     async (args: Record<string, any>) => {
+      const durationMinutes = parseDurationMinutes(args.durationMinutes);
+      if (durationMinutes === null) {
+        return errText('durationMinutes must be a whole number between 1 and 1440');
+      }
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_create_meeting'),
@@ -451,7 +463,7 @@ export async function registerZoomTools(
             topic: str(args.topic),
             type: 2, // scheduled
             start_time: str(args.startTime),
-            duration: args.durationMinutes,
+            duration: durationMinutes,
             ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
             ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
           },
