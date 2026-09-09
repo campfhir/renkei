@@ -59,6 +59,7 @@ const textOf = (result: { content: { text: string }[] }): string => result.conte
 const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'webex_list_rooms', args: {} },
   { tool: 'webex_list_messages', args: { roomId: 'room-1' } },
+  { tool: 'webex_bulk_list_messages', args: { roomIds: ['room-1'] } },
   { tool: 'webex_get_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_capture_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_send_message', args: { roomId: 'room-1', markdown: 'hi' } },

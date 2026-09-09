@@ -107,6 +107,109 @@ describe('webex_list_rooms', () => {
   });
 });
 
+describe('webex_bulk_list_messages', () => {
+  const messagesFor = (roomId: string) =>
+    jsonResponse({
+      items: [
+        {
+          id: `msg-${roomId}`,
+          roomId,
+          personEmail: 'bob@example.com',
+          text: `hello from ${roomId}`,
+          created: '2026-08-18',
+        },
+      ],
+    });
+
+  it('reads every room in one call and keeps the sections in the order asked', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      const roomId = new URL(path, 'https://x').searchParams.get('roomId') ?? '';
+      return messagesFor(roomId);
+    });
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2', 'room-3'],
+      max: 5,
+    });
+    const text = textOf(result);
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCall).toHaveBeenCalledTimes(3);
+    expect(mockCall).toHaveBeenCalledWith('/messages?roomId=room-2&max=5', undefined);
+    expect(text).toContain('3 room(s)');
+    expect(text.indexOf('roomId: room-1')).toBeLessThan(text.indexOf('roomId: room-2'));
+    expect(text.indexOf('roomId: room-2')).toBeLessThan(text.indexOf('roomId: room-3'));
+    expect(text).toContain('hello from room-3');
+  });
+
+  it('reads a room once even when its id is repeated', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      const roomId = new URL(path, 'https://x').searchParams.get('roomId') ?? '';
+      return messagesFor(roomId);
+    });
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({ roomIds: ['room-1', 'room-1'] })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+    expect(text).toContain('1 room(s)');
+  });
+
+  it('reports a room it cannot read in its own section without failing the others', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      const roomId = new URL(path, 'https://x').searchParams.get('roomId') ?? '';
+      if (roomId === 'room-2') return jsonResponse({ message: 'room not found' }, 404);
+      return messagesFor(roomId);
+    });
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2'],
+    });
+    const text = textOf(result);
+
+    expect(result.isError).toBeUndefined();
+    expect(text).toContain('2 room(s) (1 could not be read)');
+    expect(text).toContain('hello from room-1');
+    expect(text).toContain(
+      '## roomId: room-2\n(Could not read: WebEx API answered 404: room not found.)'
+    );
+  });
+
+  it('says so when a room simply has no messages', async () => {
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_bulk_list_messages')!({ roomIds: ['room-1'] }));
+
+    expect(text).toContain('## roomId: room-1\n(No messages.)');
+  });
+
+  it('is an error only when every room fails', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ message: 'token revoked' }, 401));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('None of the 2 room(s) could be read');
+    expect(textOf(result)).toContain('token revoked');
+  });
+
+  it('refuses an empty roomIds without calling WebEx', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({ roomIds: [] });
+
+    expect(result.isError).toBe(true);
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
 describe('webex_send_message', () => {
   it('refuses when neither roomId nor toPersonEmail is given', async () => {
     const tools = await toolsOf();

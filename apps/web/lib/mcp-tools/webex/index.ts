@@ -170,6 +170,8 @@ function webexSpaceUrl(roomId: string, messageId?: string): string | null {
 const NOTE_TO_SELF_TITLE = 'Note to Self';
 /** Membership probes before concluding no solo space exists and creating one. */
 const SOLO_PROBE_CAP = 20;
+/** Rooms one webex_bulk_list_messages call fans out over. */
+const BULK_ROOMS_CAP = 25;
 
 /**
  * WebEx cannot create a 1:1 room between an account and itself — POST
@@ -272,7 +274,8 @@ export async function registerWebexUserTools(
         'Read recent messages in a room the connected user is a member of, newest first. ' +
         'Access is the user’s own — rooms they are not in cannot be read. Threaded replies ' +
         'are marked "in thread <id>"; pass that id as parentId to webex_send_message to ' +
-        'answer in the same thread.',
+        'answer in the same thread. For several rooms at once, call ' +
+        'webex_bulk_list_messages instead of this once per room.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         roomId: z.string().min(1).describe('Room id from webex_list_rooms'),
@@ -296,6 +299,93 @@ export async function registerWebexUserTools(
           lines.join('\n\n'),
           'a chat-thread layout (grouped by sender, newest last) usually reads more naturally ' +
             'than this flat list.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'webex_bulk_list_messages',
+    {
+      title: 'WebEx · Read — List WebEx messages across many rooms',
+      description:
+        'Recent messages from up to 25 rooms in a single call, newest first within each room — ' +
+        'use this instead of one webex_list_messages per room whenever a request spans several ' +
+        'spaces (a catch-up, a digest, "what did I miss"). WebEx has no multi-room endpoint, so ' +
+        'this fans the reads out server-side and returns one section per room, in the order ' +
+        'asked. A room that cannot be read (not a member, unknown id) is reported in its own ' +
+        'section without failing the others. Access and thread marking are the same as ' +
+        'webex_list_messages.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        roomIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(BULK_ROOMS_CAP)
+          .describe('Room ids from webex_list_rooms'),
+        max: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .describe('How many messages per room (default 20)')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const roomIds: string[] = Array.isArray(args.roomIds)
+        ? args.roomIds.filter((id: unknown): id is string => typeof id === 'string' && id !== '')
+        : [];
+      if (roomIds.length === 0) return errText('roomIds is required');
+      const unique = [...new Set(roomIds)].slice(0, BULK_ROOMS_CAP);
+      const max = typeof args.max === 'number' ? args.max : 20;
+
+      // WebEx rate-limits per user and per app; a bounded window keeps 25
+      // rooms polite while still finishing in a few round trips.
+      const CONCURRENCY = 4;
+      const sections: string[] = new Array<string>(unique.length);
+      const failedIds: string[] = [];
+      let cursor = 0;
+      const fetchOne = async (): Promise<void> => {
+        for (;;) {
+          const index = cursor;
+          cursor += 1;
+          if (index >= unique.length) return;
+          const roomId = unique[index];
+          const result = await webexGet(
+            auth,
+            webexScopeFor('webex_bulk_list_messages'),
+            `/messages?roomId=${encodeURIComponent(roomId)}&max=${max}`
+          );
+          // The id is labelled `roomId` — the exact parameter name
+          // webex_list_messages and webex_send_message take — so the
+          // follow-up call is a copy, not a guessing game.
+          const heading = `## roomId: ${roomId}`;
+          if (!result.ok) {
+            failedIds.push(roomId);
+            sections[index] = `${heading}\n(Could not read: ${result.error})`;
+            continue;
+          }
+          const lines = items(result.body).map(messageLine);
+          sections[index] =
+            lines.length === 0 ? `${heading}\n(No messages.)` : `${heading}\n${lines.join('\n\n')}`;
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, unique.length) }, () => fetchOne())
+      );
+
+      // Partial failure is a report; TOTAL failure (revoked scope, dead
+      // credential) is an error the caller must see as one.
+      if (failedIds.length === unique.length) {
+        return errText(`None of the ${unique.length} room(s) could be read:\n\n${sections[0]}`);
+      }
+      const failed = failedIds.length ? ` (${failedIds.length} could not be read)` : '';
+      return textResult(
+        withPresentationHint(
+          `${unique.length} room(s)${failed}:\n\n${sections.join('\n\n---\n\n')}`,
+          'one chat-thread block per room (grouped by sender, newest last) usually reads more ' +
+            'naturally than this flat list.'
         )
       );
     }
@@ -462,9 +552,7 @@ export async function registerWebexUserTools(
       // follow-ups and thread replies need it, and only this response has it.
       // The message id takes the link straight to this message, not just
       // the space it landed in.
-      const sentRoomUrl = str(sent.roomId)
-        ? webexSpaceUrl(str(sent.roomId), str(sent.id))
-        : null;
+      const sentRoomUrl = str(sent.roomId) ? webexSpaceUrl(str(sent.roomId), str(sent.id)) : null;
       return {
         content: [
           {
