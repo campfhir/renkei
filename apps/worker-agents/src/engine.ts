@@ -805,7 +805,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
    * attempt, or a step that never reached the model). Best effort — a
    * finished attempt must not fail over its bookkeeping.
    */
-  async function recordUsage(run: RunRow, usage: UsageTotals, stepId: string): Promise<void> {
+  async function recordUsage(
+    run: RunRow,
+    usage: UsageTotals,
+    stepId: string,
+    llm: ResolvedLlm
+  ): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
     const ledger = await recordLlmCall(db, {
       tenantId: run.tenant_id,
@@ -822,6 +827,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
       ...(usage.cacheWriteInputTokens !== null
         ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
         : {}),
+      // The model this attempt's turns actually went to — every turn of
+      // one attempt runs on the one resolved model (migration 098).
+      model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
     });
     if (!ledger.ok) {
       logger.warn('token usage not recorded for run {runId}', {
@@ -1706,7 +1714,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, outcome.usage, step.id);
+      await recordUsage(run, outcome.usage, step.id, llm);
 
       if (outcome.remember) {
         // The step asked future runs to know something. Best-effort: a
@@ -2661,7 +2669,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, outcome.usage, step.id);
+        await recordUsage(run, outcome.usage, step.id, llm);
         await raiseApprovalCard(
           step,
           iteration,
@@ -2706,7 +2714,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, outcome.usage, step.id);
+        await recordUsage(run, outcome.usage, step.id, llm);
         await raiseQuestionCard(
           step,
           iteration,
@@ -3131,7 +3139,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, usage, branch.id);
+        await recordUsage(run, usage, branch.id, llm);
         return { kind: 'path', path: decidedPath };
       }
 
@@ -3165,7 +3173,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, usage, branch.id);
+      await recordUsage(run, usage, branch.id, llm);
     }
   }
 
@@ -3403,7 +3411,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, usage, loop.id);
+        await recordUsage(run, usage, loop.id, llm);
         return { kind: 'decided', choice: decided };
       }
 
@@ -3435,7 +3443,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, usage, loop.id);
+      await recordUsage(run, usage, loop.id, llm);
     }
   }
 

@@ -43,6 +43,35 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    entries: [
+      {
+        kind: 'added',
+        title: 'Agent oversight as cards, with token spend per agent',
+        detail:
+          'Each agent is a card: on/off switch, owner, last run, runs and failures, tokens in with the cached part, tokens out — for the period you pick, now including Yesterday — and a sort puts the most expensive agents first instead of a click into each one. An org card above splits the total by model.',
+      },
+      {
+        kind: 'added',
+        title: 'An agent’s tokens broken down by model and by step',
+        detail:
+          'An agent’s usage is a stack of cards for the period you pick: overall, by model, and by step — numbered as the steps outline numbers them, with a model filter. Both the owner’s page and the admin view have it.',
+      },
+      {
+        kind: 'changed',
+        title: 'Token usage records which model was used',
+        detail:
+          'Every model call now records the provider and model it went to, so spend can be read against each model’s price rather than as one undifferentiated count. Usage recorded before this cannot be attributed and is shown as such.',
+      },
+      {
+        kind: 'added',
+        title: 'Cached prompt tokens shown on their own',
+        detail:
+          'How much of the input the model served from its prompt cache — billed at a fraction of the input price — now shows beside every tokens-in figure, on Agent oversight, on an agent’s usage and in the by-model split.',
+      },
+    ],
+  },
+  {
     date: '2026-09-09',
     entries: [
       {

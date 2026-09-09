@@ -44,13 +44,36 @@ async function shot(
 test('admin — agent oversight totals', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/admin/agents`);
   await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
-  // One period at a time: the toggle drives the org total AND the per-agent
-  // Runs and Failures columns. Flip to a non-default bucket before the shot.
+  // One period at a time: the toggle drives the org card AND every agent
+  // card. Flip to a non-default bucket before the shot.
   await page.getByRole('button', { name: 'This quarter' }).click();
-  await expect(page.getByRole('columnheader', { name: 'Runs (this quarter)' })).toBeVisible();
-  await expect(page.getByRole('columnheader', { name: 'Failures (this quarter)' })).toBeVisible();
+  await expect(page.getByText('All agents · this quarter')).toBeVisible();
   await expect(page.getByText('across all agents')).toBeVisible();
+  await expect(page.getByText('Model usage')).toBeVisible();
   await shot(page, testInfo, 'admin-agent-oversight');
+});
+
+test('admin — agent oversight sorted by tokens', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/agents`);
+  await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
+  await page.getByRole('button', { name: 'This year' }).click();
+  await page.getByLabel('Sort by').selectOption('tokensIn');
+  // The seeded spender comes first; the org card names the seeded models.
+  await expect(page.getByRole('link', { name: 'Triage yesterday into tickets' })).toBeVisible();
+  await expect(page.getByText('claude-opus-5', { exact: false }).first()).toBeVisible();
+  await shot(page, testInfo, 'admin-agent-oversight-by-tokens');
+});
+
+test('admin — agent detail with usage by model and step', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/agents/${AGENT_RICH_ID}`);
+  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
+  await expect(page.getByText('By step · this month')).toBeVisible();
+  // Steps carry the outline's numbers; the model filter narrows them.
+  await expect(page.getByText('Find yesterday’s activity').first()).toBeVisible();
+  await page.getByRole('combobox', { name: 'Model' }).selectOption({ label: 'claude-sonnet-5' });
+  await expect(page.getByText('Pick what is actionable')).toHaveCount(0);
+  await page.getByRole('combobox', { name: 'Model' }).selectOption('all');
+  await shot(page, testInfo, 'admin-agent-detail');
 });
 
 test('admin — event monitor', async ({ page }, testInfo) => {
@@ -101,6 +124,22 @@ test('agent overview — memory section open', async ({ page }, testInfo) => {
   }
   await expect(page.getByText('Summary (compacted', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'agent-overview-memory-open');
+});
+
+test('agent overview — usage open', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('button', { name: 'Usage' }).click();
+    await expect(page.getByRole('dialog', { name: 'Usage' })).toBeVisible();
+  } else {
+    await page.getByText('Usage', { exact: true }).click();
+  }
+  await expect(page.getByText('Overall · this month')).toBeVisible();
+  await page.getByRole('button', { name: 'All time' }).click();
+  // The seeded pre-098 rows: real spend on a real step, with no model on them.
+  await expect(page.getByText('Model not recorded').first()).toBeVisible();
+  await shot(page, testInfo, 'agent-overview-usage-open', { fullPage: false });
 });
 
 test('agent overview — invocations open', async ({ page }, testInfo) => {

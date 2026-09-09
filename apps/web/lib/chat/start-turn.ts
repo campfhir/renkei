@@ -248,6 +248,11 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     chatId: input.chat.id,
     turnId: input.turnId,
     subject: input.session.subject,
+    model: {
+      provider: input.llm.providerName,
+      model: input.llm.model,
+      llmModelId: input.llm.modelConfigId,
+    },
   });
   const log = (message: string, fields: Record<string, unknown>) =>
     logger.warn(message, {

@@ -318,6 +318,20 @@ export interface RecordLlmCallInput {
   /** The cached portions of inputTokens (migration 097); omitted = not reported. */
   cacheReadInputTokens?: number;
   cacheWriteInputTokens?: number;
+  /**
+   * What the tokens were spent on (migration 098): the provider and model
+   * NAME as resolved for this call, plus the config row that answered.
+   * The name is what costs are read against — a config row can be
+   * re-pointed at another model later, the name on the row cannot.
+   */
+  model?: LlmCallModel | null;
+}
+
+export interface LlmCallModel {
+  provider: string;
+  model: string;
+  /** The `llm_model_configs` row, as a soft reference. */
+  llmModelId: string | null;
 }
 
 /**
@@ -344,6 +358,9 @@ export async function recordLlmCall(
           output_tokens: input.outputTokens,
           cache_read_input_tokens: input.cacheReadInputTokens ?? null,
           cache_write_input_tokens: input.cacheWriteInputTokens ?? null,
+          llm_model_id: input.model?.llmModelId ?? null,
+          provider: input.model?.provider ?? null,
+          model: input.model?.model ?? null,
         })
         .execute(),
     'DB_ERROR' as const

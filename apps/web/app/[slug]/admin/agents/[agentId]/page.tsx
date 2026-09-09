@@ -5,7 +5,13 @@ import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getAgentForAdmin } from '@/lib/agents/runs-view';
-import { getAgentTokenUsage, getAgentToolUsage } from '@/lib/agents/agent-usage';
+import {
+  getAgentTokenUsage,
+  getAgentTokenUsageByStep,
+  getAgentToolUsage,
+  getTokenUsageByModel,
+} from '@/lib/agents/agent-usage';
+import { labelStepUsage } from '@/lib/agents/step-usage-labels';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import AgentUsagePanel from '@/components/agent-usage-panel';
@@ -17,8 +23,8 @@ const TOOL_USAGE_WINDOW_DAYS = 30;
  * One agent, from the operator's side: identity (name, owner, description)
  * and the same on/off control the oversight table's "Turn off" button
  * offers, plus the usage this agent has actually run up — token spend
- * (durable, content-free) and its tool calls by connector (content, so
- * limited to failed attempts here — see agent-usage.ts).
+ * (durable, content-free), split by model and by step so the expensive
+ * step is findable from here, and its tool calls by connector.
  */
 export default async function AdminAgentDetailPage({
   params,
@@ -39,10 +45,21 @@ export default async function AdminAgentDetailPage({
   const agent = await getAgentForAdmin(db, tenant.id, agentId);
   if (!agent) notFound();
 
-  const [tokenUsage, toolUsage] = await Promise.all([
+  const [tokenUsage, byModel, stepRows, stepsDoc, toolUsage] = await Promise.all([
     getAgentTokenUsage(db, tenant.id, agentId),
+    getTokenUsageByModel(db, tenant.id, agentId),
+    getAgentTokenUsageByStep(db, tenant.id, agentId),
+    // Step NAMES only, to label the per-step rows; the definition itself
+    // stays the owner's to read.
+    db
+      .selectFrom('agents')
+      .select('steps')
+      .where('tenant_id', '=', tenant.id)
+      .where('id', '=', agentId)
+      .executeTakeFirst(),
     getAgentToolUsage(db, tenant.id, agentId, TOOL_USAGE_WINDOW_DAYS),
   ]);
+  const bySteps = labelStepUsage(stepsDoc?.steps, stepRows);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -71,14 +88,14 @@ export default async function AdminAgentDetailPage({
         <p className="mb-6 text-sm italic text-gray-400 dark:text-gray-500">Writing a summary…</p>
       ) : null}
 
-      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-        <h2 className="mb-3 text-sm font-semibold">Usage</h2>
-        <AgentUsagePanel
-          tokens={tokenUsage}
-          tools={toolUsage}
-          toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
-        />
-      </div>
+      <h2 className="mb-3 text-sm font-semibold">Usage</h2>
+      <AgentUsagePanel
+        tokens={tokenUsage}
+        byModel={byModel}
+        bySteps={bySteps}
+        tools={toolUsage}
+        toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
+      />
     </div>
   );
 }

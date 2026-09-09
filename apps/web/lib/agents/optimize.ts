@@ -27,7 +27,8 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { findNodeById, isAgentStepsDoc, type AgentStepsDoc } from '@renkei/agents';
-import { resolveAgentLlm } from '@renkei/agent-llm';
+import { resolveAgentLlm, type LlmUsage } from '@renkei/agent-llm';
+import type { LlmCallModel } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { retryWithBackoff } from '@/lib/retry-with-backoff';
 import { agentMarkdown } from '@/lib/agents/export-markdown';
@@ -393,7 +394,12 @@ export function buildOptimizationPrompt(
 }
 
 export type OptimizeOutcome =
-  | { report: OptimizationReport; usage: { inputTokens: number; outputTokens: number } }
+  | {
+      report: OptimizationReport;
+      usage: LlmUsage;
+      /** The model the pass ran on, for the token ledger. */
+      model: LlmCallModel;
+    }
   | { error: string; detail?: string };
 
 /** The whole pass: evidence → prompt → the org's model → a parsed report. */
@@ -498,5 +504,9 @@ export async function optimizeAgent(
       detail: text.slice(0, 1_000),
     };
   }
-  return { report, usage };
+  return {
+    report,
+    usage,
+    model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
+  };
 }

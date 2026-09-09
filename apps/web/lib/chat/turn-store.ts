@@ -7,7 +7,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { recordLlmCall } from '@renkei/agents/runs';
+import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { createAttachment, toAttachmentView } from './attachments';
 import { insertMessage, updateMessageContent } from './messages';
@@ -21,7 +21,14 @@ const ARTIFACT_MAX_BYTES = 25_000_000;
 
 export function createTurnStore(
   db: Kysely<DB>,
-  scope: { tenantId: string; chatId: string; turnId: string; subject: string }
+  scope: {
+    tenantId: string;
+    chatId: string;
+    turnId: string;
+    subject: string;
+    /** The model this turn runs on, stamped on every ledger row it writes. */
+    model: LlmCallModel | null;
+  }
 ): TurnStore {
   return {
     async appendMessage(input) {
@@ -61,6 +68,7 @@ export function createTurnStore(
         ...(usage.cacheWriteInputTokens !== undefined
           ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
           : {}),
+        model: scope.model,
       });
     },
     async storeArtifacts(messageId, files) {

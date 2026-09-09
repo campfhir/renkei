@@ -14,6 +14,7 @@ import { friendlyToolName } from '@/lib/tool-name';
 import { listAgentsForOwner } from '@/lib/agents/runs-view';
 import {
   getAgentTokenUsage,
+  getTokenUsageByModel,
   getAgentToolUsage,
   getAgentTokenTrend,
 } from '@/lib/agents/agent-usage';
@@ -113,8 +114,9 @@ export default async function PersonDetailPage({
   const lastActive = lastActiveRow?.last_used_at ?? null;
 
   const agentIds = agents.map((agent) => agent.id);
-  const [tokenBuckets, toolUsage, initialTrendDaily] = await Promise.all([
+  const [tokenBuckets, tokensByModel, toolUsage, initialTrendDaily] = await Promise.all([
     getAgentTokenUsage(db, tenant.id, agentIds),
+    getTokenUsageByModel(db, tenant.id, agentIds),
     getAgentToolUsage(db, tenant.id, agentIds, TOOL_USAGE_WINDOW_DAYS),
     // Server-rendered in UTC; the chart refetches in the browser's zone on
     // its first interaction and says which zone it shows.
@@ -311,13 +313,12 @@ export default async function PersonDetailPage({
             </div>
           )}
 
-          <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-            <AgentUsagePanel
-              tokens={tokenBuckets}
-              tools={toolUsage}
-              toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
-            />
-          </div>
+          <AgentUsagePanel
+            tokens={tokenBuckets}
+            byModel={tokensByModel}
+            tools={toolUsage}
+            toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
+          />
         </section>
       )}
     </div>

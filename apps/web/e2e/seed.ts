@@ -1130,10 +1130,41 @@ export async function seed(client: Client): Promise<void> {
             CASE WHEN n <= spread.failures THEN 'failed' ELSE 'succeeded' END,
             NOW() - make_interval(days => spread.days_ago, mins => n),
             NOW() - make_interval(days => spread.days_ago, mins => n - 1)
-     FROM (VALUES (0, 3, 1), (2, 4, 0), (12, 6, 2), (70, 9, 0), (320, 20, 5))
+     FROM (VALUES (0, 3, 1), (1, 2, 1), (2, 4, 0), (12, 6, 2), (70, 9, 0), (320, 20, 5))
        AS spread(days_ago, runs, failures)
      CROSS JOIN LATERAL generate_series(1, spread.runs) AS n`,
     [E2E_TENANT_ID, AGENT_RICH_ID]
+  );
+
+  // Token-ledger rows behind the oversight columns and the agent page's
+  // by-model / by-step tables: the rich agent's steps on two models with
+  // two prompt-cached (cached is a PORTION of input), an optimizer pass outside any step, a row from
+  // before the model was recorded, and a little on the plain agent so the
+  // oversight sort has something to order. Same day spread as the run log.
+  await client.query(
+    `INSERT INTO llm_calls
+       (tenant_id, subject, agent_id, run_id, step_id, purpose, provider, model,
+        input_tokens, output_tokens, cache_read_input_tokens, cache_write_input_tokens, created_at)
+     SELECT $1, $3, $2, gen_random_uuid(), step.id::uuid, 'run', step.provider, step.model,
+            step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,
+            NOW() - make_interval(days => spread.days_ago, mins => n)
+     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)
+     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n
+     CROSS JOIN (VALUES
+       ($4, 'anthropic', 'claude-sonnet-5', 3580, 210, 2400, 0),
+       ($5, 'anthropic', 'claude-opus-5', 3650, 640, 0, 0),
+       ($6, 'openai', 'gpt-5-mini', 1200, 95, 480, 0),
+       ($7, NULL, NULL, 310, 40, 0, 0)
+     ) AS step(id, provider, model, input_tokens, output_tokens, cache_read, cache_write)`,
+    [E2E_TENANT_ID, AGENT_RICH_ID, E2E_SUBJECT, STEP_COLLECT, STEP_RANK, STEP_FILE, STEP_WRAP]
+  );
+  await client.query(
+    `INSERT INTO llm_calls
+       (tenant_id, subject, agent_id, purpose, provider, model, input_tokens, output_tokens, cache_write_input_tokens, created_at)
+     VALUES ($1, $3, $2, 'optimize', 'anthropic', 'claude-opus-5', 18400, 1900, 6200, NOW() - interval '3 hours'),
+            ($1, $3, $4, 'run', 'anthropic', 'claude-sonnet-5', 950, 120, 0, NOW() - interval '1 day'),
+            ($1, $3, NULL, 'chat', 'anthropic', 'claude-sonnet-5', 4100, 800, 900, NOW() - interval '2 hours')`,
+    [E2E_TENANT_ID, AGENT_RICH_ID, E2E_SUBJECT, AGENT_PLAIN_ID]
   );
 
   // Connectors the org has switched on. Without these the connectors page

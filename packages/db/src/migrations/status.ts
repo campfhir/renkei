@@ -127,6 +127,7 @@ export const EXPECTED_MIGRATIONS = [
   '095-chat-user-memories',
   '096-run-token-tools',
   '097-llm-cache-tokens',
+  '098-llm-calls-model',
 ];
 
 export interface MigrationStatus {
