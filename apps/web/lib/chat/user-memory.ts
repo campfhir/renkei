@@ -145,34 +145,6 @@ export async function editUserMemory(
   return Number(result.numUpdatedRows) > 0;
 }
 
-/**
- * What a person currently holds, without reading any of it back — the
- * numbers a "forget everything?" dry run needs. readUserMemory would
- * answer the entry question too, but only up to its own limit, and a
- * confirmation that says "40 entries" when there are 300 is worse than no
- * confirmation at all.
- */
-export async function countUserMemory(
-  db: Kysely<DB>,
-  tenantId: string,
-  ownerSubject: string
-): Promise<{ entries: number; hasSummary: boolean }> {
-  const rows = await db
-    .selectFrom('chat_user_memories')
-    .select(['kind', ({ fn }) => fn.countAll<string>().as('count')])
-    .where('tenant_id', '=', tenantId)
-    .where('owner_subject', '=', ownerSubject)
-    .groupBy('kind')
-    .execute();
-  let entries = 0;
-  let hasSummary = false;
-  for (const row of rows) {
-    if (row.kind === 'summary') hasSummary = Number(row.count) > 0;
-    else entries += Number(row.count);
-  }
-  return { entries, hasSummary };
-}
-
 export async function forgetUserMemory(
   db: Kysely<DB>,
   tenantId: string,

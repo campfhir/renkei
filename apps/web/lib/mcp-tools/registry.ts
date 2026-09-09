@@ -349,9 +349,11 @@ export async function registerRenkeiTools(
   // registration-time gate: the tool exists for everyone, but what it
   // returns depends on the caller's role, matching the web Logs page.
   registerLogTools(withCapabilityGate(server, projection, LOGS_CONNECTOR), context);
-  // user_memory_* reads and writes the same chat_user_memories a chat's own
-  // chat_memory_* local tools do (apps/web/lib/chat/user-memory-tools.ts),
-  // owner-scoped from the caller's subject exactly like cards.
+  // user_memory_list reads (never writes) the same chat_user_memories a
+  // chat's own chat_memory_* local tools read and write (apps/web/lib/
+  // chat/user-memory-tools.ts) — owner-scoped from the caller's subject
+  // exactly like cards. An agent run may see this memory, never add to
+  // or remove from it; only the person's own chats or Memory page do that.
   registerUserMemoryTools(withCapabilityGate(server, projection, USER_MEMORY_CONNECTOR), context);
   // check_file_upload is cross-connector — any *_request_*_upload tool can
   // mint the slot it reads — so it registers on the raw server, ungated,
