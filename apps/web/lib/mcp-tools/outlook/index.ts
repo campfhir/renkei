@@ -51,6 +51,7 @@ import {
 } from '../widgets';
 import { prependComment } from './comment-body';
 import { markdownToHtml } from './markdown';
+import { describeRecurrence, parseRecurrence, recurrenceFieldSchema } from './recurrence';
 import type { GraphAuth } from '../graph/graph-auth';
 import {
   DIRECTORY_SEARCH_HEADERS,
@@ -2912,12 +2913,20 @@ export async function registerOutlookTools(
         'Create an event on the connected user’s calendar. Listing attendees sends them ' +
         'invitations. Split required vs optional attendees — Graph marks each accordingly on ' +
         'the invite, and outlook_find_meeting_times uses the same split to weigh availability ' +
-        "(required attendees' conflicts rule out a slot; optional attendees' do not). Acts as " +
-        'the user — only schedule what they asked for.',
+        "(required attendees' conflicts rule out a slot; optional attendees' do not). A " +
+        'recurring event (a weekly 1:1, a monthly review) is one call with `recurrence` set — ' +
+        'start and end are its first occurrence. Acts as the user — only schedule what they ' +
+        'asked for.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         subject: z.string().min(1).describe('Event title'),
-        start: z.string().min(1).describe('Start, ISO-8601 local time (e.g. 2026-08-12T15:00:00)'),
+        start: z
+          .string()
+          .min(1)
+          .describe(
+            'Start, ISO-8601 local time (e.g. 2026-08-12T15:00:00); for a recurring event, ' +
+              'the first occurrence'
+          ),
         end: z.string().min(1).describe('End, ISO-8601 local time'),
         timezone: z
           .string()
@@ -2937,12 +2946,15 @@ export async function registerOutlookTools(
           .boolean()
           .describe('Attach a Teams meeting link (default false)')
           .optional(),
+        recurrence: recurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const timezone = str(args.timezone) || 'UTC';
+      const recurrence = parseRecurrence(args.recurrence, str(args.start), timezone);
+      if (!recurrence.ok) return errText(recurrence.error);
       const requiredAttendees = Array.isArray(args.requiredAttendees)
         ? args.requiredAttendees.map(String).filter(Boolean)
         : [];
@@ -2964,6 +2976,7 @@ export async function registerOutlookTools(
         ...(args.onlineMeeting === true
           ? { isOnlineMeeting: true, onlineMeetingProvider: 'teamsForBusiness' }
           : {}),
+        ...(recurrence.val ? { recurrence: recurrence.val } : {}),
       });
       if (!result.ok) return errText(result.error);
       const event = result.body ?? {};
@@ -2971,11 +2984,13 @@ export async function registerOutlookTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         eventId: str(event.id),
+        recurring: recurrence.val !== null,
       });
       const title = str(event.subject) || str(args.subject);
       return {
         ...textResult(
           `Created "${title}" (id ${str(event.id) || 'unknown'})` +
+            (recurrence.val ? `, repeating ${describeRecurrence(recurrence.val)}` : '') +
             (requiredAttendees.length > 0 ? `; required: ${requiredAttendees.join(', ')}` : '') +
             (optionalAttendees.length > 0 ? `; optional: ${optionalAttendees.join(', ')}` : '') +
             '.' +
