@@ -15,20 +15,9 @@
  */
 
 import type { UsageBuckets } from '@/lib/agents/agent-usage';
+import { PERIODS, periodLabel } from '@/lib/agents/usage-periods';
 
-export const PERIODS: { key: keyof UsageBuckets; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'yesterday', label: 'Yesterday' },
-  { key: 'week', label: 'This week' },
-  { key: 'month', label: 'This month' },
-  { key: 'quarter', label: 'This quarter' },
-  { key: 'year', label: 'This year' },
-  { key: 'allTime', label: 'All time' },
-];
-
-export function periodLabel(key: keyof UsageBuckets): string {
-  return PERIODS.find((period) => period.key === key)?.label ?? key;
-}
+export { PERIODS, periodLabel };
 
 export default function PeriodToggle({
   value,

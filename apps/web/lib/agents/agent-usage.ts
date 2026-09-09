@@ -138,15 +138,16 @@ export interface TokenUsage {
   cacheWrite: UsageBuckets;
 }
 
+/** No spend in any bucket — what an agent with no ledger rows reads as. */
+export const ZERO_TOKEN_USAGE: TokenUsage = {
+  input: ZERO_BUCKETS,
+  output: ZERO_BUCKETS,
+  cacheRead: ZERO_BUCKETS,
+  cacheWrite: ZERO_BUCKETS,
+};
+
 function usageOf(row: TokenBucketRow | undefined): TokenUsage {
-  if (!row) {
-    return {
-      input: ZERO_BUCKETS,
-      output: ZERO_BUCKETS,
-      cacheRead: ZERO_BUCKETS,
-      cacheWrite: ZERO_BUCKETS,
-    };
-  }
+  if (!row) return ZERO_TOKEN_USAGE;
   return {
     input: bucketsOf(row, 'in'),
     output: bucketsOf(row, 'out'),
@@ -502,4 +503,132 @@ export async function getAgentTokenUsageByStep(
     },
     ...usageOf(row),
   }));
+}
+
+/**
+ * One run's tokens: plain totals, no calendar buckets — a run is a point
+ * in time, so "this week" is a question about the agent, not the run.
+ */
+export interface RunTokenTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** Attempts that reached the model — one ledger row each. */
+  calls: number;
+}
+
+export const ZERO_RUN_TOTALS: RunTokenTotals = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  calls: 0,
+};
+
+interface RunTotalRow {
+  input_tokens: string;
+  output_tokens: string;
+  cache_read: string;
+  cache_write: string;
+  calls: string;
+}
+
+function totalsOf(row: RunTotalRow): RunTokenTotals {
+  return {
+    input: Number(row.input_tokens ?? 0),
+    output: Number(row.output_tokens ?? 0),
+    cacheRead: Number(row.cache_read ?? 0),
+    cacheWrite: Number(row.cache_write ?? 0),
+    calls: Number(row.calls ?? 0),
+  };
+}
+
+/**
+ * Token totals for a set of runs at once, keyed by run id — the per-run
+ * figure beside each line of a run listing, in one query. A run with no
+ * ledger rows (queued, or one that never reached the model) is simply
+ * absent. Content-free like everything here: the ledger holds counts and
+ * ids only, so a grantee reads the same numbers as the owner.
+ */
+export async function getTokenUsageByRun(
+  db: Kysely<DB>,
+  tenantId: string,
+  runIds: readonly string[]
+): Promise<Record<string, RunTokenTotals>> {
+  if (runIds.length === 0) return {};
+  const rows = await db
+    .selectFrom('llm_calls')
+    .select(({ fn }) => [
+      'run_id',
+      fn.sum<string>('input_tokens').as('input_tokens'),
+      fn.sum<string>('output_tokens').as('output_tokens'),
+      fn.coalesce(fn.sum<string>('cache_read_input_tokens'), sql<string>`0`).as('cache_read'),
+      fn.coalesce(fn.sum<string>('cache_write_input_tokens'), sql<string>`0`).as('cache_write'),
+      fn.countAll<string>().as('calls'),
+    ])
+    .where('tenant_id', '=', tenantId)
+    .where('run_id', 'in', [...runIds])
+    .groupBy('run_id')
+    .execute();
+  return Object.fromEntries(
+    rows.flatMap((row) => (row.run_id ? [[row.run_id, totalsOf(row)] as const] : []))
+  );
+}
+
+export interface RunStepTokenUsage extends RunTokenTotals {
+  /** Null for a ledger row stamped with no step — never expected of a run's, but tolerated. */
+  stepId: string | null;
+  provider: string | null;
+  model: string | null;
+}
+
+/**
+ * One run's token spend per step and model — the run-level twin of
+ * `getAgentTokenUsageByStep`, ordered by spend. Step names are resolved
+ * afterwards against the run's OWN steps snapshot (what actually ran),
+ * through `labelStepUsage`, rather than the agent's current definition.
+ */
+export async function getRunTokenUsage(
+  db: Kysely<DB>,
+  tenantId: string,
+  runId: string
+): Promise<RunStepTokenUsage[]> {
+  const rows = await db
+    .selectFrom('llm_calls')
+    .select(({ fn }) => [
+      'step_id',
+      'provider',
+      'model',
+      fn.sum<string>('input_tokens').as('input_tokens'),
+      fn.sum<string>('output_tokens').as('output_tokens'),
+      fn.coalesce(fn.sum<string>('cache_read_input_tokens'), sql<string>`0`).as('cache_read'),
+      fn.coalesce(fn.sum<string>('cache_write_input_tokens'), sql<string>`0`).as('cache_write'),
+      fn.countAll<string>().as('calls'),
+    ])
+    .where('tenant_id', '=', tenantId)
+    .where('run_id', '=', runId)
+    .groupBy(['step_id', 'provider', 'model'])
+    .orderBy(sql`SUM(input_tokens) + SUM(output_tokens)`, 'desc')
+    .execute();
+  return rows.map((row) => ({
+    stepId: row.step_id,
+    provider: row.provider,
+    model: row.model,
+    ...totalsOf(row),
+  }));
+}
+
+/** The grouped rows summed back into one figure — pure, so the tools' text is unit-testable. */
+export function sumRunTotals(rows: readonly RunTokenTotals[]): RunTokenTotals {
+  return rows.reduce(
+    (sum, row) => ({
+      input: sum.input + row.input,
+      output: sum.output + row.output,
+      cacheRead: sum.cacheRead + row.cacheRead,
+      cacheWrite: sum.cacheWrite + row.cacheWrite,
+      calls: sum.calls + row.calls,
+    }),
+    ZERO_RUN_TOTALS
+  );
 }

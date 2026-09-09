@@ -13,13 +13,18 @@
  * any step (the optimizer's pass over the agent), and is left unnamed
  * and unnumbered too.
  *
- * Pure, so the mapping is unit-tested away from the query.
+ * Pure, so the mapping is unit-tested away from the query. Given a run's
+ * own steps snapshot instead of the agent's definition, the same walk
+ * names the steps as they stood when that run happened.
  */
 
 import { isAgentStepsDoc, walkSteps } from '@renkei/agents';
-import type { StepTokenUsage } from './agent-usage';
 
-export function labelStepUsage<T extends Omit<StepTokenUsage, 'stepName' | 'stepNumber'>>(
+/**
+ * Generic over any row keyed on a step id — the agent's calendar-bucketed
+ * rows and a single run's plain totals alike; only `stepId` is read.
+ */
+export function labelStepUsage<T extends { stepId: string | null }>(
   stepsDoc: unknown,
   rows: readonly T[]
 ): (T & { stepName: string | null; stepNumber: number | null })[] {

@@ -10,7 +10,12 @@ import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { CURRENT_STEPS_VERSION } from '@renkei/agents';
 import { recordLlmCall } from '@renkei/agents/runs';
-import { getAgentTokenUsageByStep, getTokenUsageByModel } from './agent-usage';
+import {
+  getAgentTokenUsageByStep,
+  getRunTokenUsage,
+  getTokenUsageByModel,
+  getTokenUsageByRun,
+} from './agent-usage';
 import { labelStepUsage } from './step-usage-labels';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -20,6 +25,7 @@ maybe('token usage by model and by step', () => {
   const tenantId = randomUUID();
   const agentId = randomUUID();
   const stepId = randomUUID();
+  const runId = randomUUID();
   const subject = `owner-${tenantId.slice(0, 8)}`;
   const steps = {
     version: CURRENT_STEPS_VERSION,
@@ -57,7 +63,7 @@ maybe('token usage by model and by step', () => {
 
     const big = { provider: 'anthropic', model: 'claude-big', llmModelId: null };
     const small = { provider: 'openai', model: 'gpt-small', llmModelId: null };
-    const base = { tenantId, subject, agentId, runId: randomUUID(), stepId };
+    const base = { tenantId, subject, agentId, runId, stepId };
     await recordLlmCall(db, {
       ...base,
       purpose: 'run',
@@ -150,5 +156,38 @@ maybe('token usage by model and by step', () => {
       ['Read the inbox', null, 1, 7, 0, 3],
     ]);
     expect(rows[1].stepId).toBeNull();
+  });
+  it('totals one run at a time for a listing, absent when the ledger has nothing', async () => {
+    const other = randomUUID();
+    const byRun = await getTokenUsageByRun(db, tenantId, [runId, other]);
+    expect(byRun[runId]).toEqual({
+      input: 1_207,
+      output: 33,
+      cacheRead: 900,
+      cacheWrite: 40,
+      calls: 3,
+    });
+    expect(byRun[other]).toBeUndefined();
+    expect(await getTokenUsageByRun(db, tenantId, [])).toEqual({});
+  });
+
+  it('splits one run by step and model, named from the steps it ran with', async () => {
+    const rows = labelStepUsage(steps, await getRunTokenUsage(db, tenantId, runId));
+    expect(
+      rows.map((row) => [
+        row.stepNumber,
+        row.stepName,
+        row.model,
+        row.input,
+        row.output,
+        row.cacheRead,
+        row.cacheWrite,
+        row.calls,
+      ])
+    ).toEqual([
+      [1, 'Read the inbox', 'claude-big', 1_200, 30, 900, 40, 2],
+      [1, 'Read the inbox', null, 7, 3, 0, 0, 1],
+    ]);
+    expect(await getRunTokenUsage(db, tenantId, randomUUID())).toEqual([]);
   });
 });
