@@ -49,13 +49,19 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'The assistant remembers things about you',
         detail:
-          'Outside a project, tell it to remember something and the note carries into every chat you have, not just this one. See what it has saved, add a note yourself, or forget one under Preferences → Memory.',
+          'Outside a project, tell it to remember something and the note carries into every chat you have, not just this one. See what it has saved, add a note yourself, edit or forget one, under Memory in the sidebar next to Projects and Prompt libraries.',
       },
       {
         kind: 'added',
         title: 'The assistant can look back at your other chats',
         detail:
           'Ask about something from a different conversation and it can search your other chats by title and content, or open one and read it back. A project’s own chats keep their own separate memory and are never searched this way.',
+      },
+      {
+        kind: 'added',
+        title: 'Your agents can see what is remembered about you',
+        detail:
+          'An agent you run can read the same memory your chats keep about you — read-only: it can never add to it or erase it, only your own chats and the Memory page can do that.',
       },
     ],
   },
