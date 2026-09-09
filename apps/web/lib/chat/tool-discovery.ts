@@ -5,7 +5,11 @@
  * connector and description; matches ride back as ordinary text AND as
  * `_meta.discoveredTools`, which turn-runner.ts reads to add them to the
  * turn's active tool set — callable from the very next model reply, no
- * different from a tool that was offered from the start.
+ * different from a tool that was offered from the start. A discovery
+ * outlives its turn: recallDiscoveredTools reads the chat's history for
+ * what earlier turns surfaced and start-turn.ts offers those again, so a
+ * tool the model found while planning is still callable, schema and all,
+ * when the person answers its follow-up question a turn later.
  *
  * Deliberately not an MCP tool and not backed by embeddings: the catalog is
  * small enough (per chat, at most a few hundred entries) that a plain
@@ -14,7 +18,7 @@
  */
 
 import { z } from 'zod';
-import type { LlmToolDef } from '@renkei/agent-llm';
+import type { LlmMessage, LlmToolDef } from '@renkei/agent-llm';
 import type { DiscoverableTool } from './tool-surface';
 import { errorResult, textResult, type LocalTool } from './local-tools';
 
@@ -22,6 +26,17 @@ export const FIND_TOOLS_NAME = 'find_tools';
 
 /** Enough to cover a real need without dumping the whole catalog back. */
 const MAX_MATCHES = 12;
+
+/**
+ * One matched tool as find_tools lists it, and the line's inverse. The
+ * result is text on the transcript, so a later turn recovers the names
+ * from that text (recallDiscoveredTools); keeping the two together is
+ * what makes that recovery reliable.
+ */
+function matchLine(tool: LlmToolDef): string {
+  return `- ${tool.name}: ${tool.description}`;
+}
+const MATCH_LINE = /^- ([^\s:]+):/gm;
 
 function connectorSummaryOf(discoverable: DiscoverableTool[]): string {
   const counts = new Map<string, number>();
@@ -122,7 +137,7 @@ export function findToolsTool(discoverable: DiscoverableTool[]): LocalTool | nul
         'Search for tools from connectors enabled on this chat but not offered up front — ' +
         `${summary}. Call with a short query describing what you need to do (e.g. "create a ` +
         'jira issue", "search sharepoint files", or just a connector name), and matching tools ' +
-        'become callable for the rest of this turn.',
+        'become callable for the rest of this chat.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -157,13 +172,46 @@ export function findToolsTool(discoverable: DiscoverableTool[]): LocalTool | nul
           matches
             .map((tool) => {
               const params = summarizeInputSchema(tool.inputSchema);
-              return (
-                `- ${tool.name}: ${tool.description}` + (params ? `\n  Parameters: ${params}` : '')
-              );
+              return matchLine(tool) + (params ? `\n  Parameters: ${params}` : '');
             })
             .join('\n'),
         { discoveredTools: matches }
       );
     },
   };
+}
+
+/**
+ * The discoverable tools this chat already surfaced on an earlier turn:
+ * every one the model has called by name, and every one a find_tools
+ * result listed — read back from the transcript, so nothing is stored
+ * for it. Offered again from the start of the next turn.
+ *
+ * Without this a discovery lasted one turn. The model, remembering the
+ * tool from the turn before, would still call it — and with its schema
+ * gone from the request it guessed the argument types, sending an array
+ * as its JSON text, a number as a numeric string. Names are matched
+ * against `discoverable`, never taken on trust from the text.
+ */
+export function recallDiscoveredTools(
+  history: LlmMessage[],
+  discoverable: DiscoverableTool[]
+): LlmToolDef[] {
+  if (discoverable.length === 0) return [];
+  const known = new Set(discoverable.map((entry) => entry.def.name));
+  const searches = new Set<string>();
+  const recalled = new Set<string>();
+  for (const message of history) {
+    for (const block of message.content) {
+      if (block.type === 'tool_use') {
+        if (block.name === FIND_TOOLS_NAME) searches.add(block.id);
+        else if (known.has(block.name)) recalled.add(block.name);
+      } else if (block.type === 'tool_result' && searches.has(block.toolUseId)) {
+        for (const match of block.content.matchAll(MATCH_LINE)) {
+          if (known.has(match[1])) recalled.add(match[1]);
+        }
+      }
+    }
+  }
+  return discoverable.filter((entry) => recalled.has(entry.def.name)).map((entry) => entry.def);
 }

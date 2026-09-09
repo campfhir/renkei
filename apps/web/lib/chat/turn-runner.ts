@@ -124,6 +124,13 @@ export interface TurnRunnerDeps {
    * is taken to act, and runs alone. Omitted means every call runs alone.
    */
   readOnlyTools?: ReadonlySet<string>;
+  /**
+   * Tools the chat has enabled but does not offer up front (tool-surface.ts's
+   * `discoverable`). A call the model makes to one of these by name — from
+   * memory of an earlier turn, its schema absent from this request — puts the
+   * tool in the active set, so the reply that follows has its schema.
+   */
+  discoverableTools?: LlmToolDef[];
   channel: TurnChannel;
   store: TurnStore;
   now?: () => number;
@@ -345,9 +352,18 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   let iterations = 0;
   // Grows as find_tools (tool-discovery.ts) surfaces more of the chat's
   // enabled connectors; every discovery is callable from the very next
-  // model reply onward, for the rest of this turn.
+  // model reply onward. Earlier turns' discoveries arrive already in
+  // deps.tools (start-turn.ts recalls them from the history).
   const activeTools: LlmToolDef[] = [...deps.tools];
   const activeToolNames = new Set(activeTools.map((tool) => tool.name));
+  const discoverableByName = new Map(
+    (deps.discoverableTools ?? []).map((tool) => [tool.name, tool] as const)
+  );
+  const activate = (tool: LlmToolDef) => {
+    if (activeToolNames.has(tool.name)) return;
+    activeToolNames.add(tool.name);
+    activeTools.push(tool);
+  };
   const totals = { inputTokens: 0, outputTokens: 0 };
   const attachmentBudget = { blocks: 0, base64Chars: 0 };
   let cancelRequested = false;
@@ -574,6 +590,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         return outcome;
       }
 
+      // A call to a tool the chat has enabled but did not offer this turn
+      // is the model remembering it from a turn before, schema and all —
+      // it gets the real schema from the next request on, so a retry after
+      // a type mismatch is made against it rather than from memory again.
+      for (const use of toolUses) {
+        const discoverable = discoverableByName.get(use.name);
+        if (discoverable) activate(discoverable);
+      }
+
       // Tool round. Calls that only read run side by side: a reply that
       // searches knowledge three ways is the common case, and each search
       // is an embedding call, a query and a live access check that none
@@ -644,11 +669,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           });
           attachments.push(...attachmentBlocksOfMeta(outcome.meta, attachmentBudget, limits));
           produced.push(...artifactsOfMeta(outcome.meta, use.name, iterations));
-          for (const discovered of discoveredToolsOfMeta(outcome.meta)) {
-            if (activeToolNames.has(discovered.name)) continue;
-            activeToolNames.add(discovered.name);
-            activeTools.push(discovered);
-          }
+          for (const discovered of discoveredToolsOfMeta(outcome.meta)) activate(discovered);
         }
       }
       if (cancelRequested || channel.cancelRequested) {
