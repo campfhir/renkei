@@ -312,7 +312,7 @@ describe('runChatTurn', () => {
     expect(watched.events.some((event) => event.type === 'tool_call_start')).toBe(true);
   });
 
-  it('adds a discovery tool result\'s discoveredTools to the active set for later turns', async () => {
+  it("adds a discovery tool result's discoveredTools to the active set for later turns", async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-2d');
     const requests: string[][] = [];
@@ -357,6 +357,52 @@ describe('runChatTurn', () => {
     expect(requests[1].sort()).toEqual(['find_tools', 'jira_search_issues']);
     expect(requests[2].sort()).toEqual(['find_tools', 'jira_search_issues']);
     expect(calls).toEqual(['jira_search_issues:{"jql":"a"}']);
+  });
+
+  it('offers a discoverable tool the model called from memory on the very next request', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-2r');
+    const requests: string[][] = [];
+    const captureProvider: LlmProvider = {
+      async complete(request) {
+        requests.push(request.tools.map((tool) => tool.name));
+        // Remembered from an earlier turn, its schema absent — the kind of
+        // call that arrives with an array sent as JSON text.
+        if (requests.length === 1) {
+          return ok(toolCall('outlook_create_event', { requiredAttendees: '["a@b.c"]' }));
+        }
+        if (requests.length === 2) {
+          return ok(toolCall('outlook_create_event', { requiredAttendees: ['a@b.c'] }));
+        }
+        return ok(text('Done'));
+      },
+    };
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(captureProvider),
+        tools: [{ name: 'find_tools', description: 'find tools', inputSchema: {} }],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([]),
+        localContext,
+        discoverableTools: [
+          { name: 'outlook_create_event', description: 'create', inputSchema: { type: 'object' } },
+        ],
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-2r')
+    );
+    expect(outcome.status).toBe('completed');
+    // The first call still runs (the MCP server is the judge of its
+    // arguments); the retry is made with the schema in the request.
+    expect(calls).toEqual([
+      'outlook_create_event:{"requiredAttendees":"[\\"a@b.c\\"]"}',
+      'outlook_create_event:{"requiredAttendees":["a@b.c"]}',
+    ]);
+    expect(requests[0]).toEqual(['find_tools']);
+    expect(requests[1].sort()).toEqual(['find_tools', 'outlook_create_event']);
   });
 
   it('runs read-only calls of a round together, acts alone, and keeps the order', async () => {

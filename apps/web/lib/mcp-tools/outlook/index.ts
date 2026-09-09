@@ -51,6 +51,7 @@ import {
 } from '../widgets';
 import { prependComment } from './comment-body';
 import { markdownToHtml } from './markdown';
+import { describeGraphRecurrence, parseRecurrence, recurrenceFieldSchema } from './recurrence';
 import type { GraphAuth } from '../graph/graph-auth';
 import {
   DIRECTORY_SEARCH_HEADERS,
@@ -732,8 +733,30 @@ function eventLine(event: Record<string, unknown>): string {
     `${str(event.subject) || '(no subject)'} — ${str(start.dateTime)} → ${str(end.dateTime)}` +
     ` — organizer: ${str(organizer.name) || str(organizer.address) || '(unknown)'}` +
     (str(rec(event.location).displayName) ? ` — ${str(rec(event.location).displayName)}` : '') +
-    ` — id: ${str(event.id)}`
+    ` — id: ${str(event.id)}` +
+    (event.type === 'seriesMaster'
+      ? ' — a recurring series'
+      : str(event.seriesMasterId)
+        ? ` — one occurrence of a series (series id: ${str(event.seriesMasterId)})`
+        : '')
   );
+}
+
+/**
+ * The event a change or cancellation lands on. An occurrence of a
+ * recurring event has its own id and its own start; the series it belongs
+ * to is another event (the series master, `seriesMasterId`). Meant for the
+ * whole series, the change goes to the master; otherwise to the event
+ * given, which for an occurrence leaves the rest of the series alone.
+ */
+function seriesTargetOf(
+  event: Record<string, unknown>,
+  wholeSeries: boolean
+): { id: string; series: boolean; occurrence: boolean } {
+  const seriesMasterId = str(event.seriesMasterId);
+  if (event.type === 'seriesMaster') return { id: str(event.id), series: true, occurrence: false };
+  if (seriesMasterId && wholeSeries) return { id: seriesMasterId, series: true, occurrence: true };
+  return { id: str(event.id), series: false, occurrence: Boolean(seriesMasterId) };
 }
 
 /** Which Graph scope each tool stands on; registration filters against the grant. */
@@ -775,6 +798,7 @@ export function outlookScopeFor(toolName: string): string[] {
     case 'outlook_delete_mail_folder':
       return ['MailboxFolder.ReadWrite'];
     case 'outlook_create_event':
+    case 'outlook_update_event':
     case 'outlook_respond_event':
     case 'outlook_cancel_event_preview':
     case 'outlook_cancel_event_confirm':
@@ -1740,7 +1764,9 @@ export async function registerOutlookTools(
       title: 'Outlook · Read — List Outlook calendar events',
       description:
         'The connected user’s calendar in a time window (default: last 7 days through the next ' +
-        '30), expanded from recurrences. Event ids feed outlook_get_event. When presenting the ' +
+        '30), expanded from recurrences: each occurrence of a recurring event is listed with ' +
+        'its own id, and names the series it belongs to (the series id is what changes or ' +
+        'cancels the whole series). Event ids feed outlook_get_event. When presenting the ' +
         'result, consider a calendar-like layout (a day-by-day agenda, or a small table of ' +
         'day/time/subject) rather than a flat list — usually easier to scan than plain text, ' +
         'especially across more than a few days.',
@@ -1762,7 +1788,7 @@ export async function registerOutlookTools(
         access.accessToken,
         `/me/calendarView?startDateTime=${encodeURIComponent(from)}&endDateTime=${encodeURIComponent(to)}` +
           `&$top=${max}&$orderby=start/dateTime` +
-          `&$select=id,subject,start,end,organizer,location`
+          `&$select=id,subject,start,end,organizer,location,type,seriesMasterId`
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(eventLine);
@@ -1781,7 +1807,9 @@ export async function registerOutlookTools(
     'outlook_get_event',
     {
       title: 'Outlook · Read — Get one Outlook calendar event',
-      description: 'Fetch a single event by id, with attendees and its body as text.',
+      description:
+        'Fetch a single event by id, with attendees and its body as text — and, for a ' +
+        'recurring event, how it repeats and the id of the series.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         eventId: z.string().min(1).describe('Event id from outlook_list_events'),
@@ -1796,7 +1824,7 @@ export async function registerOutlookTools(
         context,
         access.accessToken,
         `/me/events/${encodeURIComponent(eventId)}` +
-          `?$select=id,subject,start,end,organizer,location,attendees,body,webLink`
+          `?$select=id,subject,start,end,organizer,location,attendees,body,webLink,type,seriesMasterId,recurrence`
       );
       if (!result.ok) return errText(result.error);
       const event = result.body;
@@ -1806,8 +1834,12 @@ export async function registerOutlookTools(
             .filter(Boolean)
             .join(', ')
         : '';
+      const repeats =
+        event.type === 'seriesMaster' ? describeGraphRecurrence(event.recurrence) : null;
       return textResult(
-        `${eventLine(event)}\nAttendees: ${attendees || '(none listed)'}\n\n` +
+        `${eventLine(event)}\nAttendees: ${attendees || '(none listed)'}\n` +
+          (repeats ? `Repeats: ${repeats}\n` : '') +
+          `\n` +
           str(rec(event.body).content).slice(0, 20_000)
       );
     }
@@ -2912,12 +2944,20 @@ export async function registerOutlookTools(
         'Create an event on the connected user’s calendar. Listing attendees sends them ' +
         'invitations. Split required vs optional attendees — Graph marks each accordingly on ' +
         'the invite, and outlook_find_meeting_times uses the same split to weigh availability ' +
-        "(required attendees' conflicts rule out a slot; optional attendees' do not). Acts as " +
-        'the user — only schedule what they asked for.',
+        "(required attendees' conflicts rule out a slot; optional attendees' do not). A " +
+        'recurring event (a weekly 1:1, a monthly review) is one call with `recurrence` set — ' +
+        'start and end are its first occurrence. Acts as the user — only schedule what they ' +
+        'asked for.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         subject: z.string().min(1).describe('Event title'),
-        start: z.string().min(1).describe('Start, ISO-8601 local time (e.g. 2026-08-12T15:00:00)'),
+        start: z
+          .string()
+          .min(1)
+          .describe(
+            'Start, ISO-8601 local time (e.g. 2026-08-12T15:00:00); for a recurring event, ' +
+              'the first occurrence'
+          ),
         end: z.string().min(1).describe('End, ISO-8601 local time'),
         timezone: z
           .string()
@@ -2937,12 +2977,15 @@ export async function registerOutlookTools(
           .boolean()
           .describe('Attach a Teams meeting link (default false)')
           .optional(),
+        recurrence: recurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const timezone = str(args.timezone) || 'UTC';
+      const recurrence = parseRecurrence(args.recurrence, str(args.start), timezone);
+      if (!recurrence.ok) return errText(recurrence.error);
       const requiredAttendees = Array.isArray(args.requiredAttendees)
         ? args.requiredAttendees.map(String).filter(Boolean)
         : [];
@@ -2964,6 +3007,7 @@ export async function registerOutlookTools(
         ...(args.onlineMeeting === true
           ? { isOnlineMeeting: true, onlineMeetingProvider: 'teamsForBusiness' }
           : {}),
+        ...(recurrence.val ? { recurrence: recurrence.val.recurrence } : {}),
       });
       if (!result.ok) return errText(result.error);
       const event = result.body ?? {};
@@ -2971,11 +3015,13 @@ export async function registerOutlookTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         eventId: str(event.id),
+        recurring: recurrence.val !== null,
       });
       const title = str(event.subject) || str(args.subject);
       return {
         ...textResult(
           `Created "${title}" (id ${str(event.id) || 'unknown'})` +
+            (recurrence.val ? `, repeating ${recurrence.val.description}` : '') +
             (requiredAttendees.length > 0 ? `; required: ${requiredAttendees.join(', ')}` : '') +
             (optionalAttendees.length > 0 ? `; optional: ${optionalAttendees.join(', ')}` : '') +
             '.' +
@@ -2988,6 +3034,146 @@ export async function registerOutlookTools(
           ...(title ? { id: `“${title}”` } : {}),
           ...(str(event.webLink) ? { url: str(event.webLink) } : {}),
         }),
+      };
+    }
+  );
+
+  server.registerTool(
+    'outlook_update_event',
+    {
+      title: 'Outlook · Act — Change a calendar event',
+      description:
+        'Change an event on the connected user’s calendar: title, time, location, description, ' +
+        'or how it repeats. Attendees receive the update. For one occurrence of a recurring ' +
+        'event the change applies to that occurrence alone unless scope is "series"; a new ' +
+        'recurrence or stopRepeating always applies to the whole series. Acts as the user — ' +
+        'only change what they asked for.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        eventId: z
+          .string()
+          .min(1)
+          .describe('Event id from outlook_list_events or outlook_get_event'),
+        scope: z
+          .enum(['occurrence', 'series'])
+          .describe(
+            'For an occurrence of a recurring event: change this occurrence only (the default) ' +
+              'or the whole series'
+          )
+          .optional(),
+        subject: z.string().describe('New title').optional(),
+        start: z.string().describe('New start, ISO-8601 local time').optional(),
+        end: z.string().describe('New end, ISO-8601 local time').optional(),
+        timezone: z
+          .string()
+          .describe('IANA timezone for start/end (default: the event’s own)')
+          .optional(),
+        body: z.string().describe('New description, plain text').optional(),
+        location: z.string().describe('New location text').optional(),
+        recurrence: recurrenceFieldSchema.describe(
+          'A new repeat for the series, replacing the current one — frequency, interval, ' +
+            'daysOfWeek, dayOfMonth, weekOfMonth, month, until, occurrences, as on ' +
+            'outlook_create_event. Omit to leave the repeat as it is.'
+        ),
+        stopRepeating: z
+          .boolean()
+          .describe('End the series: the event becomes a single event on its first occurrence')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const eventId = str(args.eventId);
+      if (!eventId) return errText('eventId is required');
+      const repeatGiven =
+        args.recurrence !== undefined && args.recurrence !== null && args.recurrence !== '';
+      const stopRepeating = args.stopRepeating === true;
+      if (repeatGiven && stopRepeating) {
+        return errText('Give either a new recurrence or stopRepeating, not both.');
+      }
+      const select = '$select=id,subject,type,seriesMasterId,start,end';
+      const lookup = await graphGet(
+        context,
+        access.accessToken,
+        `/me/events/${encodeURIComponent(eventId)}?${select}`
+      );
+      if (!lookup.ok) return errText(lookup.error);
+      // A change to how it repeats is a change to the series, whatever id
+      // the model held; the master carries the start the range must match.
+      const target = seriesTargetOf(
+        lookup.body,
+        args.scope === 'series' || repeatGiven || stopRepeating
+      );
+      let base = lookup.body;
+      if (target.id !== eventId) {
+        const master = await graphGet(
+          context,
+          access.accessToken,
+          `/me/events/${encodeURIComponent(target.id)}?${select}`
+        );
+        if (!master.ok) return errText(master.error);
+        base = master.body;
+      }
+      const timezone = str(args.timezone) || str(rec(base.start).timeZone) || 'UTC';
+      const patch: Record<string, unknown> = {};
+      if (str(args.subject)) patch.subject = str(args.subject);
+      if (str(args.start)) patch.start = { dateTime: str(args.start), timeZone: timezone };
+      if (str(args.end)) patch.end = { dateTime: str(args.end), timeZone: timezone };
+      if (str(args.body)) patch.body = { contentType: 'Text', content: str(args.body) };
+      if (str(args.location)) patch.location = { displayName: str(args.location) };
+      let repeats: string | null = null;
+      if (stopRepeating) {
+        patch.recurrence = null;
+        repeats = 'no longer repeats';
+      } else if (repeatGiven) {
+        const recurrence = parseRecurrence(
+          args.recurrence,
+          str(args.start) || str(rec(base.start).dateTime),
+          timezone
+        );
+        if (!recurrence.ok) return errText(recurrence.error);
+        if (recurrence.val) {
+          patch.recurrence = recurrence.val.recurrence;
+          repeats = `now repeats ${recurrence.val.description}`;
+        }
+      }
+      if (Object.keys(patch).length === 0) {
+        return errText(
+          'Nothing to change: give a new subject, start, end, body, location or recurrence, ' +
+            'or stopRepeating.'
+        );
+      }
+
+      const result = await graphPatch(
+        context,
+        access.accessToken,
+        `/me/events/${encodeURIComponent(target.id)}`,
+        patch
+      );
+      if (!result.ok) return errText(result.error);
+      logger.info('outlook_update_event updated', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        eventId: target.id,
+        series: target.series,
+        fields: Object.keys(patch),
+      });
+      const subject = str(base.subject) || str(args.subject) || '(no subject)';
+      const where = target.series
+        ? target.occurrence
+          ? ' — the whole series'
+          : ''
+        : target.occurrence
+          ? ' — this occurrence only'
+          : '';
+      return {
+        ...textResult(
+          `Updated "${subject}"${where} (${Object.keys(patch).join(', ')})` +
+            (repeats ? `; ${repeats}` : '') +
+            '. Attendees were sent the update.'
+        ),
+        _meta: actMeta({ id: `“${subject}”` }),
       };
     }
   );
@@ -3251,6 +3437,13 @@ export async function registerOutlookTools(
 
   const cancelEventSchema = z.object({
     eventId: z.string().min(1).describe('Event id from outlook_list_events'),
+    scope: z
+      .enum(['occurrence', 'series'])
+      .describe(
+        'For an occurrence of a recurring event: cancel this occurrence only (the default) or ' +
+          'the whole series. A series id cancels the whole series either way.'
+      )
+      .optional(),
     comment: z
       .string()
       .describe('Message sent with the cancellation (used only when the user is the organizer)')
@@ -3264,7 +3457,8 @@ export async function registerOutlookTools(
       description:
         'Show the user an interactive preview card to cancel a calendar event — the card does ' +
         'the canceling. As the organizer this cancels for every attendee (a cancellation is ' +
-        'sent); as an attendee it only removes the event from their calendar. Always use this ' +
+        'sent); as an attendee it only removes the event from their calendar. One occurrence ' +
+        'of a recurring event is cancelled alone unless scope is "series". Always use this ' +
         'card — canceling notifies people.',
       annotations: { readOnlyHint: false },
       _meta: previewToolMeta(ISSUE_PREVIEW_URI),
@@ -3279,11 +3473,13 @@ export async function registerOutlookTools(
         context,
         access.accessToken,
         `/me/events/${encodeURIComponent(eventId)}` +
-          `?$select=id,subject,start,end,organizer,attendees,location,isOrganizer`
+          `?$select=id,subject,start,end,organizer,attendees,location,isOrganizer,type,seriesMasterId`
       );
       if (!result.ok) return errText(result.error);
       const event = result.body;
       const isOrganizer = event.isOrganizer === true;
+      const scope = args.scope === 'series' ? 'series' : undefined;
+      const target = seriesTargetOf(event, scope === 'series');
       const subject = str(event.subject) || '(no subject)';
       const organizer = rec(rec(event.organizer).emailAddress);
       const attendeeCount = Array.isArray(event.attendees) ? event.attendees.length : 0;
@@ -3303,11 +3499,15 @@ export async function registerOutlookTools(
         structuredContent: {
           kind: 'issue',
           previewId: newPreviewId(),
-          title: isOrganizer ? 'Cancel event' : 'Remove event from calendar',
+          title: isOrganizer
+            ? target.series
+              ? 'Cancel recurring series'
+              : 'Cancel event'
+            : 'Remove event from calendar',
           subtitle: subject,
           confirmTool: 'outlook_cancel_event_confirm',
-          confirmLabel: isOrganizer ? 'Cancel event' : 'Remove',
-          confirmArgs: { eventId, ...(comment ? { comment } : {}) },
+          confirmLabel: isOrganizer ? (target.series ? 'Cancel series' : 'Cancel event') : 'Remove',
+          confirmArgs: { eventId, ...(scope ? { scope } : {}), ...(comment ? { comment } : {}) },
           fields: [
             { label: 'Event', value: subject },
             {
@@ -3320,6 +3520,11 @@ export async function registerOutlookTools(
             },
             { label: 'Attendees', value: String(attendeeCount) },
             ...(where ? [{ label: 'Where', value: where }] : []),
+            ...(target.series
+              ? [{ label: 'Scope', value: 'Every occurrence of the recurring series.' }]
+              : target.occurrence
+                ? [{ label: 'Scope', value: 'This occurrence only — the series continues.' }]
+                : []),
             {
               label: 'Effect',
               value: isOrganizer
@@ -3356,43 +3561,55 @@ export async function registerOutlookTools(
       const lookup = await graphGet(
         context,
         access.accessToken,
-        `/me/events/${encodeURIComponent(eventId)}?$select=id,subject,isOrganizer`
+        `/me/events/${encodeURIComponent(eventId)}?$select=id,subject,isOrganizer,type,seriesMasterId`
       );
       if (!lookup.ok) return errText(lookup.error);
       const subject = str(lookup.body.subject) || '(no subject)';
       const isOrganizer = lookup.body.isOrganizer === true;
+      // The series is resolved here too, from the event, not from the card.
+      const target = seriesTargetOf(lookup.body, args.scope === 'series');
+      const what = target.series
+        ? target.occurrence
+          ? 'the whole series of'
+          : 'the recurring series'
+        : target.occurrence
+          ? 'this occurrence of'
+          : '';
+      const named = `${what ? `${what} ` : ''}"${subject}"`;
 
       if (isOrganizer) {
         const comment = str(args.comment);
         const result = await graphPost(
           context,
           access.accessToken,
-          `/me/events/${encodeURIComponent(eventId)}/cancel`,
+          `/me/events/${encodeURIComponent(target.id)}/cancel`,
           comment ? { comment } : {}
         );
         if (!result.ok) return errText(result.error);
         logger.info('outlook_cancel_event_confirm cancelled event', {
           component: 'mcp/tool',
           tenantId: context.tenantId,
-          eventId,
+          eventId: target.id,
+          series: target.series,
           role: 'organizer',
         });
-        return textResult(`Cancelled "${subject}" — attendees were notified.`);
+        return textResult(`Cancelled ${named} — attendees were notified.`);
       }
 
       const removal = await graphDeleteChecked(
         context,
         access.accessToken,
-        `/me/events/${encodeURIComponent(eventId)}`
+        `/me/events/${encodeURIComponent(target.id)}`
       );
       if (!removal.ok) return errText(removal.error);
       logger.info('outlook_cancel_event_confirm removed event', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
-        eventId,
+        eventId: target.id,
+        series: target.series,
         role: 'attendee',
       });
-      return textResult(`Removed "${subject}" from your calendar.`);
+      return textResult(`Removed ${named} from your calendar.`);
     }
   );
 }

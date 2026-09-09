@@ -84,7 +84,8 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['Calendars.ReadWrite'],
     label: 'Manage calendar',
     hint:
-      'outlook_create_event (sends invites), outlook_respond_event (accept/tentative/decline, ' +
+      'outlook_create_event (sends invites), outlook_update_event (changes an event or its ' +
+      'series; attendees are updated), outlook_respond_event (accept/tentative/decline, ' +
       'propose a new time), outlook_cancel_event_preview (cancel or remove an event via a ' +
       'confirm card) — acts as the user; org read-only mode disables them',
     userHint:

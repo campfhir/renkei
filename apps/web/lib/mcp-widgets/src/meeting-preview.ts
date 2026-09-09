@@ -74,6 +74,14 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   card.append(
     readonlyField('When', `${startTime}${timezone ? ` (${timezone})` : ''} — ${duration} min`)
   );
+  // The preview tool checked the repeat and worded it; the card shows the
+  // words and hands the checked object on to confirm untouched.
+  const recurrenceText = str(preview.recurrenceText);
+  const recurrence =
+    typeof preview.recurrence === 'object' && preview.recurrence !== null
+      ? preview.recurrence
+      : null;
+  if (recurrenceText) card.append(readonlyField('Repeats', recurrenceText));
   const agenda = textField('Agenda', str(preview.agenda));
   card.append(agenda.field);
 
@@ -90,6 +98,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       durationMinutes: duration,
       ...(timezone ? { timezone } : {}),
       ...(agenda.input.value.trim() ? { agenda: agenda.input.value.trim() } : {}),
+      ...(recurrence ? { recurrence } : {}),
     });
     if (created.isError) throw new Error(resultText(created) || 'Create failed');
     finishDone({
@@ -98,7 +107,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
         ? { links: parseLinks(resultText(created)) }
         : {}),
       headline: 'Meeting created',
-      detail: `“${topic.input.value.trim()}” — ${startTime}`,
+      detail: `“${topic.input.value.trim()}” — ${startTime}${recurrenceText ? `, ${recurrenceText}` : ''}`,
     });
     bridge.updateModelContext(
       `The user confirmed the Zoom meeting preview; "${topic.input.value.trim()}" was scheduled for ${startTime}.`

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for a tool that never touches it */
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
-import { findToolsTool, FIND_TOOLS_NAME } from './tool-discovery';
+import { findToolsTool, FIND_TOOLS_NAME, recallDiscoveredTools } from './tool-discovery';
+import type { LlmMessage } from '@renkei/agent-llm';
 import type { DiscoverableTool } from './tool-surface';
 
 const context: LocalToolContext = {
@@ -122,5 +123,81 @@ describe('findToolsTool', () => {
     const result = await tools.run(FIND_TOOLS_NAME, { query: 'search' }, context);
 
     expect(result.content[0]?.text).not.toContain('Parameters:');
+  });
+});
+
+describe('recallDiscoveredTools', () => {
+  const catalog = [jiraSearch, jiraCreate, sharepointSearch, outlookFindMeetingTimes];
+
+  it('recalls a tool an earlier turn called by name', () => {
+    const history: LlmMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: 'find a slot' }] },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tu1',
+            name: 'outlook_find_meeting_times',
+            input: { durationMinutes: 30 },
+          },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'tu1', content: 'slots' }] },
+      { role: 'user', content: [{ type: 'text', text: '11am' }] },
+    ];
+    expect(recallDiscoveredTools(history, catalog)).toEqual([outlookFindMeetingTimes.def]);
+  });
+
+  it('recalls every tool a find_tools result listed, called since or not', async () => {
+    // The real result text, so the recall stays in step with the format.
+    const tools = createLocalToolSet([findToolsTool(catalog)!]);
+    const found = await tools.run(FIND_TOOLS_NAME, { query: 'jira' }, context);
+    const history: LlmMessage[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'tu1', name: FIND_TOOLS_NAME, input: { query: 'jira' } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', toolUseId: 'tu1', content: found.content[0]!.text! }],
+      },
+    ];
+    expect(recallDiscoveredTools(history, catalog).map((tool) => tool.name)).toEqual([
+      'jira_search_issues',
+      'jira_create_issue',
+    ]);
+  });
+
+  it('takes no name on trust from result text: only the discoverable catalog counts', () => {
+    const history: LlmMessage[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'tu1', name: FIND_TOOLS_NAME, input: { query: 'x' } },
+          { type: 'tool_use', id: 'tu2', name: 'search_knowledge', input: {} },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            toolUseId: 'tu1',
+            content:
+              'Found 2 tool(s), now callable:\n- jira_delete_everything: gone\n- jira_create_issue: Create',
+          },
+          // Not a find_tools result — its lines are just text.
+          { type: 'tool_result', toolUseId: 'tu2', content: '- sharepoint_search_documents: hi' },
+        ],
+      },
+    ];
+    expect(recallDiscoveredTools(history, catalog)).toEqual([jiraCreate.def]);
+  });
+
+  it('is empty for a chat with nothing discoverable or nothing discovered', () => {
+    const history: LlmMessage[] = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }];
+    expect(recallDiscoveredTools(history, catalog)).toEqual([]);
+    expect(recallDiscoveredTools(history, [])).toEqual([]);
   });
 });

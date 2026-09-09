@@ -39,7 +39,7 @@ import { effectiveToolConfig } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { resolveChatToolSurface } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
-import { findToolsTool } from './tool-discovery';
+import { findToolsTool, recallDiscoveredTools } from './tool-discovery';
 import { openTurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS } from './turn-runner';
@@ -313,6 +313,10 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       },
       input.assistantMessage.id
     );
+    // What earlier turns found through find_tools stays offered: the model
+    // calls a tool it remembers whether or not its schema is in the request,
+    // and only with the schema does it call it right.
+    const recalled = recallDiscoveredTools(history, surface.discoverable);
     const context = await chatPromptContext(db, input.tenantId, input.chat, project);
     const system = buildSystemPrompt({
       personName: person?.displayName ?? person?.email ?? null,
@@ -330,13 +334,14 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     await runChatTurn(
       {
         llm: input.llm,
-        tools: [...surface.tools, ...localTools.defs()].sort((a, b) =>
+        tools: [...surface.tools, ...recalled, ...localTools.defs()].sort((a, b) =>
           a.name.localeCompare(b.name)
         ),
         mcp: surface.mcp,
         localTools,
         localContext,
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
+        discoverableTools: surface.discoverable.map((entry) => entry.def),
         channel,
         store,
         log,

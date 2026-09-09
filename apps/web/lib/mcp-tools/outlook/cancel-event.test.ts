@@ -87,10 +87,13 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 let requests: { method: string; url: string; body: unknown }[] = [];
 /** What the fake Graph says the user's role on the event is. */
 let isOrganizer = true;
+/** What the fake Graph says about the event's place in a series. */
+let series: { type: string; seriesMasterId?: string } = { type: 'singleInstance' };
 
 beforeEach(() => {
   requests = [];
   isOrganizer = true;
+  series = { type: 'singleInstance' };
   global.fetch = (async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     requests.push({
@@ -109,6 +112,7 @@ beforeEach(() => {
             attendees: [{ emailAddress: { address: 'a@example.com' } }],
             location: { displayName: 'Room 4' },
             isOrganizer,
+            ...series,
           }
         : {};
     return {
@@ -190,5 +194,62 @@ describe('outlook_cancel_event_confirm', () => {
     expect(requests[1].url).toContain('/me/events/evt-1');
     expect(requests[1].url).not.toContain('/cancel');
     expect(result.content[0]?.text).toContain('Removed');
+  });
+});
+
+describe('a recurring event', () => {
+  beforeEach(() => {
+    series = { type: 'occurrence', seriesMasterId: 'evt-master' };
+  });
+
+  it('cancels one occurrence alone by default, and says the series continues', async () => {
+    const preview = await cancelTool('outlook_cancel_event_preview', { eventId: 'evt-1' });
+    expect(preview.structuredContent?.title).toBe('Cancel event');
+    expect(preview.structuredContent?.fields).toContainEqual({
+      label: 'Scope',
+      value: 'This occurrence only — the series continues.',
+    });
+    expect(preview.structuredContent?.confirmArgs).toEqual({ eventId: 'evt-1' });
+
+    requests = [];
+    const result = await cancelTool('outlook_cancel_event_confirm', { eventId: 'evt-1' });
+    expect(requests[1].url).toContain('/me/events/evt-1/cancel');
+    expect(result.content[0]?.text).toContain('Cancelled this occurrence of "Quarterly sync"');
+  });
+
+  it('scope "series" cancels the series master, resolved again on confirm', async () => {
+    const preview = await cancelTool('outlook_cancel_event_preview', {
+      eventId: 'evt-1',
+      scope: 'series',
+    });
+    expect(preview.structuredContent?.title).toBe('Cancel recurring series');
+    expect(preview.structuredContent?.confirmLabel).toBe('Cancel series');
+    expect(preview.structuredContent?.confirmArgs).toEqual({ eventId: 'evt-1', scope: 'series' });
+    expect(preview.structuredContent?.fields).toContainEqual({
+      label: 'Scope',
+      value: 'Every occurrence of the recurring series.',
+    });
+
+    requests = [];
+    const result = await cancelTool('outlook_cancel_event_confirm', {
+      eventId: 'evt-1',
+      scope: 'series',
+    });
+    expect(requests.map((request) => request.method)).toEqual(['GET', 'POST']);
+    expect(requests[0].url).toContain('/me/events/evt-1');
+    expect(requests[1].url).toContain('/me/events/evt-master/cancel');
+    expect(result.content[0]?.text).toContain('Cancelled the whole series of "Quarterly sync"');
+  });
+
+  it('a series master cancels the whole series whatever the scope', async () => {
+    series = { type: 'seriesMaster' };
+    const preview = await cancelTool('outlook_cancel_event_preview', { eventId: 'evt-1' });
+    expect(preview.structuredContent?.title).toBe('Cancel recurring series');
+
+    requests = [];
+    isOrganizer = false;
+    const result = await cancelTool('outlook_cancel_event_confirm', { eventId: 'evt-1' });
+    expect(requests[1].method).toBe('DELETE');
+    expect(result.content[0]?.text).toContain('Removed the recurring series "Quarterly sync"');
   });
 });

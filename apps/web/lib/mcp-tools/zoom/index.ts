@@ -20,6 +20,13 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { ZoomClient, encodeZoomMeetingId, vttToText } from '@renkei/connector-zoom';
 import { actMeta } from '@renkei/tool-outcomes';
+import {
+  ZOOM_RECURRING_MEETING_TYPE,
+  describeZoomRecurrence,
+  parseZoomRecurrence,
+  zoomRecurrenceFieldSchema,
+  type ZoomRecurrenceValue,
+} from './recurrence';
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
@@ -160,6 +167,39 @@ function parseDurationMinutes(value: unknown): number | null {
     : null;
 }
 
+/**
+ * The POST body for a meeting — a one-off (type 2) or, with a repeat, a
+ * fixed-time recurring meeting (type 8) whose start is the first
+ * occurrence. Shared by zoom_create_meeting and the card's confirm.
+ */
+function meetingBody(
+  args: Record<string, unknown>,
+  durationMinutes: number,
+  recurrence: ZoomRecurrenceValue | null
+): Record<string, unknown> {
+  return {
+    topic: str(args.topic),
+    type: recurrence ? ZOOM_RECURRING_MEETING_TYPE : 2,
+    start_time: str(args.startTime),
+    duration: durationMinutes,
+    ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
+    ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
+    ...(recurrence ? { recurrence: recurrence.recurrence } : {}),
+  };
+}
+
+function scheduledLine(
+  body: Record<string, unknown>,
+  recurrence: ZoomRecurrenceValue | null
+): string {
+  return (
+    `Scheduled "${str(body.topic)}" at ${str(body.start_time)}` +
+    (recurrence ? `, repeating ${recurrence.description}` : '') +
+    ` (id ${String(body.id ?? 'unknown')}).` +
+    (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
+  );
+}
+
 function rec(value: unknown): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
@@ -184,6 +224,36 @@ function meetingLine(meeting: Record<string, unknown>): string {
     ` — id: ${str(meeting.id) || String(meeting.id ?? '')}` +
     (str(meeting.uuid) ? ` — uuid: ${str(meeting.uuid)}` : '') +
     (str(meeting.join_url) ? ` — [join](${str(meeting.join_url)})` : '')
+  );
+}
+
+/** How many of a series' occurrences zoom_get_meeting lists before summarizing the rest. */
+const MAX_OCCURRENCES_SHOWN = 30;
+
+/**
+ * A recurring meeting's repeat and its occurrences, each with the id that
+ * addresses it alone; nothing for a one-off.
+ */
+function seriesLines(meeting: Record<string, unknown>): string {
+  if (num(meeting.type) !== ZOOM_RECURRING_MEETING_TYPE) return '';
+  const repeats = describeZoomRecurrence(meeting.recurrence, str(meeting.start_time));
+  const occurrences = Array.isArray(meeting.occurrences) ? meeting.occurrences.map(rec) : [];
+  const shown = occurrences.slice(0, MAX_OCCURRENCES_SHOWN).map((occurrence) => {
+    const duration = num(occurrence.duration);
+    return (
+      `- ${str(occurrence.start_time) || '(no start time)'}` +
+      (duration !== null ? ` — ${duration} min` : '') +
+      (str(occurrence.status) ? ` — ${str(occurrence.status)}` : '') +
+      ` — occurrence id: ${str(occurrence.occurrence_id) || String(occurrence.occurrence_id ?? '')}`
+    );
+  });
+  const more = occurrences.length - shown.length;
+  return (
+    `Repeats: ${repeats ?? 'yes (recurring)'}\n` +
+    (shown.length > 0
+      ? `Occurrences (${occurrences.length}):\n${shown.join('\n')}\n` +
+        (more > 0 ? `…and ${more} more\n` : '')
+      : '')
   );
 }
 
@@ -277,7 +347,10 @@ export async function registerZoomTools(
     'zoom_get_meeting',
     {
       title: 'Zoom · Read — Get one Zoom meeting',
-      description: 'Fetch a meeting’s details by id: time, agenda, join link.',
+      description:
+        'Fetch a meeting’s details by id: time, agenda, join link — and, for a recurring ' +
+        'meeting, how it repeats and each occurrence with its occurrence id (what ' +
+        'zoom_update_meeting and zoom_delete_meeting take to change or cancel one occurrence).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         meetingId: z.string().min(1).describe('Meeting id (numeric) or UUID'),
@@ -296,6 +369,7 @@ export async function registerZoomTools(
       return textResult(
         `${meetingLine(meeting)}\n` +
           `Timezone: ${str(meeting.timezone) || '(none)'} — status: ${str(meeting.status) || 'unknown'}\n` +
+          seriesLines(meeting) +
           (str(meeting.agenda) ? `\nAgenda:\n${str(meeting.agenda)}` : 'No agenda.')
       );
     }
@@ -306,8 +380,9 @@ export async function registerZoomTools(
     {
       title: 'Zoom · Act — Schedule a Zoom meeting',
       description:
-        'Create a scheduled meeting on the connected user’s calendar. Acts as the user — only ' +
-        'schedule what they asked for.',
+        'Create a scheduled meeting on the connected user’s calendar. A recurring meeting (a ' +
+        'weekly 1:1, a monthly review) is one call with `recurrence` set — startTime is its ' +
+        'first occurrence. Acts as the user — only schedule what they asked for.',
       // Acting tool: readOnlyHint false, so org read-only mode disables it.
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -315,7 +390,10 @@ export async function registerZoomTools(
         startTime: z
           .string()
           .min(1)
-          .describe('Start, ISO-8601 (e.g. 2026-08-12T15:00:00Z or local with timezone below)'),
+          .describe(
+            'Start, ISO-8601 (e.g. 2026-08-12T15:00:00Z or local with timezone below); for a ' +
+              'recurring meeting, the first occurrence'
+          ),
         durationMinutes: z
           .union([z.number(), z.string()])
           .describe('Length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'),
@@ -324,6 +402,7 @@ export async function registerZoomTools(
           .describe('IANA timezone for startTime (e.g. America/Chicago)')
           .optional(),
         agenda: z.string().describe('Agenda text shown on the invite').optional(),
+        recurrence: zoomRecurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
@@ -331,21 +410,13 @@ export async function registerZoomTools(
       if (durationMinutes === null) {
         return errText('durationMinutes must be a whole number between 1 and 1440');
       }
+      const recurrence = parseZoomRecurrence(args.recurrence, str(args.startTime));
+      if (!recurrence.ok) return errText(recurrence.error);
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_create_meeting'),
         '/users/me/meetings',
-        {
-          method: 'POST',
-          json: {
-            topic: str(args.topic),
-            type: 2, // scheduled
-            start_time: str(args.startTime),
-            duration: durationMinutes,
-            ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
-            ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
-          },
-        }
+        { method: 'POST', json: meetingBody(args, durationMinutes, recurrence.val) }
       );
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
@@ -353,12 +424,10 @@ export async function registerZoomTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),
+        recurring: recurrence.val !== null,
       });
       return {
-        ...textResult(
-          `Scheduled "${str(body.topic)}" at ${str(body.start_time)} (id ${String(body.id ?? 'unknown')}).` +
-            (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
-        ),
+        ...textResult(scheduledLine(body, recurrence.val)),
         // The join URL, not the numeric meeting id: what a person wants
         // from "an agent scheduled a meeting" is the way into it.
         _meta: actMeta({
@@ -398,6 +467,7 @@ export async function registerZoomTools(
           .describe('IANA timezone for startTime (e.g. America/Chicago)')
           .optional(),
         agenda: z.string().describe('Agenda text shown on the invite').optional(),
+        recurrence: zoomRecurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
@@ -409,6 +479,8 @@ export async function registerZoomTools(
       if (durationMinutes === null) {
         return errText('durationMinutes must be a whole number between 1 and 1440');
       }
+      const recurrence = parseZoomRecurrence(args.recurrence, startTime);
+      if (!recurrence.ok) return errText(recurrence.error);
       return {
         ...textResult(
           `The meeting "${topic}" (${startTime}) is awaiting the user's decision on the ` +
@@ -424,6 +496,11 @@ export async function registerZoomTools(
           durationMinutes,
           ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
           ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
+          // The checked repeat rides on the card to confirm, and its
+          // wording is what the card shows.
+          ...(recurrence.val
+            ? { recurrence: recurrence.val.input, recurrenceText: recurrence.val.description }
+            : {}),
         },
       };
     }
@@ -446,6 +523,7 @@ export async function registerZoomTools(
           .describe('Length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'),
         timezone: z.string().describe('IANA timezone for startTime').optional(),
         agenda: z.string().describe('Agenda text shown on the invite').optional(),
+        recurrence: zoomRecurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
@@ -453,21 +531,13 @@ export async function registerZoomTools(
       if (durationMinutes === null) {
         return errText('durationMinutes must be a whole number between 1 and 1440');
       }
+      const recurrence = parseZoomRecurrence(args.recurrence, str(args.startTime));
+      if (!recurrence.ok) return errText(recurrence.error);
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_create_meeting'),
         '/users/me/meetings',
-        {
-          method: 'POST',
-          json: {
-            topic: str(args.topic),
-            type: 2, // scheduled
-            start_time: str(args.startTime),
-            duration: durationMinutes,
-            ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
-            ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
-          },
-        }
+        { method: 'POST', json: meetingBody(args, durationMinutes, recurrence.val) }
       );
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
@@ -475,11 +545,9 @@ export async function registerZoomTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),
+        recurring: recurrence.val !== null,
       });
-      return textResult(
-        `Scheduled "${str(body.topic)}" at ${str(body.start_time)} (id ${String(body.id ?? 'unknown')}).` +
-          (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
-      );
+      return textResult(scheduledLine(body, recurrence.val));
     }
   );
 
@@ -488,11 +556,20 @@ export async function registerZoomTools(
     {
       title: 'Zoom · Act — Reschedule or edit a Zoom meeting',
       description:
-        'Update a meeting’s topic, time, duration or agenda. Acts as the user; attendees see ' +
-        'the change through Zoom.',
+        'Update a meeting’s topic, time, duration, agenda or repeat. Acts as the user; ' +
+        'attendees see the change through Zoom. For a recurring meeting the change applies ' +
+        'to every occurrence unless occurrenceId names one (from zoom_get_meeting); a new ' +
+        'recurrence or stopRepeating always applies to the whole series.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         meetingId: z.string().min(1).describe('Meeting id to update'),
+        occurrenceId: z
+          .string()
+          .describe(
+            'Change one occurrence of a recurring meeting only (its id from zoom_get_meeting): ' +
+              'time, duration and agenda apply to that occurrence'
+          )
+          .optional(),
         topic: z.string().describe('New topic').optional(),
         startTime: z.string().describe('New start, ISO-8601').optional(),
         durationMinutes: z
@@ -503,11 +580,32 @@ export async function registerZoomTools(
           .optional(),
         timezone: z.string().describe('IANA timezone for startTime').optional(),
         agenda: z.string().describe('New agenda').optional(),
+        recurrence: zoomRecurrenceFieldSchema.describe(
+          'A new repeat for the meeting, replacing the current one (or making a one-off ' +
+            'recurring) — frequency, interval, daysOfWeek, dayOfMonth, weekOfMonth, until, ' +
+            'occurrences, as on zoom_create_meeting. Omit to leave the repeat as it is.'
+        ),
+        stopRepeating: z
+          .boolean()
+          .describe('End the series: the meeting becomes a single meeting at its start time')
+          .optional(),
       }),
     },
     async (args: Record<string, any>) => {
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
+      const occurrenceId = str(args.occurrenceId);
+      const repeatGiven =
+        args.recurrence !== undefined && args.recurrence !== null && args.recurrence !== '';
+      const stopRepeating = args.stopRepeating === true;
+      if (repeatGiven && stopRepeating) {
+        return errText('Give either a new recurrence or stopRepeating, not both.');
+      }
+      if (occurrenceId && (repeatGiven || stopRepeating)) {
+        return errText(
+          'A repeat belongs to the whole meeting: leave occurrenceId out to change it.'
+        );
+      }
       const patch: Record<string, unknown> = {};
       if (str(args.topic)) patch.topic = str(args.topic);
       if (str(args.startTime)) patch.start_time = str(args.startTime);
@@ -520,12 +618,38 @@ export async function registerZoomTools(
       }
       if (str(args.timezone)) patch.timezone = str(args.timezone);
       if (str(args.agenda)) patch.agenda = str(args.agenda);
+      let repeats: string | null = null;
+      if (stopRepeating) {
+        patch.type = 2; // scheduled, once
+        repeats = 'no longer repeats';
+      } else if (repeatGiven) {
+        // The repeat's defaults (which weekday, which day of the month)
+        // come from the meeting's start — the new one, or the one it has.
+        let start = str(args.startTime);
+        if (!start) {
+          const current = await zoomGet(
+            auth,
+            zoomScopeFor('zoom_get_meeting'),
+            `/meetings/${encodeZoomMeetingId(meetingId)}`
+          );
+          if (!current.ok) return errText(current.error);
+          start = str(current.body.start_time);
+        }
+        const recurrence = parseZoomRecurrence(args.recurrence, start);
+        if (!recurrence.ok) return errText(recurrence.error);
+        if (recurrence.val) {
+          patch.type = ZOOM_RECURRING_MEETING_TYPE;
+          patch.recurrence = recurrence.val.recurrence;
+          repeats = `now repeats ${recurrence.val.description}`;
+        }
+      }
       if (Object.keys(patch).length === 0) return errText('Nothing to update.');
 
+      const query = occurrenceId ? `?occurrence_id=${encodeURIComponent(occurrenceId)}` : '';
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_update_meeting'),
-        `/meetings/${encodeZoomMeetingId(meetingId)}`,
+        `/meetings/${encodeZoomMeetingId(meetingId)}${query}`,
         { method: 'PATCH', json: patch }
       );
       if (!result.ok) return errText(result.error);
@@ -533,8 +657,17 @@ export async function registerZoomTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         meetingId,
+        ...(occurrenceId ? { occurrenceId } : {}),
+        fields: Object.keys(patch),
       });
-      return textResult(`Meeting ${meetingId} updated (${Object.keys(patch).join(', ')}).`);
+      return textResult(
+        (occurrenceId
+          ? `Occurrence ${occurrenceId} of meeting ${meetingId} updated`
+          : `Meeting ${meetingId} updated`) +
+          ` (${Object.keys(patch).join(', ')})` +
+          (repeats ? `; ${repeats}` : '') +
+          '.'
+      );
     }
   );
 
@@ -542,10 +675,19 @@ export async function registerZoomTools(
     'zoom_delete_meeting',
     {
       title: 'Zoom · Act — Cancel a Zoom meeting',
-      description: 'Delete (cancel) a scheduled meeting. Acts as the user; this cannot be undone.',
+      description:
+        'Delete (cancel) a scheduled meeting — a one-off, or a recurring meeting with every ' +
+        'occurrence; with occurrenceId, only that occurrence of a recurring meeting (the rest ' +
+        'continue). Acts as the user; this cannot be undone.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         meetingId: z.string().min(1).describe('Meeting id to cancel'),
+        occurrenceId: z
+          .string()
+          .describe(
+            'Cancel one occurrence of a recurring meeting only (its id from zoom_get_meeting)'
+          )
+          .optional(),
         notifyRegistrants: z
           .boolean()
           .describe('Email cancellation to registrants (default false)')
@@ -555,11 +697,15 @@ export async function registerZoomTools(
     async (args: Record<string, any>) => {
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
-      const notify = args.notifyRegistrants === true ? '?cancel_meeting_reminder=true' : '';
+      const occurrenceId = str(args.occurrenceId);
+      const query = new URLSearchParams({
+        ...(occurrenceId ? { occurrence_id: occurrenceId } : {}),
+        ...(args.notifyRegistrants === true ? { cancel_meeting_reminder: 'true' } : {}),
+      }).toString();
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_delete_meeting'),
-        `/meetings/${encodeZoomMeetingId(meetingId)}${notify}`,
+        `/meetings/${encodeZoomMeetingId(meetingId)}${query ? `?${query}` : ''}`,
         { method: 'DELETE' }
       );
       if (!result.ok) return errText(result.error);
@@ -567,8 +713,13 @@ export async function registerZoomTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         meetingId,
+        ...(occurrenceId ? { occurrenceId } : {}),
       });
-      return textResult(`Meeting ${meetingId} cancelled.`);
+      return textResult(
+        occurrenceId
+          ? `Occurrence ${occurrenceId} of meeting ${meetingId} cancelled; the other occurrences continue.`
+          : `Meeting ${meetingId} cancelled.`
+      );
     }
   );
 
