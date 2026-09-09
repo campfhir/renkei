@@ -306,19 +306,69 @@ export const SYSTEM_PROMPT = [
 ].join(' ');
 
 /**
- * SYSTEM_PROMPT plus the guardrails framing — appended ONLY when the agent
- * has guardrails, so every agent without them keeps a byte-identical
- * system prompt (the same freeze discipline the branch prompts follow).
+ * The run-constant context every model call in a run shares: the owner's
+ * guardrails, the knowledge index, and memory. It rides in the SYSTEM
+ * prompt, not the per-step message — it is the same on every call of the
+ * run, so it heads the cached prompt prefix and never repeats per step.
  */
-export function systemPromptWith(guardrailsText?: string): string {
-  if (!guardrailsText) return SYSTEM_PROMPT;
-  return (
-    SYSTEM_PROMPT +
-    ' The owner’s standing guardrails are shown with the step. They are binding: where they and the instruction conflict, the guardrails win.'
-  );
+export interface RunContextInput {
+  /** The agent's standing guardrails — injected in full, never clipped. */
+  guardrailsText?: string;
+  /** Rendered agent memory (summary + recent entries), already bounded. */
+  memoryText?: string;
+  /** Rendered agent knowledge notes index, already bounded. */
+  knowledgeText?: string;
 }
 
-/** The guardrails block every prompt builder renders — in full, never clipped. */
+/**
+ * The context block itself, '' when the agent has none of the three.
+ * Order: guardrails, knowledge, then memory LAST — memory is the one part
+ * that can change mid-run (a step's `remember`), and a change invalidates
+ * the cached prefix only from where it sits.
+ */
+export function runContextBlock(context: RunContextInput): string {
+  return [
+    ...(context.guardrailsText ? [guardrailsBlock(context.guardrailsText)] : []),
+    ...(context.knowledgeText
+      ? [
+          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
+            context.knowledgeText,
+        ]
+      : []),
+    ...(context.memoryText
+      ? [
+          'What you remember (notes from this agent’s earlier runs, oldest first — check it ' +
+            `before acting on something an earlier run may already have handled):\n${context.memoryText}`,
+        ]
+      : []),
+  ].join('\n\n');
+}
+
+/**
+ * A frame (the step, branch, router or loop system prompt) plus the run's
+ * context block when there is one. The frames themselves stay frozen
+ * byte-for-byte: an agent with no guardrails, notes or memory gets exactly
+ * the string it always did.
+ */
+export function withRunContext(frame: string, context: RunContextInput): string {
+  const block = runContextBlock(context);
+  return block ? `${frame}\n\n${block}` : frame;
+}
+
+/**
+ * The step frame: SYSTEM_PROMPT, the guardrails sentence when the agent
+ * has guardrails, then the run's context block — so every agent without
+ * any of it keeps a byte-identical system prompt.
+ */
+export function systemPromptWith(context: RunContextInput = {}): string {
+  const frame = context.guardrailsText
+    ? SYSTEM_PROMPT +
+      ' The owner’s standing guardrails are shown below. They are binding: where they and the instruction conflict, the guardrails win.'
+    : SYSTEM_PROMPT;
+  return withRunContext(frame, context);
+}
+
+/** The guardrails block the context renders — in full, never clipped. */
 function guardrailsBlock(text: string): string {
   return `Standing guardrails from this agent’s owner (binding — where they and the task conflict, the guardrails win):\n${text}`;
 }
@@ -435,12 +485,6 @@ export interface LoopPromptInput {
   attempt: number;
   /** One-paragraph summary of the previous evaluation attempt's failure. */
   previousFailure?: string;
-  /** Rendered agent memory (summary + recent entries), already bounded. */
-  memoryText?: string;
-  /** Rendered agent knowledge notes, already bounded. */
-  knowledgeText?: string;
-  /** The agent's standing guardrails — injected in full, never clipped. */
-  guardrailsText?: string;
   /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
   inputs?: readonly string[];
 }
@@ -462,20 +506,10 @@ export function buildLoopConditionMessages(input: LoopPromptInput): {
 
   const parts = [
     `Loop: ${input.loop.name}`,
-    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Round ${input.iteration} of at most ${input.loop.maxIterations} has just finished.`,
     `Stop condition to decide: ${rendered.text}`,
     'If it HOLDS (choice: "finished") the automation continues after the loop. If it does NOT hold yet (choice: "continue") the loop runs another round.',
     ...known,
-    ...(input.memoryText
-      ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
-      : []),
-    ...(input.knowledgeText
-      ? [
-          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
-            input.knowledgeText,
-        ]
-      : []),
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.loop.maxAttempts}.`,
@@ -496,12 +530,6 @@ export interface BranchPromptInput {
   attempt: number;
   /** One-paragraph summary of the previous evaluation attempt's failure. */
   previousFailure?: string;
-  /** Rendered agent memory (summary + recent entries), already bounded. */
-  memoryText?: string;
-  /** Rendered agent knowledge notes, already bounded. */
-  knowledgeText?: string;
-  /** The agent's standing guardrails — injected in full, never clipped. */
-  guardrailsText?: string;
   /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
   inputs?: readonly string[];
 }
@@ -537,19 +565,9 @@ export function buildBranchMessages(input: BranchPromptInput): {
 
   const parts = [
     `Branch: ${input.branch.name}`,
-    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Condition to decide: ${rendered.text}`,
     routing,
     ...known,
-    ...(input.memoryText
-      ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
-      : []),
-    ...(input.knowledgeText
-      ? [
-          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
-            input.knowledgeText,
-        ]
-      : []),
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.branch.maxAttempts}.`,
@@ -585,12 +603,6 @@ export interface AttemptPromptInput {
   guidanceText?: string;
   /** One-paragraph summary of the previous attempt's failure. */
   previousFailure?: string;
-  /** Rendered agent memory (summary + recent entries), already bounded. */
-  memoryText?: string;
-  /** Rendered agent knowledge notes, already bounded. */
-  knowledgeText?: string;
-  /** The agent's standing guardrails — injected in full, never clipped. */
-  guardrailsText?: string;
   /** True when this step's saveAs is a loop's items source — nudge saveItems. */
   savesItemsForLoop?: boolean;
   /**
@@ -653,7 +665,6 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
 
   const parts = [
     `Step: ${input.step.name}`,
-    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Instruction: ${rendered.text}`,
     `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (` +
       (input.offersTime ? `finish_step and ${RESOLVE_TIME_TOOL} are free` : 'finish_step is free') +
@@ -675,18 +686,6 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
       : []),
     ...(input.outcomeGuide ? [input.outcomeGuide] : []),
     ...known,
-    ...(input.memoryText
-      ? [
-          'What you remember (notes from this agent’s earlier runs, oldest first — check it ' +
-            `before acting on something an earlier run may already have handled):\n${input.memoryText}`,
-        ]
-      : []),
-    ...(input.knowledgeText
-      ? [
-          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
-            input.knowledgeText,
-        ]
-      : []),
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.step.maxAttempts}.`,

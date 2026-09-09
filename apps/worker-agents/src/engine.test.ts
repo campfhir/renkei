@@ -322,6 +322,51 @@ maybe('agent run engine', () => {
     ]);
   });
 
+  it('carries guardrails and memory in the system prompt, not the step message', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    await db
+      .updateTable('agents')
+      .set({ guardrails: 'Never invent numbers.' })
+      .where('id', '=', agentId)
+      .execute();
+    await db
+      .insertInto('agent_memories')
+      .values({
+        id: randomUUID(),
+        tenant_id: tenantId,
+        agent_id: agentId,
+        kind: 'entry',
+        content: 'Replied to message 123 about the outage.',
+      })
+      .execute();
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' });
+    });
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+
+    expect(seen).toHaveLength(2);
+    for (const request of seen) {
+      expect(request.system).toContain('Standing guardrails from this agent’s owner');
+      expect(request.system).toContain('Never invent numbers.');
+      expect(request.system).toContain('Replied to message 123 about the outage.');
+      const first = request.messages[0].content[0];
+      const text = first.type === 'text' ? first.text : '';
+      expect(text).not.toContain('Never invent numbers.');
+      expect(text).not.toContain('Replied to message 123');
+    }
+    // Identical across the attempt's turns: it is the cached prefix.
+    expect(seen[1].system).toBe(seen[0].system);
+  });
+
   it('mints the run token with exactly the tools the steps name plus the notifier tools', async () => {
     const { runId } = await seedRun(singleStep());
     const minted: string[][] = [];
@@ -2599,7 +2644,7 @@ maybe('agent run engine', () => {
     expect(rows).toEqual([{ status: 'stopped', outcome: 'terminal' }]);
   });
 
-  it('injects guardrails into the system and step prompts, in full', async () => {
+  it('injects guardrails into the system prompt in full, never the step message', async () => {
     const { runId, agentId } = await seedRun(singleStep());
     const guardrails = 'Never fabricate numbers. Draft only — never send anything.';
     await db.updateTable('agents').set({ guardrails }).where('id', '=', agentId).execute();
@@ -2619,11 +2664,14 @@ maybe('agent run engine', () => {
 
     expect(seen.length).toBeGreaterThan(0);
     // The system prompt carries the override framing ONLY for agents with
-    // guardrails; the user message carries the document itself, unclipped.
+    // guardrails, and the document itself, unclipped — it is run-constant,
+    // so it heads the cached prefix instead of repeating in every step.
     expect(seen[0].system).toContain('the guardrails win');
+    expect(seen[0].system).toContain('Standing guardrails');
+    expect(seen[0].system).toContain('Never fabricate numbers. Draft only — never send anything.');
     const firstUser = JSON.stringify(seen[0].messages);
-    expect(firstUser).toContain('Standing guardrails');
-    expect(firstUser).toContain('Never fabricate numbers.');
+    expect(firstUser).not.toContain('Standing guardrails');
+    expect(firstUser).not.toContain('Never fabricate numbers.');
   });
 
   it('fails the run as a guard stop when a step uses a blocked skill', async () => {

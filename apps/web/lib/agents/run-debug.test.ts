@@ -107,11 +107,11 @@ describe('renderRunDebugMarkdown', () => {
     // The 1:1 contract: the fenced block IS the engine's captured message,
     // runtime values included; outcomes/summaries/tool calls follow it.
     expect(text).toContain(
-      'Prompt (verbatim, as sent to the model):\n```text\n' +
+      'User message (verbatim, as sent to the model):\n```text\n' +
         'Step: Create the ticket\n\nInstruction: Create it for ENG-808.\n\n' +
         'Tool budget: at most 3 tool call(s) this attempt.\n```'
     );
-    expect(text.indexOf('Prompt (verbatim')).toBeLessThan(
+    expect(text.indexOf('User message (verbatim')).toBeLessThan(
       text.indexOf('Summary: The create call was rejected.')
     );
   });

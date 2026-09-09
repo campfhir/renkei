@@ -42,6 +42,7 @@ import {
   outcomeGuideFor,
   systemPromptWith,
   usesTime,
+  withRunContext,
 } from '@renkei/agents/step-prompts';
 import { fencedDefinition } from '@/lib/agents/definition';
 import { triggerSummary } from '@/lib/agents/trigger-summary';
@@ -99,8 +100,9 @@ export function agentMarkdown(agent: AgentExportInput): string {
     'The prompt sections below are rendered by the same code the engine runs, word for word.',
     'Runtime-only content is substituted honestly: variables appear as {{name}} placeholders',
     'where real values bind during a run; memory, knowledge notes, and retry context exist',
-    'only mid-run and are omitted; tool schemas ride beside the messages and are listed by',
-    'name. The final "Definition" section is the exact stored definition — the',
+    'only mid-run and are omitted (at run time they follow the guardrails in the system',
+    'prompt); tool schemas ride beside the messages and are listed by name. The final',
+    '"Definition" section is the exact stored definition — the',
     'round-trip half of this document.',
     '',
     '## Triggers',
@@ -114,7 +116,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
     '## System prompt (every action step)',
     '',
     '```',
-    systemPromptWith(guardrailsText || undefined),
+    systemPromptWith({ guardrailsText }),
     '```',
     '',
   ];
@@ -144,7 +146,6 @@ export function agentMarkdown(agent: AgentExportInput): string {
           variables: vars,
           toolBudget: NORMAL_TOOL_CAP,
           offersTime,
-          ...(guardrailsText ? { guardrailsText } : {}),
           ...(node.saveAs && loopSourceVars.has(node.saveAs) ? { savesItemsForLoop: true } : {}),
           ...(() => {
             const guide = outcomeGuideFor(node, vars);
@@ -183,7 +184,6 @@ export function agentMarkdown(agent: AgentExportInput): string {
           branch: node,
           variables: vars,
           attempt: 1,
-          ...(guardrailsText ? { guardrailsText } : {}),
         });
         const router = node.paths.length !== 2;
         lines.push(
@@ -192,7 +192,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
           `System prompt (${router ? 'router' : 'two-path branch'}); tool offered: ${CHOOSE_PATH_TOOL}`,
           '',
           '```',
-          router ? ROUTER_SYSTEM_PROMPT : BRANCH_SYSTEM_PROMPT,
+          withRunContext(router ? ROUTER_SYSTEM_PROMPT : BRANCH_SYSTEM_PROMPT, { guardrailsText }),
           '```',
           '',
           '```',
@@ -210,7 +210,6 @@ export function agentMarkdown(agent: AgentExportInput): string {
             iteration: 1,
             variables: vars,
             attempt: 1,
-            ...(guardrailsText ? { guardrailsText } : {}),
           });
           lines.push(
             `## Step ${ordinal + 1}: Loop — ${node.name || '(unnamed)'}`,
@@ -218,7 +217,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
             `Checked after each round of its body; tool offered: ${LOOP_DECISION_TOOL}`,
             '',
             '```',
-            LOOP_SYSTEM_PROMPT,
+            withRunContext(LOOP_SYSTEM_PROMPT, { guardrailsText }),
             '```',
             '',
             '```',

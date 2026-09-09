@@ -184,14 +184,17 @@ function attemptLines(attempt: AttemptView, endedRunHere: boolean): string[] {
     typeof attempt.detail === 'object' && attempt.detail !== null && !Array.isArray(attempt.detail)
       ? attempt.detail
       : {};
-  // The prompt the model was actually sent, byte-for-byte — captured by
-  // the engine at send time (attempts recorded before that ship only the
-  // resolved-instruction preview below). Everything after it — outcomes,
-  // summaries, tool calls, errors — is appended context; this block is the
-  // 1:1 part.
+  // The user message the model was actually sent, byte-for-byte — captured
+  // by the engine at send time (attempts recorded before that ship only the
+  // resolved-instruction preview below). The system prompt is not stored:
+  // it is the step frame plus the agent's guardrails, knowledge index and
+  // memory as they stood at run time, the same on every call of the run.
+  // Everything after this block — outcomes, summaries, tool calls, errors
+  // — is appended context; this block is the 1:1 part.
   if (str(detail.promptText)) {
     lines.push(
-      '  Prompt (verbatim, as sent to the model):',
+      '  System prompt: the step frame plus this agent’s guardrails, knowledge index and memory as they stood at run time (not stored; see the export and the Memory panel for current values).',
+      '  User message (verbatim, as sent to the model):',
       '```text',
       str(detail.promptText),
       '```'

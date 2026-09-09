@@ -6,11 +6,16 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  BRANCH_SYSTEM_PROMPT,
   INLINE_VALUE_MAX,
+  SYSTEM_PROMPT,
   buildAttemptMessages,
   buildBranchMessages,
   outcomeGuideFor,
+  runContextBlock,
+  systemPromptWith,
   usesTime,
+  withRunContext,
 } from './step-prompts';
 import type { BranchStep } from './steps';
 import type { ActionStep } from './steps';
@@ -322,5 +327,45 @@ describe('Known information lists what the step references, each value once', ()
     expect(text.split(long)).toHaveLength(2);
     expect(text).not.toContain('- ticket:');
     expect(text).not.toContain('nearbyMessages');
+  });
+});
+
+describe('the run context rides in the system prompt', () => {
+  it('leaves an agent with no guardrails, notes or memory byte-identical', () => {
+    expect(systemPromptWith()).toBe(SYSTEM_PROMPT);
+    expect(systemPromptWith({})).toBe(SYSTEM_PROMPT);
+    expect(withRunContext(BRANCH_SYSTEM_PROMPT, {})).toBe(BRANCH_SYSTEM_PROMPT);
+    expect(runContextBlock({})).toBe('');
+  });
+
+  it('appends guardrails, then the knowledge index, then memory last', () => {
+    const system = systemPromptWith({
+      guardrailsText: 'Never invent numbers.',
+      knowledgeText: '- CAS request type 166 needs an MRN [noteId abc]',
+      memoryText: '- [2026-09-09 02:29] Commented on CAS-24851.',
+    });
+    expect(system.startsWith(SYSTEM_PROMPT)).toBe(true);
+    expect(system).toContain('guardrails are shown below');
+    // Past the frame, which itself mentions both blocks by name.
+    const body = system.slice(SYSTEM_PROMPT.length);
+    const guardrails = body.indexOf('Standing guardrails from this agent’s owner');
+    const knowledge = body.indexOf('Your knowledge notes');
+    const memory = body.indexOf('What you remember');
+    expect(guardrails).toBeGreaterThan(0);
+    expect(knowledge).toBeGreaterThan(guardrails);
+    expect(memory).toBeGreaterThan(knowledge);
+    expect(system.endsWith('Commented on CAS-24851.')).toBe(true);
+  });
+
+  it('keeps the context out of the per-step message', () => {
+    const text = buildAttemptMessages({
+      step: step(),
+      attempt: 1,
+      variables: {},
+      toolBudget: 3,
+    }).messages[0].content[0].text;
+    expect(text).not.toContain('Standing guardrails');
+    expect(text).not.toContain('What you remember');
+    expect(text).not.toContain('Your knowledge notes');
   });
 });

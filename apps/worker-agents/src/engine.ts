@@ -95,6 +95,7 @@ import {
   LOOP_DECISION_DEF,
   LOOP_DECISION_TOOL,
   systemPromptWith,
+  withRunContext,
   outcomeGuideFor,
   usesTime,
   NORMAL_TOOL_CAP,
@@ -296,7 +297,7 @@ interface RunContextText {
   /**
    * The agent's standing guardrails, live-read from the agents row (never
    * snapshotted — tightening a rule must bite in-flight runs immediately)
-   * and injected IN FULL into every model call. '' = none.
+   * and injected IN FULL into every model call's system prompt. '' = none.
    */
   guardrailsText: string;
   /**
@@ -2987,9 +2988,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         attempt,
         inputs: [...context.liveInputs],
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
-        ...(context.memoryText ? { memoryText: context.memoryText } : {}),
-        ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
-        ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
       const promptText = promptTextOf(built.messages);
@@ -3014,7 +3012,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       for (let turn = 0; turn < CONDITION_TURNS && !decidedPath; turn += 1) {
         const lastTurn = turn === CONDITION_TURNS - 1;
         const completion = await llm.provider.complete({
-          system: branchSystem,
+          system: withRunContext(branchSystem, context),
           messages,
           tools: branchTools,
           // 'any' rather than the named tool: forcing choose_path would make
@@ -3276,9 +3274,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         variables: vars,
         attempt,
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
-        ...(context.memoryText ? { memoryText: context.memoryText } : {}),
-        ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
-        ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
       const promptText = promptTextOf(built.messages);
@@ -3301,7 +3296,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       for (let turn = 0; turn < CONDITION_TURNS && !decided; turn += 1) {
         const lastTurn = turn === CONDITION_TURNS - 1;
         const completion = await llm.provider.complete({
-          system: LOOP_SYSTEM_PROMPT,
+          system: withRunContext(LOOP_SYSTEM_PROMPT, context),
           messages,
           tools: loopTools,
           toolChoice: lastTurn ? { name: LOOP_DECISION_TOOL } : 'any',
@@ -3480,9 +3475,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       previousFailure,
       savesItemsForLoop,
       ...(outcomeGuide ? { outcomeGuide } : {}),
-      ...(context.memoryText ? { memoryText: context.memoryText } : {}),
-      ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
-      ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
     });
 
     // The step's one tool, plus (on corrective attempts) the guidance's
@@ -3559,7 +3551,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // whole cache away. Exhaustion is expressed through tool_choice
       // alone — a forced finish_step leaves the others uncallable anyway.
       const completion = await llm.provider.complete({
-        system: systemPromptWith(context.guardrailsText || undefined),
+        system: systemPromptWith(context),
         messages,
         tools: offered,
         toolChoice: budgetExhausted ? { name: FINISH_STEP_TOOL } : 'any',
