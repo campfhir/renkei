@@ -16,6 +16,7 @@ import {
   isBranchStep,
   isCurrentStepsDoc,
   nodeUsesModel,
+  referencedTools,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -635,5 +636,53 @@ describe('nodeUsesModel', () => {
     const legacy: AgentStepNode = action({ name: 'Old' });
     expect('kind' in legacy).toBe(false);
     expect(nodeUsesModel(legacy)).toBe(true);
+  });
+});
+
+describe('referencedTools', () => {
+  it('names every step tool and retry-guidance chip once, sorted, minus the blocked set', () => {
+    const nodes: AgentStepNode[] = [
+      action({ tool: 'jira_search_issues' }),
+      branch({
+        paths: [
+          {
+            id: randomUUID(),
+            name: 'yes',
+            steps: [
+              action({
+                tool: 'jira_get_issue',
+                failureHandling: [
+                  {
+                    outcome: 'not-found',
+                    action: 'retry',
+                    guidance: [
+                      { t: 'text', v: 'Search by text with ' },
+                      { t: 'tool', name: 'jira_search_issues' },
+                      { t: 'text', v: ' or list users via ' },
+                      { t: 'tool', name: 'jira_search_users' },
+                    ],
+                  },
+                ],
+              }),
+            ],
+          },
+          { id: randomUUID(), name: 'no', steps: [action({ tool: 'webex_send_message' })] },
+        ],
+      }),
+      action({ tool: null }),
+    ];
+
+    expect(referencedTools(nodes)).toEqual([
+      'jira_get_issue',
+      'jira_search_issues',
+      'jira_search_users',
+      'webex_send_message',
+    ]);
+    expect(referencedTools(nodes, new Set(['webex_send_message']))).toEqual([
+      'jira_get_issue',
+      'jira_search_issues',
+      'jira_search_users',
+    ]);
+    expect(referencedTools([action({ tool: null })])).toEqual([]);
   });
 });

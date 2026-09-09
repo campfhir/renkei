@@ -14,7 +14,7 @@
 import { resolveOutcomes } from '@renkei/tool-outcomes';
 import { renderInstruction } from './render';
 import { attemptVariables } from './variables';
-import type { ActionStep, AgentStep, BranchStep, UntilLoopStep } from './steps';
+import type { ActionStep, AgentStep, BranchStep, InstructionSegment, UntilLoopStep } from './steps';
 
 /** Structural twin of @renkei/agent-llm's text-only PromptMessage. */
 export interface PromptMessage {
@@ -98,6 +98,49 @@ export const RESOLVE_TIME_DEF: PromptToolDef = {
     required: ['timezone'],
   },
 };
+
+/**
+ * Words that mean a step is about WHEN. Whole-word, case-insensitive; the
+ * list is deliberately broad ("last", "next" and "within" are in it), since
+ * offering resolve_time to a step that turns out not to need it costs a
+ * schema, while withholding it from one that does costs a hand-computed,
+ * quietly wrong date. Bare "am"/"pm" count only after a digit ("9 am"),
+ * never the verb.
+ */
+const TIME_WORDS =
+  /\b(?:today|tonight|yesterday|tomorrow|ago|last|next|past|coming|within|since|until|before|after|due|deadline|overdue|schedules?|scheduled|hours?|minutes?|days?|weeks?|months?|years?|dates?|times?|morning|afternoon|evening|o'clock|\d\s*(?:am|pm))\b/i;
+const TIME_PROPERTY = /date|time|since|until|before|after|due|deadline|start|end|when|schedul/i;
+
+/**
+ * Whether a call can use resolve_time, decided BEFORE the call and never by
+ * the model: the step's own prose mentions time, or the tool it will call
+ * takes a date-shaped parameter (a `date`/`date-time` format, or a property
+ * named like one). A date CHIP is not a reason — it is resolved into the
+ * prompt before the model reads it. Everything else gets neither the tool
+ * nor the paragraph about it: a call is offered nothing it cannot use.
+ */
+export function usesTime(
+  segments: InstructionSegment[][],
+  toolSchema?: Record<string, unknown>
+): boolean {
+  for (const list of segments) {
+    for (const segment of list) {
+      if (segment.t === 'text' && TIME_WORDS.test(segment.v)) return true;
+    }
+  }
+  const properties = toolSchema?.properties;
+  if (typeof properties === 'object' && properties !== null && !Array.isArray(properties)) {
+    for (const [name, value] of Object.entries(properties)) {
+      if (TIME_PROPERTY.test(name)) return true;
+      const format: unknown =
+        typeof value === 'object' && value !== null && !Array.isArray(value)
+          ? Reflect.get(value, 'format')
+          : undefined;
+      if (format === 'date' || format === 'date-time') return true;
+    }
+  }
+  return false;
+}
 
 export const FINISH_STEP_TOOL = 'finish_step';
 
@@ -479,6 +522,12 @@ export interface AttemptPromptInput {
    * dies mid-thought.
    */
   toolBudget: number;
+  /**
+   * Whether resolve_time rides beside finish_step on this call (see
+   * usesTime). The dates paragraph and the "free tools" wording follow it:
+   * a paragraph about a tool the model was not given is noise.
+   */
+  offersTime?: boolean;
   /** Resolved corrective guidance, present on attempts >= 2 with a retry match. */
   guidanceText?: string;
   /** One-paragraph summary of the previous attempt's failure. */
@@ -528,13 +577,17 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
     `Step: ${input.step.name}`,
     ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Instruction: ${rendered.text}`,
-    `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (finish_step and ` +
-      `${RESOLVE_TIME_TOOL} are free). ` +
-      'Spend them deliberately — one well-chosen call beats several exploratory ones. When the ' +
-      'budget runs out you will be asked to declare the outcome from what you have already seen.',
-    `Dates: never work out a timestamp in your head. Call ${RESOLVE_TIME_TOOL} — it is free, it ` +
-      'is exact about timezones and daylight saving, and a date you calculated yourself is the ' +
-      'single most likely thing in this step to be quietly wrong.',
+    `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (` +
+      (input.offersTime ? `finish_step and ${RESOLVE_TIME_TOOL} are free` : 'finish_step is free') +
+      '). Spend them deliberately — one well-chosen call beats several exploratory ones. When ' +
+      'the budget runs out you will be asked to declare the outcome from what you have already seen.',
+    ...(input.offersTime
+      ? [
+          `Dates: never work out a timestamp in your head. Call ${RESOLVE_TIME_TOOL} — it is free, it ` +
+            'is exact about timezones and daylight saving, and a date you calculated yourself is the ' +
+            'single most likely thing in this step to be quietly wrong.',
+        ]
+      : []),
     ...(input.step.saveAs
       ? [
           input.savesItemsForLoop

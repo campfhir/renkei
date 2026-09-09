@@ -63,6 +63,7 @@ export {
   nodeKind,
   nodeUsesModel,
   parseQuestionFields,
+  referencedTools,
   toolSegments,
   varSegments,
   walkSteps,

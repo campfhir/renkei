@@ -252,6 +252,81 @@ maybe('agent run engine', () => {
     expect(detail.resolvedInstruction).toContain('jira_get_issue');
   });
 
+  it('mints the run token with exactly the tools the steps name plus the notifier tools', async () => {
+    const { runId } = await seedRun(singleStep());
+    const minted: string[][] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => stubMcp(['jira_get_issue'], () => okToolResult),
+      resolveLlm: async () =>
+        ok(
+          stubLlm((_request, call) =>
+            call === 0
+              ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+              : finish('success', { saveValue: 'PROJ-42' })
+          )
+        ),
+      mintToken: async (_db, params) => {
+        minted.push([...(params.tools ?? [])]);
+        return 'stub-token';
+      },
+      revokeToken: async () => undefined,
+    });
+    await handler({ payload: { runId } });
+
+    expect(minted).toEqual([['jira_get_issue', 'outlook_send_mail', 'webex_note_to_self']]);
+  });
+
+  it('offers only the tools the call can use, and the same list on every turn', async () => {
+    const { runId } = await seedRun(singleStep());
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' });
+    });
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+
+    // Nothing about this step is about time: no resolve_time, no dates
+    // paragraph. The list is byte-identical across the attempt's turns —
+    // it heads the cached prompt prefix.
+    expect(seen).toHaveLength(2);
+    expect(seen[0].tools.map((tool) => tool.name)).toEqual(['finish_step', 'jira_get_issue']);
+    expect(seen[1].tools).toEqual(seen[0].tools);
+    const prompt = seen[0].messages[0].content[0];
+    expect(prompt.type === 'text' && prompt.text).not.toContain('resolve_time');
+
+    // A step whose prose is about when gets the time tool.
+    const timed = await seedRun(
+      singleStep({
+        instruction: [
+          { t: 'text', v: 'Find the ticket filed yesterday using ' },
+          { t: 'tool', name: 'jira_get_issue' },
+        ],
+      })
+    );
+    const seenTimed: LlmRequest[] = [];
+    await handlerWith(
+      stubLlm((request) => {
+        seenTimed.push(request);
+        return finish('success', { saveValue: 'PROJ-42' });
+      }),
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({ payload: { runId: timed.runId } });
+    expect(seenTimed[0].tools.map((tool) => tool.name)).toEqual([
+      'finish_step',
+      'resolve_time',
+      'jira_get_issue',
+    ]);
+  });
+
   it('feeds a _meta document attachment to the model as a typed block', async () => {
     const { runId } = await seedRun(singleStep());
     const seen: LlmRequest[] = [];
@@ -374,9 +449,12 @@ maybe('agent run engine', () => {
     expect(firstText && 'text' in firstText ? firstText.text : '').toContain(
       'Tool budget: at most 3'
     );
-    // ...and after spending it, the conversation narrowed to finish_step only.
+    // ...and after spending it, finish_step is forced through tool_choice
+    // while the tool list itself stays what it was: it heads the cached
+    // prompt prefix, so narrowing it would throw the cache away.
     const forced = requests[4];
-    expect(forced.tools.map((tool) => tool.name)).toEqual(['finish_step']);
+    expect(forced.tools.map((tool) => tool.name)).toEqual(['finish_step', 'jira_get_issue']);
+    expect(forced.tools).toEqual(requests[0].tools);
     expect(forced.toolChoice).toEqual({ name: 'finish_step' });
 
     const run = await db
@@ -1288,7 +1366,9 @@ maybe('agent run engine', () => {
     ...overrides,
   });
 
-  function branchDoc(options: { elseSteps?: object[]; branchAttempts?: number } = {}): {
+  function branchDoc(
+    options: { elseSteps?: object[]; branchAttempts?: number; condition?: string } = {}
+  ): {
     doc: AgentStepsDoc;
     ids: { branch: string; inYes: string; after: string };
   } {
@@ -1302,7 +1382,7 @@ maybe('agent run engine', () => {
           id: branchId,
           kind: 'branch',
           name: 'Anything urgent?',
-          condition: [{ t: 'text', v: 'Is anything urgent in the subject?' }],
+          condition: [{ t: 'text', v: options.condition ?? 'Is anything urgent in the subject?' }],
           paths: [
             { id: randomUUID(), name: 'Yes', steps: [inYes] },
             { id: randomUUID(), name: 'Otherwise', steps: options.elseSteps ?? [] },
@@ -2118,7 +2198,9 @@ maybe('agent run engine', () => {
   it('lets a branch condition compute a date before it decides', async () => {
     // The arithmetic a condition should never do in its head: "was this
     // before yesterday 19:00 in Los Angeles?"
-    const { doc, ids } = branchDoc();
+    const { doc, ids } = branchDoc({
+      condition: 'Was the subject sent before yesterday 19:00 in Los Angeles?',
+    });
     const { runId } = await seedRun(doc);
     let lookups = 0;
     let sawResult = '';
@@ -2173,14 +2255,20 @@ maybe('agent run engine', () => {
   it('forces the verdict on the last turn even if the condition keeps asking the time', async () => {
     // A model that only ever looks up dates must still land on a path
     // rather than burning the attempt budget.
-    const { doc } = branchDoc({ branchAttempts: 1 });
+    // The condition is about WHEN, so resolve_time is offered beside the
+    // decision — on every turn, the list never changes.
+    const { doc } = branchDoc({
+      branchAttempts: 1,
+      condition: 'Did the subject arrive after 5 pm yesterday?',
+    });
     const { runId } = await seedRun(doc);
     let dateCalls = 0;
     const llm = stubLlm((request) => {
       if (forcedName(request) !== 'choose_path') return finish('success');
-      // On the final turn resolve_time is not offered at all — the only
-      // callable tool is the decision.
-      if (request.tools.some((tool) => tool.name === 'resolve_time')) {
+      expect(request.tools.map((tool) => tool.name)).toEqual(['choose_path', 'resolve_time']);
+      // On the final turn the decision is forced through tool_choice —
+      // resolve_time is still listed but no longer callable.
+      if (request.toolChoice === 'any') {
         dateCalls += 1;
         return useTool('resolve_time', { timezone: 'UTC' });
       }

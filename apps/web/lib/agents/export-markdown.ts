@@ -41,6 +41,7 @@ import {
   buildLoopConditionMessages,
   outcomeGuideFor,
   systemPromptWith,
+  usesTime,
 } from '@renkei/agents/step-prompts';
 import { fencedDefinition } from '@/lib/agents/definition';
 import { triggerSummary } from '@/lib/agents/trigger-summary';
@@ -131,11 +132,18 @@ export function agentMarkdown(agent: AgentExportInput): string {
       case 'action':
       case undefined: {
         const vars = actionPromptVars(node);
+        // The tool's schema is not at hand here, so the export answers from
+        // the prose alone; a run also consults the tool's parameters.
+        const offersTime = usesTime([
+          node.instruction,
+          ...node.failureHandling.map((handling) => handling.guidance ?? []),
+        ]);
         const built = buildAttemptMessages({
           step: node,
           attempt: 1,
           variables: vars,
           toolBudget: NORMAL_TOOL_CAP,
+          offersTime,
           ...(guardrailsText ? { guardrailsText } : {}),
           ...(node.saveAs && loopSourceVars.has(node.saveAs) ? { savesItemsForLoop: true } : {}),
           ...(() => {
@@ -145,7 +153,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
         });
         const offered = [
           FINISH_STEP_TOOL,
-          RESOLVE_TIME_TOOL,
+          ...(offersTime ? [RESOLVE_TIME_TOOL] : []),
           ...(node.tool ? [node.tool] : []),
         ].join(', ');
         lines.push(

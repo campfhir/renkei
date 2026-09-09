@@ -800,6 +800,7 @@ export interface OauthAccessTokens {
   subject: string;
   tenant_id: string;
   token_hash: string;
+  tool_names: string[] | null;
 }
 
 export interface OauthAuthorizationCodes {

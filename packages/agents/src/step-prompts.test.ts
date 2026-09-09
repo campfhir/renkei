@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { buildAttemptMessages, outcomeGuideFor } from './step-prompts';
+import { buildAttemptMessages, outcomeGuideFor, usesTime } from './step-prompts';
 import type { ActionStep } from './steps';
 
 function step(overrides: Partial<ActionStep> = {}): ActionStep {
@@ -140,5 +140,72 @@ describe('attempt chips', () => {
     expect(text).toContain('Known information:\n- today: 2026-08-28');
     expect(text).not.toContain('- attempt: 2');
     expect(text).not.toContain('- attempt.max: 3');
+  });
+});
+
+describe('usesTime', () => {
+  it('is true when the prose is about when', () => {
+    expect(usesTime([[{ t: 'text', v: 'Find mail from yesterday evening.' }]])).toBe(true);
+    expect(usesTime([[{ t: 'text', v: 'Meetings after 9 am count.' }]])).toBe(true);
+    expect(usesTime([[], [{ t: 'text', v: 'Retry with last week instead.' }]])).toBe(true);
+  });
+
+  it('is true when the tool takes a date-shaped parameter', () => {
+    expect(
+      usesTime([[{ t: 'text', v: 'Find it.' }]], {
+        type: 'object',
+        properties: { since: { type: 'string' } },
+      })
+    ).toBe(true);
+    expect(
+      usesTime([[{ t: 'text', v: 'Find it.' }]], {
+        type: 'object',
+        properties: { cutoff: { type: 'string', format: 'date-time' } },
+      })
+    ).toBe(true);
+  });
+
+  it('is false for a step that has nothing to do with time — "I am" is not 9 am', () => {
+    expect(usesTime([[{ t: 'text', v: 'I am looking up the ticket. Comment on it.' }]])).toBe(
+      false
+    );
+    expect(
+      usesTime([[{ t: 'text', v: 'Find it.' }]], {
+        type: 'object',
+        properties: { issueKey: { type: 'string' } },
+      })
+    ).toBe(false);
+    // A date chip is resolved before the model reads it; not a reason.
+    expect(
+      usesTime([
+        [
+          { t: 'date', amount: -1, unit: 'day', timezone: 'UTC' },
+          { t: 'text', v: 'Find it.' },
+        ],
+      ])
+    ).toBe(false);
+  });
+});
+
+describe('the dates paragraph', () => {
+  it('rides only when resolve_time is offered', () => {
+    const withTime = buildAttemptMessages({
+      step: step(),
+      attempt: 1,
+      variables: {},
+      toolBudget: 3,
+      offersTime: true,
+    }).messages[0].content[0].text;
+    expect(withTime).toContain('finish_step and resolve_time are free');
+    expect(withTime).toContain('Dates: never work out a timestamp');
+
+    const without = buildAttemptMessages({
+      step: step(),
+      attempt: 1,
+      variables: {},
+      toolBudget: 3,
+    }).messages[0].content[0].text;
+    expect(without).toContain('(finish_step is free)');
+    expect(without).not.toContain('resolve_time');
   });
 });

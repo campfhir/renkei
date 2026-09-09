@@ -53,6 +53,7 @@ import {
   type LoopStep,
   type TerminalStep,
   type UntilLoopStep,
+  referencedTools,
 } from '@renkei/agents';
 import {
   resolveAgentLlm,
@@ -63,7 +64,7 @@ import {
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
 import { toolKindOf } from '@renkei/tool-outcomes';
-import { notifierFor, notificationDeliverer, type Notifier } from './notifications';
+import { NOTIFIER_TOOLS, notifierFor, notificationDeliverer, type Notifier } from './notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
@@ -94,6 +95,7 @@ import {
   LOOP_DECISION_TOOL,
   systemPromptWith,
   outcomeGuideFor,
+  usesTime,
   NORMAL_TOOL_CAP,
   CORRECTIVE_TOOL_CAP,
   type PromptMessage,
@@ -924,11 +926,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
     const deadline = startedAt.getTime() + settings.agentRunTimeoutMinutes * 60_000;
 
+    // The token names the only tools this run may see and call (migration
+    // 096): what the snapshot's steps and retry guidance reference, minus
+    // the agent's blocked set, plus the notifier's own. The gateway then
+    // registers nothing else for it — listTools below returns a handful of
+    // schemas instead of the owner's whole surface, and no tool a step did
+    // not name can be reached even by mistake.
+    const blockedTools = blockedToolsOf(agentRow.blocked_tools);
+    const runTools = [...referencedTools(nodes, blockedTools), ...NOTIFIER_TOOLS];
     const token = await mint(db, {
       tenantId,
       subject: run.owner_subject,
       agentId: run.agent_id,
       ttlSeconds: settings.agentRunTimeoutMinutes * 60 + TOKEN_SLACK_SECONDS,
+      tools: runTools,
     });
 
     try {
@@ -981,7 +992,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // approval pause re-enters here, and "started" arriving twice for one
       // run would be worse than not having it at all. Off by default.
       if (run.status === 'queued') void context.notifier.runStarted();
-      const blockedTools = blockedToolsOf(agentRow.blocked_tools);
 
       // Crash-resume rebuilds the frame stack from where current_step_id
       // sits in the tree; a fresh run starts one frame at the top.
@@ -2899,6 +2909,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       let decidedReason = '';
       const choosePathDef = buildChoosePathDef(branch);
       const branchSystem = branch.paths.length === 2 ? BRANCH_SYSTEM_PROMPT : ROUTER_SYSTEM_PROMPT;
+      // One tool list for every turn (it heads the cached prefix); the last
+      // turn forces the decision through tool_choice instead of narrowing.
+      const branchTools = usesTime([branch.condition])
+        ? [choosePathDef, RESOLVE_TIME_DEF]
+        : [choosePathDef];
       const timeNotes: string[] = [];
       // A short turn cap: the decision should come immediately; the spare
       // turns cover a model that answered in prose first, or spent one
@@ -2909,7 +2924,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         const completion = await llm.provider.complete({
           system: branchSystem,
           messages,
-          tools: lastTurn ? [choosePathDef] : [choosePathDef, RESOLVE_TIME_DEF],
+          tools: branchTools,
           // 'any' rather than the named tool: forcing choose_path would make
           // resolve_time unreachable, which is the whole point of offering
           // it. Either way the model must call SOMETHING.
@@ -3170,16 +3185,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
       let decided: 'finished' | 'continue' | null = null;
       let decidedReason = '';
       const timeNotes: string[] = [];
-      // Same shape as a branch decision: free date lookups are allowed on
-      // every turn but the last, where the verdict is forced alone. An
-      // until-loop asking "has it been an hour yet?" is exactly the
-      // arithmetic worth taking out of the model's head.
+      // Same shape as a branch decision: free date lookups (when the
+      // condition is about time) on every turn but the last, where the
+      // verdict is forced through tool_choice — the tool list itself never
+      // changes, it heads the cached prefix. An until-loop asking "has it
+      // been an hour yet?" is exactly the arithmetic worth taking out of
+      // the model's head.
+      const loopTools = usesTime([loop.condition])
+        ? [LOOP_DECISION_DEF, RESOLVE_TIME_DEF]
+        : [LOOP_DECISION_DEF];
       for (let turn = 0; turn < CONDITION_TURNS && !decided; turn += 1) {
         const lastTurn = turn === CONDITION_TURNS - 1;
         const completion = await llm.provider.complete({
           system: LOOP_SYSTEM_PROMPT,
           messages,
-          tools: lastTurn ? [LOOP_DECISION_DEF] : [LOOP_DECISION_DEF, RESOLVE_TIME_DEF],
+          tools: loopTools,
           toolChoice: lastTurn ? { name: LOOP_DECISION_TOOL } : 'any',
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
@@ -3327,11 +3347,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
     const outcomeGuide = outcomeGuideFor(step, attemptVars);
+    // resolve_time only where the call can use it — decided from the step's
+    // own prose and its tool's parameters, before the model sees anything.
+    const primaryTool = step.tool;
+    const offersTime = usesTime(
+      [step.instruction, ...step.failureHandling.map((handling) => handling.guidance ?? [])],
+      primaryTool ? toolsByName.get(primaryTool)?.inputSchema : undefined
+    );
     const built = buildAttemptMessages({
       step,
       attempt,
       variables: vars,
       toolBudget: toolCap,
+      offersTime,
       guidanceText,
       previousFailure,
       savesItemsForLoop,
@@ -3351,15 +3379,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // "yesterday 19:00 Los Angeles" means without spending its only call.
     const offered: LlmToolDef[] = [
       FINISH_STEP_DEF,
-      RESOLVE_TIME_DEF,
+      ...(offersTime ? [RESOLVE_TIME_DEF] : []),
       ...(canAskQuestions ? [ASK_PERSON_DEF] : []),
     ];
-    const primaryTool = step.tool;
-    const offeredNames = new Set<string>(
-      canAskQuestions
-        ? [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL, ASK_PERSON_TOOL]
-        : [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL]
-    );
+    const offeredNames = new Set<string>(offered.map((tool) => tool.name));
     const offer = (name: string) => {
       if (blockedTools.has(name)) return;
       const info = toolsByName.get(name);
@@ -3415,10 +3438,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (await isCanceled(run.id)) {
         throw new RunCanceled();
       }
+      // The tool list never changes within an attempt: tools render first
+      // in the cached prompt prefix, so narrowing them would throw the
+      // whole cache away. Exhaustion is expressed through tool_choice
+      // alone — a forced finish_step leaves the others uncallable anyway.
       const completion = await llm.provider.complete({
         system: systemPromptWith(context.guardrailsText || undefined),
         messages,
-        tools: budgetExhausted ? [FINISH_STEP_DEF] : offered,
+        tools: offered,
         toolChoice: budgetExhausted ? { name: FINISH_STEP_TOOL } : 'any',
         maxTokens: llm.maxOutputTokens,
         ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
@@ -3522,7 +3549,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // against the budget. Placed ahead of the budget check on purpose
         // — a model that has spent its calls must still be able to get a
         // date right while declaring its outcome.
-        if (use.name === RESOLVE_TIME_TOOL) {
+        if (use.name === RESOLVE_TIME_TOOL && offersTime) {
           const resolved = resolveTime(resolveTimeArgsOf(use.input));
           results.push({
             type: 'tool_result',
