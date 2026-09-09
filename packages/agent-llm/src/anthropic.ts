@@ -217,15 +217,49 @@ function usageOf(value: unknown): Partial<LlmUsage> {
     cache_creation_input_tokens?: unknown;
   } = typeof value === 'object' && value !== null ? value : {};
   const out: Partial<LlmUsage> = {};
-  if (typeof usage.input_tokens === 'number') out.inputTokens = usage.input_tokens;
+  const cacheRead =
+    typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : undefined;
+  const cacheWrite =
+    typeof usage.cache_creation_input_tokens === 'number'
+      ? usage.cache_creation_input_tokens
+      : undefined;
+  // Anthropic's input_tokens is the UNCACHED remainder only; the contract's
+  // inputTokens is every prompt token the model read (what the OpenAI
+  // dialect already reports), so the cached portions are folded back in
+  // here, at the one place both complete() and stream() parse usage.
+  if (typeof usage.input_tokens === 'number') {
+    out.inputTokens = usage.input_tokens + (cacheRead ?? 0) + (cacheWrite ?? 0);
+  }
   if (typeof usage.output_tokens === 'number') out.outputTokens = usage.output_tokens;
-  if (typeof usage.cache_read_input_tokens === 'number') {
-    out.cacheReadInputTokens = usage.cache_read_input_tokens;
-  }
-  if (typeof usage.cache_creation_input_tokens === 'number') {
-    out.cacheWriteInputTokens = usage.cache_creation_input_tokens;
-  }
+  if (cacheRead !== undefined) out.cacheReadInputTokens = cacheRead;
+  if (cacheWrite !== undefined) out.cacheWriteInputTokens = cacheWrite;
   return out;
+}
+
+/** Block types Anthropic accepts a cache_control marker on. */
+const CACHEABLE_WIRE_TYPES = new Set(['text', 'tool_use', 'tool_result', 'document', 'image']);
+
+/**
+ * The moving breakpoint: a marker on the last cacheable block of the last
+ * message. The system/tools markers are the guaranteed read point every
+ * call in a run or chat shares; this one makes an agentic loop cache
+ * incrementally — each turn reads the previous turn's whole prefix and
+ * writes only its own delta. Thinking blocks cannot carry a marker, so the
+ * nearest cacheable block before them takes it.
+ */
+function markLastBlock(messages: Record<string, unknown>[]): void {
+  const last = messages[messages.length - 1];
+  const content = last?.content;
+  if (!Array.isArray(content)) return;
+  for (let index = content.length - 1; index >= 0; index -= 1) {
+    const block: unknown = content[index];
+    if (typeof block !== 'object' || block === null) continue;
+    const type: unknown = Reflect.get(block, 'type');
+    if (typeof type === 'string' && CACHEABLE_WIRE_TYPES.has(type)) {
+      content[index] = { ...block, cache_control: { type: 'ephemeral' } };
+      return;
+    }
+  }
 }
 
 function stopReasonOf(value: unknown): LlmResponse['stopReason'] {
@@ -312,13 +346,21 @@ export class AnthropicProvider implements LlmProvider {
       name: tool.name,
       description: tool.description,
       input_schema: tool.inputSchema,
-      // The cache breakpoint sits on the LAST tool: everything up to and
-      // including it (system, tools) is the stable prefix a chat re-sends
-      // every turn.
+      // A breakpoint on the LAST tool: everything up to and including it
+      // (tools, then system below) is the stable prefix every call of a
+      // run or a chat re-sends. The moving one is on the last message.
       ...(request.promptCache && index === request.tools.length - 1
         ? { cache_control: { type: 'ephemeral' } }
         : {}),
     }));
+    const messages = request.messages.map((message) => ({
+      role: message.role,
+      content: message.content.flatMap((block) => {
+        const wire = toWire(block);
+        return wire ? [wire] : [];
+      }),
+    }));
+    if (request.promptCache) markLastBlock(messages);
     return {
       model: this.config.model,
       max_tokens: request.maxTokens,
@@ -335,13 +377,7 @@ export class AnthropicProvider implements LlmProvider {
       system: request.promptCache
         ? [{ type: 'text', text: request.system, cache_control: { type: 'ephemeral' } }]
         : request.system,
-      messages: request.messages.map((message) => ({
-        role: message.role,
-        content: message.content.flatMap((block) => {
-          const wire = toWire(block);
-          return wire ? [wire] : [];
-        }),
-      })),
+      messages,
       ...(tools.length > 0 ? { tools } : {}),
       ...(toolChoiceOf(request) ? { tool_choice: toolChoiceOf(request) } : {}),
     };
