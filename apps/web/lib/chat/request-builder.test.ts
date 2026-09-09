@@ -159,6 +159,7 @@ describe('buildSystemPrompt', () => {
           { id: 'f1', filename: 'plan.pdf', contentType: 'application/pdf', sizeBytes: 2048 },
         ],
       },
+      userMemoryText: null,
       chatFiles: [],
       hasTools: true,
       hasKnowledge: false,
@@ -180,6 +181,7 @@ describe('buildSystemPrompt', () => {
       personName: null,
       orgName: null,
       project: null,
+      userMemoryText: null,
       chatFiles: [],
       hasTools: true,
       hasKnowledge: false,
@@ -200,6 +202,7 @@ describe('buildSystemPrompt with search_knowledge', () => {
     personName: null,
     orgName: null,
     project: null,
+    userMemoryText: null,
     chatFiles: [],
     hasTools: true,
     hasSandbox: false,
@@ -225,6 +228,7 @@ describe('buildSystemPrompt without file storage', () => {
       personName: null,
       orgName: null,
       project: null,
+      userMemoryText: null,
       chatFiles: [],
       hasTools: true,
       hasKnowledge: false,
@@ -235,5 +239,37 @@ describe('buildSystemPrompt without file storage', () => {
     expect(prompt).toMatch(/no file storage set up/);
     expect(prompt).toMatch(/Do not produce files/);
     expect(prompt).toMatch(/Organization → Storage/);
+  });
+});
+
+describe('buildSystemPrompt with user memory', () => {
+  it('mentions memory only outside a project', () => {
+    const withMemory = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: '- [2026-09-01 10:00] Prefers concise answers',
+      chatFiles: [],
+      hasTools: true,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: true,
+      now: new Date('2026-09-04T00:00:00Z'),
+    });
+    expect(withMemory).toContain('Prefers concise answers');
+
+    const inProject = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: { name: 'Launch', instructions: null, memoryText: null, files: [] },
+      userMemoryText: '- [2026-09-01 10:00] Prefers concise answers',
+      chatFiles: [],
+      hasTools: true,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: true,
+      now: new Date('2026-09-04T00:00:00Z'),
+    });
+    expect(inProject).not.toContain('Prefers concise answers');
   });
 });

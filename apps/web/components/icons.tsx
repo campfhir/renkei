@@ -62,6 +62,10 @@ export const ICONS = {
     'M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18ZM12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18ZM15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4',
   /** A wrench — the tools a chat may use. */
   tool: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
+  /** A bookmark — a note saved to memory. */
+  memory: 'M6 3h12v18l-6-4-6 4z',
+  /** A circular back-arrow around a clock face — reaching into past chats. */
+  history: 'M3 3v5h5M3.05 13a9 9 0 1 0 2.95-7.7L3 8M12 7v5l4 2',
   /** Plain sheet with a folded corner — the fallback file glyph. */
   file: 'M6 21V3h8l4 4v14zM14 3v4h4',
   fileText: 'M6 21V3h8l4 4v14zM14 3v4h4M9 12h6M9 16h6',

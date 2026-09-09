@@ -22,6 +22,8 @@ export interface SystemPromptInput {
     memoryText: string | null;
     files: { id: string; filename: string; contentType: string; sizeBytes: number }[];
   } | null;
+  /** Memory carried across every chat this person owns; null inside a project. */
+  userMemoryText: string | null;
   chatFiles: { id: string; filename: string; contentType: string; sizeBytes: number }[];
   hasTools: boolean;
   /** search_knowledge is among the tools; the prompt then says when it is worth a call. */
@@ -72,6 +74,10 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       );
     }
     sections.push(project.join('\n\n'));
+  } else if (input.userMemoryText) {
+    sections.push(
+      `Memory (notes kept about this person across their chats, newest last):\n${input.userMemoryText}`
+    );
   }
   if (input.chatFiles.length > 0) {
     sections.push(
