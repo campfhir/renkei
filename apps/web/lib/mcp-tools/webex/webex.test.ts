@@ -130,7 +130,7 @@ describe('webex_bulk_list_messages', () => {
 
     const result = await tools.get('webex_bulk_list_messages')!({
       roomIds: ['room-1', 'room-2', 'room-3'],
-      max: 5,
+      limit: 5,
     });
     const text = textOf(result);
 
@@ -211,16 +211,18 @@ describe('webex_bulk_list_messages', () => {
 });
 
 describe('since window', () => {
-  const page = (created: string[]) =>
-    jsonResponse({
-      items: created.map((stamp, index) => ({
-        id: `msg-${index}`,
-        roomId: 'room-1',
-        personEmail: 'bob@example.com',
-        text: `sent ${stamp}`,
-        created: stamp,
-      })),
-    });
+  const message = (stamp: string, id = `msg-${stamp}`) => ({
+    id,
+    roomId: 'room-1',
+    personEmail: 'bob@example.com',
+    text: `sent ${stamp}`,
+    created: stamp,
+  });
+  const page = (created: string[]) => jsonResponse({ items: created.map((s) => message(s)) });
+  const cursorOf = (path: string) => new URL(path, 'https://x').searchParams.get('beforeMessage');
+  /** ISO stamps counting back one minute per index from a fixed point. */
+  const minutesBack = (count: number, from = Date.parse('2026-09-09T12:00:00Z')) =>
+    Array.from({ length: count }, (_, i) => new Date(from - i * 60_000).toISOString());
 
   it('keeps only messages created at or after since, on the single-room tool', async () => {
     mockCall.mockResolvedValue(
@@ -232,26 +234,91 @@ describe('since window', () => {
       await tools.get('webex_list_messages')!({ roomId: 'room-1', since: '2026-09-08T00:00:00Z' })
     );
 
+    expect(mockCall).toHaveBeenCalledTimes(1);
     expect(text).toContain('sent 2026-09-09T10:00:00Z');
     expect(text).toContain('sent 2026-09-08T00:00:00Z');
     expect(text).not.toContain('sent 2026-09-07T23:59:59Z');
-    expect(text).not.toContain('there may be more messages');
+    expect(text).not.toContain('are shown');
   });
 
-  it('flags a full page that never reaches the start of the window', async () => {
+  it('without since, a limit within one page is still the single call it always was', async () => {
+    const tools = await toolsOf();
+
+    await tools.get('webex_list_messages')!({ roomId: 'room-1', limit: 5 });
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+    expect(mockCall).toHaveBeenCalledWith('/messages?roomId=room-1&max=5', undefined);
+  });
+
+  it('newest: stops at limit and says the window holds more', async () => {
     mockCall.mockResolvedValue(page(['2026-09-09T10:00:00Z', '2026-09-09T09:00:00Z']));
     const tools = await toolsOf();
 
     const text = textOf(
       await tools.get('webex_bulk_list_messages')!({
         roomIds: ['room-1'],
-        max: 2,
+        limit: 2,
         since: '2026-09-01T00:00:00Z',
       })
     );
 
+    expect(mockCall).toHaveBeenCalledTimes(1);
     expect(text).toContain('sent 2026-09-09T09:00:00Z');
-    expect(text).toContain('there may be more messages since 2026-09-01T00:00:00Z');
+    expect(text).toContain('Only the newest 2 of the window are shown');
+    expect(text).toContain('keep: "oldest"');
+  });
+
+  it('oldest: walks back to since with beforeMessage, then keeps the earliest', async () => {
+    const first = minutesBack(100);
+    mockCall.mockImplementation(async (path: string) => {
+      if (cursorOf(path) === null) return page(first);
+      // Two more inside the window, then one before it — the walk must stop there.
+      return page(['2026-09-08T00:00:02Z', '2026-09-08T00:00:01Z', '2026-09-07T23:00:00Z']);
+    });
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({
+        roomIds: ['room-1'],
+        limit: 2,
+        since: '2026-09-08T00:00:00Z',
+        keep: 'oldest',
+      })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(2);
+    expect(mockCall).toHaveBeenLastCalledWith(
+      `/messages?roomId=room-1&max=100&beforeMessage=${encodeURIComponent(`msg-${first[99]}`)}`,
+      undefined
+    );
+    expect(text).toContain('sent 2026-09-08T00:00:02Z');
+    expect(text).toContain('sent 2026-09-08T00:00:01Z');
+    expect(text).not.toContain('sent 2026-09-07T23:00:00Z');
+    expect(text).not.toContain(`sent ${first[0]}`);
+    expect(text).toContain('Only the oldest 2 of the window are shown');
+    expect(text).not.toContain('without reaching');
+  });
+
+  it('oldest: gives up after the page cap and says the start was not reached', async () => {
+    let served = 0;
+    mockCall.mockImplementation(async () => {
+      const stamps = minutesBack(100, Date.parse('2026-09-09T12:00:00Z') - served * 60_000);
+      served += 100;
+      return page(stamps);
+    });
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_list_messages')!({
+        roomId: 'room-1',
+        limit: 3,
+        since: '2020-01-01T00:00:00Z',
+        keep: 'oldest',
+      })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(10);
+    expect(text).toContain('Walked 1000 messages back without reaching 2020-01-01T00:00:00Z');
   });
 
   it('says when a room has nothing in the window', async () => {
@@ -278,6 +345,29 @@ describe('since window', () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('ISO 8601');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('rejects keep: oldest without since, which would walk the whole room', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_list_messages')!({ roomId: 'room-1', keep: 'oldest' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('needs since');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('refuses a bulk call whose rooms × limit would overflow one reply', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2', 'room-3', 'room-4'],
+      limit: 200,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('800 messages');
     expect(mockCall).not.toHaveBeenCalled();
   });
 });

@@ -133,9 +133,24 @@ const PARENT_ID_HINT =
 /** How the since field explains itself on both message-listing tools. */
 const SINCE_HINT =
   'Only messages created at or after this ISO 8601 timestamp, e.g. 2026-09-08T00:00:00Z. ' +
-  'WebEx cannot filter by this itself, so the newest-first page of `max` is cut down ' +
-  'client-side; when the page ends inside the window the result says so — raise max to ' +
-  'see further back.';
+  'WebEx cannot filter by this itself, so the tool walks the room newest-first and stops at ' +
+  'the start of the window; limit caps how many come back and keep picks which end of the ' +
+  'window survives when it holds more.';
+
+/** How the keep field explains itself on both message-listing tools. */
+const KEEP_HINT =
+  'Which end of the since window survives when it holds more than limit: "newest" (default) ' +
+  'reads only as far as limit needs; "oldest" first walks back to since, then keeps the ' +
+  'earliest — more calls, so only ask for it when the start of the window matters. Needs since.';
+
+/** Messages one webex_list_messages / webex_bulk_list_messages call returns per room, at most. */
+const ROOM_LIMIT_CAP = 200;
+/** Messages one webex_bulk_list_messages call may return across all its rooms, at most. */
+const BULK_MESSAGES_CAP = 600;
+/** Messages per page while walking a room back; WebEx's own ceiling for /messages. */
+const WALK_PAGE_SIZE = 100;
+/** Pages one walk may read before giving up on reaching the window's start. */
+const WALK_PAGE_CAP = 10;
 
 /**
  * Parses the optional `since` argument. Absent → null (no window); present
@@ -150,33 +165,147 @@ function parseSince(value: unknown): number | null | { error: string } {
     : ms;
 }
 
-/**
- * WebEx's /messages takes `before` but has no `since`, so a "what happened
- * after <time>" window is cut client-side from the newest-first page. That
- * page is capped at `max`, so when it is full and even its oldest message
- * still falls inside the window, older ones may exist that were never
- * fetched — `incomplete` says so, instead of the caller mistaking a page
- * boundary for the start of the window. A message whose created stamp does
- * not parse is kept: dropping it would hide it for a reason unrelated to
- * the window.
- */
-function sinceWindow(
-  messages: Record<string, unknown>[],
-  sinceMs: number,
-  max: number
-): { kept: Record<string, unknown>[]; incomplete: boolean } {
-  const kept = messages.filter((message) => {
-    const created = Date.parse(str(message.created));
-    return Number.isNaN(created) || created >= sinceMs;
-  });
-  const incomplete = messages.length >= max && kept.length === messages.length;
-  return { kept, incomplete };
+type Keep = 'newest' | 'oldest';
+
+/** What both message-listing tools take, parsed once and shared by every room they read. */
+interface WindowArgs {
+  limit: number;
+  sinceMs: number | null;
+  since: string;
+  keep: Keep;
 }
 
-function sinceNotes(since: string, incomplete: boolean): string {
-  return incomplete
-    ? `\n\n(The page ended inside the window — there may be more messages since ${since}; raise max to see them.)`
-    : '';
+/**
+ * The listing arguments common to webex_list_messages and
+ * webex_bulk_list_messages, validated the same way in both: a `since` that
+ * is not a date, or `keep: "oldest"` with no `since` (which would mean
+ * walking the room's entire history to find its oldest messages) are
+ * errors the caller must see, not filters silently dropped.
+ */
+function parseWindowArgs(args: Record<string, any>): WindowArgs | { error: string } {
+  const limit = typeof args.limit === 'number' ? args.limit : 20;
+  const since = parseSince(args.since);
+  if (typeof since === 'object' && since !== null) return since;
+  const keep: Keep = args.keep === 'oldest' ? 'oldest' : 'newest';
+  if (keep === 'oldest' && since === null) {
+    return {
+      error:
+        'keep: "oldest" needs since — without a window start, the oldest messages would mean ' +
+        "walking the room's whole history.",
+    };
+  }
+  return { limit, sinceMs: since, since: str(args.since), keep };
+}
+
+interface WindowRead {
+  /** Newest first, at most `limit` of them. */
+  messages: Record<string, unknown>[];
+  /** The window holds more than `limit` — the other end was cut. */
+  more: boolean;
+  /** The walk gave up before reaching the window's start — the earliest shown may not be the earliest. */
+  unreached: boolean;
+}
+
+/**
+ * Reads one room's messages within the window, walking back page by page
+ * with `beforeMessage` — WebEx's /messages takes `before` but has no
+ * `since`, so the window's start is found by reading until a message
+ * falls before it.
+ *
+ * `keep: "newest"` stops as soon as `limit` messages are in hand: with
+ * no `since` and a limit within one page that is the single call it
+ * always was. `keep: "oldest"` has to reach the start of the window
+ * before it knows which messages are the earliest, so it walks the whole
+ * window (up to WALK_PAGE_CAP pages) and then keeps the last `limit`.
+ * A message whose created stamp does not parse is kept: dropping it
+ * would hide it for a reason unrelated to the window.
+ */
+async function readWindow(
+  auth: WebexAuth,
+  scopes: string[],
+  roomId: string,
+  window: WindowArgs
+): Promise<{ ok: true; value: WindowRead } | { ok: false; error: string }> {
+  const { limit, sinceMs, keep } = window;
+  const pageSize = keep === 'oldest' ? WALK_PAGE_SIZE : Math.min(limit, WALK_PAGE_SIZE);
+  const collected: Record<string, unknown>[] = [];
+  let before: string | null = null;
+  let pages = 0;
+  // True once the room has no more messages inside the window: either it
+  // ran out, or a message before `since` was reached.
+  let exhausted = false;
+  while (pages < WALK_PAGE_CAP && !(keep === 'newest' && collected.length >= limit)) {
+    const cursor = before ? `&beforeMessage=${encodeURIComponent(before)}` : '';
+    const result = await webexGet(
+      auth,
+      scopes,
+      `/messages?roomId=${encodeURIComponent(roomId)}&max=${pageSize}${cursor}`
+    );
+    if (!result.ok) return result;
+    pages += 1;
+    const page = items(result.body);
+    for (const message of page) {
+      const created = Date.parse(str(message.created));
+      if (sinceMs !== null && !Number.isNaN(created) && created < sinceMs) {
+        exhausted = true;
+        break;
+      }
+      collected.push(message);
+    }
+    if (exhausted || page.length < pageSize) {
+      exhausted = true;
+      break;
+    }
+    const lastId = str(page[page.length - 1].id);
+    // No id to page from, or the API handed the same page back: stop rather
+    // than loop; the walk is then reported as not having reached the start.
+    if (!lastId || lastId === before) break;
+    before = lastId;
+  }
+  if (keep === 'oldest') {
+    return {
+      ok: true,
+      value: {
+        messages: collected.slice(-limit),
+        more: collected.length > limit,
+        unreached: !exhausted,
+      },
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      messages: collected.slice(0, limit),
+      more: collected.length > limit || (collected.length === limit && !exhausted),
+      unreached: false,
+    },
+  };
+}
+
+/** The one text block for a room's window: its messages, then how it was cut, if it was. */
+function renderWindow(read: WindowRead, window: WindowArgs): string {
+  const { since, keep, limit } = window;
+  if (read.messages.length === 0) return since ? `(No messages since ${since}.)` : '(No messages.)';
+  const notes: string[] = [];
+  // Without a window, "the room has older messages than these" goes without
+  // saying; with one, a cut is the difference between "that was everything
+  // since Monday" and "that was the latest 20 since Monday".
+  if (since && read.more) {
+    notes.push(
+      keep === 'oldest'
+        ? `(Only the oldest ${limit} of the window are shown — newer messages since ${since} ` +
+            'were left out; raise limit, or pass keep: "newest" for the latest.)'
+        : `(Only the newest ${limit} of the window are shown — more messages since ${since} ` +
+            'exist; raise limit, or pass keep: "oldest" for the earliest.)'
+    );
+  }
+  if (read.unreached) {
+    notes.push(
+      `(Walked ${WALK_PAGE_CAP * WALK_PAGE_SIZE} messages back without reaching ${since} — the ` +
+        'earliest shown may not be the earliest in the window; narrow since.)'
+    );
+  }
+  return [read.messages.map(messageLine).join('\n\n'), ...notes].join('\n\n');
 }
 
 /** The title webex_note_to_self creates — and finds first on every later run. */
@@ -323,39 +452,36 @@ export async function registerWebexUserTools(
         'Read recent messages in a room the connected user is a member of, newest first. ' +
         'Access is the user’s own — rooms they are not in cannot be read. Threaded replies ' +
         'are marked "in thread <id>"; pass that id as parentId to webex_send_message to ' +
-        'answer in the same thread. For several rooms at once, call ' +
-        'webex_bulk_list_messages instead of this once per room.',
+        'answer in the same thread. Pass since for "what happened after <time>", and keep to ' +
+        'say which end of that window matters when it holds more than limit. For several ' +
+        'rooms at once, call webex_bulk_list_messages instead of this once per room.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         roomId: z.string().min(1).describe('Room id from webex_list_rooms'),
-        max: z.number().int().min(1).max(50).describe('How many messages (default 20)').optional(),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(ROOM_LIMIT_CAP)
+          .describe(`How many messages at most (default 20, up to ${ROOM_LIMIT_CAP})`)
+          .optional(),
         since: z.string().describe(SINCE_HINT).optional(),
+        keep: z.enum(['newest', 'oldest']).describe(KEEP_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
       const roomId = str(args.roomId);
       if (!roomId) return errText('roomId is required');
-      const max = typeof args.max === 'number' ? args.max : 20;
-      const since = parseSince(args.since);
-      if (typeof since === 'object' && since !== null) return errText(since.error);
-      const result = await webexGet(
-        auth,
-        webexScopeFor('webex_list_messages'),
-        `/messages?roomId=${encodeURIComponent(roomId)}&max=${max}`
-      );
+      const window = parseWindowArgs(args);
+      if ('error' in window) return errText(window.error);
+      const result = await readWindow(auth, webexScopeFor('webex_list_messages'), roomId, window);
       if (!result.ok) return errText(result.error);
-      const page = items(result.body);
-      const { kept, incomplete } =
-        since === null ? { kept: page, incomplete: false } : sinceWindow(page, since, max);
-      const lines = kept.map(messageLine);
-      if (lines.length === 0) {
-        return textResult(
-          since === null ? 'No messages.' : `No messages since ${str(args.since)}.`
-        );
+      if (result.value.messages.length === 0) {
+        return textResult(window.since ? `No messages since ${window.since}.` : 'No messages.');
       }
       return textResult(
         withPresentationHint(
-          lines.join('\n\n') + sinceNotes(str(args.since), incomplete),
+          renderWindow(result.value, window),
           'a chat-thread layout (grouped by sender, newest last) usually reads more naturally ' +
             'than this flat list.'
         )
@@ -373,7 +499,8 @@ export async function registerWebexUserTools(
         'spaces (a catch-up, a digest, "what did I miss"). WebEx has no multi-room endpoint, so ' +
         'this fans the reads out server-side and returns one section per room, in the order ' +
         'asked. A room that cannot be read (not a member, unknown id) is reported in its own ' +
-        'section without failing the others. Pass since for "what happened after <time>". ' +
+        'section without failing the others. Pass since for "what happened after <time>", and ' +
+        'keep to say which end of that window matters when a room holds more than limit. ' +
         'Access and thread marking are the same as webex_list_messages.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -382,14 +509,18 @@ export async function registerWebexUserTools(
           .min(1)
           .max(BULK_ROOMS_CAP)
           .describe('Room ids from webex_list_rooms'),
-        max: z
+        limit: z
           .number()
           .int()
           .min(1)
-          .max(50)
-          .describe('How many messages per room (default 20)')
+          .max(ROOM_LIMIT_CAP)
+          .describe(
+            `How many messages per room at most (default 20, up to ${ROOM_LIMIT_CAP}; rooms × ` +
+              `limit may not exceed ${BULK_MESSAGES_CAP})`
+          )
           .optional(),
         since: z.string().describe(SINCE_HINT).optional(),
+        keep: z.enum(['newest', 'oldest']).describe(KEEP_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -398,13 +529,21 @@ export async function registerWebexUserTools(
         : [];
       if (roomIds.length === 0) return errText('roomIds is required');
       const unique = [...new Set(roomIds)].slice(0, BULK_ROOMS_CAP);
-      const max = typeof args.max === 'number' ? args.max : 20;
-      const since = parseSince(args.since);
-      if (typeof since === 'object' && since !== null) return errText(since.error);
-      const sinceLabel = str(args.since);
+      const window = parseWindowArgs(args);
+      if ('error' in window) return errText(window.error);
+      // The cap protects the reader's context, not the API: 25 rooms × 200
+      // messages is a wall of text no one can act on in one turn.
+      if (unique.length * window.limit > BULK_MESSAGES_CAP) {
+        return errText(
+          `${unique.length} room(s) × limit ${window.limit} could return ` +
+            `${unique.length * window.limit} messages, over the ${BULK_MESSAGES_CAP} one call ` +
+            'can carry; lower limit or split the rooms across calls.'
+        );
+      }
 
       // WebEx rate-limits per user and per app; a bounded window keeps 25
-      // rooms polite while still finishing in a few round trips.
+      // rooms polite while still finishing in a few round trips. Each room's
+      // own walk is sequential — page N+1 needs page N's last id.
       const CONCURRENCY = 4;
       const sections: string[] = new Array<string>(unique.length);
       const failedIds: string[] = [];
@@ -415,10 +554,11 @@ export async function registerWebexUserTools(
           cursor += 1;
           if (index >= unique.length) return;
           const roomId = unique[index];
-          const result = await webexGet(
+          const result = await readWindow(
             auth,
             webexScopeFor('webex_bulk_list_messages'),
-            `/messages?roomId=${encodeURIComponent(roomId)}&max=${max}`
+            roomId,
+            window
           );
           // The id is labelled `roomId` — the exact parameter name
           // webex_list_messages and webex_send_message take — so the
@@ -429,14 +569,7 @@ export async function registerWebexUserTools(
             sections[index] = `${heading}\n(Could not read: ${result.error})`;
             continue;
           }
-          const page = items(result.body);
-          const { kept, incomplete } =
-            since === null ? { kept: page, incomplete: false } : sinceWindow(page, since, max);
-          const lines = kept.map(messageLine);
-          sections[index] =
-            lines.length === 0
-              ? `${heading}\n(No messages${since === null ? '' : ` since ${sinceLabel}`}.)`
-              : `${heading}\n${lines.join('\n\n')}${sinceNotes(sinceLabel, incomplete)}`;
+          sections[index] = `${heading}\n${renderWindow(result.value, window)}`;
         }
       };
       await Promise.all(
