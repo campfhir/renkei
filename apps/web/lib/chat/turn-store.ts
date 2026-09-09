@@ -55,6 +55,12 @@ export function createTurnStore(
         purpose: 'chat',
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        ...(usage.cacheReadInputTokens !== undefined
+          ? { cacheReadInputTokens: usage.cacheReadInputTokens }
+          : {}),
+        ...(usage.cacheWriteInputTokens !== undefined
+          ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
+          : {}),
       });
     },
     async storeArtifacts(messageId, files) {

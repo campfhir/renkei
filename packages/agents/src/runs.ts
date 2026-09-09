@@ -312,8 +312,12 @@ export interface RecordLlmCallInput {
   runId?: string | null;
   stepId?: string | null;
   purpose: 'run' | 'optimize' | 'chat';
+  /** Every prompt token the model read, cache-served or not. */
   inputTokens: number;
   outputTokens: number;
+  /** The cached portions of inputTokens (migration 097); omitted = not reported. */
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
 }
 
 /**
@@ -338,6 +342,8 @@ export async function recordLlmCall(
           purpose: input.purpose,
           input_tokens: input.inputTokens,
           output_tokens: input.outputTokens,
+          cache_read_input_tokens: input.cacheReadInputTokens ?? null,
+          cache_write_input_tokens: input.cacheWriteInputTokens ?? null,
         })
         .execute(),
     'DB_ERROR' as const

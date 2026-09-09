@@ -219,6 +219,8 @@ export interface AgentRuns {
 
 export interface AgentRunSteps {
   attempt: number;
+  cache_read_input_tokens: number | null;
+  cache_write_input_tokens: number | null;
   created_at: Generated<Timestamp>;
   detail: Json | null;
   finished_at: Timestamp | null;
@@ -717,6 +719,8 @@ export interface KnowledgeReindexRuns {
 
 export interface LlmCalls {
   agent_id: string | null;
+  cache_read_input_tokens: number | null;
+  cache_write_input_tokens: number | null;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   input_tokens: Generated<number>;
