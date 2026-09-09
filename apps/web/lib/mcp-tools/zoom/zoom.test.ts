@@ -164,6 +164,49 @@ describe('zoom_create_meeting', () => {
   });
 });
 
+describe('zoom_create_meeting recurrence', () => {
+  it('a repeat makes a fixed-time recurring meeting (type 8) and is said back', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({ id: 999, topic: '1:1', start_time: '2026-09-16T11:00:00', join_url: 'j' })
+    );
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_create_meeting')!({
+      topic: '1:1',
+      startTime: '2026-09-16T11:00:00',
+      durationMinutes: '30',
+      timezone: 'America/Los_Angeles',
+      recurrence: { frequency: 'weekly', interval: 1, daysOfWeek: ['Wednesday'] },
+    });
+
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      topic: '1:1',
+      type: 8,
+      start_time: '2026-09-16T11:00:00',
+      duration: 30,
+      timezone: 'America/Los_Angeles',
+      recurrence: { type: 2, repeat_interval: 1, weekly_days: '4' },
+    });
+    expect(textOf(result)).toContain('repeating every week on Wednesday');
+  });
+
+  it('refuses a repeat Zoom cannot do before calling Zoom', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_create_meeting')!({
+      topic: '1:1',
+      startTime: '2026-09-16T11:00:00',
+      durationMinutes: 30,
+      recurrence: { frequency: 'yearly' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('not yearly');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
 describe('zoom_update_meeting', () => {
   it('refuses an update with nothing to change', async () => {
     const tools = await toolsOf();
@@ -229,7 +272,65 @@ describe('zoom_create_meeting_preview', () => {
   });
 });
 
+describe('zoom_create_meeting_preview recurrence', () => {
+  it('puts the checked repeat and its wording on the card', async () => {
+    const tools = await toolsOf();
+
+    const result = (await tools.get('zoom_create_meeting_preview')!({
+      topic: 'Review',
+      startTime: '2026-09-16T11:00:00',
+      durationMinutes: 45,
+      recurrence:
+        '{"frequency":"monthly","weekOfMonth":"last","daysOfWeek":["friday"],"occurrences":6}',
+    })) as { structuredContent?: Record<string, unknown> };
+
+    expect(result.structuredContent).toMatchObject({
+      kind: 'zoom',
+      durationMinutes: 45,
+      recurrence: {
+        frequency: 'monthly',
+        interval: 1,
+        weekOfMonth: 'last',
+        daysOfWeek: ['friday'],
+        occurrences: 6,
+      },
+      recurrenceText: 'every month on the last Friday, 6 times',
+    });
+    expect(result.structuredContent?.recurrence).not.toHaveProperty('startDate');
+  });
+});
+
 describe('zoom_create_meeting_confirm', () => {
+  it('creates the series the card handed on', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ id: 7, topic: 'Review', start_time: 't' }));
+    const tools = await toolsOf();
+
+    await tools.get('zoom_create_meeting_confirm')!({
+      topic: 'Review',
+      startTime: '2026-09-16T11:00:00',
+      durationMinutes: 45,
+      recurrence: {
+        frequency: 'monthly',
+        interval: 1,
+        weekOfMonth: 'last',
+        daysOfWeek: ['friday'],
+        occurrences: 6,
+      },
+    });
+
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      type: 8,
+      recurrence: {
+        type: 3,
+        repeat_interval: 1,
+        monthly_week: -1,
+        monthly_week_day: 6,
+        end_times: 6,
+      },
+    });
+  });
+
   it('accepts durationMinutes as a numeric string', async () => {
     mockCall.mockResolvedValue(jsonResponse({ id: 999, topic: 'Planning', start_time: 't' }));
     const tools = await toolsOf();

@@ -20,6 +20,12 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { ZoomClient, encodeZoomMeetingId, vttToText } from '@renkei/connector-zoom';
 import { actMeta } from '@renkei/tool-outcomes';
+import {
+  ZOOM_RECURRING_MEETING_TYPE,
+  parseZoomRecurrence,
+  zoomRecurrenceFieldSchema,
+  type ZoomRecurrenceValue,
+} from './recurrence';
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
@@ -158,6 +164,39 @@ function parseDurationMinutes(value: unknown): number | null {
   return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 1 && parsed <= 1440
     ? parsed
     : null;
+}
+
+/**
+ * The POST body for a meeting — a one-off (type 2) or, with a repeat, a
+ * fixed-time recurring meeting (type 8) whose start is the first
+ * occurrence. Shared by zoom_create_meeting and the card's confirm.
+ */
+function meetingBody(
+  args: Record<string, unknown>,
+  durationMinutes: number,
+  recurrence: ZoomRecurrenceValue | null
+): Record<string, unknown> {
+  return {
+    topic: str(args.topic),
+    type: recurrence ? ZOOM_RECURRING_MEETING_TYPE : 2,
+    start_time: str(args.startTime),
+    duration: durationMinutes,
+    ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
+    ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
+    ...(recurrence ? { recurrence: recurrence.recurrence } : {}),
+  };
+}
+
+function scheduledLine(
+  body: Record<string, unknown>,
+  recurrence: ZoomRecurrenceValue | null
+): string {
+  return (
+    `Scheduled "${str(body.topic)}" at ${str(body.start_time)}` +
+    (recurrence ? `, repeating ${recurrence.description}` : '') +
+    ` (id ${String(body.id ?? 'unknown')}).` +
+    (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
+  );
 }
 
 function rec(value: unknown): Record<string, unknown> {
@@ -306,8 +345,9 @@ export async function registerZoomTools(
     {
       title: 'Zoom · Act — Schedule a Zoom meeting',
       description:
-        'Create a scheduled meeting on the connected user’s calendar. Acts as the user — only ' +
-        'schedule what they asked for.',
+        'Create a scheduled meeting on the connected user’s calendar. A recurring meeting (a ' +
+        'weekly 1:1, a monthly review) is one call with `recurrence` set — startTime is its ' +
+        'first occurrence. Acts as the user — only schedule what they asked for.',
       // Acting tool: readOnlyHint false, so org read-only mode disables it.
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -315,7 +355,10 @@ export async function registerZoomTools(
         startTime: z
           .string()
           .min(1)
-          .describe('Start, ISO-8601 (e.g. 2026-08-12T15:00:00Z or local with timezone below)'),
+          .describe(
+            'Start, ISO-8601 (e.g. 2026-08-12T15:00:00Z or local with timezone below); for a ' +
+              'recurring meeting, the first occurrence'
+          ),
         durationMinutes: z
           .union([z.number(), z.string()])
           .describe('Length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'),
@@ -324,6 +367,7 @@ export async function registerZoomTools(
           .describe('IANA timezone for startTime (e.g. America/Chicago)')
           .optional(),
         agenda: z.string().describe('Agenda text shown on the invite').optional(),
+        recurrence: zoomRecurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
@@ -331,21 +375,13 @@ export async function registerZoomTools(
       if (durationMinutes === null) {
         return errText('durationMinutes must be a whole number between 1 and 1440');
       }
+      const recurrence = parseZoomRecurrence(args.recurrence, str(args.startTime));
+      if (!recurrence.ok) return errText(recurrence.error);
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_create_meeting'),
         '/users/me/meetings',
-        {
-          method: 'POST',
-          json: {
-            topic: str(args.topic),
-            type: 2, // scheduled
-            start_time: str(args.startTime),
-            duration: durationMinutes,
-            ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
-            ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
-          },
-        }
+        { method: 'POST', json: meetingBody(args, durationMinutes, recurrence.val) }
       );
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
@@ -353,12 +389,10 @@ export async function registerZoomTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),
+        recurring: recurrence.val !== null,
       });
       return {
-        ...textResult(
-          `Scheduled "${str(body.topic)}" at ${str(body.start_time)} (id ${String(body.id ?? 'unknown')}).` +
-            (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
-        ),
+        ...textResult(scheduledLine(body, recurrence.val)),
         // The join URL, not the numeric meeting id: what a person wants
         // from "an agent scheduled a meeting" is the way into it.
         _meta: actMeta({
@@ -398,6 +432,7 @@ export async function registerZoomTools(
           .describe('IANA timezone for startTime (e.g. America/Chicago)')
           .optional(),
         agenda: z.string().describe('Agenda text shown on the invite').optional(),
+        recurrence: zoomRecurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
@@ -409,6 +444,8 @@ export async function registerZoomTools(
       if (durationMinutes === null) {
         return errText('durationMinutes must be a whole number between 1 and 1440');
       }
+      const recurrence = parseZoomRecurrence(args.recurrence, startTime);
+      if (!recurrence.ok) return errText(recurrence.error);
       return {
         ...textResult(
           `The meeting "${topic}" (${startTime}) is awaiting the user's decision on the ` +
@@ -424,6 +461,11 @@ export async function registerZoomTools(
           durationMinutes,
           ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
           ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
+          // The checked repeat rides on the card to confirm, and its
+          // wording is what the card shows.
+          ...(recurrence.val
+            ? { recurrence: recurrence.val.input, recurrenceText: recurrence.val.description }
+            : {}),
         },
       };
     }
@@ -446,6 +488,7 @@ export async function registerZoomTools(
           .describe('Length in minutes, 1-1440 (numeric strings such as "30" are also accepted)'),
         timezone: z.string().describe('IANA timezone for startTime').optional(),
         agenda: z.string().describe('Agenda text shown on the invite').optional(),
+        recurrence: zoomRecurrenceFieldSchema,
       }),
     },
     async (args: Record<string, any>) => {
@@ -453,21 +496,13 @@ export async function registerZoomTools(
       if (durationMinutes === null) {
         return errText('durationMinutes must be a whole number between 1 and 1440');
       }
+      const recurrence = parseZoomRecurrence(args.recurrence, str(args.startTime));
+      if (!recurrence.ok) return errText(recurrence.error);
       const result = await zoomCall(
         auth,
         zoomScopeFor('zoom_create_meeting'),
         '/users/me/meetings',
-        {
-          method: 'POST',
-          json: {
-            topic: str(args.topic),
-            type: 2, // scheduled
-            start_time: str(args.startTime),
-            duration: durationMinutes,
-            ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
-            ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
-          },
-        }
+        { method: 'POST', json: meetingBody(args, durationMinutes, recurrence.val) }
       );
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
@@ -475,11 +510,9 @@ export async function registerZoomTools(
         component: 'mcp/tool',
         tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),
+        recurring: recurrence.val !== null,
       });
-      return textResult(
-        `Scheduled "${str(body.topic)}" at ${str(body.start_time)} (id ${String(body.id ?? 'unknown')}).` +
-          (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
-      );
+      return textResult(scheduledLine(body, recurrence.val));
     }
   );
 

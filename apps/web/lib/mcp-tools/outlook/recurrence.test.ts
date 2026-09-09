@@ -4,7 +4,7 @@
  * date, and every complaint naming the field at fault.
  */
 
-import { describeRecurrence, parseRecurrence } from './recurrence';
+import { parseRecurrence } from './recurrence';
 
 const START = '2026-09-16T11:00:00'; // a Wednesday
 const TZ = 'America/Los_Angeles';
@@ -12,7 +12,13 @@ const TZ = 'America/Los_Angeles';
 function parsed(value: unknown, start = START) {
   const result = parseRecurrence(value, start, TZ);
   if (!result.ok) throw new Error(result.error);
-  return result.val;
+  return result.val?.recurrence ?? null;
+}
+
+function said(value: unknown): string {
+  const result = parseRecurrence(value, START, TZ);
+  if (!result.ok || !result.val) throw new Error('expected a recurrence');
+  return result.val.description;
 }
 
 function complaint(value: unknown, start = START): string {
@@ -134,35 +140,25 @@ describe('parseRecurrence', () => {
   });
 });
 
-describe('describeRecurrence', () => {
+describe('the description', () => {
   it('says the series in a person’s words', () => {
-    expect(describeRecurrence(parsed({ frequency: 'weekly' })!)).toBe('every week on Wednesday');
+    expect(said({ frequency: 'weekly' })).toBe('every week on Wednesday');
     expect(
-      describeRecurrence(
-        parsed({
-          frequency: 'weekly',
-          interval: 2,
-          daysOfWeek: ['mon', 'wed'],
-          until: '2026-12-18',
-        })!
-      )
+      said({
+        frequency: 'weekly',
+        interval: 2,
+        daysOfWeek: ['mon', 'wed'],
+        until: '2026-12-18',
+      })
     ).toBe('every other week on Monday and Wednesday until 2026-12-18');
-    expect(describeRecurrence(parsed({ frequency: 'daily', interval: 3, occurrences: 5 })!)).toBe(
-      'every 3 days, 5 times'
+    expect(said({ frequency: 'daily', interval: 3, occurrences: 5 })).toBe('every 3 days, 5 times');
+    expect(said({ frequency: 'monthly', dayOfMonth: 22 })).toBe('every month on the 22nd');
+    expect(said({ frequency: 'monthly', weekOfMonth: 'last', daysOfWeek: ['friday'] })).toBe(
+      'every month on the last Friday'
     );
-    expect(describeRecurrence(parsed({ frequency: 'monthly', dayOfMonth: 22 })!)).toBe(
-      'every month on the 22nd'
-    );
+    expect(said({ frequency: 'yearly' })).toBe('every year on September 16');
     expect(
-      describeRecurrence(
-        parsed({ frequency: 'monthly', weekOfMonth: 'last', daysOfWeek: ['friday'] })!
-      )
-    ).toBe('every month on the last Friday');
-    expect(describeRecurrence(parsed({ frequency: 'yearly' })!)).toBe('every year on September 16');
-    expect(
-      describeRecurrence(
-        parsed({ frequency: 'yearly', month: 11, weekOfMonth: 'fourth', daysOfWeek: ['thursday'] })!
-      )
+      said({ frequency: 'yearly', month: 11, weekOfMonth: 'fourth', daysOfWeek: ['thursday'] })
     ).toBe('every year on the fourth Thursday of November');
   });
 });

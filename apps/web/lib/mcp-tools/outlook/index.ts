@@ -51,7 +51,7 @@ import {
 } from '../widgets';
 import { prependComment } from './comment-body';
 import { markdownToHtml } from './markdown';
-import { describeRecurrence, parseRecurrence, recurrenceFieldSchema } from './recurrence';
+import { parseRecurrence, recurrenceFieldSchema } from './recurrence';
 import type { GraphAuth } from '../graph/graph-auth';
 import {
   DIRECTORY_SEARCH_HEADERS,
@@ -2976,7 +2976,7 @@ export async function registerOutlookTools(
         ...(args.onlineMeeting === true
           ? { isOnlineMeeting: true, onlineMeetingProvider: 'teamsForBusiness' }
           : {}),
-        ...(recurrence.val ? { recurrence: recurrence.val } : {}),
+        ...(recurrence.val ? { recurrence: recurrence.val.recurrence } : {}),
       });
       if (!result.ok) return errText(result.error);
       const event = result.body ?? {};
@@ -2990,7 +2990,7 @@ export async function registerOutlookTools(
       return {
         ...textResult(
           `Created "${title}" (id ${str(event.id) || 'unknown'})` +
-            (recurrence.val ? `, repeating ${describeRecurrence(recurrence.val)}` : '') +
+            (recurrence.val ? `, repeating ${recurrence.val.description}` : '') +
             (requiredAttendees.length > 0 ? `; required: ${requiredAttendees.join(', ')}` : '') +
             (optionalAttendees.length > 0 ? `; optional: ${optionalAttendees.join(', ')}` : '') +
             '.' +
