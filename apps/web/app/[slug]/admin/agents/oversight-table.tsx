@@ -74,7 +74,9 @@ export default function OversightTable({
 
   const tallies = { runsByAgent, failuresByAgent, tokensInByAgent, tokensOutByAgent };
   const ordered = sortAgentRows(agents, sortKey, bucket, tallies);
-  const modelsInPeriod = tokensByModel.filter((row) => row.input[bucket] + row.output[bucket] > 0);
+  const modelsInPeriod = tokensByModel.filter(
+    (row) => row.input[bucket] + row.output[bucket] + row.cacheRead[bucket] > 0
+  );
 
   function SortHeader({ column, label }: { column: OversightSortKey; label: string }) {
     const active = sortKey === column;
@@ -152,7 +154,10 @@ export default function OversightTable({
                   {modelLabel(row.provider, row.model)}
                 </span>
                 <span className="shrink-0 tabular-nums">
-                  {number(row.input[bucket])} in · {number(row.output[bucket])} out
+                  {number(row.input[bucket])} in
+                  {row.cacheRead[bucket] > 0 ? ` (+${number(row.cacheRead[bucket])} cached)` : ''}
+                  {' · '}
+                  {number(row.output[bucket])} out
                 </span>
               </li>
             ))}

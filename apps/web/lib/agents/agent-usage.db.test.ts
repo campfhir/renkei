@@ -70,6 +70,8 @@ maybe('token usage by model and by step', () => {
       purpose: 'run',
       inputTokens: 200,
       outputTokens: 20,
+      cacheReadInputTokens: 900,
+      cacheWriteInputTokens: 40,
       model: big,
     });
     await recordLlmCall(db, {
@@ -104,13 +106,20 @@ maybe('token usage by model and by step', () => {
 
   it('splits the whole org by model, chat and optimizer spend included', async () => {
     const rows = await getTokenUsageByModel(db, tenantId, null);
-    expect(rows.map((row) => [row.provider, row.model, row.input.today, row.output.today])).toEqual(
-      [
-        ['anthropic', 'claude-big', 5_300, 530],
-        ['openai', 'gpt-small', 1_000, 50],
-        [null, null, 7, 3],
-      ]
-    );
+    expect(
+      rows.map((row) => [
+        row.provider,
+        row.model,
+        row.input.today,
+        row.output.today,
+        row.cacheRead.today,
+        row.cacheWrite.today,
+      ])
+    ).toEqual([
+      ['anthropic', 'claude-big', 5_300, 530, 900, 40],
+      ['openai', 'gpt-small', 1_000, 50, 0, 0],
+      [null, null, 7, 3, 0, 0],
+    ]);
   });
 
   it('narrows to one agent, leaving the chat out', async () => {
@@ -131,12 +140,13 @@ maybe('token usage by model and by step', () => {
         row.model,
         row.calls.today,
         row.input.today,
+        row.cacheRead.today,
         row.output.today,
       ])
     ).toEqual([
-      [null, 'gpt-small', 1, 1_000, 50],
-      ['Read the inbox', 'claude-big', 2, 300, 30],
-      ['Read the inbox', null, 1, 7, 3],
+      [null, 'gpt-small', 1, 1_000, 0, 50],
+      ['Read the inbox', 'claude-big', 2, 300, 900, 30],
+      ['Read the inbox', null, 1, 7, 0, 3],
     ]);
     expect(rows[0].stepId).toBeNull();
   });

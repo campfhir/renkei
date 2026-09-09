@@ -63,6 +63,12 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           'Every model call now records the provider and model it went to, so spend can be read against each model’s price rather than as one undifferentiated count. Usage recorded before this cannot be attributed and is shown as such.',
       },
+      {
+        kind: 'added',
+        title: 'Cached prompt tokens counted on their own',
+        detail:
+          'Tokens the model served from its prompt cache — billed at a fraction of the input price — now show separately from fresh input, on an agent’s usage and in the by-model split, instead of being folded into one number or dropped.',
+      },
     ],
   },
   {

@@ -312,8 +312,11 @@ export interface RecordLlmCallInput {
   runId?: string | null;
   stepId?: string | null;
   purpose: 'run' | 'optimize' | 'chat';
+  /** Uncached prompt tokens; the cache counts below are additive (097). */
   inputTokens: number;
   outputTokens: number;
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
   /**
    * What the tokens were spent on (migration 096): the provider and model
    * NAME as resolved for this call, plus the config row that answered.
@@ -352,6 +355,8 @@ export async function recordLlmCall(
           purpose: input.purpose,
           input_tokens: input.inputTokens,
           output_tokens: input.outputTokens,
+          cache_read_input_tokens: input.cacheReadInputTokens ?? 0,
+          cache_write_input_tokens: input.cacheWriteInputTokens ?? 0,
           llm_model_id: input.model?.llmModelId ?? null,
           provider: input.model?.provider ?? null,
           model: input.model?.model ?? null,

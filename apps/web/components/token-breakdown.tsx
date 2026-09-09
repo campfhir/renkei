@@ -14,7 +14,12 @@
  */
 
 import { useState } from 'react';
-import type { UsageBuckets, ModelTokenUsage, StepTokenUsage } from '@/lib/agents/agent-usage';
+import type {
+  UsageBuckets,
+  TokenUsage,
+  ModelTokenUsage,
+  StepTokenUsage,
+} from '@/lib/agents/agent-usage';
 import { modelLabel } from '@/lib/agents/model-label';
 
 const BUCKETS: { key: keyof UsageBuckets; label: string }[] = [
@@ -44,13 +49,34 @@ export default function TokenBreakdown({
   defaultBucket?: keyof UsageBuckets;
 }): React.ReactNode {
   const [bucket, setBucket] = useState<keyof UsageBuckets>(defaultBucket);
-  const inPeriod = <T extends { input: UsageBuckets; output: UsageBuckets }>(rows: T[]) =>
-    rows
-      .filter((row) => row.input[bucket] + row.output[bucket] > 0)
-      .sort((a, b) => b.input[bucket] + b.output[bucket] - (a.input[bucket] + a.output[bucket]));
+  const spent = (row: TokenUsage) =>
+    row.input[bucket] + row.output[bucket] + row.cacheRead[bucket] + row.cacheWrite[bucket];
+  const inPeriod = <T extends TokenUsage>(rows: T[]) =>
+    rows.filter((row) => spent(row) > 0).sort((a, b) => spent(b) - spent(a));
   const models = inPeriod(byModel);
   const steps = bySteps ? inPeriod(bySteps) : null;
+  // The cache columns only earn their width when something was cached.
+  const showCache = [...models, ...(steps ?? [])].some(
+    (row) => row.cacheRead[bucket] + row.cacheWrite[bucket] > 0
+  );
   const headerClass = 'pb-1 pr-3 text-right font-medium';
+  const cacheHeaders = showCache ? (
+    <>
+      <th className={headerClass} title="Prompt tokens served from the provider's cache">
+        Cached in
+      </th>
+      <th className={headerClass} title="Prompt tokens written to the provider's cache">
+        Cache writes
+      </th>
+    </>
+  ) : null;
+  const cacheCells = (row: TokenUsage) =>
+    showCache ? (
+      <>
+        <td className="pr-3 text-right tabular-nums">{number(row.cacheRead[bucket])}</td>
+        <td className="pr-3 text-right tabular-nums">{number(row.cacheWrite[bucket])}</td>
+      </>
+    ) : null;
 
   return (
     <div className="space-y-4">
@@ -87,14 +113,18 @@ export default function TokenBreakdown({
                 <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   <th className="pb-1 pr-3 font-medium">Model</th>
                   <th className={headerClass}>Tokens in</th>
+                  {cacheHeaders}
                   <th className={headerClass}>Tokens out</th>
                 </tr>
               </thead>
               <tbody>
                 {models.map((row) => (
                   <tr key={`${row.provider ?? ''}/${row.model ?? ''}`}>
-                    <td className="pr-3">{modelLabel(row.provider, row.model)}</td>
+                    <td className="whitespace-nowrap pr-3">
+                      {modelLabel(row.provider, row.model)}
+                    </td>
                     <td className="pr-3 text-right tabular-nums">{number(row.input[bucket])}</td>
+                    {cacheCells(row)}
                     <td className="pr-3 text-right tabular-nums">{number(row.output[bucket])}</td>
                   </tr>
                 ))}
@@ -120,6 +150,7 @@ export default function TokenBreakdown({
                       Calls
                     </th>
                     <th className={headerClass}>Tokens in</th>
+                    {cacheHeaders}
                     <th className={headerClass}>Tokens out</th>
                   </tr>
                 </thead>
@@ -136,6 +167,7 @@ export default function TokenBreakdown({
                       </td>
                       <td className="pr-3 text-right tabular-nums">{number(row.calls[bucket])}</td>
                       <td className="pr-3 text-right tabular-nums">{number(row.input[bucket])}</td>
+                      {cacheCells(row)}
                       <td className="pr-3 text-right tabular-nums">{number(row.output[bucket])}</td>
                     </tr>
                   ))}

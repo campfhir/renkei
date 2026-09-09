@@ -53,6 +53,29 @@ test('admin — agent oversight totals', async ({ page }, testInfo) => {
   await shot(page, testInfo, 'admin-agent-oversight');
 });
 
+test('admin — agent oversight sorted by tokens', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/agents`);
+  await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
+  await page.getByRole('button', { name: 'This year' }).click();
+  await page.getByRole('button', { name: 'Tokens in (this year)' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Tokens in (this year)' })).toHaveAttribute(
+    'aria-sort',
+    'descending'
+  );
+  // The org total, split by model, names the seeded models.
+  await expect(page.getByText('claude-opus-5', { exact: false }).first()).toBeVisible();
+  await shot(page, testInfo, 'admin-agent-oversight-by-tokens');
+});
+
+test('admin — agent detail with usage by model and step', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/agents/${AGENT_RICH_ID}`);
+  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
+  await expect(page.getByText('Where the tokens went')).toBeVisible();
+  await expect(page.getByText('By step')).toBeVisible();
+  await expect(page.getByText('Find yesterday’s activity').first()).toBeVisible();
+  await shot(page, testInfo, 'admin-agent-detail');
+});
+
 test('admin — event monitor', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/admin/events`);
   await expect(page.getByRole('heading', { name: 'Events' })).toBeVisible();
@@ -101,6 +124,22 @@ test('agent overview — memory section open', async ({ page }, testInfo) => {
   }
   await expect(page.getByText('Summary (compacted', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'agent-overview-memory-open');
+});
+
+test('agent overview — usage open', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('button', { name: 'Usage' }).click();
+    await expect(page.getByRole('dialog', { name: 'Usage' })).toBeVisible();
+  } else {
+    await page.getByText('Usage', { exact: true }).click();
+  }
+  await expect(page.getByText('Where the tokens went')).toBeVisible();
+  await page.getByRole('button', { name: 'All time' }).click();
+  // The seeded pre-096 rows: real spend on a real step, with no model on them.
+  await expect(page.getByText('Model not recorded').first()).toBeVisible();
+  await shot(page, testInfo, 'agent-overview-usage-open', { fullPage: false });
 });
 
 test('agent overview — invocations open', async ({ page }, testInfo) => {

@@ -717,6 +717,8 @@ export interface KnowledgeReindexRuns {
 
 export interface LlmCalls {
   agent_id: string | null;
+  cache_read_input_tokens: Generated<number>;
+  cache_write_input_tokens: Generated<number>;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   input_tokens: Generated<number>;

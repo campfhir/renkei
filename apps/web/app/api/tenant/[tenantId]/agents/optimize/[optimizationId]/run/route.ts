@@ -80,6 +80,8 @@ export async function POST(
       purpose: 'optimize',
       inputTokens: outcome.usage.inputTokens,
       outputTokens: outcome.usage.outputTokens,
+      cacheReadInputTokens: outcome.usage.cacheReadInputTokens,
+      cacheWriteInputTokens: outcome.usage.cacheWriteInputTokens,
       model: outcome.model,
     });
     return NextResponse.json({ status: 'succeeded' });

@@ -27,7 +27,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { findNodeById, isAgentStepsDoc, type AgentStepsDoc } from '@renkei/agents';
-import { resolveAgentLlm } from '@renkei/agent-llm';
+import { resolveAgentLlm, type LlmUsage } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { retryWithBackoff } from '@/lib/retry-with-backoff';
@@ -396,7 +396,7 @@ export function buildOptimizationPrompt(
 export type OptimizeOutcome =
   | {
       report: OptimizationReport;
-      usage: { inputTokens: number; outputTokens: number };
+      usage: LlmUsage;
       /** The model the pass ran on, for the token ledger. */
       model: LlmCallModel;
     }

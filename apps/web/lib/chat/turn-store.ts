@@ -62,6 +62,8 @@ export function createTurnStore(
         purpose: 'chat',
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        cacheReadInputTokens: usage.cacheReadInputTokens,
+        cacheWriteInputTokens: usage.cacheWriteInputTokens,
         model: scope.model,
       });
     },

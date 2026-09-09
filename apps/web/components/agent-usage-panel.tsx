@@ -13,6 +13,7 @@ import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
 import type {
   UsageBuckets,
+  TokenUsage,
   AgentToolUsageRow,
   ModelTokenUsage,
   StepTokenUsage,
@@ -33,7 +34,7 @@ const BUCKETS: { key: keyof UsageBuckets; label: string }[] = [
   { key: 'allTime', label: 'All time' },
 ];
 
-function TokenBuckets({ input, output }: { input: UsageBuckets; output: UsageBuckets }) {
+function TokenBuckets({ input, output, cacheRead }: TokenUsage) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -49,15 +50,30 @@ function TokenBuckets({ input, output }: { input: UsageBuckets; output: UsageBuc
         </thead>
         <tbody>
           <tr>
-            <td className="pr-3 text-gray-500 dark:text-gray-400">Tokens in</td>
+            <td className="whitespace-nowrap pr-3 text-gray-500 dark:text-gray-400">Tokens in</td>
             {BUCKETS.map((bucket) => (
               <td key={bucket.key} className="pr-3 text-right tabular-nums">
                 {input[bucket.key].toLocaleString('en-US')}
               </td>
             ))}
           </tr>
+          {cacheRead.allTime > 0 ? (
+            <tr>
+              <td
+                className="whitespace-nowrap pr-3 text-gray-500 dark:text-gray-400"
+                title="Prompt tokens the provider served from its cache, on top of the tokens in"
+              >
+                Cached in
+              </td>
+              {BUCKETS.map((bucket) => (
+                <td key={bucket.key} className="pr-3 text-right tabular-nums">
+                  {cacheRead[bucket.key].toLocaleString('en-US')}
+                </td>
+              ))}
+            </tr>
+          ) : null}
           <tr>
-            <td className="pr-3 text-gray-500 dark:text-gray-400">Tokens out</td>
+            <td className="whitespace-nowrap pr-3 text-gray-500 dark:text-gray-400">Tokens out</td>
             {BUCKETS.map((bucket) => (
               <td key={bucket.key} className="pr-3 text-right tabular-nums">
                 {output[bucket.key].toLocaleString('en-US')}
@@ -152,7 +168,7 @@ export default function AgentUsagePanel({
   tools,
   toolWindowDays,
 }: {
-  tokens: { input: UsageBuckets; output: UsageBuckets };
+  tokens: TokenUsage;
   /** The same tokens split by model (096); omitted, the split is not shown. */
   byModel?: ModelTokenUsage[];
   /** And by step — a single agent's only; a roster has no steps in common. */
@@ -162,7 +178,7 @@ export default function AgentUsagePanel({
 }): React.ReactNode {
   return (
     <div className="space-y-5">
-      <TokenBuckets input={tokens.input} output={tokens.output} />
+      <TokenBuckets {...tokens} />
       {byModel ? <TokenBreakdown byModel={byModel} bySteps={bySteps} /> : null}
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">

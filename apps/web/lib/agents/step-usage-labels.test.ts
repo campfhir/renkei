@@ -12,6 +12,8 @@ function row(stepId: string | null) {
     calls: zero,
     input: zero,
     output: zero,
+    cacheRead: zero,
+    cacheWrite: zero,
   };
 }
 

@@ -78,7 +78,8 @@ describe('OpenAiProvider.stream', () => {
         { type: 'tool_use', id: 'call_1', name: 'a_tool', input: { q: 'x' } },
       ],
       stopReason: 'tool_use',
-      usage: { inputTokens: 30, outputTokens: 12, cacheReadInputTokens: 10 },
+      // prompt_tokens 30 of which 10 cached: 20 uncached, 10 from the cache.
+      usage: { inputTokens: 20, outputTokens: 12, cacheReadInputTokens: 10 },
     });
     expect(events[0]).toEqual({ type: 'message_start' });
     expect(events.filter((e) => e.type === 'block_start').length).toBe(3);

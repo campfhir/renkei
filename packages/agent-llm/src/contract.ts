@@ -97,6 +97,14 @@ export interface LlmRequest {
   promptCache?: boolean;
 }
 
+/**
+ * One call's spend, in the provider-neutral shape the token ledger keeps:
+ * `inputTokens` is the UNCACHED part of the prompt, and the two cache
+ * counts are additive to it — the whole prompt is the three summed. That
+ * is Anthropic's own accounting; the OpenAI dialect reports cached tokens
+ * as a subset of `prompt_tokens`, and its adapter subtracts them so a
+ * consumer never has to know which provider answered.
+ */
 export interface LlmUsage {
   inputTokens: number;
   outputTokens: number;

@@ -59,6 +59,7 @@ import {
   type LlmContentBlock,
   type LlmMessage,
   type LlmToolDef,
+  type LlmUsage,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
@@ -260,7 +261,7 @@ interface AttemptOutcome {
   /** A note finish_step asked to carry into future runs (agent memory). */
   remember: string | null;
   toolCalls: ToolCallRecord[];
-  usage: { inputTokens: number; outputTokens: number };
+  usage: AttemptUsage;
   unbound: string[];
   resolvedInstruction: string;
   /**
@@ -719,6 +720,29 @@ function askPersonArgsOf(
   };
 }
 
+/**
+ * An attempt's spend summed over its model turns: `LlmUsage` with the
+ * cache counts always present, so the ledger row and the attempt row can
+ * be written without a null check at every site.
+ */
+interface AttemptUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
+}
+
+function emptyUsage(): AttemptUsage {
+  return { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
+}
+
+function addUsage(total: AttemptUsage, turn: LlmUsage): void {
+  total.inputTokens += turn.inputTokens;
+  total.outputTokens += turn.outputTokens;
+  total.cacheReadInputTokens += turn.cacheReadInputTokens ?? 0;
+  total.cacheWriteInputTokens += turn.cacheWriteInputTokens ?? 0;
+}
+
 export function createAgentRunHandler(deps: EngineDeps) {
   const db = deps.db;
   const createClient =
@@ -738,7 +762,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
    */
   async function recordUsage(
     run: RunRow,
-    usage: { inputTokens: number; outputTokens: number },
+    usage: AttemptUsage,
     stepId: string,
     llm: ResolvedLlm
   ): Promise<void> {
@@ -752,6 +776,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       purpose: 'run',
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
+      cacheReadInputTokens: usage.cacheReadInputTokens,
+      cacheWriteInputTokens: usage.cacheWriteInputTokens,
       // The model this attempt's turns actually went to — every turn of
       // one attempt runs on the one resolved model.
       model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
@@ -2037,7 +2063,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
               durationMs: 0,
             },
           ],
-          usage: { inputTokens: 0, outputTokens: 0 },
+          usage: emptyUsage(),
           unbound: [],
           resolvedInstruction: renderInstruction(gatedStep.instruction, vars).text,
           promptText: '',
@@ -2896,7 +2922,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
       const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
-      const usage = { inputTokens: 0, outputTokens: 0 };
+      const usage = emptyUsage();
       let failureSummary = 'The model never chose a path.';
 
       let decidedPath: BranchPath | null = null;
@@ -2948,8 +2974,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           break;
         }
 
-        usage.inputTokens += completion.val.usage.inputTokens;
-        usage.outputTokens += completion.val.usage.outputTokens;
+        addUsage(usage, completion.val.usage);
         messages.push({ role: 'assistant', content: completion.val.content });
 
         const toolUses = completion.val.content.filter(
@@ -3168,7 +3193,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
       const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
-      const usage = { inputTokens: 0, outputTokens: 0 };
+      const usage = emptyUsage();
       let failureSummary = 'The model never decided the loop.';
 
       let decided: 'finished' | 'continue' | null = null;
@@ -3214,8 +3239,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           break;
         }
 
-        usage.inputTokens += completion.val.usage.inputTokens;
-        usage.outputTokens += completion.val.usage.outputTokens;
+        addUsage(usage, completion.val.usage);
         messages.push({ role: 'assistant', content: completion.val.content });
 
         const toolUses = completion.val.content.filter(
@@ -3391,7 +3415,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // scarce — over-budget attachments are dropped (their extracted text
     // already rode the tool result), never queued.
     const attachmentBudget = { blocks: 0, base64Chars: 0 };
-    const usage = { inputTokens: 0, outputTokens: 0 };
+    const usage = emptyUsage();
     const resolvedInstruction = renderInstruction(step.instruction, vars).text;
 
     const base = {
@@ -3459,8 +3483,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         };
       }
 
-      usage.inputTokens += completion.val.usage.inputTokens;
-      usage.outputTokens += completion.val.usage.outputTokens;
+      addUsage(usage, completion.val.usage);
       messages.push({ role: 'assistant', content: completion.val.content });
 
       const toolUses = completion.val.content.filter(
