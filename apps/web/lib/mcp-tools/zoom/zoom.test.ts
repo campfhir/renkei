@@ -243,6 +243,130 @@ describe('zoom_update_meeting', () => {
   });
 });
 
+describe('zoom_get_meeting on a recurring meeting', () => {
+  it('says how it repeats and lists each occurrence with its id', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({
+        id: 555,
+        topic: '1:1',
+        type: 8,
+        start_time: '2026-09-16T18:00:00Z',
+        timezone: 'America/Los_Angeles',
+        recurrence: { type: 2, repeat_interval: 1, weekly_days: '4' },
+        occurrences: [
+          {
+            occurrence_id: '1758045600000',
+            start_time: '2026-09-16T18:00:00Z',
+            duration: 30,
+            status: 'available',
+          },
+          {
+            occurrence_id: '1758650400000',
+            start_time: '2026-09-23T18:00:00Z',
+            duration: 30,
+            status: 'available',
+          },
+        ],
+      })
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('zoom_get_meeting')!({ meetingId: '555' }));
+
+    expect(text).toContain('Repeats: every week on Wednesday');
+    expect(text).toContain('Occurrences (2):');
+    expect(text).toContain(
+      '2026-09-23T18:00:00Z — 30 min — available — occurrence id: 1758650400000'
+    );
+  });
+});
+
+describe('zoom_update_meeting on a series', () => {
+  it('a new repeat reads the meeting’s start for its defaults and PATCHes type 8', async () => {
+    mockCall
+      .mockResolvedValueOnce(jsonResponse({ id: 555, start_time: '2026-09-16T18:00:00Z' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_update_meeting')!({
+      meetingId: '555',
+      recurrence: { frequency: 'weekly', interval: 2 },
+    });
+
+    expect(mockCall.mock.calls[0][0]).toBe('/meetings/555');
+    const [path, init] = mockCall.mock.calls[1] as [string, RequestInit];
+    expect(path).toBe('/meetings/555');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({
+      type: 8,
+      recurrence: { type: 2, repeat_interval: 2, weekly_days: '4' },
+    });
+    expect(textOf(result)).toContain('now repeats every other week on Wednesday');
+  });
+
+  it('stopRepeating makes it a single scheduled meeting', async () => {
+    mockCall.mockResolvedValue(new Response(null, { status: 204 }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_update_meeting')!({
+      meetingId: '555',
+      stopRepeating: true,
+    });
+
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ type: 2 });
+    expect(textOf(result)).toContain('no longer repeats');
+  });
+
+  it('occurrenceId changes that occurrence alone, and cannot carry a repeat', async () => {
+    mockCall.mockResolvedValue(new Response(null, { status: 204 }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_update_meeting')!({
+      meetingId: '555',
+      occurrenceId: '1758650400000',
+      startTime: '2026-09-23T19:00:00Z',
+    });
+    expect(mockCall.mock.calls[0][0]).toBe('/meetings/555?occurrence_id=1758650400000');
+    expect(textOf(result)).toContain('Occurrence 1758650400000 of meeting 555 updated');
+
+    const refused = await tools.get('zoom_update_meeting')!({
+      meetingId: '555',
+      occurrenceId: '1758650400000',
+      recurrence: { frequency: 'daily' },
+    });
+    expect(refused.isError).toBe(true);
+    expect(mockCall).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('zoom_delete_meeting on a series', () => {
+  it('occurrenceId cancels that occurrence only', async () => {
+    mockCall.mockResolvedValue(new Response(null, { status: 204 }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_delete_meeting')!({
+      meetingId: '555',
+      occurrenceId: '1758650400000',
+      notifyRegistrants: true,
+    });
+
+    expect(mockCall.mock.calls[0][0]).toBe(
+      '/meetings/555?occurrence_id=1758650400000&cancel_meeting_reminder=true'
+    );
+    expect(textOf(result)).toContain('the other occurrences continue');
+  });
+
+  it('without occurrenceId cancels the whole meeting, as before', async () => {
+    mockCall.mockResolvedValue(new Response(null, { status: 204 }));
+    const tools = await toolsOf();
+
+    await tools.get('zoom_delete_meeting')!({ meetingId: '555' });
+
+    expect(mockCall.mock.calls[0][0]).toBe('/meetings/555');
+  });
+});
+
 describe('zoom_create_meeting_preview', () => {
   it('normalizes a numeric-string durationMinutes to a number on the card', async () => {
     const tools = await toolsOf();

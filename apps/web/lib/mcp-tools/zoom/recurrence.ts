@@ -9,10 +9,14 @@
 
 import {
   WEEKDAYS,
+  WEEK_OF_MONTH,
+  dateOf,
   describeRecurrence,
   parseRecurrenceInput,
   recurrenceFieldSchema,
+  weekdayOfDate,
   type RecurrenceInput,
+  type Weekday,
 } from '../recurrence';
 
 export const ZOOM_RECURRING_MEETING_TYPE = 8;
@@ -120,4 +124,76 @@ export function parseZoomRecurrence(value: unknown, start: string): ZoomRecurren
 
   const { startDate: _startDate, ...rest } = input;
   return { ok: true, val: { recurrence, description: describeRecurrence(input), input: rest } };
+}
+
+function rec(value: unknown): Record<string, unknown> {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function weekdayAt(index: unknown): Weekday | null {
+  const parsed = typeof index === 'number' ? index : Number(index);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 7 ? WEEKDAYS[parsed - 1] : null;
+}
+
+/**
+ * A series as Zoom returns it (a meeting's `recurrence`), in a person's
+ * words — for zoom_get_meeting. Null for a meeting that does not repeat
+ * or a shape this cannot read. `start` is the meeting's start_time.
+ */
+export function describeZoomRecurrence(value: unknown, start: string): string | null {
+  const recurrence = rec(value);
+  const interval =
+    typeof recurrence.repeat_interval === 'number' && recurrence.repeat_interval > 0
+      ? recurrence.repeat_interval
+      : 1;
+  const startDate = dateOf(start) ?? { text: '', year: 1, month: 1, day: 1 };
+  const end =
+    typeof recurrence.end_date_time === 'string'
+      ? { until: recurrence.end_date_time.slice(0, 10) }
+      : typeof recurrence.end_times === 'number' && recurrence.end_times > 0
+        ? { occurrences: recurrence.end_times }
+        : {};
+  switch (recurrence.type) {
+    case 1:
+      return describeRecurrence({ frequency: 'daily', interval, ...end, startDate });
+    case 2: {
+      const daysOfWeek = String(recurrence.weekly_days ?? '')
+        .split(',')
+        .map(weekdayAt)
+        .filter((day): day is Weekday => day !== null);
+      return describeRecurrence({
+        frequency: 'weekly',
+        interval,
+        daysOfWeek: daysOfWeek.length > 0 ? daysOfWeek : [weekdayOfDate(startDate)],
+        ...end,
+        startDate,
+      });
+    }
+    case 3: {
+      const weekDay = weekdayAt(recurrence.monthly_week_day);
+      const week = typeof recurrence.monthly_week === 'number' ? recurrence.monthly_week : null;
+      if (weekDay && week !== null) {
+        const weekOfMonth = week === -1 ? 'last' : (WEEK_OF_MONTH[week - 1] ?? 'first');
+        return describeRecurrence({
+          frequency: 'monthly',
+          interval,
+          weekOfMonth,
+          daysOfWeek: [weekDay],
+          ...end,
+          startDate,
+        });
+      }
+      return describeRecurrence({
+        frequency: 'monthly',
+        interval,
+        dayOfMonth:
+          typeof recurrence.monthly_day === 'number' ? recurrence.monthly_day : startDate.day,
+        ...end,
+        startDate,
+      });
+    }
+    default:
+      return null;
+  }
 }

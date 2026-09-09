@@ -559,6 +559,12 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Scheduled a meeting',
     short: 'Scheduled a meeting',
   },
+  outlook_update_event: {
+    category: 'updated',
+    entity: 'meeting',
+    label: 'Changed a meeting',
+    short: 'Rescheduled or edited a meeting, or how it repeats',
+  },
   outlook_move_message: {
     category: 'updated',
     entity: 'email',

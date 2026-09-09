@@ -4,7 +4,7 @@
  * date, and every complaint naming the field at fault.
  */
 
-import { parseRecurrence } from './recurrence';
+import { describeGraphRecurrence, parseRecurrence } from './recurrence';
 
 const START = '2026-09-16T11:00:00'; // a Wednesday
 const TZ = 'America/Los_Angeles';
@@ -160,5 +160,33 @@ describe('the description', () => {
     expect(
       said({ frequency: 'yearly', month: 11, weekOfMonth: 'fourth', daysOfWeek: ['thursday'] })
     ).toBe('every year on the fourth Thursday of November');
+  });
+});
+
+describe('describeGraphRecurrence', () => {
+  it('reads a series back from Graph’s shape', () => {
+    expect(
+      describeGraphRecurrence({
+        pattern: { type: 'weekly', interval: 2, daysOfWeek: ['monday', 'wednesday'] },
+        range: { type: 'endDate', startDate: '2026-09-16', endDate: '2026-12-18' },
+      })
+    ).toBe('every other week on Monday and Wednesday until 2026-12-18');
+    expect(
+      describeGraphRecurrence({
+        pattern: { type: 'relativeMonthly', interval: 1, daysOfWeek: ['friday'], index: 'last' },
+        range: { type: 'numbered', startDate: '2026-09-16', numberOfOccurrences: 6 },
+      })
+    ).toBe('every month on the last Friday, 6 times');
+    expect(
+      describeGraphRecurrence({
+        pattern: { type: 'absoluteYearly', interval: 1, dayOfMonth: 4, month: 7 },
+        range: { type: 'noEnd', startDate: '2026-07-04' },
+      })
+    ).toBe('every year on July 4');
+  });
+
+  it('is null for no recurrence or a shape it cannot read', () => {
+    expect(describeGraphRecurrence(null)).toBeNull();
+    expect(describeGraphRecurrence({ pattern: { type: 'lunar' } })).toBeNull();
   });
 });

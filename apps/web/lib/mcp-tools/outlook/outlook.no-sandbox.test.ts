@@ -112,6 +112,7 @@ const TOOLS = [
   'outlook_rename_mail_folder',
   'outlook_delete_mail_folder',
   'outlook_create_event',
+  'outlook_update_event',
   'outlook_find_meeting_times',
   'outlook_respond_event',
   'outlook_cancel_event_preview',

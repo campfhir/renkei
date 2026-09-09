@@ -6,6 +6,9 @@
  */
 
 import {
+  WEEKDAYS,
+  WEEK_OF_MONTH,
+  dateOf,
   describeRecurrence,
   parseRecurrenceInput,
   recurrenceFieldSchema as sharedRecurrenceField,
@@ -111,4 +114,93 @@ export function parseRecurrence(value: unknown, start: string, timezone: string)
       description: describeRecurrence(input),
     },
   };
+}
+
+function rec(value: unknown): Record<string, unknown> {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function weekdays(value: unknown): Weekday[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const day = WEEKDAYS.find((name) => name === String(entry).toLowerCase());
+        return day ? [day] : [];
+      })
+    : [];
+}
+
+function weekOfMonth(value: unknown): WeekOfMonth {
+  return WEEK_OF_MONTH.find((name) => name === String(value).toLowerCase()) ?? 'first';
+}
+
+/**
+ * A series as Graph returns it (an event's `recurrence`), in a person's
+ * words — for outlook_get_event and the update tool's reply. Null for an
+ * event that does not repeat or a shape this cannot read.
+ */
+export function describeGraphRecurrence(value: unknown): string | null {
+  const pattern = rec(rec(value).pattern);
+  const range = rec(rec(value).range);
+  const interval =
+    typeof pattern.interval === 'number' && pattern.interval > 0 ? pattern.interval : 1;
+  const startDate = dateOf(String(range.startDate ?? '')) ?? {
+    text: '',
+    year: 1,
+    month: 1,
+    day: 1,
+  };
+  const end =
+    range.type === 'endDate' && typeof range.endDate === 'string'
+      ? { until: range.endDate.slice(0, 10) }
+      : range.type === 'numbered' && typeof range.numberOfOccurrences === 'number'
+        ? { occurrences: range.numberOfOccurrences }
+        : {};
+  const dayOfMonth = typeof pattern.dayOfMonth === 'number' ? pattern.dayOfMonth : 1;
+  const month = typeof pattern.month === 'number' ? pattern.month : 1;
+  let input: RecurrenceInput;
+  switch (pattern.type) {
+    case 'daily':
+      input = { frequency: 'daily', interval, ...end, startDate };
+      break;
+    case 'weekly':
+      input = {
+        frequency: 'weekly',
+        interval,
+        daysOfWeek: weekdays(pattern.daysOfWeek),
+        ...end,
+        startDate,
+      };
+      break;
+    case 'absoluteMonthly':
+      input = { frequency: 'monthly', interval, dayOfMonth, ...end, startDate };
+      break;
+    case 'relativeMonthly':
+      input = {
+        frequency: 'monthly',
+        interval,
+        weekOfMonth: weekOfMonth(pattern.index),
+        daysOfWeek: weekdays(pattern.daysOfWeek),
+        ...end,
+        startDate,
+      };
+      break;
+    case 'absoluteYearly':
+      input = { frequency: 'yearly', interval, dayOfMonth, month, ...end, startDate };
+      break;
+    case 'relativeYearly':
+      input = {
+        frequency: 'yearly',
+        interval,
+        weekOfMonth: weekOfMonth(pattern.index),
+        daysOfWeek: weekdays(pattern.daysOfWeek),
+        month,
+        ...end,
+        startDate,
+      };
+      break;
+    default:
+      return null;
+  }
+  return describeRecurrence(input);
 }

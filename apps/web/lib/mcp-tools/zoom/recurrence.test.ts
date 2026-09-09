@@ -4,7 +4,7 @@
  * month) is refused by field name before any request is made.
  */
 
-import { parseZoomRecurrence } from './recurrence';
+import { describeZoomRecurrence, parseZoomRecurrence } from './recurrence';
 
 const START = '2026-09-16T11:00:00'; // a Wednesday
 
@@ -82,5 +82,33 @@ describe('parseZoomRecurrence', () => {
     expect(complaint({ frequency: 'weekly', daysOfWeek: ['someday'] })).toContain(
       'recurrence.daysOfWeek'
     );
+  });
+});
+
+describe('describeZoomRecurrence', () => {
+  it('reads a series back from Zoom’s shape', () => {
+    expect(describeZoomRecurrence({ type: 2, repeat_interval: 1, weekly_days: '2,4' }, START)).toBe(
+      'every week on Monday and Wednesday'
+    );
+    expect(
+      describeZoomRecurrence(
+        { type: 3, repeat_interval: 1, monthly_week: -1, monthly_week_day: 6, end_times: 6 },
+        START
+      )
+    ).toBe('every month on the last Friday, 6 times');
+    expect(
+      describeZoomRecurrence(
+        { type: 1, repeat_interval: 3, end_date_time: '2026-10-01T23:59:59Z' },
+        START
+      )
+    ).toBe('every 3 days until 2026-10-01');
+    expect(describeZoomRecurrence({ type: 3, repeat_interval: 2 }, START)).toBe(
+      'every other month on the 16th'
+    );
+  });
+
+  it('is null for no recurrence', () => {
+    expect(describeZoomRecurrence(undefined, START)).toBeNull();
+    expect(describeZoomRecurrence({ type: 9 }, START)).toBeNull();
   });
 });
