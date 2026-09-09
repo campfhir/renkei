@@ -5,6 +5,13 @@
  * all-time, one bucket at a time — so the oversight cards and an agent's
  * usage panel read the same way and the e2e specs can flip either by the
  * same button names.
+ *
+ * A group of pill buttons rather than a segmented bar: the bar had to be
+ * one box, so it stretched across whatever width it was given and wrapped
+ * mid-box in a narrow column. Pills take only the width their labels
+ * need, wrap as a group, and the selected one is the one filled blue —
+ * a light fill in light mode, a deep one in dark, each with text of the
+ * same hue at the far end of the scale so it reads in both.
  */
 
 import type { UsageBuckets } from '@/lib/agents/agent-usage';
@@ -31,26 +38,25 @@ export default function PeriodToggle({
   onChange: (key: keyof UsageBuckets) => void;
 }): React.ReactNode {
   return (
-    <div
-      role="group"
-      aria-label="Period"
-      className="flex flex-wrap overflow-hidden rounded-md border border-gray-300 text-xs dark:border-gray-700"
-    >
-      {PERIODS.map((period) => (
-        <button
-          key={period.key}
-          type="button"
-          aria-pressed={value === period.key}
-          onClick={() => onChange(period.key)}
-          className={`px-2.5 py-1 ${
-            value === period.key
-              ? 'bg-gray-700 text-white dark:bg-gray-300 dark:text-gray-900'
-              : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
-          }`}
-        >
-          {period.label}
-        </button>
-      ))}
+    <div role="group" aria-label="Period" className="flex flex-wrap gap-1.5">
+      {PERIODS.map((period) => {
+        const selected = value === period.key;
+        return (
+          <button
+            key={period.key}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onChange(period.key)}
+            className={`rounded-full border px-2.5 py-0.5 text-xs ${
+              selected
+                ? 'border-blue-300 bg-blue-100 font-medium text-blue-900 dark:border-blue-700 dark:bg-blue-950 dark:text-blue-100'
+                : 'border-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'
+            }`}
+          >
+            {period.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
