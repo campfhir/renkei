@@ -13,8 +13,15 @@
 
 import { resolveOutcomes } from '@renkei/tool-outcomes';
 import { renderInstruction } from './render';
-import { attemptVariables } from './variables';
-import type { ActionStep, AgentStep, BranchStep, UntilLoopStep } from './steps';
+import { attemptVariables, knownVariables } from './variables';
+import {
+  varSegments,
+  type ActionStep,
+  type AgentStep,
+  type BranchStep,
+  type InstructionSegment,
+  type UntilLoopStep,
+} from './steps';
 
 /** Structural twin of @renkei/agent-llm's text-only PromptMessage. */
 export interface PromptMessage {
@@ -27,6 +34,36 @@ export interface PromptToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+}
+
+/**
+ * The longest var value a chip pastes into its sentence. A ticket key, a
+ * room id or an email reads inline; a saved summary or a thread renders as
+ * `[name]` and is listed once under Known information instead — never
+ * twice for a chip used twice, never in the middle of a sentence.
+ */
+export const INLINE_VALUE_MAX = 200;
+
+const INLINE = { inlineMax: INLINE_VALUE_MAX };
+
+/**
+ * The "Known information" block: the vars this call references (see
+ * knownVariables), one line each. The header explains the brackets only
+ * when a value was rendered by reference.
+ */
+function knownInformationBlock(
+  variables: Record<string, string>,
+  selection: { referenced: Iterable<string>; inlined: Iterable<string>; inputs?: Iterable<string> },
+  byReference: boolean
+): string[] {
+  const lines = Object.entries(knownVariables({ variables, ...selection }))
+    .map(([name, value]) => `- ${name}: ${value}`)
+    .join('\n');
+  if (!lines) return [];
+  const header = byReference
+    ? 'Known information ([name] in the instruction refers to an entry here):'
+    : 'Known information:';
+  return [`${header}\n${lines}`];
 }
 
 export const RESOLVE_TIME_TOOL = 'resolve_time';
@@ -99,6 +136,49 @@ export const RESOLVE_TIME_DEF: PromptToolDef = {
   },
 };
 
+/**
+ * Words that mean a step is about WHEN. Whole-word, case-insensitive; the
+ * list is deliberately broad ("last", "next" and "within" are in it), since
+ * offering resolve_time to a step that turns out not to need it costs a
+ * schema, while withholding it from one that does costs a hand-computed,
+ * quietly wrong date. Bare "am"/"pm" count only after a digit ("9 am"),
+ * never the verb.
+ */
+const TIME_WORDS =
+  /\b(?:today|tonight|yesterday|tomorrow|ago|last|next|past|coming|within|since|until|before|after|due|deadline|overdue|schedules?|scheduled|hours?|minutes?|days?|weeks?|months?|years?|dates?|times?|morning|afternoon|evening|o'clock|\d\s*(?:am|pm))\b/i;
+const TIME_PROPERTY = /date|time|since|until|before|after|due|deadline|start|end|when|schedul/i;
+
+/**
+ * Whether a call can use resolve_time, decided BEFORE the call and never by
+ * the model: the step's own prose mentions time, or the tool it will call
+ * takes a date-shaped parameter (a `date`/`date-time` format, or a property
+ * named like one). A date CHIP is not a reason — it is resolved into the
+ * prompt before the model reads it. Everything else gets neither the tool
+ * nor the paragraph about it: a call is offered nothing it cannot use.
+ */
+export function usesTime(
+  segments: InstructionSegment[][],
+  toolSchema?: Record<string, unknown>
+): boolean {
+  for (const list of segments) {
+    for (const segment of list) {
+      if (segment.t === 'text' && TIME_WORDS.test(segment.v)) return true;
+    }
+  }
+  const properties = toolSchema?.properties;
+  if (typeof properties === 'object' && properties !== null && !Array.isArray(properties)) {
+    for (const [name, value] of Object.entries(properties)) {
+      if (TIME_PROPERTY.test(name)) return true;
+      const format: unknown =
+        typeof value === 'object' && value !== null && !Array.isArray(value)
+          ? Reflect.get(value, 'format')
+          : undefined;
+      if (format === 'date' || format === 'date-time') return true;
+    }
+  }
+  return false;
+}
+
 export const FINISH_STEP_TOOL = 'finish_step';
 
 export const FINISH_STEP_DEF: PromptToolDef = {
@@ -156,9 +236,10 @@ export const FINISH_STEP_DEF: PromptToolDef = {
       remember: {
         type: 'string',
         description:
-          'A short note (one sentence, include identifiers like message ids) worth carrying ' +
-          'into FUTURE runs of this agent — e.g. "replied to message 123 about the outage". ' +
-          'Future runs see it under "What you remember". Omit when nothing is worth keeping.',
+          'A fact FUTURE runs of this agent need and could not rediscover — chiefly what this ' +
+          'step acted on (e.g. "replied to message 123 about the outage") or a durable ' +
+          'preference it learned. One sentence with identifiers. Not a summary of the step, ' +
+          'not the saved result. Omit when nothing future runs need — that is most steps.',
       },
     },
     required: ['outcome', 'summary'],
@@ -222,23 +303,73 @@ export const SYSTEM_PROMPT = [
   'When THIS STEP’s own action does not apply to this input at all — out of scope, no valid target, already handled, or the step’s own instructions rule it out — that is not a failure: declare outcome "skipped" with a summary saying why. No tool is called, nothing is saved, and the automation moves on to the next step exactly as if this step had done nothing; it does not end the automation by itself.',
   'An empty result is NOT a skip: a search or lookup that runs cleanly but finds nothing has produced an answer — declare success and save that nothing was found (or, when the step lists a failure code for it, declare failure with that code so the configured handling decides). Skip only when this step’s own action does not apply here — never as a way to end the whole automation; an instruction saying the automation itself is out of scope has its own step for that.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
-  'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled — and record anything future runs must know via finish_step’s remember field.',
+  'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled. Record via finish_step’s remember field only what future runs must know to avoid repeating or contradicting this one; routine outcomes are not worth remembering.',
 ].join(' ');
 
 /**
- * SYSTEM_PROMPT plus the guardrails framing — appended ONLY when the agent
- * has guardrails, so every agent without them keeps a byte-identical
- * system prompt (the same freeze discipline the branch prompts follow).
+ * The run-constant context every model call in a run shares: the owner's
+ * guardrails, the knowledge index, and memory. It rides in the SYSTEM
+ * prompt, not the per-step message — it is the same on every call of the
+ * run, so it heads the cached prompt prefix and never repeats per step.
  */
-export function systemPromptWith(guardrailsText?: string): string {
-  if (!guardrailsText) return SYSTEM_PROMPT;
-  return (
-    SYSTEM_PROMPT +
-    ' The owner’s standing guardrails are shown with the step. They are binding: where they and the instruction conflict, the guardrails win.'
-  );
+export interface RunContextInput {
+  /** The agent's standing guardrails — injected in full, never clipped. */
+  guardrailsText?: string;
+  /** Rendered agent memory (summary + recent entries), already bounded. */
+  memoryText?: string;
+  /** Rendered agent knowledge notes index, already bounded. */
+  knowledgeText?: string;
 }
 
-/** The guardrails block every prompt builder renders — in full, never clipped. */
+/**
+ * The context block itself, '' when the agent has none of the three.
+ * Order: guardrails, knowledge, then memory LAST — memory is the one part
+ * that can change mid-run (a step's `remember`), and a change invalidates
+ * the cached prefix only from where it sits.
+ */
+export function runContextBlock(context: RunContextInput): string {
+  return [
+    ...(context.guardrailsText ? [guardrailsBlock(context.guardrailsText)] : []),
+    ...(context.knowledgeText
+      ? [
+          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
+            context.knowledgeText,
+        ]
+      : []),
+    ...(context.memoryText
+      ? [
+          'What you remember (notes from this agent’s earlier runs, oldest first — check it ' +
+            `before acting on something an earlier run may already have handled):\n${context.memoryText}`,
+        ]
+      : []),
+  ].join('\n\n');
+}
+
+/**
+ * A frame (the step, branch, router or loop system prompt) plus the run's
+ * context block when there is one. The frames themselves stay frozen
+ * byte-for-byte: an agent with no guardrails, notes or memory gets exactly
+ * the string it always did.
+ */
+export function withRunContext(frame: string, context: RunContextInput): string {
+  const block = runContextBlock(context);
+  return block ? `${frame}\n\n${block}` : frame;
+}
+
+/**
+ * The step frame: SYSTEM_PROMPT, the guardrails sentence when the agent
+ * has guardrails, then the run's context block — so every agent without
+ * any of it keeps a byte-identical system prompt.
+ */
+export function systemPromptWith(context: RunContextInput = {}): string {
+  const frame = context.guardrailsText
+    ? SYSTEM_PROMPT +
+      ' The owner’s standing guardrails are shown below. They are binding: where they and the instruction conflict, the guardrails win.'
+    : SYSTEM_PROMPT;
+  return withRunContext(frame, context);
+}
+
+/** The guardrails block the context renders — in full, never clipped. */
 function guardrailsBlock(text: string): string {
   return `Standing guardrails from this agent’s owner (binding — where they and the task conflict, the guardrails win):\n${text}`;
 }
@@ -355,39 +486,31 @@ export interface LoopPromptInput {
   attempt: number;
   /** One-paragraph summary of the previous evaluation attempt's failure. */
   previousFailure?: string;
-  /** Rendered agent memory (summary + recent entries), already bounded. */
-  memoryText?: string;
-  /** Rendered agent knowledge notes, already bounded. */
-  knowledgeText?: string;
-  /** The agent's standing guardrails — injected in full, never clipped. */
-  guardrailsText?: string;
+  /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
+  inputs?: readonly string[];
 }
 
 export function buildLoopConditionMessages(input: LoopPromptInput): {
   messages: PromptMessage[];
   unbound: string[];
 } {
-  const rendered = renderInstruction(input.loop.condition, input.variables);
-  const variableLines = Object.entries(input.variables)
-    .map(([name, value]) => `- ${name}: ${value}`)
-    .join('\n');
+  const rendered = renderInstruction(input.loop.condition, input.variables, undefined, INLINE);
+  const known = knownInformationBlock(
+    input.variables,
+    {
+      referenced: varSegments(input.loop.condition),
+      inlined: rendered.inlined,
+      ...(input.inputs ? { inputs: input.inputs } : {}),
+    },
+    rendered.byReference.length > 0
+  );
 
   const parts = [
     `Loop: ${input.loop.name}`,
-    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Round ${input.iteration} of at most ${input.loop.maxIterations} has just finished.`,
     `Stop condition to decide: ${rendered.text}`,
     'If it HOLDS (choice: "finished") the automation continues after the loop. If it does NOT hold yet (choice: "continue") the loop runs another round.',
-    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
-    ...(input.memoryText
-      ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
-      : []),
-    ...(input.knowledgeText
-      ? [
-          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
-            input.knowledgeText,
-        ]
-      : []),
+    ...known,
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.loop.maxAttempts}.`,
@@ -408,22 +531,24 @@ export interface BranchPromptInput {
   attempt: number;
   /** One-paragraph summary of the previous evaluation attempt's failure. */
   previousFailure?: string;
-  /** Rendered agent memory (summary + recent entries), already bounded. */
-  memoryText?: string;
-  /** Rendered agent knowledge notes, already bounded. */
-  knowledgeText?: string;
-  /** The agent's standing guardrails — injected in full, never clipped. */
-  guardrailsText?: string;
+  /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
+  inputs?: readonly string[];
 }
 
 export function buildBranchMessages(input: BranchPromptInput): {
   messages: PromptMessage[];
   unbound: string[];
 } {
-  const rendered = renderInstruction(input.branch.condition, input.variables);
-  const variableLines = Object.entries(input.variables)
-    .map(([name, value]) => `- ${name}: ${value}`)
-    .join('\n');
+  const rendered = renderInstruction(input.branch.condition, input.variables, undefined, INLINE);
+  const known = knownInformationBlock(
+    input.variables,
+    {
+      referenced: varSegments(input.branch.condition),
+      inlined: rendered.inlined,
+      ...(input.inputs ? { inputs: input.inputs } : {}),
+    },
+    rendered.byReference.length > 0
+  );
 
   // Two-path prose is FROZEN (v2 agents must not drift); routers list
   // their numbered choices with the last-path fallback stated.
@@ -441,19 +566,9 @@ export function buildBranchMessages(input: BranchPromptInput): {
 
   const parts = [
     `Branch: ${input.branch.name}`,
-    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Condition to decide: ${rendered.text}`,
     routing,
-    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
-    ...(input.memoryText
-      ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
-      : []),
-    ...(input.knowledgeText
-      ? [
-          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
-            input.knowledgeText,
-        ]
-      : []),
+    ...known,
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.branch.maxAttempts}.`,
@@ -479,16 +594,16 @@ export interface AttemptPromptInput {
    * dies mid-thought.
    */
   toolBudget: number;
+  /**
+   * Whether resolve_time rides beside finish_step on this call (see
+   * usesTime). The dates paragraph and the "free tools" wording follow it:
+   * a paragraph about a tool the model was not given is noise.
+   */
+  offersTime?: boolean;
   /** Resolved corrective guidance, present on attempts >= 2 with a retry match. */
   guidanceText?: string;
   /** One-paragraph summary of the previous attempt's failure. */
   previousFailure?: string;
-  /** Rendered agent memory (summary + recent entries), already bounded. */
-  memoryText?: string;
-  /** Rendered agent knowledge notes, already bounded. */
-  knowledgeText?: string;
-  /** The agent's standing guardrails — injected in full, never clipped. */
-  guardrailsText?: string;
   /** True when this step's saveAs is a loop's items source — nudge saveItems. */
   savesItemsForLoop?: boolean;
   /**
@@ -498,6 +613,8 @@ export interface AttemptPromptInput {
    * handles nothing.
    */
   outcomeGuide?: string;
+  /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
+  inputs?: readonly string[];
 }
 
 export function buildAttemptMessages(input: AttemptPromptInput): {
@@ -518,23 +635,49 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
     ...attemptVariables(input.attempt, input.step.maxAttempts),
     ...input.variables,
   };
-  const rendered = renderInstruction(input.step.instruction, variablesWithAttempt);
+  const rendered = renderInstruction(
+    input.step.instruction,
+    variablesWithAttempt,
+    undefined,
+    INLINE
+  );
 
-  const variableLines = Object.entries(input.variables)
-    .map(([name, value]) => `- ${name}: ${value}`)
-    .join('\n');
+  // What this step references: every chip in its instruction and its
+  // failure-handling guidance. What is already in the prompt: the chips
+  // the instruction inlined, and those the non-retry guidance inlines
+  // through the outcome guide (rendered with the same threshold there).
+  // Retry guidance is not on the page on attempt 1, so a var it alone
+  // names stays listed — rare, and small next to guessing which matched.
+  const guidanceLists = input.step.failureHandling.map((handling) => handling.guidance ?? []);
+  const guideRenders = input.step.failureHandling
+    .filter((handling) => handling.action !== 'retry')
+    .map((handling) =>
+      renderInstruction(handling.guidance ?? [], variablesWithAttempt, undefined, INLINE)
+    );
+  const known = knownInformationBlock(
+    input.variables,
+    {
+      referenced: [input.step.instruction, ...guidanceLists].flatMap(varSegments),
+      inlined: [rendered, ...guideRenders].flatMap((render) => render.inlined),
+      ...(input.inputs ? { inputs: input.inputs } : {}),
+    },
+    [rendered, ...guideRenders].some((render) => render.byReference.length > 0)
+  );
 
   const parts = [
     `Step: ${input.step.name}`,
-    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Instruction: ${rendered.text}`,
-    `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (finish_step and ` +
-      `${RESOLVE_TIME_TOOL} are free). ` +
-      'Spend them deliberately — one well-chosen call beats several exploratory ones. When the ' +
-      'budget runs out you will be asked to declare the outcome from what you have already seen.',
-    `Dates: never work out a timestamp in your head. Call ${RESOLVE_TIME_TOOL} — it is free, it ` +
-      'is exact about timezones and daylight saving, and a date you calculated yourself is the ' +
-      'single most likely thing in this step to be quietly wrong.',
+    `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (` +
+      (input.offersTime ? `finish_step and ${RESOLVE_TIME_TOOL} are free` : 'finish_step is free') +
+      '). Spend them deliberately — one well-chosen call beats several exploratory ones. When ' +
+      'the budget runs out you will be asked to declare the outcome from what you have already seen.',
+    ...(input.offersTime
+      ? [
+          `Dates: never work out a timestamp in your head. Call ${RESOLVE_TIME_TOOL} — it is free, it ` +
+            'is exact about timezones and daylight saving, and a date you calculated yourself is the ' +
+            'single most likely thing in this step to be quietly wrong.',
+        ]
+      : []),
     ...(input.step.saveAs
       ? [
           input.savesItemsForLoop
@@ -543,19 +686,7 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
         ]
       : []),
     ...(input.outcomeGuide ? [input.outcomeGuide] : []),
-    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
-    ...(input.memoryText
-      ? [
-          'What you remember (notes from this agent’s earlier runs, oldest first — check it ' +
-            `before acting on something an earlier run may already have handled):\n${input.memoryText}`,
-        ]
-      : []),
-    ...(input.knowledgeText
-      ? [
-          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
-            input.knowledgeText,
-        ]
-      : []),
+    ...known,
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.step.maxAttempts}.`,
@@ -621,7 +752,7 @@ export function outcomeGuideFor(
             : `"${handling.outcome}"`;
       const note =
         handling.action !== 'retry' && handling.guidance && handling.guidance.length > 0
-          ? ` — the author notes: ${renderInstruction(handling.guidance, vars).text}`
+          ? ` — the author notes: ${renderInstruction(handling.guidance, vars, undefined, INLINE).text}`
           : '';
       return `${described}${note}`;
     })

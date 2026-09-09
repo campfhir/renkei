@@ -148,7 +148,8 @@ describe('AnthropicProvider.stream', () => {
         { type: 'tool_use', id: 'tu_1', name: 'a_tool', input: { q: 'x' } },
       ],
       stopReason: 'tool_use',
-      usage: { inputTokens: 50, outputTokens: 20, cacheReadInputTokens: 40 },
+      // 50 uncached + 40 read from the cache: inputTokens is the total read.
+      usage: { inputTokens: 90, outputTokens: 20, cacheReadInputTokens: 40 },
     });
     const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.stream).toBe(true);
@@ -173,6 +174,47 @@ describe('AnthropicProvider.stream', () => {
     ]);
     expect(body.tools[0].cache_control).toBeUndefined();
     expect(body.tools[1].cache_control).toEqual({ type: 'ephemeral' });
+    // The moving breakpoint: the last block of the last message.
+    const lastMessage = body.messages[body.messages.length - 1];
+    expect(lastMessage.content[lastMessage.content.length - 1].cache_control).toEqual({
+      type: 'ephemeral',
+    });
+  });
+
+  it('puts the moving breakpoint on the nearest cacheable block, never on thinking', async () => {
+    fetchSpy.mockResolvedValue(sse(happyPath));
+    await provider.stream(
+      {
+        ...request,
+        promptCache: true,
+        messages: [
+          ...request.messages,
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'Looking.' },
+              { type: 'thinking', thinking: 'Hmm.', signature: 'sig' },
+            ],
+          },
+        ],
+      },
+      { onEvent: () => {} }
+    );
+    const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+    const last = body.messages[body.messages.length - 1];
+    expect(last.content[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(last.content[1].cache_control).toBeUndefined();
+    // Only the last message carries the moving marker.
+    expect(body.messages[0].content[0].cache_control).toBeUndefined();
+  });
+
+  it('marks nothing without promptCache', async () => {
+    fetchSpy.mockResolvedValue(sse(happyPath));
+    await provider.stream(request, { onEvent: () => {} });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(typeof body.system).toBe('string');
+    expect(body.tools.every((tool: { cache_control?: unknown }) => !tool.cache_control)).toBe(true);
+    expect(JSON.stringify(body.messages)).not.toContain('cache_control');
   });
 
   it('omits thinking when max_tokens cannot hold it or a tool is forced', async () => {

@@ -9,6 +9,7 @@
  */
 
 import {
+  chipMention,
   flattenActionSteps,
   instructionPreview,
   LOOP_DEFAULT_ATTEMPTS,
@@ -18,7 +19,16 @@ import {
   type UntilLoopStep,
 } from '@renkei/agents';
 import { ChipEditor } from './chip-editor';
-import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
+import {
+  FieldHints,
+  FieldIssues,
+  exceptFields,
+  fieldClass,
+  forField,
+  forHints,
+  type NodeHint,
+  type NodeIssue,
+} from './field-issues';
 import type { VariableOption } from './options';
 import { useNumericInput } from '@/lib/use-numeric-input';
 
@@ -30,12 +40,15 @@ export function LoopEditor({
   variables,
   invalidVars,
   issues,
+  hints = [],
 }: {
   loop: LoopStep;
   onChange: (loop: LoopStep) => void;
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
   issues: NodeIssue[];
+  /** Lint hints for this node (a value named in words without its chip). */
+  hints?: NodeHint[];
 }) {
   // The collect source must be a result saved INSIDE the body — offer
   // exactly those, which doubles as the explanation of the rule.
@@ -218,6 +231,12 @@ export function LoopEditor({
             invalid={conditionIssues.length > 0}
           />
           <FieldIssues messages={conditionIssues} />
+          <FieldHints
+            hints={forHints(hints, 'condition')}
+            onFix={(hint) =>
+              onChange({ ...loop, condition: chipMention(loop.condition, hint.at, hint.variable) })
+            }
+          />
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Checked AFTER each round — the steps inside always run at least once. If the round limit
             is reached and this still isn’t true, the run fails.

@@ -88,21 +88,31 @@ export interface LlmRequest {
    */
   thinking?: { budgetTokens: number };
   /**
-   * Mark the system prompt and the tool list as cacheable. Anthropic's
-   * prompt cache needs an explicit `cache_control` marker; other providers
-   * cache implicitly or not at all and ignore the hint. Only worth setting
-   * when the same prefix is re-sent turn after turn — the chat — because
-   * a cache write costs more than a plain read.
+   * Mark the stable prefix (tools, system) and the last content block of
+   * the last message as cache breakpoints. The prefix markers are the
+   * shared read point every call in a run or chat hits; the moving message
+   * marker gives an agentic loop incremental caching — each turn reads the
+   * previous turn's prefix and writes only its own delta. Anthropic needs
+   * the explicit `cache_control` markers; other providers cache prefixes
+   * implicitly or not at all and ignore the flag. Two calls with a shared
+   * prefix already break even (a write costs 1.25×, a read 0.1×).
    */
   promptCache?: boolean;
 }
 
 export interface LlmUsage {
+  /**
+   * Every prompt token the model read this call, cache-served or not — the
+   * number every usage view means by "input". Each adapter normalizes to
+   * this: the OpenAI dialect's prompt_tokens already is it; Anthropic
+   * reports the uncached remainder and the adapter folds the cache
+   * portions back in.
+   */
   inputTokens: number;
   outputTokens: number;
-  /** Prompt tokens served from the provider's cache (billed at a discount). */
+  /** The portion of inputTokens served from the provider's cache (billed at a discount). */
   cacheReadInputTokens?: number;
-  /** Prompt tokens written to the cache this call (billed at a premium). */
+  /** The portion of inputTokens written to the cache this call (billed at a premium). */
   cacheWriteInputTokens?: number;
 }
 

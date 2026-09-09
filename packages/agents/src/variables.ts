@@ -71,3 +71,49 @@ export const BUILTIN_VARIABLES: VariableDescriptor[] = [
 export function attemptVariables(attempt: number, maxAttempts: number): Record<string, string> {
   return { attempt: String(attempt), 'attempt.max': String(maxAttempts) };
 }
+
+/**
+ * What a step's prompt lists under "Known information".
+ *
+ * Every var bound so far used to be listed on every step — a run's prompts
+ * grew with each saved result and re-sent a trigger's whole message dump
+ * to steps that never asked for it. A step now sees what it REFERENCES: a
+ * var its chips name (listed when the value was rendered by reference,
+ * omitted when it is already inline in the sentence), the builtins that
+ * frame every step, the answers the engine bound for this step, and the
+ * live loop item vars a caller names as inputs. A saved result, a trigger
+ * input or a collected list that no chip names is not sent.
+ */
+export const ALWAYS_KNOWN_NAMES: readonly string[] = ['today'];
+export const ALWAYS_KNOWN_PREFIXES: readonly string[] = ['user.', 'approval.', 'question.'];
+
+export function isAlwaysKnown(name: string): boolean {
+  return (
+    ALWAYS_KNOWN_NAMES.includes(name) ||
+    ALWAYS_KNOWN_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+}
+
+export interface KnownVariablesInput {
+  variables: Record<string, string>;
+  /** Every var chip in the step's segment lists (instruction, guidance, condition). */
+  referenced: Iterable<string>;
+  /** The chips whose values the prompt already carries inline — not repeated. */
+  inlined: Iterable<string>;
+  /** Names this step must see without a chip: the enclosing foreach loops' item vars. */
+  inputs?: Iterable<string>;
+}
+
+/** The subset of `variables` to list, in the variables' own order. */
+export function knownVariables(input: KnownVariablesInput): Record<string, string> {
+  const referenced = new Set(input.referenced);
+  const inlined = new Set(input.inlined);
+  const inputs = new Set(input.inputs ?? []);
+  const known: Record<string, string> = {};
+  for (const [name, value] of Object.entries(input.variables)) {
+    if (name === 'attempt' || name === 'attempt.max') continue;
+    if (inlined.has(name)) continue;
+    if (isAlwaysKnown(name) || inputs.has(name) || referenced.has(name)) known[name] = value;
+  }
+  return known;
+}

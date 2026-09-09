@@ -239,6 +239,10 @@ maybe('agent run engine', () => {
     expect(attempts[0].status).toBe('succeeded');
     expect(attempts[0].outcome).toBe('tool_ok');
     expect(attempts[0].tool_call_count).toBe(1);
+    // The scripted model reports no cache accounting: "not reported", not 0.
+    expect(attempts[0].input_tokens).toBe(20);
+    expect(attempts[0].cache_read_input_tokens).toBeNull();
+    expect(attempts[0].cache_write_input_tokens).toBeNull();
     const detail: { saveValue?: unknown; resolvedInstruction?: unknown } =
       typeof attempts[0].detail === 'object' &&
       attempts[0].detail !== null &&
@@ -250,6 +254,243 @@ maybe('agent run engine', () => {
     // its canonical name.
     expect(detail.resolvedInstruction).toContain('PROJ-42 is broken');
     expect(detail.resolvedInstruction).toContain('jira_get_issue');
+  });
+
+  it('caches the prompt prefix and keeps the cached share on the ledgers', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    const seen: LlmRequest[] = [];
+    const cached = (response: LlmResponse): LlmResponse => ({
+      ...response,
+      // inputTokens is the total read; the cache fields are its breakdown.
+      usage: {
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheReadInputTokens: 60,
+        cacheWriteInputTokens: 20,
+      },
+    });
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return cached(
+        call === 0
+          ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+          : finish('success', { saveValue: 'PROJ-42' })
+      );
+    });
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+
+    expect(seen.every((request) => request.promptCache === true)).toBe(true);
+    const attempt = await db
+      .selectFrom('agent_run_steps')
+      .select([
+        'input_tokens',
+        'output_tokens',
+        'cache_read_input_tokens',
+        'cache_write_input_tokens',
+      ])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(attempt).toEqual({
+      input_tokens: 200,
+      output_tokens: 10,
+      cache_read_input_tokens: 120,
+      cache_write_input_tokens: 40,
+    });
+    const ledger = await db
+      .selectFrom('llm_calls')
+      .select([
+        'input_tokens',
+        'output_tokens',
+        'cache_read_input_tokens',
+        'cache_write_input_tokens',
+      ])
+      .where('run_id', '=', runId)
+      .where('agent_id', '=', agentId)
+      .execute();
+    expect(ledger).toEqual([
+      {
+        input_tokens: 200,
+        output_tokens: 10,
+        cache_read_input_tokens: 120,
+        cache_write_input_tokens: 40,
+      },
+    ]);
+  });
+
+  it('carries guardrails and memory in the system prompt, not the step message', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    await db
+      .updateTable('agents')
+      .set({ guardrails: 'Never invent numbers.' })
+      .where('id', '=', agentId)
+      .execute();
+    await db
+      .insertInto('agent_memories')
+      .values({
+        id: randomUUID(),
+        tenant_id: tenantId,
+        agent_id: agentId,
+        kind: 'entry',
+        content: 'Replied to message 123 about the outage.',
+      })
+      .execute();
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' });
+    });
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+
+    expect(seen).toHaveLength(2);
+    for (const request of seen) {
+      expect(request.system).toContain('Standing guardrails from this agent’s owner');
+      expect(request.system).toContain('Never invent numbers.');
+      expect(request.system).toContain('Replied to message 123 about the outage.');
+      const first = request.messages[0].content[0];
+      const text = first.type === 'text' ? first.text : '';
+      expect(text).not.toContain('Never invent numbers.');
+      expect(text).not.toContain('Replied to message 123');
+    }
+    // Identical across the attempt's turns: it is the cached prefix.
+    expect(seen[1].system).toBe(seen[0].system);
+  });
+
+  it('writes memory only when a step asks, once per fact, visible to the rest of the run', async () => {
+    const first = reasoningStep('note the message');
+    const second = reasoningStep('note it again');
+    const doc = { version: 1, steps: [first, second] };
+    if (!isAgentStepsDoc(doc)) throw new Error('fixture');
+    const { runId, agentId } = await seedRun(doc);
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request) => {
+      seen.push(request);
+      return finish('success', { remember: 'Replied to message 123 about the outage.' });
+    });
+    await handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    )({ payload: { runId } });
+
+    const memory = await db
+      .selectFrom('agent_memories')
+      .select(['kind', 'content'])
+      .where('agent_id', '=', agentId)
+      .execute();
+    // One entry for two identical remembers, and no run breadcrumb.
+    expect(memory).toEqual([
+      { kind: 'entry', content: 'Replied to message 123 about the outage.' },
+    ]);
+    // The second step already saw what the first remembered.
+    expect(seen[0].system).not.toContain('Replied to message 123');
+    expect(seen[1].system).toContain('Replied to message 123 about the outage.');
+  });
+
+  it('leaves no memory behind for a run that remembers nothing', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' })
+    );
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+    const rows = await db
+      .selectFrom('agent_memories')
+      .select('id')
+      .where('agent_id', '=', agentId)
+      .execute();
+    expect(rows).toEqual([]);
+  });
+
+  it('mints the run token with exactly the tools the steps name plus the notifier tools', async () => {
+    const { runId } = await seedRun(singleStep());
+    const minted: string[][] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => stubMcp(['jira_get_issue'], () => okToolResult),
+      resolveLlm: async () =>
+        ok(
+          stubLlm((_request, call) =>
+            call === 0
+              ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+              : finish('success', { saveValue: 'PROJ-42' })
+          )
+        ),
+      mintToken: async (_db, params) => {
+        minted.push([...(params.tools ?? [])]);
+        return 'stub-token';
+      },
+      revokeToken: async () => undefined,
+    });
+    await handler({ payload: { runId } });
+
+    expect(minted).toEqual([['jira_get_issue', 'outlook_send_mail', 'webex_note_to_self']]);
+  });
+
+  it('offers only the tools the call can use, and the same list on every turn', async () => {
+    const { runId } = await seedRun(singleStep());
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' });
+    });
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+
+    // Nothing about this step is about time: no resolve_time, no dates
+    // paragraph. The list is byte-identical across the attempt's turns —
+    // it heads the cached prompt prefix.
+    expect(seen).toHaveLength(2);
+    expect(seen[0].tools.map((tool) => tool.name)).toEqual(['finish_step', 'jira_get_issue']);
+    expect(seen[1].tools).toEqual(seen[0].tools);
+    const prompt = seen[0].messages[0].content[0];
+    expect(prompt.type === 'text' && prompt.text).not.toContain('resolve_time');
+
+    // A step whose prose is about when gets the time tool.
+    const timed = await seedRun(
+      singleStep({
+        instruction: [
+          { t: 'text', v: 'Find the ticket filed yesterday using ' },
+          { t: 'tool', name: 'jira_get_issue' },
+        ],
+      })
+    );
+    const seenTimed: LlmRequest[] = [];
+    await handlerWith(
+      stubLlm((request) => {
+        seenTimed.push(request);
+        return finish('success', { saveValue: 'PROJ-42' });
+      }),
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({ payload: { runId: timed.runId } });
+    expect(seenTimed[0].tools.map((tool) => tool.name)).toEqual([
+      'finish_step',
+      'resolve_time',
+      'jira_get_issue',
+    ]);
   });
 
   it('feeds a _meta document attachment to the model as a typed block', async () => {
@@ -374,9 +615,12 @@ maybe('agent run engine', () => {
     expect(firstText && 'text' in firstText ? firstText.text : '').toContain(
       'Tool budget: at most 3'
     );
-    // ...and after spending it, the conversation narrowed to finish_step only.
+    // ...and after spending it, finish_step is forced through tool_choice
+    // while the tool list itself stays what it was: it heads the cached
+    // prompt prefix, so narrowing it would throw the cache away.
     const forced = requests[4];
-    expect(forced.tools.map((tool) => tool.name)).toEqual(['finish_step']);
+    expect(forced.tools.map((tool) => tool.name)).toEqual(['finish_step', 'jira_get_issue']);
+    expect(forced.tools).toEqual(requests[0].tools);
     expect(forced.toolChoice).toEqual({ name: 'finish_step' });
 
     const run = await db
@@ -543,8 +787,9 @@ maybe('agent run engine', () => {
     expect(attempts[0].outcome_code).toBe('not-found');
     expect(attempts[1].status).toBe('succeeded');
     // The saved result bound to the failure summary, so the second step's
-    // prompt saw what happened instead of an unbound chip.
-    expect(seen[1]).toContain('theTicket: declared failure');
+    // chip rendered what happened instead of an unbound marker.
+    expect(seen[1]).toContain('Instruction: Decide from declared failure');
+    expect(seen[1]).not.toContain('(unknown: theTicket)');
   });
 
   it('stops before the next step once a cancel is requested mid-run', async () => {
@@ -1288,7 +1533,9 @@ maybe('agent run engine', () => {
     ...overrides,
   });
 
-  function branchDoc(options: { elseSteps?: object[]; branchAttempts?: number } = {}): {
+  function branchDoc(
+    options: { elseSteps?: object[]; branchAttempts?: number; condition?: string } = {}
+  ): {
     doc: AgentStepsDoc;
     ids: { branch: string; inYes: string; after: string };
   } {
@@ -1302,7 +1549,7 @@ maybe('agent run engine', () => {
           id: branchId,
           kind: 'branch',
           name: 'Anything urgent?',
-          condition: [{ t: 'text', v: 'Is anything urgent in the subject?' }],
+          condition: [{ t: 'text', v: options.condition ?? 'Is anything urgent in the subject?' }],
           paths: [
             { id: randomUUID(), name: 'Yes', steps: [inYes] },
             { id: randomUUID(), name: 'Otherwise', steps: options.elseSteps ?? [] },
@@ -1620,6 +1867,83 @@ maybe('agent run engine', () => {
     // The collected list holds what each round ACTUALLY saved — one entry,
     // none, then two: smaller AND larger than the per-round input.
     expect(firstText(requests[4])).toContain('Report from note-one\nn3a\nn3b');
+  });
+
+  it('lists only what each step references, plus the live loop item', async () => {
+    const { doc, ids } = foreachDoc();
+    // The body no longer chips the item — it must still see it, as a live
+    // loop input; the report chips the collected list and nothing else.
+    const body = doc.steps[1];
+    if (body.kind !== 'loop') throw new Error('fixture');
+    const work = body.steps[0];
+    if (work.kind !== undefined) throw new Error('fixture');
+    work.instruction = [{ t: 'text', v: 'Handle the current item.' }];
+    const { runId } = await seedRun(doc);
+    const requests: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      requests.push(request);
+      if (call === 0) return finish('success', { saveItems: ['one', 'two'] });
+      if (call === 1) return finish('success', { saveValue: 'note-one' });
+      if (call === 2) return finish('success', { saveValue: 'note-two' });
+      return finish('success');
+    });
+    await handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    )({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    expect(ids.work).toBeDefined();
+
+    // Round 2 of the body: the item is listed (a live input), the gathered
+    // list is not (no chip names it), and the trigger input is not either.
+    const round2 = firstText(requests[2]);
+    expect(round2).toContain('- item: two');
+    expect(round2).not.toContain('- items:');
+    expect(round2).not.toContain('trigger.subject');
+    // The report: the collected list is inline through its chip, and the
+    // loop's item and per-round note are gone with the loop.
+    const report = firstText(requests[3]);
+    expect(report).toContain('Report from note-one\nnote-two');
+    expect(report).not.toContain('- notes:');
+    expect(report).not.toContain('- item:');
+    expect(report).not.toContain('- note:');
+  });
+
+  it('strips tool-call residue a model leaves at the end of a saved value', async () => {
+    const { runId } = await seedRun(singleStep());
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', {
+            saveValue: 'PROJ-42 is the ticket</saveValue>\n</invoke>\n',
+            summary: 'Found it.</parameter></invoke>',
+          })
+    );
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+    const attempt = await db
+      .selectFrom('agent_run_steps')
+      .select('detail')
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    const detail: { saveValue?: unknown; llmSummary?: unknown } =
+      typeof attempt.detail === 'object' &&
+      attempt.detail !== null &&
+      !Array.isArray(attempt.detail)
+        ? attempt.detail
+        : {};
+    expect(detail.saveValue).toBe('PROJ-42 is the ticket');
+    expect(detail.llmSummary).toBe('Found it.');
   });
 
   it('skips a for-each loop over an empty list without failing', async () => {
@@ -2118,7 +2442,9 @@ maybe('agent run engine', () => {
   it('lets a branch condition compute a date before it decides', async () => {
     // The arithmetic a condition should never do in its head: "was this
     // before yesterday 19:00 in Los Angeles?"
-    const { doc, ids } = branchDoc();
+    const { doc, ids } = branchDoc({
+      condition: 'Was the subject sent before yesterday 19:00 in Los Angeles?',
+    });
     const { runId } = await seedRun(doc);
     let lookups = 0;
     let sawResult = '';
@@ -2173,14 +2499,20 @@ maybe('agent run engine', () => {
   it('forces the verdict on the last turn even if the condition keeps asking the time', async () => {
     // A model that only ever looks up dates must still land on a path
     // rather than burning the attempt budget.
-    const { doc } = branchDoc({ branchAttempts: 1 });
+    // The condition is about WHEN, so resolve_time is offered beside the
+    // decision — on every turn, the list never changes.
+    const { doc } = branchDoc({
+      branchAttempts: 1,
+      condition: 'Did the subject arrive after 5 pm yesterday?',
+    });
     const { runId } = await seedRun(doc);
     let dateCalls = 0;
     const llm = stubLlm((request) => {
       if (forcedName(request) !== 'choose_path') return finish('success');
-      // On the final turn resolve_time is not offered at all — the only
-      // callable tool is the decision.
-      if (request.tools.some((tool) => tool.name === 'resolve_time')) {
+      expect(request.tools.map((tool) => tool.name)).toEqual(['choose_path', 'resolve_time']);
+      // On the final turn the decision is forced through tool_choice —
+      // resolve_time is still listed but no longer callable.
+      if (request.toolChoice === 'any') {
         dateCalls += 1;
         return useTool('resolve_time', { timezone: 'UTC' });
       }
@@ -2363,7 +2695,7 @@ maybe('agent run engine', () => {
     expect(rows).toEqual([{ status: 'stopped', outcome: 'terminal' }]);
   });
 
-  it('injects guardrails into the system and step prompts, in full', async () => {
+  it('injects guardrails into the system prompt in full, never the step message', async () => {
     const { runId, agentId } = await seedRun(singleStep());
     const guardrails = 'Never fabricate numbers. Draft only — never send anything.';
     await db.updateTable('agents').set({ guardrails }).where('id', '=', agentId).execute();
@@ -2383,11 +2715,14 @@ maybe('agent run engine', () => {
 
     expect(seen.length).toBeGreaterThan(0);
     // The system prompt carries the override framing ONLY for agents with
-    // guardrails; the user message carries the document itself, unclipped.
+    // guardrails, and the document itself, unclipped — it is run-constant,
+    // so it heads the cached prefix instead of repeating in every step.
     expect(seen[0].system).toContain('the guardrails win');
+    expect(seen[0].system).toContain('Standing guardrails');
+    expect(seen[0].system).toContain('Never fabricate numbers. Draft only — never send anything.');
     const firstUser = JSON.stringify(seen[0].messages);
-    expect(firstUser).toContain('Standing guardrails');
-    expect(firstUser).toContain('Never fabricate numbers.');
+    expect(firstUser).not.toContain('Standing guardrails');
+    expect(firstUser).not.toContain('Never fabricate numbers.');
   });
 
   it('fails the run as a guard stop when a step uses a blocked skill', async () => {
@@ -3126,8 +3461,12 @@ maybe('agent run engine', () => {
       expect(run.status).toBe('succeeded');
       const acted = prompts.join('\n');
       expect(acted).toContain('question.message: Which project does this belong to?');
-      expect(acted).toContain('project: PROJ-42');
+      // The answer reaches the fresh attempt through question.answer, which
+      // restates every field; the per-field var itself is listed only
+      // where a chip names it.
       expect(acted).toContain('question.answer:');
+      expect(acted).toContain('PROJ-42');
+      expect(acted).not.toContain('- project:');
     });
 
     it('timed out: the fresh attempt sees that nobody answered', async () => {

@@ -66,7 +66,6 @@ describe('agentMarkdown', () => {
       attempt: 1,
       variables: vars,
       toolBudget: NORMAL_TOOL_CAP,
-      guardrailsText: 'Never invent numbers.',
       ...(guide ? { outcomeGuide: guide } : {}),
     }).messages[0].content[0];
     if (runtime?.type !== 'text') throw new Error('expected a text block');
@@ -78,8 +77,8 @@ describe('agentMarkdown', () => {
     const markdown = exported();
     // The step system prompt, verbatim, with the guardrails framing.
     expect(markdown).toContain(SYSTEM_PROMPT);
-    expect(markdown).toContain('guardrails are shown with the step');
-    // The guardrails block inside the step message, exactly as injected.
+    expect(markdown).toContain('guardrails are shown below');
+    // The guardrails block inside the system prompt, exactly as injected.
     expect(markdown).toContain('Standing guardrails from this agent’s owner');
     // The custom condition steers via its applies-when text…
     expect(markdown).toContain(

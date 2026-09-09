@@ -25,6 +25,7 @@
 
 import { useState } from 'react';
 import {
+  chipMention,
   customOutcomeSlug,
   instructionPreview,
   type FailureHandling,
@@ -33,7 +34,14 @@ import {
 import type { ToolOutcomes } from '@/lib/mcp-tools/outcomes';
 import { ChipEditor } from './chip-editor';
 import { useNumericInput } from '@/lib/use-numeric-input';
-import { FieldIssues, forField, type NodeIssue } from './field-issues';
+import {
+  FieldHints,
+  FieldIssues,
+  forField,
+  forHints,
+  type NodeHint,
+  type NodeIssue,
+} from './field-issues';
 import type { ToolOption, VariableOption } from './options';
 
 const CORRECTIVE_TOOL_LIMIT = 10;
@@ -58,6 +66,8 @@ export interface FailurePanelProps {
    * and outlines its own.
    */
   issues?: NodeIssue[];
+  /** Lint hints under `failureHandling.<index>`: a guidance note naming a value without its chip. */
+  hints?: NodeHint[];
 }
 
 /** An emptied note must not survive as `guidance: []` — see the header. */
@@ -78,6 +88,7 @@ export function FailurePanel({
   variables,
   invalidVars,
   issues = [],
+  hints = [],
 }: FailurePanelProps) {
   const [adding, setAdding] = useState(false);
   const [customWhen, setCustomWhen] = useState('');
@@ -179,6 +190,7 @@ export function FailurePanel({
           const retriable = isCustom || enumerated === undefined || enumerated.retriable;
           const isRetry = entry.action === 'retry';
           const entryIssues = forField(issues, `failureHandling.${index}`);
+          const entryHints = forHints(hints, `failureHandling.${index}`);
           return (
             <li
               key={entry.outcome}
@@ -313,6 +325,15 @@ export function FailurePanel({
                   invalidVars={invalidVars}
                 />
               </div>
+              <FieldHints
+                hints={entryHints}
+                onFix={(hint) =>
+                  replaceEntry(entry.outcome, {
+                    ...entry,
+                    guidance: chipMention(entry.guidance ?? [], hint.at, hint.variable),
+                  })
+                }
+              />
               {isCustom ? (
                 <div className="mt-1.5 flex items-center gap-2">
                   <label className="shrink-0 text-xs font-medium text-gray-600 dark:text-gray-400">

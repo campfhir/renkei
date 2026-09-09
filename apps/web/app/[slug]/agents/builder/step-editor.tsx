@@ -6,11 +6,20 @@
  * only opens itself when it holds a validation problem.
  */
 
-import { toolSegments, type AgentStep, type InstructionSegment } from '@renkei/agents';
+import { chipMention, toolSegments, type AgentStep, type InstructionSegment } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { FailurePanel } from './failure-panel';
 import { ChipEditor } from './chip-editor';
-import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
+import {
+  FieldHints,
+  FieldIssues,
+  exceptFields,
+  fieldClass,
+  forField,
+  forHints,
+  type NodeHint,
+  type NodeIssue,
+} from './field-issues';
 import type { ToolOption, VariableOption } from './options';
 
 const labelClass = 'block text-sm font-medium mb-1';
@@ -58,6 +67,8 @@ export interface StepEditorProps {
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
   issues: NodeIssue[];
+  /** Lint hints for this node (a value named in words without its chip). */
+  hints?: NodeHint[];
 }
 
 export function StepEditor({
@@ -70,6 +81,7 @@ export function StepEditor({
   variables,
   invalidVars,
   issues,
+  hints = [],
 }: StepEditorProps) {
   const handleInstruction = (instruction: InstructionSegment[]) => {
     // The step's tool IS the tool chip in its body — one field, not two
@@ -95,6 +107,8 @@ export function StepEditor({
   // The step's tool IS a chip in the instruction, so tool issues point at
   // the same field the author must edit.
   const instructionIssues = forField(issues, 'instruction', 'tool');
+  const instructionHints = forHints(hints, 'instruction');
+  const guidanceHints = forHints(hints, 'failureHandling');
   const saveAsIssues = forField(issues, 'saveAs');
   const failureIssues = issues.filter(
     (issue) => issue.field === 'failureHandling' || issue.field.startsWith('failureHandling.')
@@ -161,6 +175,10 @@ export function StepEditor({
           invalid={instructionIssues.length > 0}
         />
         <FieldIssues messages={instructionIssues} />
+        <FieldHints
+          hints={instructionHints}
+          onFix={(hint) => handleInstruction(chipMention(step.instruction, hint.at, hint.variable))}
+        />
       </div>
 
       <div>
@@ -222,6 +240,7 @@ export function StepEditor({
             variables={variables}
             invalidVars={invalidVars}
             issues={failureIssues}
+            hints={guidanceHints}
           />
         </details>
       ) : step.tool === null ? (

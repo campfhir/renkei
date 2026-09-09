@@ -99,13 +99,30 @@ export async function readAgentMemory(
  * Append one entry (best-effort callers swallow their own errors; this
  * throws on database failure so tests can see it). Content is clipped to
  * the entry ceiling — memory is notes, never payloads.
+ *
+ * An entry identical to one the agent already holds is not written again
+ * (`inserted: false`): a step that remembers the same fact on every run
+ * would otherwise fill the prompt budget with one line repeated. A plain
+ * select-before-insert rather than a unique index, because existing
+ * tables already hold duplicates and the only race — two concurrent runs
+ * remembering the same thing — is benign and folded by compaction.
  */
 export async function appendAgentMemory(
   db: Kysely<DB>,
   input: { tenantId: string; agentId: string; content: string; runId?: string }
-): Promise<void> {
+): Promise<{ inserted: boolean }> {
   const content = clip(input.content.trim(), MEMORY_ENTRY_MAX_CHARS);
-  if (!content) return;
+  if (!content) return { inserted: false };
+  const existing = await db
+    .selectFrom('agent_memories')
+    .select('id')
+    .where('tenant_id', '=', input.tenantId)
+    .where('agent_id', '=', input.agentId)
+    .where('kind', '=', 'entry')
+    .where('content', '=', content)
+    .limit(1)
+    .executeTakeFirst();
+  if (existing) return { inserted: false };
   await db
     .insertInto('agent_memories')
     .values({
@@ -117,6 +134,7 @@ export async function appendAgentMemory(
       run_id: input.runId ?? null,
     })
     .execute();
+  return { inserted: true };
 }
 
 /** Replace (or create) the agent's one rolling summary. */
@@ -185,9 +203,10 @@ export const AGENT_NOTES_INJECT_MAX_NOTES = 50;
  * via knowledge_create_note — metadata.agentId names it), newest first,
  * rendered under a character budget for run-context injection.
  *
- * Distinct from memory on purpose: memory is the engine's append-only
- * breadcrumb trail (auto-compacted), notes are what the agent DELIBERATELY
- * wrote down and can rewrite through the knowledge tools. A plain select —
+ * Distinct from memory on purpose: memory is what steps chose to remember
+ * through finish_step, one line at a time (auto-compacted); notes are what
+ * the agent DELIBERATELY wrote down and can rewrite through the knowledge
+ * tools. A plain select —
  * no embedder — so agents get their notes even in orgs where semantic
  * search is off; chunk rows collapse to one note each (first chunk wins,
  * which carries the opening of the content).

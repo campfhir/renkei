@@ -56,6 +56,12 @@ export async function mintRunToken(
     ttlSeconds: number;
     /** The person's renkei roles; omitted = none (the pre-091 behavior). */
     roles?: string[];
+    /**
+     * The only tools this token may see or call (migration 096) — an
+     * agent run passes every tool its steps name. Omitted = unrestricted,
+     * the surface a chat turn or a draft has always had.
+     */
+    tools?: readonly string[];
   }
 ): Promise<string> {
   const clientId = await ensureAgentRunnerClient(db, params.tenantId);
@@ -74,6 +80,7 @@ export async function mintRunToken(
       agent_id: params.agentId,
       scope: null,
       ...(params.roles ? { roles: params.roles } : {}),
+      ...(params.tools ? { tool_names: [...new Set(params.tools)].sort() } : {}),
       expires_at: new Date(Date.now() + params.ttlSeconds * 1000),
     })
     .execute();

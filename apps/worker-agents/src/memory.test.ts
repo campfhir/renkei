@@ -73,6 +73,21 @@ maybe('agent memory', () => {
     await closeDatabase();
   });
 
+  it('writes an identical entry once — a fact remembered every run is one line', async () => {
+    const first = await appendAgentMemory(db, { tenantId, agentId, content: 'replied to 123' });
+    const again = await appendAgentMemory(db, { tenantId, agentId, content: ' replied to 123 ' });
+    const other = await appendAgentMemory(db, { tenantId, agentId, content: 'replied to 124' });
+    expect(first).toEqual({ inserted: true });
+    expect(again).toEqual({ inserted: false });
+    expect(other).toEqual({ inserted: true });
+
+    const memory = await readAgentMemory(db, tenantId, agentId);
+    expect(memory.entries.map((entry) => entry.content)).toEqual([
+      'replied to 124',
+      'replied to 123',
+    ]);
+  });
+
   it('appends entries and reads them newest-first with the summary', async () => {
     await appendAgentMemory(db, { tenantId, agentId, content: 'handled message 1' });
     await appendAgentMemory(db, { tenantId, agentId, content: 'handled message 2' });

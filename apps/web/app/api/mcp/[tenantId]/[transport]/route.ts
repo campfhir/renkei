@@ -6,6 +6,7 @@
  * 43+ tools on every request. Cache persists for the lifetime of the Next.js process.
  */
 
+import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@renkei/db';
@@ -22,6 +23,7 @@ import {
   registerRenkeiTools,
 } from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
+import { withToolAllowList } from '@/lib/mcp-tools/capability-gate';
 import { registerWidgetResources } from '@/lib/mcp-tools/widgets';
 import { withRedaction } from '@/lib/mcp-tools/redaction-gate';
 import {
@@ -195,7 +197,14 @@ const handler = async (
     // handler first would pin its role-gated tool set for every later
     // caller of this subject until the TTL/version otherwise busts it.
     const roles = tokenRecord.roles;
-    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${roles.join(',')}:${surfaceVersion}`;
+    // A run token's allow-list (migration 096) shapes the registered set
+    // too, so two runs of different agents under one owner never share a
+    // handler: the sorted list rides in the key, hashed to keep it short.
+    const toolNames = tokenRecord.toolNames;
+    const allowListKey = toolNames
+      ? createHash('sha256').update(toolNames.join('\n')).digest('hex').slice(0, 16)
+      : 'all';
+    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${roles.join(',')}:${allowListKey}:${surfaceVersion}`;
 
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to
@@ -449,12 +458,19 @@ const handler = async (
                 roles,
               }
             );
-            await registerRenkeiTools(server, context, availability, projection);
+            // A run token names the only tools it may see (migration 096):
+            // an agent run's steps, plus the notifier's own. Everything
+            // else is never registered, so tools/list is a handful of
+            // schemas and a call to anything else is refused before any
+            // gate below runs. Person tokens (null) keep the full surface.
+            const allowListed = toolNames ? withToolAllowList(server, new Set(toolNames)) : server;
+            await registerRenkeiTools(allowListed, context, availability, projection);
 
             // A caller with other connectors but no Jira still gets the
             // pointer to connect it — as a normal tool, so it shows up in
-            // their list without hijacking the whole server.
-            if (!grant) {
+            // their list without hijacking the whole server. Not for an
+            // allow-listed run: a step cannot click a connect link.
+            if (!grant && !toolNames) {
               server.registerTool(
                 'jira_connect',
                 {

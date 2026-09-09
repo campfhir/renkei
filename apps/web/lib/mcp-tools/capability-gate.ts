@@ -95,3 +95,28 @@ export function withScopeGate(
     },
   });
 }
+
+/**
+ * Registration-time allow-list, layered under the other gates: only the
+ * named tools register, whatever the connector, scope and role gates would
+ * have allowed. An agent run's token carries this list (migration 096:
+ * every tool its steps name), so the run's `tools/list` is a handful of
+ * schemas instead of the owner's whole surface, and a call to any other
+ * tool is refused before a gate ever sees it — the gateway-enforced twin
+ * of the agent's own `blocked_tools`. Same Proxy shape as withScopeGate.
+ */
+export function withToolAllowList(server: McpServer, allowed: ReadonlySet<string>): McpServer {
+  return new Proxy(server, {
+    get(target, property, receiver) {
+      if (property === 'registerTool') {
+        return (...args: RegisterToolArgs) => {
+          const [name] = args;
+          if (!allowed.has(name)) return undefined;
+          return target.registerTool(...args);
+        };
+      }
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}

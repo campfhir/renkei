@@ -15,12 +15,15 @@ export function StepNode({
   ordinal,
   selected,
   issueCount,
+  hintCount = 0,
   onSelect,
 }: {
   step: AgentStep;
   ordinal: number;
   selected: boolean;
   issueCount: number;
+  /** Lint hints, shown only when nothing is actually wrong. */
+  hintCount?: number;
   onSelect: () => void;
 }) {
   const preview = useMemo(() => {
@@ -45,6 +48,13 @@ export function StepNode({
           className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white"
         >
           {issueCount}
+        </span>
+      ) : hintCount > 0 ? (
+        <span
+          aria-label={`${hintCount} hint${hintCount === 1 ? '' : 's'}`}
+          className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white"
+        >
+          {hintCount}
         </span>
       ) : null}
       <span className="flex items-center gap-2">

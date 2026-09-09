@@ -11,6 +11,8 @@
  * shows in the editor's bottom list, so no message is ever lost.
  */
 
+import type { Mention } from '@renkei/agents';
+
 export interface NodeIssue {
   /** Path relative to the node: 'name', 'failureHandling.1', '' for node-level. */
   field: string;
@@ -45,6 +47,64 @@ export function fieldClass(invalid: boolean): string {
   return `w-full rounded-md border bg-white px-3 py-2 text-sm dark:bg-gray-900 ${
     invalid ? 'border-red-400 dark:border-red-700' : 'border-gray-300 dark:border-gray-700'
   }`;
+}
+
+/**
+ * A lint hint routed to its node, the same way as an issue but with the
+ * fix attached: `variable` and `at` are what `chipMention` needs to turn
+ * the mentioned words into the chip.
+ */
+export interface NodeHint extends NodeIssue {
+  variable?: string;
+  at: Mention;
+}
+
+/** The hints for one or more claimed fields, fix data intact. */
+export function forHints(hints: NodeHint[], ...fields: string[]): NodeHint[] {
+  return hints.filter((hint) => fields.some((field) => claims(hint.field, field)));
+}
+
+/**
+ * The amber hint list under a field — worth a look, never a save block —
+ * with the one-click fix beside any hint that has one.
+ */
+export function FieldHints({
+  hints,
+  onFix,
+}: {
+  hints: NodeHint[];
+  /** Apply a hint's chip; absent (or a hint without a variable) shows the message alone. */
+  onFix?: (hint: NodeHint & { variable: string }) => void;
+}) {
+  if (hints.length === 0) return null;
+  return (
+    <ul className="mt-1 space-y-0.5">
+      {hints.map((hint) => {
+        const { variable } = hint;
+        return (
+          <li
+            key={`${hint.field}:${hint.at.segment}:${hint.at.start}`}
+            role="status"
+            className="text-xs text-amber-700 dark:text-amber-300"
+          >
+            {hint.message}
+            {onFix && variable ? (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  className="font-medium underline decoration-amber-400 hover:decoration-amber-700"
+                  onClick={() => onFix({ ...hint, variable })}
+                >
+                  Add the chip
+                </button>
+              </>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 /** The red message list rendered directly under the offending field. */

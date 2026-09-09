@@ -258,6 +258,30 @@ describe('AnthropicProvider.complete', () => {
     expect(result.val.usage).toEqual({ inputTokens: 100, outputTokens: 42 });
   });
 
+  it('reports inputTokens as everything the model read, cache included', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, {
+        content: [{ type: 'text', text: 'ok' }],
+        stop_reason: 'end_turn',
+        // Anthropic's input_tokens is the uncached remainder only.
+        usage: {
+          input_tokens: 30,
+          output_tokens: 7,
+          cache_read_input_tokens: 500,
+          cache_creation_input_tokens: 120,
+        },
+      })
+    );
+    const result = await provider.complete(request);
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.val.usage).toEqual({
+      inputTokens: 650,
+      outputTokens: 7,
+      cacheReadInputTokens: 500,
+      cacheWriteInputTokens: 120,
+    });
+  });
+
   it.each([
     [401, 'auth'],
     [403, 'auth'],

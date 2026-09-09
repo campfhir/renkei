@@ -83,9 +83,11 @@ import {
   flattenFormFields,
   friendlyToolName,
   isCurrentStepsDoc,
+  lintAgentDraft,
   savesByPathCoverage,
   type AgentStepsDoc,
   type QuestionField,
+  type TriggerDraft,
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
@@ -192,6 +194,10 @@ function outlineOf(steps: AgentStepsDoc): string {
 function variableLines(steps: AgentStepsDoc): string[] {
   const coverage = savesByPathCoverage(steps.steps);
   return [
+    'A step sees only the variables it names as var chips (in its instruction, guidance or',
+    'condition), plus the builtins below, the approval.*/question.* values bound for it, and',
+    'the item var of an enclosing loop. A trigger value or saved result a step only alludes',
+    'to in words is not sent to it — chip it explicitly.',
     'Variables always available (var chips):',
     ...BUILTIN_VARIABLES.map((variable) => `- ${variable.name}: ${variable.description}`),
     ...(coverage.size > 0
@@ -1882,7 +1888,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     "message:[segment,...] — an optional note on why, shown on the run's own timeline; whether",
     "anyone is notified about the run at all is that PERSON's own Preferences, not a step field.",
     'A segment is {t:"text", v:"..."}, {t:"var", name:"<a variable this agent has>"} or',
-    '{t:"tool", name:"<a skill name>"}.',
+    '{t:"tool", name:"<a skill name>"}. A node\'s model sees ONLY the variables its own',
+    'segments name as var segments (plus today, user.*, the approval.*/question.* bound for',
+    'that step, and the item var of an enclosing foreach loop). A trigger value, a saved',
+    'result or a collected list the text merely alludes to ("reply to the message", "use the',
+    'ticket found earlier") is NOT sent — put the var segment in, in the instruction, the',
+    'guidance, or the branch/loop condition that needs it.',
   ].join(' ');
 
   /**
@@ -2051,6 +2062,22 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     ].join('\n');
   }
 
+  /**
+   * The builder's lint, for an author with no builder: prose leaning on a
+   * value the node does not chip. Never a refusal — the definition is
+   * saved as given — but the surest sign a step will run without the
+   * ticket or message it talks about.
+   */
+  function hintLines(draft: { steps: AgentStepsDoc; triggers: TriggerDraft[] }): string[] {
+    const hints = lintAgentDraft(draft);
+    if (hints.length === 0) return [];
+    return [
+      '',
+      'Worth a look (a node is only given the variables its segments name):',
+      ...hints.map((hint) => `- ${hint.path}: ${hint.message}`),
+    ];
+  }
+
   server.registerTool(
     'agent_create',
     {
@@ -2094,6 +2121,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ...(result.normalized.guardrails
               ? ['', 'Guardrails:', result.normalized.guardrails]
               : []),
+            ...hintLines(result.normalized),
             '',
             'Nothing was saved. Call again with confirm:true to create it.',
           ].join('\n')
@@ -2109,6 +2137,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         [
           `Created "${result.normalized.name}" — DISABLED until you review and turn it on in the builder.`,
           `agentId: ${result.agentId}`,
+          ...hintLines(result.normalized),
           ...(result.apiKeys.length > 0
             ? [
                 'API trigger keys (shown exactly once):',
@@ -2236,6 +2265,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           [
             `Valid. ${operations.val.length} operation(s) would leave "${result.normalized.name}" as:`,
             outlineOf(result.normalized.steps),
+            ...hintLines(result.normalized),
             '',
             'Nothing was saved. Call again with confirm:true to apply it.',
           ].join('\n')
@@ -2248,7 +2278,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         agentId: agent.id,
       });
       return textResult(
-        [`Updated "${result.normalized.name}":`, outlineOf(result.normalized.steps)].join('\n')
+        [
+          `Updated "${result.normalized.name}":`,
+          outlineOf(result.normalized.steps),
+          ...hintLines(result.normalized),
+        ].join('\n')
       );
     }
   );
@@ -2526,6 +2560,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ...(result.normalized.guardrails
               ? ['', 'Guardrails:', result.normalized.guardrails]
               : []),
+            ...hintLines(result.normalized),
             '',
             `It stays ${enabled ? 'ENABLED' : 'disabled'}. Nothing was saved. Call again with confirm:true to apply.`,
           ].join('\n')
@@ -2540,6 +2575,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       return textResult(
         [
           `Updated "${result.normalized.name}" (${enabled ? 'still enabled' : 'disabled'}).`,
+          ...hintLines(result.normalized),
           ...(result.apiKeys.length > 0
             ? [
                 'API trigger keys (shown exactly once):',
