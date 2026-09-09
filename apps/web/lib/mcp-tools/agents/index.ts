@@ -192,6 +192,10 @@ function outlineOf(steps: AgentStepsDoc): string {
 function variableLines(steps: AgentStepsDoc): string[] {
   const coverage = savesByPathCoverage(steps.steps);
   return [
+    'A step sees only the variables it names as var chips (in its instruction, guidance or',
+    'condition), plus the builtins below, the approval.*/question.* values bound for it, and',
+    'the item var of an enclosing loop. A trigger value or saved result a step only alludes',
+    'to in words is not sent to it — chip it explicitly.',
     'Variables always available (var chips):',
     ...BUILTIN_VARIABLES.map((variable) => `- ${variable.name}: ${variable.description}`),
     ...(coverage.size > 0
@@ -1882,7 +1886,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     "message:[segment,...] — an optional note on why, shown on the run's own timeline; whether",
     "anyone is notified about the run at all is that PERSON's own Preferences, not a step field.",
     'A segment is {t:"text", v:"..."}, {t:"var", name:"<a variable this agent has>"} or',
-    '{t:"tool", name:"<a skill name>"}.',
+    '{t:"tool", name:"<a skill name>"}. A node\'s model sees ONLY the variables its own',
+    'segments name as var segments (plus today, user.*, the approval.*/question.* bound for',
+    'that step, and the item var of an enclosing foreach loop). A trigger value, a saved',
+    'result or a collected list the text merely alludes to ("reply to the message", "use the',
+    'ticket found earlier") is NOT sent — put the var segment in, in the instruction, the',
+    'guidance, or the branch/loop condition that needs it.',
   ].join(' ');
 
   /**

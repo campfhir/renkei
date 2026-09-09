@@ -256,6 +256,12 @@ function promptOf(
     '- Each step does ONE thing and may use AT MOST ONE tool, looked up with find_tools (a step may also be pure reasoning with no tool).',
     '- When a step covers MANY items (a sprint of issues, a folder of mail, a search result set), choose the bulk tool (named *_bulk_*) or a single search over per-item tools — one step, one call, never one step per item. Search find_tools for the task first; it surfaces bulk variants alongside the per-item ones.',
     '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY a tool name find_tools actually returned to you, and ONLY variables from the list below.',
+    "- A step's model sees ONLY the variables that step names as {{var:...}} chips (plus the " +
+      'builtins and the current loop item). A step that alludes to the triggering event, an ' +
+      'earlier result or a saved list in words alone ("reply to the message", "use the ticket ' +
+      'found earlier", "for the sender") never receives that value. Always write the chip — ' +
+      '{{var:trigger.text}}, {{var:the ticket}} — in every step, branch condition, loop ' +
+      'condition or retry guidance that needs it, even when an earlier step already used it.',
     '- When a later step needs an earlier step\'s result, give the earlier step a short "saveAs" name (starts with a letter; then letters, numbers, spaces, ".", "-" or "_"; at most 64 characters — e.g. "the ticket") and reference it as {{var:the ticket}}.',
     '- Every "saveAs" name must be UNIQUE — never reuse a name across steps. Later references use the exact earlier name.',
     '- When the description says the flow ENDS at a step on success, set that step\'s "onSuccess" to "stop"; when it should end silently doing nothing (no reply, no follow-up — e.g. "if it\'s not relevant, ignore it"), use "stop-quiet". For CONDITIONAL endings keep the condition in the instruction words ("If …, … and stop here" / "…stop silently") — the runner honors those at runtime.',
