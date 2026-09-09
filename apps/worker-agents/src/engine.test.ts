@@ -367,6 +367,57 @@ maybe('agent run engine', () => {
     expect(seen[1].system).toBe(seen[0].system);
   });
 
+  it('writes memory only when a step asks, once per fact, visible to the rest of the run', async () => {
+    const first = reasoningStep('note the message');
+    const second = reasoningStep('note it again');
+    const doc = { version: 1, steps: [first, second] };
+    if (!isAgentStepsDoc(doc)) throw new Error('fixture');
+    const { runId, agentId } = await seedRun(doc);
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request) => {
+      seen.push(request);
+      return finish('success', { remember: 'Replied to message 123 about the outage.' });
+    });
+    await handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    )({ payload: { runId } });
+
+    const memory = await db
+      .selectFrom('agent_memories')
+      .select(['kind', 'content'])
+      .where('agent_id', '=', agentId)
+      .execute();
+    // One entry for two identical remembers, and no run breadcrumb.
+    expect(memory).toEqual([
+      { kind: 'entry', content: 'Replied to message 123 about the outage.' },
+    ]);
+    // The second step already saw what the first remembered.
+    expect(seen[0].system).not.toContain('Replied to message 123');
+    expect(seen[1].system).toContain('Replied to message 123 about the outage.');
+  });
+
+  it('leaves no memory behind for a run that remembers nothing', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' })
+    );
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+    const rows = await db
+      .selectFrom('agent_memories')
+      .select('id')
+      .where('agent_id', '=', agentId)
+      .execute();
+    expect(rows).toEqual([]);
+  });
+
   it('mints the run token with exactly the tools the steps name plus the notifier tools', async () => {
     const { runId } = await seedRun(singleStep());
     const minted: string[][] = [];

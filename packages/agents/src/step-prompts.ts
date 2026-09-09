@@ -236,9 +236,10 @@ export const FINISH_STEP_DEF: PromptToolDef = {
       remember: {
         type: 'string',
         description:
-          'A short note (one sentence, include identifiers like message ids) worth carrying ' +
-          'into FUTURE runs of this agent — e.g. "replied to message 123 about the outage". ' +
-          'Future runs see it under "What you remember". Omit when nothing is worth keeping.',
+          'A fact FUTURE runs of this agent need and could not rediscover — chiefly what this ' +
+          'step acted on (e.g. "replied to message 123 about the outage") or a durable ' +
+          'preference it learned. One sentence with identifiers. Not a summary of the step, ' +
+          'not the saved result. Omit when nothing future runs need — that is most steps.',
       },
     },
     required: ['outcome', 'summary'],
@@ -302,7 +303,7 @@ export const SYSTEM_PROMPT = [
   'When THIS STEP’s own action does not apply to this input at all — out of scope, no valid target, already handled, or the step’s own instructions rule it out — that is not a failure: declare outcome "skipped" with a summary saying why. No tool is called, nothing is saved, and the automation moves on to the next step exactly as if this step had done nothing; it does not end the automation by itself.',
   'An empty result is NOT a skip: a search or lookup that runs cleanly but finds nothing has produced an answer — declare success and save that nothing was found (or, when the step lists a failure code for it, declare failure with that code so the configured handling decides). Skip only when this step’s own action does not apply here — never as a way to end the whole automation; an instruction saying the automation itself is out of scope has its own step for that.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
-  'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled — and record anything future runs must know via finish_step’s remember field.',
+  'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled. Record via finish_step’s remember field only what future runs must know to avoid repeating or contradicting this one; routine outcomes are not worth remembering.',
 ].join(' ');
 
 /**

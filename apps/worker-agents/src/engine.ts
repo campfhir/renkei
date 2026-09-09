@@ -1037,7 +1037,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         )
       );
 
-      // The agent's carried context: memory (earlier runs' breadcrumbs)
+      // The agent's carried context: memory (what earlier runs chose to remember)
       // and its own knowledge notes, both bounded at render time — the
       // read-side budget is what keeps prompts safe however large either
       // store grows. Best-effort: an unreadable memory degrades the run to
@@ -1710,14 +1710,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       if (outcome.remember) {
         // The step asked future runs to know something. Best-effort: a
-        // memory write must never change this attempt's outcome.
+        // memory write must never change this attempt's outcome. A NEW
+        // note also reaches the rest of THIS run: the system prompt's
+        // memory block is re-rendered, which costs the run one cache
+        // write for the prefix (memory sits last in the block for exactly
+        // that reason) and stops a later step or loop round acting on
+        // something this run has already handled.
         try {
-          await appendAgentMemory(db, {
+          const { inserted } = await appendAgentMemory(db, {
             tenantId: run.tenant_id,
             agentId: run.agent_id,
             content: outcome.remember,
             runId: run.id,
           });
+          if (inserted) {
+            context.memoryText = renderAgentMemory(
+              await readAgentMemory(db, run.tenant_id, run.agent_id)
+            );
+          }
         } catch (error) {
           logger.warn('memory append failed for run {runId}: {error}', {
             component: 'worker-agents/engine',
@@ -4122,36 +4132,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
         agentId: run.agent_id,
       });
     }
-    // The automatic breadcrumb — what makes "did I already handle this?"
-    // answerable even when no step remembered anything explicitly. Carries
-    // the trigger's identifying vars (messageId etc.), never bodies.
-    try {
-      const idsOfInterest = [
-        'trigger.messageId',
-        'trigger.roomId',
-        'trigger.from',
-        'trigger.sender',
-        'trigger.subject',
-        'trigger.scheduledFor',
-      ];
-      const idText = idsOfInterest
-        .filter((key) => vars[key])
-        .map((key) => `${key.slice('trigger.'.length)}=${clip(vars[key], 120)}`)
-        .join(', ');
-      await appendAgentMemory(db, {
-        tenantId: run.tenant_id,
-        agentId: run.agent_id,
-        content: `Run ${status}${idText ? ` (${idText})` : ''}${error ? ` — ${clip(error, 160)}` : ''}`,
-        runId: run.id,
-      });
-    } catch (memoryError) {
-      logger.warn('finalize memory append failed for run {runId}: {error}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-        subject: run.owner_subject,
-        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
-      });
-    }
+    // No automatic memory entry: what future runs need to know is a step's
+    // explicit `remember` (finishAttempt), never a per-run breadcrumb — an
+    // agent firing every few minutes wrote one for every run, and every
+    // later run re-read all of them on every call. Trigger deduplication
+    // is the firing ledger's job (agent_trigger_firings), not memory's.
     if (deps.onFinalized) {
       try {
         await deps.onFinalized({
