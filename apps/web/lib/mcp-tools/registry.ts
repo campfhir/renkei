@@ -37,6 +37,7 @@ import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/kno
 import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
 import { registerAgentTools, AGENTS_CONNECTOR } from '@/lib/mcp-tools/agents';
 import { registerLogTools, LOGS_CONNECTOR } from '@/lib/mcp-tools/logs';
+import { registerUserMemoryTools, USER_MEMORY_CONNECTOR } from '@/lib/mcp-tools/user-memory';
 import { registerUploadStatusTool } from '@/lib/mcp-tools/upload-slots';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
@@ -272,6 +273,9 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     // Same for logs: it reads Renkei's own log store, self-scoped from the
     // caller's subject/accountId — no external grant to wait for either.
     LOGS_CONNECTOR,
+    // Same for user memory: chat_user_memories is a plain Renkei table,
+    // self-scoped from the caller's subject — no external grant either.
+    USER_MEMORY_CONNECTOR,
     ...(availability.knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
     ...(availability.webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
     ...(availability.microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
@@ -345,6 +349,10 @@ export async function registerRenkeiTools(
   // registration-time gate: the tool exists for everyone, but what it
   // returns depends on the caller's role, matching the web Logs page.
   registerLogTools(withCapabilityGate(server, projection, LOGS_CONNECTOR), context);
+  // user_memory_* reads and writes the same chat_user_memories a chat's own
+  // chat_memory_* local tools do (apps/web/lib/chat/user-memory-tools.ts),
+  // owner-scoped from the caller's subject exactly like cards.
+  registerUserMemoryTools(withCapabilityGate(server, projection, USER_MEMORY_CONNECTOR), context);
   // check_file_upload is cross-connector — any *_request_*_upload tool can
   // mint the slot it reads — so it registers on the raw server, ungated,
   // the way whoami does.

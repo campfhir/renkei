@@ -50,6 +50,7 @@ const PREFIXES: [string, string][] = [
   ['card_', 'cards'],
   ['agent_', 'agents'],
   ['log_', 'logs'],
+  ['user_memory_', 'user-memory'],
 ];
 
 /**

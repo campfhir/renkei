@@ -40,9 +40,9 @@ export const EXTRA_LOGOS = ['outlook', 'microsoft', 'jira-jsm', 'atlassian', 'di
 /**
  * Marks we deliberately do not ship, which render the built-in glyph.
  *
- * `knowledge`, `cards`, `agents`, `logs` and `web-search` are our own surfaces rather than
- * products — the built-in glyph says that better than any vendor-style
- * file would.
+ * `knowledge`, `cards`, `agents`, `logs`, `user-memory` and `web-search` are our own surfaces
+ * rather than products — the built-in glyph says that better than any
+ * vendor-style file would.
  *
  * `directory` is NOT here. It has no vendor logo either — it names a Renkei
  * bundle of Graph scopes, not a Microsoft product — but a real asset beats a
@@ -56,6 +56,7 @@ export const GLYPH_ONLY = new Set([
   'agents',
   'fileshares',
   'logs',
+  'user-memory',
   // Web search is a Renkei surface over an Azure deployment, not a product
   // of its own — and drawing Bing's or Azure's mark for it would claim
   // more than it is.
