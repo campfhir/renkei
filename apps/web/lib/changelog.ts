@@ -43,7 +43,24 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
+    date: '2026-09-09',
+    entries: [
+      {
+        kind: 'added',
+        title: 'The assistant remembers things about you',
+        detail:
+          'Outside a project, tell it to remember something and the note carries into every chat you have, not just this one. See what it has saved, add a note yourself, or forget one under Preferences → Memory.',
+      },
+      {
+        kind: 'added',
+        title: 'The assistant can look back at your other chats',
+        detail:
+          'Ask about something from a different conversation and it can search your other chats by title and content, or open one and read it back. A project’s own chats keep their own separate memory and are never searched this way.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-04',
     entries: [
       {
         kind: 'added',
@@ -108,7 +125,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-04',
     heading: "Chat with your organization's models",
     entries: [
       {
@@ -204,7 +221,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Your usage, and agents that learn from their failures',
     entries: [
       {
