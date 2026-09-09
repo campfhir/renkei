@@ -13,8 +13,15 @@
 
 import { resolveOutcomes } from '@renkei/tool-outcomes';
 import { renderInstruction } from './render';
-import { attemptVariables } from './variables';
-import type { ActionStep, AgentStep, BranchStep, InstructionSegment, UntilLoopStep } from './steps';
+import { attemptVariables, knownVariables } from './variables';
+import {
+  varSegments,
+  type ActionStep,
+  type AgentStep,
+  type BranchStep,
+  type InstructionSegment,
+  type UntilLoopStep,
+} from './steps';
 
 /** Structural twin of @renkei/agent-llm's text-only PromptMessage. */
 export interface PromptMessage {
@@ -27,6 +34,36 @@ export interface PromptToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+}
+
+/**
+ * The longest var value a chip pastes into its sentence. A ticket key, a
+ * room id or an email reads inline; a saved summary or a thread renders as
+ * `[name]` and is listed once under Known information instead — never
+ * twice for a chip used twice, never in the middle of a sentence.
+ */
+export const INLINE_VALUE_MAX = 200;
+
+const INLINE = { inlineMax: INLINE_VALUE_MAX };
+
+/**
+ * The "Known information" block: the vars this call references (see
+ * knownVariables), one line each. The header explains the brackets only
+ * when a value was rendered by reference.
+ */
+function knownInformationBlock(
+  variables: Record<string, string>,
+  selection: { referenced: Iterable<string>; inlined: Iterable<string>; inputs?: Iterable<string> },
+  byReference: boolean
+): string[] {
+  const lines = Object.entries(knownVariables({ variables, ...selection }))
+    .map(([name, value]) => `- ${name}: ${value}`)
+    .join('\n');
+  if (!lines) return [];
+  const header = byReference
+    ? 'Known information ([name] in the instruction refers to an entry here):'
+    : 'Known information:';
+  return [`${header}\n${lines}`];
 }
 
 export const RESOLVE_TIME_TOOL = 'resolve_time';
@@ -404,16 +441,24 @@ export interface LoopPromptInput {
   knowledgeText?: string;
   /** The agent's standing guardrails — injected in full, never clipped. */
   guardrailsText?: string;
+  /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
+  inputs?: readonly string[];
 }
 
 export function buildLoopConditionMessages(input: LoopPromptInput): {
   messages: PromptMessage[];
   unbound: string[];
 } {
-  const rendered = renderInstruction(input.loop.condition, input.variables);
-  const variableLines = Object.entries(input.variables)
-    .map(([name, value]) => `- ${name}: ${value}`)
-    .join('\n');
+  const rendered = renderInstruction(input.loop.condition, input.variables, undefined, INLINE);
+  const known = knownInformationBlock(
+    input.variables,
+    {
+      referenced: varSegments(input.loop.condition),
+      inlined: rendered.inlined,
+      ...(input.inputs ? { inputs: input.inputs } : {}),
+    },
+    rendered.byReference.length > 0
+  );
 
   const parts = [
     `Loop: ${input.loop.name}`,
@@ -421,7 +466,7 @@ export function buildLoopConditionMessages(input: LoopPromptInput): {
     `Round ${input.iteration} of at most ${input.loop.maxIterations} has just finished.`,
     `Stop condition to decide: ${rendered.text}`,
     'If it HOLDS (choice: "finished") the automation continues after the loop. If it does NOT hold yet (choice: "continue") the loop runs another round.',
-    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
+    ...known,
     ...(input.memoryText
       ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
       : []),
@@ -457,16 +502,24 @@ export interface BranchPromptInput {
   knowledgeText?: string;
   /** The agent's standing guardrails — injected in full, never clipped. */
   guardrailsText?: string;
+  /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
+  inputs?: readonly string[];
 }
 
 export function buildBranchMessages(input: BranchPromptInput): {
   messages: PromptMessage[];
   unbound: string[];
 } {
-  const rendered = renderInstruction(input.branch.condition, input.variables);
-  const variableLines = Object.entries(input.variables)
-    .map(([name, value]) => `- ${name}: ${value}`)
-    .join('\n');
+  const rendered = renderInstruction(input.branch.condition, input.variables, undefined, INLINE);
+  const known = knownInformationBlock(
+    input.variables,
+    {
+      referenced: varSegments(input.branch.condition),
+      inlined: rendered.inlined,
+      ...(input.inputs ? { inputs: input.inputs } : {}),
+    },
+    rendered.byReference.length > 0
+  );
 
   // Two-path prose is FROZEN (v2 agents must not drift); routers list
   // their numbered choices with the last-path fallback stated.
@@ -487,7 +540,7 @@ export function buildBranchMessages(input: BranchPromptInput): {
     ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Condition to decide: ${rendered.text}`,
     routing,
-    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
+    ...known,
     ...(input.memoryText
       ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
       : []),
@@ -547,6 +600,8 @@ export interface AttemptPromptInput {
    * handles nothing.
    */
   outcomeGuide?: string;
+  /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
+  inputs?: readonly string[];
 }
 
 export function buildAttemptMessages(input: AttemptPromptInput): {
@@ -567,11 +622,34 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
     ...attemptVariables(input.attempt, input.step.maxAttempts),
     ...input.variables,
   };
-  const rendered = renderInstruction(input.step.instruction, variablesWithAttempt);
+  const rendered = renderInstruction(
+    input.step.instruction,
+    variablesWithAttempt,
+    undefined,
+    INLINE
+  );
 
-  const variableLines = Object.entries(input.variables)
-    .map(([name, value]) => `- ${name}: ${value}`)
-    .join('\n');
+  // What this step references: every chip in its instruction and its
+  // failure-handling guidance. What is already in the prompt: the chips
+  // the instruction inlined, and those the non-retry guidance inlines
+  // through the outcome guide (rendered with the same threshold there).
+  // Retry guidance is not on the page on attempt 1, so a var it alone
+  // names stays listed — rare, and small next to guessing which matched.
+  const guidanceLists = input.step.failureHandling.map((handling) => handling.guidance ?? []);
+  const guideRenders = input.step.failureHandling
+    .filter((handling) => handling.action !== 'retry')
+    .map((handling) =>
+      renderInstruction(handling.guidance ?? [], variablesWithAttempt, undefined, INLINE)
+    );
+  const known = knownInformationBlock(
+    input.variables,
+    {
+      referenced: [input.step.instruction, ...guidanceLists].flatMap(varSegments),
+      inlined: [rendered, ...guideRenders].flatMap((render) => render.inlined),
+      ...(input.inputs ? { inputs: input.inputs } : {}),
+    },
+    [rendered, ...guideRenders].some((render) => render.byReference.length > 0)
+  );
 
   const parts = [
     `Step: ${input.step.name}`,
@@ -596,7 +674,7 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
         ]
       : []),
     ...(input.outcomeGuide ? [input.outcomeGuide] : []),
-    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
+    ...known,
     ...(input.memoryText
       ? [
           'What you remember (notes from this agent’s earlier runs, oldest first — check it ' +
@@ -674,7 +752,7 @@ export function outcomeGuideFor(
             : `"${handling.outcome}"`;
       const note =
         handling.action !== 'retry' && handling.guidance && handling.guidance.length > 0
-          ? ` — the author notes: ${renderInstruction(handling.guidance, vars).text}`
+          ? ` — the author notes: ${renderInstruction(handling.guidance, vars, undefined, INLINE).text}`
           : '';
       return `${described}${note}`;
     })

@@ -309,6 +309,13 @@ interface RunContextText {
    * silent one so the field is never undefined mid-run.
    */
   notifier: Notifier;
+  /**
+   * The item vars of every foreach loop the run is currently inside — what
+   * a step must see under "Known information" without a chip naming it.
+   * Set by the frame loop before each dispatch; rides here for the same
+   * reason the notifier does (the bag already reaches every builder).
+   */
+  liveInputs: ReadonlySet<string>;
 }
 
 /**
@@ -536,6 +543,15 @@ interface LoopFrame {
 
 type Frame = SeqFrame | LoopFrame;
 
+/** The item vars bound by every enclosing foreach loop, outermost first. */
+function liveItemVars(stack: Frame[]): Set<string> {
+  const names = new Set<string>();
+  for (const frame of stack) {
+    if (frame.kind === 'loop' && frame.loop.mode === 'foreach') names.add(frame.loop.itemVar);
+  }
+  return names;
+}
+
 /** The innermost loop's iteration, or 0 outside any loop. */
 function currentIteration(stack: Frame[]): number {
   for (let i = stack.length - 1; i >= 0; i -= 1) {
@@ -717,21 +733,36 @@ function finishArgsOf(input: unknown): {
   }
   const saveItems = Array.isArray(args.saveItems)
     ? args.saveItems
-        .flatMap((entry) => (typeof entry === 'string' && entry ? [entry] : []))
+        .flatMap((entry) => (typeof entry === 'string' && entry ? [stripToolResidue(entry)] : []))
+        .filter(Boolean)
         .slice(0, SAVE_ITEMS_MAX)
         .map((entry) => clip(entry, SAVE_ITEM_CHARS))
     : null;
+  const saveValue = typeof args.saveValue === 'string' ? stripToolResidue(args.saveValue) : null;
+  const remember = typeof args.remember === 'string' ? stripToolResidue(args.remember) : '';
   return {
     outcome,
     code: typeof args.code === 'string' ? args.code : null,
-    summary: typeof args.summary === 'string' ? args.summary : '',
-    saveValue: typeof args.saveValue === 'string' ? args.saveValue : null,
+    summary: typeof args.summary === 'string' ? stripToolResidue(args.summary) : '',
+    saveValue,
     saveItems: saveItems && saveItems.length > 0 ? saveItems : null,
     stop: args.stop === true,
     quiet: args.quiet === true,
-    remember:
-      typeof args.remember === 'string' && args.remember.trim() ? args.remember.trim() : null,
+    remember: remember || null,
   };
+}
+
+/**
+ * Trailing tool-call markup a model sometimes leaves inside a string
+ * argument (`</saveValue>\n</invoke>` at the end of a saved value, seen in
+ * production). Bound as-is, it rode into every later step's prompt and
+ * into the record. Only closing tags at the very end are stripped — a
+ * value that legitimately contains markup mid-text is untouched.
+ */
+const TOOL_RESIDUE = /(?:\s*<\/[a-z_][\w:-]*>)+\s*$/i;
+
+function stripToolResidue(text: string): string {
+  return text.replace(TOOL_RESIDUE, '').trim();
 }
 
 /**
@@ -1042,6 +1073,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             // what this iteration saved (if configured), then decide
             // whether another round runs.
             await collectIteration(run, frame, vars, lists);
+            context.liveInputs = liveItemVars(stack);
             const boundary = await loopBoundary(
               run,
               frame,
@@ -1096,6 +1128,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           await finalizeRun(run, 'canceled', null, null, vars, true);
           return;
         }
+        context.liveInputs = liveItemVars(stack);
 
         // Exhaustive dispatch on the node kind: a kind this switch does not
         // handle is a compile error, never a silent fall-through into the
@@ -1326,7 +1359,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
     // guardrailsText is filled by the caller from the agents row it
     // already read — one query, not two.
-    return { memoryText, knowledgeText, guardrailsText: '', notifier: SILENT_NOTIFIER };
+    return {
+      memoryText,
+      knowledgeText,
+      guardrailsText: '',
+      notifier: SILENT_NOTIFIER,
+      liveInputs: new Set(),
+    };
   }
 
   /** Builtins + trigger.* from initial_state; list-valued inputs also land in `lists`. */
@@ -2946,6 +2985,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         branch,
         variables: vars,
         attempt,
+        inputs: [...context.liveInputs],
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
         ...(context.memoryText ? { memoryText: context.memoryText } : {}),
         ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
@@ -3231,6 +3271,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const built = buildLoopConditionMessages({
         loop,
+        inputs: [...context.liveInputs],
         iteration,
         variables: vars,
         attempt,
@@ -3434,6 +3475,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       variables: vars,
       toolBudget: toolCap,
       offersTime,
+      inputs: [...context.liveInputs],
       guidanceText,
       previousFailure,
       savesItemsForLoop,

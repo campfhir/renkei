@@ -691,8 +691,9 @@ maybe('agent run engine', () => {
     expect(attempts[0].outcome_code).toBe('not-found');
     expect(attempts[1].status).toBe('succeeded');
     // The saved result bound to the failure summary, so the second step's
-    // prompt saw what happened instead of an unbound chip.
-    expect(seen[1]).toContain('theTicket: declared failure');
+    // chip rendered what happened instead of an unbound marker.
+    expect(seen[1]).toContain('Instruction: Decide from declared failure');
+    expect(seen[1]).not.toContain('(unknown: theTicket)');
   });
 
   it('stops before the next step once a cancel is requested mid-run', async () => {
@@ -1770,6 +1771,83 @@ maybe('agent run engine', () => {
     // The collected list holds what each round ACTUALLY saved — one entry,
     // none, then two: smaller AND larger than the per-round input.
     expect(firstText(requests[4])).toContain('Report from note-one\nn3a\nn3b');
+  });
+
+  it('lists only what each step references, plus the live loop item', async () => {
+    const { doc, ids } = foreachDoc();
+    // The body no longer chips the item — it must still see it, as a live
+    // loop input; the report chips the collected list and nothing else.
+    const body = doc.steps[1];
+    if (body.kind !== 'loop') throw new Error('fixture');
+    const work = body.steps[0];
+    if (work.kind !== undefined) throw new Error('fixture');
+    work.instruction = [{ t: 'text', v: 'Handle the current item.' }];
+    const { runId } = await seedRun(doc);
+    const requests: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      requests.push(request);
+      if (call === 0) return finish('success', { saveItems: ['one', 'two'] });
+      if (call === 1) return finish('success', { saveValue: 'note-one' });
+      if (call === 2) return finish('success', { saveValue: 'note-two' });
+      return finish('success');
+    });
+    await handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    )({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    expect(ids.work).toBeDefined();
+
+    // Round 2 of the body: the item is listed (a live input), the gathered
+    // list is not (no chip names it), and the trigger input is not either.
+    const round2 = firstText(requests[2]);
+    expect(round2).toContain('- item: two');
+    expect(round2).not.toContain('- items:');
+    expect(round2).not.toContain('trigger.subject');
+    // The report: the collected list is inline through its chip, and the
+    // loop's item and per-round note are gone with the loop.
+    const report = firstText(requests[3]);
+    expect(report).toContain('Report from note-one\nnote-two');
+    expect(report).not.toContain('- notes:');
+    expect(report).not.toContain('- item:');
+    expect(report).not.toContain('- note:');
+  });
+
+  it('strips tool-call residue a model leaves at the end of a saved value', async () => {
+    const { runId } = await seedRun(singleStep());
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', {
+            saveValue: 'PROJ-42 is the ticket</saveValue>\n</invoke>\n',
+            summary: 'Found it.</parameter></invoke>',
+          })
+    );
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+    const attempt = await db
+      .selectFrom('agent_run_steps')
+      .select('detail')
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    const detail: { saveValue?: unknown; llmSummary?: unknown } =
+      typeof attempt.detail === 'object' &&
+      attempt.detail !== null &&
+      !Array.isArray(attempt.detail)
+        ? attempt.detail
+        : {};
+    expect(detail.saveValue).toBe('PROJ-42 is the ticket');
+    expect(detail.llmSummary).toBe('Found it.');
   });
 
   it('skips a for-each loop over an empty list without failing', async () => {
@@ -3284,8 +3362,12 @@ maybe('agent run engine', () => {
       expect(run.status).toBe('succeeded');
       const acted = prompts.join('\n');
       expect(acted).toContain('question.message: Which project does this belong to?');
-      expect(acted).toContain('project: PROJ-42');
+      // The answer reaches the fresh attempt through question.answer, which
+      // restates every field; the per-field var itself is listed only
+      // where a chip names it.
       expect(acted).toContain('question.answer:');
+      expect(acted).toContain('PROJ-42');
+      expect(acted).not.toContain('- project:');
     });
 
     it('timed out: the fresh attempt sees that nobody answered', async () => {

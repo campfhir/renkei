@@ -5,7 +5,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { buildAttemptMessages, outcomeGuideFor, usesTime } from './step-prompts';
+import {
+  INLINE_VALUE_MAX,
+  buildAttemptMessages,
+  buildBranchMessages,
+  outcomeGuideFor,
+  usesTime,
+} from './step-prompts';
+import type { BranchStep } from './steps';
 import type { ActionStep } from './steps';
 
 function step(overrides: Partial<ActionStep> = {}): ActionStep {
@@ -207,5 +214,113 @@ describe('the dates paragraph', () => {
     }).messages[0].content[0].text;
     expect(without).toContain('(finish_step is free)');
     expect(without).not.toContain('resolve_time');
+  });
+});
+
+describe('Known information lists what the step references, each value once', () => {
+  const long = 'L'.repeat(INLINE_VALUE_MAX + 1);
+  const variables = {
+    today: '2026-09-09',
+    'trigger.text': 'Be on the lookout for a text.',
+    'trigger.nearbyMessages': 'a very long dump of messages',
+    ticket: 'CAS-24851',
+    'final summary': long,
+    'thread context': 'unreferenced and never sent',
+  };
+
+  it('drops what no chip names, inlines short values, lists long ones once', () => {
+    const built = buildAttemptMessages({
+      step: step({
+        instruction: [
+          { t: 'text', v: 'Combine ' },
+          { t: 'var', name: 'final summary' },
+          { t: 'text', v: ' for ' },
+          { t: 'var', name: 'ticket' },
+          { t: 'text', v: ' per ' },
+          { t: 'var', name: 'final summary' },
+        ],
+      }),
+      attempt: 1,
+      variables,
+      toolBudget: 3,
+    });
+    const text = built.messages[0].content[0].text;
+
+    expect(text).toContain(
+      'Instruction: Combine [final summary] for CAS-24851 per [final summary]'
+    );
+    expect(text).toContain(
+      `Known information ([name] in the instruction refers to an entry here):\n- today: 2026-09-09\n- final summary: ${long}`
+    );
+    // Once, not three times; the short value is inline only.
+    expect(text.split(long)).toHaveLength(2);
+    expect(text).not.toContain('- ticket:');
+    expect(text).not.toContain('nearbyMessages');
+    expect(text).not.toContain('thread context');
+    expect(text).not.toContain('- trigger.text');
+  });
+
+  it('lists a trigger input only when a chip names it', () => {
+    const chipped = buildAttemptMessages({
+      step: step({
+        instruction: [
+          { t: 'text', v: 'Consider ' },
+          { t: 'var', name: 'trigger.nearbyMessages' },
+        ],
+      }),
+      attempt: 1,
+      variables,
+      toolBudget: 3,
+    }).messages[0].content[0].text;
+    // Short enough to inline, so inline only.
+    expect(chipped).toContain('Consider a very long dump of messages');
+    expect(chipped).not.toContain('- trigger.nearbyMessages');
+  });
+
+  it('lists a var referenced only in retry guidance, and the live loop inputs', () => {
+    const text = buildAttemptMessages({
+      step: step({
+        failureHandling: [
+          {
+            outcome: 'no-results',
+            action: 'retry',
+            guidance: [
+              { t: 'text', v: 'Search for ' },
+              { t: 'var', name: 'ticket' },
+            ],
+          },
+        ],
+      }),
+      attempt: 1,
+      variables: { ...variables, item: 'one' },
+      toolBudget: 3,
+      inputs: ['item'],
+    }).messages[0].content[0].text;
+    expect(text).toContain(
+      'Known information:\n- today: 2026-09-09\n- ticket: CAS-24851\n- item: one'
+    );
+  });
+
+  it('applies the same rule to a branch condition', () => {
+    const branch: BranchStep = {
+      id: randomUUID(),
+      kind: 'branch',
+      name: 'Relevant?',
+      condition: [
+        { t: 'text', v: 'Based on ' },
+        { t: 'var', name: 'final summary' },
+        { t: 'text', v: ', is it relevant?' },
+      ],
+      paths: [
+        { id: randomUUID(), name: 'Yes', steps: [] },
+        { id: randomUUID(), name: 'No', steps: [] },
+      ],
+      maxAttempts: 2,
+    };
+    const text = buildBranchMessages({ branch, variables, attempt: 1 }).messages[0].content[0].text;
+    expect(text).toContain('Condition to decide: Based on [final summary], is it relevant?');
+    expect(text.split(long)).toHaveLength(2);
+    expect(text).not.toContain('- ticket:');
+    expect(text).not.toContain('nearbyMessages');
   });
 });
