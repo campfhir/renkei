@@ -6,6 +6,7 @@ import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { listAgentsForAdmin } from '@/lib/agents/runs-view';
+import { getTokenUsageByModel } from '@/lib/agents/agent-usage';
 import { RetentionForm } from './retention-form';
 import OversightTable, { type RunBuckets } from './oversight-table';
 
@@ -17,9 +18,11 @@ import OversightTable, { type RunBuckets } from './oversight-table';
  *
  * Run and failure tallies come from the durable counters (migrations 049
  * and 050) — counter rows survive the run-retention prune, so year and
- * all-time are real. This page fetches every bucket; the client table
- * shows one period at a time behind a toggle that drives the org total,
- * the Runs column and the Failures column together.
+ * all-time are real. Token tallies come from the token ledger (085),
+ * per agent and per model (096) — so the agent that costs the most is a
+ * column sort away, not a click into each one. This page fetches every
+ * bucket; the client table shows one period at a time behind a toggle
+ * that drives the org total and every per-agent column together.
  */
 
 interface BucketRow {
@@ -149,7 +152,7 @@ export default async function AdminAgentsPage({
   const agents = await listAgentsForAdmin(dbResult.val, tenant.id);
   const settingsResult = await getOrgSettings(tenant.id);
 
-  const [totalsResult, tokenTotalsResult] = await Promise.all([
+  const [totalsResult, tokenTotalsResult, tokensByModel] = await Promise.all([
     sql<BucketRow>`
       SELECT ${BUCKET_COLUMNS}
       FROM agent_run_log
@@ -160,6 +163,7 @@ export default async function AdminAgentsPage({
       FROM llm_calls
       WHERE tenant_id = ${tenant.id}
     `.execute(dbResult.val),
+    getTokenUsageByModel(dbResult.val, tenant.id, null),
   ]);
   const totals = toBuckets(totalsResult.rows[0]);
   const failureTotals = toFailureBuckets(totalsResult.rows[0]);
@@ -167,17 +171,34 @@ export default async function AdminAgentsPage({
   const tokenOutTotals = toTokenOutBuckets(tokenTotalsResult.rows[0]);
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
 
-  const perAgentResult = await sql<BucketRow & { agent_id: string }>`
-    SELECT agent_id, ${BUCKET_COLUMNS}
-    FROM agent_run_log
-    WHERE tenant_id = ${tenant.id}
-    GROUP BY agent_id
-  `.execute(dbResult.val);
+  const [perAgentResult, perAgentTokensResult] = await Promise.all([
+    sql<BucketRow & { agent_id: string }>`
+      SELECT agent_id, ${BUCKET_COLUMNS}
+      FROM agent_run_log
+      WHERE tenant_id = ${tenant.id}
+      GROUP BY agent_id
+    `.execute(dbResult.val),
+    // Every purpose stamped with the agent — its runs and the optimizer's
+    // passes over it — so the column matches what the agent's own page
+    // shows; chat spend has no agent and only counts in the org total.
+    sql<TokenBucketRow & { agent_id: string }>`
+      SELECT agent_id, ${TOKEN_BUCKET_COLUMNS}
+      FROM llm_calls
+      WHERE tenant_id = ${tenant.id} AND agent_id IS NOT NULL
+      GROUP BY agent_id
+    `.execute(dbResult.val),
+  ]);
   const runsByAgent = Object.fromEntries(
     perAgentResult.rows.map((row) => [row.agent_id, toBuckets(row)])
   );
   const failuresByAgent = Object.fromEntries(
     perAgentResult.rows.map((row) => [row.agent_id, toFailureBuckets(row)])
+  );
+  const tokensInByAgent = Object.fromEntries(
+    perAgentTokensResult.rows.map((row) => [row.agent_id, toTokenInBuckets(row)])
+  );
+  const tokensOutByAgent = Object.fromEntries(
+    perAgentTokensResult.rows.map((row) => [row.agent_id, toTokenOutBuckets(row)])
   );
 
   const retentionDays = settingsResult.ok
@@ -190,7 +211,8 @@ export default async function AdminAgentsPage({
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Every user-drafted agent in this organization. You can view run statuses (step content only
         for failures), see its usage, and turn an agent off or back on; editing stays with its
-        owner.
+        owner. Click a numeric column to rank agents by it for the period in view; an agent&apos;s
+        page breaks its tokens down by model and by step.
       </p>
 
       <OversightTable
@@ -198,10 +220,13 @@ export default async function AdminAgentsPage({
         agents={agents}
         runsByAgent={runsByAgent}
         failuresByAgent={failuresByAgent}
+        tokensInByAgent={tokensInByAgent}
+        tokensOutByAgent={tokensOutByAgent}
         totals={totals}
         failureTotals={failureTotals}
         tokenInTotals={tokenInTotals}
         tokenOutTotals={tokenOutTotals}
+        tokensByModel={tokensByModel}
         dailyCap={dailyCap}
       />
 

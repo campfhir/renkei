@@ -720,7 +720,10 @@ export interface LlmCalls {
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   input_tokens: Generated<number>;
+  llm_model_id: string | null;
+  model: string | null;
   output_tokens: Generated<number>;
+  provider: string | null;
   purpose: string;
   run_id: string | null;
   step_id: string | null;

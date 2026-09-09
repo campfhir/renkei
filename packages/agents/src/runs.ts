@@ -314,6 +314,20 @@ export interface RecordLlmCallInput {
   purpose: 'run' | 'optimize' | 'chat';
   inputTokens: number;
   outputTokens: number;
+  /**
+   * What the tokens were spent on (migration 096): the provider and model
+   * NAME as resolved for this call, plus the config row that answered.
+   * The name is what costs are read against — a config row can be
+   * re-pointed at another model later, the name on the row cannot.
+   */
+  model?: LlmCallModel | null;
+}
+
+export interface LlmCallModel {
+  provider: string;
+  model: string;
+  /** The `llm_model_configs` row, as a soft reference. */
+  llmModelId: string | null;
 }
 
 /**
@@ -338,6 +352,9 @@ export async function recordLlmCall(
           purpose: input.purpose,
           input_tokens: input.inputTokens,
           output_tokens: input.outputTokens,
+          llm_model_id: input.model?.llmModelId ?? null,
+          provider: input.model?.provider ?? null,
+          model: input.model?.model ?? null,
         })
         .execute(),
     'DB_ERROR' as const

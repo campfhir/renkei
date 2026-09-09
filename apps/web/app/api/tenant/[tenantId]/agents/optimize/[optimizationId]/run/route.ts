@@ -80,6 +80,7 @@ export async function POST(
       purpose: 'optimize',
       inputTokens: outcome.usage.inputTokens,
       outputTokens: outcome.usage.outputTokens,
+      model: outcome.model,
     });
     return NextResponse.json({ status: 'succeeded' });
   } catch (error) {

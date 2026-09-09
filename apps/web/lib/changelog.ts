@@ -43,6 +43,29 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    entries: [
+      {
+        kind: 'added',
+        title: 'Token spend per agent on Agent oversight',
+        detail:
+          'Tokens in and out now sit beside runs and failures for every agent, for the period in view, and any numeric column sorts the list — so the most expensive agents are at the top, not a click into each one away. The org total is also split by model.',
+      },
+      {
+        kind: 'added',
+        title: 'An agent’s tokens broken down by model and by step',
+        detail:
+          'An agent’s page shows where its tokens went: which model they ran on, and which step spent them, with the calls that step made. Both the owner’s page and the admin view have it.',
+      },
+      {
+        kind: 'changed',
+        title: 'Token usage records which model was used',
+        detail:
+          'Every model call now records the provider and model it went to, so spend can be read against each model’s price rather than as one undifferentiated count. Usage recorded before this cannot be attributed and is shown as such.',
+      },
+    ],
+  },
+  {
     date: '2026-09-09',
     entries: [
       {

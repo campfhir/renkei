@@ -285,3 +285,152 @@ export async function getAgentTokenTrend(
     outputTokens: Number(row.output_tokens ?? 0),
   }));
 }
+
+export interface ModelTokenUsage {
+  /** Null on rows written before the ledger recorded the model (096). */
+  provider: string | null;
+  model: string | null;
+  input: UsageBuckets;
+  output: UsageBuckets;
+}
+
+interface ModelBucketRow extends TokenBucketRow {
+  provider: string | null;
+  model: string | null;
+}
+
+/** The same six calendar buckets, per column prefix, off one grouped row. */
+function bucketsOf(row: TokenBucketRow, prefix: 'in' | 'out'): UsageBuckets {
+  return {
+    today: Number(row[`${prefix}_today`] ?? 0),
+    week: Number(row[`${prefix}_week`] ?? 0),
+    month: Number(row[`${prefix}_month`] ?? 0),
+    quarter: Number(row[`${prefix}_quarter`] ?? 0),
+    year: Number(row[`${prefix}_year`] ?? 0),
+    allTime: Number(row[`${prefix}_all_time`] ?? 0),
+  };
+}
+
+const TOKEN_BUCKET_COLUMNS = sql`
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS in_today,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
+  COALESCE(SUM(input_tokens), 0) AS in_all_time,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS out_today,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
+  COALESCE(SUM(output_tokens), 0) AS out_all_time
+`;
+
+/**
+ * Token buckets split by the model they were spent on (096) — the
+ * breakdown that makes a token count mean something as a cost, since a
+ * million tokens on a frontier model and a million on a small one are
+ * not the same bill.
+ *
+ * `agentId: null` means every row in the tenant, including chat and
+ * optimizer spend with no agent — the oversight page's org-wide view;
+ * an id (or a set) narrows to those agents. Null is the only way to
+ * widen. Ordered by total spend, largest first; rows written before the
+ * model was recorded surface as one null-model row.
+ */
+export async function getTokenUsageByModel(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string | readonly string[] | null
+): Promise<ModelTokenUsage[]> {
+  const ids = agentId === null ? null : idsOf(agentId);
+  if (ids !== null && ids.length === 0) return [];
+  const result = await sql<ModelBucketRow>`
+    SELECT provider, model, ${TOKEN_BUCKET_COLUMNS}
+    FROM llm_calls
+    WHERE tenant_id = ${tenantId}
+      ${ids === null ? sql`` : sql`AND agent_id IN (${sql.join(ids)})`}
+    GROUP BY provider, model
+    ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
+  `.execute(db);
+  return result.rows.map((row) => ({
+    provider: row.provider,
+    model: row.model,
+    input: bucketsOf(row, 'in'),
+    output: bucketsOf(row, 'out'),
+  }));
+}
+
+export interface StepTokenUsage {
+  /** Null for spend outside any step — the optimizer's passes. */
+  stepId: string | null;
+  /**
+   * The step's current name from the agent's definition, or null when
+   * the id no longer exists there (a step since removed) — see
+   * `labelStepUsage`.
+   */
+  stepName: string | null;
+  provider: string | null;
+  model: string | null;
+  /** Attempts that reached the model — one ledger row each. */
+  calls: UsageBuckets;
+  input: UsageBuckets;
+  output: UsageBuckets;
+}
+
+interface StepBucketRow extends ModelBucketRow {
+  step_id: string | null;
+  calls_today: string;
+  calls_week: string;
+  calls_month: string;
+  calls_quarter: string;
+  calls_year: string;
+  calls_all_time: string;
+}
+
+/**
+ * One agent's token spend per step and model — the drill-down under the
+ * per-agent total, so the step that costs the most can be found without
+ * opening its runs one by one. Grouped on `step_id`, which the engine
+ * stamps on every attempt's ledger row; names are resolved afterwards
+ * against the agent's CURRENT definition by `labelStepUsage`, so a step
+ * renamed since keeps its history under its new name and a removed one
+ * is still listed, unnamed.
+ *
+ * Content-free like the rest of this module: step ids and names come
+ * from the definition, which the viewer can already see.
+ */
+export async function getAgentTokenUsageByStep(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<Omit<StepTokenUsage, 'stepName'>[]> {
+  const result = await sql<StepBucketRow>`
+    SELECT step_id, provider, model, ${TOKEN_BUCKET_COLUMNS},
+      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS calls_today,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)) AS calls_week,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)) AS calls_month,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS calls_quarter,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS calls_year,
+      COUNT(*) AS calls_all_time
+    FROM llm_calls
+    WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
+    GROUP BY step_id, provider, model
+    ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
+  `.execute(db);
+  return result.rows.map((row) => ({
+    stepId: row.step_id,
+    provider: row.provider,
+    model: row.model,
+    calls: {
+      today: Number(row.calls_today ?? 0),
+      week: Number(row.calls_week ?? 0),
+      month: Number(row.calls_month ?? 0),
+      quarter: Number(row.calls_quarter ?? 0),
+      year: Number(row.calls_year ?? 0),
+      allTime: Number(row.calls_all_time ?? 0),
+    },
+    input: bucketsOf(row, 'in'),
+    output: bucketsOf(row, 'out'),
+  }));
+}

@@ -18,7 +18,13 @@ import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 import CollapsibleSection from '@/components/collapsible-section';
 import AgentEnabledToggle from '@/components/agent-enabled-toggle';
 import AgentUsagePanel from '@/components/agent-usage-panel';
-import { getAgentTokenUsage, getAgentToolUsage } from '@/lib/agents/agent-usage';
+import {
+  getAgentTokenUsage,
+  getAgentTokenUsageByStep,
+  getAgentToolUsage,
+  getTokenUsageByModel,
+} from '@/lib/agents/agent-usage';
+import { labelStepUsage } from '@/lib/agents/step-usage-labels';
 import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
@@ -126,6 +132,8 @@ export default async function AgentOverviewPage({
     settingsResult,
     ownerDisplay,
     tokenUsage,
+    tokensByModel,
+    tokenStepRows,
     toolUsage,
     optimization,
   ] = await Promise.all([
@@ -136,6 +144,8 @@ export default async function AgentOverviewPage({
       ? Promise.resolve(null)
       : getIdentityDisplay(tenant.id, access.ownerSubject),
     getAgentTokenUsage(dbResult.val, tenant.id, agentId),
+    getTokenUsageByModel(dbResult.val, tenant.id, agentId),
+    getAgentTokenUsageByStep(dbResult.val, tenant.id, agentId),
     getAgentToolUsage(dbResult.val, tenant.id, agentId, TOOL_USAGE_WINDOW_DAYS),
     // The optimizer's latest report — the owner's only; a grantee gets
     // null from the read itself and no panel below.
@@ -385,6 +395,8 @@ export default async function AgentOverviewPage({
           <CollapsibleSection title="Usage">
             <AgentUsagePanel
               tokens={tokenUsage}
+              byModel={tokensByModel}
+              bySteps={labelStepUsage(agent.steps, tokenStepRows)}
               tools={toolUsage}
               toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
             />

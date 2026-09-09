@@ -11,7 +11,13 @@
 import ConnectorIcon from '@/components/connector-icon';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
-import type { UsageBuckets, AgentToolUsageRow } from '@/lib/agents/agent-usage';
+import type {
+  UsageBuckets,
+  AgentToolUsageRow,
+  ModelTokenUsage,
+  StepTokenUsage,
+} from '@/lib/agents/agent-usage';
+import TokenBreakdown from '@/components/token-breakdown';
 
 function connectorLabel(key: string | null): string {
   if (!key) return 'Other';
@@ -141,16 +147,23 @@ function ToolsByConnector({ rows }: { rows: AgentToolUsageRow[] }) {
 
 export default function AgentUsagePanel({
   tokens,
+  byModel,
+  bySteps,
   tools,
   toolWindowDays,
 }: {
   tokens: { input: UsageBuckets; output: UsageBuckets };
+  /** The same tokens split by model (096); omitted, the split is not shown. */
+  byModel?: ModelTokenUsage[];
+  /** And by step — a single agent's only; a roster has no steps in common. */
+  bySteps?: StepTokenUsage[];
   tools: AgentToolUsageRow[];
   toolWindowDays: number;
 }): React.ReactNode {
   return (
     <div className="space-y-5">
       <TokenBuckets input={tokens.input} output={tokens.output} />
+      {byModel ? <TokenBreakdown byModel={byModel} bySteps={bySteps} /> : null}
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Tools used, last {toolWindowDays} days
