@@ -88,16 +88,14 @@ export default async function AdminAgentDetailPage({
         <p className="mb-6 text-sm italic text-gray-400 dark:text-gray-500">Writing a summary…</p>
       ) : null}
 
-      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-        <h2 className="mb-3 text-sm font-semibold">Usage</h2>
-        <AgentUsagePanel
-          tokens={tokenUsage}
-          byModel={byModel}
-          bySteps={bySteps}
-          tools={toolUsage}
-          toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
-        />
-      </div>
+      <h2 className="mb-3 text-sm font-semibold">Usage</h2>
+      <AgentUsagePanel
+        tokens={tokenUsage}
+        byModel={byModel}
+        bySteps={bySteps}
+        tools={toolUsage}
+        toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
+      />
     </div>
   );
 }

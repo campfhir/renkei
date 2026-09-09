@@ -1,8 +1,12 @@
 import { sortAgentRows, type OversightTallies } from './oversight-sort';
-import type { RunBuckets } from './oversight-table';
+import type { TokenUsage, UsageBuckets } from '@/lib/agents/agent-usage';
 
-function buckets(month: number, allTime = month): RunBuckets {
-  return { today: 0, week: 0, month, quarter: month, year: month, allTime };
+function buckets(month: number, allTime = month): UsageBuckets {
+  return { today: 0, yesterday: 0, week: 0, month, quarter: month, year: month, allTime };
+}
+
+function tokens(input: UsageBuckets, output: UsageBuckets = buckets(0)): TokenUsage {
+  return { input, output, cacheRead: buckets(0), cacheWrite: buckets(0) };
 }
 
 const agents = [
@@ -14,8 +18,11 @@ const agents = [
 const tallies: OversightTallies = {
   runsByAgent: { a: buckets(5), b: buckets(9), c: buckets(5) },
   failuresByAgent: { a: buckets(1) },
-  tokensInByAgent: { a: buckets(100, 9_000), b: buckets(3_000, 3_000) },
-  tokensOutByAgent: { c: buckets(40) },
+  tokensByAgent: {
+    a: tokens(buckets(100, 9_000)),
+    b: tokens(buckets(3_000, 3_000)),
+    c: tokens(buckets(0), buckets(40)),
+  },
 };
 
 describe('sortAgentRows', () => {

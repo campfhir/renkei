@@ -47,15 +47,15 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
-        title: 'Token spend per agent on Agent oversight',
+        title: 'Agent oversight as cards, with token spend per agent',
         detail:
-          'Tokens in and out now sit beside runs and failures for every agent, for the period in view, and any numeric column sorts the list — so the most expensive agents are at the top, not a click into each one away. The org total is also split by model.',
+          'Each agent is a card: on/off switch, owner, last run, runs and failures, tokens in with the cached part, tokens out — for the period you pick, now including Yesterday — and a sort puts the most expensive agents first instead of a click into each one. An org card above splits the total by model.',
       },
       {
         kind: 'added',
         title: 'An agent’s tokens broken down by model and by step',
         detail:
-          'An agent’s page shows where its tokens went: which model they ran on, and which step spent them, with the calls that step made. Both the owner’s page and the admin view have it.',
+          'An agent’s usage is a stack of cards for the period you pick: overall, by model, and by step — numbered as the steps outline numbers them, with a model filter. Both the owner’s page and the admin view have it.',
       },
       {
         kind: 'changed',

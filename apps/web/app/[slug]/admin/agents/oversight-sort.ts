@@ -1,41 +1,43 @@
 /**
- * Ordering for the oversight table, kept pure so it is unit-tested away
- * from the component. Numeric columns sort largest first — the point of
+ * Ordering for the oversight cards, kept pure so it is unit-tested away
+ * from the component. Numeric sorts put the largest first — the point of
  * sorting by tokens is finding the agent that costs the most, which is
  * always the top of a descending list — with the agent's name breaking
  * ties so the order is stable between renders. Name sorts ascending.
  */
 
-import type { RunBuckets } from './oversight-table';
+import type { TokenUsage, UsageBuckets } from '@/lib/agents/agent-usage';
 
 export type OversightSortKey = 'name' | 'runs' | 'failures' | 'tokensIn' | 'tokensOut';
 
 export interface OversightTallies {
-  runsByAgent: Record<string, RunBuckets>;
-  failuresByAgent: Record<string, RunBuckets>;
-  tokensInByAgent: Record<string, RunBuckets>;
-  tokensOutByAgent: Record<string, RunBuckets>;
+  runsByAgent: Record<string, UsageBuckets>;
+  failuresByAgent: Record<string, UsageBuckets>;
+  tokensByAgent: Record<string, TokenUsage>;
 }
 
 export function tallyOf(
   tallies: OversightTallies,
   key: Exclude<OversightSortKey, 'name'>,
   agentId: string,
-  bucket: keyof RunBuckets
+  bucket: keyof UsageBuckets
 ): number {
-  const table = {
-    runs: tallies.runsByAgent,
-    failures: tallies.failuresByAgent,
-    tokensIn: tallies.tokensInByAgent,
-    tokensOut: tallies.tokensOutByAgent,
-  }[key];
-  return table[agentId]?.[bucket] ?? 0;
+  switch (key) {
+    case 'runs':
+      return tallies.runsByAgent[agentId]?.[bucket] ?? 0;
+    case 'failures':
+      return tallies.failuresByAgent[agentId]?.[bucket] ?? 0;
+    case 'tokensIn':
+      return tallies.tokensByAgent[agentId]?.input[bucket] ?? 0;
+    case 'tokensOut':
+      return tallies.tokensByAgent[agentId]?.output[bucket] ?? 0;
+  }
 }
 
 export function sortAgentRows<T extends { id: string; name: string }>(
   agents: readonly T[],
   key: OversightSortKey,
-  bucket: keyof RunBuckets,
+  bucket: keyof UsageBuckets,
   tallies: OversightTallies
 ): T[] {
   const byName = (left: T, right: T) =>

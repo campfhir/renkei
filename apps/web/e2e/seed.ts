@@ -1130,7 +1130,7 @@ export async function seed(client: Client): Promise<void> {
             CASE WHEN n <= spread.failures THEN 'failed' ELSE 'succeeded' END,
             NOW() - make_interval(days => spread.days_ago, mins => n),
             NOW() - make_interval(days => spread.days_ago, mins => n - 1)
-     FROM (VALUES (0, 3, 1), (2, 4, 0), (12, 6, 2), (70, 9, 0), (320, 20, 5))
+     FROM (VALUES (0, 3, 1), (1, 2, 1), (2, 4, 0), (12, 6, 2), (70, 9, 0), (320, 20, 5))
        AS spread(days_ago, runs, failures)
      CROSS JOIN LATERAL generate_series(1, spread.runs) AS n`,
     [E2E_TENANT_ID, AGENT_RICH_ID]
@@ -1148,7 +1148,7 @@ export async function seed(client: Client): Promise<void> {
      SELECT $1, $3, $2, gen_random_uuid(), step.id::uuid, 'run', step.provider, step.model,
             step.input_tokens, step.output_tokens, step.cache_read, step.cache_write,
             NOW() - make_interval(days => spread.days_ago, mins => n)
-     FROM (VALUES (0, 3), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)
+     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)
      CROSS JOIN LATERAL generate_series(1, spread.runs) AS n
      CROSS JOIN (VALUES
        ($4, 'anthropic', 'claude-sonnet-5', 1180, 210, 2400, 0),

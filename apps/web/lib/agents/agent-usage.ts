@@ -23,6 +23,7 @@ import { connectorKeyForTool } from '@renkei/tool-outcomes';
 
 export interface UsageBuckets {
   today: number;
+  yesterday: number;
   week: number;
   month: number;
   quarter: number;
@@ -33,24 +34,28 @@ export interface UsageBuckets {
 /** One grouped ledger row: six calendar buckets per token kind, by prefix. */
 interface TokenBucketRow {
   in_today: string;
+  in_yesterday: string;
   in_week: string;
   in_month: string;
   in_quarter: string;
   in_year: string;
   in_all_time: string;
   out_today: string;
+  out_yesterday: string;
   out_week: string;
   out_month: string;
   out_quarter: string;
   out_year: string;
   out_all_time: string;
   cr_today: string;
+  cr_yesterday: string;
   cr_week: string;
   cr_month: string;
   cr_quarter: string;
   cr_year: string;
   cr_all_time: string;
   cw_today: string;
+  cw_yesterday: string;
   cw_week: string;
   cw_month: string;
   cw_quarter: string;
@@ -63,12 +68,21 @@ function idsOf(agentId: string | readonly string[]): string[] {
   return typeof agentId === 'string' ? [agentId] : [...agentId];
 }
 
-const ZERO_BUCKETS: UsageBuckets = { today: 0, week: 0, month: 0, quarter: 0, year: 0, allTime: 0 };
+const ZERO_BUCKETS: UsageBuckets = {
+  today: 0,
+  yesterday: 0,
+  week: 0,
+  month: 0,
+  quarter: 0,
+  year: 0,
+  allTime: 0,
+};
 
 /** The same six calendar buckets, per column prefix, off one grouped row. */
 function bucketsOf(row: TokenBucketRow, prefix: 'in' | 'out' | 'cr' | 'cw'): UsageBuckets {
   return {
     today: Number(row[`${prefix}_today`] ?? 0),
+    yesterday: Number(row[`${prefix}_yesterday`] ?? 0),
     week: Number(row[`${prefix}_week`] ?? 0),
     month: Number(row[`${prefix}_month`] ?? 0),
     quarter: Number(row[`${prefix}_quarter`] ?? 0),
@@ -79,24 +93,28 @@ function bucketsOf(row: TokenBucketRow, prefix: 'in' | 'out' | 'cr' | 'cw'): Usa
 
 const TOKEN_BUCKET_COLUMNS = sql`
   COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS in_today,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS in_yesterday,
   COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
   COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
   COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
   COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
   COALESCE(SUM(input_tokens), 0) AS in_all_time,
   COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS out_today,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS out_yesterday,
   COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
   COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
   COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
   COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
   COALESCE(SUM(output_tokens), 0) AS out_all_time,
   COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS cr_today,
+  COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS cr_yesterday,
   COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS cr_week,
   COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS cr_month,
   COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS cr_quarter,
   COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS cr_year,
   COALESCE(SUM(cache_read_input_tokens), 0) AS cr_all_time,
   COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS cw_today,
+  COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS cw_yesterday,
   COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS cw_week,
   COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS cw_month,
   COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS cw_quarter,
@@ -335,6 +353,36 @@ export async function getAgentTokenTrend(
   }));
 }
 
+/** Every ledger row in the org — runs, optimizer passes and chat alike. */
+export async function getTenantTokenUsage(db: Kysely<DB>, tenantId: string): Promise<TokenUsage> {
+  const result = await sql<TokenBucketRow>`
+    SELECT ${TOKEN_BUCKET_COLUMNS}
+    FROM llm_calls
+    WHERE tenant_id = ${tenantId}
+  `.execute(db);
+  return usageOf(result.rows[0]);
+}
+
+/**
+ * Token buckets for every agent in the org at once, keyed by agent id —
+ * the oversight page's per-card numbers in one query. Every purpose
+ * stamped with the agent counts (its runs and the optimizer's passes over
+ * it), matching the agent's own page; chat spend has no agent and only
+ * reaches the org total.
+ */
+export async function getTokenUsageByAgent(
+  db: Kysely<DB>,
+  tenantId: string
+): Promise<Record<string, TokenUsage>> {
+  const result = await sql<TokenBucketRow & { agent_id: string }>`
+    SELECT agent_id, ${TOKEN_BUCKET_COLUMNS}
+    FROM llm_calls
+    WHERE tenant_id = ${tenantId} AND agent_id IS NOT NULL
+    GROUP BY agent_id
+  `.execute(db);
+  return Object.fromEntries(result.rows.map((row) => [row.agent_id, usageOf(row)]));
+}
+
 export interface ModelTokenUsage extends TokenUsage {
   /** Null on rows written before the ledger recorded the model (096). */
   provider: string | null;
@@ -389,6 +437,8 @@ export interface StepTokenUsage extends TokenUsage {
    * `labelStepUsage`.
    */
   stepName: string | null;
+  /** The step's 1-based position in the definition's pre-order walk, or null with the name. */
+  stepNumber: number | null;
   provider: string | null;
   model: string | null;
   /** Attempts that reached the model — one ledger row each. */
@@ -398,6 +448,7 @@ export interface StepTokenUsage extends TokenUsage {
 interface StepBucketRow extends ModelBucketRow {
   step_id: string | null;
   calls_today: string;
+  calls_yesterday: string;
   calls_week: string;
   calls_month: string;
   calls_quarter: string;
@@ -421,10 +472,11 @@ export async function getAgentTokenUsageByStep(
   db: Kysely<DB>,
   tenantId: string,
   agentId: string
-): Promise<Omit<StepTokenUsage, 'stepName'>[]> {
+): Promise<Omit<StepTokenUsage, 'stepName' | 'stepNumber'>[]> {
   const result = await sql<StepBucketRow>`
     SELECT step_id, provider, model, ${TOKEN_BUCKET_COLUMNS},
       COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS calls_today,
+      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE - 1) AS calls_yesterday,
       COUNT(*) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)) AS calls_week,
       COUNT(*) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)) AS calls_month,
       COUNT(*) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS calls_quarter,
@@ -441,6 +493,7 @@ export async function getAgentTokenUsageByStep(
     model: row.model,
     calls: {
       today: Number(row.calls_today ?? 0),
+      yesterday: Number(row.calls_yesterday ?? 0),
       week: Number(row.calls_week ?? 0),
       month: Number(row.calls_month ?? 0),
       quarter: Number(row.calls_quarter ?? 0),
