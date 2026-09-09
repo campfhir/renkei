@@ -175,7 +175,7 @@ export default function AgentUsagePanel({
   defaultPeriod = 'month',
 }: {
   tokens: TokenUsage;
-  /** The same tokens split by model (096); omitted, the card is not shown. */
+  /** The same tokens split by model (098); omitted, the card is not shown. */
   byModel?: ModelTokenUsage[];
   /** And by step — a single agent's only; a roster has no steps in common. */
   bySteps?: StepTokenUsage[];

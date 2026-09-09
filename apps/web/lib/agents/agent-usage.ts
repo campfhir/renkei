@@ -384,7 +384,7 @@ export async function getTokenUsageByAgent(
 }
 
 export interface ModelTokenUsage extends TokenUsage {
-  /** Null on rows written before the ledger recorded the model (096). */
+  /** Null on rows written before the ledger recorded the model (098). */
   provider: string | null;
   model: string | null;
 }
@@ -395,7 +395,7 @@ interface ModelBucketRow extends TokenBucketRow {
 }
 
 /**
- * Token buckets split by the model they were spent on (096) — the
+ * Token buckets split by the model they were spent on (098) — the
  * breakdown that makes a token count mean something as a cost, since a
  * million tokens on a frontier model and a million on a small one are
  * not the same bill.

@@ -63,6 +63,7 @@ export {
   nodeKind,
   nodeUsesModel,
   parseQuestionFields,
+  referencedTools,
   toolSegments,
   varSegments,
   walkSteps,
@@ -109,6 +110,7 @@ export {
   type QuestionAnswerValue,
   type QuestionAnswersResult,
 } from './question-answers';
+export { chipMention, lintAgentDraft, type LintHint, type Mention } from './lint';
 export {
   normalizeAgentDraft,
   savesByPathCoverage,

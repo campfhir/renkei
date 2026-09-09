@@ -102,6 +102,12 @@ export interface AccessTokenRecord {
    * authorize step. Gates must treat empty as "no role", not "unknown".
    */
   roles: string[];
+  /**
+   * The only tools this token may see or call (migration 096): an agent
+   * run's token names what its steps use. Null = unrestricted, which every
+   * MCP-client token and every person-minted run token is.
+   */
+  toolNames: string[] | null;
 }
 
 export async function storeAccessToken(params: {
@@ -159,6 +165,7 @@ export async function resolveAccessToken(
       'application',
       'agent_id',
       'roles',
+      'tool_names',
     ])
     .where('token_hash', '=', tokenHash)
     .where('tenant_id', '=', tenantId)
@@ -184,6 +191,7 @@ export async function resolveAccessToken(
     application: row.application,
     agentId: row.agent_id,
     roles: row.roles ?? [],
+    toolNames: row.tool_names ?? null,
   };
 }
 

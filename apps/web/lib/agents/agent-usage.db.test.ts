@@ -68,7 +68,8 @@ maybe('token usage by model and by step', () => {
     await recordLlmCall(db, {
       ...base,
       purpose: 'run',
-      inputTokens: 200,
+      // 1,100 read in total, 900 of them from the cache (a portion, per LlmUsage).
+      inputTokens: 1_100,
       outputTokens: 20,
       cacheReadInputTokens: 900,
       cacheWriteInputTokens: 40,
@@ -116,7 +117,7 @@ maybe('token usage by model and by step', () => {
         row.cacheWrite.today,
       ])
     ).toEqual([
-      ['anthropic', 'claude-big', 5_300, 530, 900, 40],
+      ['anthropic', 'claude-big', 6_200, 530, 900, 40],
       ['openai', 'gpt-small', 1_000, 50, 0, 0],
       [null, null, 7, 3, 0, 0],
     ]);
@@ -125,8 +126,8 @@ maybe('token usage by model and by step', () => {
   it('narrows to one agent, leaving the chat out', async () => {
     const rows = await getTokenUsageByModel(db, tenantId, agentId);
     expect(rows.map((row) => [row.model, row.input.allTime])).toEqual([
+      ['claude-big', 1_200],
       ['gpt-small', 1_000],
-      ['claude-big', 300],
       [null, 7],
     ]);
     expect(await getTokenUsageByModel(db, tenantId, [])).toEqual([]);
@@ -144,10 +145,10 @@ maybe('token usage by model and by step', () => {
         row.output.today,
       ])
     ).toEqual([
+      ['Read the inbox', 'claude-big', 2, 1_200, 900, 30],
       [null, 'gpt-small', 1, 1_000, 0, 50],
-      ['Read the inbox', 'claude-big', 2, 300, 900, 30],
       ['Read the inbox', null, 1, 7, 0, 3],
     ]);
-    expect(rows[0].stepId).toBeNull();
+    expect(rows[1].stepId).toBeNull();
   });
 });

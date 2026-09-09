@@ -3,7 +3,7 @@ import { Kysely, sql } from 'kysely';
 /**
  * Which model a token-ledger row was spent on.
  *
- * `llm_calls` (085) has counted tokens per call since it existed, but
+ * `llm_calls` (085, cache breakdown 097) has counted tokens per call since it existed, but
  * never said WHAT they were spent on: a million input tokens on a small
  * model and a million on a frontier one were the same two integers. The
  * run recorded its model-config id (`agent_runs.llm_model_id`), but runs

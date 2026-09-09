@@ -125,8 +125,9 @@ export const EXPECTED_MIGRATIONS = [
   '093-prompt-libraries',
   '094-chat-attachment-origin',
   '095-chat-user-memories',
-  '096-llm-calls-model',
-  '097-llm-calls-cache-tokens',
+  '096-run-token-tools',
+  '097-llm-cache-tokens',
+  '098-llm-calls-model',
 ];
 
 export interface MigrationStatus {

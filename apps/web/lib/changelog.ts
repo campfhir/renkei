@@ -65,9 +65,9 @@ export const CHANGELOG: ChangelogRelease[] = [
       },
       {
         kind: 'added',
-        title: 'Cached prompt tokens counted on their own',
+        title: 'Cached prompt tokens shown on their own',
         detail:
-          'Tokens the model served from its prompt cache — billed at a fraction of the input price — now show separately from fresh input, on an agent’s usage and in the by-model split, instead of being folded into one number or dropped.',
+          'How much of the input the model served from its prompt cache — billed at a fraction of the input price — now shows beside every tokens-in figure, on Agent oversight, on an agent’s usage and in the by-model split.',
       },
     ],
   },

@@ -199,11 +199,7 @@ function usageOf(value: unknown): Partial<LlmUsage> {
   if (typeof usage.prompt_tokens === 'number') out.inputTokens = usage.prompt_tokens;
   if (typeof usage.completion_tokens === 'number') out.outputTokens = usage.completion_tokens;
   if (typeof usage.prompt_tokens_details?.cached_tokens === 'number') {
-    const cached = usage.prompt_tokens_details.cached_tokens;
-    out.cacheReadInputTokens = cached;
-    // `prompt_tokens` INCLUDES the cached part here; the contract counts
-    // the cache separately from the uncached input (see LlmUsage).
-    if (out.inputTokens !== undefined) out.inputTokens = Math.max(0, out.inputTokens - cached);
+    out.cacheReadInputTokens = usage.prompt_tokens_details.cached_tokens;
   }
   return out;
 }

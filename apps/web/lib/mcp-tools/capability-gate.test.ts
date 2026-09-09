@@ -8,7 +8,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { createProjection, OPEN_ORG_POLICY } from '@renkei/capability-registry';
-import { withCapabilityGate, JIRA_CONNECTOR } from './capability-gate';
+import { withCapabilityGate, withToolAllowList, JIRA_CONNECTOR } from './capability-gate';
 
 function fakeServer(): { server: McpServer; registered: string[] } {
   const registered: string[] = [];
@@ -124,5 +124,36 @@ describe('withCapabilityGate', () => {
     registerSampleTools(gated);
 
     expect(registered).toEqual(['jira_search_issues', 'jira_create_issue', 'jira_delete_issue']);
+  });
+});
+
+describe('withToolAllowList', () => {
+  it('registers only the named tools, in registration order', () => {
+    const { server, registered } = fakeServer();
+    const gated = withToolAllowList(server, new Set(['jira_delete_issue', 'jira_search_issues']));
+
+    registerSampleTools(gated);
+
+    expect(registered).toEqual(['jira_search_issues', 'jira_delete_issue']);
+  });
+
+  it('registers nothing for an empty list — a run whose steps name no tool', () => {
+    const { server, registered } = fakeServer();
+
+    registerSampleTools(withToolAllowList(server, new Set()));
+
+    expect(registered).toEqual([]);
+  });
+
+  it('composes under the capability gate: a listed tool the policy refuses stays out', () => {
+    const { server, registered } = fakeServer();
+    const gated = withCapabilityGate(
+      withToolAllowList(server, new Set(['jira_search_issues', 'jira_create_issue'])),
+      createProjection({ ...OPEN_ORG_POLICY, readOnly: true }, PROVISIONED)
+    );
+
+    registerSampleTools(gated);
+
+    expect(registered).toEqual(['jira_search_issues']);
   });
 });

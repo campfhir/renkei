@@ -1,9 +1,10 @@
 /**
  * One token figure the way every card shows it: the number, its label,
- * and the cached part beside it when there is one — "12,400 in · +3,100
- * cached". Cached prompt tokens are additive to the input (see LlmUsage)
- * and billed at a fraction of it, so they sit next to the input rather
- * than inside it.
+ * and the cached part beside it when there is one — "12,400 in · 3,100
+ * cached". Cached prompt tokens are a PORTION of the input (see LlmUsage:
+ * input is every prompt token the model read, cache-served or not) billed
+ * at a fraction of the rest, so the figure says how much of the input
+ * was the cheap kind.
  */
 
 const number = (value: number) => value.toLocaleString('en-US');
@@ -16,7 +17,7 @@ export function TokenStat({
 }: {
   label: string;
   value: number;
-  /** Cache reads riding with this figure; omitted or zero shows nothing. */
+  /** The part of `value` served from the cache; omitted or zero shows nothing. */
   cached?: number;
   emphasis?: boolean;
 }): React.ReactNode {
@@ -29,7 +30,7 @@ export function TokenStat({
         {label}
         {cached ? (
           <span className="ml-1 normal-case tracking-normal text-gray-400 dark:text-gray-500">
-            +{number(cached)} cached
+            · {number(cached)} cached
           </span>
         ) : null}
       </div>

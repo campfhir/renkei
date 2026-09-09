@@ -137,7 +137,7 @@ test('agent overview — usage open', async ({ page }, testInfo) => {
   }
   await expect(page.getByText('Overall · this month')).toBeVisible();
   await page.getByRole('button', { name: 'All time' }).click();
-  // The seeded pre-096 rows: real spend on a real step, with no model on them.
+  // The seeded pre-098 rows: real spend on a real step, with no model on them.
   await expect(page.getByText('Model not recorded').first()).toBeVisible();
   await shot(page, testInfo, 'agent-overview-usage-open', { fullPage: false });
 });

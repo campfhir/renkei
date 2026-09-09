@@ -31,6 +31,42 @@ describe('renderInstruction', () => {
   });
 });
 
+describe('renderInstruction by reference', () => {
+  const long = 'x'.repeat(300);
+  const chips: InstructionSegment[] = [
+    { t: 'text', v: 'Combine ' },
+    { t: 'var', name: 'summary' },
+    { t: 'text', v: ' with ' },
+    { t: 'var', name: 'key' },
+    { t: 'text', v: ' per ' },
+    { t: 'var', name: 'summary' },
+  ];
+
+  it('inlines short values and names long ones, each reported once', () => {
+    const result = renderInstruction(chips, { summary: long, key: 'PROJ-42' }, new Date(), {
+      inlineMax: 200,
+    });
+    expect(result.text).toBe('Combine [summary] with PROJ-42 per [summary]');
+    expect(result.inlined).toEqual(['key']);
+    expect(result.byReference).toEqual(['summary']);
+    expect(result.unbound).toEqual([]);
+  });
+
+  it('keeps everything inline without a threshold — the export and preview reading', () => {
+    const result = renderInstruction(chips, { summary: long, key: 'PROJ-42' });
+    expect(result.text).toBe(`Combine ${long} with PROJ-42 per ${long}`);
+    expect(result.inlined).toEqual(['summary', 'key']);
+    expect(result.byReference).toEqual([]);
+  });
+
+  it('reports an unbound chip as unbound, not as inlined or by reference', () => {
+    const result = renderInstruction(chips, { key: 'PROJ-42' }, new Date(), { inlineMax: 200 });
+    expect(result.unbound).toEqual(['summary', 'summary']);
+    expect(result.inlined).toEqual(['key']);
+    expect(result.byReference).toEqual([]);
+  });
+});
+
 describe('instructionPreview', () => {
   it('brackets chips so history reads at a glance', () => {
     expect(instructionPreview(segments)).toBe(

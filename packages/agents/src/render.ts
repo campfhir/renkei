@@ -22,6 +22,23 @@ export interface RenderResult {
   text: string;
   /** Var chips that had no value — recorded on the run as warnings. */
   unbound: string[];
+  /** Var chips whose value went into the text itself, each name once. */
+  inlined: string[];
+  /**
+   * Var chips rendered as `[name]` because the value was longer than the
+   * caller's inlineMax, each name once — the caller lists those values
+   * once elsewhere instead of pasting them into the sentence.
+   */
+  byReference: string[];
+}
+
+export interface RenderOptions {
+  /**
+   * The longest value rendered inline. A longer one renders as `[name]`
+   * and is reported in byReference. Omitted = everything inline, the
+   * reading a preview or an export wants.
+   */
+  inlineMax?: number;
 }
 
 /** Minute and hour shifts snap to the hour; larger units to their own. */
@@ -73,9 +90,12 @@ export function renderInstruction(
   segments: InstructionSegment[],
   variables: Record<string, string>,
   /** Injectable clock: one instant for a whole render, and pinnable in tests. */
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: RenderOptions = {}
 ): RenderResult {
   const unbound: string[] = [];
+  const inlined = new Set<string>();
+  const byReference = new Set<string>();
   const parts = segments.map((segment) => {
     switch (segment.t) {
       case 'text':
@@ -90,11 +110,19 @@ export function renderInstruction(
           unbound.push(segment.name);
           return `(unknown: ${segment.name})`;
         }
+        // A long value (a summary, a thread) does not belong in the middle
+        // of a sentence, and a chip used twice must not paste it twice:
+        // it renders as its name and is listed once by the caller.
+        if (options.inlineMax !== undefined && value.length > options.inlineMax) {
+          byReference.add(segment.name);
+          return `[${segment.name}]`;
+        }
+        inlined.add(segment.name);
         return value;
       }
     }
   });
-  return { text: parts.join(''), unbound };
+  return { text: parts.join(''), unbound, inlined: [...inlined], byReference: [...byReference] };
 }
 
 /** The plain-text reading of an instruction, for summaries and history. */

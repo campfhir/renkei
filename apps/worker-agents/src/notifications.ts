@@ -89,6 +89,14 @@ function textOf(result: { content: { type: string; text?: string }[] }): string 
     .join('\n');
 }
 
+/**
+ * The tools the notifier itself calls. A run's token is minted with
+ * exactly the tools its steps name plus these (migration 096), so an
+ * owner notification can go out even from a run whose steps never touch
+ * mail or WebEx.
+ */
+export const NOTIFIER_TOOLS = ['outlook_send_mail', 'webex_note_to_self'] as const;
+
 export function notificationDeliverer(mcp: McpClient, toolsByName: Map<string, McpToolInfo>) {
   const toolCalls: DelivererToolCallRecord[] = [];
   const notes: string[] = [];
@@ -137,7 +145,7 @@ export function notificationDeliverer(mcp: McpClient, toolsByName: Map<string, M
       if (!input.ownerEmail) {
         notes.push('Email skipped — no email address is recorded for you.');
       } else {
-        await deliver('Email', 'outlook_send_mail', {
+        await deliver('Email', NOTIFIER_TOOLS[0], {
           to: [input.ownerEmail],
           subject: input.heading,
           body: input.body,
@@ -145,7 +153,7 @@ export function notificationDeliverer(mcp: McpClient, toolsByName: Map<string, M
       }
     }
     if (input.webex) {
-      await deliver('WebEx note', 'webex_note_to_self', {
+      await deliver('WebEx note', NOTIFIER_TOOLS[1], {
         markdown: `**${input.heading}**\n\n${input.body}`,
       });
     }

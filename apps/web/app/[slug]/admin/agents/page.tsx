@@ -23,7 +23,7 @@ import OversightCards, { type RunBuckets } from './oversight-cards';
  * Run and failure tallies come from the durable run log (migration 083),
  * which survives the run-retention prune, so year and all-time are real.
  * Token tallies come from the token ledger (085), per agent and per model
- * (096, cache counts 097) — so the agent that costs the most is a sort
+ * (098, cache breakdown 097) — so the agent that costs the most is a sort
  * away, not a click into each one. This page fetches every bucket; the
  * client cards show one period at a time behind a toggle that drives the
  * org card and every agent card together.

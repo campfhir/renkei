@@ -20,7 +20,6 @@ import {
   type ForEachLoopStep,
   type GroupStep,
   type TerminalStep,
-  type ValidationIssue,
 } from '@renkei/agents';
 import { randomUUID } from '@/lib/agents/uuid';
 
@@ -490,23 +489,24 @@ export function moveTargets(nodes: AgentStepNode[], id: string): MoveTarget[] {
  * 'failureHandling.1', '' for the node itself) so the editors can style
  * the offending input instead of leaving the reader to guess.
  */
-export function issuesByNode(
+export function issuesByNode<T extends { path: string }>(
   nodes: AgentStepNode[],
-  issues: ValidationIssue[]
-): Map<string, { field: string; message: string }[]> {
+  issues: T[]
+): Map<string, (Omit<T, 'path'> & { field: string })[]> {
   const prefixes = walkSteps(nodes)
     .map(({ node, path }) => ({ id: node.id, prefix: path }))
     // Longest first: the first prefix that matches IS the longest match.
     .sort((a, b) => b.prefix.length - a.prefix.length);
-  const out = new Map<string, { field: string; message: string }[]>();
+  const out = new Map<string, (Omit<T, 'path'> & { field: string })[]>();
   for (const issue of issues) {
     const owner = prefixes.find(
       ({ prefix }) => issue.path === prefix || issue.path.startsWith(`${prefix}.`)
     );
     if (!owner) continue;
     const list = out.get(owner.id) ?? [];
-    const field = issue.path === owner.prefix ? '' : issue.path.slice(owner.prefix.length + 1);
-    list.push({ field, message: issue.message });
+    const { path, ...rest } = issue;
+    const field = path === owner.prefix ? '' : path.slice(owner.prefix.length + 1);
+    list.push({ ...rest, field });
     out.set(owner.id, list);
   }
   return out;

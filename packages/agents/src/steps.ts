@@ -1108,6 +1108,29 @@ export function flattenActionSteps(nodes: AgentStepNode[]): ActionStep[] {
   return walkSteps(nodes).flatMap(({ node }) => (isActionStepNode(node) ? [node] : []));
 }
 
+/**
+ * Every tool a run of this document can call: each action step's own tool
+ * and every tool chip in its failure-handling guidance (offered on the
+ * retry attempts that guidance steers), minus the agent's blocked set.
+ * Known before the run starts — the snapshot is frozen at enqueue — so the
+ * run token is minted with exactly this list (migration 096) and the
+ * gateway registers nothing else for it. Sorted and deduplicated, so equal
+ * sets read equal wherever the list is compared or keyed.
+ */
+export function referencedTools(
+  nodes: AgentStepNode[],
+  blocked: ReadonlySet<string> = new Set()
+): string[] {
+  const names = new Set<string>();
+  for (const node of flattenActionSteps(nodes)) {
+    if (node.tool) names.add(node.tool);
+    for (const handling of node.failureHandling) {
+      for (const name of toolSegments(handling.guidance ?? [])) names.add(name);
+    }
+  }
+  return [...names].filter((name) => !blocked.has(name)).sort();
+}
+
 /** Total node count — container nodes count 1 (their evaluation/structure costs a step). */
 export function countNodes(nodes: AgentStepNode[]): number {
   return walkSteps(nodes).length;

@@ -53,6 +53,8 @@ export type InsertKind = 'step' | 'branch' | 'loop' | 'group' | 'terminal';
 interface CanvasHandlers {
   selection: BuilderSelection | null;
   issuesFor: (nodeId: string) => number;
+  /** Lint hints per node — an amber badge where there is no red one. */
+  hintsFor: (nodeId: string) => number;
   onSelect: (selection: BuilderSelection | null) => void;
   onInsert: (location: InsertLocation, kind: InsertKind) => void;
   onMove: (id: string, direction: -1 | 1) => void;
@@ -517,6 +519,7 @@ function NodeBlock({
             ordinal={ordinal}
             selected={selectedId === node.id}
             issueCount={handlers.issuesFor(node.id)}
+            hintCount={handlers.hintsFor(node.id)}
             onSelect={onSelect}
           />
         );
@@ -527,6 +530,7 @@ function NodeBlock({
             ordinal={ordinal}
             selected={selectedId === node.id}
             issueCount={handlers.issuesFor(node.id)}
+            hintCount={handlers.hintsFor(node.id)}
             onSelect={onSelect}
           />
         );
@@ -558,6 +562,7 @@ function NodeBlock({
             ordinal={ordinal}
             selected={selectedId === node.id}
             issueCount={handlers.issuesFor(node.id)}
+            hintCount={handlers.hintsFor(node.id)}
             onSelect={onSelect}
           />
         );
@@ -684,6 +689,7 @@ export function FlowCanvas({
   otherAgents,
   selection,
   issuesFor,
+  hintsFor,
   triggerIssues,
   stepsIssues,
   onSelect,
@@ -720,6 +726,7 @@ export function FlowCanvas({
   const handlers: CanvasHandlers = {
     selection,
     issuesFor,
+    hintsFor,
     onSelect,
     onInsert,
     onMove,

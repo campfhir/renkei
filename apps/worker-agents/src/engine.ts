@@ -53,6 +53,7 @@ import {
   type LoopStep,
   type TerminalStep,
   type UntilLoopStep,
+  referencedTools,
 } from '@renkei/agents';
 import {
   resolveAgentLlm,
@@ -64,7 +65,7 @@ import {
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
 import { toolKindOf } from '@renkei/tool-outcomes';
-import { notifierFor, notificationDeliverer, type Notifier } from './notifications';
+import { NOTIFIER_TOOLS, notifierFor, notificationDeliverer, type Notifier } from './notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
@@ -94,7 +95,9 @@ import {
   LOOP_DECISION_DEF,
   LOOP_DECISION_TOOL,
   systemPromptWith,
+  withRunContext,
   outcomeGuideFor,
+  usesTime,
   NORMAL_TOOL_CAP,
   CORRECTIVE_TOOL_CAP,
   type PromptMessage,
@@ -261,7 +264,7 @@ interface AttemptOutcome {
   /** A note finish_step asked to carry into future runs (agent memory). */
   remember: string | null;
   toolCalls: ToolCallRecord[];
-  usage: AttemptUsage;
+  usage: UsageTotals;
   unbound: string[];
   resolvedInstruction: string;
   /**
@@ -294,7 +297,7 @@ interface RunContextText {
   /**
    * The agent's standing guardrails, live-read from the agents row (never
    * snapshotted — tightening a rule must bite in-flight runs immediately)
-   * and injected IN FULL into every model call. '' = none.
+   * and injected IN FULL into every model call's system prompt. '' = none.
    */
   guardrailsText: string;
   /**
@@ -307,6 +310,13 @@ interface RunContextText {
    * silent one so the field is never undefined mid-run.
    */
   notifier: Notifier;
+  /**
+   * The item vars of every foreach loop the run is currently inside — what
+   * a step must see under "Known information" without a chip naming it.
+   * Set by the frame loop before each dispatch; rides here for the same
+   * reason the notifier does (the bag already reaches every builder).
+   */
+  liveInputs: ReadonlySet<string>;
 }
 
 /**
@@ -318,6 +328,40 @@ const SILENT_NOTIFIER: Notifier = {
   runStarted: async () => undefined,
   runFinished: async () => undefined,
 };
+
+/**
+ * Token spend summed over an attempt's turns. inputTokens is every prompt
+ * token the model read (the contract's meaning, cache-served or not); the
+ * cache fields are its breakdown, null when no turn reported one — the
+ * ledgers (migration 097) keep that as "not reported" rather than 0.
+ */
+interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+}
+
+function emptyUsage(): UsageTotals {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: null,
+    cacheWriteInputTokens: null,
+  };
+}
+
+function addUsage(totals: UsageTotals, usage: LlmUsage): void {
+  totals.inputTokens += usage.inputTokens;
+  totals.outputTokens += usage.outputTokens;
+  if (usage.cacheReadInputTokens !== undefined) {
+    totals.cacheReadInputTokens = (totals.cacheReadInputTokens ?? 0) + usage.cacheReadInputTokens;
+  }
+  if (usage.cacheWriteInputTokens !== undefined) {
+    totals.cacheWriteInputTokens =
+      (totals.cacheWriteInputTokens ?? 0) + usage.cacheWriteInputTokens;
+  }
+}
 
 /** agents.blocked_tools jsonb → the runtime's refusal set. */
 function blockedToolsOf(value: unknown): Set<string> {
@@ -500,6 +544,15 @@ interface LoopFrame {
 
 type Frame = SeqFrame | LoopFrame;
 
+/** The item vars bound by every enclosing foreach loop, outermost first. */
+function liveItemVars(stack: Frame[]): Set<string> {
+  const names = new Set<string>();
+  for (const frame of stack) {
+    if (frame.kind === 'loop' && frame.loop.mode === 'foreach') names.add(frame.loop.itemVar);
+  }
+  return names;
+}
+
 /** The innermost loop's iteration, or 0 outside any loop. */
 function currentIteration(stack: Frame[]): number {
   for (let i = stack.length - 1; i >= 0; i -= 1) {
@@ -681,21 +734,36 @@ function finishArgsOf(input: unknown): {
   }
   const saveItems = Array.isArray(args.saveItems)
     ? args.saveItems
-        .flatMap((entry) => (typeof entry === 'string' && entry ? [entry] : []))
+        .flatMap((entry) => (typeof entry === 'string' && entry ? [stripToolResidue(entry)] : []))
+        .filter(Boolean)
         .slice(0, SAVE_ITEMS_MAX)
         .map((entry) => clip(entry, SAVE_ITEM_CHARS))
     : null;
+  const saveValue = typeof args.saveValue === 'string' ? stripToolResidue(args.saveValue) : null;
+  const remember = typeof args.remember === 'string' ? stripToolResidue(args.remember) : '';
   return {
     outcome,
     code: typeof args.code === 'string' ? args.code : null,
-    summary: typeof args.summary === 'string' ? args.summary : '',
-    saveValue: typeof args.saveValue === 'string' ? args.saveValue : null,
+    summary: typeof args.summary === 'string' ? stripToolResidue(args.summary) : '',
+    saveValue,
     saveItems: saveItems && saveItems.length > 0 ? saveItems : null,
     stop: args.stop === true,
     quiet: args.quiet === true,
-    remember:
-      typeof args.remember === 'string' && args.remember.trim() ? args.remember.trim() : null,
+    remember: remember || null,
   };
+}
+
+/**
+ * Trailing tool-call markup a model sometimes leaves inside a string
+ * argument (`</saveValue>\n</invoke>` at the end of a saved value, seen in
+ * production). Bound as-is, it rode into every later step's prompt and
+ * into the record. Only closing tags at the very end are stripped — a
+ * value that legitimately contains markup mid-text is untouched.
+ */
+const TOOL_RESIDUE = /(?:\s*<\/[a-z_][\w:-]*>)+\s*$/i;
+
+function stripToolResidue(text: string): string {
+  return text.replace(TOOL_RESIDUE, '').trim();
 }
 
 /**
@@ -720,29 +788,6 @@ function askPersonArgsOf(
   };
 }
 
-/**
- * An attempt's spend summed over its model turns: `LlmUsage` with the
- * cache counts always present, so the ledger row and the attempt row can
- * be written without a null check at every site.
- */
-interface AttemptUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadInputTokens: number;
-  cacheWriteInputTokens: number;
-}
-
-function emptyUsage(): AttemptUsage {
-  return { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
-}
-
-function addUsage(total: AttemptUsage, turn: LlmUsage): void {
-  total.inputTokens += turn.inputTokens;
-  total.outputTokens += turn.outputTokens;
-  total.cacheReadInputTokens += turn.cacheReadInputTokens ?? 0;
-  total.cacheWriteInputTokens += turn.cacheWriteInputTokens ?? 0;
-}
-
 export function createAgentRunHandler(deps: EngineDeps) {
   const db = deps.db;
   const createClient =
@@ -762,7 +807,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
    */
   async function recordUsage(
     run: RunRow,
-    usage: AttemptUsage,
+    usage: UsageTotals,
     stepId: string,
     llm: ResolvedLlm
   ): Promise<void> {
@@ -776,10 +821,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       purpose: 'run',
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
-      cacheReadInputTokens: usage.cacheReadInputTokens,
-      cacheWriteInputTokens: usage.cacheWriteInputTokens,
+      ...(usage.cacheReadInputTokens !== null
+        ? { cacheReadInputTokens: usage.cacheReadInputTokens }
+        : {}),
+      ...(usage.cacheWriteInputTokens !== null
+        ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
+        : {}),
       // The model this attempt's turns actually went to — every turn of
-      // one attempt runs on the one resolved model.
+      // one attempt runs on the one resolved model (migration 098).
       model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
     });
     if (!ledger.ok) {
@@ -954,11 +1003,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
     const deadline = startedAt.getTime() + settings.agentRunTimeoutMinutes * 60_000;
 
+    // The token names the only tools this run may see and call (migration
+    // 096): what the snapshot's steps and retry guidance reference, minus
+    // the agent's blocked set, plus the notifier's own. The gateway then
+    // registers nothing else for it — listTools below returns a handful of
+    // schemas instead of the owner's whole surface, and no tool a step did
+    // not name can be reached even by mistake.
+    const blockedTools = blockedToolsOf(agentRow.blocked_tools);
+    const runTools = [...referencedTools(nodes, blockedTools), ...NOTIFIER_TOOLS];
     const token = await mint(db, {
       tenantId,
       subject: run.owner_subject,
       agentId: run.agent_id,
       ttlSeconds: settings.agentRunTimeoutMinutes * 60 + TOKEN_SLACK_SECONDS,
+      tools: runTools,
     });
 
     try {
@@ -987,7 +1045,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         )
       );
 
-      // The agent's carried context: memory (earlier runs' breadcrumbs)
+      // The agent's carried context: memory (what earlier runs chose to remember)
       // and its own knowledge notes, both bounded at render time — the
       // read-side budget is what keeps prompts safe however large either
       // store grows. Best-effort: an unreadable memory degrades the run to
@@ -1011,7 +1069,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // approval pause re-enters here, and "started" arriving twice for one
       // run would be worse than not having it at all. Off by default.
       if (run.status === 'queued') void context.notifier.runStarted();
-      const blockedTools = blockedToolsOf(agentRow.blocked_tools);
 
       // Crash-resume rebuilds the frame stack from where current_step_id
       // sits in the tree; a fresh run starts one frame at the top.
@@ -1025,6 +1082,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             // what this iteration saved (if configured), then decide
             // whether another round runs.
             await collectIteration(run, frame, vars, lists);
+            context.liveInputs = liveItemVars(stack);
             const boundary = await loopBoundary(
               run,
               frame,
@@ -1079,6 +1137,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           await finalizeRun(run, 'canceled', null, null, vars, true);
           return;
         }
+        context.liveInputs = liveItemVars(stack);
 
         // Exhaustive dispatch on the node kind: a kind this switch does not
         // handle is a compile error, never a silent fall-through into the
@@ -1309,7 +1368,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
     // guardrailsText is filled by the caller from the agents row it
     // already read — one query, not two.
-    return { memoryText, knowledgeText, guardrailsText: '', notifier: SILENT_NOTIFIER };
+    return {
+      memoryText,
+      knowledgeText,
+      guardrailsText: '',
+      notifier: SILENT_NOTIFIER,
+      liveInputs: new Set(),
+    };
   }
 
   /** Builtins + trigger.* from initial_state; list-valued inputs also land in `lists`. */
@@ -1637,7 +1702,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome_code: outcome.outcomeCode,
           tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
           input_tokens: outcome.usage.inputTokens,
+
           output_tokens: outcome.usage.outputTokens,
+
+          cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
+
+          cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
           detail: detailJson,
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
@@ -1648,14 +1718,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       if (outcome.remember) {
         // The step asked future runs to know something. Best-effort: a
-        // memory write must never change this attempt's outcome.
+        // memory write must never change this attempt's outcome. A NEW
+        // note also reaches the rest of THIS run: the system prompt's
+        // memory block is re-rendered, which costs the run one cache
+        // write for the prefix (memory sits last in the block for exactly
+        // that reason) and stops a later step or loop round acting on
+        // something this run has already handled.
         try {
-          await appendAgentMemory(db, {
+          const { inserted } = await appendAgentMemory(db, {
             tenantId: run.tenant_id,
             agentId: run.agent_id,
             content: outcome.remember,
             runId: run.id,
           });
+          if (inserted) {
+            context.memoryText = renderAgentMemory(
+              await readAgentMemory(db, run.tenant_id, run.agent_id)
+            );
+          }
         } catch (error) {
           logger.warn('memory append failed for run {runId}: {error}', {
             component: 'worker-agents/engine',
@@ -2569,7 +2649,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome: 'guard',
             tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
             input_tokens: outcome.usage.inputTokens,
+
             output_tokens: outcome.usage.outputTokens,
+
+            cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
             detail: clip(
               JSON.stringify({
                 pauseKind: 'approval',
@@ -2606,7 +2691,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome: 'question',
             tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
             input_tokens: outcome.usage.inputTokens,
+
             output_tokens: outcome.usage.outputTokens,
+
+            cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
             detail: clip(
               JSON.stringify({
                 pauseKind: 'question',
@@ -2914,10 +3004,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         branch,
         variables: vars,
         attempt,
+        inputs: [...context.liveInputs],
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
-        ...(context.memoryText ? { memoryText: context.memoryText } : {}),
-        ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
-        ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
       const promptText = promptTextOf(built.messages);
@@ -2929,6 +3017,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       let decidedReason = '';
       const choosePathDef = buildChoosePathDef(branch);
       const branchSystem = branch.paths.length === 2 ? BRANCH_SYSTEM_PROMPT : ROUTER_SYSTEM_PROMPT;
+      // One tool list for every turn (it heads the cached prefix); the last
+      // turn forces the decision through tool_choice instead of narrowing.
+      const branchTools = usesTime([branch.condition])
+        ? [choosePathDef, RESOLVE_TIME_DEF]
+        : [choosePathDef];
       const timeNotes: string[] = [];
       // A short turn cap: the decision should come immediately; the spare
       // turns cover a model that answered in prose first, or spent one
@@ -2937,13 +3030,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
       for (let turn = 0; turn < CONDITION_TURNS && !decidedPath; turn += 1) {
         const lastTurn = turn === CONDITION_TURNS - 1;
         const completion = await llm.provider.complete({
-          system: branchSystem,
+          system: withRunContext(branchSystem, context),
           messages,
-          tools: lastTurn ? [choosePathDef] : [choosePathDef, RESOLVE_TIME_DEF],
+          tools: branchTools,
           // 'any' rather than the named tool: forcing choose_path would make
           // resolve_time unreachable, which is the whole point of offering
           // it. Either way the model must call SOMETHING.
           toolChoice: lastTurn ? { name: CHOOSE_PATH_TOOL } : 'any',
+          promptCache: true,
+
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
@@ -3032,7 +3127,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome_code: null,
             tool_call_count: 0,
             input_tokens: usage.inputTokens,
+
             output_tokens: usage.outputTokens,
+
+            cache_read_input_tokens: usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: usage.cacheWriteInputTokens,
             detail: clip(JSON.stringify(detail), DETAIL_CHARS),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
@@ -3061,7 +3161,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome_code: 'other',
           tool_call_count: 0,
           input_tokens: usage.inputTokens,
+
           output_tokens: usage.outputTokens,
+
+          cache_read_input_tokens: usage.cacheReadInputTokens,
+
+          cache_write_input_tokens: usage.cacheWriteInputTokens,
           detail: clip(JSON.stringify(detail), DETAIL_CHARS),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
@@ -3182,13 +3287,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const built = buildLoopConditionMessages({
         loop,
+        inputs: [...context.liveInputs],
         iteration,
         variables: vars,
         attempt,
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
-        ...(context.memoryText ? { memoryText: context.memoryText } : {}),
-        ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
-        ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
       const promptText = promptTextOf(built.messages);
@@ -3199,17 +3302,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
       let decided: 'finished' | 'continue' | null = null;
       let decidedReason = '';
       const timeNotes: string[] = [];
-      // Same shape as a branch decision: free date lookups are allowed on
-      // every turn but the last, where the verdict is forced alone. An
-      // until-loop asking "has it been an hour yet?" is exactly the
-      // arithmetic worth taking out of the model's head.
+      // Same shape as a branch decision: free date lookups (when the
+      // condition is about time) on every turn but the last, where the
+      // verdict is forced through tool_choice — the tool list itself never
+      // changes, it heads the cached prefix. An until-loop asking "has it
+      // been an hour yet?" is exactly the arithmetic worth taking out of
+      // the model's head.
+      const loopTools = usesTime([loop.condition])
+        ? [LOOP_DECISION_DEF, RESOLVE_TIME_DEF]
+        : [LOOP_DECISION_DEF];
       for (let turn = 0; turn < CONDITION_TURNS && !decided; turn += 1) {
         const lastTurn = turn === CONDITION_TURNS - 1;
         const completion = await llm.provider.complete({
-          system: LOOP_SYSTEM_PROMPT,
+          system: withRunContext(LOOP_SYSTEM_PROMPT, context),
           messages,
-          tools: lastTurn ? [LOOP_DECISION_DEF] : [LOOP_DECISION_DEF, RESOLVE_TIME_DEF],
+          tools: loopTools,
           toolChoice: lastTurn ? { name: LOOP_DECISION_TOOL } : 'any',
+          promptCache: true,
+
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
@@ -3289,7 +3399,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome_code: null,
             tool_call_count: 0,
             input_tokens: usage.inputTokens,
+
             output_tokens: usage.outputTokens,
+
+            cache_read_input_tokens: usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: usage.cacheWriteInputTokens,
             detail: clip(JSON.stringify(detail), DETAIL_CHARS),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
@@ -3316,7 +3431,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome_code: 'other',
           tool_call_count: 0,
           input_tokens: usage.inputTokens,
+
           output_tokens: usage.outputTokens,
+
+          cache_read_input_tokens: usage.cacheReadInputTokens,
+
+          cache_write_input_tokens: usage.cacheWriteInputTokens,
           detail: clip(JSON.stringify(detail), DETAIL_CHARS),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
@@ -3355,18 +3475,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
     const outcomeGuide = outcomeGuideFor(step, attemptVars);
+    // resolve_time only where the call can use it — decided from the step's
+    // own prose and its tool's parameters, before the model sees anything.
+    const primaryTool = step.tool;
+    const offersTime = usesTime(
+      [step.instruction, ...step.failureHandling.map((handling) => handling.guidance ?? [])],
+      primaryTool ? toolsByName.get(primaryTool)?.inputSchema : undefined
+    );
     const built = buildAttemptMessages({
       step,
       attempt,
       variables: vars,
       toolBudget: toolCap,
+      offersTime,
+      inputs: [...context.liveInputs],
       guidanceText,
       previousFailure,
       savesItemsForLoop,
       ...(outcomeGuide ? { outcomeGuide } : {}),
-      ...(context.memoryText ? { memoryText: context.memoryText } : {}),
-      ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
-      ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
     });
 
     // The step's one tool, plus (on corrective attempts) the guidance's
@@ -3379,15 +3505,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // "yesterday 19:00 Los Angeles" means without spending its only call.
     const offered: LlmToolDef[] = [
       FINISH_STEP_DEF,
-      RESOLVE_TIME_DEF,
+      ...(offersTime ? [RESOLVE_TIME_DEF] : []),
       ...(canAskQuestions ? [ASK_PERSON_DEF] : []),
     ];
-    const primaryTool = step.tool;
-    const offeredNames = new Set<string>(
-      canAskQuestions
-        ? [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL, ASK_PERSON_TOOL]
-        : [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL]
-    );
+    const offeredNames = new Set<string>(offered.map((tool) => tool.name));
     const offer = (name: string) => {
       if (blockedTools.has(name)) return;
       const info = toolsByName.get(name);
@@ -3443,11 +3564,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (await isCanceled(run.id)) {
         throw new RunCanceled();
       }
+      // The tool list never changes within an attempt: tools render first
+      // in the cached prompt prefix, so narrowing them would throw the
+      // whole cache away. Exhaustion is expressed through tool_choice
+      // alone — a forced finish_step leaves the others uncallable anyway.
       const completion = await llm.provider.complete({
-        system: systemPromptWith(context.guardrailsText || undefined),
+        system: systemPromptWith(context),
         messages,
-        tools: budgetExhausted ? [FINISH_STEP_DEF] : offered,
+        tools: offered,
         toolChoice: budgetExhausted ? { name: FINISH_STEP_TOOL } : 'any',
+        promptCache: true,
+
         maxTokens: llm.maxOutputTokens,
         ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
       });
@@ -3549,7 +3676,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // against the budget. Placed ahead of the budget check on purpose
         // — a model that has spent its calls must still be able to get a
         // date right while declaring its outcome.
-        if (use.name === RESOLVE_TIME_TOOL) {
+        if (use.name === RESOLVE_TIME_TOOL && offersTime) {
           const resolved = resolveTime(resolveTimeArgsOf(use.input));
           results.push({
             type: 'tool_result',
@@ -4013,36 +4140,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
         agentId: run.agent_id,
       });
     }
-    // The automatic breadcrumb — what makes "did I already handle this?"
-    // answerable even when no step remembered anything explicitly. Carries
-    // the trigger's identifying vars (messageId etc.), never bodies.
-    try {
-      const idsOfInterest = [
-        'trigger.messageId',
-        'trigger.roomId',
-        'trigger.from',
-        'trigger.sender',
-        'trigger.subject',
-        'trigger.scheduledFor',
-      ];
-      const idText = idsOfInterest
-        .filter((key) => vars[key])
-        .map((key) => `${key.slice('trigger.'.length)}=${clip(vars[key], 120)}`)
-        .join(', ');
-      await appendAgentMemory(db, {
-        tenantId: run.tenant_id,
-        agentId: run.agent_id,
-        content: `Run ${status}${idText ? ` (${idText})` : ''}${error ? ` — ${clip(error, 160)}` : ''}`,
-        runId: run.id,
-      });
-    } catch (memoryError) {
-      logger.warn('finalize memory append failed for run {runId}: {error}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-        subject: run.owner_subject,
-        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
-      });
-    }
+    // No automatic memory entry: what future runs need to know is a step's
+    // explicit `remember` (finishAttempt), never a per-run breadcrumb — an
+    // agent firing every few minutes wrote one for every run, and every
+    // later run re-read all of them on every call. Trigger deduplication
+    // is the firing ledger's job (agent_trigger_firings), not memory's.
     if (deps.onFinalized) {
       try {
         await deps.onFinalized({
