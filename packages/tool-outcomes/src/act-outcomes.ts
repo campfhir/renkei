@@ -1037,6 +1037,18 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Forgot part of an agent’s memory',
     short: 'Forgot agent memory',
   },
+  user_memory_remember: {
+    category: 'created',
+    entity: 'memory',
+    label: 'Remembered something about you',
+    short: 'Added to your memory',
+  },
+  user_memory_forget: {
+    category: 'deleted',
+    entity: 'memory',
+    label: 'Forgot part of your memory',
+    short: 'Forgot your memory',
+  },
   fileshare_request_file_upload: {
     category: 'created',
     entity: 'file',

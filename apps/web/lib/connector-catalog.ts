@@ -150,6 +150,16 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'log_*',
   },
   {
+    capabilityKey: 'user-memory',
+    // No connector_configs row: this reads and writes chat_user_memories,
+    // Renkei's own table — the key exists so the identifier stays
+    // consistent.
+    configKey: 'user-memory',
+    label: 'Renkei memory',
+    summary: "A person's own memory, carried across every chat they own — read and add to it.",
+    toolPrefix: 'user_memory_*',
+  },
+  {
     capabilityKey: 'knowledge',
     configKey: 'embeddings',
     label: 'Knowledge',
