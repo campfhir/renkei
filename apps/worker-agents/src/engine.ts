@@ -60,6 +60,7 @@ import {
   type LlmContentBlock,
   type LlmMessage,
   type LlmToolDef,
+  type LlmUsage,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
@@ -262,7 +263,7 @@ interface AttemptOutcome {
   /** A note finish_step asked to carry into future runs (agent memory). */
   remember: string | null;
   toolCalls: ToolCallRecord[];
-  usage: { inputTokens: number; outputTokens: number };
+  usage: UsageTotals;
   unbound: string[];
   resolvedInstruction: string;
   /**
@@ -319,6 +320,40 @@ const SILENT_NOTIFIER: Notifier = {
   runStarted: async () => undefined,
   runFinished: async () => undefined,
 };
+
+/**
+ * Token spend summed over an attempt's turns. inputTokens is every prompt
+ * token the model read (the contract's meaning, cache-served or not); the
+ * cache fields are its breakdown, null when no turn reported one — the
+ * ledgers (migration 097) keep that as "not reported" rather than 0.
+ */
+interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+}
+
+function emptyUsage(): UsageTotals {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: null,
+    cacheWriteInputTokens: null,
+  };
+}
+
+function addUsage(totals: UsageTotals, usage: LlmUsage): void {
+  totals.inputTokens += usage.inputTokens;
+  totals.outputTokens += usage.outputTokens;
+  if (usage.cacheReadInputTokens !== undefined) {
+    totals.cacheReadInputTokens = (totals.cacheReadInputTokens ?? 0) + usage.cacheReadInputTokens;
+  }
+  if (usage.cacheWriteInputTokens !== undefined) {
+    totals.cacheWriteInputTokens =
+      (totals.cacheWriteInputTokens ?? 0) + usage.cacheWriteInputTokens;
+  }
+}
 
 /** agents.blocked_tools jsonb → the runtime's refusal set. */
 function blockedToolsOf(value: unknown): Set<string> {
@@ -738,11 +773,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
    * attempt, or a step that never reached the model). Best effort — a
    * finished attempt must not fail over its bookkeeping.
    */
-  async function recordUsage(
-    run: RunRow,
-    usage: { inputTokens: number; outputTokens: number },
-    stepId: string
-  ): Promise<void> {
+  async function recordUsage(run: RunRow, usage: UsageTotals, stepId: string): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
     const ledger = await recordLlmCall(db, {
       tenantId: run.tenant_id,
@@ -753,6 +784,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
       purpose: 'run',
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
+      ...(usage.cacheReadInputTokens !== null
+        ? { cacheReadInputTokens: usage.cacheReadInputTokens }
+        : {}),
+      ...(usage.cacheWriteInputTokens !== null
+        ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
+        : {}),
     });
     if (!ledger.ok) {
       logger.warn('token usage not recorded for run {runId}', {
@@ -1617,7 +1654,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome_code: outcome.outcomeCode,
           tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
           input_tokens: outcome.usage.inputTokens,
+
           output_tokens: outcome.usage.outputTokens,
+
+          cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
+
+          cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
           detail: detailJson,
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
@@ -2043,7 +2085,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
               durationMs: 0,
             },
           ],
-          usage: { inputTokens: 0, outputTokens: 0 },
+          usage: emptyUsage(),
           unbound: [],
           resolvedInstruction: renderInstruction(gatedStep.instruction, vars).text,
           promptText: '',
@@ -2549,7 +2591,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome: 'guard',
             tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
             input_tokens: outcome.usage.inputTokens,
+
             output_tokens: outcome.usage.outputTokens,
+
+            cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
             detail: clip(
               JSON.stringify({
                 pauseKind: 'approval',
@@ -2586,7 +2633,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome: 'question',
             tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
             input_tokens: outcome.usage.inputTokens,
+
             output_tokens: outcome.usage.outputTokens,
+
+            cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
             detail: clip(
               JSON.stringify({
                 pauseKind: 'question',
@@ -2902,7 +2954,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
       const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
-      const usage = { inputTokens: 0, outputTokens: 0 };
+      const usage = emptyUsage();
       let failureSummary = 'The model never chose a path.';
 
       let decidedPath: BranchPath | null = null;
@@ -2929,6 +2981,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           // resolve_time unreachable, which is the whole point of offering
           // it. Either way the model must call SOMETHING.
           toolChoice: lastTurn ? { name: CHOOSE_PATH_TOOL } : 'any',
+          promptCache: true,
+
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
@@ -2959,8 +3013,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           break;
         }
 
-        usage.inputTokens += completion.val.usage.inputTokens;
-        usage.outputTokens += completion.val.usage.outputTokens;
+        addUsage(usage, completion.val.usage);
         messages.push({ role: 'assistant', content: completion.val.content });
 
         const toolUses = completion.val.content.filter(
@@ -3018,7 +3071,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome_code: null,
             tool_call_count: 0,
             input_tokens: usage.inputTokens,
+
             output_tokens: usage.outputTokens,
+
+            cache_read_input_tokens: usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: usage.cacheWriteInputTokens,
             detail: clip(JSON.stringify(detail), DETAIL_CHARS),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
@@ -3047,7 +3105,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome_code: 'other',
           tool_call_count: 0,
           input_tokens: usage.inputTokens,
+
           output_tokens: usage.outputTokens,
+
+          cache_read_input_tokens: usage.cacheReadInputTokens,
+
+          cache_write_input_tokens: usage.cacheWriteInputTokens,
           detail: clip(JSON.stringify(detail), DETAIL_CHARS),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
@@ -3179,7 +3242,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
       const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
-      const usage = { inputTokens: 0, outputTokens: 0 };
+      const usage = emptyUsage();
       let failureSummary = 'The model never decided the loop.';
 
       let decided: 'finished' | 'continue' | null = null;
@@ -3201,6 +3264,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           messages,
           tools: loopTools,
           toolChoice: lastTurn ? { name: LOOP_DECISION_TOOL } : 'any',
+          promptCache: true,
+
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
@@ -3230,8 +3295,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           break;
         }
 
-        usage.inputTokens += completion.val.usage.inputTokens;
-        usage.outputTokens += completion.val.usage.outputTokens;
+        addUsage(usage, completion.val.usage);
         messages.push({ role: 'assistant', content: completion.val.content });
 
         const toolUses = completion.val.content.filter(
@@ -3281,7 +3345,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome_code: null,
             tool_call_count: 0,
             input_tokens: usage.inputTokens,
+
             output_tokens: usage.outputTokens,
+
+            cache_read_input_tokens: usage.cacheReadInputTokens,
+
+            cache_write_input_tokens: usage.cacheWriteInputTokens,
             detail: clip(JSON.stringify(detail), DETAIL_CHARS),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
@@ -3308,7 +3377,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome_code: 'other',
           tool_call_count: 0,
           input_tokens: usage.inputTokens,
+
           output_tokens: usage.outputTokens,
+
+          cache_read_input_tokens: usage.cacheReadInputTokens,
+
+          cache_write_input_tokens: usage.cacheWriteInputTokens,
           detail: clip(JSON.stringify(detail), DETAIL_CHARS),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
@@ -3410,7 +3484,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // scarce — over-budget attachments are dropped (their extracted text
     // already rode the tool result), never queued.
     const attachmentBudget = { blocks: 0, base64Chars: 0 };
-    const usage = { inputTokens: 0, outputTokens: 0 };
+    const usage = emptyUsage();
     const resolvedInstruction = renderInstruction(step.instruction, vars).text;
 
     const base = {
@@ -3447,6 +3521,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         messages,
         tools: offered,
         toolChoice: budgetExhausted ? { name: FINISH_STEP_TOOL } : 'any',
+        promptCache: true,
+
         maxTokens: llm.maxOutputTokens,
         ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
       });
@@ -3482,8 +3558,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         };
       }
 
-      usage.inputTokens += completion.val.usage.inputTokens;
-      usage.outputTokens += completion.val.usage.outputTokens;
+      addUsage(usage, completion.val.usage);
       messages.push({ role: 'assistant', content: completion.val.content });
 
       const toolUses = completion.val.content.filter(

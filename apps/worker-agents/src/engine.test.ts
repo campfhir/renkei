@@ -239,6 +239,10 @@ maybe('agent run engine', () => {
     expect(attempts[0].status).toBe('succeeded');
     expect(attempts[0].outcome).toBe('tool_ok');
     expect(attempts[0].tool_call_count).toBe(1);
+    // The scripted model reports no cache accounting: "not reported", not 0.
+    expect(attempts[0].input_tokens).toBe(20);
+    expect(attempts[0].cache_read_input_tokens).toBeNull();
+    expect(attempts[0].cache_write_input_tokens).toBeNull();
     const detail: { saveValue?: unknown; resolvedInstruction?: unknown } =
       typeof attempts[0].detail === 'object' &&
       attempts[0].detail !== null &&
@@ -250,6 +254,72 @@ maybe('agent run engine', () => {
     // its canonical name.
     expect(detail.resolvedInstruction).toContain('PROJ-42 is broken');
     expect(detail.resolvedInstruction).toContain('jira_get_issue');
+  });
+
+  it('caches the prompt prefix and keeps the cached share on the ledgers', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    const seen: LlmRequest[] = [];
+    const cached = (response: LlmResponse): LlmResponse => ({
+      ...response,
+      // inputTokens is the total read; the cache fields are its breakdown.
+      usage: {
+        inputTokens: 100,
+        outputTokens: 5,
+        cacheReadInputTokens: 60,
+        cacheWriteInputTokens: 20,
+      },
+    });
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return cached(
+        call === 0
+          ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+          : finish('success', { saveValue: 'PROJ-42' })
+      );
+    });
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    )({
+      payload: { runId },
+    });
+
+    expect(seen.every((request) => request.promptCache === true)).toBe(true);
+    const attempt = await db
+      .selectFrom('agent_run_steps')
+      .select([
+        'input_tokens',
+        'output_tokens',
+        'cache_read_input_tokens',
+        'cache_write_input_tokens',
+      ])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(attempt).toEqual({
+      input_tokens: 200,
+      output_tokens: 10,
+      cache_read_input_tokens: 120,
+      cache_write_input_tokens: 40,
+    });
+    const ledger = await db
+      .selectFrom('llm_calls')
+      .select([
+        'input_tokens',
+        'output_tokens',
+        'cache_read_input_tokens',
+        'cache_write_input_tokens',
+      ])
+      .where('run_id', '=', runId)
+      .where('agent_id', '=', agentId)
+      .execute();
+    expect(ledger).toEqual([
+      {
+        input_tokens: 200,
+        output_tokens: 10,
+        cache_read_input_tokens: 120,
+        cache_write_input_tokens: 40,
+      },
+    ]);
   });
 
   it('mints the run token with exactly the tools the steps name plus the notifier tools', async () => {
