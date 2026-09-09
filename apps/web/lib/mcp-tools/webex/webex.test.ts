@@ -107,6 +107,271 @@ describe('webex_list_rooms', () => {
   });
 });
 
+describe('webex_bulk_list_messages', () => {
+  const messagesFor = (roomId: string) =>
+    jsonResponse({
+      items: [
+        {
+          id: `msg-${roomId}`,
+          roomId,
+          personEmail: 'bob@example.com',
+          text: `hello from ${roomId}`,
+          created: '2026-08-18',
+        },
+      ],
+    });
+
+  it('reads every room in one call and keeps the sections in the order asked', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      const roomId = new URL(path, 'https://x').searchParams.get('roomId') ?? '';
+      return messagesFor(roomId);
+    });
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2', 'room-3'],
+      limit: 5,
+    });
+    const text = textOf(result);
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCall).toHaveBeenCalledTimes(3);
+    expect(mockCall).toHaveBeenCalledWith('/messages?roomId=room-2&max=5', undefined);
+    expect(text).toContain('3 room(s)');
+    expect(text.indexOf('roomId: room-1')).toBeLessThan(text.indexOf('roomId: room-2'));
+    expect(text.indexOf('roomId: room-2')).toBeLessThan(text.indexOf('roomId: room-3'));
+    expect(text).toContain('hello from room-3');
+  });
+
+  it('reads a room once even when its id is repeated', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      const roomId = new URL(path, 'https://x').searchParams.get('roomId') ?? '';
+      return messagesFor(roomId);
+    });
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({ roomIds: ['room-1', 'room-1'] })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+    expect(text).toContain('1 room(s)');
+  });
+
+  it('reports a room it cannot read in its own section without failing the others', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      const roomId = new URL(path, 'https://x').searchParams.get('roomId') ?? '';
+      if (roomId === 'room-2') return jsonResponse({ message: 'room not found' }, 404);
+      return messagesFor(roomId);
+    });
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2'],
+    });
+    const text = textOf(result);
+
+    expect(result.isError).toBeUndefined();
+    expect(text).toContain('2 room(s) (1 could not be read)');
+    expect(text).toContain('hello from room-1');
+    expect(text).toContain(
+      '## roomId: room-2\n(Could not read: WebEx API answered 404: room not found.)'
+    );
+  });
+
+  it('says so when a room simply has no messages', async () => {
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_bulk_list_messages')!({ roomIds: ['room-1'] }));
+
+    expect(text).toContain('## roomId: room-1\n(No messages.)');
+  });
+
+  it('is an error only when every room fails', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ message: 'token revoked' }, 401));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('None of the 2 room(s) could be read');
+    expect(textOf(result)).toContain('token revoked');
+  });
+
+  it('refuses an empty roomIds without calling WebEx', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({ roomIds: [] });
+
+    expect(result.isError).toBe(true);
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
+describe('since window', () => {
+  const message = (stamp: string, id = `msg-${stamp}`) => ({
+    id,
+    roomId: 'room-1',
+    personEmail: 'bob@example.com',
+    text: `sent ${stamp}`,
+    created: stamp,
+  });
+  const page = (created: string[]) => jsonResponse({ items: created.map((s) => message(s)) });
+  const cursorOf = (path: string) => new URL(path, 'https://x').searchParams.get('beforeMessage');
+  /** ISO stamps counting back one minute per index from a fixed point. */
+  const minutesBack = (count: number, from = Date.parse('2026-09-09T12:00:00Z')) =>
+    Array.from({ length: count }, (_, i) => new Date(from - i * 60_000).toISOString());
+
+  it('keeps only messages created at or after since, on the single-room tool', async () => {
+    mockCall.mockResolvedValue(
+      page(['2026-09-09T10:00:00Z', '2026-09-08T00:00:00Z', '2026-09-07T23:59:59Z'])
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_list_messages')!({ roomId: 'room-1', since: '2026-09-08T00:00:00Z' })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+    expect(text).toContain('sent 2026-09-09T10:00:00Z');
+    expect(text).toContain('sent 2026-09-08T00:00:00Z');
+    expect(text).not.toContain('sent 2026-09-07T23:59:59Z');
+    expect(text).not.toContain('are shown');
+  });
+
+  it('without since, a limit within one page is still the single call it always was', async () => {
+    const tools = await toolsOf();
+
+    await tools.get('webex_list_messages')!({ roomId: 'room-1', limit: 5 });
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+    expect(mockCall).toHaveBeenCalledWith('/messages?roomId=room-1&max=5', undefined);
+  });
+
+  it('newest: stops at limit and says the window holds more', async () => {
+    mockCall.mockResolvedValue(page(['2026-09-09T10:00:00Z', '2026-09-09T09:00:00Z']));
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({
+        roomIds: ['room-1'],
+        limit: 2,
+        since: '2026-09-01T00:00:00Z',
+      })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+    expect(text).toContain('sent 2026-09-09T09:00:00Z');
+    expect(text).toContain('Only the newest 2 of the window are shown');
+    expect(text).toContain('keep: "oldest"');
+  });
+
+  it('oldest: walks back to since with beforeMessage, then keeps the earliest', async () => {
+    const first = minutesBack(100);
+    mockCall.mockImplementation(async (path: string) => {
+      if (cursorOf(path) === null) return page(first);
+      // Two more inside the window, then one before it — the walk must stop there.
+      return page(['2026-09-08T00:00:02Z', '2026-09-08T00:00:01Z', '2026-09-07T23:00:00Z']);
+    });
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({
+        roomIds: ['room-1'],
+        limit: 2,
+        since: '2026-09-08T00:00:00Z',
+        keep: 'oldest',
+      })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(2);
+    expect(mockCall).toHaveBeenLastCalledWith(
+      `/messages?roomId=room-1&max=100&beforeMessage=${encodeURIComponent(`msg-${first[99]}`)}`,
+      undefined
+    );
+    expect(text).toContain('sent 2026-09-08T00:00:02Z');
+    expect(text).toContain('sent 2026-09-08T00:00:01Z');
+    expect(text).not.toContain('sent 2026-09-07T23:00:00Z');
+    expect(text).not.toContain(`sent ${first[0]}`);
+    expect(text).toContain('Only the oldest 2 of the window are shown');
+    expect(text).not.toContain('without reaching');
+  });
+
+  it('oldest: gives up after the page cap and says the start was not reached', async () => {
+    let served = 0;
+    mockCall.mockImplementation(async () => {
+      const stamps = minutesBack(100, Date.parse('2026-09-09T12:00:00Z') - served * 60_000);
+      served += 100;
+      return page(stamps);
+    });
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_list_messages')!({
+        roomId: 'room-1',
+        limit: 3,
+        since: '2020-01-01T00:00:00Z',
+        keep: 'oldest',
+      })
+    );
+
+    expect(mockCall).toHaveBeenCalledTimes(10);
+    expect(text).toContain('Walked 1000 messages back without reaching 2020-01-01T00:00:00Z');
+  });
+
+  it('says when a room has nothing in the window', async () => {
+    mockCall.mockResolvedValue(page(['2026-09-01T10:00:00Z']));
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({
+        roomIds: ['room-1'],
+        since: '2026-09-08T00:00:00Z',
+      })
+    );
+
+    expect(text).toContain('## roomId: room-1\n(No messages since 2026-09-08T00:00:00Z.)');
+  });
+
+  it('rejects a since that is not a date, without calling WebEx', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1'],
+      since: 'yesterday',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('ISO 8601');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('rejects keep: oldest without since, which would walk the whole room', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_list_messages')!({ roomId: 'room-1', keep: 'oldest' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('needs since');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('refuses a bulk call whose rooms × limit would overflow one reply', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1', 'room-2', 'room-3', 'room-4'],
+      limit: 200,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('800 messages');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
 describe('webex_send_message', () => {
   it('refuses when neither roomId nor toPersonEmail is given', async () => {
     const tools = await toolsOf();

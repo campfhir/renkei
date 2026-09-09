@@ -25,7 +25,7 @@ export const WEBEX_USER_SCOPE_OPTIONS: ScopeOption[] = [
     id: 'spark:messages_read',
     scopes: ['spark:messages_read'],
     label: 'Read messages',
-    hint: 'webex_list_messages, webex_get_message, webex_capture_message',
+    hint: 'webex_list_messages, webex_bulk_list_messages, webex_get_message, webex_capture_message',
     userHint: 'Read messages in your WebEx spaces.',
     group: 'messaging',
     defaultChecked: true,
