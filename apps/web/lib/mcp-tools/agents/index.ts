@@ -96,7 +96,7 @@ import {
   type TriggerDraft,
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
-import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
+import { createAgentRun, findInProgressRun, resumeAgentRun } from '@renkei/agents/runs';
 import { sql } from 'kysely';
 import { keywordsFieldSchema, type MCPToolContext } from '../common';
 import { listAgents, type TriggerPayload } from '@/lib/agents/store';
@@ -1382,6 +1382,120 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             'Cancellation requested. agent_run_get on this runId will show "canceled" once it lands.'
           );
       }
+    }
+  );
+
+  server.registerTool(
+    'agent_run_resume',
+    {
+      title: 'Agents · Act — Resume a failed run at the step that failed',
+      description:
+        'Pick a FAILED run of one of your agents (or one shared with you) back up at the step ' +
+        'it failed on — the same run, its snapshot and everything earlier steps saved, with ' +
+        "that step's failed attempts set aside so it gets a fresh try. Pass guidance to tell " +
+        'that step what to do differently (it reads the note as binding: "the CIO project has ' +
+        'no Task issue type — file it as a Project"). Different from agent_run_now: that ' +
+        'starts a NEW run from the top; this continues an existing one from where it stopped. ' +
+        'Refuses runs that are not failed, and a run that ended on a terminal failure marker ' +
+        "(that is the plan's own verdict — fix the steps instead). If the agent already has a " +
+        'run queued or running, this refuses and says so — pass confirm: true to queue it ' +
+        'anyway. Refuses agent-run callers, same as agent_run_cancel. Follow the run with ' +
+        'agent_run_get; attempts it set aside show as "Set aside".',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        runId: z.string().min(1).describe('From agent_runs_list — a run whose status is failed'),
+        guidance: z
+          .string()
+          .max(2000)
+          .optional()
+          .describe('What the failed step should do differently this time (optional)'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('Resume anyway when this agent already has a run queued or running.'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) {
+        return errText('Agent runs cannot resume runs from here — that is a human/API decision.');
+      }
+      const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
+      if (!isUuid(runId)) return errText('No run of yours has that id.');
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+
+      const runRow = await db
+        .selectFrom('agent_runs')
+        .select(['agent_id', 'trigger_kind'])
+        .where('id', '=', runId)
+        .where('tenant_id', '=', context.tenantId)
+        .executeTakeFirst();
+      if (!runRow) return errText('No run of yours has that id.');
+      const access = await resolveAgentAccess(
+        db,
+        context.tenantId,
+        context.subject,
+        runRow.agent_id
+      );
+      if (!access) return errText('No run of yours has that id.');
+      const agent = access.agent;
+
+      if (runRow.trigger_kind !== 'event' && args.confirm !== true) {
+        const inProgress = await findInProgressRun(db, context.tenantId, agent.id);
+        if (inProgress) {
+          return errText(
+            `"${agent.name}" already has a run ${inProgress.status} (runId: ${inProgress.id}). ` +
+              'Call again with confirm: true to queue the resumed run behind it anyway.'
+          );
+        }
+      }
+
+      const resumed = await resumeAgentRun(db, agentJobsQueue().producer, {
+        tenantId: context.tenantId,
+        agentId: agent.id,
+        runId,
+        ownerSubject: access.ownerSubject,
+        resumedBySubject: context.subject,
+        ...(typeof args.guidance === 'string' ? { guidance: args.guidance } : {}),
+      });
+      if (!resumed.ok) {
+        switch (resumed.err.type) {
+          case 'NOT_FOUND':
+            return errText('No run of yours has that id.');
+          case 'NOT_FAILED':
+          case 'NOT_RESUMABLE':
+            return errText(resumed.err.message ?? 'This run cannot be resumed.');
+          case 'QUEUE_ERROR':
+            return errText('The run could not be queued — try again shortly.');
+          case 'DB_ERROR':
+            return errText('The run could not be resumed.');
+        }
+      }
+
+      logger.info('agent_run_resume resumed a failed run', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        agentId: agent.id,
+        runId,
+        stepName: resumed.val.stepName ?? '(start)',
+      });
+      return textResult(
+        [
+          `Resumed run ${runId} of "${agent.name}"` +
+            (resumed.val.stepName
+              ? ` at "${resumed.val.stepName}"`
+              : ' from the start (it failed before reaching a step)') +
+            (resumed.val.retiredAttempts > 0
+              ? `, setting aside ${resumed.val.retiredAttempts} earlier attempt(s) of that step.`
+              : '.'),
+          typeof args.guidance === 'string' && args.guidance.trim()
+            ? "Your guidance rides with that step's next attempt."
+            : 'No guidance given — the step simply gets another try.',
+          'It is queued; agent_run_get on that runId shows how it went.',
+        ].join('\n')
+      );
     }
   );
 

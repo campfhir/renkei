@@ -98,8 +98,12 @@ import {
   withRunContext,
   outcomeGuideFor,
   usesTime,
+  resumeNoteFor,
   NORMAL_TOOL_CAP,
   CORRECTIVE_TOOL_CAP,
+  SAVE_ITEM_CHARS,
+  SAVE_ITEMS_MAX,
+  SAVE_VALUE_CHARS,
   type PromptMessage,
 } from './prompt';
 import { logger } from './logger';
@@ -113,10 +117,6 @@ const MAX_LLM_TURNS = 10;
 const PREVIEW_CHARS = 2_000;
 const DETAIL_CHARS = 60_000;
 const TOKEN_SLACK_SECONDS = 15 * 60;
-/** Per-entry cap on saveItems / collected list entries. */
-const SAVE_ITEM_CHARS = 500;
-/** Max saveItems entries one finish_step may return. */
-const SAVE_ITEMS_MAX = 25;
 /**
  * The run-wide execution budget: total attempt rows a run may create.
  * MAX_STEPS bounds the static plan; this bounds the RUNTIME (a loop's body
@@ -176,6 +176,11 @@ interface RunRow {
   started_at: Date | null;
   waiting_until: Date | null;
   cancel_requested_at: Date | null;
+  /** Set once an owner resumed this run from a failure (migration 099). */
+  resumed_at: Date | null;
+  /** The step the latest resume picked back up at; its attempts get the guidance. */
+  resume_step_id: string | null;
+  resume_guidance: string | null;
 }
 
 /** actionable_items decision → the gate's outcome vocabulary. */
@@ -395,6 +400,35 @@ class RunCanceled extends Error {}
 
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
+
+/**
+ * An attempt's `detail` as the JSON the row stores, kept under
+ * DETAIL_CHARS by shrinking the biggest field — the verbatim prompt —
+ * rather than cutting the serialized text. Clipping the JSON string
+ * itself, which is what this replaced, would have handed Postgres an
+ * unterminated document and failed the write that closes the attempt:
+ * a run whose prompt referenced three large saved values would have died
+ * exactly when it had the most to record.
+ */
+function detailJson(detail: Record<string, unknown>): string {
+  let text = JSON.stringify(detail);
+  if (text.length <= DETAIL_CHARS) return text;
+  const prompt = detail.promptText;
+  if (typeof prompt === 'string' && prompt.length > 0) {
+    const excess = text.length - DETAIL_CHARS;
+    const kept = Math.max(0, prompt.length - excess - 32);
+    text = JSON.stringify({ ...detail, promptText: clip(prompt, kept) });
+    if (text.length <= DETAIL_CHARS) return text;
+  }
+  // Still over with the prompt gone: drop the tool-call previews, which
+  // are the next largest thing, and say so where the timeline reads them.
+  const { toolCalls: _toolCalls, promptText: _promptText, ...rest } = detail;
+  return JSON.stringify({
+    ...rest,
+    toolCalls: [],
+    detailTruncated: 'tool-call previews and the prompt were dropped to fit the record',
+  });
 }
 
 /**
@@ -739,7 +773,13 @@ function finishArgsOf(input: unknown): {
         .slice(0, SAVE_ITEMS_MAX)
         .map((entry) => clip(entry, SAVE_ITEM_CHARS))
     : null;
-  const saveValue = typeof args.saveValue === 'string' ? stripToolResidue(args.saveValue) : null;
+  // Bound HERE, once, at the single cap the row will store it at — so the
+  // value later steps read live is byte-identical to the one a resumed run
+  // recovers from the row (see SAVE_VALUE_CHARS).
+  const saveValue =
+    typeof args.saveValue === 'string'
+      ? clip(stripToolResidue(args.saveValue), SAVE_VALUE_CHARS)
+      : null;
   const remember = typeof args.remember === 'string' ? stripToolResidue(args.remember) : '';
   return {
     outcome,
@@ -871,6 +911,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         'started_at',
         'waiting_until',
         'cancel_requested_at',
+        'resumed_at',
+        'resume_step_id',
+        'resume_guidance',
       ])
       .where('id', '=', runId)
       .executeTakeFirst();
@@ -1068,7 +1111,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // Only on a genuinely NEW run. A crash-resume or a wake from an
       // approval pause re-enters here, and "started" arriving twice for one
       // run would be worse than not having it at all. Off by default.
-      if (run.status === 'queued') void context.notifier.runStarted();
+      if (run.status === 'queued' && run.resumed_at === null) void context.notifier.runStarted();
 
       // Crash-resume rebuilds the frame stack from where current_step_id
       // sits in the tree; a fresh run starts one frame at the top.
@@ -1437,7 +1480,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           : {};
       if (Array.isArray(detail.saveItems) && detail.saveItems.every((e) => typeof e === 'string')) {
         lists[name] = detail.saveItems;
-        vars[name] = detail.saveItems.join('\n');
+        vars[name] = clip(detail.saveItems.join('\n'), SAVE_VALUE_CHARS);
       } else if (typeof detail.saveValue === 'string') {
         vars[name] = detail.saveValue;
       }
@@ -1681,9 +1724,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
           : outcome.succeeded
             ? 'success'
             : 'failure',
-        ...(outcome.saveValue !== null
-          ? { saveValue: clip(outcome.saveValue, PREVIEW_CHARS) }
-          : {}),
+        // Stored whole (it is already within SAVE_VALUE_CHARS): the row is
+        // what a re-entry rebuilds the variables from, so a clipped copy
+        // here would have every step after a pause read a shorter value
+        // than the steps before it did — which is exactly what happened.
+        ...(outcome.saveValue !== null ? { saveValue: outcome.saveValue } : {}),
         ...(outcome.saveItems !== null ? { saveItems: outcome.saveItems } : {}),
         ...(outcome.unbound.length > 0 ? { unboundVariables: outcome.unbound } : {}),
         ...(guidance
@@ -1692,7 +1737,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         toolCalls: outcome.toolCalls,
         usage: outcome.usage,
       };
-      const detailJson = clip(JSON.stringify(detail), DETAIL_CHARS);
+      const detailText = detailJson(detail);
 
       await db
         .updateTable('agent_run_steps')
@@ -1708,7 +1753,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
 
           cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
-          detail: detailJson,
+          detail: detailText,
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
@@ -1756,7 +1801,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           // A saved LIST: bind both representations — the list for loops,
           // the joined text for var chips.
           lists[step.saveAs] = outcome.saveItems;
-          vars[step.saveAs] = outcome.saveItems.join('\n');
+          vars[step.saveAs] = clip(outcome.saveItems.join('\n'), SAVE_VALUE_CHARS);
         } else if (step.saveAs && outcome.saveValue !== null) {
           vars[step.saveAs] = outcome.saveValue;
         }
@@ -2076,10 +2121,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
               outcome: 'guard',
               outcome_code: 'not_approved',
               tool_call_count: 0,
-              detail: clip(
-                JSON.stringify({ llmSummary: wording, decision, ...(comment ? { comment } : {}) }),
-                DETAIL_CHARS
-              ),
+              detail: detailJson({
+                llmSummary: wording,
+                decision,
+                ...(comment ? { comment } : {}),
+              }),
               finished_at: sql`NOW()`,
               updated_at: sql`NOW()`,
             })
@@ -2131,7 +2177,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           summary: toolResult.isError
             ? clip(resultText, PREVIEW_CHARS) || 'The tool reported an error.'
             : clip(`Approved${decidedNote}. ${resultText}`, PREVIEW_CHARS),
-          saveValue: gatedStep.saveAs ? clip(resultText, PREVIEW_CHARS) : null,
+          saveValue: gatedStep.saveAs ? clip(resultText, SAVE_VALUE_CHARS) : null,
           saveItems: null,
           remember: null,
           toolCalls: [
@@ -2327,17 +2373,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome: 'question',
             outcome_code: null,
             tool_call_count: 0,
-            detail: clip(
-              JSON.stringify({
-                pauseKind: 'question',
-                llmSummary: answered ? 'Answered.' : 'Nobody answered before the deadline.',
-                message,
-                form,
-                answers,
-                timedOut: !answered,
-              }),
-              DETAIL_CHARS
-            ),
+            detail: detailJson({
+              pauseKind: 'question',
+              llmSummary: answered ? 'Answered.' : 'Nobody answered before the deadline.',
+              message,
+              form,
+              answers,
+              timedOut: !answered,
+            }),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
           })
@@ -2461,7 +2504,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // than pushing the pauseKind check into SQL.
       const stepRows = await db
         .selectFrom('agent_run_steps')
-        .select(['detail'])
+        .select(['status', 'detail'])
         .where('run_id', '=', run.id)
         .where('step_id', '=', step.id)
         .where('iteration', '=', iteration)
@@ -2476,13 +2519,27 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // it is the owner's answer being awaited, not a retry — so it must
       // never count against maxAttempts, or a step could exhaust its
       // whole budget on pure waiting before doing a single real turn.
+      // A 'retired' row is an attempt an owner's resume set aside (see
+      // resumeAgentRun): it happened, the timeline shows it, and it costs
+      // this fresh budget nothing — that is what a resume IS.
       const attemptsUsed = stepRows.filter((row) => {
+        if (row.status === 'retired') return false;
         const detail: { pauseKind?: unknown } =
           typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
             ? row.detail
             : {};
         return detail.pauseKind !== 'question';
       }).length;
+      // The resumed step, on any round: the owner's note rides every one
+      // of its attempts, and the failure it recovers from is the retired
+      // attempt of THIS round when there is one.
+      const resumeNote =
+        run.resume_step_id === step.id
+          ? resumeNoteFor({
+              ...(await retiredFailureText(run.id, step.id, iteration)),
+              ...(run.resume_guidance ? { guidance: run.resume_guidance } : {}),
+            })
+          : undefined;
 
       // Advance past a step that already succeeded (resume/fast-forward) —
       // EXCEPT a resolved ask_person pause, whose whole point is that the
@@ -2615,7 +2672,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           iteration,
           Boolean(step.saveAs && loopSourceVars.has(step.saveAs)),
           canAskQuestions,
-          deadline
+          deadline,
+          resumeNote
         );
       } catch (error) {
         if (error instanceof TransientFailure) {
@@ -2655,16 +2713,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
             cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
 
             cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
-            detail: clip(
-              JSON.stringify({
-                pauseKind: 'approval',
-                llmSummary: 'Waiting for your approval.',
-                proposedTool: outcome.proposedCall.tool,
-                proposedArgs: outcome.proposedCall.args,
-                toolCalls: outcome.toolCalls,
-              }),
-              DETAIL_CHARS
-            ),
+            detail: detailJson({
+              pauseKind: 'approval',
+              llmSummary: 'Waiting for your approval.',
+              proposedTool: outcome.proposedCall.tool,
+              proposedArgs: outcome.proposedCall.args,
+              toolCalls: outcome.toolCalls,
+            }),
             updated_at: sql`NOW()`,
           })
           .where('id', '=', rowId)
@@ -2697,19 +2752,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
             cache_read_input_tokens: outcome.usage.cacheReadInputTokens,
 
             cache_write_input_tokens: outcome.usage.cacheWriteInputTokens,
-            detail: clip(
-              JSON.stringify({
-                pauseKind: 'question',
-                llmSummary: 'Waiting for your answer.',
-                message: outcome.askPerson.message,
-                form: outcome.askPerson.form,
-                ...(outcome.askPerson.timeoutHours !== undefined
-                  ? { timeoutHours: outcome.askPerson.timeoutHours }
-                  : {}),
-                toolCalls: outcome.toolCalls,
-              }),
-              DETAIL_CHARS
-            ),
+            detail: detailJson({
+              pauseKind: 'question',
+              llmSummary: 'Waiting for your answer.',
+              message: outcome.askPerson.message,
+              form: outcome.askPerson.form,
+              ...(outcome.askPerson.timeoutHours !== undefined
+                ? { timeoutHours: outcome.askPerson.timeoutHours }
+                : {}),
+              toolCalls: outcome.toolCalls,
+            }),
             updated_at: sql`NOW()`,
           })
           .where('id', '=', rowId)
@@ -2839,7 +2891,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         outcome: 'terminal',
         outcome_code: null,
         tool_call_count: 0,
-        detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+        detail: detailJson(detail),
         finished_at: sql`NOW()`,
         updated_at: sql`NOW()`,
       })
@@ -2939,14 +2991,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // budget the counted rows leave.
       }
 
+      // Two counts, as executeStep keeps them: every row numbers the next
+      // attempt (the unique constraint needs that), only live rows — not
+      // the ones a resume retired — spend the budget.
       const counted = await db
         .selectFrom('agent_run_steps')
-        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .select(['status'])
         .where('run_id', '=', run.id)
         .where('step_id', '=', branch.id)
         .where('iteration', '=', iteration)
-        .executeTakeFirst();
-      const attemptsUsed = Number(counted?.count ?? 0);
+        .execute();
+      const totalRows = counted.length;
+      const attemptsUsed = counted.filter((row) => row.status !== 'retired').length;
 
       if (attemptsUsed >= budget) {
         // Evaluation exhausted its attempts. With a failure path configured
@@ -2976,7 +3032,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
       }
 
-      const attempt = attemptsUsed + 1;
+      const attempt = totalRows + 1;
       const rowId = randomUUID();
       try {
         await db
@@ -3000,12 +3056,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
         throw error;
       }
 
+      const resumeNote =
+        run.resume_step_id === branch.id
+          ? resumeNoteFor({
+              ...(await retiredFailureText(run.id, branch.id, iteration)),
+              ...(run.resume_guidance ? { guidance: run.resume_guidance } : {}),
+            })
+          : undefined;
       const built = buildBranchMessages({
         branch,
         variables: vars,
         attempt,
         inputs: [...context.liveInputs],
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
+        ...(resumeNote ? { resumeNote } : {}),
       });
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
       const promptText = promptTextOf(built.messages);
@@ -3133,7 +3197,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             cache_read_input_tokens: usage.cacheReadInputTokens,
 
             cache_write_input_tokens: usage.cacheWriteInputTokens,
-            detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+            detail: detailJson(detail),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
           })
@@ -3167,7 +3231,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           cache_read_input_tokens: usage.cacheReadInputTokens,
 
           cache_write_input_tokens: usage.cacheWriteInputTokens,
-          detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+          detail: detailJson(detail),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
@@ -3240,12 +3304,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const counted = await db
         .selectFrom('agent_run_steps')
-        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .select(['status'])
         .where('run_id', '=', run.id)
         .where('step_id', '=', loop.id)
         .where('iteration', '=', iteration)
-        .executeTakeFirst();
-      const attemptsUsed = Number(counted?.count ?? 0);
+        .execute();
+      const totalRows = counted.length;
+      const attemptsUsed = counted.filter((row) => row.status !== 'retired').length;
 
       if (attemptsUsed >= budget) {
         return {
@@ -3261,7 +3326,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
       }
 
-      const attempt = attemptsUsed + 1;
+      const attempt = totalRows + 1;
       const rowId = randomUUID();
       try {
         await db
@@ -3285,6 +3350,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
         throw error;
       }
 
+      const resumeNote =
+        run.resume_step_id === loop.id
+          ? resumeNoteFor({
+              ...(await retiredFailureText(run.id, loop.id, iteration)),
+              ...(run.resume_guidance ? { guidance: run.resume_guidance } : {}),
+            })
+          : undefined;
       const built = buildLoopConditionMessages({
         loop,
         inputs: [...context.liveInputs],
@@ -3292,6 +3364,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         variables: vars,
         attempt,
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
+        ...(resumeNote ? { resumeNote } : {}),
       });
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
       const promptText = promptTextOf(built.messages);
@@ -3405,7 +3478,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             cache_read_input_tokens: usage.cacheReadInputTokens,
 
             cache_write_input_tokens: usage.cacheWriteInputTokens,
-            detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+            detail: detailJson(detail),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
           })
@@ -3437,7 +3510,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           cache_read_input_tokens: usage.cacheReadInputTokens,
 
           cache_write_input_tokens: usage.cacheWriteInputTokens,
-          detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+          detail: detailJson(detail),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
@@ -3461,7 +3534,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
     iteration: number,
     savesItemsForLoop: boolean,
     canAskQuestions: boolean,
-    deadline: number
+    deadline: number,
+    /** Present on the step an owner resumed the run at — see resumeNoteFor. */
+    resumeNote?: string
   ): Promise<AttemptOutcome> {
     // Corrective guidance is the likeliest place for "try [attempt] of
     // [attempt.max]" to be written, so it renders against the same bindings
@@ -3473,7 +3548,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const guidanceText = guidance ? renderInstruction(guidance, attemptVars).text : undefined;
     const previousFailure =
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
-    const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
+    // A resumed attempt gets the corrective allowance: the owner's note
+    // usually means "look again, differently", and fixing a failure takes
+    // extra lookups whether the retry was the plan's or the owner's.
+    const toolCap = attempt > 1 || resumeNote ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
     const outcomeGuide = outcomeGuideFor(step, attemptVars);
     // resolve_time only where the call can use it — decided from the step's
     // own prose and its tool's parameters, before the model sees anything.
@@ -3493,6 +3571,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       previousFailure,
       savesItemsForLoop,
       ...(outcomeGuide ? { outcomeGuide } : {}),
+      ...(resumeNote ? { resumeNote } : {}),
     });
 
     // The step's one tool, plus (on corrective attempts) the guidance's
@@ -3985,6 +4064,40 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ? row.detail
         : {};
     return typeof detail.llmSummary === 'string' ? detail.llmSummary : undefined;
+  }
+
+  /**
+   * What the retired attempt of this round recorded before the owner
+   * resumed the run — the "what went wrong" a resumed step reads. Shaped
+   * for spreading into resumeNoteFor: empty when the round has no retired
+   * row (a later round of the resumed step, or a resume with no attempt
+   * to point at).
+   */
+  async function retiredFailureText(
+    runId: string,
+    stepId: string,
+    iteration: number
+  ): Promise<{ previousFailure?: string }> {
+    const row = await db
+      .selectFrom('agent_run_steps')
+      .select(['detail', 'outcome_code'])
+      .where('run_id', '=', runId)
+      .where('step_id', '=', stepId)
+      .where('iteration', '=', iteration)
+      .where('status', '=', 'retired')
+      .orderBy('attempt', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    if (!row) return {};
+    const detail: { llmSummary?: unknown } =
+      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+        ? row.detail
+        : {};
+    const summary = typeof detail.llmSummary === 'string' ? detail.llmSummary : '';
+    const text = [row.outcome_code ? `(${row.outcome_code})` : '', clip(summary, 600)]
+      .filter(Boolean)
+      .join(' ');
+    return text ? { previousFailure: text } : {};
   }
 
   /** The agent's name for a log sentence; its id stays in the metadata. */

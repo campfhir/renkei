@@ -206,6 +206,11 @@ export interface AgentRuns {
   llm_model_id: string | null;
   owner_subject: string;
   parent_run_id: string | null;
+  resume_count: Generated<number>;
+  resume_guidance: string | null;
+  resume_step_id: string | null;
+  resumed_at: Timestamp | null;
+  resumed_by: string | null;
   started_at: Timestamp | null;
   status: Generated<string>;
   steps_snapshot: Json;

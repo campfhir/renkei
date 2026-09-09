@@ -181,6 +181,41 @@ export function usesTime(
 
 export const FINISH_STEP_TOOL = 'finish_step';
 
+/**
+ * The size of what a step may hand the next one.
+ *
+ * ONE cap, applied where the value is bound into the run's variables AND
+ * where it is written to the attempt row — so a step later in the run
+ * sees the same text whether the run stayed in one process or came back
+ * from a crash, an approval wait or an owner's resume (the row is what a
+ * re-entry rebuilds the variables from). Before this, the live binding
+ * was unbounded while the stored copy was clipped at 2 000 characters:
+ * a run that paused for approval silently carried on with a truncated
+ * plan, and nothing said so.
+ *
+ * The number is generous on purpose. A saved result is the memory
+ * between steps — an agent that reads five meeting notes and must carry
+ * the facts forward has nowhere else to put them — and a value this size
+ * costs a few thousand tokens per step that references it, which is the
+ * step's author's call. The model is told the cap in finish_step's own
+ * description, so an over-long value is cut where it was warned, not
+ * silently somewhere downstream.
+ */
+export const SAVE_VALUE_CHARS = 12_000;
+
+/**
+ * Per-entry cap on saveItems (and on collected / trigger lists). An entry
+ * is meant to be a line — an id, a key, one card — and a foreach loop
+ * pastes the current one into every body step's prompt, so it stays much
+ * smaller than a saved value. 500 used to be the figure; an approval
+ * queue whose entries are whole issue drafts (summary + description +
+ * evidence) lost their tails at that size and filed the clipped text.
+ */
+export const SAVE_ITEM_CHARS = 2_000;
+
+/** Max saveItems entries one finish_step may return. */
+export const SAVE_ITEMS_MAX = 25;
+
 export const FINISH_STEP_DEF: PromptToolDef = {
   name: FINISH_STEP_TOOL,
   description:
@@ -211,7 +246,9 @@ export const FINISH_STEP_DEF: PromptToolDef = {
       saveValue: {
         type: 'string',
         description:
-          'If this step was asked to save its result, the value to save (an ID, a key, a short text). Omit otherwise.',
+          'If this step was asked to save its result, the value to save (an ID, a key, a short ' +
+          `text — at most ${SAVE_VALUE_CHARS.toLocaleString('en-US')} characters; anything ` +
+          'longer is cut off there). Omit otherwise.',
       },
       saveItems: {
         type: 'array',
@@ -219,7 +256,8 @@ export const FINISH_STEP_DEF: PromptToolDef = {
         description:
           'When the step was asked to save a LIST — items a later part of the automation ' +
           'iterates one by one — the items, one string per entry (an id, a key, a short ' +
-          'line each). At most 25. Use INSTEAD of cramming a list into saveValue.',
+          `line each, at most ${SAVE_ITEM_CHARS.toLocaleString('en-US')} characters per ` +
+          `entry). At most ${SAVE_ITEMS_MAX}. Use INSTEAD of cramming a list into saveValue.`,
       },
       stop: {
         type: 'boolean',
@@ -488,6 +526,8 @@ export interface LoopPromptInput {
   previousFailure?: string;
   /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
   inputs?: readonly string[];
+  /** The owner resumed the run at this decision — see AttemptPromptInput.resumeNote. */
+  resumeNote?: string;
 }
 
 export function buildLoopConditionMessages(input: LoopPromptInput): {
@@ -511,6 +551,7 @@ export function buildLoopConditionMessages(input: LoopPromptInput): {
     `Stop condition to decide: ${rendered.text}`,
     'If it HOLDS (choice: "finished") the automation continues after the loop. If it does NOT hold yet (choice: "continue") the loop runs another round.',
     ...known,
+    ...(input.resumeNote ? [input.resumeNote] : []),
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.loop.maxAttempts}.`,
@@ -533,6 +574,8 @@ export interface BranchPromptInput {
   previousFailure?: string;
   /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
   inputs?: readonly string[];
+  /** The owner resumed the run at this decision — see AttemptPromptInput.resumeNote. */
+  resumeNote?: string;
 }
 
 export function buildBranchMessages(input: BranchPromptInput): {
@@ -569,6 +612,7 @@ export function buildBranchMessages(input: BranchPromptInput): {
     `Condition to decide: ${rendered.text}`,
     routing,
     ...known,
+    ...(input.resumeNote ? [input.resumeNote] : []),
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.branch.maxAttempts}.`,
@@ -615,6 +659,42 @@ export interface AttemptPromptInput {
   outcomeGuide?: string;
   /** Names this call must see without a chip: the enclosing foreach loops' item vars. */
   inputs?: readonly string[];
+  /**
+   * Present when the owner resumed the run AT this step after it failed:
+   * what went wrong before and what they said to do differently, already
+   * composed as prose by the engine (see resumeNoteFor). It replaces the
+   * "attempt N of M" wording — the attempts the failure spent were set
+   * aside, so this try is a fresh budget with the failure in view, not
+   * try 4 of 3.
+   */
+  resumeNote?: string;
+}
+
+/**
+ * The paragraph a resumed step reads. Built here, beside the prompt it
+ * rides in, so the engine and the export render the same words.
+ */
+export function resumeNoteFor(input: {
+  /** The last failed attempt's summary, when one was recorded. */
+  previousFailure?: string;
+  /** What the owner typed when resuming, if anything. */
+  guidance?: string;
+}): string {
+  const parts = [
+    'The owner resumed this automation at this step after it failed' +
+      (input.previousFailure ? `. What went wrong before: ${input.previousFailure}` : '.'),
+  ];
+  if (input.guidance) {
+    parts.push(
+      `The owner’s guidance for this resume (binding for this step — follow it even where it ` +
+        `narrows the instruction): ${input.guidance}`
+    );
+  }
+  parts.push(
+    'The earlier attempts were set aside: this is a fresh try with their failure in view, so ' +
+      'do not repeat what already went wrong.'
+  );
+  return parts.join(' ');
 }
 
 export function buildAttemptMessages(input: AttemptPromptInput): {
@@ -687,13 +767,15 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
       : []),
     ...(input.outcomeGuide ? [input.outcomeGuide] : []),
     ...known,
-    ...(input.attempt > 1
-      ? [
-          `This is attempt ${input.attempt} of ${input.step.maxAttempts}.`,
-          ...(input.previousFailure ? [`Previous attempt: ${input.previousFailure}`] : []),
-          ...(input.guidanceText ? [`Extra guidance for this retry: ${input.guidanceText}`] : []),
-        ]
-      : []),
+    ...(input.resumeNote
+      ? [input.resumeNote]
+      : input.attempt > 1
+        ? [
+            `This is attempt ${input.attempt} of ${input.step.maxAttempts}.`,
+            ...(input.previousFailure ? [`Previous attempt: ${input.previousFailure}`] : []),
+            ...(input.guidanceText ? [`Extra guidance for this retry: ${input.guidanceText}`] : []),
+          ]
+        : []),
   ];
 
   return {

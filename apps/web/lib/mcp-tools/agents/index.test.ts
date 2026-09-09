@@ -78,6 +78,7 @@ jest.mock('@renkei/queue', () => ({
 jest.mock('@renkei/agents/runs', () => ({
   createAgentRun: jest.fn(),
   findInProgressRun: jest.fn(),
+  resumeAgentRun: jest.fn(),
 }));
 jest.mock('@/lib/agents/run-cancellation', () => ({ requestRunCancellation: jest.fn() }));
 jest.mock('@renkei/agents/memory', () => ({
@@ -1344,6 +1345,67 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
     expect(result.isError).toBeUndefined();
     expect(approvalsMock.listPendingApprovals).not.toHaveBeenCalled();
     expect(result.content[0]?.text ?? '').not.toContain('Waiting on you');
+  });
+
+  it('agent_run_resume resumes a failed run through the grant, carrying the guidance', async () => {
+    stubDb({ row: { agent_id: 'agent-1', trigger_kind: 'manual' } });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(granteeAccess(AGENT));
+    const runs = jest.requireMock<{ findInProgressRun: jest.Mock; resumeAgentRun: jest.Mock }>(
+      '@renkei/agents/runs'
+    );
+    runs.findInProgressRun.mockResolvedValue(null);
+    runs.resumeAgentRun.mockResolvedValue({
+      ok: true,
+      val: {
+        runId: 'run-1',
+        stepId: 'step-9',
+        stepName: 'Create the approved issue',
+        retiredAttempts: 1,
+      },
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_resume')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+      guidance: 'File it as a Project, not a Task.',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(runs.resumeAgentRun).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        agentId: 'agent-1',
+        ownerSubject: 'auth0|owner',
+        resumedBySubject: 'auth0|alice',
+        guidance: 'File it as a Project, not a Task.',
+      })
+    );
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('at "Create the approved issue"');
+    expect(text).toContain('setting aside 1 earlier attempt(s)');
+    expect(text).toContain('Your guidance rides');
+  });
+
+  it('agent_run_resume refuses a run that is not failed, in the library’s words', async () => {
+    stubDb({ row: { agent_id: 'agent-1', trigger_kind: 'event' } });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(granteeAccess(AGENT));
+    const runs = jest.requireMock<{ resumeAgentRun: jest.Mock }>('@renkei/agents/runs');
+    runs.resumeAgentRun.mockResolvedValue({
+      ok: false,
+      err: {
+        type: 'NOT_FAILED',
+        message: 'This run is succeeded — only a failed run can be resumed.',
+      },
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_resume')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? '').toContain('only a failed run can be resumed');
   });
 
   it('agent_run_cancel resolves the agent from the run and cancels through the grant', async () => {

@@ -27,7 +27,7 @@ import type { QueueProducer } from '@renkei/queue';
 import { getOrgSettings } from '@renkei/settings';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import type { AgentStepsDoc } from './steps';
+import { findNodeById, isAgentStepsDoc, type AgentStepsDoc } from './steps';
 
 export interface CreateAgentRunInput {
   tenantId: string;
@@ -181,6 +181,231 @@ export async function findInProgressRun(
     .orderBy('created_at', 'desc')
     .executeTakeFirst();
   return row ?? null;
+}
+
+/** The longest note an owner may attach to a resume. */
+export const RESUME_GUIDANCE_MAX_CHARS = 2_000;
+
+export interface ResumeAgentRunInput {
+  tenantId: string;
+  agentId: string;
+  runId: string;
+  /** The run's owner_subject — whose grants it keeps acting under. */
+  ownerSubject: string;
+  /** Who asked — the owner, or a grantee troubleshooting for them. */
+  resumedBySubject: string;
+  /** What to do differently at the resumed step; trimmed, capped, optional. */
+  guidance?: string;
+}
+
+export type ResumeAgentRunError =
+  | 'NOT_FOUND'
+  /** The run is not in 'failed' — only a failed run has a step to pick back up at. */
+  | 'NOT_FAILED'
+  /** The run ended on a terminal failure node: that is the plan's own verdict, not a fault to retry. */
+  | 'NOT_RESUMABLE'
+  | 'DB_ERROR'
+  | 'QUEUE_ERROR';
+
+export interface ResumedAgentRun {
+  runId: string;
+  /** The step the run picks back up at; null when it failed before reaching one. */
+  stepId: string | null;
+  stepName: string | null;
+  /** The attempts of that step (on the iteration that failed) set aside for the retry. */
+  retiredAttempts: number;
+}
+
+/**
+ * Pick a failed run back up at the step it failed on — the same run row,
+ * the same snapshot, the same saved variables, with the failed step given
+ * a fresh attempt budget and, when the owner adds one, a note on what to
+ * do differently.
+ *
+ * Why this is possible without new machinery: the engine persists no
+ * cursor beyond `current_step_id` and no variable bag at all — every
+ * re-entry (a crash, an approval wake) rebuilds position and bindings
+ * from the `agent_run_steps` rows and fast-forwards through the ones that
+ * succeeded. A failed run is just a run whose last row failed. So a
+ * resume is: set the failed step's spent attempts aside (status
+ * 'retired' — kept for the timeline, ignored by the budget count), put
+ * the row back to 'queued' with the failure cleared, and enqueue the same
+ * bare `{ runId }` message every other start uses. The engine does the
+ * rest exactly as it does after a crash.
+ *
+ * Contrast with "run again" (the rerun route): that starts a NEW run of
+ * the agent AS IT STANDS NOW on the old input, for when the plan itself
+ * was wrong. This keeps the run and its snapshot, for when the plan was
+ * fine and one step needs another go — a transient tool error, a bad
+ * value the owner can correct in a sentence, an approval that filed
+ * something the target refused.
+ *
+ * Cancel-request flags are cleared: a resume is the owner asking for the
+ * opposite of a cancel, and a stale flag would stop the run at its first
+ * checkpoint. `started_at` is cleared so the engine hands the resumed
+ * run a fresh deadline budget (the pause was the owner's time).
+ */
+export async function resumeAgentRun(
+  db: Kysely<DB>,
+  producer: QueueProducer,
+  input: ResumeAgentRunInput
+): Promise<Result<ResumedAgentRun, ResumeAgentRunError>> {
+  const runResult = await wrapAsync(
+    () =>
+      db
+        .selectFrom('agent_runs')
+        .select(['id', 'status', 'current_step_id', 'steps_snapshot', 'error', 'error_kind'])
+        .where('id', '=', input.runId)
+        .where('tenant_id', '=', input.tenantId)
+        .where('agent_id', '=', input.agentId)
+        .where('owner_subject', '=', input.ownerSubject)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!runResult.ok) return runResult;
+  const run = runResult.val;
+  if (!run) return err('NOT_FOUND' as const);
+  if (run.status !== 'failed') {
+    return err('NOT_FAILED' as const, {
+      message: `This run ${run.status === 'canceled' ? 'was canceled' : `is ${run.status}`} — only a failed run can be resumed.`,
+    });
+  }
+
+  // Where it stopped. A run that failed before its first step (a model
+  // configuration problem, a snapshot the engine refused) has no step to
+  // point at: resuming it starts from the top, which is still a resume of
+  // THIS run — its id, its history — not a new one.
+  const stepId = run.current_step_id;
+  let stepName: string | null = null;
+  if (stepId && isAgentStepsDoc(run.steps_snapshot)) {
+    const found = findNodeById(run.steps_snapshot.steps, stepId);
+    if (found?.node.kind === 'terminal') {
+      return err('NOT_RESUMABLE' as const, {
+        message:
+          'This run ended on a failure marker the automation reached by design — there is ' +
+          'no failed step to retry. Fix the steps and run it again instead.',
+      });
+    }
+    stepName = found?.node.name ?? null;
+  }
+
+  const guidance = (input.guidance ?? '').trim().slice(0, RESUME_GUIDANCE_MAX_CHARS) || null;
+
+  const flipped = await wrapAsync(
+    () =>
+      db.transaction().execute(async (trx) => {
+        // The failed step's spent attempts, on the round that failed: set
+        // aside, not deleted. The engine numbers new attempts past them
+        // (the unique (run, step, iteration, attempt) constraint needs
+        // that) and counts only live ones against the budget; the
+        // timeline keeps them so the failure story stays readable.
+        let retiredAttempts = 0;
+        if (stepId) {
+          const last = await trx
+            .selectFrom('agent_run_steps')
+            .select(({ fn }) => fn.max<number | null>('iteration').as('iteration'))
+            .where('run_id', '=', input.runId)
+            .where('step_id', '=', stepId)
+            .executeTakeFirst();
+          if (last?.iteration !== null && last?.iteration !== undefined) {
+            const retired = await trx
+              .updateTable('agent_run_steps')
+              .set({ status: 'retired', updated_at: sql`NOW()` })
+              .where('run_id', '=', input.runId)
+              .where('step_id', '=', stepId)
+              .where('iteration', '=', Number(last.iteration))
+              .where('status', 'in', ['failed', 'canceled'])
+              .executeTakeFirst();
+            retiredAttempts = Number(retired.numUpdatedRows ?? 0);
+          }
+        }
+
+        // Optimistic on the status: a second click, or a janitor racing
+        // this, finds the row no longer 'failed' and changes nothing.
+        const updated = await trx
+          .updateTable('agent_runs')
+          .set({
+            status: 'queued',
+            error: null,
+            error_kind: null,
+            started_at: null,
+            finished_at: null,
+            waiting_until: null,
+            cancel_requested_at: null,
+            cancel_requested_by: null,
+            resumed_at: sql`NOW()`,
+            resumed_by: input.resumedBySubject,
+            resume_count: sql`resume_count + 1`,
+            resume_step_id: stepId,
+            resume_guidance: guidance,
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', input.runId)
+          .where('status', '=', 'failed')
+          .executeTakeFirst();
+        if (Number(updated.numUpdatedRows ?? 0) === 0) {
+          throw new Error('run is no longer failed');
+        }
+        return retiredAttempts;
+      }),
+    'DB_ERROR' as const
+  );
+  if (!flipped.ok) {
+    const cause = flipped.err.cause;
+    if (cause instanceof Error && cause.message === 'run is no longer failed') {
+      return err('NOT_FAILED' as const, { message: 'This run was already resumed.' });
+    }
+    return flipped;
+  }
+  const retiredAttempts = flipped.val;
+
+  const enqueueResult = await producer.enqueue({
+    tenantId: input.tenantId,
+    source: `agents:${input.agentId}`,
+    type: 'run',
+    payload: { runId: input.runId },
+    orderingKey: `agent:${input.agentId}`,
+  });
+  if (!enqueueResult.ok) {
+    // A 'queued' row with no message would sit until the stuck-run
+    // janitor failed it hours later, with the original error gone. Put
+    // the failure back the way it was; the retired rows stay retired —
+    // the next resume attempt retires nothing new and the budget reads
+    // the same either way.
+    await wrapAsync(
+      () =>
+        db
+          .updateTable('agent_runs')
+          .set({
+            status: 'failed',
+            error: run.error,
+            error_kind: run.error_kind,
+            finished_at: sql`NOW()`,
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', input.runId)
+          .where('status', '=', 'queued')
+          .execute(),
+      'DB_ERROR' as const
+    );
+    return err('QUEUE_ERROR' as const);
+  }
+
+  // The durable log reads 'failed' for this run until the engine
+  // finalizes it again; say it is back in flight so the usage page does
+  // not count a run that is running as a failure meanwhile. Best effort,
+  // like every write to the ledger.
+  await wrapAsync(
+    () =>
+      db
+        .updateTable('agent_run_log')
+        .set({ status: 'queued', finished_at: null })
+        .where('run_id', '=', input.runId)
+        .execute(),
+    'DB_ERROR' as const
+  );
+
+  return ok({ runId: input.runId, stepId, stepName, retiredAttempts });
 }
 
 /**

@@ -22,6 +22,7 @@ import RunActivitySection from '../../../run-activity';
 import ApprovalActions from '../../../../approval-actions';
 import QuestionActions from '../../../../question-actions';
 import RerunButton from './rerun-button';
+import ResumeButton from './resume-button';
 import CancelButton from './cancel-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import { isRunSettled } from '@/lib/agents/run-labels';
@@ -43,6 +44,14 @@ export default function RunLive({
   initialData: OwnerRunPageData;
 }) {
   const [data, setData] = useState(initialData);
+
+  // A resume flips a settled run back to queued and refreshes the page:
+  // the fresh server data has to replace what this component captured on
+  // first mount, or the effect below reopens the stream against a state
+  // that still says "failed".
+  useEffect(() => {
+    setData(initialData);
+  }, [initialData]);
 
   useEffect(() => {
     // A run that already loaded settled will never move again — nothing
@@ -90,13 +99,28 @@ export default function RunLive({
         {!isRunSettled(run.status) ? (
           <CancelButton tenantId={tenantId} agentId={agentId} runId={runId} />
         ) : (
-          <RerunButton
-            tenantId={tenantId}
-            slug={slug}
-            agentId={agentId}
-            runId={runId}
-            agentName={agentName}
-          />
+          <>
+            {/* A failed run gets a third option beside rerun: pick THIS
+                run back up at the step that failed, keeping what earlier
+                steps saved — for when the plan was fine and one step
+                needs another go, with a word from the owner on how. */}
+            {run.status === 'failed' ? (
+              <ResumeButton
+                tenantId={tenantId}
+                agentId={agentId}
+                runId={runId}
+                agentName={agentName}
+                failedStepName={run.failedStepName}
+              />
+            ) : null}
+            <RerunButton
+              tenantId={tenantId}
+              slug={slug}
+              agentId={agentId}
+              runId={runId}
+              agentName={agentName}
+            />
+          </>
         )}
       </div>
       {pauseCard ? (
@@ -112,6 +136,24 @@ export default function RunLive({
       {run.error ? (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
           {run.error}
+        </p>
+      ) : null}
+      {run.resumeCount > 0 ? (
+        <p className="mb-4 rounded-md border border-sky-200 bg-sky-50/50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+          Resumed {run.resumeCount === 1 ? 'once' : `${run.resumeCount} times`}
+          {run.resumeStepName ? <> at “{run.resumeStepName}”</> : null}
+          {run.resumedAt ? (
+            <>
+              , last <LocalTime at={run.resumedAt} />
+            </>
+          ) : null}
+          . Attempts marked “Set aside” are what a resume retired.
+          {run.resumeGuidance ? (
+            <>
+              {' '}
+              Guidance given: <span className="italic">“{run.resumeGuidance}”</span>
+            </>
+          ) : null}
         </p>
       ) : null}
       <RunActivitySection run={run} />

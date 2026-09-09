@@ -28,6 +28,10 @@ export interface RunSummary {
   finishedAt: string | null;
   /** Milliseconds, when both ends exist. */
   durationMs: number | null;
+  /** How many times an owner resumed this run from a failure (migration 099). */
+  resumeCount: number;
+  /** The latest resume, when there was one. */
+  resumedAt: string | null;
 }
 
 export interface AttemptView {
@@ -59,6 +63,14 @@ export interface RunDetail extends RunSummary {
    */
   initialState?: Json;
   initialStateRedacted: boolean;
+  /**
+   * What the owner said to do differently when they last resumed the run,
+   * and the step it was resumed at (resolved from the snapshot). Content
+   * the owner wrote, so it follows the owner-always / admin-on-failure
+   * rule the attempt detail does.
+   */
+  resumeGuidance: string | null;
+  resumeStepName: string | null;
 }
 
 function iso(value: Date | null): string | null {
@@ -75,6 +87,9 @@ interface RunRow {
   created_at: Date;
   started_at: Date | null;
   finished_at: Date | null;
+  resume_count: number;
+  resumed_at: Date | null;
+  resume_step_id: string | null;
 }
 
 /** The failed step's name, from wherever the caller has a snapshot. */
@@ -103,7 +118,15 @@ function summaryOf(row: RunRow, snapshot?: Json | null): RunSummary {
       row.started_at && row.finished_at
         ? row.finished_at.getTime() - row.started_at.getTime()
         : null,
+    resumeCount: row.resume_count,
+    resumedAt: iso(row.resumed_at),
   };
+}
+
+/** The resumed step's name, when the run was resumed and the snapshot still names it. */
+function resumeStepNameOf(row: Pick<RunRow, 'resume_step_id'>, snapshot: Json): string | null {
+  if (!row.resume_step_id || !isAgentStepsDoc(snapshot)) return null;
+  return findNodeById(snapshot.steps, row.resume_step_id)?.node.name || null;
 }
 
 const RUN_COLUMNS = [
@@ -116,6 +139,9 @@ const RUN_COLUMNS = [
   'created_at',
   'started_at',
   'finished_at',
+  'resume_count',
+  'resumed_at',
+  'resume_step_id',
 ] as const;
 
 /**
@@ -210,9 +236,21 @@ export async function listRunsForOwner(
   return rows.map((row) => summaryOf(row, row.failed_snapshot));
 }
 
+/**
+ * The owner's resume note, for the admin path only on a failed run — the
+ * same CASE shape FAILED_INITIAL_STATE uses, for the same reason.
+ */
+const FAILED_RESUME_GUIDANCE = sql<string | null>`
+  case when status = 'failed' then resume_guidance end
+`.as('resume_guidance');
+
 async function runDetail(
   db: Kysely<DB>,
-  runRow: RunRow & { steps_snapshot: Json; initial_state: Json | null },
+  runRow: RunRow & {
+    steps_snapshot: Json;
+    initial_state: Json | null;
+    resume_guidance: string | null;
+  },
   audience: 'owner' | 'admin'
 ): Promise<RunDetail> {
   const attemptRows = await db
@@ -251,6 +289,8 @@ async function runDetail(
       ? { initialState: runRow.initial_state }
       : {}),
     initialStateRedacted: !initialVisible,
+    resumeGuidance: initialVisible ? runRow.resume_guidance : null,
+    resumeStepName: resumeStepNameOf(runRow, runRow.steps_snapshot),
     attempts: attemptRows.map((row) => {
       // THE visibility rule: content for the owner always; for an admin
       // only when the attempt failed (troubleshooting is their job,
@@ -284,7 +324,7 @@ export async function getRunForOwner(
   if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, 'steps_snapshot', 'initial_state'])
+    .select([...RUN_COLUMNS, 'steps_snapshot', 'initial_state', 'resume_guidance'])
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId)
@@ -340,7 +380,7 @@ export async function getRunForAdmin(
   if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, 'steps_snapshot', FAILED_INITIAL_STATE])
+    .select([...RUN_COLUMNS, 'steps_snapshot', FAILED_INITIAL_STATE, FAILED_RESUME_GUIDANCE])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)
