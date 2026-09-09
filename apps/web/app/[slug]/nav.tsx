@@ -163,11 +163,12 @@ export default function AppNav({
         {
           href: `/${slug}/chat`,
           label: 'Chat',
-          except: [`/${slug}/chat/projects`, `/${slug}/chat/prompts`],
+          except: [`/${slug}/chat/projects`, `/${slug}/chat/prompts`, `/${slug}/chat/memory`],
           plus: { href: `/${slug}/chat/new`, label: 'New chat' },
         },
         { href: `/${slug}/chat/projects`, label: 'Projects' },
         { href: `/${slug}/chat/prompts`, label: 'Prompt libraries' },
+        { href: `/${slug}/chat/memory`, label: 'Memory' },
       ],
       extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
     },
