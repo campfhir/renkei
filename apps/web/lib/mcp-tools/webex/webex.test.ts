@@ -210,6 +210,78 @@ describe('webex_bulk_list_messages', () => {
   });
 });
 
+describe('since window', () => {
+  const page = (created: string[]) =>
+    jsonResponse({
+      items: created.map((stamp, index) => ({
+        id: `msg-${index}`,
+        roomId: 'room-1',
+        personEmail: 'bob@example.com',
+        text: `sent ${stamp}`,
+        created: stamp,
+      })),
+    });
+
+  it('keeps only messages created at or after since, on the single-room tool', async () => {
+    mockCall.mockResolvedValue(
+      page(['2026-09-09T10:00:00Z', '2026-09-08T00:00:00Z', '2026-09-07T23:59:59Z'])
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_list_messages')!({ roomId: 'room-1', since: '2026-09-08T00:00:00Z' })
+    );
+
+    expect(text).toContain('sent 2026-09-09T10:00:00Z');
+    expect(text).toContain('sent 2026-09-08T00:00:00Z');
+    expect(text).not.toContain('sent 2026-09-07T23:59:59Z');
+    expect(text).not.toContain('there may be more messages');
+  });
+
+  it('flags a full page that never reaches the start of the window', async () => {
+    mockCall.mockResolvedValue(page(['2026-09-09T10:00:00Z', '2026-09-09T09:00:00Z']));
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({
+        roomIds: ['room-1'],
+        max: 2,
+        since: '2026-09-01T00:00:00Z',
+      })
+    );
+
+    expect(text).toContain('sent 2026-09-09T09:00:00Z');
+    expect(text).toContain('there may be more messages since 2026-09-01T00:00:00Z');
+  });
+
+  it('says when a room has nothing in the window', async () => {
+    mockCall.mockResolvedValue(page(['2026-09-01T10:00:00Z']));
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('webex_bulk_list_messages')!({
+        roomIds: ['room-1'],
+        since: '2026-09-08T00:00:00Z',
+      })
+    );
+
+    expect(text).toContain('## roomId: room-1\n(No messages since 2026-09-08T00:00:00Z.)');
+  });
+
+  it('rejects a since that is not a date, without calling WebEx', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_bulk_list_messages')!({
+      roomIds: ['room-1'],
+      since: 'yesterday',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('ISO 8601');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+});
+
 describe('webex_send_message', () => {
   it('refuses when neither roomId nor toPersonEmail is given', async () => {
     const tools = await toolsOf();

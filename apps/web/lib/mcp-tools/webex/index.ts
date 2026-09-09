@@ -130,6 +130,55 @@ const PARENT_ID_HINT =
   'Thread root to reply under — the id in "in thread <id>" from webex_list_messages, or a ' +
   "top-level message's own id. Omitted = new top-level message.";
 
+/** How the since field explains itself on both message-listing tools. */
+const SINCE_HINT =
+  'Only messages created at or after this ISO 8601 timestamp, e.g. 2026-09-08T00:00:00Z. ' +
+  'WebEx cannot filter by this itself, so the newest-first page of `max` is cut down ' +
+  'client-side; when the page ends inside the window the result says so — raise max to ' +
+  'see further back.';
+
+/**
+ * Parses the optional `since` argument. Absent → null (no window); present
+ * but not a date → an error string for the caller, since a silently ignored
+ * window would return messages the caller explicitly asked not to see.
+ */
+function parseSince(value: unknown): number | null | { error: string } {
+  if (value === undefined || value === null || value === '') return null;
+  const ms = typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isNaN(ms)
+    ? { error: 'since must be an ISO 8601 timestamp, e.g. 2026-09-08T00:00:00Z' }
+    : ms;
+}
+
+/**
+ * WebEx's /messages takes `before` but has no `since`, so a "what happened
+ * after <time>" window is cut client-side from the newest-first page. That
+ * page is capped at `max`, so when it is full and even its oldest message
+ * still falls inside the window, older ones may exist that were never
+ * fetched — `incomplete` says so, instead of the caller mistaking a page
+ * boundary for the start of the window. A message whose created stamp does
+ * not parse is kept: dropping it would hide it for a reason unrelated to
+ * the window.
+ */
+function sinceWindow(
+  messages: Record<string, unknown>[],
+  sinceMs: number,
+  max: number
+): { kept: Record<string, unknown>[]; incomplete: boolean } {
+  const kept = messages.filter((message) => {
+    const created = Date.parse(str(message.created));
+    return Number.isNaN(created) || created >= sinceMs;
+  });
+  const incomplete = messages.length >= max && kept.length === messages.length;
+  return { kept, incomplete };
+}
+
+function sinceNotes(since: string, incomplete: boolean): string {
+  return incomplete
+    ? `\n\n(The page ended inside the window — there may be more messages since ${since}; raise max to see them.)`
+    : '';
+}
+
 /** The title webex_note_to_self creates — and finds first on every later run. */
 /**
  * Decodes a WebEx API id — base64 of a `ciscospark://…/<TYPE>/<uuid>` URI —
@@ -280,23 +329,33 @@ export async function registerWebexUserTools(
       inputSchema: z.object({
         roomId: z.string().min(1).describe('Room id from webex_list_rooms'),
         max: z.number().int().min(1).max(50).describe('How many messages (default 20)').optional(),
+        since: z.string().describe(SINCE_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
       const roomId = str(args.roomId);
       if (!roomId) return errText('roomId is required');
       const max = typeof args.max === 'number' ? args.max : 20;
+      const since = parseSince(args.since);
+      if (typeof since === 'object' && since !== null) return errText(since.error);
       const result = await webexGet(
         auth,
         webexScopeFor('webex_list_messages'),
         `/messages?roomId=${encodeURIComponent(roomId)}&max=${max}`
       );
       if (!result.ok) return errText(result.error);
-      const lines = items(result.body).map(messageLine);
-      if (lines.length === 0) return textResult('No messages.');
+      const page = items(result.body);
+      const { kept, incomplete } =
+        since === null ? { kept: page, incomplete: false } : sinceWindow(page, since, max);
+      const lines = kept.map(messageLine);
+      if (lines.length === 0) {
+        return textResult(
+          since === null ? 'No messages.' : `No messages since ${str(args.since)}.`
+        );
+      }
       return textResult(
         withPresentationHint(
-          lines.join('\n\n'),
+          lines.join('\n\n') + sinceNotes(str(args.since), incomplete),
           'a chat-thread layout (grouped by sender, newest last) usually reads more naturally ' +
             'than this flat list.'
         )
@@ -314,8 +373,8 @@ export async function registerWebexUserTools(
         'spaces (a catch-up, a digest, "what did I miss"). WebEx has no multi-room endpoint, so ' +
         'this fans the reads out server-side and returns one section per room, in the order ' +
         'asked. A room that cannot be read (not a member, unknown id) is reported in its own ' +
-        'section without failing the others. Access and thread marking are the same as ' +
-        'webex_list_messages.',
+        'section without failing the others. Pass since for "what happened after <time>". ' +
+        'Access and thread marking are the same as webex_list_messages.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         roomIds: z
@@ -330,6 +389,7 @@ export async function registerWebexUserTools(
           .max(50)
           .describe('How many messages per room (default 20)')
           .optional(),
+        since: z.string().describe(SINCE_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -339,6 +399,9 @@ export async function registerWebexUserTools(
       if (roomIds.length === 0) return errText('roomIds is required');
       const unique = [...new Set(roomIds)].slice(0, BULK_ROOMS_CAP);
       const max = typeof args.max === 'number' ? args.max : 20;
+      const since = parseSince(args.since);
+      if (typeof since === 'object' && since !== null) return errText(since.error);
+      const sinceLabel = str(args.since);
 
       // WebEx rate-limits per user and per app; a bounded window keeps 25
       // rooms polite while still finishing in a few round trips.
@@ -366,9 +429,14 @@ export async function registerWebexUserTools(
             sections[index] = `${heading}\n(Could not read: ${result.error})`;
             continue;
           }
-          const lines = items(result.body).map(messageLine);
+          const page = items(result.body);
+          const { kept, incomplete } =
+            since === null ? { kept: page, incomplete: false } : sinceWindow(page, since, max);
+          const lines = kept.map(messageLine);
           sections[index] =
-            lines.length === 0 ? `${heading}\n(No messages.)` : `${heading}\n${lines.join('\n\n')}`;
+            lines.length === 0
+              ? `${heading}\n(No messages${since === null ? '' : ` since ${sinceLabel}`}.)`
+              : `${heading}\n${lines.join('\n\n')}${sinceNotes(sinceLabel, incomplete)}`;
         }
       };
       await Promise.all(
