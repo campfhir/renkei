@@ -22,6 +22,7 @@ import {
   isContainerNode,
   isTriggerDraft,
   CURRENT_STEPS_VERSION,
+  lintAgentDraft,
   triggerVariableDescriptors,
   validateAgentDraft,
   walkSteps,
@@ -591,6 +592,9 @@ export function AgentBuilder({
     [draft, tools, maxSteps]
   );
   const issues = serverIssues.length > 0 ? serverIssues : clientIssues;
+  // Hints ride beside the issues but never block: a step only sees what
+  // it chips, and the lint spots prose leaning on a value without one.
+  const hints = useMemo(() => lintAgentDraft(draft), [draft]);
   // Exact prefix match: `steps.1` must NOT claim `steps.10.instruction`.
   const issuesAt = (prefix: string) =>
     issues
@@ -689,6 +693,7 @@ export function AgentBuilder({
   };
 
   const issueMap = useMemo(() => issuesByNode(steps, issues), [steps, issues]);
+  const hintMap = useMemo(() => issuesByNode(steps, hints), [steps, hints]);
 
   // The whole find result, not just the node: the mobile footer needs the
   // sibling list and index to disable move-up/-down at the edges.
@@ -902,6 +907,7 @@ export function AgentBuilder({
                     variables={variables}
                     invalidVars={invalidVars}
                     issues={issueMap.get(selectedNode.id) ?? []}
+                    hints={hintMap.get(selectedNode.id) ?? []}
                   />
                 );
               case 'loop':
@@ -912,6 +918,7 @@ export function AgentBuilder({
                     variables={variables}
                     invalidVars={invalidVars}
                     issues={issueMap.get(selectedNode.id) ?? []}
+                    hints={hintMap.get(selectedNode.id) ?? []}
                   />
                 );
               case 'group':
@@ -945,6 +952,7 @@ export function AgentBuilder({
                     variables={variables}
                     invalidVars={invalidVars}
                     issues={issueMap.get(selectedNode.id) ?? []}
+                    hints={hintMap.get(selectedNode.id) ?? []}
                   />
                 );
               default: {
@@ -1283,9 +1291,11 @@ export function AgentBuilder({
             <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
               {issues.length > 0
                 ? `${issues.length} thing${issues.length === 1 ? '' : 's'} to fix before saving`
-                : enabled
-                  ? 'This agent is on.'
-                  : 'Saved agents start turned off — you review, then turn them on.'}
+                : hints.length > 0
+                  ? `${hints.length} hint${hints.length === 1 ? '' : 's'} worth a look — saving works regardless`
+                  : enabled
+                    ? 'This agent is on.'
+                    : 'Saved agents start turned off — you review, then turn them on.'}
             </p>
             {saveError && !saveModal ? (
               <p
@@ -1329,6 +1339,7 @@ export function AgentBuilder({
               otherAgents={otherAgents}
               selection={selection}
               issuesFor={(nodeId) => issueMap.get(nodeId)?.length ?? 0}
+              hintsFor={(nodeId) => hintMap.get(nodeId)?.length ?? 0}
               triggerIssues={issuesAt('triggers')}
               stepsIssues={issues
                 .filter((issue) => issue.path === 'steps')
@@ -1358,9 +1369,11 @@ export function AgentBuilder({
           <p className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
             {issues.length > 0
               ? `${issues.length} thing${issues.length === 1 ? '' : 's'} to fix before saving`
-              : enabled
-                ? 'This agent is on.'
-                : 'Saved agents start turned off — you review, then turn them on.'}
+              : hints.length > 0
+                ? `${hints.length} hint${hints.length === 1 ? '' : 's'} worth a look — saving works regardless`
+                : enabled
+                  ? 'This agent is on.'
+                  : 'Saved agents start turned off — you review, then turn them on.'}
           </p>
           <div className="flex shrink-0 items-center gap-2">
             <button

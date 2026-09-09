@@ -110,6 +110,7 @@ export {
   type QuestionAnswerValue,
   type QuestionAnswersResult,
 } from './question-answers';
+export { chipMention, lintAgentDraft, type LintHint, type Mention } from './lint';
 export {
   normalizeAgentDraft,
   savesByPathCoverage,

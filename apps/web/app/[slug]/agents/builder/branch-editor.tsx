@@ -10,10 +10,19 @@
  */
 
 import RemoveButton from '@/components/remove-button';
-import { MAX_BRANCH_PATHS, type BranchPath, type BranchStep } from '@renkei/agents';
+import { chipMention, MAX_BRANCH_PATHS, type BranchPath, type BranchStep } from '@renkei/agents';
 import { randomUUID } from '@/lib/agents/uuid';
 import { ChipEditor } from './chip-editor';
-import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
+import {
+  FieldHints,
+  FieldIssues,
+  exceptFields,
+  fieldClass,
+  forField,
+  forHints,
+  type NodeHint,
+  type NodeIssue,
+} from './field-issues';
 import type { VariableOption } from './options';
 
 const labelClass = 'block text-sm font-medium mb-1';
@@ -24,12 +33,15 @@ export function BranchEditor({
   variables,
   invalidVars,
   issues,
+  hints = [],
 }: {
   branch: BranchStep;
   onChange: (branch: BranchStep) => void;
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
   issues: NodeIssue[];
+  /** Lint hints for this node (a value named in words without its chip). */
+  hints?: NodeHint[];
 }) {
   const renamePath = (index: number, name: string) => {
     onChange({
@@ -128,6 +140,15 @@ export function BranchEditor({
           invalid={conditionIssues.length > 0}
         />
         <FieldIssues messages={conditionIssues} />
+        <FieldHints
+          hints={forHints(hints, 'condition')}
+          onFix={(hint) =>
+            onChange({
+              ...branch,
+              condition: chipMention(branch.condition, hint.at, hint.variable),
+            })
+          }
+        />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {twoWay
             ? 'The agent answers yes or no from what it already knows; after either path finishes, the flow continues below the branch.'
