@@ -208,6 +208,150 @@ function assignmentItems(json: unknown): Record<string, unknown>[] {
 }
 
 /**
+ * Which id fields in Administration API records point at which catalog.
+ * annotateIds walks a record and writes a `…Name` sibling next to each one
+ * it knows, so a document type reads `documentTypeGroupId: 101` beside
+ * `documentTypeGroupName: "Medical Records - Patient"` instead of sending
+ * the reader off to look 101 up. The API hands ids back as numbers in some
+ * records and strings in others; both are matched. "0" is this API's
+ * "none" (an ungrouped keyword, no cache disk group) and is left alone.
+ */
+const ID_FIELDS: Record<string, { kind: AdminCatalogKind; noun: string }> = {
+  documentTypeGroupId: { kind: 'document-type-groups', noun: 'document type group' },
+  documentTypeId: { kind: 'document-types', noun: 'document type' },
+  defaultDiskGroupId: { kind: 'disk-groups', noun: 'disk group' },
+  diskGroupId: { kind: 'disk-groups', noun: 'disk group' },
+  defaultFileFormatId: { kind: 'file-types', noun: 'file type' },
+  fileTypeId: { kind: 'file-types', noun: 'file type' },
+  keywordTypeId: { kind: 'keyword-types', noun: 'keyword type' },
+  keywordTypeGroupId: { kind: 'keyword-type-groups', noun: 'keyword type group' },
+  userGroupId: { kind: 'user-groups', noun: 'user group' },
+  userId: { kind: 'users', noun: 'user' },
+  changeAuthor: { kind: 'users', noun: 'user' },
+};
+
+/** An id worth resolving: a non-empty string or number other than 0. */
+function idValue(value: unknown): string | null {
+  const id =
+    typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  return id === '' || id === '0' ? null : id;
+}
+
+function nameKey(key: string): string {
+  return `${key.endsWith('Id') ? key.slice(0, -2) : key}Name`;
+}
+
+/**
+ * A copy of `value` with a `…Name` field beside every id field ID_FIELDS
+ * knows, resolved through this connector's own catalogs. Each catalog is
+ * loaded at most once per call, and only when some field references it,
+ * so a record with no ids costs nothing extra. A dangling id (no such
+ * item in the catalog) is said outright — that is the debugging case.
+ */
+async function annotateIds(
+  context: MCPToolContext,
+  auth: OnBaseAuth,
+  value: unknown
+): Promise<unknown> {
+  const kinds = new Set<AdminCatalogKind>();
+  const collect = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      v.forEach(collect);
+      return;
+    }
+    if (!isRecord(v)) return;
+    for (const [key, x] of Object.entries(v)) {
+      const field = ID_FIELDS[key];
+      if (field && idValue(x) !== null) kinds.add(field.kind);
+      collect(x);
+    }
+  };
+  collect(value);
+
+  // null = the listing failed; names for that kind are unavailable rather than absent.
+  const tables = new Map<AdminCatalogKind, Map<string, string> | null>();
+  await Promise.all(
+    [...kinds].map(async (kind) => {
+      const catalog = await loadAdminCatalog(context, auth, kind);
+      tables.set(
+        kind,
+        typeof catalog === 'string' ? null : new Map(catalog.map((t) => [t.id, displayName(t)]))
+      );
+    })
+  );
+
+  const rewrite = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(rewrite);
+    if (!isRecord(v)) return v;
+    const out: Record<string, unknown> = {};
+    for (const [key, x] of Object.entries(v)) {
+      out[key] = rewrite(x);
+      const field = ID_FIELDS[key];
+      const id = field ? idValue(x) : null;
+      if (!field || id === null) continue;
+      const table = tables.get(field.kind);
+      out[nameKey(key)] =
+        table === null || table === undefined
+          ? `(${field.noun} names unavailable)`
+          : (table.get(id) ?? `(no such ${field.noun}: ${id})`);
+    }
+    return out;
+  };
+  return rewrite(value);
+}
+
+/** Full user records by id, one GET each, five minutes of staleness. Only successes are cached. */
+const userDetailCache = new CatalogCache<Record<string, unknown>>();
+
+/** How many users one answer will fetch individually before falling back to names alone. */
+const USER_DETAIL_LIMIT = 40;
+
+/**
+ * Prose labels for user ids — "jdoe — Jane Doe <jdoe@example.org> (id 302)"
+ * — degrading to the listing's user name, then to "user 302", as less is
+ * known. The listing has only user names; real name and email need one
+ * GET per user, so those are fetched in parallel for up to
+ * USER_DETAIL_LIMIT distinct ids and skipped beyond that.
+ */
+async function userLabels(
+  context: MCPToolContext,
+  auth: OnBaseAuth,
+  ids: readonly string[]
+): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter((id) => id !== ''))];
+  const names = await adminNames(context, auth, 'users');
+  const details = new Map<string, Record<string, unknown>>();
+  await Promise.all(
+    unique.slice(0, USER_DETAIL_LIMIT).map(async (id) => {
+      const key = `${context.tenantId}:user:${id}`;
+      const cached = userDetailCache.get(key);
+      if (cached) {
+        details.set(id, cached);
+        return;
+      }
+      const result = await apiJson(
+        auth,
+        { method: 'GET', path: `/api/users/${encodeURIComponent(id)}` },
+        'read a user'
+      );
+      if (typeof result === 'string' || !isRecord(result.json)) return;
+      userDetailCache.set(key, result.json);
+      details.set(id, result.json);
+    })
+  );
+  return new Map(
+    unique.map((id) => {
+      const detail = details.get(id);
+      const name = str(detail?.name) || names.get(id);
+      if (!name) return [id, `user ${id}`];
+      const email = str(detail?.emailAddress);
+      const extra = [str(detail?.realName), email ? `<${email}>` : ''].filter(Boolean).join(' ');
+      return [id, `${name}${extra ? ` — ${extra}` : ''} (id ${id})`];
+    })
+  );
+}
+
+/**
  * The warning every document type created without a user group carries.
  * OnBase shows a document type only to members of a user group it has been
  * granted to — in every client AND in OnBase Configuration — so an
@@ -318,7 +462,7 @@ export function registerOnbaseAdminTools(
         'read the document type'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -350,7 +494,7 @@ export function registerOnbaseAdminTools(
         'read the keyword type'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -379,7 +523,7 @@ export function registerOnbaseAdminTools(
         'read the document type group'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -408,7 +552,7 @@ export function registerOnbaseAdminTools(
         'read the keyword type group'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -432,7 +576,7 @@ export function registerOnbaseAdminTools(
         'read the file type'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -541,7 +685,7 @@ export function registerOnbaseAdminTools(
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         itemName: z.string().optional().describe('The configuration item name to filter to.'),
-        author: z.string().optional().describe('The user id who made the change.'),
+        author: z.string().optional().describe('The user who made the change — user name or id.'),
         changeType: z.enum(['Create', 'Update', 'Delete']).optional(),
         after: z.string().optional().describe('Lower bound, e.g. "2026-08-27 00:00:00.000".'),
         before: z.string().optional().describe('Upper bound, same format.'),
@@ -556,7 +700,11 @@ export function registerOnbaseAdminTools(
     }) => {
       const query: Record<string, string> = {};
       if (args.itemName) query.itemName = args.itemName;
-      if (args.author) query.author = args.author;
+      if (args.author) {
+        const authorId = await resolveAdminRef(context, auth, 'users', args.author, 'user');
+        if (typeof authorId !== 'string') return errText(authorId.refusal);
+        query.author = authorId;
+      }
       if (args.changeType) query.changeType = args.changeType;
       if (args.after) query.afterDateChanged = args.after;
       if (args.before) query.beforeDateChanged = args.before;
@@ -569,9 +717,20 @@ export function registerOnbaseAdminTools(
       const items =
         isRecord(result.json) && Array.isArray(result.json.items) ? result.json.items : [];
       if (items.length === 0) return textResult('No matching change events.');
-      const lines = items.filter(isRecord).map((event) => {
+      const events = items.filter(isRecord);
+      const authors = await userLabels(
+        context,
+        auth,
+        events.map((event) => str(event.changeAuthor))
+      );
+      const lines = events.map((event) => {
         const item = isRecord(event.changeItem) ? event.changeItem : {};
-        const who = str(event.changeAuthorUserName) || `user ${str(event.changeAuthor) || '?'}`;
+        const authorId = str(event.changeAuthor);
+        const who =
+          authors.get(authorId) ??
+          (str(event.changeAuthorUserName)
+            ? `${str(event.changeAuthorUserName)} (id ${authorId || '?'})`
+            : `user ${authorId || '?'}`);
         return (
           `  ${str(event.dateChanged) || '?'} — ${str(item.changeType) || '?'} ${str(item.itemType) || '?'} ` +
           `"${str(item.itemName) || '?'}" (id ${str(item.itemId) || '?'}) by ${who}`
@@ -700,16 +859,17 @@ export function registerOnbaseAdminTools(
         "read the user group's members"
       );
       if (typeof members === 'string') return errText(members);
-      const userNames = await adminNames(context, auth, 'users');
       const memberIds = assignmentItems(members.json)
         .map((m) => str(m.userId))
         .filter((userId) => userId !== '');
+      const labels = await userLabels(context, auth, memberIds);
       const lines =
         memberIds.length === 0
           ? ['  (no members)']
-          : memberIds.map((userId) => `  ${labelled(userNames, userId, 'user')}`);
+          : memberIds.map((userId) => `  ${labels.get(userId) ?? `user ${userId}`}`);
+      const shown = await annotateIds(context, auth, group.json);
       return textResult(
-        `${JSON.stringify(group.json, null, 2)}\n\nMembers (${memberIds.length}):\n${lines.join('\n')}`
+        `${JSON.stringify(shown, null, 2)}\n\nMembers (${memberIds.length}):\n${lines.join('\n')}`
       );
     }
   );
@@ -749,7 +909,11 @@ export function registerOnbaseAdminTools(
         groupIds.length === 0
           ? ['  (none)']
           : groupIds.map((groupId) => `  ${labelled(groupNames, groupId, 'user group')}`);
-      const shown = isRecord(user.json) ? { ...user.json, password: undefined } : user.json;
+      const shown = await annotateIds(
+        context,
+        auth,
+        isRecord(user.json) ? { ...user.json, password: undefined } : user.json
+      );
       return textResult(
         `${JSON.stringify(shown, null, 2)}\n\nUser groups (${groupIds.length}):\n${lines.join('\n')}`
       );
@@ -898,7 +1062,7 @@ export function registerOnbaseAdminTools(
         'read your permissions'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -1680,10 +1844,10 @@ async function renderAssignments(
     return { ok: true, text: 'No keyword types are assigned to this document type.' };
   }
 
-  const catalog = await loadAdminCatalog(context, auth, 'keyword-types');
-  const names = new Map(
-    typeof catalog === 'string' ? [] : catalog.map((t) => [t.id, displayName(t)])
-  );
+  const names = await adminNames(context, auth, 'keyword-types');
+  const groups = items.some((item) => isRecord(item) && idValue(item.keywordTypeGroupId) !== null)
+    ? await adminNames(context, auth, 'keyword-type-groups')
+    : new Map<string, string>();
 
   const lines = items.filter(isRecord).map((item) => {
     const label = names.get(str(item.keywordTypeId)) ?? `keyword type ${str(item.keywordTypeId)}`;
@@ -1693,7 +1857,12 @@ async function renderAssignments(
       item.readOnly === true ? 'read-only' : null,
       item.makesDocUnique === true ? 'makes-unique' : null,
     ].filter((f): f is string => f !== null);
-    return `  ${label} (id ${str(item.keywordTypeId)})${flags.length ? ` [${flags.join(', ')}]` : ''}`;
+    const groupId = idValue(item.keywordTypeGroupId);
+    const group = groupId ? ` in group ${labelled(groups, groupId, 'keyword type group')}` : '';
+    return (
+      `  ${label} (id ${str(item.keywordTypeId)})` +
+      `${flags.length ? ` [${flags.join(', ')}]` : ''}${group}`
+    );
   });
   return { ok: true, text: `Assigned keyword types:\n${lines.join('\n')}` };
 }

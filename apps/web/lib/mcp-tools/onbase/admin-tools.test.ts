@@ -423,6 +423,33 @@ describe('user and user group lookup', () => {
     expect(result.content[0].text).toContain('user 999');
   });
 
+  it('labels members with real name and email when the user record is readable', async () => {
+    const scripted = scriptedAuth((request) => {
+      if (request.method === 'GET' && request.path === '/api/user-groups/202') {
+        return { status: 200, body: { id: '202', name: 'Finance' } };
+      }
+      if (request.method === 'GET' && request.path === '/api/users/302') {
+        return {
+          status: 200,
+          body: { id: '302', name: 'jdoe', realName: 'Jane Doe', emailAddress: 'jdoe@example.org' },
+        };
+      }
+      if (
+        request.method === 'GET' &&
+        request.path === '/api/users/user-groups' &&
+        request.query?.userGroupId === '202'
+      ) {
+        return { status: 200, body: { items: [{ userGroupId: '202', userId: '302' }] } };
+      }
+      return undefined;
+    });
+    const result = await tools(scripted.auth).get('onbase_admin_get_user_group')!({
+      userGroup: 'Finance',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('jdoe — Jane Doe <jdoe@example.org> (id 302)');
+  });
+
   it("shows a user's groups and never echoes a password", async () => {
     const scripted = scriptedAuth((request) => {
       if (request.method === 'GET' && request.path === '/api/users/302') {
@@ -566,5 +593,147 @@ describe('onbase_admin_assign_document_type_user_groups', () => {
     )!({ documentTypeGroup: 'Finance', userGroups: [{ userGroup: 'Clinical Staff' }] });
     expect(result.isError).toBeUndefined();
     expect(written).toEqual({ items: [{ userGroupId: '201', documentTypeGroupId: '50' }] });
+  });
+});
+
+describe('ids are resolved to names in every record', () => {
+  it('writes a …Name beside each known id field, deep, and says when an id dangles', async () => {
+    const scripted = scriptedAuth((request) => {
+      if (request.method === 'GET' && request.path === '/api/document-types/7') {
+        return {
+          status: 200,
+          body: {
+            id: '7',
+            name: 'Invoices',
+            documentTypeGroupId: 50,
+            defaultDiskGroupId: 10,
+            defaultFileFormatId: 80,
+            queryRestrictions: { requireDate: false },
+            nested: [{ keywordTypeId: '101', keywordTypeGroupId: '0' }, { userGroupId: '404' }],
+          },
+        };
+      }
+      return undefined;
+    });
+    const result = await tools(scripted.auth).get('onbase_admin_get_document_type')!({
+      documentType: 'Invoices',
+    });
+    expect(result.isError).toBeUndefined();
+    const shown = JSON.parse(result.content[0].text);
+    expect(shown).toMatchObject({
+      documentTypeGroupId: 50,
+      documentTypeGroupName: 'Finance',
+      defaultDiskGroupId: 10,
+      defaultDiskGroupName: 'System',
+      defaultFileFormatId: 80,
+      defaultFileFormatName: 'PDF Document',
+      queryRestrictions: { requireDate: false },
+    });
+    expect(shown.nested[0]).toEqual({
+      keywordTypeId: '101',
+      keywordTypeName: 'Vendor',
+      // 0 is "ungrouped", not a reference: no name key at all.
+      keywordTypeGroupId: '0',
+    });
+    expect(shown.nested[1]).toEqual({
+      userGroupId: '404',
+      userGroupName: '(no such user group: 404)',
+    });
+  });
+
+  it('loads no catalog for a record with no id fields', async () => {
+    const scripted = scriptedAuth((request) => {
+      if (request.method === 'GET' && request.path === '/api/file-types/80') {
+        return { status: 200, body: { id: '80', name: 'PDF Document', displayType: 'Pdf' } };
+      }
+      return undefined;
+    });
+    const result = await tools(scripted.auth).get('onbase_admin_get_file_type')!({
+      fileType: '80',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      id: '80',
+      name: 'PDF Document',
+      displayType: 'Pdf',
+    });
+    // Resolving '80' (an id) may need the file-types listing (unless an
+    // earlier test left it cached); no other catalog was fetched.
+    const listings = scripted.requests.filter((r) => r.method === 'GET' && !r.path.includes('/80'));
+    expect(listings.map((r) => r.path).filter((path) => path !== '/api/file-types')).toEqual([]);
+  });
+
+  it('names the change author from their user record, and takes author by name', async () => {
+    const scripted = scriptedAuth((request) => {
+      if (request.method === 'GET' && request.path === '/api/change-events') {
+        expect(request.query?.author).toBe('302');
+        return {
+          status: 200,
+          body: {
+            items: [
+              {
+                dateChanged: '2026-09-09 17:10:39.877',
+                changeAuthor: '302',
+                changeItem: {
+                  changeType: 'Create',
+                  itemType: 'DocumentTypes',
+                  itemName: 'Renkei Testing',
+                  itemId: '683',
+                },
+              },
+            ],
+          },
+        };
+      }
+      if (request.method === 'GET' && request.path === '/api/users/302') {
+        return {
+          status: 200,
+          body: { id: '302', name: 'jdoe', realName: 'Jane Doe', emailAddress: 'jdoe@example.org' },
+        };
+      }
+      return undefined;
+    });
+    const result = await tools(scripted.auth).get('onbase_admin_list_change_events')!({
+      author: 'jdoe',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain(
+      'Create DocumentTypes "Renkei Testing" (id 683) by jdoe — Jane Doe <jdoe@example.org> (id 302)'
+    );
+  });
+
+  it('names the keyword type group an assigned keyword sits in', async () => {
+    const scripted = scriptedAuth((request) => {
+      if (
+        request.method === 'GET' &&
+        request.path === '/api/document-types/keyword-types' &&
+        request.query?.documentTypeId === '7'
+      ) {
+        return {
+          status: 200,
+          body: {
+            items: [
+              {
+                keywordTypeId: '101',
+                documentTypeId: '7',
+                keywordTypeGroupId: '60',
+                required: true,
+              },
+              { keywordTypeId: '102', documentTypeId: '7', keywordTypeGroupId: '0' },
+            ],
+          },
+        };
+      }
+      return undefined;
+    });
+    const result = await tools(scripted.auth).get('onbase_admin_get_document_type_keywords')!({
+      documentType: 'Invoices',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain(
+      'Vendor (id 101) [required] in group Invoice Fields (id 60)'
+    );
+    expect(result.content[0].text).toMatch(/Invoice Amount \(id 102\)$/m);
+    expect(result.content[0].text).not.toContain('Invoice Amount (id 102) in group');
   });
 });

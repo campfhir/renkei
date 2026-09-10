@@ -495,6 +495,18 @@ What was added, all in `admin-tools.ts` against the same connector:
   and a document type created with none is answered with an explicit
   warning naming the grant tool, not a success line.
 
+Ids are resolved to names on the way out, too. Every `onbase_admin_get_*`
+answer passes through `annotateIds`, which walks the record and writes a
+`…Name` sibling beside each id field it knows (`documentTypeGroupId` →
+`documentTypeGroupName`, and so on for disk groups, file types, keyword
+types and groups, user groups, users, change authors), loading each
+catalog once per call and only when referenced; a dangling id is labelled
+`(no such …)` rather than left as a bare number. Prose lines that name a
+person (change-event authors, user group members) go further and fetch
+the user record — user name, real name, email — one GET per distinct id
+up to a cap of 40, cached five minutes. The cost is a listing or two per
+answer; the alternative was every reader doing that lookup by hand.
+
 Two spec-conformance fixes rode along. `DocumentType` declares
 `documentTypeGroupId`, `defaultDiskGroupId` and `defaultFileFormatId` as
 numbers while every listing returns ids as strings; the create now sends

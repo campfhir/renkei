@@ -65,6 +65,12 @@ export const CHANGELOG: ChangelogRelease[] = [
           'Creating a document type now takes user groups by name, and when none are given the answer says plainly that the document type will not show up for anyone until one is granted — instead of reporting a clean success.',
       },
       {
+        kind: 'changed',
+        title: 'OnBase ids come with their names',
+        detail:
+          'Every OnBase Administration record now carries the name beside each id it references — the document type group, disk group, file type, keyword type, user group or user — and people are shown with their real name and email where the account can read them. A reference to something that no longer exists says so instead of leaving a bare number.',
+      },
+      {
         kind: 'added',
         title: 'See your own OnBase rights',
         detail:
