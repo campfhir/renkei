@@ -514,7 +514,7 @@ export async function getToolDetail(
 export async function getAvailableTools(tenantId: string): Promise<ToolDescriptor[]> {
   const session = await getSessionFromCookies(tenantId);
   if (!session) return [];
-  return listAvailableTools(tenantId, session.subject);
+  return listAvailableTools(tenantId, session.subject, { roles: session.roles });
 }
 
 /** The identity spine's name for the signed-in caller, for the page header. */

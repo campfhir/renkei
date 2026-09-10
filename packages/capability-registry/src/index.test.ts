@@ -1,6 +1,6 @@
 /**
- * The projection's contract: three gates, applied org → provisioning → user,
- * each only ever narrowing. These tests are the registry's spec.
+ * The projection's contract: five gates, applied org → roles → audience →
+ * provisioning → user, each only ever narrowing. These tests are the registry's spec.
  */
 
 import { createProjection, projectCapabilities, OPEN_ORG_POLICY } from './index';
@@ -125,5 +125,52 @@ describe('projectCapabilities', () => {
         requiredRole: 'renkei-operator',
       })
     ).toBe(false);
+  });
+
+  it('a restricted connector exposes nothing to a caller outside its audience', () => {
+    // The gate that turns "hide the card" into a real restriction: outside
+    // the audience, reads and acts alike are never registered.
+    const projection = createProjection(
+      { ...OPEN_ORG_POLICY, restrictedConnectors: ['webex'] },
+      { ...EVERYTHING, allowedConnectors: [] }
+    );
+    expect(projection.allows({ id: 'get_thread', connector: 'webex', kind: 'read' })).toBe(false);
+    expect(projection.allows({ id: 'post_reply', connector: 'webex', kind: 'act' })).toBe(false);
+    expect(projection.allows({ id: 'jira_search_issues', connector: 'jira', kind: 'read' })).toBe(
+      true
+    );
+  });
+
+  it('a restricted connector is unchanged for a caller inside its audience', () => {
+    const projection = createProjection(
+      { ...OPEN_ORG_POLICY, restrictedConnectors: ['webex'] },
+      { ...EVERYTHING, allowedConnectors: ['webex'] }
+    );
+    expect(projection.allows({ id: 'get_thread', connector: 'webex', kind: 'read' })).toBe(true);
+  });
+
+  it('omitting allowedConnectors closes every restricted connector', () => {
+    // The fail-closed default: a caller whose audience could not be
+    // resolved is outside every audience.
+    const projection = createProjection(
+      { ...OPEN_ORG_POLICY, restrictedConnectors: ['webex'] },
+      EVERYTHING
+    );
+    expect(projection.allows({ id: 'get_thread', connector: 'webex', kind: 'read' })).toBe(false);
+  });
+
+  it('being in an audience cannot widen a disabled or unprovisioned connector', () => {
+    const disabled = createProjection(
+      { ...OPEN_ORG_POLICY, restrictedConnectors: ['webex'], disabledConnectors: ['webex'] },
+      { ...EVERYTHING, allowedConnectors: ['webex'] }
+    );
+    expect(disabled.allows({ id: 'get_thread', connector: 'webex', kind: 'read' })).toBe(false);
+    const unprovisioned = createProjection(
+      { ...OPEN_ORG_POLICY, restrictedConnectors: ['webex'] },
+      { provisionedConnectors: ['jira'], hiddenCapabilities: [], allowedConnectors: ['webex'] }
+    );
+    expect(unprovisioned.allows({ id: 'get_thread', connector: 'webex', kind: 'read' })).toBe(
+      false
+    );
   });
 });

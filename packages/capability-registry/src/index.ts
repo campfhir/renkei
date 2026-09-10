@@ -3,16 +3,18 @@
  * actually sees (RENKEI.md Decisions #12 and #13).
  *
  * Connectors declare capabilities; what any given user (or an agent acting
- * for them) sees is the declared set filtered through four gates, applied
+ * for them) sees is the declared set filtered through five gates, applied
  * in this order:
  *
  *   1. the org-admin's capability policy — is the capability enabled for the
  *      org at all, and within what constraints;
  *   2. the caller's roles — a capability that names a requiredRole is
  *      invisible to anyone not holding it;
- *   3. the user's provisioned connectors — an unprovisioned connector
+ *   3. the connector's audience — a connector the org-admin restricted to
+ *      certain people exposes nothing to anyone else;
+ *   4. the user's provisioned connectors — an unprovisioned connector
  *      exposes nothing;
- *   4. the user's own expose/hide choices.
+ *   5. the user's own expose/hide choices.
  *
  * The MCP tool list and the A2A Agent Card are per-user projections of this
  * filtering, never a global catalog. The projection is pure data-in,
@@ -49,6 +51,13 @@ export interface OrgCapabilityPolicy {
   disabledConnectors: readonly string[];
   /** Individual capabilities switched off org-wide. */
   disabledCapabilities: readonly string[];
+  /**
+   * Connectors the org-admin scoped to an audience. A connector listed
+   * here exposes nothing unless the caller's `allowedConnectors` names it;
+   * absent from this list means everyone. Required rather than optional so
+   * a caller building a policy cannot forget the gate exists.
+   */
+  restrictedConnectors: readonly string[];
 }
 
 /** Gates 3 and 4 — the user's provisioning and their own expose/hide choices. */
@@ -63,6 +72,13 @@ export interface UserCapabilitySelection {
    * a capability with no requiredRole is unaffected either way.
    */
   roles?: readonly string[];
+  /**
+   * Gate 3 — of the org's restricted connectors, the ones this caller is in
+   * the audience of. Resolved from the caller's recorded identity (never
+   * from a token: agent-run tokens carry none), and only ever consulted
+   * for a connector in `restrictedConnectors` — it cannot widen anything.
+   */
+  allowedConnectors?: readonly string[];
 }
 
 /** An org policy with everything enabled — the single-org deployment default. */
@@ -70,6 +86,7 @@ export const OPEN_ORG_POLICY: OrgCapabilityPolicy = {
   readOnly: false,
   disabledConnectors: [],
   disabledCapabilities: [],
+  restrictedConnectors: [],
 };
 
 export interface CapabilityProjection {
@@ -77,8 +94,8 @@ export interface CapabilityProjection {
 }
 
 /**
- * Build the per-user projection. The three gates compose by AND — each can
- * only narrow, never widen, what an earlier gate allowed.
+ * Build the per-user projection. The gates compose by AND — each can only
+ * narrow, never widen, what an earlier gate allowed.
  */
 export function createProjection(
   org: OrgCapabilityPolicy,
@@ -89,6 +106,8 @@ export function createProjection(
   const provisioned = new Set(user.provisionedConnectors);
   const hidden = new Set(user.hiddenCapabilities);
   const roles = new Set(user.roles ?? []);
+  const restricted = new Set(org.restrictedConnectors);
+  const allowed = new Set(user.allowedConnectors ?? []);
 
   return {
     allows(capability: CapabilityDescriptor): boolean {
@@ -96,6 +115,7 @@ export function createProjection(
       if (disabledConnectors.has(capability.connector)) return false;
       if (disabledCapabilities.has(capability.id)) return false;
       if (capability.requiredRole && !roles.has(capability.requiredRole)) return false;
+      if (restricted.has(capability.connector) && !allowed.has(capability.connector)) return false;
       if (!provisioned.has(capability.connector)) return false;
       if (hidden.has(capability.id)) return false;
       return true;

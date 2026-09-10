@@ -12,6 +12,7 @@ import {
   setOrgSettings,
   getPublicBaseUrl,
   invalidateSettingsCache,
+  coerceStringListRecord,
   DEFAULT_ORG_SETTINGS,
 } from './index';
 
@@ -138,5 +139,28 @@ describe('public base URL', () => {
   it('treats a blank PUBLIC_BASE_URL as unset', () => {
     process.env.PUBLIC_BASE_URL = '   ';
     expect(getPublicBaseUrl()).toBeNull();
+  });
+});
+
+describe('connector audiences', () => {
+  it('round-trips a map of group lists and drops anything malformed', async () => {
+    stubDb();
+    await setOrgSettings('t1', {
+      connectorAudiences: { zoom: ['svc-desk', 'ops'], 'atlassian-bitbucket': [] },
+    });
+    const settings = await getOrgSettings('t1');
+    expect(settings.ok && settings.val.connectorAudiences).toEqual({
+      zoom: ['svc-desk', 'ops'],
+      'atlassian-bitbucket': [],
+    });
+  });
+
+  it('coerces defensively: non-object → default, non-list values dropped, empties kept', () => {
+    expect(coerceStringListRecord('zoom', { a: ['x'] })).toEqual({ a: ['x'] });
+    expect(coerceStringListRecord(['zoom'], {})).toEqual({});
+    expect(coerceStringListRecord({ zoom: 'svc', jira: ['a', 3, ''], onbase: [] }, {})).toEqual({
+      jira: ['a'],
+      onbase: [],
+    });
   });
 });

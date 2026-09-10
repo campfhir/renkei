@@ -37,6 +37,38 @@ function registerSampleTools(server: McpServer): void {
 }
 
 describe('withCapabilityGate', () => {
+  it('registers none of a restricted connector for a caller outside its audience', () => {
+    // The assertion that separates a real restriction from a hidden card:
+    // outside the audience, the connector's tools never reach tools/list.
+    const outside = fakeServer();
+    registerSampleTools(
+      withCapabilityGate(
+        outside.server,
+        createProjection(
+          { ...OPEN_ORG_POLICY, restrictedConnectors: [JIRA_CONNECTOR] },
+          { ...PROVISIONED, allowedConnectors: [] }
+        )
+      )
+    );
+    expect(outside.registered).toEqual([]);
+
+    const inside = fakeServer();
+    registerSampleTools(
+      withCapabilityGate(
+        inside.server,
+        createProjection(
+          { ...OPEN_ORG_POLICY, restrictedConnectors: [JIRA_CONNECTOR] },
+          { ...PROVISIONED, allowedConnectors: [JIRA_CONNECTOR] }
+        )
+      )
+    );
+    expect(inside.registered).toEqual([
+      'jira_search_issues',
+      'jira_create_issue',
+      'jira_delete_issue',
+    ]);
+  });
+
   it('registers everything under an open policy', () => {
     const { server, registered } = fakeServer();
     const gated = withCapabilityGate(server, createProjection(OPEN_ORG_POLICY, PROVISIONED));

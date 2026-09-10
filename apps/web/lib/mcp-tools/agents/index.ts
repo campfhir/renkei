@@ -619,7 +619,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       // Same projection the save path validates against, so this cannot
       // offer a tool a step would then be refused for naming.
-      const all = (await listAvailableTools(context.tenantId, context.subject)).filter(
+      const all = (
+        await listAvailableTools(context.tenantId, context.subject, { roles: context.roles })
+      ).filter(
         // Preview-card buttons: the model never sees them, so an author must
         // not be told to write a step for one.
         (tool) => !tool.appOnly

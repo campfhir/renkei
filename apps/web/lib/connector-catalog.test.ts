@@ -63,7 +63,12 @@ describe('connector catalog', () => {
 describe('disabling a connector', () => {
   const projectionWith = (disabled: string[]) =>
     createProjection(
-      { readOnly: false, disabledConnectors: disabled, disabledCapabilities: [] },
+      {
+        readOnly: false,
+        disabledConnectors: disabled,
+        disabledCapabilities: [],
+        restrictedConnectors: [],
+      },
       {
         provisionedConnectors: ['microsoft', 'sharepoint', 'onedrive'],
         hiddenCapabilities: [],
