@@ -133,7 +133,12 @@ export default function AddConnectorModal({
                   const isAdded = added.has(entry.capabilityKey);
                   const isConnected = item?.connected ?? false;
                   return (
-                    <li key={entry.capabilityKey} className="flex items-center gap-3 py-2">
+                    // Jira and JSM share a capability key (one gate, one
+                    // selection), so the row is keyed by config too.
+                    <li
+                      key={`${entry.configKey}:${entry.capabilityKey}`}
+                      className="flex items-center gap-3 py-2"
+                    >
                       <span className="flex w-16 shrink-0 items-center justify-center">
                         <ConnectorIcon
                           capabilityKey={entry.capabilityKey}
