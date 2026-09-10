@@ -37,19 +37,30 @@
  * kind, so a document type created this turn resolves by name on the very
  * next tool call instead of waiting out five minutes of staleness.
  *
+ * Users and user groups are READ here — list them, look one up, see who
+ * is in a group and which document types a group may see — because the
+ * Administration API keys every access grant by user group id and nothing
+ * else in the connector could answer "what is the id of the Clinical
+ * Staff group?". The one WRITE on that side is the document type ↔ user
+ * group grant (and its document type group twin): in OnBase a document
+ * type nobody has been granted is invisible everywhere, OnBase
+ * Configuration included, so a document type created here without a user
+ * group is one nobody can find — the exact "it has an id but does not show
+ * up" symptom. Creating users or user groups, changing memberships, and
+ * editing privileges/configuration rights stay out: that is identity and
+ * rights management, a different risk class from document configuration.
+ *
  * Deliberately not in this cut, matching the Document API tools' own
- * "nothing destructive, nothing identity/security-adjacent in v1" scope:
- * no deletes anywhere (a document type or keyword type deleted on a
- * model's say-so is not a v1 capability); no users or user groups
- * (creating accounts and editing rights is identity management, a
- * different risk class from document configuration); no password
- * policies, EVM, Insight Discovery, key providers, or security keywords
- * (unrelated to "document types and keywords", and each wants its own
- * considered story); disk groups and file types are read-only reference
- * data here (an admin creates storage infrastructure and viewer file
- * types deliberately, not as a side effect of filing documents); no PATCH
- * update for document type groups or file types (only document types and
- * keyword types, the two things this cut is actually for).
+ * "nothing destructive, nothing security-adjacent in v1" scope: no deletes
+ * anywhere (a document type or keyword type deleted on a model's say-so is
+ * not a v1 capability); no password policies, EVM, Insight Discovery, key
+ * providers, or security keywords (unrelated to "document types and
+ * keywords", and each wants its own considered story); disk groups and file
+ * types are read-only reference data here (an admin creates storage
+ * infrastructure and viewer file types deliberately, not as a side effect
+ * of filing documents); no PATCH update for document type groups or file
+ * types (only document types and keyword types, the two things this cut is
+ * actually for).
  *
  * Unverified against a real Foundation server, per onbase-connector-design.md's
  * own caveat — this connector has no public sandbox equivalent to Atlassian
@@ -78,7 +89,19 @@ type AdminCatalogKind =
   | 'document-type-groups'
   | 'keyword-type-groups'
   | 'file-types'
-  | 'disk-groups';
+  | 'disk-groups'
+  | 'user-groups'
+  | 'users';
+
+/**
+ * Every paged listing takes `limit`, where 0 means "everything". A catalog
+ * used for name resolution needs the whole vocabulary, not the server's
+ * first page — the 101st document type must resolve too. Disk groups are
+ * the one listing with no paging parameters.
+ */
+function listingQuery(kind: AdminCatalogKind): Record<string, string> | undefined {
+  return kind === 'disk-groups' ? undefined : { limit: '0' };
+}
 
 /**
  * This connector's own vocabulary cache — a second instance from index.ts's,
@@ -97,7 +120,11 @@ async function loadAdminCatalog(
   const cacheKey = `${context.tenantId}:${kind}`;
   const cached = adminCatalogCache.get(cacheKey);
   if (cached) return cached;
-  const result = await apiJson(auth, { method: 'GET', path: `/api/${kind}` }, `list ${kind}`);
+  const result = await apiJson(
+    auth,
+    { method: 'GET', path: `/api/${kind}`, query: listingQuery(kind) },
+    `list ${kind}`
+  );
   if (typeof result === 'string') return result;
   const items = namedList(result.json);
   adminCatalogCache.set(cacheKey, items);
@@ -133,6 +160,218 @@ function replacePatch(
     value,
   }));
 }
+
+/**
+ * The Administration API hands every id back as a string, but DocumentType
+ * declares documentTypeGroupId, defaultDiskGroupId and defaultFileFormatId
+ * as numbers and the POST models take userGroupIds/userIds as integers.
+ * Send what the schema declares; a non-numeric id (none are expected) is
+ * passed through untouched rather than turned into NaN.
+ */
+function numericId(id: string): number | string {
+  return /^\d+$/.test(id) ? Number(id) : id;
+}
+
+/** Resolve user group names or ids to ids, refusing on the first unknown one. */
+async function resolveUserGroupIds(
+  context: MCPToolContext,
+  auth: OnBaseAuth,
+  refs: readonly string[]
+): Promise<string[] | { refusal: string }> {
+  const ids: string[] = [];
+  for (const ref of refs) {
+    const id = await resolveAdminRef(context, auth, 'user-groups', ref, 'user group');
+    if (typeof id !== 'string') return id;
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+/** id → display name for one catalog kind, for rendering assignment rows; empty when the listing fails. */
+async function adminNames(
+  context: MCPToolContext,
+  auth: OnBaseAuth,
+  kind: AdminCatalogKind
+): Promise<Map<string, string>> {
+  const catalog = await loadAdminCatalog(context, auth, kind);
+  return new Map(typeof catalog === 'string' ? [] : catalog.map((t) => [t.id, displayName(t)]));
+}
+
+function labelled(names: Map<string, string>, id: string, noun: string): string {
+  const name = names.get(id);
+  return name ? `${name} (id ${id})` : `${noun} ${id}`;
+}
+
+/** The `items[]` of an assignment collection, or [] for anything else. */
+function assignmentItems(json: unknown): Record<string, unknown>[] {
+  return isRecord(json) && Array.isArray(json.items) ? json.items.filter(isRecord) : [];
+}
+
+/**
+ * Which id fields in Administration API records point at which catalog.
+ * annotateIds walks a record and writes a `…Name` sibling next to each one
+ * it knows, so a document type reads `documentTypeGroupId: 101` beside
+ * `documentTypeGroupName: "Medical Records - Patient"` instead of sending
+ * the reader off to look 101 up. The API hands ids back as numbers in some
+ * records and strings in others; both are matched. "0" is this API's
+ * "none" (an ungrouped keyword, no cache disk group) and is left alone.
+ */
+const ID_FIELDS: Record<string, { kind: AdminCatalogKind; noun: string }> = {
+  documentTypeGroupId: { kind: 'document-type-groups', noun: 'document type group' },
+  documentTypeId: { kind: 'document-types', noun: 'document type' },
+  defaultDiskGroupId: { kind: 'disk-groups', noun: 'disk group' },
+  diskGroupId: { kind: 'disk-groups', noun: 'disk group' },
+  defaultFileFormatId: { kind: 'file-types', noun: 'file type' },
+  fileTypeId: { kind: 'file-types', noun: 'file type' },
+  keywordTypeId: { kind: 'keyword-types', noun: 'keyword type' },
+  keywordTypeGroupId: { kind: 'keyword-type-groups', noun: 'keyword type group' },
+  userGroupId: { kind: 'user-groups', noun: 'user group' },
+  userId: { kind: 'users', noun: 'user' },
+  changeAuthor: { kind: 'users', noun: 'user' },
+};
+
+/** An id worth resolving: a non-empty string or number other than 0. */
+function idValue(value: unknown): string | null {
+  const id =
+    typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  return id === '' || id === '0' ? null : id;
+}
+
+function nameKey(key: string): string {
+  return `${key.endsWith('Id') ? key.slice(0, -2) : key}Name`;
+}
+
+/**
+ * A copy of `value` with a `…Name` field beside every id field ID_FIELDS
+ * knows, resolved through this connector's own catalogs. Each catalog is
+ * loaded at most once per call, and only when some field references it,
+ * so a record with no ids costs nothing extra. A dangling id (no such
+ * item in the catalog) is said outright — that is the debugging case.
+ */
+async function annotateIds(
+  context: MCPToolContext,
+  auth: OnBaseAuth,
+  value: unknown
+): Promise<unknown> {
+  const kinds = new Set<AdminCatalogKind>();
+  const collect = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      v.forEach(collect);
+      return;
+    }
+    if (!isRecord(v)) return;
+    for (const [key, x] of Object.entries(v)) {
+      const field = ID_FIELDS[key];
+      if (field && idValue(x) !== null) kinds.add(field.kind);
+      collect(x);
+    }
+  };
+  collect(value);
+
+  // null = the listing failed; names for that kind are unavailable rather than absent.
+  const tables = new Map<AdminCatalogKind, Map<string, string> | null>();
+  await Promise.all(
+    [...kinds].map(async (kind) => {
+      const catalog = await loadAdminCatalog(context, auth, kind);
+      tables.set(
+        kind,
+        typeof catalog === 'string' ? null : new Map(catalog.map((t) => [t.id, displayName(t)]))
+      );
+    })
+  );
+
+  const rewrite = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(rewrite);
+    if (!isRecord(v)) return v;
+    const out: Record<string, unknown> = {};
+    for (const [key, x] of Object.entries(v)) {
+      out[key] = rewrite(x);
+      const field = ID_FIELDS[key];
+      const id = field ? idValue(x) : null;
+      if (!field || id === null) continue;
+      const table = tables.get(field.kind);
+      out[nameKey(key)] =
+        table === null || table === undefined
+          ? `(${field.noun} names unavailable)`
+          : (table.get(id) ?? `(no such ${field.noun}: ${id})`);
+    }
+    return out;
+  };
+  return rewrite(value);
+}
+
+/** Full user records by id, one GET each, five minutes of staleness. Only successes are cached. */
+const userDetailCache = new CatalogCache<Record<string, unknown>>();
+
+/** How many users one answer will fetch individually before falling back to names alone. */
+const USER_DETAIL_LIMIT = 40;
+
+/**
+ * Prose labels for user ids — "jdoe — Jane Doe <jdoe@example.org> (id 302)"
+ * — degrading to the listing's user name, then to "user 302", as less is
+ * known. The listing has only user names; real name and email need one
+ * GET per user, so those are fetched in parallel for up to
+ * USER_DETAIL_LIMIT distinct ids and skipped beyond that.
+ */
+async function userLabels(
+  context: MCPToolContext,
+  auth: OnBaseAuth,
+  ids: readonly string[]
+): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter((id) => id !== ''))];
+  const names = await adminNames(context, auth, 'users');
+  const details = new Map<string, Record<string, unknown>>();
+  await Promise.all(
+    unique.slice(0, USER_DETAIL_LIMIT).map(async (id) => {
+      const key = `${context.tenantId}:user:${id}`;
+      const cached = userDetailCache.get(key);
+      if (cached) {
+        details.set(id, cached);
+        return;
+      }
+      const result = await apiJson(
+        auth,
+        { method: 'GET', path: `/api/users/${encodeURIComponent(id)}` },
+        'read a user'
+      );
+      if (typeof result === 'string' || !isRecord(result.json)) return;
+      userDetailCache.set(key, result.json);
+      details.set(id, result.json);
+    })
+  );
+  return new Map(
+    unique.map((id) => {
+      const detail = details.get(id);
+      const name = str(detail?.name) || names.get(id);
+      if (!name) return [id, `user ${id}`];
+      const email = str(detail?.emailAddress);
+      const extra = [str(detail?.realName), email ? `<${email}>` : ''].filter(Boolean).join(' ');
+      return [id, `${name}${extra ? ` — ${extra}` : ''} (id ${id})`];
+    })
+  );
+}
+
+/**
+ * The warning every document type created without a user group carries.
+ * OnBase shows a document type only to members of a user group it has been
+ * granted to — in every client AND in OnBase Configuration — so an
+ * ungranted document type exists (it has an id, it is in the audit log) but
+ * nobody can see it, the caller's own account included.
+ */
+const UNGRANTED_DOCUMENT_TYPE_NOTE =
+  'No user group has been granted it yet, so it will not appear in OnBase Configuration or in ' +
+  'any OnBase client for anyone — including you — until one is. Grant it with ' +
+  'onbase_admin_assign_document_type_user_groups (onbase_admin_list_user_groups shows the ' +
+  'groups). OnBase Configuration also loads its lists at sign-in: restart it to see changes ' +
+  'made through this API.';
+
+const userGroupsSchema = z
+  .array(z.string().min(1))
+  .optional()
+  .describe(
+    'User groups to grant this to immediately, by name or id (onbase_admin_list_user_groups ' +
+      'shows them).'
+  );
 
 const optionsSchema = z
   .record(z.string(), z.unknown())
@@ -223,7 +462,7 @@ export function registerOnbaseAdminTools(
         'read the document type'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -255,7 +494,7 @@ export function registerOnbaseAdminTools(
         'read the keyword type'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -284,7 +523,7 @@ export function registerOnbaseAdminTools(
         'read the document type group'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -313,7 +552,7 @@ export function registerOnbaseAdminTools(
         'read the keyword type group'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -337,7 +576,7 @@ export function registerOnbaseAdminTools(
         'read the file type'
       );
       if (typeof result === 'string') return errText(result);
-      return textResult(JSON.stringify(result.json, null, 2));
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -356,7 +595,8 @@ export function registerOnbaseAdminTools(
       if (typeof types === 'string') return errText(types);
       if (types.length === 0) return textResult('No file types are visible to your account.');
       return textResult(
-        'File types (name — id):\n' + types.map((t) => `  ${displayName(t)} — id ${t.id}`).join('\n')
+        'File types (name — id):\n' +
+          types.map((t) => `  ${displayName(t)} — id ${t.id}`).join('\n')
       );
     }
   );
@@ -367,7 +607,7 @@ export function registerOnbaseAdminTools(
       title: 'OnBase Admin · Read — List disk groups',
       description:
         'The disk groups configured in this OnBase, by name and id — required to create a ' +
-        "document type (its defaultDiskGroup). Disk groups themselves are not created here: " +
+        'document type (its defaultDiskGroup). Disk groups themselves are not created here: ' +
         "they're storage infrastructure an OnBase admin sets up deliberately, not a byproduct " +
         'of configuring document types.',
       annotations: { readOnlyHint: true },
@@ -378,7 +618,8 @@ export function registerOnbaseAdminTools(
       if (typeof groups === 'string') return errText(groups);
       if (groups.length === 0) return textResult('No disk groups are visible to your account.');
       return textResult(
-        'Disk groups (name — id):\n' + groups.map((g) => `  ${displayName(g)} — id ${g.id}`).join('\n')
+        'Disk groups (name — id):\n' +
+          groups.map((g) => `  ${displayName(g)} — id ${g.id}`).join('\n')
       );
     }
   );
@@ -444,7 +685,7 @@ export function registerOnbaseAdminTools(
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         itemName: z.string().optional().describe('The configuration item name to filter to.'),
-        author: z.string().optional().describe('The user id who made the change.'),
+        author: z.string().optional().describe('The user who made the change — user name or id.'),
         changeType: z.enum(['Create', 'Update', 'Delete']).optional(),
         after: z.string().optional().describe('Lower bound, e.g. "2026-08-27 00:00:00.000".'),
         before: z.string().optional().describe('Upper bound, same format.'),
@@ -459,7 +700,11 @@ export function registerOnbaseAdminTools(
     }) => {
       const query: Record<string, string> = {};
       if (args.itemName) query.itemName = args.itemName;
-      if (args.author) query.author = args.author;
+      if (args.author) {
+        const authorId = await resolveAdminRef(context, auth, 'users', args.author, 'user');
+        if (typeof authorId !== 'string') return errText(authorId.refusal);
+        query.author = authorId;
+      }
       if (args.changeType) query.changeType = args.changeType;
       if (args.after) query.afterDateChanged = args.after;
       if (args.before) query.beforeDateChanged = args.before;
@@ -469,17 +714,355 @@ export function registerOnbaseAdminTools(
         'list change events'
       );
       if (typeof result === 'string') return errText(result);
-      const items = isRecord(result.json) && Array.isArray(result.json.items) ? result.json.items : [];
+      const items =
+        isRecord(result.json) && Array.isArray(result.json.items) ? result.json.items : [];
       if (items.length === 0) return textResult('No matching change events.');
-      const lines = items.filter(isRecord).map((event) => {
+      const events = items.filter(isRecord);
+      const authors = await userLabels(
+        context,
+        auth,
+        events.map((event) => str(event.changeAuthor))
+      );
+      const lines = events.map((event) => {
         const item = isRecord(event.changeItem) ? event.changeItem : {};
-        const who = str(event.changeAuthorUserName) || `user ${str(event.changeAuthor) || '?'}`;
+        const authorId = str(event.changeAuthor);
+        const who =
+          authors.get(authorId) ??
+          (str(event.changeAuthorUserName)
+            ? `${str(event.changeAuthorUserName)} (id ${authorId || '?'})`
+            : `user ${authorId || '?'}`);
         return (
           `  ${str(event.dateChanged) || '?'} — ${str(item.changeType) || '?'} ${str(item.itemType) || '?'} ` +
           `"${str(item.itemName) || '?'}" (id ${str(item.itemId) || '?'}) by ${who}`
         );
       });
       return textResult(`Change events:\n${lines.join('\n')}`);
+    }
+  );
+
+  /* ------------------------ Users and user groups ------------------------ */
+
+  server.registerTool(
+    'onbase_admin_list_user_groups',
+    {
+      title: 'OnBase Admin · Read — List user groups',
+      description:
+        'The user groups configured in this OnBase, by name and id — the ids every access ' +
+        'grant is keyed by (userGroups on onbase_admin_create_document_type, ' +
+        'onbase_admin_assign_document_type_user_groups). Every other tool also accepts a ' +
+        'group by name, so this is mostly for browsing.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        nameContains: z
+          .string()
+          .optional()
+          .describe('Only groups whose name contains this text (case-insensitive).'),
+      }),
+    },
+    async (args: { nameContains?: string }) => {
+      const groups = await loadAdminCatalog(context, auth, 'user-groups');
+      if (typeof groups === 'string') return errText(groups);
+      const wanted = args.nameContains?.trim().toLowerCase();
+      const shown = wanted
+        ? groups.filter((g) => displayName(g).toLowerCase().includes(wanted))
+        : groups;
+      if (shown.length === 0) {
+        return textResult(
+          wanted
+            ? `No user group name contains "${args.nameContains}" (${groups.length} visible).`
+            : 'No user groups are visible to your account.'
+        );
+      }
+      return textResult(
+        'User groups (name — id):\n' +
+          shown.map((g) => `  ${displayName(g)} — id ${g.id}`).join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'onbase_admin_list_users',
+    {
+      title: 'OnBase Admin · Read — List users',
+      description:
+        'The user accounts in this OnBase, by user name and id. Service accounts (the ones ' +
+        'services and integrations sign in as) are left out unless asked for.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        nameContains: z
+          .string()
+          .optional()
+          .describe('Only users whose user name contains this text (case-insensitive).'),
+        includeServiceAccounts: z.boolean().optional().describe('Default false.'),
+      }),
+    },
+    async (args: { nameContains?: string; includeServiceAccounts?: boolean }) => {
+      // Not the cached catalog: the listing's isServiceAccount flag matters
+      // here and NamedThing has no room for it.
+      const result = await apiJson(
+        auth,
+        { method: 'GET', path: '/api/users', query: listingQuery('users') },
+        'list users'
+      );
+      if (typeof result === 'string') return errText(result);
+      const wanted = args.nameContains?.trim().toLowerCase();
+      const users = assignmentItems(result.json).filter((u) => typeof u.id === 'string');
+      const shown = users.filter(
+        (u) =>
+          (args.includeServiceAccounts || u.isServiceAccount !== true) &&
+          (!wanted || str(u.name).toLowerCase().includes(wanted))
+      );
+      if (shown.length === 0) {
+        return textResult(
+          wanted
+            ? `No user name contains "${args.nameContains}" (${users.length} visible).`
+            : 'No users are visible to your account.'
+        );
+      }
+      return textResult(
+        'Users (user name — id):\n' +
+          shown
+            .map(
+              (u) =>
+                `  ${str(u.name) || '(unnamed)'} — id ${str(u.id)}` +
+                (u.isServiceAccount === true ? ' [service account]' : '')
+            )
+            .join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'onbase_admin_get_user_group',
+    {
+      title: 'OnBase Admin · Read — User group and its members',
+      description:
+        "One user group's configuration and the users who are members of it. " +
+        'onbase_admin_list_user_group_access shows what the group may see.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        userGroup: z.string().min(1).describe('User group name or id.'),
+      }),
+    },
+    async (args: { userGroup: string }) => {
+      const id = await resolveAdminRef(context, auth, 'user-groups', args.userGroup, 'user group');
+      if (typeof id !== 'string') return errText(id.refusal);
+      const group = await apiJson(
+        auth,
+        { method: 'GET', path: `/api/user-groups/${encodeURIComponent(id)}` },
+        'read the user group'
+      );
+      if (typeof group === 'string') return errText(group);
+      const members = await apiJson(
+        auth,
+        { method: 'GET', path: '/api/users/user-groups', query: { userGroupId: id } },
+        "read the user group's members"
+      );
+      if (typeof members === 'string') return errText(members);
+      const memberIds = assignmentItems(members.json)
+        .map((m) => str(m.userId))
+        .filter((userId) => userId !== '');
+      const labels = await userLabels(context, auth, memberIds);
+      const lines =
+        memberIds.length === 0
+          ? ['  (no members)']
+          : memberIds.map((userId) => `  ${labels.get(userId) ?? `user ${userId}`}`);
+      const shown = await annotateIds(context, auth, group.json);
+      return textResult(
+        `${JSON.stringify(shown, null, 2)}\n\nMembers (${memberIds.length}):\n${lines.join('\n')}`
+      );
+    }
+  );
+
+  server.registerTool(
+    'onbase_admin_get_user',
+    {
+      title: 'OnBase Admin · Read — User and their user groups',
+      description:
+        "One user account's configuration (never its password) and the user groups it belongs " +
+        'to — which is what decides the document types that person can see.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        user: z.string().min(1).describe('User name or id.'),
+      }),
+    },
+    async (args: { user: string }) => {
+      const id = await resolveAdminRef(context, auth, 'users', args.user, 'user');
+      if (typeof id !== 'string') return errText(id.refusal);
+      const user = await apiJson(
+        auth,
+        { method: 'GET', path: `/api/users/${encodeURIComponent(id)}` },
+        'read the user'
+      );
+      if (typeof user === 'string') return errText(user);
+      const memberships = await apiJson(
+        auth,
+        { method: 'GET', path: '/api/users/user-groups', query: { userId: id } },
+        "read the user's group memberships"
+      );
+      if (typeof memberships === 'string') return errText(memberships);
+      const groupNames = await adminNames(context, auth, 'user-groups');
+      const groupIds = assignmentItems(memberships.json)
+        .map((m) => str(m.userGroupId))
+        .filter((groupId) => groupId !== '');
+      const lines =
+        groupIds.length === 0
+          ? ['  (none)']
+          : groupIds.map((groupId) => `  ${labelled(groupNames, groupId, 'user group')}`);
+      const shown = await annotateIds(
+        context,
+        auth,
+        isRecord(user.json) ? { ...user.json, password: undefined } : user.json
+      );
+      return textResult(
+        `${JSON.stringify(shown, null, 2)}\n\nUser groups (${groupIds.length}):\n${lines.join('\n')}`
+      );
+    }
+  );
+
+  server.registerTool(
+    'onbase_admin_list_user_group_access',
+    {
+      title: 'OnBase Admin · Read — Who may see a document type',
+      description:
+        'The document type ↔ user group grants that decide visibility in OnBase. Ask from ' +
+        'either side: give a userGroup to see every document type and document type group it ' +
+        'has been granted, or a documentType / documentTypeGroup to see which user groups have ' +
+        'been granted it. A document type with no user groups is invisible to everyone, OnBase ' +
+        'Configuration included — the usual reason a newly created one "does not show up".',
+      annotations: { readOnlyHint: true },
+      inputSchema: z
+        .object({
+          userGroup: z.string().min(1).optional().describe('User group name or id.'),
+          documentType: z.string().min(1).optional().describe('Document type name or id.'),
+          documentTypeGroup: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('Document type group name or id.'),
+        })
+        .refine(
+          (a) => [a.userGroup, a.documentType, a.documentTypeGroup].filter(Boolean).length === 1,
+          { message: 'Give exactly one of userGroup, documentType or documentTypeGroup.' }
+        ),
+    },
+    async (args: { userGroup?: string; documentType?: string; documentTypeGroup?: string }) => {
+      const given = [args.userGroup, args.documentType, args.documentTypeGroup].filter(Boolean);
+      if (given.length !== 1) {
+        return errText('Give exactly one of userGroup, documentType or documentTypeGroup.');
+      }
+
+      if (args.userGroup) {
+        const id = await resolveAdminRef(
+          context,
+          auth,
+          'user-groups',
+          args.userGroup,
+          'user group'
+        );
+        if (typeof id !== 'string') return errText(id.refusal);
+        const [types, groups] = await Promise.all([
+          apiJson(
+            auth,
+            { method: 'GET', path: '/api/document-types/user-groups', query: { userGroupId: id } },
+            "read the user group's document types"
+          ),
+          apiJson(
+            auth,
+            {
+              method: 'GET',
+              path: '/api/document-type-groups/user-groups',
+              query: { userGroupId: id },
+            },
+            "read the user group's document type groups"
+          ),
+        ]);
+        if (typeof types === 'string') return errText(types);
+        if (typeof groups === 'string') return errText(groups);
+        const typeNames = await adminNames(context, auth, 'document-types');
+        const groupNames = await adminNames(context, auth, 'document-type-groups');
+        const typeIds = assignmentItems(types.json)
+          .map((a) => str(a.documentTypeId))
+          .filter(Boolean);
+        const groupIds = assignmentItems(groups.json)
+          .map((a) => str(a.documentTypeGroupId))
+          .filter(Boolean);
+        return textResult(
+          `User group ${args.userGroup} (id ${id}) may see:\n` +
+            `Document types (${typeIds.length}):\n` +
+            (typeIds.length
+              ? typeIds.map((t) => `  ${labelled(typeNames, t, 'document type')}`).join('\n')
+              : '  (none)') +
+            `\nDocument type groups (${groupIds.length}):\n` +
+            (groupIds.length
+              ? groupIds
+                  .map((g) => `  ${labelled(groupNames, g, 'document type group')}`)
+                  .join('\n')
+              : '  (none)')
+        );
+      }
+
+      const groupNames = await adminNames(context, auth, 'user-groups');
+      const renderGroups = (ids: string[], subject: string) =>
+        ids.length === 0
+          ? `${subject} has been granted to NO user groups — nobody can see it, OnBase ` +
+            'Configuration included. Grant it with ' +
+            (args.documentType
+              ? 'onbase_admin_assign_document_type_user_groups.'
+              : 'onbase_admin_assign_document_type_group_user_groups.')
+          : `${subject} is granted to ${ids.length} user group(s):\n` +
+            ids.map((g) => `  ${labelled(groupNames, g, 'user group')}`).join('\n');
+
+      if (args.documentType) {
+        const id = await resolveAdminRef(
+          context,
+          auth,
+          'document-types',
+          args.documentType,
+          'document type'
+        );
+        if (typeof id !== 'string') return errText(id.refusal);
+        const current = await documentTypeUserGroups(auth, id);
+        if (typeof current === 'string') return errText(current);
+        return textResult(renderGroups(current, `Document type ${args.documentType} (id ${id})`));
+      }
+
+      const id = await resolveAdminRef(
+        context,
+        auth,
+        'document-type-groups',
+        args.documentTypeGroup!,
+        'document type group'
+      );
+      if (typeof id !== 'string') return errText(id.refusal);
+      const current = await documentTypeGroupUserGroups(auth, id);
+      if (typeof current === 'string') return errText(current);
+      return textResult(
+        renderGroups(current, `Document type group ${args.documentTypeGroup} (id ${id})`)
+      );
+    }
+  );
+
+  server.registerTool(
+    'onbase_admin_get_my_permissions',
+    {
+      title: 'OnBase Admin · Read — My rights in OnBase',
+      description:
+        'The product rights, configuration rights and privileges OnBase grants the connected ' +
+        'account — what this connection can and cannot configure. Check here first when a ' +
+        'tool answers 403, or to see whether a licensed product (Medical Records, Physician ' +
+        'Portal, Patient Portal, Records Management, Workflow…) is enabled for you.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const result = await apiJson(
+        auth,
+        { method: 'GET', path: '/api/users/me/permissions' },
+        'read your permissions'
+      );
+      if (typeof result === 'string') return errText(result);
+      return textResult(JSON.stringify(await annotateIds(context, auth, result.json), null, 2));
     }
   );
 
@@ -493,6 +1076,9 @@ export function registerOnbaseAdminTools(
         'Create a new document type. documentTypeGroup, defaultFileFormat and defaultDiskGroup ' +
         'are required by OnBase and are resolved from names (onbase_admin_list_document_types, ' +
         'onbase_admin_list_file_types, onbase_admin_list_disk_groups show the vocabulary). ' +
+        'Pass userGroups too: OnBase shows a document type only to members of a user group it ' +
+        'has been granted to, so one created without any is invisible everywhere (OnBase ' +
+        'Configuration included) until onbase_admin_assign_document_type_user_groups grants it. ' +
         'Keyword types are NOT assigned at creation — call onbase_admin_assign_keyword_types ' +
         'afterward.',
       inputSchema: z.object({
@@ -507,10 +1093,11 @@ export function registerOnbaseAdminTools(
         retrievalListSortOrder: z
           .enum(['None', 'DateDescending', 'DateAscending', 'HandleDescending', 'HandleAscending'])
           .optional(),
+        userGroups: userGroupsSchema,
         userGroupIds: z
           .array(z.string())
           .optional()
-          .describe('User groups to grant this document type to immediately, by id.'),
+          .describe('Older spelling of userGroups; ids only. Prefer userGroups.'),
         options: optionsSchema,
       }),
     },
@@ -524,6 +1111,7 @@ export function registerOnbaseAdminTools(
       cachingAllowed?: boolean;
       thumbnailsEnabled?: boolean;
       retrievalListSortOrder?: string;
+      userGroups?: string[];
       userGroupIds?: string[];
       options?: Record<string, unknown>;
     }) => {
@@ -551,19 +1139,28 @@ export function registerOnbaseAdminTools(
         'disk group'
       );
       if (typeof diskGroupId !== 'string') return errText(diskGroupId.refusal);
+      const userGroupIds = await resolveUserGroupIds(context, auth, [
+        ...(args.userGroups ?? []),
+        ...(args.userGroupIds ?? []),
+      ]);
+      if (!Array.isArray(userGroupIds)) return errText(userGroupIds.refusal);
 
       const body: Record<string, unknown> = {
         ...args.options,
         name: args.name,
-        documentTypeGroupId: groupId,
-        defaultFileFormatId: fileFormatId,
-        defaultDiskGroupId: diskGroupId,
+        documentTypeGroupId: numericId(groupId),
+        defaultFileFormatId: numericId(fileFormatId),
+        defaultDiskGroupId: numericId(diskGroupId),
         ...(args.autoNameString !== undefined ? { autoNameString: args.autoNameString } : {}),
         ...(args.allowMarkUp !== undefined ? { allowMarkUp: args.allowMarkUp } : {}),
         ...(args.cachingAllowed !== undefined ? { cachingAllowed: args.cachingAllowed } : {}),
-        ...(args.thumbnailsEnabled !== undefined ? { thumbnailsEnabled: args.thumbnailsEnabled } : {}),
-        ...(args.retrievalListSortOrder ? { retrievalListSortOrder: args.retrievalListSortOrder } : {}),
-        ...(args.userGroupIds ? { userGroupIds: args.userGroupIds.map((id) => Number(id)) } : {}),
+        ...(args.thumbnailsEnabled !== undefined
+          ? { thumbnailsEnabled: args.thumbnailsEnabled }
+          : {}),
+        ...(args.retrievalListSortOrder
+          ? { retrievalListSortOrder: args.retrievalListSortOrder }
+          : {}),
+        ...(userGroupIds.length > 0 ? { userGroupIds: userGroupIds.map(numericId) } : {}),
       };
 
       const created = await apiJson(
@@ -574,8 +1171,15 @@ export function registerOnbaseAdminTools(
       if (typeof created === 'string') return errText(created);
       invalidateAdminCatalog(context, 'document-types');
       const newId = isRecord(created.json) ? str(created.json.id) : '';
+      const groupNames = await adminNames(context, auth, 'user-groups');
+      const granted =
+        userGroupIds.length > 0
+          ? `Granted to ${userGroupIds.length} user group(s): ` +
+            userGroupIds.map((id) => labelled(groupNames, id, 'user group')).join(', ') +
+            '.'
+          : UNGRANTED_DOCUMENT_TYPE_NOTE;
       return textResult(
-        `Created document type "${args.name}"${newId ? ` (id ${newId})` : ''}. Use ` +
+        `Created document type "${args.name}"${newId ? ` (id ${newId})` : ''}. ${granted} Use ` +
           'onbase_admin_assign_keyword_types to add keywords to it.'
       );
     }
@@ -587,7 +1191,7 @@ export function registerOnbaseAdminTools(
       title: 'OnBase Admin · Act — Update a document type',
       description:
         'Change fields on an existing document type. Only the fields named in `fields` change ' +
-        '(each is a top-level property from onbase_admin_get_document_type\'s output, e.g. ' +
+        "(each is a top-level property from onbase_admin_get_document_type's output, e.g. " +
         '{"cachingAllowed": true, "autoNameString": "%N - %D2"}) — everything else is left as is.',
       inputSchema: z.object({
         documentType: z.string().min(1).describe('Document type name or id.'),
@@ -688,7 +1292,7 @@ export function registerOnbaseAdminTools(
       title: 'OnBase Admin · Act — Update a keyword type',
       description:
         'Change fields on an existing keyword type. Only the fields named in `fields` change ' +
-        '(top-level properties from onbase_admin_get_keyword_type\'s output) — everything else ' +
+        "(top-level properties from onbase_admin_get_keyword_type's output) — everything else " +
         'is left as is. dataType cannot be changed once documents use this keyword type.',
       inputSchema: z.object({
         keywordType: z.string().min(1).describe('Keyword type name or id.'),
@@ -731,24 +1335,31 @@ export function registerOnbaseAdminTools(
       inputSchema: z.object({
         name: z.string().min(1).max(65),
         documentSource: z.enum(['Normal', 'GroupEnabled', 'OleAPI', 'DMA', 'Catalog']).optional(),
+        userGroups: userGroupsSchema,
         userGroupIds: z
           .array(z.string())
           .optional()
-          .describe('User groups to grant this document type group to immediately, by id.'),
+          .describe('Older spelling of userGroups; ids only. Prefer userGroups.'),
         options: optionsSchema,
       }),
     },
     async (args: {
       name: string;
       documentSource?: string;
+      userGroups?: string[];
       userGroupIds?: string[];
       options?: Record<string, unknown>;
     }) => {
+      const userGroupIds = await resolveUserGroupIds(context, auth, [
+        ...(args.userGroups ?? []),
+        ...(args.userGroupIds ?? []),
+      ]);
+      if (!Array.isArray(userGroupIds)) return errText(userGroupIds.refusal);
       const body: Record<string, unknown> = {
         ...args.options,
         name: args.name,
         ...(args.documentSource ? { documentSource: args.documentSource } : {}),
-        ...(args.userGroupIds ? { userGroupIds: args.userGroupIds.map((id) => Number(id)) } : {}),
+        ...(userGroupIds.length > 0 ? { userGroupIds: userGroupIds.map(numericId) } : {}),
       };
       const created = await apiJson(
         auth,
@@ -758,7 +1369,9 @@ export function registerOnbaseAdminTools(
       if (typeof created === 'string') return errText(created);
       invalidateAdminCatalog(context, 'document-type-groups');
       const newId = isRecord(created.json) ? str(created.json.id) : '';
-      return textResult(`Created document type group "${args.name}"${newId ? ` (id ${newId})` : ''}.`);
+      return textResult(
+        `Created document type group "${args.name}"${newId ? ` (id ${newId})` : ''}.`
+      );
     }
   );
 
@@ -888,7 +1501,10 @@ export function registerOnbaseAdminTools(
           .array(
             z.object({
               keywordType: z.string().min(1).describe('Keyword type name or id.'),
-              remove: z.boolean().optional().describe('Drop this keyword type instead of setting it.'),
+              remove: z
+                .boolean()
+                .optional()
+                .describe('Drop this keyword type instead of setting it.'),
               required: z.boolean().optional(),
               sequenceNum: z.number().int().min(0).optional(),
               defaultKeywordValue: z.string().optional(),
@@ -990,7 +1606,9 @@ export function registerOnbaseAdminTools(
             : {}),
           ...(assignment.hidden !== undefined ? { hidden: assignment.hidden } : {}),
           ...(assignment.readOnly !== undefined ? { readOnly: assignment.readOnly } : {}),
-          ...(assignment.makesDocUnique !== undefined ? { makesDocUnique: assignment.makesDocUnique } : {}),
+          ...(assignment.makesDocUnique !== undefined
+            ? { makesDocUnique: assignment.makesDocUnique }
+            : {}),
           ...(assignment.requiredForRetrieval !== undefined
             ? { requiredForRetrieval: assignment.requiredForRetrieval }
             : {}),
@@ -1013,6 +1631,200 @@ export function registerOnbaseAdminTools(
       );
     }
   );
+  server.registerTool(
+    'onbase_admin_assign_document_type_user_groups',
+    {
+      title: 'OnBase Admin · Act — Grant a document type to user groups',
+      description:
+        'Change which user groups may see a document type — the mechanism that makes a ' +
+        "document type appear in OnBase Configuration and in the clients. OnBase's own API " +
+        'REPLACES every grant on every write; this tool reads the current grants, merges your ' +
+        'changes in (unnamed groups keep their grant), and writes the whole set back. Set ' +
+        'remove: true on an entry to revoke that group instead of granting it.',
+      inputSchema: z.object({
+        documentType: z.string().min(1).describe('Document type name or id.'),
+        userGroups: z
+          .array(
+            z.object({
+              userGroup: z.string().min(1).describe('User group name or id.'),
+              remove: z.boolean().optional().describe('Revoke this group instead of granting it.'),
+            })
+          )
+          .min(1),
+      }),
+    },
+    async (args: {
+      documentType: string;
+      userGroups: { userGroup: string; remove?: boolean }[];
+    }) => {
+      const documentTypeId = await resolveAdminRef(
+        context,
+        auth,
+        'document-types',
+        args.documentType,
+        'document type'
+      );
+      if (typeof documentTypeId !== 'string') return errText(documentTypeId.refusal);
+      const current = await documentTypeUserGroups(auth, documentTypeId);
+      if (typeof current === 'string') return errText(current);
+
+      const merged = await mergeUserGroupGrants(context, auth, current, args.userGroups);
+      if (!('ids' in merged)) return errText(merged.refusal);
+
+      const written = await apiJson(
+        auth,
+        {
+          method: 'PUT',
+          path: '/api/document-types/user-groups',
+          query: { documentTypeId },
+          body: merged.ids.map((userGroupId) => ({ userGroupId, documentTypeId })),
+        },
+        'write the document type grants'
+      );
+      if (typeof written === 'string') return errText(written);
+      const groupNames = await adminNames(context, auth, 'user-groups');
+      return textResult(
+        `Document type ${args.documentType}: ${merged.added} user group(s) granted, ` +
+          `${merged.removed} revoked. ` +
+          (merged.ids.length === 0
+            ? 'No user group may see it now — it is invisible everywhere until one is granted.'
+            : `Granted to ${merged.ids.length}: ` +
+              merged.ids.map((g) => labelled(groupNames, g, 'user group')).join(', ') +
+              '.')
+      );
+    }
+  );
+
+  server.registerTool(
+    'onbase_admin_assign_document_type_group_user_groups',
+    {
+      title: 'OnBase Admin · Act — Grant a document type group to user groups',
+      description:
+        'Change which user groups may see a document type group. Same read-merge-write ' +
+        'protection as onbase_admin_assign_document_type_user_groups: unnamed groups keep ' +
+        'their grant; remove: true revokes one. Granting the group does not by itself grant ' +
+        'the document types inside it — grant those individually.',
+      inputSchema: z.object({
+        documentTypeGroup: z.string().min(1).describe('Document type group name or id.'),
+        userGroups: z
+          .array(
+            z.object({
+              userGroup: z.string().min(1).describe('User group name or id.'),
+              remove: z.boolean().optional().describe('Revoke this group instead of granting it.'),
+            })
+          )
+          .min(1),
+      }),
+    },
+    async (args: {
+      documentTypeGroup: string;
+      userGroups: { userGroup: string; remove?: boolean }[];
+    }) => {
+      const documentTypeGroupId = await resolveAdminRef(
+        context,
+        auth,
+        'document-type-groups',
+        args.documentTypeGroup,
+        'document type group'
+      );
+      if (typeof documentTypeGroupId !== 'string') return errText(documentTypeGroupId.refusal);
+      const current = await documentTypeGroupUserGroups(auth, documentTypeGroupId);
+      if (typeof current === 'string') return errText(current);
+
+      const merged = await mergeUserGroupGrants(context, auth, current, args.userGroups);
+      if (!('ids' in merged)) return errText(merged.refusal);
+
+      const written = await apiJson(
+        auth,
+        {
+          method: 'PUT',
+          path: `/api/document-type-groups/${encodeURIComponent(documentTypeGroupId)}/user-groups`,
+          // This endpoint takes the collection object, not a bare array —
+          // unlike its document-type twin.
+          body: { items: merged.ids.map((userGroupId) => ({ userGroupId, documentTypeGroupId })) },
+        },
+        'write the document type group grants'
+      );
+      if (typeof written === 'string') return errText(written);
+      const groupNames = await adminNames(context, auth, 'user-groups');
+      return textResult(
+        `Document type group ${args.documentTypeGroup}: ${merged.added} user group(s) granted, ` +
+          `${merged.removed} revoked. ` +
+          (merged.ids.length === 0
+            ? 'No user group may see it now.'
+            : `Granted to ${merged.ids.length}: ` +
+              merged.ids.map((g) => labelled(groupNames, g, 'user group')).join(', ') +
+              '.')
+      );
+    }
+  );
+}
+
+/** The user group ids currently granted a document type. */
+async function documentTypeUserGroups(
+  auth: OnBaseAuth,
+  documentTypeId: string
+): Promise<string[] | string> {
+  const result = await apiJson(
+    auth,
+    { method: 'GET', path: '/api/document-types/user-groups', query: { documentTypeId } },
+    "read the document type's user groups"
+  );
+  if (typeof result === 'string') return result;
+  return assignmentItems(result.json)
+    .map((a) => str(a.userGroupId))
+    .filter((id) => id !== '');
+}
+
+/** The user group ids currently granted a document type group. */
+async function documentTypeGroupUserGroups(
+  auth: OnBaseAuth,
+  documentTypeGroupId: string
+): Promise<string[] | string> {
+  const result = await apiJson(
+    auth,
+    {
+      method: 'GET',
+      path: '/api/document-type-groups/user-groups',
+      query: { documentTypeGroupId },
+    },
+    "read the document type group's user groups"
+  );
+  if (typeof result === 'string') return result;
+  return assignmentItems(result.json)
+    .map((a) => str(a.userGroupId))
+    .filter((id) => id !== '');
+}
+
+/**
+ * Apply grant/revoke entries (user groups by name or id) to the current set
+ * of granted user group ids — the merge half of read-merge-write, shared by
+ * the document type and document type group grant tools.
+ */
+async function mergeUserGroupGrants(
+  context: MCPToolContext,
+  auth: OnBaseAuth,
+  current: readonly string[],
+  changes: readonly { userGroup: string; remove?: boolean }[]
+): Promise<{ ids: string[]; added: number; removed: number } | { refusal: string }> {
+  const ids = [...current];
+  let added = 0;
+  let removed = 0;
+  for (const change of changes) {
+    const id = await resolveAdminRef(context, auth, 'user-groups', change.userGroup, 'user group');
+    if (typeof id !== 'string') return id;
+    const at = ids.indexOf(id);
+    if (change.remove) {
+      if (at !== -1) {
+        ids.splice(at, 1);
+        removed += 1;
+      }
+    } else if (at === -1) {
+      ids.push(id);
+      added += 1;
+    }
+  }
+  return { ids, added, removed };
 }
 
 /** Shared by onbase_admin_get_document_type_keywords's own rendering. */
@@ -1032,8 +1844,10 @@ async function renderAssignments(
     return { ok: true, text: 'No keyword types are assigned to this document type.' };
   }
 
-  const catalog = await loadAdminCatalog(context, auth, 'keyword-types');
-  const names = new Map(typeof catalog === 'string' ? [] : catalog.map((t) => [t.id, displayName(t)]));
+  const names = await adminNames(context, auth, 'keyword-types');
+  const groups = items.some((item) => isRecord(item) && idValue(item.keywordTypeGroupId) !== null)
+    ? await adminNames(context, auth, 'keyword-type-groups')
+    : new Map<string, string>();
 
   const lines = items.filter(isRecord).map((item) => {
     const label = names.get(str(item.keywordTypeId)) ?? `keyword type ${str(item.keywordTypeId)}`;
@@ -1043,7 +1857,12 @@ async function renderAssignments(
       item.readOnly === true ? 'read-only' : null,
       item.makesDocUnique === true ? 'makes-unique' : null,
     ].filter((f): f is string => f !== null);
-    return `  ${label} (id ${str(item.keywordTypeId)})${flags.length ? ` [${flags.join(', ')}]` : ''}`;
+    const groupId = idValue(item.keywordTypeGroupId);
+    const group = groupId ? ` in group ${labelled(groups, groupId, 'keyword type group')}` : '';
+    return (
+      `  ${label} (id ${str(item.keywordTypeId)})` +
+      `${flags.length ? ` [${flags.join(', ')}]` : ''}${group}`
+    );
   });
   return { ok: true, text: `Assigned keyword types:\n${lines.join('\n')}` };
 }

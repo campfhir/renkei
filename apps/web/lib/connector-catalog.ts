@@ -107,8 +107,9 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     label: 'OnBase Administration',
     summary:
       'Create and configure document types, keyword types, keyword assignments and their ' +
-      "groups on your organization's Hyland OnBase. A separate connection from OnBase above " +
-      '(its own Hyland OAuth client) — connecting one does not connect the other.',
+      "groups on your organization's Hyland OnBase; look up users and user groups and grant " +
+      'document types to them. A separate connection from OnBase above (its own Hyland OAuth ' +
+      'client) — connecting one does not connect the other.',
     toolPrefix: 'onbase_admin_*',
   },
   {
