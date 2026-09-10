@@ -314,6 +314,7 @@ none exists or it is locked.
 | `sandbox_download_url`         | Act  | Fetch an `https://` URL into the scratch space (SSRF-guarded, byte-capped).                                                                                                    |
 | `sandbox_fetch_page`           | Read | Fetch an `https://` URL through the same guard and answer its readable text — a page's title, main content and links, or a PDF/Office file's extracted text — keeping nothing. |
 | `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                     |
+| `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                             |
 | `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                 |
 | `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                      |
 | `sandbox_read_file`            | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`).                                                                                                     |

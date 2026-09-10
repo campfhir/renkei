@@ -12,7 +12,8 @@
  * against for real — see that file and webex-auth.ts for why.
  *
  * Read-and-capture only: list rooms, read messages, turn one into an
- * actionable item. Nothing here posts to WebEx as the user except
+ * actionable item, stage a message's attachments in the caller's sandbox
+ * scratch space. Nothing here posts to WebEx as the user except
  * webex_send_message, on explicit request.
  */
 
@@ -20,11 +21,14 @@ import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
+import { DEFAULT_MAX_FILE_BYTES, validateFilename } from '@renkei/connector-sandbox';
 import { logger } from '@/lib/logger';
 import { actMeta } from '@renkei/tool-outcomes';
+import { clientFailure, sandboxConfig, sbWriteFile } from '@/lib/sandbox/service-client';
 import { recordSentWebexMessage } from './sent-ledger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
+import { fileLine } from '../sandbox/shared';
 import {
   APP_ONLY_META,
   CHAT_MESSAGE_URI,
@@ -119,12 +123,89 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+/** The content URLs a message carries — WebEx's `files` array, strings only. */
+function messageFiles(message: Record<string, unknown>): string[] {
+  return Array.isArray(message.files)
+    ? message.files.filter((file): file is string => typeof file === 'string' && file !== '')
+    : [];
+}
+
 function messageLine(message: Record<string, unknown>): string {
-  const text = str(message.text) || '(no text — possibly a card or attachment)';
+  const files = messageFiles(message);
+  const text =
+    str(message.text) || (files.length ? '(no text)' : '(no text — possibly a card or attachment)');
   // WebEx threads reply under the ROOT message's id, so a reply's parentId is
   // the one identifier that lets a caller answer in the same thread.
   const thread = str(message.parentId) ? ` — in thread ${str(message.parentId)}` : '';
-  return `[${str(message.created)}] ${str(message.personEmail)} (${str(message.id)})${thread}:\n  ${text.replace(/\n/g, '\n  ')}`;
+  // The URLs are opaque (no filename until fetched), but their presence is
+  // what tells a reader to reach for webex_download_attachments; listing
+  // them also gives fileUrl something exact to name.
+  const attachments = files.length
+    ? `\n  attachments (${files.length}, stage with webex_download_attachments): ${files.join(', ')}`
+    : '';
+  return `[${str(message.created)}] ${str(message.personEmail)} (${str(message.id)})${thread}:\n  ${text.replace(/\n/g, '\n  ')}${attachments}`;
+}
+
+/**
+ * The API path behind a message's content URL, when it IS one. WebEx hands
+ * attachments out as `https://webexapis.com/v1/contents/<id>`; the token
+ * only ever goes to that host and that endpoint — a `files` entry pointing
+ * anywhere else (a malformed message, a spoofed webhook replay) is refused
+ * rather than fetched with the user's bearer token attached. Null for
+ * anything that isn't exactly that shape.
+ */
+export function contentPathOf(fileUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(fileUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'webexapis.com') return null;
+  const match = /^\/v1\/contents\/([^/]+)$/.exec(url.pathname);
+  return match ? `/contents/${match[1]}` : null;
+}
+
+/**
+ * The filename a `Content-Disposition` header names, RFC 5987 form first
+ * (`filename*=UTF-8''…`, the one that survives non-ASCII), then the plain
+ * quoted or bare `filename=`. Empty when the header names none.
+ */
+export function filenameOfDisposition(header: string | null): string {
+  if (!header) return '';
+  const extended = /filename\*\s*=\s*(?:UTF-8|utf-8)?'[^']*'([^;]+)/.exec(header);
+  if (extended) {
+    try {
+      return decodeURIComponent(extended[1].trim());
+    } catch {
+      // Fall through to the plain form.
+    }
+  }
+  const plain = /filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/.exec(header);
+  if (!plain) return '';
+  return (plain[1] !== undefined ? plain[1].replace(/\\(.)/g, '$1') : plain[2]).trim();
+}
+
+/**
+ * A name the scratch space accepts: what the header said when that is
+ * usable, else `attachment-<n>` with the extension a media type implies.
+ * Path separators are replaced rather than refused — the name is only a
+ * label here; the worker validates it again.
+ */
+function stagedFilename(disposition: string | null, contentType: string, ordinal: number): string {
+  const named = filenameOfDisposition(disposition).replace(/[/\\\0]/g, '_');
+  const valid = validateFilename(named);
+  if (valid.ok) return valid.filename;
+  const extension =
+    {
+      'application/pdf': '.pdf',
+      'image/png': '.png',
+      'image/jpeg': '.jpg',
+      'image/gif': '.gif',
+      'text/plain': '.txt',
+      'text/csv': '.csv',
+    }[contentType] ?? '';
+  return `attachment-${ordinal}${extension}`;
 }
 
 /** How the markdown field explains itself everywhere a message is composed. */
@@ -401,6 +482,10 @@ export function webexScopeFor(toolName: string): string[] {
       return ['meeting:recordings_read'];
     case 'webex_list_rooms':
       return ['spark:rooms_read'];
+    // /contents/<id> is served under the same scope as the message that
+    // carries the file — no separate files scope exists.
+    case 'webex_download_attachments':
+      return ['spark:messages_read'];
     default:
       // list/get/capture message tools
       return ['spark:messages_read'];
@@ -621,6 +706,140 @@ export async function registerWebexUserTools(
       return textResult(messageLine(result.body));
     }
   );
+
+  // Registered only where this deployment runs a sandbox worker — the same
+  // env check registry.ts makes for sandbox_* itself. Without one there is
+  // nowhere to put the bytes, and a tool that can only ever answer "not
+  // configured" is noise in the model's catalog.
+  if (sandboxConfig() !== null) {
+    server.registerTool(
+      'webex_download_attachments',
+      {
+        title: 'WebEx · Act — Download a message’s attachments into your scratch space',
+        description:
+          'Stage the files attached to a WebEx message in your sandbox scratch space, ' +
+          'server-to-server — the bytes never pass through the model. Messages carrying files ' +
+          'show an "attachments" line in webex_list_messages / webex_get_message; this stages ' +
+          'all of them, or just the one named by fileUrl. Each staged file answers with an id: ' +
+          'sandbox_read_file extracts its text, sandbox_send_to_upload forwards it into a ' +
+          'Jira, OnBase or Confluence upload. Staged files expire after a day and count ' +
+          'against a per-caller quota; sandbox_delete_file removes one early.',
+        // Writes to the caller's scratch space, never to WebEx — but it is a
+        // write, so org read-only mode disables it, like sandbox_download_url.
+        annotations: { readOnlyHint: false },
+        inputSchema: z.object({
+          messageId: z.string().min(1).describe('Message id whose attachments to stage'),
+          fileUrl: z
+            .string()
+            .describe(
+              'One content URL from the message’s "attachments" line, to stage only that ' +
+                'file. Omitted = every attachment on the message.'
+            )
+            .optional(),
+        }),
+      },
+      async (args: Record<string, any>) => {
+        const messageId = str(args.messageId);
+        if (!messageId) return errText('messageId is required');
+        if (!context.subject) return errText('No signed-in identity on this request.');
+        const target = { tenantId: context.tenantId, subject: context.subject };
+        const scopes = webexScopeFor('webex_download_attachments');
+
+        const message = await webexGet(auth, scopes, `/messages/${encodeURIComponent(messageId)}`);
+        if (!message.ok) return errText(message.error);
+        const files = messageFiles(message.body);
+        if (files.length === 0) return textResult('That message has no attachments.');
+
+        const wanted = str(args.fileUrl);
+        if (wanted && !files.includes(wanted)) {
+          return errText(
+            `That message carries no attachment at ${wanted}. Its attachments: ${files.join(', ')}`
+          );
+        }
+        const selected = wanted ? [wanted] : files;
+
+        // The org's attachment cap is the ceiling the worker's own limit
+        // sits under; either refusal reads the same to the caller. Checked
+        // on the declared length first so an oversized file is never held
+        // in memory, then on the bytes, since Content-Length is optional.
+        const maxBytes = context.maxAttachmentBytes ?? DEFAULT_MAX_FILE_BYTES;
+        const lines: string[] = [];
+        let staged = 0;
+        for (const [index, fileUrl] of selected.entries()) {
+          const path = contentPathOf(fileUrl);
+          if (!path) {
+            lines.push(`Skipped ${fileUrl}: not a WebEx content URL, so it was not fetched.`);
+            continue;
+          }
+          const fetched = await webexCall(auth, scopes, path);
+          if (!fetched.ok) {
+            lines.push(`Could not fetch ${fileUrl}: ${fetched.error}`);
+            continue;
+          }
+          const response = fetched.response;
+          const declared = Number(response.headers.get('content-length'));
+          if (Number.isFinite(declared) && declared > maxBytes) {
+            lines.push(
+              `Skipped ${fileUrl}: ${declared} bytes is over this org's ${maxBytes}-byte attachment limit.`
+            );
+            continue;
+          }
+          const bytes = new Uint8Array(
+            await response.arrayBuffer().catch(() => new ArrayBuffer(0))
+          );
+          if (bytes.byteLength === 0) {
+            lines.push(`Could not fetch ${fileUrl}: WebEx returned no content.`);
+            continue;
+          }
+          if (bytes.byteLength > maxBytes) {
+            lines.push(
+              `Skipped ${fileUrl}: ${bytes.byteLength} bytes is over this org's ${maxBytes}-byte attachment limit.`
+            );
+            continue;
+          }
+          const contentType = (response.headers.get('content-type') ?? '')
+            .split(';')[0]
+            .trim()
+            .toLowerCase();
+          const filename = stagedFilename(
+            response.headers.get('content-disposition'),
+            contentType,
+            index + 1
+          );
+          const written = await sbWriteFile(
+            target,
+            {
+              filename,
+              ...(contentType ? { contentType } : {}),
+              source: `webex:${messageId}`,
+            },
+            bytes
+          );
+          if (!written.ok) {
+            lines.push(`Could not stage ${fileUrl}: ${clientFailure(written.err).message}`);
+            continue;
+          }
+          staged += 1;
+          lines.push(`Staged ${fileLine(written.val)}`);
+        }
+
+        logger.info('webex_download_attachments staged', {
+          component: 'mcp/tool',
+          tenantId: context.tenantId,
+          messageId,
+          staged,
+          attempted: selected.length,
+        });
+        // Partial failure is a report; TOTAL failure (revoked scope, full
+        // quota) is an error the caller must see as one.
+        if (staged === 0) return errText(lines.join('\n'));
+        return textResult(
+          `${staged} of ${selected.length} attachment(s) staged from message ${messageId}:\n` +
+            lines.join('\n')
+        );
+      }
+    );
+  }
 
   server.registerTool(
     'webex_capture_message',
