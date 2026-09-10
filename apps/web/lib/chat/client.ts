@@ -18,7 +18,12 @@ export const chatClient = {
 
   createChat: (
     tenantId: string,
-    input: { projectId?: string | null; llmModelId?: string | null; thinkingEnabled?: boolean }
+    input: {
+      projectId?: string | null;
+      llmModelId?: string | null;
+      thinkingEnabled?: boolean;
+      toolConfig?: { connectors: string[] } | null;
+    }
   ) => sendJsonFull<{ chatId: string }>(`${base(tenantId)}/chats`, 'POST', input),
 
   getChat: (tenantId: string, chatId: string) =>

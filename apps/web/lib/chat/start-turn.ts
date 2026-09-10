@@ -330,6 +330,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       userMemoryText: context.userMemoryText,
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
+      hasDiscoverableTools: discoveryTool !== null,
       hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
