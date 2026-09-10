@@ -129,6 +129,7 @@ export default function ChatThread({
       projectId: newChatProject?.id ?? null,
       llmModelId: modelId,
       thinkingEnabled: thinking,
+      toolConfig: connectors ? { connectors } : null,
     });
     if (created.error || !created.data) {
       setError(created.error ?? 'The chat could not be created.');
@@ -141,7 +142,7 @@ export default function ChatThread({
     }
     setChat(loaded.data.chat);
     return loaded.data.chat;
-  }, [chat, tenantId, newChatProject, modelId, thinking]);
+  }, [chat, tenantId, newChatProject, modelId, thinking, connectors]);
 
   /** The optimistic prompt row and the turn to follow: the stream only carries the reply. */
   const begin = useCallback(

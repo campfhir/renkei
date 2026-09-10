@@ -162,6 +162,7 @@ describe('buildSystemPrompt', () => {
       userMemoryText: null,
       chatFiles: [],
       hasTools: true,
+      hasDiscoverableTools: false,
       hasKnowledge: false,
       hasSandbox: true,
       filesAllowed: true,
@@ -184,6 +185,7 @@ describe('buildSystemPrompt', () => {
       userMemoryText: null,
       chatFiles: [],
       hasTools: true,
+      hasDiscoverableTools: false,
       hasKnowledge: false,
       hasSandbox: false,
       filesAllowed: true,
@@ -205,6 +207,7 @@ describe('buildSystemPrompt with search_knowledge', () => {
     userMemoryText: null,
     chatFiles: [],
     hasTools: true,
+    hasDiscoverableTools: false,
     hasSandbox: false,
     filesAllowed: true,
     now: new Date('2026-09-04T00:00:00Z'),
@@ -222,6 +225,30 @@ describe('buildSystemPrompt with search_knowledge', () => {
   });
 });
 
+describe('buildSystemPrompt with find_tools', () => {
+  const base = {
+    personName: null,
+    orgName: null,
+    project: null,
+    userMemoryText: null,
+    chatFiles: [],
+    hasTools: true,
+    hasKnowledge: false,
+    hasSandbox: false,
+    filesAllowed: true,
+    now: new Date('2026-09-04T00:00:00Z'),
+  };
+
+  it('says to search for an unoffered tool rather than ask the person or give up, only when find_tools is offered', () => {
+    const withDiscovery = buildSystemPrompt({ ...base, hasDiscoverableTools: true });
+    expect(withDiscovery).toMatch(/find_tools/);
+    expect(withDiscovery).toMatch(/Before asking the person/);
+
+    const without = buildSystemPrompt({ ...base, hasDiscoverableTools: false });
+    expect(without).not.toMatch(/find_tools/);
+  });
+});
+
 describe('buildSystemPrompt without file storage', () => {
   it('tells the model not to produce files, and where storage is set up', () => {
     const prompt = buildSystemPrompt({
@@ -231,6 +258,7 @@ describe('buildSystemPrompt without file storage', () => {
       userMemoryText: null,
       chatFiles: [],
       hasTools: true,
+      hasDiscoverableTools: false,
       hasKnowledge: false,
       hasSandbox: true,
       filesAllowed: false,
@@ -251,6 +279,7 @@ describe('buildSystemPrompt with user memory', () => {
       userMemoryText: '- [2026-09-01 10:00] Prefers concise answers',
       chatFiles: [],
       hasTools: true,
+      hasDiscoverableTools: false,
       hasKnowledge: false,
       hasSandbox: false,
       filesAllowed: true,
@@ -265,6 +294,7 @@ describe('buildSystemPrompt with user memory', () => {
       userMemoryText: '- [2026-09-01 10:00] Prefers concise answers',
       chatFiles: [],
       hasTools: true,
+      hasDiscoverableTools: false,
       hasKnowledge: false,
       hasSandbox: false,
       filesAllowed: true,

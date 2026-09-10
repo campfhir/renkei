@@ -26,6 +26,13 @@ export interface SystemPromptInput {
   userMemoryText: string | null;
   chatFiles: { id: string; filename: string; contentType: string; sizeBytes: number }[];
   hasTools: boolean;
+  /**
+   * find_tools is among the tools (tool-discovery.ts): this chat has
+   * connectors enabled beyond what is offered up front. The prompt then
+   * says to search rather than ask the person for something a lookup —
+   * a directory search, say — could supply on its own.
+   */
+  hasDiscoverableTools: boolean;
   /** search_knowledge is among the tools; the prompt then says when it is worth a call. */
   hasKnowledge: boolean;
   hasSandbox: boolean;
@@ -45,6 +52,17 @@ const STANDING_BRIEF = `You are Renkei, an assistant inside an organization's ow
  * the tool is there, so a chat without it carries no dead advice.
  */
 const KNOWLEDGE_BRIEF = `search_knowledge finds what the organization has indexed from its own systems — mail, tickets, pages, documents, meetings and notes. Use it when the answer depends on the organization's own people, work or records. Do not use it for general knowledge, for reasoning, or for anything this conversation already contains, and do not use it to confirm what another tool just returned. Make one well-aimed search — a specific query, k up to 10, sources when you know the kind of item — and answer from what comes back, saying what you looked at and what was not there. Search again only for a genuinely different question, not a rephrasing of the same one.`;
+
+/**
+ * When find_tools is on offer. Its own description already names the
+ * connectors it covers; this says when to reach for it, since a model that
+ * only sees a handful of tools up front has no other signal that more
+ * exist. Without this nudge a task needing an unoffered tool tends to get
+ * answered by asking the person for information a lookup could have
+ * supplied instead (an email address, a ticket key) or by saying the
+ * capability isn't there.
+ */
+const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools listed here. Before asking the person for something a tool could look up (a colleague's email or user id, an issue key, a document link) or saying a capability is unavailable, call find_tools with a short description of what you need, or a connector name — matching tools become callable right away.`;
 
 function fileLine(file: { id: string; filename: string; contentType: string; sizeBytes: number }) {
   return `- ${file.filename} (${file.contentType}, ${Math.round(file.sizeBytes / 1024)} KB, attachment id ${file.id})`;
@@ -90,6 +108,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches; to read a public web page or a document at a URL, sandbox_fetch_page is one call and needs no browser."
         : "Tools act with this person's own permissions in the organization's systems."
     );
+  }
+  if (input.hasDiscoverableTools) {
+    sections.push(DISCOVERY_BRIEF);
   }
   if (input.hasKnowledge) {
     sections.push(KNOWLEDGE_BRIEF);
