@@ -21,8 +21,9 @@ import {
 import { setNotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '@renkei/user-prefs';
 import { setOrgSettings } from '@renkei/settings';
 import { createAgentRunHandler } from './engine';
+import { resumeAgentRun } from '@renkei/agents/runs';
+import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
 import { createApprovalSweep } from './approval-sweep';
-import type { QueueMessageInput } from '@renkei/queue';
 import type { McpClient, McpToolResult } from './mcp-client';
 import { recordedLogs, renderLog, resetRecordedLogs } from './test-support/logger-mock';
 
@@ -1376,6 +1377,214 @@ maybe('agent run engine', () => {
     expect(logged.status).toBe('failed');
     expect(logged.error_kind).toBe('step_failed');
     expect(logged.attempts).toBe(1);
+  });
+
+  it('resumes a failed run at the failed step: saved vars kept, attempts set aside, guidance read', async () => {
+    // Step 1 saves a plan; step 2 references it and fails with an exit
+    // handling. The owner then resumes with a note, and step 2's fresh
+    // attempt must see the recovered plan AND the note — with step 1 never
+    // re-run (its row is the memory).
+    const planStep = {
+      id: randomUUID(),
+      name: 'Make the plan',
+      instruction: [{ t: 'text' as const, v: 'Plan it.' }],
+      tool: null,
+      maxAttempts: 1,
+      saveAs: 'plan',
+      failureHandling: [],
+    };
+    const useStep = {
+      id: randomUUID(),
+      name: 'Create the approved issue',
+      instruction: [
+        { t: 'text' as const, v: 'Create it from ' },
+        { t: 'var' as const, name: 'plan' },
+        { t: 'text' as const, v: ' with ' },
+        { t: 'tool' as const, name: 'jira_create_issue' },
+      ],
+      tool: 'jira_create_issue',
+      maxAttempts: 1,
+      failureHandling: [{ outcome: 'invalid-input', action: 'exit' as const }],
+    };
+    const { runId, agentId } = await seedRun({ version: 1, steps: [planStep, useStep] });
+    const bigPlan = `THE PLAN: ${'x'.repeat(3_000)} END`;
+
+    const rejected: McpToolResult = {
+      content: [{ type: 'text', text: 'Jira API 400: issuetype: Specify a valid issue type' }],
+      isError: true,
+      meta: {},
+    };
+    const firstLlm = stubLlm((_request, call) => {
+      if (call === 0) return finish('success', { saveValue: bigPlan });
+      if (call === 1) return useTool('jira_create_issue', { issueType: 'Task' });
+      return finish('failure', { code: 'invalid-input', summary: 'Jira refused the issue type.' });
+    });
+    await handlerWith(
+      firstLlm,
+      stubMcp(['jira_create_issue'], () => rejected)
+    )({ payload: { runId } });
+
+    const failed = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'current_step_id', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(failed.status).toBe('failed');
+    expect(failed.current_step_id).toBe(useStep.id);
+
+    // Not resumable twice, and not resumable at all unless failed — but
+    // first: the resume itself.
+    const enqueued: QueueMessageInput[] = [];
+    const producer: QueueProducer = {
+      enqueue: async (message) => {
+        enqueued.push(message);
+        return ok(undefined);
+      },
+    };
+    const resumed = await resumeAgentRun(db, producer, {
+      tenantId,
+      agentId,
+      runId,
+      ownerSubject: subject,
+      resumedBySubject: subject,
+      guidance: '  The CIO project has no Task type — file it as a Project.  ',
+    });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.val).toEqual({
+      runId,
+      stepId: useStep.id,
+      stepName: 'Create the approved issue',
+      retiredAttempts: 1,
+    });
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]).toMatchObject({ payload: { runId }, orderingKey: `agent:${agentId}` });
+
+    const queued = await db
+      .selectFrom('agent_runs')
+      .select([
+        'status',
+        'error',
+        'error_kind',
+        'started_at',
+        'resume_count',
+        'resume_step_id',
+        'resume_guidance',
+      ])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(queued).toMatchObject({
+      status: 'queued',
+      error: null,
+      error_kind: null,
+      started_at: null,
+      resume_count: 1,
+      resume_step_id: useStep.id,
+      resume_guidance: 'The CIO project has no Task type — file it as a Project.',
+    });
+    const again = await resumeAgentRun(db, producer, {
+      tenantId,
+      agentId,
+      runId,
+      ownerSubject: subject,
+      resumedBySubject: subject,
+    });
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.err.type).toBe('NOT_FAILED');
+
+    // The resumed run: step 1 must NOT be re-asked; step 2's prompt must
+    // carry the recovered plan (whole — 3 000 chars is past the old
+    // 2 000-char stored clip) and the owner's note, and the fresh try
+    // gets the corrective tool allowance.
+    let resumeCalls = 0;
+    const secondLlm = stubLlm((request, call) => {
+      resumeCalls += 1;
+      const text = firstText(request);
+      expect(text).toContain('Step: Create the approved issue');
+      expect(text).toContain(bigPlan);
+      expect(text).toContain('The owner resumed this automation at this step after it failed');
+      expect(text).toContain('(invalid-input) Jira refused the issue type.');
+      expect(text).toContain('file it as a Project.');
+      expect(text).not.toContain('This is attempt');
+      expect(text).toContain('at most 10 tool call(s)');
+      return call === 0
+        ? useTool('jira_create_issue', { issueType: 'Project' })
+        : finish('success', { summary: 'Created CIO-43.' });
+    });
+    await handlerWith(
+      secondLlm,
+      stubMcp(['jira_create_issue'], () => okToolResult)
+    )({ payload: { runId } });
+    expect(resumeCalls).toBe(2);
+
+    const done = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error', 'resume_count'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(done).toMatchObject({ status: 'succeeded', error: null, resume_count: 1 });
+
+    const rows = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'attempt', 'status', 'outcome_code'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .orderBy('attempt')
+      .execute();
+    expect(rows).toEqual([
+      { step_id: planStep.id, attempt: 1, status: 'succeeded', outcome_code: null },
+      { step_id: useStep.id, attempt: 1, status: 'retired', outcome_code: 'invalid-input' },
+      { step_id: useStep.id, attempt: 2, status: 'succeeded', outcome_code: null },
+    ]);
+
+    const logged = await db
+      .selectFrom('agent_run_log')
+      .select(['status', 'attempts'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(logged.status).toBe('succeeded');
+    expect(logged.attempts).toBe(3);
+  });
+
+  it('keeps a saved value whole across a re-entry, up to the one cap the model is told', async () => {
+    // Regression for the silent truncation: the live binding was unbounded
+    // while the stored copy was clipped at 2 000 chars, so a run that came
+    // back from a pause read a shorter value than the run before it did.
+    const saver = reasoningStep('Save a lot', { saveAs: 'notes' });
+    const reader = reasoningStep('Read it back', {
+      instruction: [
+        { t: 'text', v: 'Read ' },
+        { t: 'var', name: 'notes' },
+      ],
+    });
+    const { runId } = await seedRun({ version: 1, steps: [saver, reader] });
+    const huge = 'n'.repeat(20_000);
+    let sawReader = '';
+    const llm = stubLlm((request, call) => {
+      if (call === 0) return finish('success', { saveValue: huge });
+      sawReader = firstText(request);
+      return finish('success');
+    });
+    await handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    )({ payload: { runId } });
+
+    // The reader saw the capped value, clip marker included…
+    expect(sawReader).toContain('n'.repeat(12_000) + '… [truncated]');
+    expect(sawReader).not.toContain('n'.repeat(12_001));
+    // …and the row stores that SAME text, so a re-entry recovers it as-is.
+    const row = await db
+      .selectFrom('agent_run_steps')
+      .select('detail')
+      .where('run_id', '=', runId)
+      .where('step_id', '=', saver.id)
+      .executeTakeFirstOrThrow();
+    const detail: { saveValue?: unknown } =
+      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+        ? row.detail
+        : {};
+    expect(detail.saveValue).toBe('n'.repeat(12_000) + '… [truncated]');
   });
 
   it('names the failed step in the warning it logs', async () => {

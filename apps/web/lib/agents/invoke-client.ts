@@ -37,8 +37,30 @@ export async function rerunAgentRun(
   runId: string,
   confirm = false
 ): Promise<InvokeAgentRunResult> {
-  return postConfirmable(
-    `/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/rerun`,
-    confirm
+  return postConfirmable(`/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/rerun`, confirm);
+}
+
+/**
+ * Resume a FAILED run at the step it failed on, optionally with a note on
+ * what to do differently there. Same confirm dance as the other two: a run
+ * of the agent already in flight turns the 409 into a confirm step.
+ */
+export async function resumeAgentRun(
+  tenantId: string,
+  agentId: string,
+  runId: string,
+  guidance: string,
+  confirm = false
+): Promise<InvokeAgentRunResult> {
+  const result = await sendJsonFull<{ runId?: string; code?: string }>(
+    `/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/resume`,
+    'POST',
+    { guidance, confirm }
   );
+  if (result.error) {
+    return result.data?.code === 'already-in-progress'
+      ? { kind: 'needs-confirm', message: result.error }
+      : { kind: 'error', message: result.error };
+  }
+  return { kind: 'started', runId: result.data?.runId ?? null };
 }

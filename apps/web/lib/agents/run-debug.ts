@@ -23,6 +23,47 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+/**
+ * Values printed once and elided everywhere after.
+ *
+ * A saved result is listed in full under the attempt that saved it, and
+ * then AGAIN — verbatim, under "Known information" — inside the prompt of
+ * every later step that references it. Five steps chipping one 10 KB
+ * plan is 50 KB of the same text in a paste, which is where most of a
+ * long export's bulk came from. Each long value is therefore printed
+ * where it first appears (the trigger input section, or the "Saved
+ * result" line) and later occurrences inside prompts become a pointer
+ * back to it. Exact-substring replacement, no prompt parsing: a value
+ * short enough to read inline is left alone, and a value the projection
+ * clipped differently from the prompt simply does not match and stays.
+ */
+const ELIDE_MIN_CHARS = 300;
+
+class SeenValues {
+  private readonly entries: { value: string; note: string }[] = [];
+
+  add(value: string, note: string): void {
+    if (value.length < ELIDE_MIN_CHARS) return;
+    if (this.entries.some((entry) => entry.value === value)) return;
+    this.entries.push({ value, note });
+  }
+
+  /** The text with every seen value replaced; whether anything was. */
+  elide(text: string): { text: string; elided: boolean } {
+    let out = text;
+    let elided = false;
+    // Longest first, so a value that contains another is replaced whole.
+    for (const entry of [...this.entries].sort((a, b) => b.value.length - a.value.length)) {
+      if (!out.includes(entry.value)) continue;
+      out = out
+        .split(entry.value)
+        .join(`[${entry.note} — ${entry.value.length} chars, shown above]`);
+      elided = true;
+    }
+    return { text: out, elided };
+  }
+}
+
 function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
   if (isAgentStepsDoc(run.stepsSnapshot)) {
     const found = findNodeById(run.stepsSnapshot.steps, stepId);
@@ -58,7 +99,7 @@ function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
  * subject, a body that arrived truncated. Reading the steps without this is
  * reading half the problem.
  */
-function initialStateLines(run: RunDetail): string[] {
+function initialStateLines(run: RunDetail, seen: SeenValues): string[] {
   if (run.initialStateRedacted) {
     return ['## Trigger input', '', '(hidden for this audience)', ''];
   }
@@ -69,6 +110,7 @@ function initialStateLines(run: RunDetail): string[] {
   const lines = ['## Trigger input', ''];
   for (const [key, value] of entries) {
     const rendered = typeof value === 'string' ? value : JSON.stringify(value);
+    seen.add(String(rendered ?? ''), `trigger.${key}`);
     // Multi-line values (an email body) are indented so the markdown stays
     // one list rather than collapsing into the surrounding prose.
     lines.push(`- ${key}: ${String(rendered ?? '').replace(/\n/g, '\n    ')}`);
@@ -172,7 +214,13 @@ function snapshotLines(run: RunDetail): string[] {
   return lines;
 }
 
-function attemptLines(attempt: AttemptView, endedRunHere: boolean): string[] {
+function attemptLines(
+  attempt: AttemptView,
+  endedRunHere: boolean,
+  seen: SeenValues,
+  savedAs: string | null,
+  stepName: string
+): string[] {
   const heading =
     `- ${attempt.iteration > 0 ? `Iteration ${attempt.iteration}, attempt` : 'Attempt'} ${attempt.attempt}: ${statusLabel(attempt.status)}` +
     (attempt.outcomeCode ? ` (${outcomeCodeLabel(attempt.outcomeCode)})` : '') +
@@ -180,6 +228,13 @@ function attemptLines(attempt: AttemptView, endedRunHere: boolean): string[] {
   if (attempt.redacted) return [heading, '  (details hidden for this audience)'];
 
   const lines = [heading];
+  // A retired attempt is what a resume set aside: it failed, the owner
+  // picked the run back up here, and the retry is the attempt that
+  // follows it. Said explicitly, or the timeline reads as a failure the
+  // run then ignored.
+  if (attempt.status === 'retired') {
+    lines.push('  Set aside by the owner’s resume — the retry is the attempt after this one.');
+  }
   const detail: Record<string, unknown> =
     typeof attempt.detail === 'object' && attempt.detail !== null && !Array.isArray(attempt.detail)
       ? attempt.detail
@@ -192,11 +247,14 @@ function attemptLines(attempt: AttemptView, endedRunHere: boolean): string[] {
   // Everything after this block — outcomes, summaries, tool calls, errors
   // — is appended context; this block is the 1:1 part.
   if (str(detail.promptText)) {
+    const prompt = seen.elide(str(detail.promptText));
     lines.push(
       '  System prompt: the step frame plus this agent’s guardrails, knowledge index and memory as they stood at run time (not stored; see the export and the Memory panel for current values).',
-      '  User message (verbatim, as sent to the model):',
+      prompt.elided
+        ? '  User message (as sent to the model, except that long values already shown above are replaced by a pointer to them):'
+        : '  User message (verbatim, as sent to the model):',
       '```text',
-      str(detail.promptText),
+      prompt.text,
       '```'
     );
   }
@@ -216,7 +274,20 @@ function attemptLines(attempt: AttemptView, endedRunHere: boolean): string[] {
   }
   if (str(detail.llmSummary)) lines.push(`  Summary: ${str(detail.llmSummary)}`);
   if (str(detail.guidanceUsed)) lines.push(`  Guidance used: ${str(detail.guidanceUsed)}`);
-  if (str(detail.saveValue)) lines.push(`  Saved result: ${str(detail.saveValue)}`);
+  if (str(detail.saveValue)) {
+    lines.push(`  Saved result: ${str(detail.saveValue)}`);
+    seen.add(
+      str(detail.saveValue),
+      `value of "${savedAs ?? 'the saved result'}", saved by "${stepName}"`
+    );
+  }
+  const saveItems = Array.isArray(detail.saveItems) ? detail.saveItems : [];
+  if (saveItems.length > 0 && saveItems.every((item) => typeof item === 'string')) {
+    const items = saveItems.map(String);
+    lines.push(`  Saved items (${items.length}):`, ...items.map((item) => `    - ${item}`));
+    seen.add(items.join('\n'), `list "${savedAs ?? 'the saved items'}", saved by "${stepName}"`);
+    for (const item of items) seen.add(item, `an item of "${savedAs ?? 'the saved items'}"`);
+  }
 
   const toolCalls = Array.isArray(detail.toolCalls) ? detail.toolCalls : [];
   for (const call of toolCalls) {
@@ -238,7 +309,16 @@ function attemptLines(attempt: AttemptView, endedRunHere: boolean): string[] {
   return lines;
 }
 
+/** The saveAs of an action step, for naming its saved result in the paste. */
+function savedAsOf(run: RunDetail, stepId: string): string | null {
+  if (!isAgentStepsDoc(run.stepsSnapshot)) return null;
+  const found = findNodeById(run.stepsSnapshot.steps, stepId);
+  if (!found || (found.node.kind !== 'action' && found.node.kind !== undefined)) return null;
+  return found.node.saveAs ?? null;
+}
+
 export function renderRunDebugMarkdown(agentName: string, run: RunDetail): string {
+  const seen = new SeenValues();
   const lines: string[] = [
     `# Agent run debug: ${agentName}`,
     '',
@@ -251,8 +331,17 @@ export function renderRunDebugMarkdown(agentName: string, run: RunDetail): strin
     ...(run.errorKind ? [`- Error kind: ${run.errorKind}`] : []),
     ...(run.failedStepName ? [`- Failed step: ${run.failedStepName}`] : []),
     ...(run.error ? [`- Error: ${run.error}`] : []),
+    ...(run.resumeCount > 0
+      ? [
+          `- Resumed by the owner: ${run.resumeCount} time(s)` +
+            (run.resumedAt ? `, last ${run.resumedAt}` : '') +
+            (run.resumeStepName ? ` at "${run.resumeStepName}"` : '') +
+            ' (attempts marked "Set aside" are what each resume retired)',
+          ...(run.resumeGuidance ? [`- Resume guidance: ${run.resumeGuidance}`] : []),
+        ]
+      : []),
     '',
-    ...initialStateLines(run),
+    ...initialStateLines(run, seen),
     ...activityLines(run),
     ...snapshotLines(run),
     '## Timeline',
@@ -272,9 +361,11 @@ export function renderRunDebugMarkdown(agentName: string, run: RunDetail): strin
   // case a declared skip's line may say the run ended here.
   const lastAttempt = run.attempts[run.attempts.length - 1];
   for (const [stepId, attempts] of byStep) {
-    lines.push(`### ${stepNameOf(run, stepId, attempts[0]?.stepIndex ?? 0)}`);
+    const stepName = stepNameOf(run, stepId, attempts[0]?.stepIndex ?? 0);
+    const savedAs = savedAsOf(run, stepId);
+    lines.push(`### ${stepName}`);
     for (const attempt of attempts) {
-      lines.push(...attemptLines(attempt, attempt === lastAttempt));
+      lines.push(...attemptLines(attempt, attempt === lastAttempt, seen, savedAs, stepName));
     }
     lines.push('');
   }

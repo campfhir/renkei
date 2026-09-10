@@ -128,6 +128,7 @@ export const EXPECTED_MIGRATIONS = [
   '096-run-token-tools',
   '097-llm-cache-tokens',
   '098-llm-calls-model',
+  '099-agent-run-resume',
 ];
 
 export interface MigrationStatus {

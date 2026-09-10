@@ -11,13 +11,18 @@ import {
   SYSTEM_PROMPT,
   buildAttemptMessages,
   buildBranchMessages,
+  buildLoopConditionMessages,
   outcomeGuideFor,
+  resumeNoteFor,
+  FINISH_STEP_DEF,
+  SAVE_ITEM_CHARS,
+  SAVE_VALUE_CHARS,
   runContextBlock,
   systemPromptWith,
   usesTime,
   withRunContext,
 } from './step-prompts';
-import type { BranchStep } from './steps';
+import type { BranchStep, UntilLoopStep } from './steps';
 import type { ActionStep } from './steps';
 
 function step(overrides: Partial<ActionStep> = {}): ActionStep {
@@ -367,5 +372,101 @@ describe('the run context rides in the system prompt', () => {
     expect(text).not.toContain('Standing guardrails');
     expect(text).not.toContain('What you remember');
     expect(text).not.toContain('Your knowledge notes');
+  });
+});
+
+describe('resumeNoteFor', () => {
+  it('names the earlier failure and makes the owner’s guidance binding', () => {
+    const note = resumeNoteFor({
+      previousFailure: '(invalid-input) Jira API 400: issuetype: Specify a valid issue type',
+      guidance: 'The CIO project has no Task type — create it as a Project.',
+    });
+    expect(note).toContain('resumed this automation at this step after it failed');
+    expect(note).toContain('What went wrong before: (invalid-input) Jira API 400');
+    expect(note).toContain('binding for this step');
+    expect(note).toContain('create it as a Project.');
+    expect(note).toContain('earlier attempts were set aside');
+  });
+
+  it('still reads as a sentence with neither a failure nor guidance', () => {
+    const note = resumeNoteFor({});
+    expect(note).toMatch(/^The owner resumed this automation at this step after it failed\./);
+    expect(note).not.toContain('guidance');
+  });
+});
+
+describe('a resumed attempt', () => {
+  it('reads the resume note instead of "attempt N of M" — the budget is fresh', () => {
+    const note = resumeNoteFor({ guidance: 'Use issueType "Project".' });
+    const built = buildAttemptMessages({
+      step: step({ maxAttempts: 1 }),
+      // The row number keeps counting past the retired attempts, so the
+      // prompt must not turn that into "attempt 2 of 1".
+      attempt: 2,
+      variables: {},
+      toolBudget: 10,
+      previousFailure: 'it broke',
+      guidanceText: 'retry guidance that must not show',
+      resumeNote: note,
+    });
+    const text = built.messages[0].content[0].text;
+    expect(text).toContain(note);
+    expect(text).not.toContain('This is attempt 2 of 1');
+    expect(text).not.toContain('Previous attempt: it broke');
+    expect(text).not.toContain('retry guidance that must not show');
+  });
+
+  it('carries the note into a branch decision and a loop decision alike', () => {
+    const note = resumeNoteFor({ guidance: 'Pick yes.' });
+    const branch: BranchStep = {
+      kind: 'branch',
+      id: randomUUID(),
+      name: 'Anything to write?',
+      condition: [{ t: 'text', v: 'Is there anything?' }],
+      maxAttempts: 2,
+      paths: [
+        { id: randomUUID(), name: 'yes', steps: [] },
+        { id: randomUUID(), name: 'no', steps: [] },
+      ],
+    };
+    const branchText = buildBranchMessages({ branch, variables: {}, attempt: 1, resumeNote: note })
+      .messages[0].content[0].text;
+    expect(branchText).toContain(note);
+
+    const loop: UntilLoopStep = {
+      kind: 'loop',
+      id: randomUUID(),
+      name: 'Until done',
+      mode: 'until',
+      condition: [{ t: 'text', v: 'Are we done?' }],
+      maxIterations: 3,
+      maxAttempts: 2,
+      steps: [],
+    };
+    const loopText = buildLoopConditionMessages({
+      loop,
+      iteration: 1,
+      variables: {},
+      attempt: 1,
+      resumeNote: note,
+    }).messages[0].content[0].text;
+    expect(loopText).toContain(note);
+  });
+});
+
+describe('finish_step tells the model the save caps', () => {
+  it('states both limits in the schema descriptions', () => {
+    const properties: unknown = FINISH_STEP_DEF.inputSchema.properties;
+    const descriptionOf = (name: string): string => {
+      const field: unknown =
+        typeof properties === 'object' && properties !== null
+          ? Reflect.get(properties, name)
+          : undefined;
+      const description: unknown =
+        typeof field === 'object' && field !== null ? Reflect.get(field, 'description') : '';
+      return typeof description === 'string' ? description : '';
+    };
+    expect(descriptionOf('saveValue')).toContain(SAVE_VALUE_CHARS.toLocaleString('en-US'));
+    expect(descriptionOf('saveItems')).toContain(SAVE_ITEM_CHARS.toLocaleString('en-US'));
   });
 });

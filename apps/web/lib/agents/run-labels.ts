@@ -22,6 +22,11 @@ const STATUS_LABELS: Record<string, string> = {
   // Parked behind an approval card on the home page — the run continues
   // when the owner acts (or its wait ceiling routes the timeout path).
   waiting: 'Waiting for you',
+  // An attempt an owner's resume set aside: it failed, the run was picked
+  // back up at that step with a fresh budget, and this row is the record
+  // of what the retry is recovering from. Attempt-only — a run is never
+  // 'retired'.
+  retired: 'Set aside',
 };
 
 /** Title-case label for a run or attempt status; unknown values capitalize. */

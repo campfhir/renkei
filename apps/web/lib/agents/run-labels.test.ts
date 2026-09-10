@@ -18,6 +18,10 @@ describe('statusLabel', () => {
     expect(statusLabel(raw)).toBe(label);
   });
 
+  it('reads a retired attempt as set aside — a resume’s doing, not a failure the run ignored', () => {
+    expect(statusLabel('retired')).toBe('Set aside');
+  });
+
   it('capitalizes an unknown status rather than hiding it', () => {
     expect(statusLabel('paused')).toBe('Paused');
   });
