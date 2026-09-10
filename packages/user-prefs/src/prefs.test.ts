@@ -15,6 +15,8 @@ import {
   effectivePauseDelivery,
   parseNotificationPrefs,
   wantsAct,
+  parseConnectorPrefs,
+  DEFAULT_CONNECTOR_PREFS,
   type NotificationPrefs,
   type DeliveryPrefs,
 } from './prefs';
@@ -75,9 +77,7 @@ describe('defaults', () => {
 
 describe('deliveryForCategory / wantsAct', () => {
   it('falls back to the category default on App, and off on Email/WebEx', () => {
-    expect(deliveryForCategory(prefs(), 'jira', 'created')).toEqual(
-      delivery({ app: true })
-    );
+    expect(deliveryForCategory(prefs(), 'jira', 'created')).toEqual(delivery({ app: true }));
     expect(deliveryForCategory(prefs(), 'jira', 'other')).toEqual(delivery({ app: false }));
     expect(wantsAct(prefs(), 'jira', 'created', 'app')).toBe(true);
     expect(wantsAct(prefs(), 'jira', 'created', 'email')).toBe(false);
@@ -106,7 +106,12 @@ describe('deliveryForCategory / wantsAct', () => {
   it('handles an act with no connector attribution', () => {
     expect(wantsAct(prefs(), null, 'created', 'app')).toBe(true);
     expect(
-      wantsAct(prefs({ acts: { jira: { created: delivery({ app: false }) } } }), null, 'created', 'app')
+      wantsAct(
+        prefs({ acts: { jira: { created: delivery({ app: false }) } } }),
+        null,
+        'created',
+        'app'
+      )
     ).toBe(true);
   });
 });
@@ -291,5 +296,19 @@ describe('batch events', () => {
 
   it('lists the three events in the order a page shows them', () => {
     expect(BATCH_EVENTS).toEqual(['batchStarted', 'batchFinished', 'batchFailed']);
+  });
+});
+
+describe('parseConnectorPrefs', () => {
+  it('defaults an absent or malformed row to nothing added', () => {
+    expect(parseConnectorPrefs(undefined)).toEqual(DEFAULT_CONNECTOR_PREFS);
+    expect(parseConnectorPrefs('jira')).toEqual(DEFAULT_CONNECTOR_PREFS);
+    expect(parseConnectorPrefs({ added: 'jira' })).toEqual(DEFAULT_CONNECTOR_PREFS);
+  });
+
+  it('keeps only non-empty strings, once each', () => {
+    expect(parseConnectorPrefs({ added: ['jira', 3, '', 'jira', 'zoom'] })).toEqual({
+      added: ['jira', 'zoom'],
+    });
   });
 });

@@ -8,7 +8,7 @@
  * being pulled in behind it.
  */
 
-/** The one preference key so far. Add a namespace, not a column. */
+/** One key per preference namespace (see CONNECTORS_KEY below). Add a namespace, not a column. */
 export const NOTIFICATIONS_KEY = 'notifications';
 
 /** Where a toast appears, for someone whose eyes live in one corner. */
@@ -347,4 +347,41 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),
     toastCorner: corner,
   };
+}
+
+/**
+ * The connectors a person has added to their own connectors page.
+ *
+ * A second key rather than a field on the notification preferences: they are
+ * read on different pages by different code, and one growing JSON blob would
+ * mean the notification worker parsing catalog choices it has no use for.
+ */
+export const CONNECTORS_KEY = 'connectors';
+
+export interface ConnectorPrefs {
+  /**
+   * Capability keys the person chose to show on their connectors page.
+   * A layout preference and nothing more: it never widens or narrows which
+   * tools register — that is provisioning and org policy — so a person who
+   * connected something without "adding" it keeps their tools, and the page
+   * shows the card anyway (added ∪ connected).
+   */
+  added: string[];
+}
+
+export const DEFAULT_CONNECTOR_PREFS: ConnectorPrefs = { added: [] };
+
+/** Survives whatever jsonb hands back; anything unrecognisable is the default. */
+export function parseConnectorPrefs(stored: unknown): ConnectorPrefs {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
+    return DEFAULT_CONNECTOR_PREFS;
+  }
+  const raw: Record<string, unknown> = { ...stored };
+  if (!Array.isArray(raw.added)) return DEFAULT_CONNECTOR_PREFS;
+  const added = [
+    ...new Set(
+      raw.added.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    ),
+  ];
+  return { added };
 }
