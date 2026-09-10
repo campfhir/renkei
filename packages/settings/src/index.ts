@@ -29,6 +29,17 @@ export interface OrgSettings {
    * off for now".
    */
   disabledConnectors: string[];
+  /**
+   * Connector audiences: capability key → the IdP group values a person
+   * must carry (any one of them) to be offered that connector. A key that
+   * is absent, or maps to an empty list, means everyone. Enforced in the
+   * capability projection — outside the audience, the connector's tools
+   * never register — and mirrored by the connectors page, which does not
+   * offer what the projection would refuse. Lives here rather than in a
+   * table of its own so it rides the same cache, the same invalidation and
+   * the same tool-surface version as disabledConnectors.
+   */
+  connectorAudiences: Record<string, string[]>;
   /** RFC 7591 dynamic client registration on this org's OAuth server. */
   enableDcr: boolean;
   maxJqlResults: number;
@@ -181,6 +192,7 @@ export interface OrgSettings {
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   readOnly: false,
   disabledConnectors: [],
+  connectorAudiences: {},
   enableDcr: true,
   maxJqlResults: 100,
   maxAttachmentBytes: 20_971_520, // 20MB
@@ -233,6 +245,22 @@ function coerceStringList(current: unknown, fallback: string[]): string[] {
 }
 
 /**
+ * A map of string lists; keys whose value is not a list are dropped, and
+ * an empty list is kept (it is a meaningful "everyone" for audiences).
+ */
+export function coerceStringListRecord(
+  current: unknown,
+  fallback: Record<string, string[]>
+): Record<string, string[]> {
+  if (typeof current !== 'object' || current === null || Array.isArray(current)) return fallback;
+  const out: Record<string, string[]> = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (Array.isArray(value)) out[key] = coerceStringList(value, []);
+  }
+  return out;
+}
+
+/**
  * The org's settings, defaults filled in for anything unset. Cached briefly;
  * a change takes effect within the TTL (or immediately after a setter, which
  * invalidates).
@@ -260,6 +288,10 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
   const settings: OrgSettings = {
     readOnly: Boolean(coerce(stored.get('read_only'), d.readOnly)),
     disabledConnectors: coerceStringList(stored.get('disabled_connectors'), d.disabledConnectors),
+    connectorAudiences: coerceStringListRecord(
+      stored.get('connector_audiences'),
+      d.connectorAudiences
+    ),
     enableDcr: Boolean(coerce(stored.get('enable_dcr'), d.enableDcr)),
     maxJqlResults: Number(coerce(stored.get('max_jql_results'), d.maxJqlResults)),
     maxAttachmentBytes: Number(coerce(stored.get('max_attachment_bytes'), d.maxAttachmentBytes)),
@@ -335,36 +367,38 @@ export async function setOrgSettings(
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const pairs: Array<[string, boolean | number | string[] | undefined]> = [
-    ['read_only', updates.readOnly],
-    ['disabled_connectors', updates.disabledConnectors],
-    ['enable_dcr', updates.enableDcr],
-    ['max_jql_results', updates.maxJqlResults],
-    ['max_attachment_bytes', updates.maxAttachmentBytes],
-    ['rate_limit_per_user_per_minute', updates.rateLimitPerUserPerMinute],
-    ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
-    ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],
-    ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
-    ['redaction_enabled', updates.redactionEnabled],
-    ['redaction_detectors', updates.redactionDetectors],
-    ['redaction_mrn_formats', updates.redactionMrnFormats],
-    ['agent_run_retention_days', updates.agentRunRetentionDays],
-    ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
-    ['agent_usage_retention_days', updates.agentUsageRetentionDays],
-    ['chat_retention_days', updates.chatRetentionDays],
-    ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
-    ['agent_max_chain_depth', updates.agentMaxChainDepth],
-    ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
-    ['agent_max_step_attempts', updates.agentMaxStepAttempts],
-    ['agent_max_steps', updates.agentMaxSteps],
-    ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
-    ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
-    ['content_poll_minutes', updates.contentPollMinutes],
-    ['webex_webhook_health_minutes', updates.webexWebhookHealthMinutes],
-    ['log_retention_days', updates.logRetentionDays],
-    ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
-    ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
-  ];
+  const pairs: Array<[string, boolean | number | string[] | Record<string, string[]> | undefined]> =
+    [
+      ['read_only', updates.readOnly],
+      ['disabled_connectors', updates.disabledConnectors],
+      ['connector_audiences', updates.connectorAudiences],
+      ['enable_dcr', updates.enableDcr],
+      ['max_jql_results', updates.maxJqlResults],
+      ['max_attachment_bytes', updates.maxAttachmentBytes],
+      ['rate_limit_per_user_per_minute', updates.rateLimitPerUserPerMinute],
+      ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
+      ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],
+      ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
+      ['redaction_enabled', updates.redactionEnabled],
+      ['redaction_detectors', updates.redactionDetectors],
+      ['redaction_mrn_formats', updates.redactionMrnFormats],
+      ['agent_run_retention_days', updates.agentRunRetentionDays],
+      ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
+      ['agent_usage_retention_days', updates.agentUsageRetentionDays],
+      ['chat_retention_days', updates.chatRetentionDays],
+      ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
+      ['agent_max_chain_depth', updates.agentMaxChainDepth],
+      ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
+      ['agent_max_step_attempts', updates.agentMaxStepAttempts],
+      ['agent_max_steps', updates.agentMaxSteps],
+      ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
+      ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
+      ['content_poll_minutes', updates.contentPollMinutes],
+      ['webex_webhook_health_minutes', updates.webexWebhookHealthMinutes],
+      ['log_retention_days', updates.logRetentionDays],
+      ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
+      ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
+    ];
 
   for (const [key, value] of pairs) {
     if (value === undefined) continue;

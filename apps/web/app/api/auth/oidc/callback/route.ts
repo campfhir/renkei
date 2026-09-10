@@ -4,7 +4,8 @@ import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/session';
-import { identityClaimsFromIdToken, upsertIdentity } from '@/lib/identity';
+import { identityClaimsFromIdToken, hasGroupsOverage, upsertIdentity } from '@/lib/identity';
+import { DEFAULT_GROUPS_CLAIM } from '@/lib/tenant-operations';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { safeFetch, assertPublicHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
@@ -234,11 +235,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return response;
     }
 
-    // Record the identity spine entry (subject → email) while the id_token
-    // is in hand — the only moment the mapping is trustworthy. Non-fatal:
-    // a failed upsert must not break sign-in, and everything downstream
-    // that needs the email fails closed without it.
-    const identityClaims = decoded ? identityClaimsFromIdToken(decoded) : null;
+    // Record the identity spine entry (subject → email, plus the groups
+    // claim for connector audiences) while the id_token is in hand — the
+    // only moment the mapping is trustworthy. Non-fatal: a failed upsert
+    // must not break sign-in, and everything downstream that needs the
+    // email fails closed without it. No extra scope is requested for
+    // groups: it is not a standard OIDC scope, and IdPs emit the claim per
+    // app registration (Entra) or claim mapping (Okta, Keycloak).
+    const groupsClaim = oidc.groupsClaim || DEFAULT_GROUPS_CLAIM;
+    const identityClaims = decoded ? identityClaimsFromIdToken(decoded, groupsClaim) : null;
+    if (decoded && hasGroupsOverage(decoded, groupsClaim)) {
+      // Entra omits the claim past ~200 groups and points at Graph instead.
+      // Renkei does not follow the pointer, so this person has no groups on
+      // record and every audience-scoped connector is closed to them.
+      logger.warn(
+        'id_token omits the groups claim (groups overage); audience rules fail closed for this subject',
+        { component: 'auth/oidc', tenantId, subject, groupsClaim }
+      );
+    }
     if (identityClaims) {
       const recorded = await upsertIdentity(tenantId, subject, identityClaims);
       if (!recorded.ok) {

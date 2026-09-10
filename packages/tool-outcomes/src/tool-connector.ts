@@ -3,11 +3,11 @@
  *
  * This returns the CATALOG capability key (`connector-catalog.ts`), not the
  * tool's name prefix. The two differ often enough to matter: `outlook_*` tools
- * belong to the `microsoft` connector, `webex_*` to `webex` (the capability
- * gate calls it `webex-user`), and `jsm_*` sits under `jira`. Splitting a name
- * at its first underscore would produce `outlook`, `webex` and `jsm` — keys no
- * logo, catalog entry or admin toggle recognises, so a usage page built on
- * them would show unlabelled rows and blank icons.
+ * belong to the `microsoft` connector, `webex_*` to `webex`, and `jsm_*` sits
+ * under `jira`. Splitting a name at its first underscore would produce
+ * `outlook`, `webex` and `jsm` — keys no logo, catalog entry or admin toggle
+ * recognises, so a usage page built on them would show unlabelled rows and
+ * blank icons.
  *
  * One caveat worth stating: for the summary tools this is a DISPLAY grouping,
  * not the gate's. `outlook_calendar_summary` registers behind the Jira
@@ -44,6 +44,8 @@ const PREFIXES: [string, string][] = [
   ['onedrive_', 'onedrive'],
   ['webex_', 'webex'],
   ['zoom_', 'zoom'],
+  // Before `onbase_`: the admin tools are a separate connector and grant.
+  ['onbase_admin_', 'onbase-admin'],
   ['onbase_', 'onbase'],
   ['knowledge_', 'knowledge'],
   ['fileshare_', 'fileshares'],
@@ -51,6 +53,8 @@ const PREFIXES: [string, string][] = [
   ['agent_', 'agents'],
   ['log_', 'logs'],
   ['user_memory_', 'user-memory'],
+  ['sandbox_', 'sandbox'],
+  ['batch_', 'batch-jobs'],
 ];
 
 /**

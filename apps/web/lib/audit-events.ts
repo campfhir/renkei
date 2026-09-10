@@ -23,6 +23,7 @@ export type AuditAction =
   | 'user.signed_out'
   | 'connector.connected'
   | 'connector.disconnected'
+  | 'connector.audience_updated'
   | 'agent.created'
   | 'agent.updated'
   | 'agent.enabled'

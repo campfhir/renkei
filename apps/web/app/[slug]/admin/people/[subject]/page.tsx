@@ -87,7 +87,7 @@ export default async function PersonDetailPage({
   const [identity, grants, agents, lastActiveRow] = await Promise.all([
     db
       .selectFrom('identities')
-      .select(['subject', 'display_name', 'email'])
+      .select(['subject', 'display_name', 'email', 'idp_groups'])
       .where('tenant_id', '=', tenant.id)
       .where('subject', '=', subject)
       .executeTakeFirst(),
@@ -147,6 +147,31 @@ export default async function PersonDetailPage({
           'never signed in'
         )}
       </p>
+
+      {/* The groups the IdP reported at this person's last sign-in — what
+          connector audiences are judged on. Read-only: the answer to "why
+          can't they see Zoom" is here, the fix is at the IdP. */}
+      <section className="mb-6">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+          Groups (IdP)
+        </h2>
+        {!identity || identity.idp_groups.length === 0 ? (
+          <p className="text-sm text-gray-400 dark:text-gray-600">
+            No groups recorded at last sign-in
+          </p>
+        ) : (
+          <ul className="flex flex-wrap gap-1.5">
+            {identity.idp_groups.map((group) => (
+              <li
+                key={group}
+                className="rounded-full border border-gray-200 px-2.5 py-0.5 font-mono text-xs dark:border-gray-800"
+              >
+                {group}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">

@@ -17,11 +17,7 @@ import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
 import { cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
-import {
-  resolveConnectorAvailability,
-  provisionedConnectorsFor,
-  registerRenkeiTools,
-} from '@/lib/mcp-tools/registry';
+import { resolveConnectorAvailability, registerRenkeiTools } from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
 import { withToolAllowList } from '@/lib/mcp-tools/capability-gate';
 import { registerWidgetResources } from '@/lib/mcp-tools/widgets';
@@ -35,7 +31,8 @@ import {
 import { ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
-import { createProjection } from '@renkei/capability-registry';
+import { buildProjection } from '@/lib/mcp-tools/projection';
+import { resolveAudience } from '@/lib/connectors/audience';
 import { toolSurfaceVersion } from '@/lib/mcp-tools/surface-version';
 import { getHandler, setHandler } from '@/lib/mcp-tools/handler-cache';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
@@ -440,24 +437,12 @@ const handler = async (
             // is the org-wide read-only capability flag, so mutating tools are
             // simply never registered under it. A caller without a Jira grant
             // still reaches here on their other connectors; the empty Jira
-            // scope list keeps that namespace unregistered. Per-capability
-            // user expose/hide choices arrive with the preferences UI.
-            const projection = createProjection(
-              {
-                readOnly: settings.readOnly,
-                // The org-admin's org-wide off switch (Connector setup →
-                // Available connectors). Unlike narrowing the scope ceiling,
-                // this touches no grant, so flipping it back restores the
-                // tools without anyone reconnecting.
-                disabledConnectors: settings.disabledConnectors,
-                disabledCapabilities: [],
-              },
-              {
-                provisionedConnectors: provisionedConnectorsFor(availability),
-                hiddenCapabilities: [],
-                roles,
-              }
-            );
+            // scope list keeps that namespace unregistered. Connector
+            // audiences are resolved from the caller's recorded identity —
+            // a run token carries no roles, and a restriction must hold for
+            // an agent exactly as for the person it runs for.
+            const audience = await resolveAudience(db, tenantId, subject);
+            const projection = buildProjection({ settings, availability, roles, audience });
             // A run token names the only tools it may see (migration 096):
             // an agent run's steps, plus the notifier's own. Everything
             // else is never registered, so tools/list is a handful of

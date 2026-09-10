@@ -1,6 +1,10 @@
 # Scoping connectors to people — design
 
-No code yet.
+Built, with one change of direction: audiences are keyed on IdP group
+claims rather than the Renkei-local groups recommended below. See
+[`connector-catalog-design.md`](./connector-catalog-design.md) for what
+shipped; the gate, the fail-closed rule and the test named here are as
+described.
 
 ## The problem
 

@@ -31,17 +31,14 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
-import { createProjection } from '@renkei/capability-registry';
+import { buildProjection } from '@/lib/mcp-tools/projection';
+import { resolveAudience } from '@/lib/connectors/audience';
 import { ATLASSIAN, ATLASSIAN_JSM } from '@renkei/provider-grants';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { connectorKeyForTool } from '@/lib/mcp-tools/tool-connector';
 import { resolveOutcomes, type ToolOutcomes } from '@/lib/mcp-tools/outcomes';
-import {
-  resolveConnectorAvailability,
-  provisionedConnectorsFor,
-  registerRenkeiTools,
-} from '@/lib/mcp-tools/registry';
+import { resolveConnectorAvailability, registerRenkeiTools } from '@/lib/mcp-tools/registry';
 
 export interface ToolDescriptor {
   name: string;
@@ -174,7 +171,11 @@ interface CacheEntry {
 
 const catalogCache = new Map<string, CacheEntry>();
 
-const cacheKey = (tenantId: string, subject: string) => `${tenantId} ${subject}`;
+// Roles are part of the key: a role-gated tool is in an operator's list and
+// not a user's, and one subject can be asked about under both (a session
+// versus a run token). Sorted so order never mints a second entry.
+const cacheKey = (tenantId: string, subject: string, roles: readonly string[] = []) =>
+  `${tenantId} ${subject} ${[...roles].sort().join(',')}`;
 
 /**
  * Drop cached catalogs — used after a connector connects or disconnects for
@@ -188,7 +189,7 @@ export function invalidateToolCatalogCache(tenantId?: string, subject?: string):
   }
   const prefix = `${tenantId} `;
   for (const key of catalogCache.keys()) {
-    if (key.startsWith(prefix) && (!subject || key === cacheKey(tenantId, subject))) {
+    if (key.startsWith(prefix) && (!subject || key.startsWith(`${tenantId} ${subject} `))) {
       catalogCache.delete(key);
     }
   }
@@ -211,9 +212,19 @@ export function invalidateToolCatalogCache(tenantId?: string, subject?: string):
 export async function listAvailableTools(
   tenantId: string,
   subject: string,
-  options: { fresh?: boolean } = {}
+  options: {
+    fresh?: boolean;
+    /**
+     * The caller's renkei roles, when the surface knows them. Role-gated
+     * tools register only for a holder, so a list built without roles is
+     * the non-operator's list — the safe default, and the one every
+     * caller got before roles reached the catalog at all.
+     */
+    roles?: readonly string[];
+  } = {}
 ): Promise<ToolDescriptor[]> {
-  const key = cacheKey(tenantId, subject);
+  const roles = options.roles ?? [];
+  const key = cacheKey(tenantId, subject, roles);
   const cached = catalogCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -230,15 +241,11 @@ export async function listAvailableTools(
   if (!settingsResult.ok) return [];
   const settings = settingsResult.val;
 
-  const availability = await resolveConnectorAvailability(db, tenantId, subject);
-  const projection = createProjection(
-    {
-      readOnly: settings.readOnly,
-      disabledConnectors: settings.disabledConnectors,
-      disabledCapabilities: [],
-    },
-    { provisionedConnectors: provisionedConnectorsFor(availability), hiddenCapabilities: [] }
-  );
+  const [availability, audience] = await Promise.all([
+    resolveConnectorAvailability(db, tenantId, subject),
+    resolveAudience(db, tenantId, subject),
+  ]);
+  const projection = buildProjection({ settings, availability, roles, audience });
 
   const context: MCPToolContext = {
     tenantId,

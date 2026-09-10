@@ -14,6 +14,7 @@ function CreateOrganizationContent() {
     clientId: '',
     clientSecret: '',
     roleClaim: 'roles',
+    groupsClaim: 'groups',
     operatorRoleMapping: '',
     userRoleMapping: '',
   });
@@ -134,6 +135,7 @@ function CreateOrganizationContent() {
           clientId: formData.clientId,
           clientSecret: formData.clientSecret,
           roleClaim: formData.roleClaim,
+          groupsClaim: formData.groupsClaim || undefined,
           operatorIdpValue: formData.operatorRoleMapping || undefined,
           userIdpValue: formData.userRoleMapping || undefined,
         }),
@@ -284,6 +286,25 @@ function CreateOrganizationContent() {
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               JWT claim that contains user roles (e.g., 'roles' for Entra ID, 'appRoles',
               'org_roles')
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Groups Claim (optional)
+            </label>
+            <input
+              type="text"
+              name="groupsClaim"
+              value={formData.groupsClaim}
+              onChange={handleInputChange}
+              placeholder="groups"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              JWT claim that lists the user's groups. Recorded at each sign-in so connectors can be
+              offered to some groups and not others. Configure your identity provider to include it
+              in the ID token ('groups' for Entra ID group claims).
             </p>
           </div>
 

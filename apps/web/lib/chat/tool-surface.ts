@@ -143,7 +143,7 @@ export async function resolveChatToolSurface(
     ttlSeconds: number;
   }
 ): Promise<ChatToolSurface> {
-  const catalog = await listAvailableTools(input.tenantId, input.subject);
+  const catalog = await listAvailableTools(input.tenantId, input.subject, { roles: input.roles });
   const candidates = catalog.filter(
     (descriptor) =>
       !descriptor.appOnly &&

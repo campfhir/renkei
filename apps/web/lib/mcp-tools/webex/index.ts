@@ -34,7 +34,14 @@ import {
 } from '../widgets';
 import { resolveWebexAccess, type WebexAuth } from './webex-auth';
 
-export const WEBEX_USER_MCP_CONNECTOR = 'webex-user';
+/**
+ * The capability key the WebEx user tools register under. 'webex' — the same
+ * key the connector catalog, the org's disabledConnectors and usage rows
+ * (connectorKeyForTool) use. It was 'webex-user' (the CONFIG key) for a
+ * while, which made the admin off switch a no-op: the switch wrote 'webex'
+ * and the gate looked for 'webex-user'.
+ */
+export const WEBEX_USER_MCP_CONNECTOR = 'webex';
 
 async function describeWebexFailure(response: Response): Promise<string> {
   // Reads the body's `message` field either way: a real WebEx error carries

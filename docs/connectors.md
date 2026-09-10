@@ -100,6 +100,26 @@ Other exports: `ZoomClient`, `verifyZoomSignature`/`parseZoomWebhookPayload`, `z
 
 Not a provider wrapper — the shared per-tenant connector configuration store every connector above reads through. `getConnectorConfig`/`setConnectorConfig` read/write the `connector_configs` table (enabled flag, non-secret `settings`, `secrets` sealed via `@renkei/crypto`'s envelope); `readConnectorConfigCached`/`invalidateConnectorConfigCache` provide a 60-second cache for hot per-event paths. This is what lets connector credentials and policy live in the database rather than environment variables (`RENKEI.md` Decision #13).
 
+## The catalog and the definitions
+
+Three identifiers name a connector, and `apps/web/lib/connector-catalog.ts` is where they are reconciled: the **capability key** (what the projection gates on, and what `disabledConnectors`, a person's catalog selections and an admin's audience rules all name), the **config key** (the `connector_configs` row an admin fills in — Outlook, SharePoint and OneDrive share `microsoft`), and the **grant provider** (`provider_grants.provider`). `CONNECTOR_CATALOG` is pure data — one entry per product, with a category, search synonyms, the suite card that hosts it, its grant providers, and whether a person adds it themselves — so client components can import it anywhere. `lib/connectors/definitions.tsx` binds each config key to the admin form that edits it and is what the admin pages read.
+
+Two surfaces are built on it. `/[slug]/connectors` shows a person what they added or connected (added ∪ connected, from `lib/connectors/user-catalog.ts`; the selection is a `connectors` key in `user_preferences`, never an input to tool registration) and offers the rest of what the org provisions for them behind a searchable "Add connector". `/[slug]/admin/connectors` is the org's catalog: every connector, its status, its org-wide switches, and a page per config key at `/admin/connectors/<configKey>`.
+
+An admin can scope a connector to an **audience** — people whose sign-in carried one of the named IdP group values (`OrgSettings.connectorAudiences`, keyed by capability key; `tenant_oidc.groups_claim` names the claim, `identities.idp_groups` records it). Enforced as a gate of the capability projection, resolved per subject from recorded identity by `lib/connectors/audience.ts`, failing closed. See [`connector-catalog-design.md`](./connector-catalog-design.md).
+
+## Adding a connector
+
+In the order the tests will complain about it:
+
+1. **Provider package and grant adapter** — `packages/connector-<x>` (API wrapper, `verifyAccess` where content is indexed) and a `ProviderAdapter` plus provider constant in `packages/provider-grants`, when the connector holds a per-user OAuth grant.
+2. **App reader and scopes** — `apps/web/lib/<x>-app.ts` (`<X>_CONNECTOR` config key, `get<X>App` over `readConnectorConfigCached`) and `lib/<x>-scopes.ts` (`ScopeOption`/`ScopeGroup` catalog, defaults, `usable<X>Ceiling`).
+3. **Admin API and form** — `app/api/admin/[slug]/connectors/<configKey>/route.ts` (GET reports presence only; PUT saves through `@renkei/connector-config`) and `app/[slug]/admin/connectors/forms/<configKey>-form.tsx`, bound in `lib/connectors/definitions.tsx`'s `FORMS`. `definitions.test.ts` fails on a route without a form or a form without a route.
+4. **Catalog entry** — `CONNECTOR_CATALOG`: capability key, config key, label, summary, tool prefix, category, keywords, suite, grant providers, `userConnectable`, `togglable`. `connector-logos.test.ts` fails until the mark exists in `public/connector-logos/` (or the key is in `GLYPH_ONLY`).
+5. **User card** — a card under `app/[slug]/connectors/`, or a panel inside the suite card the entry names, wired by capability key in `connectors/page.tsx`; authorize and grant routes under `app/api/<x>/[tenantId]/`.
+6. **Tool module** — `lib/mcp-tools/<x>/index.ts` exporting `<X>_MCP_CONNECTOR` (the capability key — not the config key, which is the mistake WebEx shipped with) and `register<X>Tools`; availability, `provisionedConnectorsFor`, `REGISTERED_CONNECTOR_KEYS` and the gated registration in `lib/mcp-tools/registry.ts`; the tool prefix in `packages/tool-outcomes/src/tool-connector.ts`. `registry-keys.test.ts` fails on a mounted key the catalog does not list, or a prefix that maps elsewhere.
+7. **This document** — the table above, and the package section.
+
 ## Cross-cutting
 
-Scoping a connector to an audience of users/groups (a fourth narrowing gate on top of the capability registry) is described in [`connector-access-control-design.md`](./connector-access-control-design.md). The batch/live `verifyAccess` contract itself, and why every candidate is checked at object level rather than a coarser container/space granularity, is Decision #18 in [`RENKEI.md`](../RENKEI.md).
+The batch/live `verifyAccess` contract itself, and why every candidate is checked at object level rather than a coarser container/space granularity, is Decision #18 in [`RENKEI.md`](../RENKEI.md).
