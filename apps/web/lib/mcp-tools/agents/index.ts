@@ -52,6 +52,12 @@
  *    that reason. It refuses agent-run callers too: an agent starting
  *    agents outside the chain would bypass the cycle and depth guards,
  *    which read a lineage only a real trigger carries.
+ *  - USAGE is read from the token and tool ledgers (agent-usage.ts), the
+ *    same rows the usage dashboards show: agent_usage_get per agent (or
+ *    a line per reachable agent), a tokens line per run in
+ *    agent_runs_list, and a per-step/per-model split under agent_run_get.
+ *    Content-free by construction, so a grantee reads the owner's numbers
+ *    and an agent run may read its own.
  *  - EDITS ARE PARTIAL BY DEFAULT: agent_update replaces the whole
  *    definition, which makes every untouched step and trigger a
  *    transcription risk, and an omitted trigger an outright delete.
@@ -109,6 +115,24 @@ import { triggerSummary } from '@/lib/agents/trigger-summary';
 import { listRunsForOwner, getRunForOwner } from '@/lib/agents/runs-view';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import {
+  getAgentTokenUsage,
+  getAgentTokenUsageByStep,
+  getAgentToolUsage,
+  getRunTokenUsage,
+  getTokenUsageByAgent,
+  getTokenUsageByModel,
+  getTokenUsageByRun,
+  ZERO_TOKEN_USAGE,
+} from '@/lib/agents/agent-usage';
+import { labelStepUsage } from '@/lib/agents/step-usage-labels';
+import { isUsagePeriod, PERIOD_KEYS } from '@/lib/agents/usage-periods';
+import {
+  renderAgentUsageText,
+  renderAgentsUsageText,
+  renderRunUsageMarkdown,
+  runTokenLine,
+} from '@/lib/agents/usage-text';
+import {
   createAgentNote,
   deleteAgentNote,
   listAgentNotes,
@@ -149,6 +173,8 @@ function entryCount(count: number): string {
 }
 
 const NO_SUBJECT = 'This caller has no recorded identity, so it has no agents.';
+/** The trailing window the agent page's "Tools used" card reads. */
+const TOOL_USAGE_WINDOW_DAYS = 30;
 const NOT_FOUND = 'No agent of yours, and none shared with you, has that id.';
 const RUN_REFUSAL =
   'Agent runs cannot edit agent definitions — creating and updating agents is reserved ' +
@@ -1030,7 +1056,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         "One of your agents' (or one shared with you) recent runs: status (including " +
         "'waiting' for approval pauses), " +
-        'what failed and where, trigger, timing. Use agent_run_get on a runId for the full story.',
+        'what failed and where, trigger, timing, and the tokens each run spent. Use ' +
+        'agent_run_get on a runId for the full story; agent_usage_get for the agent as a whole.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -1079,16 +1106,26 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           })
         : [];
       const byRun = new Map(waiting.map((approval) => [approval.runId, approval]));
+      // What each run cost, from the token ledger — the figure the usage
+      // dashboards show per agent, here per run. A run with no ledger rows
+      // (queued, never reached the model) simply has no tokens line.
+      const tokensByRun = await getTokenUsageByRun(
+        dbResult.val,
+        context.tenantId,
+        runs.map((run) => run.id)
+      );
       const now = Date.now();
 
       const lines = [`${runs.length} run(s) of "${agent.name}", newest first:`];
       for (const run of runs) {
         const duration = run.durationMs !== null ? ` · ${Math.round(run.durationMs / 1000)}s` : '';
         const approval = byRun.get(run.id);
+        const tokens = tokensByRun[run.id];
         lines.push(
           '',
           `- ${run.status} · via ${run.triggerKind} · ${run.createdAt}${duration}`,
           `  runId: ${run.id}`,
+          ...(tokens ? [`  ${runTokenLine(tokens)}`] : []),
           ...(approval
             ? ['  Waiting on you:', ...approvalLines(approval, now).map((line) => `  ${line}`)]
             : []),
@@ -1111,7 +1148,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         'The full debugging view of one run of one of your agents (or one shared with you) — ' +
         'snapshot outline, timeline, every ' +
         'attempt with its tool calls. The same markdown the run page\'s "Copy for debugging" ' +
-        'button produces, designed to be handed to a model.',
+        'button produces, designed to be handed to a model, plus the tokens the run spent ' +
+        'in total, by step and by model.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         runId: z.string().min(1).describe('From agent_runs_list'),
@@ -1163,9 +1201,18 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ).find((pending) => pending.runId === runId)
           : undefined;
 
+      // The run's own tokens from the ledger, its steps named from the
+      // snapshot it ran with (not the agent's current definition, which
+      // may have changed since).
+      const usageRows = labelStepUsage(
+        run.stepsSnapshot,
+        await getRunTokenUsage(db, context.tenantId, runId)
+      );
+
       return textResult(
         [
           renderRunDebugMarkdown(agent.name, run),
+          renderRunUsageMarkdown(usageRows),
           ...(approval
             ? [
                 '',
@@ -1177,6 +1224,94 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               ]
             : []),
         ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'agent_usage_get',
+    {
+      title: 'Agents · Read — Token and tool usage of your agents',
+      description:
+        'What your agents (and those shared with you) spend, from the same ledger the usage ' +
+        'dashboards read. Without agentId: every agent you can reach, one line each, tokens ' +
+        "in/out for the chosen period, largest first. With agentId: that agent's tokens for " +
+        'every period (today through all time), the chosen period split by model and by ' +
+        'step, and its tool calls over the last 30 days by connector. Cached prompt tokens ' +
+        'are reported as the portion of the input served from cache. For what one RUN ' +
+        'cost, agent_runs_list shows a tokens line per run and agent_run_get the split by ' +
+        'step and model.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        agentId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('From agent_list. Omit for a line per agent instead.'),
+        period: z
+          .enum(PERIOD_KEYS)
+          .optional()
+          .describe('The calendar period to split by (default: month = this month).'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+      const period = isUsagePeriod(args.period) ? args.period : 'month';
+
+      const agentId = typeof args.agentId === 'string' ? args.agentId.trim() : '';
+      if (!agentId) {
+        // Every agent the caller can reach — their own plus the shared
+        // ones — against the org-wide per-agent buckets, filtered down
+        // to those ids. The caller's reach decides what is listed; the
+        // ledger only ever fills in numbers for ids already resolved.
+        const [own, shared, byAgent] = await Promise.all([
+          listAgents(db, context.tenantId, context.subject),
+          listAgentsSharedWith(db, context.tenantId, context.subject),
+          getTokenUsageByAgent(db, context.tenantId),
+        ]);
+        if (own.length === 0 && shared.length === 0) {
+          return textResult('You have no agents yet, and none have been shared with you.');
+        }
+        return textResult(
+          renderAgentsUsageText(period, [
+            ...own.map((agent) => ({
+              agentId: agent.id,
+              name: agent.name,
+              tokens: byAgent[agent.id] ?? ZERO_TOKEN_USAGE,
+            })),
+            ...shared.map((listing) => ({
+              agentId: listing.agent.id,
+              name: listing.agent.name,
+              sharedBy: listing.ownerName ?? listing.ownerEmail ?? listing.ownerSubject,
+              tokens: byAgent[listing.agent.id] ?? ZERO_TOKEN_USAGE,
+            })),
+          ])
+        );
+      }
+
+      const access = await agentAccessFor(db, context, agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
+      const [tokens, byModel, stepRows, tools] = await Promise.all([
+        getAgentTokenUsage(db, context.tenantId, agent.id),
+        getTokenUsageByModel(db, context.tenantId, agent.id),
+        getAgentTokenUsageByStep(db, context.tenantId, agent.id),
+        getAgentToolUsage(db, context.tenantId, agent.id, TOOL_USAGE_WINDOW_DAYS),
+      ]);
+      return textResult(
+        renderAgentUsageText({
+          agentName: agent.name,
+          agentId: agent.id,
+          period,
+          tokens,
+          byModel,
+          bySteps: labelStepUsage(agent.steps, stepRows),
+          tools,
+          toolWindowDays: TOOL_USAGE_WINDOW_DAYS,
+        })
       );
     }
   );

@@ -24,6 +24,39 @@ jest.mock('@/lib/agents/runs-view', () => ({
   getRunForOwner: jest.fn(),
 }));
 jest.mock('@/lib/agents/run-debug', () => ({ renderRunDebugMarkdown: jest.fn(() => 'DEBUG MD') }));
+jest.mock('@/lib/agents/agent-usage', () => {
+  const zero = { today: 0, yesterday: 0, week: 0, month: 0, quarter: 0, year: 0, allTime: 0 };
+  const ZERO_TOKEN_USAGE = { input: zero, output: zero, cacheRead: zero, cacheWrite: zero };
+  return {
+    ZERO_TOKEN_USAGE,
+    getAgentTokenUsage: jest.fn(async () => ZERO_TOKEN_USAGE),
+    getAgentTokenUsageByStep: jest.fn(async () => []),
+    getAgentToolUsage: jest.fn(async () => []),
+    getRunTokenUsage: jest.fn(async () => []),
+    getTokenUsageByAgent: jest.fn(async () => ({})),
+    getTokenUsageByModel: jest.fn(async () => []),
+    getTokenUsageByRun: jest.fn(async () => ({})),
+    sumRunTotals: (
+      rows: {
+        input: number;
+        output: number;
+        cacheRead: number;
+        cacheWrite: number;
+        calls: number;
+      }[]
+    ) =>
+      rows.reduce(
+        (sum, row) => ({
+          input: sum.input + row.input,
+          output: sum.output + row.output,
+          cacheRead: sum.cacheRead + row.cacheRead,
+          cacheWrite: sum.cacheWrite + row.cacheWrite,
+          calls: sum.calls + row.calls,
+        }),
+        { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, calls: 0 }
+      ),
+  };
+});
 jest.mock('@/lib/agents/agent-notes', () => ({
   MAX_AGENT_NOTE_CHARS: 50_000,
   MAX_AGENT_NOTE_TITLE_CHARS: 200,
@@ -101,6 +134,15 @@ const notesMock = jest.requireMock<{
 const cancelMock = jest.requireMock<{ requestRunCancellation: jest.Mock }>(
   '@/lib/agents/run-cancellation'
 );
+const usageMock = jest.requireMock<{
+  getAgentTokenUsage: jest.Mock;
+  getAgentTokenUsageByStep: jest.Mock;
+  getAgentToolUsage: jest.Mock;
+  getRunTokenUsage: jest.Mock;
+  getTokenUsageByAgent: jest.Mock;
+  getTokenUsageByModel: jest.Mock;
+  getTokenUsageByRun: jest.Mock;
+}>('@/lib/agents/agent-usage');
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
@@ -194,6 +236,12 @@ const ownerAccess = (agent: unknown) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   stubDb();
+  usageMock.getTokenUsageByRun.mockResolvedValue({});
+  usageMock.getRunTokenUsage.mockResolvedValue([]);
+  usageMock.getTokenUsageByAgent.mockResolvedValue({});
+  usageMock.getTokenUsageByModel.mockResolvedValue([]);
+  usageMock.getAgentTokenUsageByStep.mockResolvedValue([]);
+  usageMock.getAgentToolUsage.mockResolvedValue([]);
   accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
   accessGrantsMock.listAgentsSharedWith.mockResolvedValue([]);
   identityMock.getIdentityEmail.mockResolvedValue({ ok: true, val: 'alice@example.com' });
@@ -447,7 +495,10 @@ test('agent_run_get resolves the run to its agent and renders the debug markdown
     runId: '22222222-2222-4222-8222-222222222222',
   });
   expect(result.isError).toBeUndefined();
-  expect(result.content[0]?.text).toBe('DEBUG MD');
+  // The debug markdown first, then the run's tokens from the ledger.
+  expect(result.content[0]?.text).toBe(
+    'DEBUG MD\n## Token usage\n\nNo model calls recorded for this run.'
+  );
 });
 
 test('every agents tool fails closed without a subject', async () => {
@@ -1315,5 +1366,212 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
         canceledBySubject: 'auth0|alice',
       })
     );
+  });
+});
+
+describe("token usage — the dashboards' numbers, over MCP", () => {
+  const buckets = (value: number) => ({
+    today: value,
+    yesterday: 0,
+    week: value,
+    month: value,
+    quarter: value,
+    year: value,
+    allTime: value,
+  });
+  const usage = (input: number, output: number, cached = 0) => ({
+    input: buckets(input),
+    output: buckets(output),
+    cacheRead: buckets(cached),
+    cacheWrite: buckets(0),
+  });
+
+  it('agent_runs_list carries a tokens line per run, and none for a run the ledger has nothing on', async () => {
+    runsMock.listRunsForOwner.mockResolvedValue([
+      {
+        id: 'run-1',
+        status: 'succeeded',
+        triggerKind: 'manual',
+        createdAt: '2026-01-02T00:00:00Z',
+        durationMs: 4000,
+        error: null,
+        errorKind: null,
+        failedStepName: null,
+      },
+      {
+        id: 'run-2',
+        status: 'queued',
+        triggerKind: 'schedule',
+        createdAt: '2026-01-03T00:00:00Z',
+        durationMs: null,
+        error: null,
+        errorKind: null,
+        failedStepName: null,
+      },
+    ]);
+    usageMock.getTokenUsageByRun.mockResolvedValue({
+      'run-1': { input: 12_400, output: 900, cacheRead: 3_100, cacheWrite: 0, calls: 3 },
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_runs_list')!({ agentId: 'agent-1' });
+
+    const text = result.content[0]?.text ?? '';
+    expect(usageMock.getTokenUsageByRun).toHaveBeenCalledWith(expect.anything(), 'tenant-1', [
+      'run-1',
+      'run-2',
+    ]);
+    expect(text).toContain(
+      '  runId: run-1\n  tokens: 12,400 in (3,100 cached) · 900 out · 3 model calls'
+    );
+    expect(text.split('tokens:')).toHaveLength(2);
+  });
+
+  it("agent_run_get appends the run's tokens by step, named from the run's own snapshot", async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    runsMock.getRunForOwner.mockResolvedValue({
+      id: 'run-1',
+      status: 'succeeded',
+      attempts: [],
+      stepsSnapshot: {
+        version: CURRENT_STEPS_VERSION,
+        steps: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Read the inbox',
+            instruction: [{ t: 'text', v: 'Look.' }],
+            tool: null,
+            maxAttempts: 1,
+            failureHandling: [],
+          },
+        ],
+      },
+    });
+    usageMock.getRunTokenUsage.mockResolvedValue([
+      {
+        stepId: '11111111-1111-4111-8111-111111111111',
+        provider: 'anthropic',
+        model: 'claude-big',
+        input: 1_000,
+        output: 50,
+        cacheRead: 400,
+        cacheWrite: 20,
+        calls: 2,
+      },
+    ]);
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_get')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+    });
+
+    const text = result.content[0]?.text ?? '';
+    expect(text.startsWith('DEBUG MD')).toBe(true);
+    expect(text).toContain('## Token usage');
+    expect(text).toContain(
+      '- Total: 1,000 in (400 cached) · 50 out · 20 cache writes · 2 model calls'
+    );
+    expect(text).toContain(
+      '- 1. Read the inbox: 1,000 in (400 cached) · 50 out · 20 cache writes · 2 model calls'
+    );
+    expect(text).toContain('- claude-big: 1,000 in (400 cached) · 50 out · 20 cache writes');
+  });
+
+  it('agent_usage_get with an agentId reads through the access resolver and renders the panel', async () => {
+    usageMock.getAgentTokenUsage.mockResolvedValue(usage(5_000, 400, 1_000));
+    usageMock.getTokenUsageByModel.mockResolvedValue([
+      { provider: 'anthropic', model: 'claude-big', ...usage(5_000, 400, 1_000) },
+    ]);
+    usageMock.getAgentToolUsage.mockResolvedValue([
+      {
+        tool: 'jira_search_issues',
+        connector: 'jira',
+        calls: 12,
+        errors: 1,
+        medianMs: 300,
+        p95Ms: 1200,
+      },
+    ]);
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_usage_get')!({ agentId: 'agent-1', period: 'week' });
+
+    expect(result.isError).toBeUndefined();
+    expect(accessGrantsMock.resolveAgentAccess).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'auth0|alice',
+      'agent-1'
+    );
+    expect(usageMock.getAgentToolUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'agent-1',
+      30
+    );
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('Usage of "Triage" (agentId: agent-1)');
+    expect(text).toContain('- This week: 5,000 in (1,000 cached) · 400 out');
+    expect(text).toContain('- Yesterday: 0 in · 0 out');
+    expect(text).toContain(
+      'By model · this week:\n- claude-big: 5,000 in (1,000 cached) · 400 out'
+    );
+    expect(text).toContain('By step · this week:\n- no tokens this week');
+    expect(text).toContain('Tool calls, last 30 days: 12 (1 failed)');
+    expect(text).toContain('- jira_search_issues: 12 calls · 1 failed · median 300ms, p95 1.2s');
+  });
+
+  it('agent_usage_get defaults to this month', async () => {
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_usage_get')!({ agentId: 'agent-1' });
+    expect(result.content[0]?.text ?? '').toContain('By model · this month:');
+  });
+
+  it('agent_usage_get reads an unreachable agentId as not-found', async () => {
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(null);
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_usage_get')!({ agentId: 'agent-9' });
+    expect(result.isError).toBe(true);
+    expect(usageMock.getAgentTokenUsage).not.toHaveBeenCalled();
+  });
+
+  it('agent_usage_get without an agentId lists every reachable agent, largest spend first', async () => {
+    storeMock.listAgents.mockResolvedValue([
+      { ...AGENT, id: 'agent-1', name: 'Triage' },
+      { ...AGENT, id: 'agent-2', name: 'Digest' },
+    ]);
+    accessGrantsMock.listAgentsSharedWith.mockResolvedValue([
+      {
+        agent: { ...AGENT, id: 'agent-3', name: 'Theirs' },
+        ownerSubject: 'auth0|owner',
+        ownerName: 'Owner',
+        ownerEmail: 'owner@example.com',
+      },
+    ]);
+    usageMock.getTokenUsageByAgent.mockResolvedValue({
+      'agent-1': usage(100, 10),
+      'agent-3': usage(900, 90, 300),
+      // An agent the caller cannot reach never appears, whatever it spent.
+      'agent-4': usage(1_000_000, 1),
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_usage_get')!({});
+
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain(
+      'Token usage of 3 agent(s) · this month: 1,000 in (300 cached) · 100 out'
+    );
+    expect(text.indexOf('Theirs (shared by Owner)')).toBeLessThan(text.indexOf('- Triage:'));
+    expect(text.indexOf('- Triage:')).toBeLessThan(text.indexOf('- Digest:'));
+    expect(text).toContain('- Digest: 0 in · 0 out\n  agentId: agent-2');
+    expect(text).not.toContain('agent-4');
+    expect(accessGrantsMock.resolveAgentAccess).not.toHaveBeenCalled();
+  });
+
+  it('agent_usage_get stays open to agent-run callers — it is a read', async () => {
+    const handlers = registerAll({ agent: { agentId: 'agent-9' } });
+    const result = await handlers.get('agent_usage_get')!({ agentId: 'agent-1' });
+    expect(result.isError).toBeUndefined();
   });
 });
