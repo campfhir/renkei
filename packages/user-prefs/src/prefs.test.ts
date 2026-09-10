@@ -17,6 +17,8 @@ import {
   wantsAct,
   parseConnectorPrefs,
   DEFAULT_CONNECTOR_PREFS,
+  parseThemePrefs,
+  DEFAULT_THEME_PREFS,
   type NotificationPrefs,
   type DeliveryPrefs,
 } from './prefs';
@@ -310,5 +312,26 @@ describe('parseConnectorPrefs', () => {
     expect(parseConnectorPrefs({ added: ['jira', 3, '', 'jira', 'zoom'] })).toEqual({
       added: ['jira', 'zoom'],
     });
+  });
+});
+
+describe('parseThemePrefs', () => {
+  it('defaults an absent or malformed row to auto', () => {
+    expect(parseThemePrefs(undefined)).toEqual(DEFAULT_THEME_PREFS);
+    expect(parseThemePrefs(null)).toEqual(DEFAULT_THEME_PREFS);
+    expect(parseThemePrefs('dark')).toEqual(DEFAULT_THEME_PREFS);
+    expect(parseThemePrefs(['dark'])).toEqual(DEFAULT_THEME_PREFS);
+    expect(parseThemePrefs({})).toEqual(DEFAULT_THEME_PREFS);
+  });
+
+  it('keeps a valid mode', () => {
+    expect(parseThemePrefs({ mode: 'light' })).toEqual({ mode: 'light' });
+    expect(parseThemePrefs({ mode: 'dark' })).toEqual({ mode: 'dark' });
+    expect(parseThemePrefs({ mode: 'auto' })).toEqual({ mode: 'auto' });
+  });
+
+  it('falls back to auto for an unrecognised mode', () => {
+    expect(parseThemePrefs({ mode: 'darkest' })).toEqual(DEFAULT_THEME_PREFS);
+    expect(parseThemePrefs({ mode: 42 })).toEqual(DEFAULT_THEME_PREFS);
   });
 });
