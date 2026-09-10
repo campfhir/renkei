@@ -24,6 +24,22 @@ export interface TenantOidc {
   roleClaim?: string;
   operatorIdpValue?: string | null;
   userIdpValue?: string | null;
+  /**
+   * The id_token claim carrying a person's groups, read at sign-in for
+   * connector audience rules. Absent means the conventional 'groups'.
+   */
+  groupsClaim?: string | null;
+}
+
+/** What sign-in reads for groups when the tenant has not said otherwise. */
+export const DEFAULT_GROUPS_CLAIM = 'groups';
+
+/** The claim-mapping half of the OIDC config: editable without the client secret. */
+export interface TenantOidcClaims {
+  roleClaim?: string | null;
+  operatorIdpValue?: string | null;
+  userIdpValue?: string | null;
+  groupsClaim?: string | null;
 }
 
 export interface JiraGrant {
@@ -126,6 +142,7 @@ export async function setTenantOidc(
           role_claim: oidc.roleClaim,
           operator_idp_value: oidc.operatorIdpValue || null,
           user_idp_value: oidc.userIdpValue || null,
+          groups_claim: oidc.groupsClaim || null,
           created_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
@@ -136,6 +153,7 @@ export async function setTenantOidc(
             role_claim: oidc.roleClaim,
             operator_idp_value: oidc.operatorIdpValue || null,
             user_idp_value: oidc.userIdpValue || null,
+            groups_claim: oidc.groupsClaim || null,
           })
         )
         .execute(),
@@ -233,6 +251,7 @@ export async function getTenantOidc(
           'role_claim',
           'operator_idp_value',
           'user_idp_value',
+          'groups_claim',
         ])
         .where('tenant_id', '=', tenantId)
         .executeTakeFirst(),
@@ -254,7 +273,64 @@ export async function getTenantOidc(
     roleClaim: row.role_claim || undefined,
     operatorIdpValue: row.operator_idp_value || undefined,
     userIdpValue: row.user_idp_value || undefined,
+    groupsClaim: row.groups_claim || undefined,
   });
+}
+
+/**
+ * The claim mappings alone, for the admin settings page. The full
+ * setTenantOidc needs the client secret and is what the organization
+ * bootstrap uses; changing which claim carries groups should not demand
+ * re-entering a secret or re-running discovery.
+ */
+export async function getTenantOidcClaims(
+  tenantId: string
+): Promise<Result<TenantOidcClaims | null, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+  const rowResult = await wrapAsync(
+    () =>
+      dbResult.val
+        .selectFrom('tenant_oidc')
+        .select(['role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
+        .where('tenant_id', '=', tenantId)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!rowResult.ok) return rowResult;
+  const row = rowResult.val;
+  if (!row) return ok(null);
+  return ok({
+    roleClaim: row.role_claim,
+    operatorIdpValue: row.operator_idp_value,
+    userIdpValue: row.user_idp_value,
+    groupsClaim: row.groups_claim,
+  });
+}
+
+/** Update only the claim mappings; false when the tenant has no OIDC row to update. */
+export async function setTenantOidcClaims(
+  tenantId: string,
+  claims: TenantOidcClaims
+): Promise<Result<boolean, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+  const result = await wrapAsync(
+    () =>
+      dbResult.val
+        .updateTable('tenant_oidc')
+        .set({
+          role_claim: claims.roleClaim || null,
+          operator_idp_value: claims.operatorIdpValue || null,
+          user_idp_value: claims.userIdpValue || null,
+          groups_claim: claims.groupsClaim || null,
+        })
+        .where('tenant_id', '=', tenantId)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return result;
+  return ok(Number(result.val.numUpdatedRows) > 0);
 }
 
 /**

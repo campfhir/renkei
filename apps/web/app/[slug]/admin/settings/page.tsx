@@ -6,6 +6,8 @@ import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { SettingsForm, type EditableSettings } from './settings-form';
+import IdentityForm from './identity-form';
+import { observedIdpGroups } from '@/lib/identity';
 
 /**
  * The org's operating settings — everything adjustable that has no more
@@ -38,13 +40,14 @@ export default async function SettingsPage({
     );
   }
 
-  const [settingsResult, oidc] = await Promise.all([
+  const [settingsResult, oidc, observedGroups] = await Promise.all([
     getOrgSettings(tenantRef.id),
     dbResult.val
       .selectFrom('tenant_oidc')
-      .select(['issuer'])
+      .select(['issuer', 'role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
       .where('tenant_id', '=', tenantRef.id)
       .executeTakeFirst(),
+    observedIdpGroups(dbResult.val, tenantRef.id, '', 10_000),
   ]);
   if (!settingsResult.ok) {
     return (
@@ -150,6 +153,18 @@ export default async function SettingsPage({
         <p className="mt-1 text-gray-600 dark:text-gray-400">
           Organization slug: <code className="text-xs">{slug}</code>
         </p>
+        {oidc && (
+          <IdentityForm
+            slug={slug}
+            initial={{
+              roleClaim: oidc.role_claim ?? '',
+              operatorIdpValue: oidc.operator_idp_value ?? '',
+              userIdpValue: oidc.user_idp_value ?? '',
+              groupsClaim: oidc.groups_claim ?? '',
+            }}
+            observedGroups={observedGroups.length}
+          />
+        )}
       </section>
     </div>
   );

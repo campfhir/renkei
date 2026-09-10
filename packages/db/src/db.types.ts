@@ -677,6 +677,7 @@ export interface Identities {
   created_at: Generated<Timestamp>;
   display_name: string | null;
   email: string;
+  idp_groups: Generated<string[]>;
   subject: string;
   tenant_id: string;
   updated_at: Generated<Timestamp>;
@@ -1035,6 +1036,7 @@ export interface TenantOidc {
   client_id: string;
   client_secret: string;
   created_at: Generated<Timestamp>;
+  groups_claim: string | null;
   id: string;
   issuer: string;
   operator_idp_value: string | null;

@@ -39,6 +39,7 @@ interface OidcConfigRequest {
   roleClaim?: string;
   operatorIdpValue?: string;
   userIdpValue?: string;
+  groupsClaim?: string;
 }
 
 function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
@@ -183,6 +184,7 @@ export async function POST(
       roleClaim: body.roleClaim,
       operatorIdpValue: body.operatorIdpValue || null,
       userIdpValue: body.userIdpValue || null,
+      groupsClaim: body.groupsClaim || null,
     };
 
     if (configured) {
@@ -288,7 +290,14 @@ export async function GET(
     // Get OIDC configuration
     const oidc = await db
       .selectFrom('tenant_oidc')
-      .select(['issuer', 'client_id', 'role_claim', 'operator_idp_value', 'user_idp_value'])
+      .select([
+        'issuer',
+        'client_id',
+        'role_claim',
+        'operator_idp_value',
+        'user_idp_value',
+        'groups_claim',
+      ])
       .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
@@ -303,6 +312,7 @@ export async function GET(
       roleClaim: oidc.role_claim,
       operatorIdpValue: oidc.operator_idp_value,
       userIdpValue: oidc.user_idp_value,
+      groupsClaim: oidc.groups_claim,
     });
   } catch (error) {
     logger.error('Config fetch error: {error}', {
