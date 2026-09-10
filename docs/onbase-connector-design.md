@@ -379,10 +379,12 @@ in this cut, matching the Document API tools' own restraint:
 - **No deletes anywhere.** A document type or keyword type deleted on a
   model's say-so is not a v1 capability, same reasoning as the Document
   API's own "no `DELETE /documents/{id}`".
-- **No users or user groups.** Creating accounts and editing rights is
-  identity management — a different risk class from document
-  configuration, and it wants its own considered story rather than riding
-  in on this one.
+- **No creating users or user groups, no memberships, no privileges.**
+  Creating accounts and editing rights is identity management — a
+  different risk class from document configuration, and it wants its own
+  considered story rather than riding in on this one. (Reading users and
+  user groups, and granting document types to user groups, were added
+  later — see "Who can see a document type" below.)
 - **No password policies, EVM, Insight Discovery, key providers, or
   security keywords.** None of it is "document types and keywords"; each
   is its own surface with its own risk profile.
@@ -449,6 +451,77 @@ only ever connects `onbase-admin` — never `onbase` — still gets a fully
 working connector. A create or rename invalidates this file's own cache for
 that catalog kind, so a document type created this turn resolves by name on
 the very next tool call.
+
+### Who can see a document type (added after the first cut)
+
+The first cut's "no users or user groups" left a hole: every access grant
+in the Administration API is keyed by **user group id** (`userGroupIds` on
+`POST /api/document-types`, the `/user-groups` assignment endpoints), and
+nothing in the connector could answer "what is the id of the Clinical Staff
+group?". Worse, the grant is not optional in practice. OnBase shows a
+document type only to members of a user group it has been granted to — in
+every client **and in OnBase Configuration** — so a document type created
+without one exists (it has an id, it is in the change-event log,
+`GET /api/document-types` lists it for the API account) but nobody can find
+it. That is the "created it, it has an id, it does not show up in
+Configuration" report, and `onbase_admin_create_document_type` used to
+answer it with a clean success. (Two lesser causes worth ruling out on the
+same report: OnBase Configuration loads its lists at sign-in, so changes
+made through the API are not seen until it is restarted; and the document
+type group itself may not be granted to the admin's user group either.)
+
+What was added, all in `admin-tools.ts` against the same connector:
+
+- Reads: `onbase_admin_list_user_groups`, `onbase_admin_list_users`
+  (service accounts hidden unless asked), `onbase_admin_get_user_group`
+  (config + members), `onbase_admin_get_user` (config + memberships, the
+  password field dropped), `onbase_admin_list_user_group_access` (the
+  document type ↔ user group grants from either side), and
+  `onbase_admin_get_my_permissions` (`GET /api/users/me/permissions` — the
+  first thing to check on a 403, and where the licensed-product flags such
+  as `medicalRecords`, `med2WebPhysicianPortal` and `patientPortal` live).
+  User groups and users joined `AdminCatalogKind`, so every tool that
+  wants a group takes a name or an id.
+- Writes: `onbase_admin_assign_document_type_user_groups` and
+  `onbase_admin_assign_document_type_group_user_groups`. Both
+  `PUT /api/document-types/user-groups?documentTypeId=` and
+  `PUT /api/document-type-groups/{id}/user-groups` replace the whole grant
+  list, so both tools read-merge-write like the keyword assignment tool.
+  Note the asymmetry the spec draws: the document type endpoint takes a
+  bare array, the document type group endpoint takes the
+  `{ items: [...] }` collection object.
+- `onbase_admin_create_document_type` and `..._create_document_type_group`
+  take `userGroups` by name (the old id-only `userGroupIds` still works),
+  and a document type created with none is answered with an explicit
+  warning naming the grant tool, not a success line.
+
+Two spec-conformance fixes rode along. `DocumentType` declares
+`documentTypeGroupId`, `defaultDiskGroupId` and `defaultFileFormatId` as
+numbers while every listing returns ids as strings; the create now sends
+numbers. And every paged listing (`document-types`, `keyword-types`,
+groups, file types, users, user groups) is fetched with `limit=0` — the
+spec's "no limit" — so name resolution sees the whole vocabulary rather
+than the server's first page.
+
+Still out, deliberately: `POST /api/users`, `POST /api/user-groups`,
+`PUT /api/users/user-groups` (membership), and the
+`/permissions/{privileges,configuration-rights,product-rights}` writes.
+
+### Healthcare modules are not in either REST API
+
+Both specs in `docs/` were searched for this. The Document API has no
+healthcare surface at all. The Administration API's only healthcare
+touch-points are flags: `usedInMedicalRecords` (read-only) on a document
+type group, and the `medicalRecords`, `med2WebPhysicianPortal` and
+`patientPortal` product rights on a user group / the current user. There is
+no endpoint for provider records, patient or encounter records, chart
+deficiencies, or anything else Medical Records Management configures —
+those live in OnBase Configuration / the Medical Records Unity Client and
+the module's own feeds (HL7), not in the Foundation 26.1 REST family we
+wrap. Managing them from this connector would need a Hyland API that we do
+not have a spec for; until one turns up, the honest answer is that
+`onbase_admin_*` can tell you whether the module is enabled for the
+connected account (`onbase_admin_get_my_permissions`) and nothing more.
 
 ### The same trap, twice
 

@@ -44,6 +44,36 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'OnBase Administration: who can see what',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Find OnBase users and user groups',
+        detail:
+          'New tools list user groups and users by name and id, show who is in a group and which groups a person belongs to, and answer "who may see this document type?" from either side — so a name like "Clinical Staff" is enough wherever OnBase wants a group id.',
+      },
+      {
+        kind: 'added',
+        title: 'Grant a document type to user groups',
+        detail:
+          'A document type nobody has been granted is invisible in every OnBase client and in OnBase Configuration, even though it exists and has an id. Grant it (or a document type group) to user groups by name; existing grants are read first and kept, so naming one group never revokes the others.',
+      },
+      {
+        kind: 'changed',
+        title: 'Creating a document type warns when nobody can see it',
+        detail:
+          'Creating a document type now takes user groups by name, and when none are given the answer says plainly that the document type will not show up for anyone until one is granted — instead of reporting a clean success.',
+      },
+      {
+        kind: 'added',
+        title: 'See your own OnBase rights',
+        detail:
+          'One tool shows the product rights, configuration rights and privileges the connected account holds — the first thing to check when OnBase refuses a change, or to see whether a licensed module such as Medical Records is enabled.',
+      },
+    ],
+  },
+  {
+    date: null,
     entries: [
       {
         kind: 'added',
