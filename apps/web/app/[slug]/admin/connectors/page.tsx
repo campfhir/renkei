@@ -31,6 +31,7 @@ export default async function AdminConnectorsPage({
 
   const settings = await getOrgSettings(tenantRef.id);
   const disabledConnectors = settings.ok ? settings.val.disabledConnectors : [];
+  const audiences = settings.ok ? settings.val.connectorAudiences : {};
 
   const dbResult = getDatabase();
   const configs = dbResult.ok
@@ -57,6 +58,7 @@ export default async function AdminConnectorsPage({
       toolPrefix: entry.toolPrefix,
       keywords: entry.keywords,
       togglable: entry.togglable,
+      audienceGroups: audiences[entry.capabilityKey]?.length ?? 0,
     })),
   }));
 

@@ -40,6 +40,8 @@ export interface ConnectorRow {
     toolPrefix: string;
     keywords: string[];
     togglable: boolean;
+    /** How many IdP groups the audience names; 0 is everyone. */
+    audienceGroups: number;
   }>;
 }
 
@@ -179,6 +181,9 @@ export default function ConnectorList({
                         <Pill tone="gray">Built in</Pill>
                       )}
                       {allOff && <Pill tone="red">Off</Pill>}
+                      {row.products.some((product) => product.audienceGroups > 0) && (
+                        <Pill tone="yellow">Restricted</Pill>
+                      )}
                     </div>
                     <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                       {row.products.length === 1

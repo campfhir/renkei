@@ -9,6 +9,10 @@ import { definitionFor } from '@/lib/connectors/definitions';
 import BackLink from '@/components/back-link';
 import ConnectorIcon from '@/components/connector-icon';
 import AvailabilityToggles from '../availability-toggles';
+import AudienceControl from './audience-control';
+import { getDatabase } from '@renkei/db';
+import { observedIdpGroups } from '@/lib/identity';
+import { getTenantOidcClaims, DEFAULT_GROUPS_CLAIM } from '@/lib/tenant-operations';
 
 /**
  * One connector's page: its credentials form, and the org-wide switches
@@ -34,6 +38,13 @@ export default async function AdminConnectorPage({
   const origin = await resolvePublicOrigin();
   const settings = await getOrgSettings(tenantRef.id);
   const disabledConnectors = settings.ok ? settings.val.disabledConnectors : [];
+  const audiences = settings.ok ? settings.val.connectorAudiences : {};
+  const dbResult = getDatabase();
+  const [observedGroups, oidcClaims] = await Promise.all([
+    dbResult.ok ? observedIdpGroups(dbResult.val, tenantRef.id, '', 10_000) : Promise.resolve([]),
+    getTenantOidcClaims(tenantRef.id),
+  ]);
+  const groupsClaim = (oidcClaims.ok ? oidcClaims.val?.groupsClaim : null) || DEFAULT_GROUPS_CLAIM;
   const Form = definition.adminForm;
   const togglable = definition.entries.filter((entry) => entry.togglable);
   // Jira and JSM share one capability key; one switch, listed once.
@@ -84,6 +95,18 @@ export default async function AdminConnectorPage({
       {switches.length > 0 && (
         <AvailabilityToggles slug={slug} initialDisabled={disabledConnectors} products={switches} />
       )}
+
+      {switches.map((product) => (
+        <AudienceControl
+          key={product.capabilityKey}
+          slug={slug}
+          capabilityKey={product.capabilityKey}
+          label={product.label}
+          initialValues={audiences[product.capabilityKey] ?? []}
+          groupsClaim={groupsClaim}
+          observedGroups={observedGroups.length}
+        />
+      ))}
 
       <p className="text-xs text-gray-500 dark:text-gray-400">
         People connect their own account from{' '}
