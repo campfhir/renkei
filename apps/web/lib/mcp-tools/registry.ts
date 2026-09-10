@@ -293,6 +293,35 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
 }
 
 /**
+ * Every capability key registerRenkeiTools can mount a namespace under — the
+ * set the connector catalog must cover. A key here with no catalog entry is
+ * one an admin cannot switch off, scope to an audience, or even see named;
+ * `connector-catalog.test.ts` reads this so forgetting the catalog fails
+ * the suite instead of shipping an unlabelled, ungovernable connector.
+ */
+export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
+  JIRA_CONNECTOR,
+  CARDS_CONNECTOR,
+  AGENTS_CONNECTOR,
+  BATCH_JOBS_MCP_CONNECTOR,
+  LOGS_CONNECTOR,
+  USER_MEMORY_CONNECTOR,
+  KNOWLEDGE_CONNECTOR,
+  WEBEX_USER_MCP_CONNECTOR,
+  OUTLOOK_MCP_CONNECTOR,
+  SHAREPOINT_MCP_CONNECTOR,
+  ONEDRIVE_MCP_CONNECTOR,
+  ZOOM_MCP_CONNECTOR,
+  CONFLUENCE_MCP_CONNECTOR,
+  BITBUCKET_MCP_CONNECTOR,
+  FILESHARES_MCP_CONNECTOR,
+  ONBASE_MCP_CONNECTOR,
+  ONBASE_ADMIN_MCP_CONNECTOR,
+  SANDBOX_MCP_CONNECTOR,
+  WEB_SEARCH_CONNECTOR,
+];
+
+/**
  * Register every tool this caller should have, each namespace behind its own
  * capability gate.
  *

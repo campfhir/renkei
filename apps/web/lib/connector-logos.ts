@@ -40,7 +40,8 @@ export const EXTRA_LOGOS = ['outlook', 'microsoft', 'jira-jsm', 'atlassian', 'di
 /**
  * Marks we deliberately do not ship, which render the built-in glyph.
  *
- * `knowledge`, `cards`, `agents`, `logs`, `user-memory` and `web-search` are our own surfaces
+ * `knowledge`, `cards`, `agents`, `logs`, `user-memory`, `web-search`, `sandbox`,
+ * `batch-jobs` and `mistral-ocr` are our own surfaces
  * rather than products — the built-in glyph says that better than any
  * vendor-style file would.
  *
@@ -61,6 +62,12 @@ export const GLYPH_ONLY = new Set([
   // of its own — and drawing Bing's or Azure's mark for it would claim
   // more than it is.
   'web-search',
+  // Same reasoning for the sandbox, batch jobs and the OCR stage: Renkei
+  // surfaces, not vendor products (Mistral's mark would claim the wrong
+  // thing for a pipeline stage that happens to call it).
+  'sandbox',
+  'batch-jobs',
+  'mistral-ocr',
 ]);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */

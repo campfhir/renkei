@@ -30,23 +30,33 @@ describe('connector catalog', () => {
     expect(keys.filter((key) => key === 'jira')).toHaveLength(1);
   });
 
-  it('covers every namespace the MCP route registers', () => {
-    // A connector missing here is one an admin cannot switch off.
-    const keys = new Set(togglableConnectors().map((entry) => entry.capabilityKey));
-    for (const registered of [
-      'jira',
-      'knowledge',
-      'webex',
-      'microsoft',
-      'sharepoint',
-      'onedrive',
-      'zoom',
-      'atlassian-confluence',
-      'onbase',
-      'web-search',
-    ]) {
-      expect(keys).toContain(registered);
+  it('offers no switch for an entry that registers no tools', () => {
+    // Mistral OCR is a pipeline stage: a toggle would promise a control
+    // that does nothing. (Coverage of every key the registry DOES mount is
+    // asserted from the registry's side, in mcp-tools/registry-keys.test.ts.)
+    const keys = togglableConnectors().map((entry) => entry.capabilityKey);
+    expect(keys).not.toContain('mistral-ocr');
+    expect(CONNECTOR_CATALOG.some((entry) => entry.capabilityKey === 'mistral-ocr')).toBe(true);
+  });
+
+  it('keeps a shared config row within one suite', () => {
+    // Outlook, SharePoint and OneDrive ride one Entra app; Jira and JSM ride
+    // one capability key but separate apps. Either way, the products sharing
+    // a config row must render inside the same composite card, or a person
+    // would connect the same app twice from two places.
+    const suiteOf = new Map<string, string | undefined>();
+    for (const entry of CONNECTOR_CATALOG) {
+      if (suiteOf.has(entry.configKey)) expect(suiteOf.get(entry.configKey)).toBe(entry.suite);
+      suiteOf.set(entry.configKey, entry.suite);
     }
+  });
+
+  it('marks only self-service products as user-connectable', () => {
+    // Renkei's own surfaces are provisioned org-wide, not added by a person.
+    const personal = CONNECTOR_CATALOG.filter((entry) => entry.userConnectable);
+    expect(personal.every((entry) => entry.category !== 'renkei')).toBe(true);
+    expect(personal.map((entry) => entry.label)).toContain('File shares');
+    expect(personal.map((entry) => entry.label)).not.toContain('Knowledge');
   });
 });
 
