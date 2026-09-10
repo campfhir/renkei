@@ -42,6 +42,7 @@ export default function MicrosoftConnector({
   displayName,
   ceiling,
   priorScopes,
+  shownKeys,
 }: {
   tenantId: string;
   connected: boolean;
@@ -50,7 +51,15 @@ export default function MicrosoftConnector({
   ceiling: string[];
   /** Scopes on the user's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
+  /**
+   * Which products' panels to show, by capability key — the ones this
+   * person added or connected. The consent is still one consent: a hidden
+   * panel's scopes are simply not offered, the same as unticking them.
+   */
+  shownKeys: string[];
 }) {
+  const shown = new Set(shownKeys);
+  const products = MICROSOFT_PRODUCTS.filter((product) => shown.has(product.capabilityKey));
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -219,7 +228,7 @@ export default function MicrosoftConnector({
       </p>
 
       <div className="mt-3 space-y-3">
-        {MICROSOFT_PRODUCTS.map((product) => (
+        {products.map((product) => (
           <MicrosoftProductCard
             key={product.id}
             capabilityKey={product.capabilityKey}
