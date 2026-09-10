@@ -5,11 +5,11 @@
  *
  * This is the only module that imports the forms. `lib/connector-catalog.ts`
  * stays pure data so chat, agents and usage can import it anywhere; this
- * file is what the admin (server) pages import — the forms are client
- * components, the definitions themselves are server data, and a
- * 'use client' here would turn the array into a client reference the page
- * could not read —  and it grows by one entry in
- * `FORMS` when a connector gains a form. A definition with no form is a
+ * file is what the admin (server) pages import, and it grows by one entry
+ * in `FORMS` when a connector gains a form. The forms are client
+ * components; the definitions themselves are server data, so there is no
+ * 'use client' here — that directive would turn the array into a client
+ * reference the page could not iterate. A definition with no form is a
  * connector Renkei provides without credentials (cards, agents, the
  * sandbox…) or one configured elsewhere (file shares are registered one at a
  * time on their own page).

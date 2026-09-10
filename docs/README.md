@@ -7,14 +7,14 @@ This folder holds two kinds of documents:
 
 ## As-built references
 
-| Doc | Covers |
-| --- | --- |
-| [`architecture.md`](./architecture.md) | System topology: the `apps/*` processes, the `packages/*` shared modules, how an event or an MCP call actually flows through them, and how this differs from the aspirational plan in `RENKEI.md`. Start here. |
-| [`mcp-gateway.md`](./mcp-gateway.md) | The MCP tool surface: tenant routing, the two OAuth/OIDC layers, the tool registry and per-user capability gating, the admin UI, and the cards/actionable-items feed. |
-| [`connectors.md`](./connectors.md) | Every connector package (`packages/connector-*`): what provider it wraps, its auth model, its data contract (what's indexed vs. live-queried vs. never stored), and its `verifyAccess` implementation. |
-| [`knowledge-and-security.md`](./knowledge-and-security.md) | The knowledge layer (chunking, embeddings, pgvector search), the two hard-coded enforcement gates (live ACL verification and the disclosure gate), the capability registry's three-gate per-user projection, and redaction. |
-| [`agents.md`](./agents.md) | The agent system: the step-document model, the `needsApproval` gate and `ask_person` questions, triggers, runs, memory, LLM provider resolution, and the `apps/worker-agents` execution engine. |
-| [`chat.md`](./chat.md) | The first-party chat: its tables, how a turn runs and streams (live channel vs. database snapshot), the per-chat toolset and the loopback call into the MCP gateway, attachments and the object store, projects with shared files/instructions/memory, prompt libraries, and read-only sharing. |
+| Doc                                                        | Covers                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`architecture.md`](./architecture.md)                     | System topology: the `apps/*` processes, the `packages/*` shared modules, how an event or an MCP call actually flows through them, and how this differs from the aspirational plan in `RENKEI.md`. Start here.                                                                                        |
+| [`mcp-gateway.md`](./mcp-gateway.md)                       | The MCP tool surface: tenant routing, the two OAuth/OIDC layers, the tool registry and per-user capability gating, the admin UI, and the cards/actionable-items feed.                                                                                                                                 |
+| [`connectors.md`](./connectors.md)                         | Every connector package (`packages/connector-*`): what provider it wraps, its auth model, its data contract (what's indexed vs. live-queried vs. never stored), and its `verifyAccess` implementation. Also the connector catalog and definitions, audiences, and the "adding a connector" checklist. |
+| [`knowledge-and-security.md`](./knowledge-and-security.md) | The knowledge layer (chunking, embeddings, pgvector search), the two hard-coded enforcement gates (live ACL verification and the disclosure gate), the capability registry's three-gate per-user projection, and redaction.                                                                           |
+| [`agents.md`](./agents.md)                                 | The agent system: the step-document model, the `needsApproval` gate and `ask_person` questions, triggers, runs, memory, LLM provider resolution, and the `apps/worker-agents` execution engine.                                                                                                       |
+| [`chat.md`](./chat.md)                                     | The first-party chat: its tables, how a turn runs and streams (live channel vs. database snapshot), the per-chat toolset and the loopback call into the MCP gateway, attachments and the object store, projects with shared files/instructions/memory, prompt libraries, and read-only sharing.       |
 
 ## Product vision vs. current code
 
