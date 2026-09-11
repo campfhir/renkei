@@ -32,11 +32,28 @@ jest.mock('@renkei/db', () => ({
   }),
 }));
 
+// webex_download_attachments stages into the sandbox scratch space; the
+// client is stubbed so the suite sees what would be written, never a worker.
+jest.mock('@/lib/sandbox/service-client', () => ({
+  sandboxConfig: () => ({ url: 'http://sandbox.test', key: 'k' }),
+  sbWriteFile: (...args: unknown[]) => mockWrite(...args),
+  clientFailure: (error: { kind: string; type?: string; message?: string }) => ({
+    status: 500,
+    message: error.kind === 'unconfigured' ? 'not configured' : (error.message ?? error.type),
+  }),
+}));
+
 const insertedRows: unknown[] = [];
 const mockCall = jest.fn();
+const mockWrite = jest.fn();
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import { registerWebexUserTools, webexScopeFor } from './index';
+import {
+  contentPathOf,
+  filenameOfDisposition,
+  registerWebexUserTools,
+  webexScopeFor,
+} from './index';
 import type { WebexAuth } from './webex-auth';
 import type { MCPToolContext } from '../common';
 
@@ -82,6 +99,25 @@ beforeEach(() => {
   jest.clearAllMocks();
   insertedRows.length = 0;
   mockCall.mockResolvedValue(jsonResponse({ items: [] }));
+  mockWrite.mockImplementation(
+    async (
+      _target: unknown,
+      input: { filename: string; contentType?: string },
+      bytes: Uint8Array
+    ) => ({
+      ok: true,
+      val: {
+        id: `file-${input.filename}`,
+        filename: input.filename,
+        contentType: input.contentType ?? null,
+        sizeBytes: bytes.byteLength,
+        source: 'webex:msg-1',
+        batchId: null,
+        createdAt: '2026-09-10T10:00:00Z',
+        expiresAt: '2026-09-11T10:00:00Z',
+      },
+    })
+  );
 });
 
 describe('webex_list_rooms', () => {
@@ -579,6 +615,257 @@ describe('webex_capture_message', () => {
   });
 });
 
+const CONTENT_URL = 'https://webexapis.com/v1/contents/Y2lzY29zcGFyazovL3VzL0NPTlRFTlQvMQ';
+const CONTENT_URL_2 = 'https://webexapis.com/v1/contents/Y2lzY29zcGFyazovL3VzL0NPTlRFTlQvMg';
+
+function bytesResponse(body: string, headers: Record<string, string>, status = 200): Response {
+  return new Response(body, { status, headers });
+}
+
+describe('attachments on a message line', () => {
+  it('lists a message’s content URLs and points at the staging tool', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({
+        id: 'msg-1',
+        personEmail: 'bob@example.com',
+        text: 'see attached',
+        created: '2026-09-10',
+        files: [CONTENT_URL],
+      })
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_get_message')!({ messageId: 'msg-1' }));
+
+    expect(text).toContain('attachments (1, stage with webex_download_attachments)');
+    expect(text).toContain(CONTENT_URL);
+  });
+
+  it('does not guess at an attachment when a textless message carries files', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({ id: 'msg-1', personEmail: 'bob@example.com', files: [CONTENT_URL] })
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_get_message')!({ messageId: 'msg-1' }));
+
+    expect(text).toContain('(no text)');
+    expect(text).not.toContain('possibly a card or attachment');
+  });
+});
+
+describe('webex_download_attachments', () => {
+  const message = (files: string[]) =>
+    jsonResponse({ id: 'msg-1', roomId: 'room-1', personEmail: 'bob@example.com', files });
+
+  it('fetches each content URL through the auth wrapper and stages the bytes', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      if (path.startsWith('/messages/')) return message([CONTENT_URL, CONTENT_URL_2]);
+      return bytesResponse(path.endsWith('vMQ') ? 'first' : 'second', {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${path.endsWith('vMQ') ? 'spec.pdf' : 'notes.pdf'}"`,
+      });
+    });
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_download_attachments')!({ messageId: 'msg-1' });
+
+    expect(result.isError).toBeUndefined();
+    // The bytes go to /contents/<id> relative to the API base — never the
+    // raw URL, which would let a message dictate where the token is sent.
+    expect(mockCall).toHaveBeenCalledWith(
+      '/contents/Y2lzY29zcGFyazovL3VzL0NPTlRFTlQvMQ',
+      expect.anything()
+    );
+    expect(mockCall).toHaveBeenCalledWith(
+      '/contents/Y2lzY29zcGFyazovL3VzL0NPTlRFTlQvMg',
+      expect.anything()
+    );
+    expect(mockWrite).toHaveBeenCalledTimes(2);
+    const [target, input, bytes] = mockWrite.mock.calls[0] as [
+      { tenantId: string; subject: string },
+      { filename: string; contentType?: string; source?: string },
+      Uint8Array,
+    ];
+    expect(target).toEqual({ tenantId: 'tenant-1', subject: 'subject-1' });
+    expect(input).toEqual({
+      filename: 'spec.pdf',
+      contentType: 'application/pdf',
+      source: 'webex:msg-1',
+    });
+    expect(Buffer.from(bytes).toString()).toBe('first');
+    expect(textOf(result)).toContain('2 of 2 attachment(s) staged');
+    expect(textOf(result)).toContain('file-spec.pdf');
+    expect(textOf(result)).toContain('file-notes.pdf');
+  });
+
+  it('stages only the one file fileUrl names', async () => {
+    mockCall.mockImplementation(async (path: string) =>
+      path.startsWith('/messages/')
+        ? message([CONTENT_URL, CONTENT_URL_2])
+        : bytesResponse('second', { 'Content-Disposition': 'attachment; filename=notes.pdf' })
+    );
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_download_attachments')!({
+      messageId: 'msg-1',
+      fileUrl: CONTENT_URL_2,
+    });
+
+    expect(mockWrite).toHaveBeenCalledTimes(1);
+    expect(textOf(result)).toContain('1 of 1 attachment(s) staged');
+    expect(textOf(result)).toContain('notes.pdf');
+  });
+
+  it('refuses a fileUrl the message does not carry, naming what it does', async () => {
+    mockCall.mockResolvedValue(message([CONTENT_URL]));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_download_attachments')!({
+      messageId: 'msg-1',
+      fileUrl: CONTENT_URL_2,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain(CONTENT_URL);
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it('says so, without error, when the message has no attachments', async () => {
+    mockCall.mockResolvedValue(message([]));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_download_attachments')!({ messageId: 'msg-1' });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('no attachments');
+  });
+
+  it('never sends the token to a content URL off webexapis.com', async () => {
+    mockCall.mockImplementation(async (path: string) =>
+      path.startsWith('/messages/')
+        ? message(['https://evil.example.com/v1/contents/abc', CONTENT_URL])
+        : bytesResponse('ok', { 'Content-Disposition': 'attachment; filename=a.txt' })
+    );
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_download_attachments')!({ messageId: 'msg-1' });
+
+    expect(mockCall).not.toHaveBeenCalledWith(expect.stringContaining('evil'), expect.anything());
+    expect(textOf(result)).toContain('1 of 2 attachment(s) staged');
+    expect(textOf(result)).toContain('not a WebEx content URL');
+  });
+
+  it('skips a file over the org attachment cap by its declared length, before reading it', async () => {
+    mockCall.mockImplementation(async (path: string) =>
+      path.startsWith('/messages/')
+        ? message([CONTENT_URL])
+        : bytesResponse('tiny', { 'Content-Length': '99999999', 'Content-Type': 'image/png' })
+    );
+    const tools = await toolsOf();
+    const registered = new Map<string, Handler>();
+    const server = {
+      registerTool: (name: string, _config: unknown, handler: Handler) => {
+        registered.set(name, handler);
+      },
+    } as unknown as McpServer;
+    await registerWebexUserTools(
+      server,
+      { ...context(), maxAttachmentBytes: 1000 } as MCPToolContext,
+      stubAuth()
+    );
+    void tools;
+
+    const result = await registered.get('webex_download_attachments')!({ messageId: 'msg-1' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('1000-byte attachment limit');
+    expect(mockWrite).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a numbered name with the type’s extension when no filename is given', async () => {
+    mockCall.mockImplementation(async (path: string) =>
+      path.startsWith('/messages/')
+        ? message([CONTENT_URL])
+        : bytesResponse('png-bytes', { 'Content-Type': 'image/png; charset=binary' })
+    );
+    const tools = await toolsOf();
+
+    await tools.get('webex_download_attachments')!({ messageId: 'msg-1' });
+
+    expect(mockWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      { filename: 'attachment-1.png', contentType: 'image/png', source: 'webex:msg-1' },
+      expect.anything()
+    );
+  });
+
+  it('reports a failed stage as an error only when nothing was staged', async () => {
+    mockCall.mockImplementation(async (path: string) =>
+      path.startsWith('/messages/')
+        ? message([CONTENT_URL])
+        : bytesResponse('x', { 'Content-Disposition': 'attachment; filename=a.txt' })
+    );
+    mockWrite.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op', type: 'quota_exceeded', message: 'quota full', status: 429 },
+    });
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_download_attachments')!({ messageId: 'msg-1' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('quota full');
+  });
+
+  it('surfaces a failed message fetch through errText', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ message: 'message not found' }, 404));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_download_attachments')!({ messageId: 'msg-1' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('message not found');
+  });
+});
+
+describe('contentPathOf', () => {
+  it('maps a WebEx content URL to its API path', () => {
+    expect(contentPathOf(CONTENT_URL)).toBe('/contents/Y2lzY29zcGFyazovL3VzL0NPTlRFTlQvMQ');
+  });
+
+  it.each([
+    'http://webexapis.com/v1/contents/abc',
+    'https://webexapis.com.evil.example/v1/contents/abc',
+    'https://webexapis.com/v1/messages/abc',
+    'https://webexapis.com/v1/contents/abc/extra',
+    'not a url',
+  ])('refuses %s', (url) => {
+    expect(contentPathOf(url)).toBeNull();
+  });
+});
+
+describe('filenameOfDisposition', () => {
+  it('reads a quoted filename', () => {
+    expect(filenameOfDisposition('attachment; filename="Q3 plan.pdf"')).toBe('Q3 plan.pdf');
+  });
+
+  it('reads a bare filename', () => {
+    expect(filenameOfDisposition('attachment; filename=plan.pdf')).toBe('plan.pdf');
+  });
+
+  it('prefers the RFC 5987 form, decoded', () => {
+    expect(
+      filenameOfDisposition('attachment; filename="fallback.pdf"; filename*=UTF-8\'\'caf%C3%A9.pdf')
+    ).toBe('café.pdf');
+  });
+
+  it('is empty for no header or no filename', () => {
+    expect(filenameOfDisposition(null)).toBe('');
+    expect(filenameOfDisposition('inline')).toBe('');
+  });
+});
+
 describe('a failed call', () => {
   it('surfaces the API detail through errText, not a raw status', async () => {
     mockCall.mockResolvedValue(jsonResponse({ message: 'room not found' }, 404));
@@ -598,6 +885,10 @@ describe('webexScopeFor', () => {
 
   it('defaults everything else to message read', () => {
     expect(webexScopeFor('webex_get_message')).toEqual(['spark:messages_read']);
+  });
+
+  it('stages attachments on the message read scope — /contents has no scope of its own', () => {
+    expect(webexScopeFor('webex_download_attachments')).toEqual(['spark:messages_read']);
   });
 
   it('names all four scopes note_to_self stands on', () => {

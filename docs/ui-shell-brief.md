@@ -110,7 +110,9 @@ nothing but the brand:
    connectors), each user connects on the Connectors page, grant rows live in
    provider_grants like Jira. MCP tools register per-user when the grant
    exists: webex_list_rooms, webex_list_messages, webex_bulk_list_messages (many
-   rooms in one call), webex_get_message,
+   rooms in one call), webex_get_message, webex_download_attachments (a
+   message's files, staged in the sandbox scratch space for sandbox_read_file
+   or sandbox_send_to_upload; only where a sandbox worker is configured),
    webex_capture_message (→ card feed, human decides), webex_list_meetings,
    webex_list_transcripts, webex_get_transcript, webex_list_recordings, and
    webex_send_message — the one acting tool (disabled under org read-only

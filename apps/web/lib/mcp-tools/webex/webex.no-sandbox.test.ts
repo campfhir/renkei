@@ -25,6 +25,15 @@
 jest.mock('@renkei/db', () => ({
   getDatabase: () => ({ ok: false, error: 'no db in this suite' }),
 }));
+// A configured sandbox worker, so webex_download_attachments registers at
+// all — it fails on its message fetch here, long before any write.
+jest.mock('@/lib/sandbox/service-client', () => ({
+  sandboxConfig: () => ({ url: 'http://sandbox.test', key: 'k' }),
+  sbWriteFile: jest.fn(async () => {
+    throw new Error('never reached: the denied credential fails the message fetch first');
+  }),
+  clientFailure: () => ({ status: 500, message: 'unused' }),
+}));
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerWebexUserTools } from './index';
@@ -61,6 +70,7 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'webex_list_messages', args: { roomId: 'room-1' } },
   { tool: 'webex_bulk_list_messages', args: { roomIds: ['room-1'] } },
   { tool: 'webex_get_message', args: { messageId: 'msg-1' } },
+  { tool: 'webex_download_attachments', args: { messageId: 'msg-1' } },
   { tool: 'webex_capture_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_send_message', args: { roomId: 'room-1', markdown: 'hi' } },
   { tool: 'webex_note_to_self', args: { markdown: 'hi' } },
