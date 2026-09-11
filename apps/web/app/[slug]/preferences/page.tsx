@@ -1,7 +1,7 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { getNotificationPrefs } from '@renkei/user-prefs';
+import { getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { actsByConnector, ACT_CATEGORIES } from '@renkei/tool-outcomes';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
@@ -12,6 +12,7 @@ import { listChatConnectors } from '@/lib/chat/tool-surface';
 import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
+import ThemeForm from './theme-form';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -31,8 +32,9 @@ export default async function PreferencesPage({
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
 
   const dbResult = getDatabase();
-  const [notifications, channels, myAgents, chatConnectors, chatDefault] = await Promise.all([
+  const [notifications, theme, channels, myAgents, chatConnectors, chatDefault] = await Promise.all([
     getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
+    getThemePrefs(tenant.id, session.subject, { fresh: true }),
     getChannelAvailability(tenant.id, session.subject),
     // Just id + name: the overrides picker names an agent, it doesn't need
     // its steps — listAgents()'s full parse would be work spent for nothing
@@ -106,6 +108,9 @@ export default async function PreferencesPage({
         Yours alone — nobody else sees these, and they change nothing about what your agents are
         allowed to do.
       </p>
+      <div className="mb-6">
+        <ThemeForm tenantId={tenant.id} initial={theme.mode} />
+      </div>
       <div className="mb-6">
         <DefaultToolsForm
           tenantId={tenant.id}

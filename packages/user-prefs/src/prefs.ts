@@ -385,3 +385,36 @@ export function parseConnectorPrefs(stored: unknown): ConnectorPrefs {
   ];
   return { added };
 }
+
+/**
+ * Which look the UI renders in — a third scope, next to notifications and
+ * connectors, for the same reason CONNECTORS_KEY is its own key rather than
+ * a field on NotificationPrefs: read by different code (the theme script
+ * that runs before first paint, rather than the notification worker), so
+ * one growing JSON blob would mean that code parsing preferences it has no
+ * use for.
+ */
+export const THEME_KEY = 'theme';
+
+/**
+ * 'auto' follows the browser's `prefers-color-scheme` and updates live if it
+ * changes (a laptop's scheduled night mode, say); 'light'/'dark' pin the UI
+ * regardless of the system setting.
+ */
+export type ThemeMode = 'auto' | 'light' | 'dark';
+
+export interface ThemePrefs {
+  mode: ThemeMode;
+}
+
+export const DEFAULT_THEME_PREFS: ThemePrefs = { mode: 'auto' };
+
+/** Survives whatever jsonb hands back; anything unrecognisable is 'auto'. */
+export function parseThemePrefs(stored: unknown): ThemePrefs {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
+    return DEFAULT_THEME_PREFS;
+  }
+  const raw: Record<string, unknown> = { ...stored };
+  const mode = raw.mode === 'light' || raw.mode === 'dark' ? raw.mode : 'auto';
+  return { mode };
+}

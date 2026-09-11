@@ -46,7 +46,7 @@ Everything not in `apps/*` lives under `packages/*` and is consumed by more than
 - **`settings`** — typed, cached accessor over org- and tenant-level policy rows (read-only mode, disabled connectors, redaction toggles, retention windows, poll intervals) — policy is data in Postgres, not environment variables (except the pre-auth `PUBLIC_BASE_URL`).
 - **`rate-limit`** — a process-scoped token-bucket limiter protecting outbound provider calls from webhook floods or sweep bursts.
 - **`tool-outcomes`** — the shared vocabulary describing what an MCP tool call did or can fail at (read vs. act, curated outcome categories); exists as its own package specifically so `apps/worker-agents` can use it without importing from `apps/web`.
-- **`user-prefs`** — per-user notification preferences (run started/finished/failed, per-connector/category overrides), reusing `tool-outcomes`' category taxonomy.
+- **`user-prefs`** — per-user preferences: notifications (run started/finished/failed, per-connector/category overrides, reusing `tool-outcomes`' category taxonomy), connector picks, and UI theme (auto/light/dark).
 - **`notifications`** — Web Push delivery (VAPID keys, subscriptions, best-effort per-device send); the newest package in the repo (added 2026-08-30).
 - **`email-sanitizer`** — a deterministic classify → route → clean/extract/exclude pipeline that runs ahead of embedding for mail, including a sandboxed per-org cleaner-script runtime.
 - **`document-text`** — dependency-light OOXML (docx/xlsx/pptx) and PDF text extraction for the knowledge index; deliberately does no OCR.

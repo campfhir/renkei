@@ -1,5 +1,18 @@
 @import 'tailwindcss';
 
+/*
+ * `dark:` normally follows `prefers-color-scheme` alone. A person's own
+ * Appearance choice (see @renkei/user-prefs' theme preference) is applied
+ * as `data-theme` on <html> by app/theme-script.tsx before first paint, so
+ * `dark:` instead follows that attribute — set to 'dark' for an explicit
+ * dark choice, and (by the same script, resolved from `matchMedia`) for
+ * "Auto" whenever the system is currently dark. A visitor with JavaScript
+ * disabled never gets `data-theme` at all and falls back to whatever the
+ * plain `:root`/`@media` rules below say, which is why those keep their
+ * system-preference block rather than switching to the attribute too.
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -17,12 +30,19 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --background: #0a0a0a;
     --foreground: #ededed;
     --border: #27272a;
     --muted: #9ca3af;
   }
+}
+
+:root[data-theme='dark'] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --border: #27272a;
+  --muted: #9ca3af;
 }
 
 body {
@@ -54,8 +74,9 @@ body {
 /*                                                                           */
 /* They ship style-less — semantic elements plus data-* hooks — so everything */
 /* below is this app's skin for them, adapted from the package's own demo.    */
-/* Dark mode follows the system preference, matching the Tailwind `dark:`     */
-/* utilities used elsewhere.                                                  */
+/* Dark mode follows `data-theme` (a person's Appearance choice); the plain   */
+/* `@media` block below it keeps this working with JS disabled, unlike the   */
+/* `dark:` Tailwind utilities elsewhere, which are `data-theme`-only.         */
 /* ------------------------------------------------------------------------- */
 :root {
   --bl-surface: #ffffff;
@@ -76,7 +97,7 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --bl-surface: var(--color-slate-900);
     --bl-surface-2: var(--color-slate-800);
     --bl-border: var(--color-slate-800);
@@ -93,6 +114,24 @@ body {
     --bl-warn: var(--color-amber-300);
     --bl-error: var(--color-red-300);
   }
+}
+
+:root[data-theme='dark'] {
+  --bl-surface: var(--color-slate-900);
+  --bl-surface-2: var(--color-slate-800);
+  --bl-border: var(--color-slate-800);
+  --bl-text: var(--color-slate-100);
+  --bl-muted: var(--color-slate-400);
+  --bl-hover: color-mix(in oklab, var(--color-slate-800) 55%, transparent);
+  --bl-input: var(--color-slate-950);
+  --bl-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  --bl-chip-bg: color-mix(in oklab, var(--color-sky-500) 15%, transparent);
+  --bl-chip-border: var(--color-sky-500);
+  --bl-chip-text: var(--color-sky-200);
+  --bl-debug: var(--color-slate-300);
+  --bl-info: var(--color-emerald-300);
+  --bl-warn: var(--color-amber-300);
+  --bl-error: var(--color-red-300);
 }
 
 /* --- LogSearchBar --------------------------------------------------------- */
@@ -338,10 +377,15 @@ body {
   font-size: 0.8125rem;
 }
 @media (prefers-color-scheme: dark) {
-  .log-daterange input[type='date'],
-  .log-daterange input[type='time'] {
+  :root:not([data-theme='light']) .log-daterange input[type='date'],
+  :root:not([data-theme='light']) .log-daterange input[type='time'] {
     color-scheme: dark;
   }
+}
+
+:root[data-theme='dark'] .log-daterange input[type='date'],
+:root[data-theme='dark'] .log-daterange input[type='time'] {
+  color-scheme: dark;
 }
 
 /* --- Level badges (LogTable + LogCard) ------------------------------------ */
@@ -630,15 +674,25 @@ main:has([data-flush-page]) {
   color: var(--color-red-700);
 }
 @media (prefers-color-scheme: dark) {
-  .chip-editor [data-chip][data-chip-kind='tool'] {
+  :root:not([data-theme='light']) .chip-editor [data-chip][data-chip-kind='tool'] {
     color: var(--color-sky-300);
   }
-  .chip-editor [data-chip][data-chip-kind='var'] {
+  :root:not([data-theme='light']) .chip-editor [data-chip][data-chip-kind='var'] {
     color: var(--color-violet-300);
   }
-  .chip-editor [data-chip][data-chip-invalid] {
+  :root:not([data-theme='light']) .chip-editor [data-chip][data-chip-invalid] {
     color: var(--color-red-300);
   }
+}
+
+:root[data-theme='dark'] .chip-editor [data-chip][data-chip-kind='tool'] {
+  color: var(--color-sky-300);
+}
+:root[data-theme='dark'] .chip-editor [data-chip][data-chip-kind='var'] {
+  color: var(--color-violet-300);
+}
+:root[data-theme='dark'] .chip-editor [data-chip][data-chip-invalid] {
+  color: var(--color-red-300);
 }
 .chip-editor [data-chip] button {
   cursor: pointer;
@@ -684,7 +738,8 @@ input[type='number']::-webkit-inner-spin-button {
 
 /* ------------------------------------------------------------------------- */
 /* The chat: the model's Markdown, folded blocks, and the streaming cursor.   */
-/* Token colors follow the system scheme like every dark: utility elsewhere.  */
+/* Token colors follow data-theme, with a system-preference fallback for     */
+/* JS-disabled visitors — see the @custom-variant comment up top.            */
 /* ------------------------------------------------------------------------- */
 .chat-markdown {
   line-height: 1.6;
@@ -819,60 +874,115 @@ input[type='number']::-webkit-inner-spin-button {
 }
 
 @media (prefers-color-scheme: dark) {
-  .chat-markdown a {
+  :root:not([data-theme='light']) .chat-markdown a {
     color: var(--color-blue-400);
   }
-  .chat-markdown blockquote {
+  :root:not([data-theme='light']) .chat-markdown blockquote {
     border-color: var(--color-gray-700);
     color: var(--color-gray-400);
   }
-  .chat-markdown code,
-  .chat-markdown pre,
-  .chat-markdown th {
+  :root:not([data-theme='light']) .chat-markdown code,
+  :root:not([data-theme='light']) .chat-markdown pre,
+  :root:not([data-theme='light']) .chat-markdown th {
     background: var(--color-gray-900);
   }
-  .chat-markdown th,
-  .chat-markdown td {
+  :root:not([data-theme='light']) .chat-markdown th,
+  :root:not([data-theme='light']) .chat-markdown td {
     border-color: var(--color-gray-700);
   }
-  .chat-markdown hr {
+  :root:not([data-theme='light']) .chat-markdown hr {
     border-color: var(--color-gray-800);
   }
-  .chat-markdown .hljs-comment,
-  .chat-markdown .hljs-quote {
+  :root:not([data-theme='light']) .chat-markdown .hljs-comment,
+  :root:not([data-theme='light']) .chat-markdown .hljs-quote {
     color: var(--color-gray-500);
   }
-  .chat-markdown .hljs-keyword,
-  .chat-markdown .hljs-selector-tag,
-  .chat-markdown .hljs-built_in,
-  .chat-markdown .hljs-type {
+  :root:not([data-theme='light']) .chat-markdown .hljs-keyword,
+  :root:not([data-theme='light']) .chat-markdown .hljs-selector-tag,
+  :root:not([data-theme='light']) .chat-markdown .hljs-built_in,
+  :root:not([data-theme='light']) .chat-markdown .hljs-type {
     color: var(--color-purple-300);
   }
-  .chat-markdown .hljs-string,
-  .chat-markdown .hljs-attr,
-  .chat-markdown .hljs-template-variable,
-  .chat-markdown .hljs-regexp {
+  :root:not([data-theme='light']) .chat-markdown .hljs-string,
+  :root:not([data-theme='light']) .chat-markdown .hljs-attr,
+  :root:not([data-theme='light']) .chat-markdown .hljs-template-variable,
+  :root:not([data-theme='light']) .chat-markdown .hljs-regexp {
     color: var(--color-emerald-300);
   }
-  .chat-markdown .hljs-number,
-  .chat-markdown .hljs-literal {
+  :root:not([data-theme='light']) .chat-markdown .hljs-number,
+  :root:not([data-theme='light']) .chat-markdown .hljs-literal {
     color: var(--color-amber-300);
   }
-  .chat-markdown .hljs-title,
-  .chat-markdown .hljs-function,
-  .chat-markdown .hljs-section,
-  .chat-markdown .hljs-name {
+  :root:not([data-theme='light']) .chat-markdown .hljs-title,
+  :root:not([data-theme='light']) .chat-markdown .hljs-function,
+  :root:not([data-theme='light']) .chat-markdown .hljs-section,
+  :root:not([data-theme='light']) .chat-markdown .hljs-name {
     color: var(--color-blue-300);
   }
-  .chat-markdown .hljs-variable,
-  .chat-markdown .hljs-property,
-  .chat-markdown .hljs-symbol {
+  :root:not([data-theme='light']) .chat-markdown .hljs-variable,
+  :root:not([data-theme='light']) .chat-markdown .hljs-property,
+  :root:not([data-theme='light']) .chat-markdown .hljs-symbol {
     color: var(--color-rose-300);
   }
-  .chat-markdown .hljs-meta,
-  .chat-markdown .hljs-tag {
+  :root:not([data-theme='light']) .chat-markdown .hljs-meta,
+  :root:not([data-theme='light']) .chat-markdown .hljs-tag {
     color: var(--color-sky-300);
   }
+}
+
+:root[data-theme='dark'] .chat-markdown a {
+  color: var(--color-blue-400);
+}
+:root[data-theme='dark'] .chat-markdown blockquote {
+  border-color: var(--color-gray-700);
+  color: var(--color-gray-400);
+}
+:root[data-theme='dark'] .chat-markdown code,
+:root[data-theme='dark'] .chat-markdown pre,
+:root[data-theme='dark'] .chat-markdown th {
+  background: var(--color-gray-900);
+}
+:root[data-theme='dark'] .chat-markdown th,
+:root[data-theme='dark'] .chat-markdown td {
+  border-color: var(--color-gray-700);
+}
+:root[data-theme='dark'] .chat-markdown hr {
+  border-color: var(--color-gray-800);
+}
+:root[data-theme='dark'] .chat-markdown .hljs-comment,
+:root[data-theme='dark'] .chat-markdown .hljs-quote {
+  color: var(--color-gray-500);
+}
+:root[data-theme='dark'] .chat-markdown .hljs-keyword,
+:root[data-theme='dark'] .chat-markdown .hljs-selector-tag,
+:root[data-theme='dark'] .chat-markdown .hljs-built_in,
+:root[data-theme='dark'] .chat-markdown .hljs-type {
+  color: var(--color-purple-300);
+}
+:root[data-theme='dark'] .chat-markdown .hljs-string,
+:root[data-theme='dark'] .chat-markdown .hljs-attr,
+:root[data-theme='dark'] .chat-markdown .hljs-template-variable,
+:root[data-theme='dark'] .chat-markdown .hljs-regexp {
+  color: var(--color-emerald-300);
+}
+:root[data-theme='dark'] .chat-markdown .hljs-number,
+:root[data-theme='dark'] .chat-markdown .hljs-literal {
+  color: var(--color-amber-300);
+}
+:root[data-theme='dark'] .chat-markdown .hljs-title,
+:root[data-theme='dark'] .chat-markdown .hljs-function,
+:root[data-theme='dark'] .chat-markdown .hljs-section,
+:root[data-theme='dark'] .chat-markdown .hljs-name {
+  color: var(--color-blue-300);
+}
+:root[data-theme='dark'] .chat-markdown .hljs-variable,
+:root[data-theme='dark'] .chat-markdown .hljs-property,
+:root[data-theme='dark'] .chat-markdown .hljs-symbol {
+  color: var(--color-rose-300);
+}
+:root[data-theme='dark'] .chat-markdown .hljs-meta,
+:root[data-theme='dark'] .chat-markdown .hljs-tag {
+  color: var(--color-sky-300);
 }
 
 /* A folded block — thinking, a tool call — with its result inside. */
@@ -921,22 +1031,39 @@ input[type='number']::-webkit-inner-spin-button {
   padding: 0.5rem;
 }
 @media (prefers-color-scheme: dark) {
-  .chat-fold {
+  :root:not([data-theme='light']) .chat-fold {
     border-color: var(--color-gray-800);
   }
-  .chat-fold > summary,
-  .chat-fold > .chat-fold-static {
+  :root:not([data-theme='light']) .chat-fold > summary,
+  :root:not([data-theme='light']) .chat-fold > .chat-fold-static {
     color: var(--color-gray-400);
   }
-  .chat-fold[open] > summary {
+  :root:not([data-theme='light']) .chat-fold[open] > summary {
     border-color: var(--color-gray-800);
   }
-  .chat-fold-error > summary {
+  :root:not([data-theme='light']) .chat-fold-error > summary {
     color: var(--color-red-300);
   }
-  .chat-pre {
+  :root:not([data-theme='light']) .chat-pre {
     background: var(--color-gray-900);
   }
+}
+
+:root[data-theme='dark'] .chat-fold {
+  border-color: var(--color-gray-800);
+}
+:root[data-theme='dark'] .chat-fold > summary,
+:root[data-theme='dark'] .chat-fold > .chat-fold-static {
+  color: var(--color-gray-400);
+}
+:root[data-theme='dark'] .chat-fold[open] > summary {
+  border-color: var(--color-gray-800);
+}
+:root[data-theme='dark'] .chat-fold-error > summary {
+  color: var(--color-red-300);
+}
+:root[data-theme='dark'] .chat-pre {
+  background: var(--color-gray-900);
 }
 
 /* The streaming cursor and the "calling…" dots. */

@@ -5,12 +5,14 @@ import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getNotificationPrefs } from '@renkei/user-prefs';
+import { getNotificationPrefs, getThemePrefs, DEFAULT_THEME_PREFS } from '@renkei/user-prefs';
 import { getDatabase } from '@renkei/db';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { NotificationCenter } from '@/components/notification-center';
 import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
+import ThemeScript from '@/components/theme-script';
+import ThemeSync from '@/components/theme-sync';
 import { getVersionInfo } from '@/lib/version-info';
 import AppNav from './nav';
 
@@ -47,6 +49,9 @@ export default async function TenantLayout({
   const prefs = session
     ? await getNotificationPrefs(tenant.id, session.subject, { fresh: true })
     : null;
+  const theme = session
+    ? await getThemePrefs(tenant.id, session.subject, { fresh: true })
+    : DEFAULT_THEME_PREFS;
 
   // The menu carries the person's chats on every page.
   const dbResult = getDatabase();
@@ -95,6 +100,22 @@ export default async function TenantLayout({
     </div>
   );
 
-  if (!session) return shell;
-  return <NotificationCenter tenantId={tenant.id}>{shell}</NotificationCenter>;
+  // ThemeScript has to be the very first thing this layout renders — see
+  // its own comment — so both return paths lead with it rather than nesting
+  // it inside `shell`.
+  if (!session) {
+    return (
+      <>
+        <ThemeScript tenantId={tenant.id} />
+        {shell}
+      </>
+    );
+  }
+  return (
+    <>
+      <ThemeScript tenantId={tenant.id} />
+      <ThemeSync tenantId={tenant.id} mode={theme.mode} />
+      <NotificationCenter tenantId={tenant.id}>{shell}</NotificationCenter>
+    </>
+  );
 }
