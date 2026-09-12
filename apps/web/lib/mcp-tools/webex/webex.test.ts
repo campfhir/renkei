@@ -51,6 +51,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   contentPathOf,
   filenameOfDisposition,
+  nextPagePath,
   registerWebexUserTools,
   webexScopeFor,
 } from './index';
@@ -140,6 +141,145 @@ describe('webex_list_rooms', () => {
     await tools.get('webex_list_rooms')!({});
 
     expect(mockCall).toHaveBeenCalledWith(expect.stringContaining('/rooms'), undefined);
+  });
+
+  it('asks WebEx for its largest page, most recently active first', async () => {
+    const tools = await toolsOf();
+    await tools.get('webex_list_rooms')!({});
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+    expect(mockCall.mock.calls[0][0]).toBe('/rooms?max=100&sortBy=lastactivity');
+  });
+
+  it('follows the Link rel="next" header until the last page', async () => {
+    mockCall
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [{ id: 'room-1', title: 'A', type: 'group' }] }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            Link: '<https://webexapis.com/v1/rooms?cursor=abc&max=100&sortBy=lastactivity>; rel="next"',
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 'room-2', title: 'B', type: 'group' }] })
+      );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_list_rooms')!({}));
+
+    expect(mockCall).toHaveBeenCalledTimes(2);
+    expect(mockCall.mock.calls[1][0]).toBe('/rooms?cursor=abc&max=100&sortBy=lastactivity');
+    expect(text).toContain('Rooms 1–2 of 2');
+    expect(text).toContain('id: room-1');
+    expect(text).toContain('id: room-2');
+  });
+
+  it('filters by title, case-insensitively, across every page', async () => {
+    mockCall
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [
+              { id: 'room-1', title: 'Engineering', type: 'group' },
+              { id: 'room-2', title: 'Sales', type: 'group' },
+            ],
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              Link: '<https://webexapis.com/v1/rooms?cursor=p2&max=100>; rel="next"',
+            },
+          }
+        )
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 'room-3', title: 'Platform engineering', type: 'group' }] })
+      );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_list_rooms')!({ query: 'ENGINEER' }));
+
+    expect(text).toContain('Rooms 1–2 of 2 matching "ENGINEER"');
+    expect(text).toContain('id: room-1');
+    expect(text).toContain('id: room-3');
+    expect(text).not.toContain('id: room-2');
+  });
+
+  it('pages with limit and offset and names the next offset', async () => {
+    const rooms = Array.from({ length: 5 }, (_, i) => ({
+      id: `room-${i + 1}`,
+      title: `Room ${i + 1}`,
+      type: 'group',
+    }));
+    // A Response body reads once, so each call gets a fresh one.
+    mockCall.mockImplementation(async () => jsonResponse({ items: rooms }));
+    const tools = await toolsOf();
+
+    const first = textOf(await tools.get('webex_list_rooms')!({ limit: 2 }));
+    expect(first).toContain('Rooms 1–2 of 5');
+    expect(first).toContain('Pass offset=2 for the next page.');
+    expect(first).toContain('id: room-1');
+    expect(first).toContain('id: room-2');
+    expect(first).not.toContain('id: room-3');
+
+    const last = textOf(await tools.get('webex_list_rooms')!({ limit: 2, offset: 4 }));
+    expect(last).toContain('Rooms 5–5 of 5.');
+    expect(last).not.toContain('Pass offset=');
+    expect(last).toContain('id: room-5');
+  });
+
+  it('says so when the offset is past the end, and when nothing matches', async () => {
+    mockCall.mockImplementation(async () =>
+      jsonResponse({ items: [{ id: 'room-1', title: 'Engineering', type: 'group' }] })
+    );
+    const tools = await toolsOf();
+
+    expect(textOf(await tools.get('webex_list_rooms')!({ offset: 10 }))).toContain(
+      'Only 1 room; offset 10 is past the end.'
+    );
+    expect(textOf(await tools.get('webex_list_rooms')!({ query: 'zzz' }))).toContain(
+      'No rooms with "zzz" in the title.'
+    );
+  });
+
+  it('surfaces a failure on a later page instead of a partial list', async () => {
+    mockCall
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [{ id: 'room-1', title: 'A', type: 'group' }] }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            Link: '<https://webexapis.com/v1/rooms?cursor=p2>; rel="next"',
+          },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ message: 'rate limited' }, 429));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_list_rooms')!({});
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('429');
+  });
+});
+
+describe('nextPagePath', () => {
+  it('returns the rel="next" url relative to the API base', () => {
+    expect(
+      nextPagePath(
+        '<https://webexapis.com/v1/rooms?cursor=abc&max=100>; rel="next", ' +
+          '<https://webexapis.com/v1/rooms?cursor=xyz>; rel="prev"'
+      )
+    ).toBe('/rooms?cursor=abc&max=100');
+  });
+
+  it('is null with no header, no next link, or a link off the API base', () => {
+    expect(nextPagePath(null)).toBeNull();
+    expect(nextPagePath('<https://webexapis.com/v1/rooms?cursor=x>; rel="prev"')).toBeNull();
+    expect(nextPagePath('<https://evil.example/rooms?cursor=x>; rel="next"')).toBeNull();
   });
 });
 

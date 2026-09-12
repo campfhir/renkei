@@ -88,6 +88,84 @@ async function webexGet(
   return { ok: true, body: body as Record<string, unknown> };
 }
 
+/**
+ * WebEx pages list endpoints RFC 5988-style: a `Link: <url>; rel="next"`
+ * header, never a cursor in the body. The url is absolute; `WebexAuth.fetch`
+ * takes a path relative to the API base (so the base stays out of handlers'
+ * hands), so this hands back the relative form, or null on the last page.
+ */
+export function nextPagePath(linkHeader: string | null): string | null {
+  if (!linkHeader) return null;
+  for (const part of linkHeader.split(',')) {
+    const match = /<([^>]+)>\s*;\s*rel="?next"?/.exec(part.trim());
+    if (!match) continue;
+    const url = match[1];
+    const base = 'https://webexapis.com/v1';
+    if (url.startsWith(base)) return url.slice(base.length);
+    // A relative link (never seen from WebEx, but harmless to honor).
+    if (url.startsWith('/')) return url;
+    return null;
+  }
+  return null;
+}
+
+/** GET one page of a list endpoint: its items plus the path of the page after it. */
+async function webexGetPage(
+  auth: WebexAuth,
+  scopes: string[],
+  path: string
+): Promise<
+  { ok: true; items: Record<string, unknown>[]; next: string | null } | { ok: false; error: string }
+> {
+  const response = await auth.fetch(scopes, path);
+  if (!response.ok) return { ok: false, error: await describeWebexFailure(response) };
+  const body: unknown = await response.json().catch(() => null);
+  if (typeof body !== 'object' || body === null) {
+    return { ok: false, error: 'Malformed WebEx API response' };
+  }
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const page = items(body as Record<string, unknown>);
+  return { ok: true, items: page, next: nextPagePath(response.headers.get('link')) };
+}
+
+/** Default and largest page webex_list_rooms hands back per call. */
+const ROOMS_LIMIT_DEFAULT = 30;
+const ROOMS_LIMIT_CAP = 100;
+/** The largest page WebEx serves for /rooms. */
+const ROOMS_PAGE_SIZE = 100;
+/**
+ * How many pages to walk before stopping. 20 × 100 = 2,000 spaces, sorted
+ * most recently active first — past that the tail is dormant rooms nobody
+ * is looking for, and every page is one more round trip on the user's turn.
+ */
+const ROOMS_PAGE_CAP = 20;
+
+/**
+ * Every room the user is in, most recently active first, walked page by
+ * page. The Rooms API has no search parameter and no offset — `max` and
+ * `sortBy` are all it takes — so search and paging in webex_list_rooms are
+ * done here, over the full list, not by WebEx. `truncated` says the walk hit
+ * ROOMS_PAGE_CAP with more pages still unread.
+ */
+async function listAllRooms(
+  auth: WebexAuth,
+  scopes: string[]
+): Promise<
+  { ok: true; rooms: Record<string, unknown>[]; truncated: boolean } | { ok: false; error: string }
+> {
+  const rooms: Record<string, unknown>[] = [];
+  let path: string | null = `/rooms?max=${ROOMS_PAGE_SIZE}&sortBy=lastactivity`;
+  let pages = 0;
+  while (path !== null && pages < ROOMS_PAGE_CAP) {
+    const page = await webexGetPage(auth, scopes, path);
+    if (!page.ok) return page;
+    rooms.push(...page.items);
+    path = page.next;
+    pages += 1;
+  }
+  return { ok: true, rooms, truncated: path !== null };
+}
+
 /** For callers that need the raw Response — a POST, or a non-JSON body like a transcript download. */
 async function webexCall(
   auth: WebexAuth,
@@ -507,29 +585,79 @@ export async function registerWebexUserTools(
       title: 'WebEx · Read — List WebEx rooms',
       description:
         'List the WebEx rooms (spaces) the connected user is a member of, most recently active ' +
-        'first. Returns room ids for use with webex_list_messages.',
+        'first. Returns room ids for use with webex_list_messages. Pass query to find a room ' +
+        'by name (case-insensitive substring of the title), and limit/offset to page: the ' +
+        'answer says how many rooms matched in total and which offset shows the next page.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        max: z.number().int().min(1).max(100).describe('How many rooms (default 30)').optional(),
+        query: z
+          .string()
+          .describe('Only rooms whose title contains this text (case-insensitive)')
+          .optional(),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(ROOMS_LIMIT_CAP)
+          .describe(
+            `How many rooms per page (default ${ROOMS_LIMIT_DEFAULT}, up to ${ROOMS_LIMIT_CAP})`
+          )
+          .optional(),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .describe('How many matching rooms to skip — the next page starts where the last ended')
+          .optional(),
       }),
     },
     async (args: Record<string, any>) => {
-      const max = typeof args.max === 'number' ? args.max : 30;
-      const result = await webexGet(
-        auth,
-        webexScopeFor('webex_list_rooms'),
-        `/rooms?max=${max}&sortBy=lastactivity`
-      );
+      const query = str(args.query).trim().toLowerCase();
+      const limit =
+        typeof args.limit === 'number' && Number.isInteger(args.limit) && args.limit >= 1
+          ? Math.min(args.limit, ROOMS_LIMIT_CAP)
+          : ROOMS_LIMIT_DEFAULT;
+      const offset =
+        typeof args.offset === 'number' && Number.isInteger(args.offset) && args.offset >= 0
+          ? args.offset
+          : 0;
+      const result = await listAllRooms(auth, webexScopeFor('webex_list_rooms'));
       if (!result.ok) return errText(result.error);
-      const rooms = items(result.body).map(
+      const matching = query
+        ? result.rooms.filter((room) => str(room.title).toLowerCase().includes(query))
+        : result.rooms;
+      const total = matching.length;
+      const page = matching.slice(offset, offset + limit);
+      const rooms = page.map(
         (room) =>
           `${str(room.title) || '(untitled)'} — ${str(room.type)} — id: ${str(room.id)}` +
           (str(room.lastActivity) ? ` — last activity ${str(room.lastActivity)}` : '')
       );
-      if (rooms.length === 0) return textResult('No rooms.');
+      const scopeNote = result.truncated
+        ? ` (searched the ${result.rooms.length} most recently active rooms; older ones are not included)`
+        : '';
+      if (total === 0) {
+        return textResult(
+          (query ? `No rooms with "${str(args.query).trim()}" in the title.` : 'No rooms.') +
+            scopeNote
+        );
+      }
+      if (rooms.length === 0) {
+        return textResult(
+          `Only ${total} room${total === 1 ? '' : 's'}${query ? ' match' : ''}; offset ${offset} ` +
+            'is past the end.' +
+            scopeNote
+        );
+      }
+      const last = offset + rooms.length;
+      const heading =
+        `Rooms ${offset + 1}–${last} of ${total}` +
+        (query ? ` matching "${str(args.query).trim()}"` : '') +
+        scopeNote +
+        (last < total ? `. Pass offset=${last} for the next page.` : '.');
       return textResult(
         withPresentationHint(
-          rooms.join('\n'),
+          `${heading}\n${rooms.join('\n')}`,
           'a table (Room, Type, Last activity) usually scans faster than this flat list.'
         )
       );
