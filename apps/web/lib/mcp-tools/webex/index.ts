@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
+import { webexNextPagePath } from '@renkei/connector-webex';
 import { DEFAULT_MAX_FILE_BYTES, validateFilename } from '@renkei/connector-sandbox';
 import { logger } from '@/lib/logger';
 import { actMeta } from '@renkei/tool-outcomes';
@@ -88,27 +89,6 @@ async function webexGet(
   return { ok: true, body: body as Record<string, unknown> };
 }
 
-/**
- * WebEx pages list endpoints RFC 5988-style: a `Link: <url>; rel="next"`
- * header, never a cursor in the body. The url is absolute; `WebexAuth.fetch`
- * takes a path relative to the API base (so the base stays out of handlers'
- * hands), so this hands back the relative form, or null on the last page.
- */
-export function nextPagePath(linkHeader: string | null): string | null {
-  if (!linkHeader) return null;
-  for (const part of linkHeader.split(',')) {
-    const match = /<([^>]+)>\s*;\s*rel="?next"?/.exec(part.trim());
-    if (!match) continue;
-    const url = match[1];
-    const base = 'https://webexapis.com/v1';
-    if (url.startsWith(base)) return url.slice(base.length);
-    // A relative link (never seen from WebEx, but harmless to honor).
-    if (url.startsWith('/')) return url;
-    return null;
-  }
-  return null;
-}
-
 /** GET one page of a list endpoint: its items plus the path of the page after it. */
 async function webexGetPage(
   auth: WebexAuth,
@@ -125,7 +105,7 @@ async function webexGetPage(
   }
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   const page = items(body as Record<string, unknown>);
-  return { ok: true, items: page, next: nextPagePath(response.headers.get('link')) };
+  return { ok: true, items: page, next: webexNextPagePath(response.headers.get('link')) };
 }
 
 /** Default and largest page webex_list_rooms hands back per call. */

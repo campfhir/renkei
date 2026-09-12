@@ -9,9 +9,10 @@
  *
  * SEARCH IS DONE HERE, NOT BY WEBEX. The Rooms API takes `max` and
  * `sortBy` and nothing else — there is no query parameter — so a search is
- * a bounded page fetched and then filtered by title. The consequence is
- * real and worth stating: someone in more than LIST_MAX spaces may not find
- * a long-dormant one, which is why the field also accepts a pasted id.
+ * a bounded list fetched (the client walks WebEx's 100-room pages up to
+ * LIST_MAX) and then filtered by title. The consequence is real and worth
+ * stating: someone in more than LIST_MAX spaces may not find a long-dormant
+ * one, which is why the field also accepts a pasted id.
  *
  * Deliberately not cached: which spaces someone is in changes without
  * Renkei being told, and a stale list here is a filter they cannot express.

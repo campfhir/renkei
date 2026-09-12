@@ -51,7 +51,6 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   contentPathOf,
   filenameOfDisposition,
-  nextPagePath,
   registerWebexUserTools,
   webexScopeFor,
 } from './index';
@@ -263,23 +262,6 @@ describe('webex_list_rooms', () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('429');
-  });
-});
-
-describe('nextPagePath', () => {
-  it('returns the rel="next" url relative to the API base', () => {
-    expect(
-      nextPagePath(
-        '<https://webexapis.com/v1/rooms?cursor=abc&max=100>; rel="next", ' +
-          '<https://webexapis.com/v1/rooms?cursor=xyz>; rel="prev"'
-      )
-    ).toBe('/rooms?cursor=abc&max=100');
-  });
-
-  it('is null with no header, no next link, or a link off the API base', () => {
-    expect(nextPagePath(null)).toBeNull();
-    expect(nextPagePath('<https://webexapis.com/v1/rooms?cursor=x>; rel="prev"')).toBeNull();
-    expect(nextPagePath('<https://evil.example/rooms?cursor=x>; rel="next"')).toBeNull();
   });
 });
 
