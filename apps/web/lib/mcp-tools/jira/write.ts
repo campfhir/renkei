@@ -566,6 +566,14 @@ export async function registerWriteTools(
       return {
         content: [{ type: 'text' as const, text }],
         ...(outcome.sent ? {} : { isError: true }),
+        ...(outcome.sent
+          ? {
+              _meta: actMeta({
+                id: issueKey,
+                ...(context.siteUrl ? { url: `${context.siteUrl}/browse/${issueKey}` } : {}),
+              }),
+            }
+          : {}),
       };
     } catch (error) {
       return {
