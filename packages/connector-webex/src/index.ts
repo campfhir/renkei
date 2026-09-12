@@ -31,6 +31,7 @@ export {
 } from './webhook';
 export {
   WebexClient,
+  webexNextPagePath,
   type WebexMessage,
   type WebexPerson,
   type WebexRoom,

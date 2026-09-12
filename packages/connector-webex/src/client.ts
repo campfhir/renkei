@@ -12,6 +12,8 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 const API_BASE = 'https://webexapis.com/v1';
+/** The largest page WebEx serves for /rooms. */
+const ROOMS_PAGE_SIZE = 100;
 /**
  * Bounds every call out to WebEx. Without this, an unreachable host (DNS not
  * yet up right after a boot, a stalled connection) hangs `fetch` forever —
@@ -73,6 +75,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+/**
+ * WebEx pages list endpoints RFC 5988-style: a `Link: <url>; rel="next"`
+ * header, never a cursor in the body. The url is absolute; every request
+ * here takes a path relative to API_BASE, so this hands back the relative
+ * form, or null on the last page (or for a link off the API host, which is
+ * never followed).
+ */
+export function webexNextPagePath(linkHeader: string | null): string | null {
+  if (!linkHeader) return null;
+  for (const part of linkHeader.split(',')) {
+    const match = /<([^>]+)>\s*;\s*rel="?next"?/.exec(part.trim());
+    if (!match) continue;
+    const url = match[1];
+    if (url.startsWith(API_BASE)) return url.slice(API_BASE.length);
+    // A relative link (never seen from WebEx, but harmless to honor).
+    if (url.startsWith('/')) return url;
+    return null;
+  }
+  return null;
 }
 
 export interface WebexAttachmentAction {
@@ -181,6 +204,20 @@ export class WebexClient {
     path: string,
     body?: unknown
   ): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
+    const result = await this.requestPage(method, path, body);
+    return result.ok ? ok(result.val.body) : result;
+  }
+
+  /**
+   * One call, plus the relative path of the page after it when WebEx says
+   * there is one — the paging cursor lives in a header, not the body, so
+   * `request` alone cannot see it.
+   */
+  private async requestPage(
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    body?: unknown
+  ): Promise<Result<{ body: Record<string, unknown>; next: string | null }, 'WEBEX_API_ERROR'>> {
     await limiter.take(this.lane);
     let response: Response;
     try {
@@ -210,13 +247,13 @@ export class WebexClient {
     }
 
     // Deletes answer 204 with no body.
-    if (response.status === 204) return ok({});
+    if (response.status === 204) return ok({ body: {}, next: null });
 
     const parsed: unknown = await response.json().catch(() => null);
     if (!isRecord(parsed)) {
       return err('WEBEX_API_ERROR' as const, { message: `WebEx API returned no JSON for ${path}` });
     }
-    return ok(parsed);
+    return ok({ body: parsed, next: webexNextPagePath(response.headers.get('link')) });
   }
 
   private get(path: string): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
@@ -235,23 +272,36 @@ export class WebexClient {
   }
 
   /**
-   * Rooms the token's owner belongs to, most recently active first. Works
-   * with any bearer — a bot token sees the bot's rooms, a user token sees
-   * the user's own — which is what lets a user's own grant search spaces the
-   * bot was never invited to (see webex-forward-context.ts in the worker).
+   * Up to `max` rooms the token's owner belongs to, most recently active
+   * first. Works with any bearer — a bot token sees the bot's rooms, a user
+   * token sees the user's own — which is what lets a user's own grant search
+   * spaces the bot was never invited to (see webex-forward-context.ts in the
+   * worker).
+   *
+   * WebEx serves at most 100 per page and offers no offset, so anything past
+   * that is gathered by following the `Link: rel="next"` header until `max`
+   * is reached or the pages run out. A failed page fails the call: a silent
+   * partial list would read as "these are all your rooms".
    */
   async listRooms(max = 30): Promise<Result<WebexRoom[], 'WEBEX_API_ERROR'>> {
-    const result = await this.get(`/rooms?max=${max}&sortBy=lastactivity`);
-    if (!result.ok) return result;
-    const items = result.val.items;
-    if (!Array.isArray(items)) {
-      return err('WEBEX_API_ERROR' as const, { message: 'rooms response missing items' });
-    }
     const rooms: WebexRoom[] = [];
-    for (const item of items) {
-      if (!isRecord(item)) continue;
-      const room = readRoom(item);
-      if (room) rooms.push(room);
+    let path: string | null = `/rooms?max=${Math.min(max, ROOMS_PAGE_SIZE)}&sortBy=lastactivity`;
+    while (path !== null && rooms.length < max) {
+      const result = await this.requestPage('GET', path);
+      if (!result.ok) return result;
+      const items = result.val.body.items;
+      if (!Array.isArray(items)) {
+        return err('WEBEX_API_ERROR' as const, { message: 'rooms response missing items' });
+      }
+      for (const item of items) {
+        if (rooms.length >= max) break;
+        if (!isRecord(item)) continue;
+        const room = readRoom(item);
+        if (room) rooms.push(room);
+      }
+      // An empty page with a next link would loop forever on a WebEx quirk;
+      // treat it as the end.
+      path = items.length === 0 ? null : result.val.next;
     }
     return ok(rooms);
   }
