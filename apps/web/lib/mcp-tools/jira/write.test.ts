@@ -26,6 +26,7 @@ type ToolResult = {
   content: { type: string; text?: string }[];
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
 };
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
@@ -405,6 +406,27 @@ describe('jira_update_issue', () => {
 
     expect(result.isError).toBe(true);
     expect(putBody()).toBeNull();
+  });
+
+  it('attaches a receipt so the notification links to the issue', async () => {
+    serve([STORY_POINTS]);
+    const update = await updateIssue();
+
+    const result = await update({ issueKey: 'CHG-20', summary: 'New title' });
+
+    expect(result._meta).toEqual({
+      'renkei/act': { id: 'CHG-20', url: 'https://example.atlassian.net/browse/CHG-20' },
+    });
+  });
+
+  it('attaches no receipt when nothing was written', async () => {
+    serve([DECISION]);
+    const update = await updateIssue();
+
+    const result = await update({ issueKey: 'CHG-20', storyPoints: 5 });
+
+    expect(result.isError).toBe(true);
+    expect(result._meta).toBeUndefined();
   });
 });
 
