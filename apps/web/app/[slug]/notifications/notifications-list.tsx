@@ -73,10 +73,18 @@ export default function NotificationsList({
   tenantId,
   slug,
   rows,
+  unreadCount,
 }: {
   tenantId: string;
   slug: string;
   rows: NotificationCard[];
+  /**
+   * The TRUE unread total, not just how many of the loaded rows are
+   * unread — the page only ever fetches the newest PAGE_SIZE, so beyond
+   * that this is the only number that reflects reality, and the only way
+   * "Mark all as read" can promise to reach rows that never rendered.
+   */
+  unreadCount: number;
 }) {
   const router = useRouter();
   const { refresh } = useNotifications();
@@ -88,6 +96,10 @@ export default function NotificationsList({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [markingAll, setMarkingAll] = useState(false);
+  // Optimistic: sits between the real unreadCount prop and "0 unread now",
+  // so a still-loading server refresh doesn't flash the button back.
+  const [allMarkedRead, setAllMarkedRead] = useState(false);
 
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -171,6 +183,36 @@ export default function NotificationsList({
     if (isUnread(row)) void setRead([row.id], true);
   };
 
+  /**
+   * Reaches every unread notification, including the ones past PAGE_SIZE
+   * that never made it into `rows` — the one action in this file that is
+   * NOT scoped to what's loaded, because it exists specifically for the
+   * rows that can't be. The API call is a single `{ all: true }` update,
+   * not one id per row.
+   */
+  async function markAllRead() {
+    setMarkingAll(true);
+    try {
+      await fetch(`/api/tenant/${tenantId}/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true }),
+      });
+      setReadOverride((current) => {
+        const next = new Map(current);
+        for (const row of rows) next.set(row.id, true);
+        return next;
+      });
+      setAllMarkedRead(true);
+      refresh();
+      router.refresh();
+    } catch {
+      // The next poll or refresh reconciles; the optimistic state stands.
+    } finally {
+      setMarkingAll(false);
+    }
+  }
+
   async function deleteIds(ids: string[]) {
     setBusy(true);
     try {
@@ -211,8 +253,26 @@ export default function NotificationsList({
     else days.push({ label, rows: [row] });
   }
 
+  const showMarkAllRead = !allMarkedRead && unreadCount > 0 && !selectionMode;
+
   return (
     <div className="space-y-6">
+      {showMarkAllRead ? (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            {unreadCount} unread{unreadCount > visible.length ? ' (some not shown below)' : ''}
+          </span>
+          <button
+            type="button"
+            disabled={markingAll}
+            onClick={() => void markAllRead()}
+            className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.check} className="h-4 w-4" />
+            {markingAll ? 'Marking…' : 'Mark all as read'}
+          </button>
+        </div>
+      ) : null}
       {days.map((day) => (
         <section key={day.label}>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -243,6 +303,15 @@ export default function NotificationsList({
                   ? `/${slug}/agents/${row.agentId}`
                   : null;
               const inAppLabel = batch ? 'Open batch' : 'Open agent';
+              // Every row without a link of its own — a saved note, a
+              // created card, a run failure — still belongs to a run, and
+              // that run is never nothing to show. Without this fallback
+              // the card was unopenable: no refUrl (nothing outside
+              // Renkei to point at) and no agentHref (only agent_edited /
+              // agent_disabled / batch rows get one), so tapping it did
+              // nothing at all.
+              const usesRunHrefAsPrimary = !row.refUrl && !agentHref && runHref !== null;
+              const primaryInAppHref = agentHref ?? (usesRunHrefAsPrimary ? runHref : null);
               return (
                 <li key={row.id} className="relative">
                   <div
@@ -261,7 +330,7 @@ export default function NotificationsList({
                           ? 'border-blue-200 bg-blue-50/40 dark:border-blue-900 dark:bg-blue-950/20'
                           : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950'
                     } ${
-                      row.refUrl || agentHref
+                      row.refUrl || primaryInAppHref
                         ? 'transition-colors hover:border-blue-400 dark:hover:border-blue-700'
                         : ''
                     }`}
@@ -336,9 +405,9 @@ export default function NotificationsList({
                           >
                             {row.headline}
                           </a>
-                        ) : agentHref ? (
+                        ) : primaryInAppHref ? (
                           <Link
-                            href={agentHref}
+                            href={primaryInAppHref}
                             onClick={(event) => {
                               if (
                                 selectionMode ||
@@ -414,7 +483,7 @@ export default function NotificationsList({
                               {inAppLabel}
                             </Link>
                           ) : null}
-                          {runHref ? (
+                          {runHref && !usesRunHrefAsPrimary ? (
                             <Link
                               role="menuitem"
                               href={runHref}
