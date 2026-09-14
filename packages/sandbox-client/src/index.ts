@@ -795,6 +795,52 @@ export async function sbWorkspaceWrite(
   };
 }
 
+/**
+ * A file uploaded into the checkout as bytes — a person's gesture from the
+ * project page, not the model's. The body is the file; the target, the
+ * workspace and the destination path ride the query string.
+ */
+export async function sbWorkspaceUpload(
+  target: SandboxTarget,
+  input: { id: string; path: string; bytes: Uint8Array<ArrayBuffer> }
+): Promise<ClientResult<{ path: string; created: boolean; sizeBytes: number }>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  const query = new URLSearchParams({
+    tenantId: target.tenantId,
+    subject: target.subject,
+    id: input.id,
+    path: input.path,
+  });
+  let response: Response;
+  try {
+    response = await fetch(`${cfg.url}/v1/workspaces/upload?${query.toString()}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/octet-stream' },
+      body: input.bytes,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) return opFailure(response);
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    return unreachable('The sandbox service answered an unreadable response.');
+  }
+  if (!isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: {
+      path: str(value.path),
+      created: value.created === true,
+      sizeBytes: typeof value.sizeBytes === 'number' ? value.sizeBytes : 0,
+    },
+  };
+}
+
 export async function sbWorkspaceEdit(
   target: SandboxTarget,
   input: { id: string; path: string; oldText: string; newText: string; replaceAll?: boolean }

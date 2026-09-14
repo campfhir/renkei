@@ -9,7 +9,7 @@
  * them and only a command ever sees them.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
@@ -53,6 +53,11 @@ export default function CodeSections({
   const [envOpen, setEnvOpen] = useState(false);
   const [envText, setEnvText] = useState('');
   const [problems, setProblems] = useState(envProblems);
+  const [addingFiles, setAddingFiles] = useState(false);
+  const [folder, setFolder] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploaded, setUploaded] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const workspace = code.workspace;
   const cloning = workspace?.status === 'cloning';
@@ -113,6 +118,39 @@ export default function CodeSections({
     router.refresh();
   };
 
+  // Files a person adds go into the checkout, where a chat can commit
+  // them — a code project keeps no files of its own. One request per
+  // file, its bytes as the body, the destination in the query string.
+  const uploadFiles = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    const prefix = folder.trim().replace(/^\/+|\/+$/g, '');
+    setUploading(true);
+    setError(null);
+    setUploaded(null);
+    const added: string[] = [];
+    for (const file of [...list]) {
+      const path = prefix ? `${prefix}/${file.name}` : file.name;
+      const response = await fetch(`${base}/files?path=${encodeURIComponent(path)}`, {
+        method: 'PUT',
+        body: file,
+      }).catch(() => null);
+      const body = response ? await response.json().catch(() => null) : null;
+      if (!response?.ok) {
+        setError(`${path}: ${typeof body?.error === 'string' ? body.error : 'not added'}`);
+        break;
+      }
+      added.push(path);
+    }
+    setUploading(false);
+    if (added.length) {
+      setUploaded(
+        `Added ${added.length === 1 ? added[0] : `${added.length} files`} to the checkout, uncommitted — ask a chat in this project to commit and push.`
+      );
+      setAddingFiles(false);
+      setFolder('');
+    }
+  };
+
   const statusPill = !code.enabled ? (
     <Pill tone="amber">Workspaces off</Pill>
   ) : !workspace ? (
@@ -149,6 +187,16 @@ export default function CodeSections({
               >
                 Change repository
               </button>
+              {workspace?.status === 'ready' ? (
+                <button
+                  type="button"
+                  disabled={busy || uploading}
+                  onClick={() => setAddingFiles((value) => !value)}
+                  className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+                >
+                  Add files
+                </button>
+              ) : null}
             </span>
           ) : null}
         </div>
@@ -206,22 +254,72 @@ export default function CodeSections({
             </p>
           </form>
         ) : null}
+        {addingFiles ? (
+          <form
+            aria-label="Add files to the repository"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void uploadFiles(fileInput.current?.files ?? null);
+            }}
+            className="mt-3 grid gap-2 border-t border-gray-200 pt-3 sm:grid-cols-[1fr_1fr_auto] dark:border-gray-800"
+          >
+            <label className="block text-sm">
+              <span className="mb-1 block text-xs font-medium text-gray-500">
+                Folder (optional)
+              </span>
+              <input
+                value={folder}
+                onChange={(event) => setFolder(event.target.value)}
+                placeholder="docs/assets"
+                autoComplete="off"
+                spellCheck={false}
+                className={`font-mono ${inputClass}`}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block text-xs font-medium text-gray-500">Files</span>
+              <input
+                ref={fileInput}
+                type="file"
+                multiple
+                required
+                className="block w-full text-sm file:mr-2 file:rounded-md file:border file:border-gray-300 file:bg-white file:px-2 file:py-1 file:text-xs dark:file:border-gray-700 dark:file:bg-gray-900"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={uploading}
+              className="self-end rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {uploading ? 'Adding…' : 'Add to checkout'}
+            </button>
+            <p className="text-xs text-gray-500 sm:col-span-3">
+              The files land in the checkout as they are, uncommitted. A code project keeps no files
+              of its own: what a chat should have belongs in the repository.
+            </p>
+          </form>
+        ) : null}
+        {uploaded ? (
+          <p className="mt-2 text-xs text-green-700 dark:text-green-400">{uploaded}</p>
+        ) : null}
       </section>
 
       <section className={sectionClass}>
-        <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-sm font-semibold">Environment</h2>
-          <span className="text-xs text-gray-500">What the project’s commands run with.</span>
-          {canEdit && code.enabled ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => setEnvOpen((value) => !value)}
-              className="ml-auto whitespace-nowrap text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
-            >
-              {code.env.length ? 'Replace .env' : 'Add .env'}
-            </button>
-          ) : null}
+        <div className="mb-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold">Environment</h2>
+            {canEdit && code.enabled ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setEnvOpen((value) => !value)}
+                className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+              >
+                {code.env.length ? 'Replace .env' : 'Add .env'}
+              </button>
+            ) : null}
+          </div>
+          <p className="text-xs text-gray-500">What the project’s commands run with.</p>
         </div>
         {code.env.length === 0 ? (
           <p className="text-sm text-gray-500">No environment variables.</p>

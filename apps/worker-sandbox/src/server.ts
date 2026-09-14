@@ -43,6 +43,7 @@ import {
   DEFAULT_BATCH_MAX_FILE_BYTES,
   DEFAULT_BATCH_QUOTA_BYTES,
   MAX_FILES_PER_BATCH,
+  UPLOAD_MAX_BYTES,
   validateFilename,
   type SandboxFileSummary,
 } from '@renkei/connector-sandbox';
@@ -788,6 +789,19 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     // query string, matching the fileshare worker's /v1/write.
     if (url.pathname === '/v1/write') {
       return handleWrite(request, url, response);
+    }
+    // So is a file uploaded into a code workspace's checkout.
+    if (url.pathname === '/v1/workspaces/upload') {
+      const bytes = await readBody(request, UPLOAD_MAX_BYTES);
+      if (bytes === null) {
+        return sendError(
+          response,
+          413,
+          'too_large',
+          `A file is at most ${UPLOAD_MAX_BYTES} bytes.`
+        );
+      }
+      return workspaces.handleUpload(url, bytes, response);
     }
 
     const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';

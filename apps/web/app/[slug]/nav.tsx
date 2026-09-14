@@ -9,7 +9,6 @@ import { useNotifications } from '@/components/notification-center';
 import { useMediaQuery } from '@/lib/use-media-query';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
-import { CodeList } from './code/_components/code-nav';
 
 interface NavProps {
   slug: string;
@@ -174,9 +173,10 @@ export default function AppNav({
       extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
     },
     {
-      // Code projects — a repository to work in, apart from ordinary chats:
-      // their own section, their own list, and the chats inside them are
-      // found here rather than among the person's chats above.
+      // Code projects — a repository to work in, apart from ordinary chats.
+      // The menu only opens the door: the projects, and the chats inside
+      // each, are listed on the Code page and on the project's own page,
+      // never here and never among the person's chats above.
       label: 'Code',
       items: [
         {
@@ -185,7 +185,6 @@ export default function AppNav({
           plus: { href: `/${slug}/code/new`, label: 'New code project' },
         },
       ],
-      extra: chats ? <CodeList slug={slug} data={chats} /> : null,
     },
   ];
 

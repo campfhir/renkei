@@ -29,7 +29,7 @@ jest.mock('./env-secrets-store', () => ({
   deleteEnvSecret: jest.fn(),
 }));
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -226,6 +226,40 @@ describe('editing', () => {
         })
       ).status
     ).toBe(400);
+  });
+});
+
+describe('uploading', () => {
+  async function upload(query: Record<string, string>, body: Uint8Array<ArrayBuffer>) {
+    const response = await fetch(
+      `${enabledBase}/v1/workspaces/upload?${new URLSearchParams(query).toString()}`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
+        body,
+      }
+    );
+    return { status: response.status, json: await response.json() };
+  }
+
+  it('writes the body as bytes at the path, under the checkout only', async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0xff]);
+    const sent = await upload({ ...TARGET, id: 'ws-1', path: 'assets/logo.png' }, bytes);
+    expect(sent.status).toBe(200);
+    expect(sent.json).toEqual({ path: 'assets/logo.png', created: true, sizeBytes: 7 });
+    expect(
+      new Uint8Array(await readFile(join(workspaceDir(STORAGE_KEY), 'assets', 'logo.png')))
+    ).toEqual(bytes);
+    expect(
+      (await upload({ ...TARGET, id: 'ws-1', path: '.git/hooks/pre-commit' }, bytes)).status
+    ).toBe(400);
+    expect((await upload({ ...TARGET, id: 'ws-1', path: '../escape.png' }, bytes)).status).toBe(
+      400
+    );
+    expect(
+      (await upload({ ...TARGET, id: 'ws-1', path: 'empty.bin' }, new Uint8Array())).status
+    ).toBe(400);
+    expect((await upload({ ...TARGET, id: 'ws-9', path: 'x.bin' }, bytes)).status).toBe(404);
   });
 });
 

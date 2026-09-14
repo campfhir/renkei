@@ -190,6 +190,8 @@ test.describe('code projects', () => {
     const openMenu = async () => {
       if (mobile) await page.getByRole('button', { name: 'Open menu' }).click();
     };
+    const sectionOf = (name: string) =>
+      main.locator('section', { has: page.getByRole('heading', { level: 2, name }) });
 
     // ── The index: the seeded project under Mine, its repository beneath ──
     await page.goto(`/${E2E_SLUG}/code`);
@@ -201,18 +203,14 @@ test.describe('code projects', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-index.png');
 
-    // ── The menu: a Code section listing the project and its chat; the
-    //    chat is NOT among the person's ordinary chats ──
+    // ── The menu: a Code entry and a "+ New" only — projects and their
+    //    chats are listed on the Code page, and the chat is NOT among the
+    //    person's ordinary chats ──
     await openMenu();
-    const codeNav = menu.getByRole('navigation', { name: 'Code projects' });
-    await expect(codeNav.getByRole('link', { name: ids.seededName })).toBeVisible();
-    await expect(codeNav.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
-    await expect(
-      menu
-        .getByRole('navigation', { name: 'Chats' })
-        .getByRole('link', { name: ids.seededChatTitle })
-    ).toHaveCount(0);
+    await expect(menu.getByRole('link', { name: 'Code', exact: true })).toBeVisible();
     await expect(menu.getByRole('link', { name: 'New code project' })).toBeVisible();
+    await expect(menu.getByRole('link', { name: ids.seededName })).toHaveCount(0);
+    await expect(menu.getByRole('link', { name: ids.seededChatTitle })).toHaveCount(0);
     if (!mobile) await shot('code-menu.png');
     if (mobile) await page.getByRole('button', { name: 'Close menu' }).click();
 
@@ -220,10 +218,19 @@ test.describe('code projects', () => {
     await seededRow.click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
     await expect(page.getByText('Your code project')).toBeVisible();
-    const repository = page
-      .getByRole('heading', { level: 2, name: 'Repository' })
-      .locator('..')
-      .locator('..');
+    // A code project keeps no files of its own; its chats are listed here.
+    await expect(main.getByRole('heading', { level: 2, name: 'Files' })).toHaveCount(0);
+    await expect(
+      main.getByRole('heading', { level: 2, name: 'Chats in this project' })
+    ).toBeVisible();
+    await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
+    // A subheading sits under its title, not beside it.
+    const memoryTitle = main.getByRole('heading', { level: 2, name: 'Memory' });
+    const memoryNote = main.getByText("Notes the assistant keeps across this project's chats.");
+    expect((await memoryNote.boundingBox())!.y).toBeGreaterThan(
+      (await memoryTitle.boundingBox())!.y + 10
+    );
+    const repository = sectionOf('Repository');
     await expect(repository.getByText('Not cloned')).toBeVisible();
     await expect(repository.getByText('acme/billing-service')).toBeVisible();
     await expectNoHorizontalOverflow(page);
@@ -235,12 +242,25 @@ test.describe('code projects', () => {
     await expect(repository.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
     await shot('code-project-ready.png');
 
+    // ── A person's files go into the checkout, not onto the project ──
+    await repository.getByRole('button', { name: 'Add files' }).click();
+    const addFiles = repository.getByRole('form', { name: 'Add files to the repository' });
+    await addFiles.getByLabel('Folder (optional)').fill('docs');
+    await addFiles.getByLabel('Files').setInputFiles({
+      name: 'notes.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Notes\n'),
+    });
+    await shot('code-project-add-files.png');
+    await addFiles.getByRole('button', { name: 'Add to checkout' }).click();
+    await expect(
+      repository.getByText(/Added docs\/notes\.md to the checkout, uncommitted/)
+    ).toBeVisible();
+    await expect(addFiles).toHaveCount(0);
+
     // ── Environment: none yet; paste a .env with one bad line; names appear,
     //    values never do; the bad line is reported; remove one; replace all ──
-    const environment = page
-      .getByRole('heading', { level: 2, name: 'Environment' })
-      .locator('..')
-      .locator('..');
+    const environment = sectionOf('Environment');
     await expect(environment.getByText('No environment variables.')).toBeVisible();
     await environment.getByRole('button', { name: 'Add .env' }).click();
     await environment
@@ -299,14 +319,19 @@ test.describe('code projects', () => {
     await expect(page.getByText('Connect Bitbucket first')).toHaveCount(0);
     const create = page.getByRole('button', { name: 'Create and clone' });
     await expect(create).toBeDisabled();
-    await page.getByLabel('Name').fill(ids.newName);
-    await page.getByLabel('Repository').fill('notif');
+    await page.getByLabel('Name', { exact: true }).fill(ids.newName);
+    await page.getByLabel(/^Repository/).fill('notif');
     await expect(
       page.locator('#code-project-repos option[value="acme/notifications-gateway"]')
     ).toHaveCount(1);
-    await page.getByLabel('Repository').fill('acme/notifications-gateway');
-    await expect(page.getByLabel('Branch')).toHaveAttribute('placeholder', 'develop');
+    await page.getByLabel(/^Repository/).fill('acme/notifications-gateway');
+    await expect(page.getByLabel('Branch', { exact: true })).toHaveAttribute(
+      'placeholder',
+      'develop'
+    );
     await page.getByLabel(/^\.env/).fill('SENDGRID_KEY=sg_live_abc\n');
+    // The developer's brief is there to start from, and can be replaced.
+    await expect(page.getByLabel(/^Instructions/)).toHaveValue(/test-first/);
     await page.getByLabel(/^Instructions/).fill('Run pnpm test before every commit.');
     await expectNoHorizontalOverflow(page);
     await shot('code-new.png');
@@ -314,16 +339,10 @@ test.describe('code projects', () => {
     await create.click();
     await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code/[0-9a-f-]{36}$`));
     await expect(page.getByRole('heading', { level: 1, name: ids.newName })).toBeVisible();
-    const newRepo = page
-      .getByRole('heading', { level: 2, name: 'Repository' })
-      .locator('..')
-      .locator('..');
+    const newRepo = sectionOf('Repository');
     await expect(newRepo.getByText('acme/notifications-gateway')).toBeVisible();
     await expect(newRepo.getByText('Ready')).toBeVisible({ timeout: 15_000 });
-    const newEnv = page
-      .getByRole('heading', { level: 2, name: 'Environment' })
-      .locator('..')
-      .locator('..');
+    const newEnv = sectionOf('Environment');
     await expect(newEnv.getByText('SENDGRID_KEY')).toBeVisible();
     await expect(page.getByText('sg_live_abc')).toHaveCount(0);
     await expect(page.getByText('Run pnpm test before every commit.')).toBeVisible();
@@ -351,9 +370,8 @@ test.describe('code projects', () => {
     }
     await page.goto(`/${E2E_SLUG}/code/${ids.seededProjectId}`);
     const repository = page
-      .getByRole('heading', { level: 2, name: 'Repository' })
-      .locator('..')
-      .locator('..');
+      .getByRole('main')
+      .locator('section', { has: page.getByRole('heading', { level: 2, name: 'Repository' }) });
     await repository.getByRole('button', { name: 'Clone', exact: true }).click();
     await expect(repository.getByText('Clone failed', { exact: true })).toBeVisible({
       timeout: 15_000,

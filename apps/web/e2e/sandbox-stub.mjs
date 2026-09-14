@@ -45,6 +45,12 @@ function error(response, status, type, message) {
   json(response, status, { error: { type, message } });
 }
 
+function wire(workspace) {
+  const rest = { ...workspace };
+  delete rest.files;
+  return rest;
+}
+
 function envWire(variable) {
   return { ...variable };
 }
@@ -99,6 +105,8 @@ function handleWorkspaces(op, body, response) {
         createdAt: now.toISOString(),
         lastUsedAt: now.toISOString(),
         expiresAt: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+        /** Uploaded bytes by path; never on the wire, only counted. */
+        files: new Map(),
       };
       scope.workspaces.set(workspace.id, workspace);
       // A repository named "fails" clones badly, so the page's failure
@@ -114,14 +122,14 @@ function handleWorkspaces(op, body, response) {
           workspace.sizeBytes = 4_321_000;
         }
       }, CLONE_MS);
-      return json(response, 200, { workspace });
+      return json(response, 200, { workspace: wire(workspace) });
     }
     case 'list':
-      return json(response, 200, { workspaces: [...scope.workspaces.values()] });
+      return json(response, 200, { workspaces: [...scope.workspaces.values()].map(wire) });
     case 'get': {
       const workspace = scope.workspaces.get(body.id ?? '');
       if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
-      return json(response, 200, { workspace });
+      return json(response, 200, { workspace: wire(workspace) });
     }
     case 'delete': {
       const workspace = scope.workspaces.get(body.id ?? '');
@@ -181,6 +189,34 @@ const server = createServer((request, response) => {
     return error(response, 401, 'unauthorized');
   }
   if (request.method !== 'POST') return error(response, 405, 'method_not_allowed');
+  // The one verb whose body is the file: it lands in memory, by path.
+  if (url.pathname === '/v1/workspaces/upload') {
+    const query = Object.fromEntries(url.searchParams);
+    if (!query.tenantId || !query.subject) return error(response, 400, 'bad_request');
+    const scope = scopeOf(query);
+    const workspace = scope.workspaces.get(query.id ?? '');
+    if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+    if (workspace.status !== 'ready')
+      return error(
+        response,
+        409,
+        'not_ready',
+        'That workspace is still cloning; check again shortly.'
+      );
+    if (!query.path || query.path.startsWith('.git/') || query.path.includes('..'))
+      return error(response, 400, 'bad_path', 'That path is not usable inside the workspace.');
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const bytes = Buffer.concat(chunks);
+      if (bytes.byteLength === 0)
+        return error(response, 400, 'bad_request', 'The request body was empty.');
+      const created = !workspace.files.has(query.path);
+      workspace.files.set(query.path, bytes);
+      json(response, 200, { path: query.path, created, sizeBytes: bytes.byteLength });
+    });
+    return;
+  }
   const op = url.pathname.startsWith('/v1/') ? url.pathname.slice(4) : '';
   void readBody(request).then((body) => {
     if (!body.tenantId || !body.subject) return error(response, 400, 'bad_request');

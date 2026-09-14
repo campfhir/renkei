@@ -24,17 +24,16 @@ export interface ProjectListItem {
 }
 
 /**
- * The menu's two sections: chats and chat projects under Chat; code
- * projects — and the chats inside them — under Code. A chat in a code
- * project is never listed among the person's ordinary chats: it belongs
- * to its repository, and the Code section is where it is found.
+ * The menu's Chat section: chats and chat projects. Code projects are
+ * kept apart — the Code page lists them, and a chat in a code project
+ * is never listed among the person's ordinary chats: it belongs to its
+ * repository, and the project's page is where it is found.
  */
 export interface ChatSidebarData {
   chats: ChatListItem[];
   projects: ProjectListItem[];
   code: {
     projects: ProjectListItem[];
-    chats: ChatListItem[];
   };
 }
 
@@ -133,7 +132,6 @@ export async function loadChatSidebar(
     projects: projects.filter((project) => project.kind === 'chat').map(listItem),
     code: {
       projects: projects.filter((project) => project.kind === 'code').map(listItem),
-      chats: allChats.filter(inCode),
     },
   };
 }

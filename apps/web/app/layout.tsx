@@ -51,7 +51,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    // `data-theme` is put on <html> by the tenant layout's inline theme
+    // script before React hydrates (components/theme-script.tsx), so the
+    // attribute the browser has is never one the server rendered — which is
+    // exactly the one place a hydration mismatch is expected and harmless.
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

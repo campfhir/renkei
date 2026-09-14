@@ -53,7 +53,8 @@ export type AuditAction =
   | 'code.project.cloned'
   | 'code.project.deleted'
   | 'code.env.replaced'
-  | 'code.env.deleted';
+  | 'code.env.deleted'
+  | 'code.files.uploaded';
 
 export interface AuditEventInput {
   tenantId: string;

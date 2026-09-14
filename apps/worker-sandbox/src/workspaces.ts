@@ -471,7 +471,7 @@ export async function readWorkspaceFile(
 export async function writeWorkspaceFile(
   dir: string,
   relativePath: string,
-  content: string,
+  content: string | Buffer,
   identity: ExecIdentity | null
 ): Promise<{ created: boolean; sizeBytes: number }> {
   const path = await containedPath(dir, relativePath);
@@ -506,7 +506,7 @@ export async function writeWorkspaceFile(
     await mkdir(parent, { mode: 0o755 });
     await chownIf(parent, identity);
   }
-  const bytes = Buffer.from(content, 'utf8');
+  const bytes = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
   await writeFileBytes(path, bytes, { mode: 0o644 });
   await chownIf(path, identity);
   return { created, sizeBytes: bytes.byteLength };

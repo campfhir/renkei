@@ -24,6 +24,7 @@ import {
 } from '@/lib/chat/projects';
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
+import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 import { replaceProjectEnv, startProjectClone } from '@/lib/code/projects';
 import { resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
 import { getOrigin } from '@/lib/get-origin';
@@ -66,7 +67,12 @@ export async function POST(
     branch = ref.ref;
   }
   const description = optionalString(body.description, 2_000) ?? null;
-  const instructions = optionalString(body.instructions, PROJECT_INSTRUCTIONS_MAX_CHARS) ?? null;
+  // Instructions left out of the request get the standing developer's
+  // brief; instructions sent blank were cleared on purpose and stay so.
+  const instructions =
+    body.instructions === undefined
+      ? DEFAULT_CODE_INSTRUCTIONS
+      : (optionalString(body.instructions, PROJECT_INSTRUCTIONS_MAX_CHARS) ?? null);
   const toolConfig = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
   const dotenv = typeof body.env === 'string' ? body.env : '';
   if (dotenv.length > DOTENV_MAX_CHARS) return jsonError(413, 'invalid', 'The .env is too large.');

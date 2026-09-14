@@ -35,6 +35,7 @@ import {
   READ_MAX_BYTES,
   WORKSPACE_MAX_BYTES,
   WORKSPACE_MAX_PER_SUBJECT,
+  UPLOAD_MAX_BYTES,
   WRITE_MAX_CHARS,
   clipOutput,
   execTimeoutMs,
@@ -894,6 +895,69 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     'git-pull': gitPull,
   };
 
+  /**
+   * `/v1/workspaces/upload` — the one workspace verb whose body IS the
+   * file: a person adding a file to the checkout from the project page
+   * (an image, a fixture, a document) rather than the model writing
+   * text. Metadata rides the query string, as the staged-file write does.
+   * The bytes land as they are, uncommitted, owned by the project's uid.
+   */
+  async function handleUpload(url: URL, bytes: Buffer, response: ServerResponse): Promise<void> {
+    if (!deps.enabled)
+      return sendError(
+        response,
+        503,
+        'workspaces_unavailable',
+        'Code workspaces are not enabled on this deployment.'
+      );
+    const tenantId = url.searchParams.get('tenantId') ?? '';
+    const subject = url.searchParams.get('subject') ?? '';
+    const id = url.searchParams.get('id') ?? '';
+    if (!tenantId || !subject || !id) return sendError(response, 400, 'bad_request');
+    const target = { tenantId, subject };
+    const path = validateWorkspacePath(url.searchParams.get('path'), { forWrite: true });
+    if (!path.ok || !path.path)
+      return sendError(
+        response,
+        400,
+        'bad_path',
+        path.ok ? 'A file path is required.' : path.message
+      );
+    if (bytes.byteLength === 0)
+      return sendError(response, 400, 'bad_request', 'The request body was empty.');
+    if (bytes.byteLength > UPLOAD_MAX_BYTES)
+      return sendError(response, 413, 'too_large', `A file is at most ${UPLOAD_MAX_BYTES} bytes.`);
+    const workspace = await loadReady(target, { id }, response);
+    if (!workspace) return;
+    if (workspace.sizeBytes + bytes.byteLength > WORKSPACE_MAX_BYTES) {
+      return sendError(
+        response,
+        413,
+        'quota_exceeded',
+        'The workspace is over its size limit; remove some files first.'
+      );
+    }
+    try {
+      const written = await writeWorkspaceFile(
+        workspaceDir(workspace.storageKey),
+        path.path,
+        bytes,
+        identityFor(workspace)
+      );
+      await store.touchWorkspace(db, workspace.id);
+      sendJson(response, 200, {
+        path: path.path,
+        created: written.created,
+        sizeBytes: written.sizeBytes,
+      });
+    } catch (error) {
+      if (error instanceof WorkspacePathError) {
+        return sendError(response, 400, 'bad_path', error.message);
+      }
+      throw error;
+    }
+  }
+
   async function handleWorkspaces(op: string, body: Body, response: ServerResponse): Promise<void> {
     if (!deps.enabled)
       return sendError(
@@ -949,7 +1013,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
   }
 
-  return { handleWorkspaces, handleEnv, sweep };
+  return { handleWorkspaces, handleUpload, handleEnv, sweep };
 }
 
 /** Exposed for tests: the contained-path check the file verbs rely on. */

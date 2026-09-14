@@ -241,67 +241,71 @@ export default function ProjectView({
           )}
         </section>
 
-        <section className={sectionClass}>
-          <div className="mb-2 flex items-center gap-2">
-            <h2 className="text-sm font-semibold">Files</h2>
-            {canEdit ? (
-              <>
-                <button
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => fileInput.current?.click()}
-                  className="ml-auto rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
-                >
-                  {uploading ? 'Uploading…' : 'Add files'}
-                </button>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(event) => {
-                    void upload(event.target.files);
-                    event.target.value = '';
-                  }}
-                />
-              </>
-            ) : null}
-          </div>
-          {files.length === 0 ? (
-            <p className="text-sm text-gray-500">
-              No files yet. Files here are readable in every chat of the project.
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {files.map((file) => (
-                <AttachmentChip
-                  key={file.id}
-                  tenantId={tenantId}
-                  attachment={file}
-                  onRemove={canEdit ? () => void removeFile(file.id) : undefined}
-                />
-              ))}
+        {variant === 'code' ? null : (
+          <section className={sectionClass}>
+            <div className="mb-2 flex items-center gap-2">
+              <h2 className="text-sm font-semibold">Files</h2>
+              {canEdit ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={uploading}
+                    onClick={() => fileInput.current?.click()}
+                    className="ml-auto rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                  >
+                    {uploading ? 'Uploading…' : 'Add files'}
+                  </button>
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => {
+                      void upload(event.target.files);
+                      event.target.value = '';
+                    }}
+                  />
+                </>
+              ) : null}
             </div>
-          )}
-          {fileError ? <p className="mt-1 text-xs text-red-600">{fileError}</p> : null}
-        </section>
+            {files.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                No files yet. Files here are readable in every chat of the project.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {files.map((file) => (
+                  <AttachmentChip
+                    key={file.id}
+                    tenantId={tenantId}
+                    attachment={file}
+                    onRemove={canEdit ? () => void removeFile(file.id) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+            {fileError ? <p className="mt-1 text-xs text-red-600">{fileError}</p> : null}
+          </section>
+        )}
 
         <section className={sectionClass}>
-          <div className="mb-2 flex items-center gap-2">
-            <h2 className="text-sm font-semibold">Memory</h2>
-            <span className="text-xs text-gray-500">
+          <div className="mb-2">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold">Memory</h2>
+              {canEdit && memory.entries.length > 0 ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void forget('all')}
+                  className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
+                >
+                  Forget all
+                </button>
+              ) : null}
+            </div>
+            <p className="text-xs text-gray-500">
               Notes the assistant keeps across this project's chats.
-            </span>
-            {canEdit && memory.entries.length > 0 ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void forget('all')}
-                className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
-              >
-                Forget all
-              </button>
-            ) : null}
+            </p>
           </div>
           {memory.summary ? (
             <p className="mb-2 rounded-md bg-gray-50 p-2 text-sm dark:bg-gray-900">
@@ -414,7 +418,7 @@ export default function ProjectView({
         <Modal title="Delete project" onClose={() => setConfirmDelete(false)}>
           <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">
             {variant === 'code'
-              ? 'The project’s checkout on the sandbox, its environment variables, files, memory and shares are deleted — anything not pushed is lost. Chats inside it are kept and simply leave the project.'
+              ? 'The project’s checkout on the sandbox, its environment variables, memory and shares are deleted — anything not pushed is lost. Chats inside it are kept and simply leave the project.'
               : "The project's files, memory and shares are deleted. Chats inside it are kept and simply leave the project."}
           </p>
           <DialogFooter

@@ -49,6 +49,8 @@ export const READ_MAX_CHARS = 200_000;
 /** A file the read tool refuses outright — a binary or a bundle is not something to read as text. */
 export const READ_MAX_BYTES = 4 * 1_048_576;
 export const WRITE_MAX_CHARS = 1_000_000;
+/** A file a person uploads into the checkout from the project page, as bytes. */
+export const UPLOAD_MAX_BYTES = 50 * 1_048_576;
 export const FIND_MAX_RESULTS = 500;
 export const GREP_MAX_MATCHES = 200;
 export const GREP_MAX_LINE_CHARS = 400;

@@ -13,6 +13,7 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 
 interface RepoChoice {
   fullName: string;
@@ -36,7 +37,7 @@ export default function NewCodeProject({
   const [repository, setRepository] = useState('');
   const [branch, setBranch] = useState('');
   const [env, setEnv] = useState('');
-  const [instructions, setInstructions] = useState('');
+  const [instructions, setInstructions] = useState(DEFAULT_CODE_INSTRUCTIONS);
   const [choices, setChoices] = useState<RepoChoice[]>([]);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,7 +71,7 @@ export default function NewCodeProject({
         repository: repository.trim(),
         branch: branch.trim(),
         env,
-        instructions: instructions.trim() || null,
+        instructions: instructions.trim(),
       }
     );
     setBusy(false);
@@ -177,16 +178,21 @@ export default function NewCodeProject({
 
         <label className="block text-sm">
           <span className="mb-1 block text-xs font-medium text-gray-500">
-            Instructions — what every chat in this project should know (optional)
+            Instructions — what every chat in this project should know
           </span>
           <textarea
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
-            rows={5}
+            rows={12}
             maxLength={20_000}
             placeholder="How to run the tests, the conventions to keep, what not to touch…"
             className={inputClass}
           />
+          <span className="mt-1 block text-xs text-gray-500">
+            A developer’s standing brief to start from — change it here or on the project’s page
+            later; add how this repository runs its tests, the conventions to keep, what not to
+            touch.
+          </span>
         </label>
 
         {error ? (
