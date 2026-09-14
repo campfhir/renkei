@@ -10,10 +10,10 @@ import { getOrigin } from '@/lib/get-origin';
 import type { NextRequest } from 'next/server';
 import { oauthBitbucketAuth, type BitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { bbJson, bbRawText, rec, str, values } from '@/lib/mcp-tools/bitbucket/client';
+import { listUserWorkspaces } from '@/lib/mcp-tools/bitbucket/workspaces';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
 const PAGE = 100;
-const MAX_WORKSPACES = 50;
 const README_MAX_CHARS = 60_000;
 const README_NAMES = ['README.md', 'readme.md', 'README.MD', 'Readme.md', 'README', 'README.txt'];
 
@@ -60,14 +60,12 @@ export function bitbucketAuthOf(context: {
 export async function listWorkspaces(
   auth: BitbucketAuth
 ): Promise<{ ok: true; workspaces: BrowseWorkspace[] } | { ok: false; error: string }> {
-  const listed = await bbJson(auth, ['account'], `/workspaces?pagelen=${MAX_WORKSPACES}`);
+  const listed = await listUserWorkspaces(auth, ['account']);
   if (!listed.ok) return listed;
-  const workspaces: BrowseWorkspace[] = [];
-  for (const workspace of values(listed.body)) {
-    const slug = str(workspace.slug);
-    if (slug) workspaces.push({ slug, name: str(workspace.name) || slug });
-  }
-  return { ok: true, workspaces };
+  return {
+    ok: true,
+    workspaces: listed.workspaces.map(({ slug, name }) => ({ slug, name })),
+  };
 }
 
 export async function listProjects(
