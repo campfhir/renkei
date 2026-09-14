@@ -23,7 +23,7 @@
  *  - Any Delete           → modal confirmation before the API call.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConnectorIcon from '@/components/connector-icon';
@@ -60,6 +60,39 @@ export interface NotificationCard {
   createdAt: string;
 }
 
+/** One row as the polling/paging API (route.ts) shapes it, camelCased. */
+interface NotificationApiRow {
+  id: string;
+  kind: string;
+  connector: string | null;
+  entity: string | null;
+  headline: string;
+  refUrl: string | null;
+  agentId: string | null;
+  agentName: string | null;
+  runId: string | null;
+  meta: unknown;
+  readAt: string | null;
+  createdAt: string;
+}
+
+function toCard(row: NotificationApiRow): NotificationCard {
+  return {
+    id: row.id,
+    kind: row.kind,
+    connector: row.connector,
+    entity: row.entity,
+    headline: row.headline,
+    refUrl: row.refUrl,
+    agentId: row.agentId,
+    agentName: row.agentName,
+    runId: row.runId,
+    meta: row.meta ?? null,
+    unread: row.readAt === null,
+    createdAt: row.createdAt,
+  };
+}
+
 /** A day heading a person recognises without doing arithmetic. */
 function dayLabel(when: Date, today: Date): string {
   const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -74,6 +107,7 @@ export default function NotificationsList({
   slug,
   rows,
   unreadCount,
+  initialHasMore,
 }: {
   tenantId: string;
   slug: string;
@@ -85,6 +119,8 @@ export default function NotificationsList({
    * "Mark all as read" can promise to reach rows that never rendered.
    */
   unreadCount: number;
+  /** Whether the server page's own query was cut off at PAGE_SIZE. */
+  initialHasMore: boolean;
 }) {
   const router = useRouter();
   const { refresh } = useNotifications();
@@ -101,10 +137,27 @@ export default function NotificationsList({
   // so a still-loading server refresh doesn't flash the button back.
   const [allMarkedRead, setAllMarkedRead] = useState(false);
 
+  // "Show more" pages: older rows fetched past what the server page sent,
+  // appended after it. `rows` itself is re-queried (freshest PAGE_SIZE) on
+  // every AutoRefresh, so these are kept separate and only ever grow —
+  // losing them on a background refresh would undo the person's own click.
+  const [extraRows, setExtraRows] = useState<NotificationCard[]>([]);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // Deduped by id: a refresh can shift `rows`' window enough to overlap the
+  // oldest `extraRows` page at the edges, and `rows` — always the current
+  // truth — wins.
+  const allRows = useMemo(() => {
+    const seen = new Set(rows.map((row) => row.id));
+    const older = extraRows.filter((row) => !seen.has(row.id));
+    return [...rows, ...older];
+  }, [rows, extraRows]);
+
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const selectionMode = selected.size > 0;
-  const visible = rows.filter((row) => !removed.has(row.id));
+  const visible = allRows.filter((row) => !removed.has(row.id));
   const allSelected = selectionMode && selected.size === visible.length;
 
   // One open menu at a time; outside click or Escape closes it — the same
@@ -200,7 +253,7 @@ export default function NotificationsList({
       });
       setReadOverride((current) => {
         const next = new Map(current);
-        for (const row of rows) next.set(row.id, true);
+        for (const row of allRows) next.set(row.id, true);
         return next;
       });
       setAllMarkedRead(true);
@@ -210,6 +263,41 @@ export default function NotificationsList({
       // The next poll or refresh reconciles; the optimistic state stands.
     } finally {
       setMarkingAll(false);
+    }
+  }
+
+  /**
+   * "Show more": one page further back than whatever's currently loaded,
+   * cursored on the oldest row's own timestamp so it can't skip or repeat
+   * rows regardless of how many pages are already in.
+   */
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    const oldest = allRows[allRows.length - 1];
+    if (!oldest) {
+      setHasMore(false);
+      return;
+    }
+    setLoadingMore(true);
+    try {
+      const url = new URL(`/api/tenant/${tenantId}/notifications`, window.location.origin);
+      url.searchParams.set('before', oldest.createdAt);
+      url.searchParams.set('limit', '100');
+      const response = await fetch(url.toString());
+      if (!response.ok) return;
+      const body: unknown = await response.json();
+      const parsed: { notifications?: NotificationApiRow[] } =
+        typeof body === 'object' && body !== null ? body : {};
+      const fresh = Array.isArray(parsed.notifications) ? parsed.notifications : [];
+      const mapped = fresh.map(toCard);
+      setExtraRows((current) => [...current, ...mapped]);
+      // Fewer than asked for means the table ran out, not the limit.
+      if (mapped.length < 100) setHasMore(false);
+    } catch {
+      // Leave hasMore as it was — the button stays up so the person can
+      // just try again, same as any other network hiccup on this page.
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -543,6 +631,26 @@ export default function NotificationsList({
           </ul>
         </section>
       ))}
+
+      {/* Floating "Show more" — the same pill as chat's "Jump to latest"
+          (message-list.tsx), same styling, different positioning: that one
+          is `sticky` inside a bounded, scrolling message pane; this page
+          has no such pane, the whole document scrolls, so this is `fixed`
+          to the viewport instead — a floating CTA rather than a sticky
+          footer. Hidden in selection mode so it never competes with the
+          fixed multi-select footer below. */}
+      {hasMore && !selectionMode ? (
+        <div className="fixed inset-x-0 bottom-4 z-20 flex justify-center">
+          <button
+            type="button"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+            className="rounded-full border border-gray-300 bg-white px-4 py-1.5 text-xs font-medium shadow-lg hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+          >
+            {loadingMore ? 'Loading…' : 'Show more'}
+          </button>
+        </div>
+      ) : null}
 
       {/* Sticky multi-select footer — appears with the first selected card.
           Three rows, three visual weights: select all/none is a neutral

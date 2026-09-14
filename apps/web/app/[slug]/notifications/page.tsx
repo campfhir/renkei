@@ -35,7 +35,9 @@ export default async function NotificationsPage({
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/notifications`));
 
   const dbResult = getDatabase();
-  const rows = dbResult.ok
+  // One extra row, never rendered, just to answer "is there more?" without
+  // a second count query — PAGE_SIZE + 1 rows back means yes.
+  const fetched = dbResult.ok
     ? await dbResult.val
         .selectFrom('agent_notifications')
         .selectAll()
@@ -44,9 +46,11 @@ export default async function NotificationsPage({
         .where('tenant_id', '=', tenant.id)
         .where('subject', '=', session.subject)
         .orderBy('created_at', 'desc')
-        .limit(PAGE_SIZE)
+        .limit(PAGE_SIZE + 1)
         .execute()
     : [];
+  const hasMore = fetched.length > PAGE_SIZE;
+  const rows = hasMore ? fetched.slice(0, PAGE_SIZE) : fetched;
 
   // A person can have more unread notifications than fit in PAGE_SIZE — the
   // ones past it never render, so they can never be clicked read one at a
@@ -104,6 +108,7 @@ export default async function NotificationsPage({
           slug={slug}
           rows={cards}
           unreadCount={unreadCount}
+          initialHasMore={hasMore}
         />
       )}
     </div>

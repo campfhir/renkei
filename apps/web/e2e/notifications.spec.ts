@@ -124,6 +124,80 @@ async function seedNotifications(): Promise<void> {
   }
 }
 
+/**
+ * More than PAGE_SIZE (100) unread rows — the case the render cap used to
+ * make unreachable. 105 rows, all unread, newest first: index 0 is "now",
+ * index 104 is 104 minutes ago, so indices 100-104 fall past the page and
+ * only appear after "Show more".
+ */
+async function seedManyNotifications(count: number): Promise<void> {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query('DELETE FROM agent_notifications WHERE tenant_id = $1', [E2E_TENANT_ID]);
+    for (let index = 0; index < count; index += 1) {
+      await client.query(
+        `INSERT INTO agent_notifications
+           (id, tenant_id, subject, kind, category, connector, tool, entity, headline,
+            ref_url, agent_id, agent_name, created_at)
+         VALUES (gen_random_uuid(),$1,$2,'act','created','jira','jira_create_issue','issue',
+                 $3,null,$4,'Triage yesterday into tickets', now() - ($5 || ' minutes')::interval)`,
+        [
+          E2E_TENANT_ID,
+          E2E_SUBJECT,
+          `Notification ${String(index).padStart(3, '0')}`,
+          AGENT_DEEP_ID,
+          String(index),
+        ]
+      );
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+test('notifications — mark all as read reaches rows past the page, show more loads them', async ({
+  page,
+}, testInfo) => {
+  await seedManyNotifications(105);
+  await page.goto(`/${E2E_SLUG}/notifications`);
+  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+
+  // The banner reports the TRUE total, not just what rendered.
+  await expect(page.getByText('105 unread (some not shown below)')).toBeVisible();
+  const markAllRead = page.getByRole('button', { name: 'Mark all as read' });
+  await expect(markAllRead).toBeVisible();
+
+  // Only the newest 100 are on the page; the oldest 5 need "Show more".
+  await expect(page.getByText('Notification 099', { exact: true })).toBeVisible();
+  await expect(page.getByText('Notification 100', { exact: true })).toHaveCount(0);
+
+  const showMore = page.getByRole('button', { name: 'Show more' });
+  await expect(showMore).toBeVisible();
+  await shot(page, testInfo, 'review-notifications-show-more-and-mark-all', false);
+
+  await showMore.click();
+  await expect(page.getByText('Notification 104', { exact: true })).toBeVisible();
+  // Exactly 105 rows: one "Show more" click exhausts the remaining 5, so
+  // the button retires rather than offering another empty page.
+  await expect(showMore).toHaveCount(0);
+
+  // "Mark all as read" reaches every row, including the 5 that only just
+  // loaded and the ones that never did — a single `{ all: true }` call,
+  // not one per visible row.
+  await markAllRead.click();
+  await expect(markAllRead).toHaveCount(0);
+  await expect(page.getByText(/\d+ unread/)).toHaveCount(0);
+
+  // Reload to prove the server actually persisted it beyond the optimistic
+  // client state — this is the bug report's exact complaint: rows past the
+  // render cap that could never be marked read before.
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+  await expect(page.getByText(/\d+ unread/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
+});
+
 test('canvas — the fixed mark in the corner', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
   await expect(page.getByRole('button', { name: `Edit loop: ${DEEP_LOOP_NAME}` })).toBeVisible();
