@@ -395,8 +395,8 @@ function WorkFold({
     <details className={`chat-fold ${failed ? 'chat-fold-error' : ''}`}>
       <summary>
         {icon}
-        <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
         {label}
+        <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
       </summary>
       <ol className="space-y-2">
         {shown.map((step, index) => {
@@ -422,15 +422,15 @@ function WorkFold({
                   <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
                     <summary>
                       <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
-                      <Icon
-                        path={ICONS.chevron}
-                        className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
-                      />
                       {pending ? 'Calling ' : step.result?.isError ? 'Failed: ' : 'Called '}
                       <span className="font-medium" title={step.block.name}>
                         {friendlyToolName(step.block.name, null)}
                       </span>
                       {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
+                      <Icon
+                        path={ICONS.chevron}
+                        className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
+                      />
                     </summary>
                     <div className="space-y-2">
                       <div>
