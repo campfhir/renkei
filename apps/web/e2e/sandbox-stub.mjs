@@ -281,7 +281,13 @@ Invoices, dunning and the nightly jobs.
 
 function handleBitbucket(url, response) {
   const path = url.pathname.slice('/bitbucket/2.0'.length);
-  if (path === '/workspaces') return json(response, 200, { values: BITBUCKET.workspaces });
+  // The membership listing the app reads (bare /workspaces is deprecated
+  // and refuses newer tokens): workspace_access rows wrapping each workspace.
+  if (path === '/user/workspaces') {
+    return json(response, 200, {
+      values: BITBUCKET.workspaces.map((workspace) => ({ administrator: true, workspace })),
+    });
+  }
   const projects = /^\/workspaces\/([^/]+)\/projects$/.exec(path);
   if (projects) {
     return json(response, 200, { values: BITBUCKET.projects[projects[1]] ?? [] });
