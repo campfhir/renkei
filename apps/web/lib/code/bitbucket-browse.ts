@@ -12,6 +12,7 @@ import { oauthBitbucketAuth, type BitbucketAuth } from '@/lib/mcp-tools/bitbucke
 import { bbJson, bbRawText, rec, str, values } from '@/lib/mcp-tools/bitbucket/client';
 import { listUserWorkspaces } from '@/lib/mcp-tools/bitbucket/workspaces';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
+import { repoSlugFromName } from './repo-slug';
 
 const PAGE = 100;
 const README_MAX_CHARS = 60_000;
@@ -131,6 +132,47 @@ export async function listRepositories(
   }
   repos.sort((a, b) => (b.updatedOn ?? '').localeCompare(a.updatedOn ?? ''));
   return { ok: true, repos };
+}
+
+/**
+ * A brand-new, empty repository under a workspace's project — for the
+ * new-project form's "Create new repository" tab. The slug is derived
+ * from the name (Bitbucket's URL takes the slug, not the display name);
+ * the repository starts private with nothing in it, so the caller still
+ * gets no branch back — the first chat's clone is what puts anything on it.
+ */
+export async function createRepository(
+  auth: BitbucketAuth,
+  input: { workspace: string; project: string; name: string }
+): Promise<{ ok: true; repo: RepoChoice } | { ok: false; error: string }> {
+  const workspace = input.workspace.trim();
+  const project = input.project.trim();
+  const name = input.name.trim();
+  if (!workspace) return { ok: false, error: 'Pick a workspace.' };
+  if (!project) return { ok: false, error: 'Pick a project.' };
+  if (!name) return { ok: false, error: 'Give the repository a name.' };
+  const slug = repoSlugFromName(name);
+  if (!slug) {
+    return { ok: false, error: 'That name has no characters a repository slug can use.' };
+  }
+  const created = await bbJson(
+    auth,
+    ['repository:admin'],
+    `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`,
+    { method: 'POST', json: { scm: 'git', name, project: { key: project }, is_private: true } }
+  );
+  if (!created.ok) return created;
+  const repo = created.body;
+  return {
+    ok: true,
+    repo: {
+      fullName: str(repo.full_name) || `${workspace}/${slug}`,
+      name: str(repo.name) || name,
+      projectKey: str(rec(repo.project).key) || project,
+      mainBranch: str(rec(repo.mainbranch).name) || null,
+      updatedOn: str(repo.updated_on) || null,
+    },
+  };
 }
 
 export interface SourceEntry {

@@ -3,10 +3,11 @@
 /**
  * The chat list under the app menu's Chat section, on every page: mine
  * grouped by day (archived ones behind a switch), then the ones shared
- * with me; each row names its project underneath. Row actions live
- * behind a "⋯" menu — the notifications list's idiom — and every
- * mutation goes through a route and then router.refresh(), so the
- * layout's server data is the truth.
+ * with me; a row is just its title — no project or owner subheading here,
+ * the chat's own title bar and the Projects/Code pages already carry that.
+ * Row actions live behind a "⋯" menu — the notifications list's idiom —
+ * and every mutation goes through a route and then router.refresh(), so
+ * the layout's server data is the truth.
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -271,23 +272,6 @@ function ChatRow({
         {chat.archived ? (
           <span className="ml-1.5 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
             archived
-          </span>
-        ) : null}
-        {chat.projectName || chat.ownerName ? (
-          <span className="flex items-center gap-1 truncate text-[11px] font-normal text-gray-500">
-            {chat.projectName ? (
-              <>
-                <Icon path={ICONS.folder} className="h-3 w-3 shrink-0" />
-                <span className="truncate">{chat.projectName}</span>
-              </>
-            ) : null}
-            {chat.ownerName ? (
-              <span className="truncate">
-                {chat.projectName ? '· ' : ''}
-                {chat.via === 'project' ? 'by ' : 'Shared by '}
-                {chat.ownerName}
-              </span>
-            ) : null}
           </span>
         ) : null}
       </Link>

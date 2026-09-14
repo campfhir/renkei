@@ -88,7 +88,7 @@ export interface ChatListItem {
   id: string;
   title: string | null;
   projectId: string | null;
-  /** The project's name, for the list's subheading; null outside a project. */
+  /** The project's name; null outside a project. */
   projectName: string | null;
   updatedAt: string;
   lastMessageAt: string | null;

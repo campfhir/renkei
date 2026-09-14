@@ -14,7 +14,7 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('@/lib/get-origin', () => ({ getOrigin: jest.fn() }));
 
 import type { BitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
-import { listRepositories, listWorkspaces } from './bitbucket-browse';
+import { createRepository, listRepositories, listWorkspaces } from './bitbucket-browse';
 
 interface Route {
   match: string;
@@ -24,11 +24,13 @@ interface Route {
 
 let routes: Route[] = [];
 let requests: string[] = [];
+let posts: { path: string; json: unknown }[] = [];
 
 const stubAuth: BitbucketAuth = {
   kind: 'pat',
-  async fetch(_scopes, path) {
+  async fetch(_scopes, path, init) {
     requests.push(path);
+    if (init?.method === 'POST') posts.push({ path, json: init.json });
     const route = routes.find((candidate) => path.includes(candidate.match));
     if (!route) return new Response(JSON.stringify({}), { status: 404 });
     return new Response(JSON.stringify(route.body ?? {}), { status: route.status ?? 200 });
@@ -46,6 +48,7 @@ const ANONYMOUS_404 = {
 beforeEach(() => {
   routes = [];
   requests = [];
+  posts = [];
 });
 
 describe('listWorkspaces', () => {
@@ -167,5 +170,58 @@ describe('listRepositories', () => {
     expect(requests).toEqual([
       `/repositories/nems?pagelen=100&sort=-updated_on&q=${encodeURIComponent('project.key = "BILL"')}`,
     ]);
+  });
+});
+
+describe('createRepository', () => {
+  it('posts to the slugged path under the workspace and project, empty and private', async () => {
+    routes = [
+      {
+        match: '/repositories/nems/billing-service',
+        body: {
+          full_name: 'nems/billing-service',
+          name: 'Billing Service',
+          project: { key: 'BILL' },
+        },
+      },
+    ];
+    const created = await createRepository(stubAuth, {
+      workspace: 'nems',
+      project: 'BILL',
+      name: 'Billing Service',
+    });
+
+    expect(created).toEqual({
+      ok: true,
+      repo: {
+        fullName: 'nems/billing-service',
+        name: 'Billing Service',
+        projectKey: 'BILL',
+        mainBranch: null,
+        updatedOn: null,
+      },
+    });
+    expect(posts).toEqual([
+      {
+        path: '/repositories/nems/billing-service',
+        json: { scm: 'git', name: 'Billing Service', project: { key: 'BILL' }, is_private: true },
+      },
+    ]);
+  });
+
+  it('refuses without a workspace, project, or a usable name — no request made', async () => {
+    expect(await createRepository(stubAuth, { workspace: '', project: 'BILL', name: 'x' })).toEqual(
+      { ok: false, error: 'Pick a workspace.' }
+    );
+    expect(await createRepository(stubAuth, { workspace: 'nems', project: '', name: 'x' })).toEqual(
+      { ok: false, error: 'Pick a project.' }
+    );
+    expect(
+      await createRepository(stubAuth, { workspace: 'nems', project: 'BILL', name: '  ' })
+    ).toEqual({ ok: false, error: 'Give the repository a name.' });
+    expect(
+      await createRepository(stubAuth, { workspace: 'nems', project: 'BILL', name: '···' })
+    ).toEqual({ ok: false, error: 'That name has no characters a repository slug can use.' });
+    expect(requests).toEqual([]);
   });
 });
