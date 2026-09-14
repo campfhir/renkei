@@ -30,6 +30,8 @@ export interface SystemPromptInput {
       /** Why it is not ready, when it is not — cloning, or a clone that failed. */
       notReady: string | null;
       envNames: string[];
+      /** The checkout was cloned for this very turn. */
+      clonedNow?: boolean;
     } | null;
   } | null;
   /** Memory carried across every chat this person owns; null inside a project. */
@@ -81,7 +83,7 @@ const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools liste
  * secret) does well; the one that guesses at files or asks for a token
  * does not.
  */
-const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message on a new branch (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. For a change with independent parts, or an investigation that would flood this conversation, hand a self-contained task to a sub-agent with code_delegate (its own instructions, the same tools, no pushing) and read its report critically — you own the result. Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. Say what you changed and what you ran.`;
+const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. Whether to work on a new branch is your call from what the person asks: a change meant for review goes on a branch of its own, a quick fix or an experiment they want on the current branch stays there. For a change with independent parts, or an investigation that would flood this conversation, hand a self-contained task to a sub-agent with code_delegate (its own instructions, the same tools, no pushing) and read its report critically — you own the result. Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. Say what you changed and what you ran.`;
 
 function fileLine(file: { id: string; filename: string; contentType: string; sizeBytes: number }) {
   return `- ${file.filename} (${file.contentType}, ${Math.round(file.sizeBytes / 1024)} KB, attachment id ${file.id})`;
@@ -116,7 +118,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         `This is a code project on the repository ${code.repoFullName}` +
           (code.branch ? ` (branch ${code.branch})` : '') +
           (code.ready
-            ? `.${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}`
+            ? `.${code.clonedNow ? ' It was just cloned into the sandbox for this chat.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}`
             : `. Its checkout is not usable right now (${code.notReady ?? 'not ready'}), so the code_* tools are not available in this turn; say so if the person asks for work in the repository.`)
       );
     }

@@ -232,10 +232,97 @@ function handleEnv(op, body, response) {
   }
 }
 
+const BITBUCKET = {
+  workspaces: [
+    { slug: 'acme', name: 'Acme' },
+    { slug: 'acme-labs', name: 'Acme Labs' },
+  ],
+  projects: {
+    acme: [
+      { key: 'BILL', name: 'Billing' },
+      { key: 'NOTIF', name: 'Notifications' },
+    ],
+    'acme-labs': [{ key: 'LAB', name: 'Experiments' }],
+  },
+  repos: [
+    {
+      full_name: 'acme/billing-service',
+      name: 'billing-service',
+      project: { key: 'BILL' },
+      mainbranch: { name: 'main' },
+      updated_on: '2026-08-20T00:00:00Z',
+    },
+    {
+      full_name: 'acme/notifications-gateway',
+      name: 'notifications-gateway',
+      project: { key: 'NOTIF' },
+      mainbranch: { name: 'develop' },
+      updated_on: '2026-09-01T00:00:00Z',
+    },
+    {
+      full_name: 'acme-labs/prototype',
+      name: 'prototype',
+      project: { key: 'LAB' },
+      mainbranch: { name: 'main' },
+      updated_on: '2026-07-01T00:00:00Z',
+    },
+  ],
+};
+
+const README = `# Billing service
+
+Invoices, dunning and the nightly jobs.
+
+## Running it
+
+- \`pnpm install\`
+- \`pnpm test\`
+`;
+
+function handleBitbucket(url, response) {
+  const path = url.pathname.slice('/bitbucket/2.0'.length);
+  if (path === '/workspaces') return json(response, 200, { values: BITBUCKET.workspaces });
+  const projects = /^\/workspaces\/([^/]+)\/projects$/.exec(path);
+  if (projects) {
+    return json(response, 200, { values: BITBUCKET.projects[projects[1]] ?? [] });
+  }
+  const repos = /^\/repositories\/([^/]+)$/.exec(path);
+  if (repos) {
+    const q = url.searchParams.get('q') ?? '';
+    const name = /name ~ "([^"]*)"/.exec(q)?.[1]?.toLowerCase() ?? '';
+    const project = /project\.key = "([^"]*)"/.exec(q)?.[1] ?? '';
+    return json(response, 200, {
+      values: BITBUCKET.repos.filter(
+        (repo) =>
+          repo.full_name.startsWith(`${repos[1]}/`) &&
+          (!name || repo.name.includes(name)) &&
+          (!project || repo.project.key === project)
+      ),
+    });
+  }
+  const one = /^\/repositories\/([^/]+)\/([^/]+)$/.exec(path);
+  if (one) {
+    const repo = BITBUCKET.repos.find((entry) => entry.full_name === `${one[1]}/${one[2]}`);
+    return repo ? json(response, 200, repo) : error(response, 404, 'not_found');
+  }
+  const file = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.+)$/.exec(path);
+  if (file) {
+    if (decodeURIComponent(file[4]) !== 'README.md') return error(response, 404, 'not_found');
+    const payload = README;
+    response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+    return response.end(payload);
+  }
+  return error(response, 404, 'not_found');
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
   if (request.method === 'GET' && url.pathname === '/health')
     return json(response, 200, { ok: true });
+  // Bitbucket, stood in for: the app is pointed here with
+  // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
+  // README are exercised without the network.
+  if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(url, response);
   if (request.headers.authorization !== `Bearer ${API_KEY}`) {
     return error(response, 401, 'unauthorized');
   }

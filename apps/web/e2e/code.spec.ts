@@ -1,13 +1,13 @@
 /**
- * The Code section from a person's side: the index, a new code project
- * made through the form (a repository, a branch, a pasted .env with a
- * line that is not a variable), the project page following the clone to
- * Ready, the environment replaced and pruned, the repository re-pointed,
- * a chat started in the project (its title bar pointing back at /code),
- * the menu listing the project and its chat apart from ordinary chats,
- * and deletion. The sandbox worker is the stub in sandbox-stub.mjs; the
- * repository picker's Bitbucket call is answered here so the datalist is
- * exercised without a network. Screenshots land under
+ * The Code section from a person's side: the index and the menu, a
+ * project page before and after its checkout exists (with its README
+ * from Bitbucket, its tree, the developer's brief kept on Save, the
+ * environment replaced and pruned), a chat in it (back link, Add files
+ * into the checkout, Changes with its diff, Environment), a new project
+ * made through the form with the repository browsed on Bitbucket, and
+ * deletion. The sandbox worker AND Bitbucket are the stub in
+ * sandbox-stub.mjs (the app is pointed at it for both), so nothing here
+ * needs the network. Screenshots land under
  * test-results/screens/<project>/code-*.png for the eye.
  */
 
@@ -99,8 +99,7 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
       E2E_TENANT_ID,
       ids.newName,
     ]);
-    // A code project whose checkout is gone (never cloned, or expired): the
-    // page's "Not cloned" state, with Clone as the way back.
+    // A code project with no checkout yet — the first chat makes one.
     await client.query(
       `INSERT INTO chat_projects
          (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
@@ -139,22 +138,50 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-/** The Bitbucket picker, answered locally: no network, a known list. */
-async function answerRepoPicker(page: Page): Promise<void> {
-  await page.route('**/api/tenant/*/code/repos*', (route) =>
-    route.fulfill({
-      json: {
-        repos: [
-          {
-            fullName: 'acme/notifications-gateway',
-            mainBranch: 'develop',
-            updatedOn: '2026-09-01',
-          },
-          { fullName: 'acme/billing-service', mainBranch: 'main', updatedOn: '2026-08-20' },
-        ],
-      },
-    })
-  );
+/**
+ * A checkout for the seeded project, as a first chat would leave it: the
+ * stub worker clones it under the project's own scope and the row points
+ * at it — the page never clones anything itself.
+ */
+async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
+  const worker = process.env.SANDBOX_WORKER_URL ?? 'http://127.0.0.1:8092';
+  const headers = {
+    authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
+    'content-type': 'application/json',
+  };
+  const target = { tenantId: E2E_TENANT_ID, subject: `code-project:${ids.seededProjectId}` };
+  const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      ...target,
+      provider: 'atlassian-bitbucket',
+      repoFullName: 'acme/billing-service',
+      branch: 'main',
+      cloneUrl: 'https://bitbucket.org/acme/billing-service.git',
+      authHeader: 'Basic e2e',
+    }),
+  });
+  const { workspace }: { workspace: { id: string } } = await cloned.json();
+  for (let tries = 0; tries < 20; tries += 1) {
+    const got = await fetch(`${worker}/v1/workspaces/get`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...target, id: workspace.id }),
+    });
+    const state: { workspace: { status: string } } = await got.json();
+    if (state.workspace.status === 'ready') break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  const client = await db();
+  try {
+    await client.query('UPDATE chat_projects SET workspace_id = $1 WHERE id = $2', [
+      workspace.id,
+      ids.seededProjectId,
+    ]);
+  } finally {
+    await client.end();
+  }
 }
 
 test.describe('code projects', () => {
@@ -217,18 +244,26 @@ test.describe('code projects', () => {
     if (!mobile) await shot('code-menu.png');
     if (mobile) await page.getByRole('button', { name: 'Close menu' }).click();
 
-    // ── The seeded project's page: Not cloned, then Clone → Cloning → Ready ──
+    // ── The seeded project's page: not cloned yet (the first chat does
+    //    that), the repository fixed — no clone or change buttons — and
+    //    the README from Bitbucket in place of a description ──
     await seededRow.click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
     await expect(page.getByText('Your code project')).toBeVisible();
-    // A code project keeps no files of its own; its chats are listed here.
+    // A code project keeps no files of its own, picks its tools per chat,
+    // and describes itself through its README; its chats are listed here.
     await expect(main.getByRole('heading', { level: 2, name: 'Files', exact: true })).toHaveCount(
       0
     );
+    await expect(main.getByRole('button', { name: 'Tools' })).toHaveCount(0);
+    await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
     ).toBeVisible();
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
+    const readme = sectionOf('README');
+    await expect(readme.getByRole('heading', { name: 'Billing service' })).toBeVisible();
+    await expect(readme.getByRole('heading', { name: 'Running it' })).toBeVisible();
     // A subheading sits under its title, not beside it.
     const memoryTitle = main.getByRole('heading', { level: 2, name: 'Memory' });
     const memoryNote = main.getByText("Notes the assistant keeps across this project's chats.");
@@ -236,14 +271,27 @@ test.describe('code projects', () => {
       (await memoryTitle.boundingBox())!.y + 10
     );
     const repository = sectionOf('Repository');
-    await expect(repository.getByText('Not cloned')).toBeVisible();
+    await expect(repository.getByText('Not cloned yet')).toBeVisible();
     await expect(repository.getByText('acme/billing-service')).toBeVisible();
+    await expect(repository.getByText(/The first chat in this project clones it/)).toBeVisible();
+    await expect(repository.getByRole('button')).toHaveCount(0);
+    await expect(repository.getByRole('link', { name: 'Open on Bitbucket' })).toHaveAttribute(
+      'href',
+      'https://bitbucket.org/acme/billing-service'
+    );
     await expectNoHorizontalOverflow(page);
     await shot('code-project-not-cloned.png');
-    await repository.getByRole('button', { name: 'Clone', exact: true }).click();
-    await expect(repository.getByText('Cloning…')).toBeVisible();
-    await shot('code-project-cloning.png');
-    await expect(repository.getByText('Ready')).toBeVisible({ timeout: 15_000 });
+
+    // ── Back to Code, and in again ──
+    await main.getByRole('link', { name: 'Back to Code' }).click();
+    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
+    await seededRow.click();
+    await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
+
+    // ── With a checkout (as a first chat would leave it): Ready, the tree ──
+    await seedCheckout(ids);
+    await page.reload();
+    await expect(repository.getByText('Ready')).toBeVisible();
     await expect(repository.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
     await shot('code-project-ready.png');
 
@@ -267,76 +315,74 @@ test.describe('code projects', () => {
     await expect(sectionOf('About').getByLabel(/^Instructions/)).toHaveValue(/test-first/);
     await expect(sectionOf('About').getByText(/not saved yet/)).toHaveCount(0);
 
-    // ── A person's files go into the checkout, not onto the project ──
-    await repository.getByRole('button', { name: 'Add files' }).click();
-    const addFiles = repository.getByRole('form', { name: 'Add files to the repository' });
-    await addFiles.getByLabel('Folder (optional)').fill('docs');
-    await addFiles.getByLabel('Files').setInputFiles({
-      name: 'notes.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('# Notes\n'),
-    });
-    await shot('code-project-add-files.png');
-    await addFiles.getByRole('button', { name: 'Add to checkout' }).click();
-    await expect(
-      repository.getByText(/Added docs\/notes\.md to the checkout, uncommitted/)
-    ).toBeVisible();
-    await expect(addFiles).toHaveCount(0);
-
     // ── Environment: none yet; paste a .env with one bad line; names appear,
-    //    values never do; the bad line is reported; remove one; replace all ──
+    //    the bad line is reported, a value is never rendered ──
     const environment = sectionOf('Environment');
     await expect(environment.getByText('No environment variables.')).toBeVisible();
     await environment.getByRole('button', { name: 'Add .env' }).click();
     await environment
       .getByLabel('.env contents')
       .fill(
-        '# registry\nNPM_TOKEN=npm_secret_value_123\nexport DATABASE_URL="postgres://x:y@db/app"\nthis is not a variable\n'
+        'NPM_TOKEN=npm_secret_value_123\nDATABASE_URL=postgres://u:p@db/app\nexport DEBUG=1\nthis line is broken\n'
       );
     await environment.getByRole('button', { name: 'Save' }).click();
     await expect(environment.getByText('NPM_TOKEN')).toBeVisible();
     await expect(environment.getByText('DATABASE_URL')).toBeVisible();
-    await expect(environment.getByText(/line 4: not a NAME=value line/)).toBeVisible();
+    await expect(environment.getByText('DEBUG')).toBeVisible();
+    await expect(environment.getByText(/Not read from the pasted \.env: line 4/)).toBeVisible();
     await expect(page.getByText('npm_secret_value_123')).toHaveCount(0);
-    await expect(page.getByText('postgres://x:y@db/app')).toHaveCount(0);
+    await expect(page.getByText('postgres://u:p@db/app')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
     await shot('code-project-env.png');
-    page.once('dialog', (dialog) => dialog.accept());
+    // Remove one; replace the rest.
+    page.once('dialog', (dialog) => void dialog.accept());
     await environment
       .getByRole('listitem')
-      .filter({ hasText: 'DATABASE_URL' })
+      .filter({ hasText: 'DEBUG' })
       .getByRole('button', { name: 'Remove' })
       .click();
-    await expect(environment.getByText('DATABASE_URL')).toHaveCount(0);
-    await expect(environment.getByText('NPM_TOKEN')).toBeVisible();
+    await expect(environment.getByText('DEBUG')).toHaveCount(0);
     await environment.getByRole('button', { name: 'Replace .env' }).click();
     await environment.getByLabel('.env contents').fill('API_BASE_URL=https://api.example.test\n');
     await environment.getByRole('button', { name: 'Save' }).click();
     await expect(environment.getByText('API_BASE_URL')).toBeVisible();
     await expect(environment.getByText('NPM_TOKEN')).toHaveCount(0);
 
-    // ── Re-point the repository: the checkout is replaced and clones again ──
-    await repository.getByRole('button', { name: 'Change repository' }).click();
-    await repository.getByLabel('Repository').fill('acme/billing-service-v2');
-    await repository.getByLabel('Branch').fill('release/2026-09');
-    await repository.getByRole('button', { name: 'Clone', exact: true }).click();
-    await expect(repository.getByText('acme/billing-service-v2')).toBeVisible();
-    await expect(repository.getByText('Ready')).toBeVisible({ timeout: 15_000 });
-    await expect(repository.getByText('@ release/2026-09')).toBeVisible();
-
-    // ── A chat started in the project: its title bar names the project and
-    //    links back to the Code page, not the chat projects page ──
+    // ── A chat started in the project: its title bar names the project,
+    //    links back to it, and carries the code buttons ──
     await main.getByRole('link', { name: 'New chat' }).click();
     await expect(
       page.getByRole('heading', { name: `New chat in ${ids.seededName}` })
     ).toBeVisible();
     const crumb = main.getByRole('link', { name: ids.seededName });
     await expect(crumb).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
+    await expect(main.getByRole('link', { name: 'Back to project' })).toHaveAttribute(
+      'href',
+      `/${E2E_SLUG}/code/${ids.seededProjectId}`
+    );
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-new.png');
 
-    // ── The title bar's code buttons: Changes carries the checkout's
-    //    +added −deleted and opens every diff (side by side on a wide
-    //    screen); Environment opens the project's variables ──
+    // ── Add files: picked (or dropped) files land in the checkout,
+    //    untracked, for the chat's tools ──
+    await main.getByRole('button', { name: 'Add files' }).click();
+    const filesDialog = page.getByRole('dialog', { name: 'Add files' });
+    await expect(filesDialog.getByText(/land as untracked files/)).toBeVisible();
+    await filesDialog.getByLabel('Folder (optional)').fill('docs');
+    await filesDialog.locator('input[type="file"]').setInputFiles({
+      name: 'notes.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Notes\n'),
+    });
+    await expect(filesDialog.getByText('notes.md')).toBeVisible();
+    await shot('code-chat-add-files.png');
+    await filesDialog.getByRole('button', { name: 'Add to repository' }).click();
+    await expect(filesDialog.getByText('Added to the checkout: docs/notes.md.')).toBeVisible();
+    await filesDialog.getByRole('button', { name: 'Done' }).click();
+
+    // ── Changes carries the checkout's +added −deleted and opens every
+    //    diff (side by side on a wide screen); Environment opens the
+    //    project's variables ──
     const changes = main.getByRole('button', { name: 'Changes' });
     await expect(changes).toContainText('+3');
     await expect(changes).toContainText('−1');
@@ -354,27 +400,32 @@ test.describe('code projects', () => {
     await expect(envDialog.getByText('API_BASE_URL')).toBeVisible();
     await shot('code-chat-env.png');
     await envDialog.getByRole('button', { name: 'Close' }).click();
-    await crumb.click();
+    await main.getByRole('link', { name: 'Back to project' }).click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
 
-    // ── A new code project through the form, with the picker and a .env ──
-    await answerRepoPicker(page);
+    // ── A new code project through the form: the repository browsed on
+    //    Bitbucket (workspace → project → repositories), a .env pasted,
+    //    the brief there to start from; nothing cloned yet ──
     await page.goto(`/${E2E_SLUG}/code/new`);
     await expect(page.getByRole('heading', { level: 1, name: 'New code project' })).toBeVisible();
     await expect(page.getByText('Connect Bitbucket first')).toHaveCount(0);
-    const create = page.getByRole('button', { name: 'Create and clone' });
+    const create = page.getByRole('button', { name: 'Create project' });
     await expect(create).toBeDisabled();
     await page.getByLabel('Name', { exact: true }).fill(ids.newName);
-    await page.getByLabel(/^Repository/).fill('notif');
-    await expect(
-      page.locator('#code-project-repos option[value="acme/notifications-gateway"]')
-    ).toHaveCount(1);
-    await page.getByLabel(/^Repository/).fill('acme/notifications-gateway');
-    await expect(page.getByLabel('Branch', { exact: true })).toHaveAttribute(
-      'placeholder',
-      'develop'
-    );
+    const workspacePick = page.getByRole('combobox', { name: /^Workspace/ });
+    await expect(workspacePick).toBeEnabled({ timeout: 15_000 });
+    await workspacePick.selectOption('acme');
+    const projectPick = page.getByRole('combobox', { name: /^Project/ });
+    await expect(projectPick).toBeEnabled({ timeout: 15_000 });
+    await projectPick.selectOption('NOTIF');
+    const repoList = page.getByRole('list', { name: 'Repositories' });
+    await expect(repoList.getByText('acme/notifications-gateway')).toBeVisible();
+    await expect(repoList.getByText('acme/billing-service')).toHaveCount(0);
+    await shot('code-new-browse.png');
+    await repoList.getByRole('button', { name: /notifications-gateway/ }).click();
+    await expect(page.getByText('acme/notifications-gateway')).toBeVisible();
+    await expect(page.getByLabel('Branch (optional)')).toHaveAttribute('placeholder', 'develop');
     await page.getByLabel(/^\.env/).fill('SENDGRID_KEY=sg_live_abc\n');
     // The developer's brief is there to start from, and can be replaced.
     await expect(page.getByLabel(/^Instructions/)).toHaveValue(/test-first/);
@@ -387,7 +438,7 @@ test.describe('code projects', () => {
     await expect(page.getByRole('heading', { level: 1, name: ids.newName })).toBeVisible();
     const newRepo = sectionOf('Repository');
     await expect(newRepo.getByText('acme/notifications-gateway')).toBeVisible();
-    await expect(newRepo.getByText('Ready')).toBeVisible({ timeout: 15_000 });
+    await expect(newRepo.getByText('Not cloned yet')).toBeVisible();
     const newEnv = sectionOf('Environment');
     await expect(newEnv.getByText('SENDGRID_KEY')).toBeVisible();
     await expect(page.getByText('sg_live_abc')).toHaveCount(0);
@@ -402,27 +453,5 @@ test.describe('code projects', () => {
     await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
     await expect(main.getByRole('link', { name: ids.newName })).toHaveCount(0);
     await expect(main.getByRole('link', { name: ids.seededName })).toBeVisible();
-  });
-
-  test('a clone that fails says so and offers to clone again', async ({ page }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const client = await db();
-    try {
-      await client.query(`UPDATE chat_projects SET repo_full_name = 'acme/fails' WHERE id = $1`, [
-        ids.seededProjectId,
-      ]);
-    } finally {
-      await client.end();
-    }
-    await page.goto(`/${E2E_SLUG}/code/${ids.seededProjectId}`);
-    const repository = page
-      .getByRole('main')
-      .locator('section', { has: page.getByRole('heading', { level: 2, name: 'Repository' }) });
-    await repository.getByRole('button', { name: 'Clone', exact: true }).click();
-    await expect(repository.getByText('Clone failed', { exact: true })).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(repository.getByText('The clone failed: repository not found.')).toBeVisible();
-    await expect(repository.getByRole('button', { name: 'Clone again' })).toBeEnabled();
   });
 });

@@ -10,6 +10,8 @@ import type { ResourceAccess } from '@/lib/chat/access';
 import { loadProjectView, type ProjectView } from '@/lib/chat/project-view';
 import { getProjectRow } from '@/lib/chat/projects';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
+import { getPublicBaseUrl } from '@renkei/settings';
+import { bitbucketAuthOf, readReadme } from './bitbucket-browse';
 import { projectEnv, projectWorkspace } from './projects';
 
 export interface CodeProjectView extends ProjectView {
@@ -27,6 +29,8 @@ export interface CodeProjectView extends ProjectView {
     env: { name: string; updatedAt: string; lastUsedAt: string | null }[];
     /** The deployment runs code workspaces at all. */
     enabled: boolean;
+    /** The repository's README on the project's branch, as Markdown, read from Bitbucket. */
+    readme: { path: string; text: string } | null;
   };
 }
 
@@ -39,10 +43,15 @@ export async function loadCodeProjectView(
 ): Promise<CodeProjectView | null> {
   const project = await getProjectRow(db, tenantId, projectId);
   if (!project || project.kind !== 'code' || !project.repo) return null;
-  const [view, workspace, env] = await Promise.all([
+  const [view, workspace, env, readme] = await Promise.all([
     loadProjectView(db, tenantId, viewerSubject, projectId, access),
     projectWorkspace(project),
     projectEnv(project),
+    readReadme(
+      bitbucketAuthOf({ tenantId, subject: viewerSubject, origin: getPublicBaseUrl() ?? '' }),
+      project.repo.fullName,
+      project.repo.branch
+    ),
   ]);
   if (!view) return null;
   return {
@@ -66,6 +75,7 @@ export async function loadCodeProjectView(
         lastUsedAt: variable.lastUsedAt,
       })),
       enabled: sandboxWorkspacesEnabled(),
+      readme,
     },
   };
 }

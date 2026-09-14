@@ -2,14 +2,15 @@
 
 /**
  * The two sections that make a project a code project, at the top of
- * its page: the repository and its checkout on the sandbox (with the
- * clone's state, followed while it runs), and the environment — the
- * names of the variables the project's commands run with, replaced by
- * pasting a `.env` again. Values are never shown; the worker sealed
- * them and only a command ever sees them.
+ * its page: the repository (fixed when the project was made) and the
+ * state of its checkout on the sandbox — none until the first chat
+ * clones it, then ready, cloning, or failed with why — and the
+ * environment: the names of the variables the project's commands run
+ * with, replaced by pasting a `.env` again. Values are never shown; the
+ * worker sealed them and only a command ever sees them.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
@@ -47,23 +48,15 @@ export default function CodeSections({
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [repointing, setRepointing] = useState(false);
-  const [repository, setRepository] = useState(code.repoFullName);
-  const [branch, setBranch] = useState(code.branch);
   const [envOpen, setEnvOpen] = useState(false);
   const [envText, setEnvText] = useState('');
   const [problems, setProblems] = useState(envProblems);
-  const [addingFiles, setAddingFiles] = useState(false);
-  const [folder, setFolder] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [uploaded, setUploaded] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const workspace = code.workspace;
   const cloning = workspace?.status === 'cloning';
 
-  // While the clone runs, follow it: the worker flips the row on its own,
-  // and the page's server data is the truth.
+  // While a chat's clone runs, follow it: the worker flips the row on its
+  // own, and the page's server data is the truth.
   useEffect(() => {
     if (!cloning) return;
     const timer = setInterval(() => {
@@ -74,19 +67,6 @@ export default function CodeSections({
     }, POLL_MS);
     return () => clearInterval(timer);
   }, [cloning, base, router]);
-
-  const clone = async (input?: { repository: string; branch: string }) => {
-    setBusy(true);
-    setError(null);
-    const result = await sendJsonFull(`${base}/workspace`, 'POST', input ?? {});
-    setBusy(false);
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-    setRepointing(false);
-    router.refresh();
-  };
 
   const replaceEnv = async () => {
     setBusy(true);
@@ -118,43 +98,10 @@ export default function CodeSections({
     router.refresh();
   };
 
-  // Files a person adds go into the checkout, where a chat can commit
-  // them — a code project keeps no files of its own. One request per
-  // file, its bytes as the body, the destination in the query string.
-  const uploadFiles = async (list: FileList | null) => {
-    if (!list || list.length === 0) return;
-    const prefix = folder.trim().replace(/^\/+|\/+$/g, '');
-    setUploading(true);
-    setError(null);
-    setUploaded(null);
-    const added: string[] = [];
-    for (const file of [...list]) {
-      const path = prefix ? `${prefix}/${file.name}` : file.name;
-      const response = await fetch(`${base}/files?path=${encodeURIComponent(path)}`, {
-        method: 'PUT',
-        body: file,
-      }).catch(() => null);
-      const body = response ? await response.json().catch(() => null) : null;
-      if (!response?.ok) {
-        setError(`${path}: ${typeof body?.error === 'string' ? body.error : 'not added'}`);
-        break;
-      }
-      added.push(path);
-    }
-    setUploading(false);
-    if (added.length) {
-      setUploaded(
-        `Added ${added.length === 1 ? added[0] : `${added.length} files`} to the checkout, uncommitted — ask a chat in this project to commit and push.`
-      );
-      setAddingFiles(false);
-      setFolder('');
-    }
-  };
-
   const statusPill = !code.enabled ? (
     <Pill tone="amber">Workspaces off</Pill>
   ) : !workspace ? (
-    <Pill tone="gray">Not cloned</Pill>
+    <Pill tone="gray">Not cloned yet</Pill>
   ) : workspace.status === 'ready' ? (
     <Pill tone="green">Ready</Pill>
   ) : workspace.status === 'cloning' ? (
@@ -163,42 +110,33 @@ export default function CodeSections({
     <Pill tone="red">Clone failed</Pill>
   );
 
+  const [workspaceSlug, repoSlug] = code.repoFullName.split('/');
+  const bitbucketUrl =
+    workspaceSlug && repoSlug
+      ? `https://bitbucket.org/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
+      : null;
+
   return (
     <>
       <section className={sectionClass}>
-        <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-sm font-semibold">Repository</h2>
-          {statusPill}
-          {canEdit && code.enabled ? (
-            <span className="ml-auto flex items-center gap-3">
-              <button
-                type="button"
-                disabled={busy || cloning}
-                onClick={() => void clone()}
-                className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+        <div className="mb-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold">Repository</h2>
+            {statusPill}
+            {bitbucketUrl ? (
+              <a
+                href={bitbucketUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
               >
-                {workspace ? 'Clone again' : 'Clone'}
-              </button>
-              <button
-                type="button"
-                disabled={busy || cloning}
-                onClick={() => setRepointing((value) => !value)}
-                className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
-              >
-                Change repository
-              </button>
-              {workspace?.status === 'ready' ? (
-                <button
-                  type="button"
-                  disabled={busy || uploading}
-                  onClick={() => setAddingFiles((value) => !value)}
-                  className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
-                >
-                  Add files
-                </button>
-              ) : null}
-            </span>
-          ) : null}
+                Open on Bitbucket
+              </a>
+            ) : null}
+          </div>
+          <p className="text-xs text-gray-500">
+            The repository this project works in, chosen when it was made.
+          </p>
         </div>
         <p className="text-sm">
           <span className="font-mono">{code.repoFullName}</span>
@@ -211,97 +149,13 @@ export default function CodeSections({
           {!code.enabled
             ? 'Code workspaces are not enabled on this deployment; chats here have no code tools.'
             : !workspace
-              ? 'The checkout is gone — it expired, or the clone never ran. Clone to work in it again.'
+              ? 'The first chat in this project clones it into the sandbox, with the chatting person’s own Bitbucket access.'
               : workspace.status === 'failed'
-                ? `The clone failed: ${workspace.error ?? 'unknown reason'}.`
+                ? `The last clone failed: ${workspace.error ?? 'unknown reason'}. The next chat tries again.`
                 : workspace.status === 'cloning'
                   ? 'Cloning on the sandbox worker; this page follows it.'
-                  : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · chats in this project work here.`}
+                  : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · chats in this project work here, and clone again if it has expired.`}
         </p>
-        {repointing ? (
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void clone({ repository: repository.trim(), branch: branch.trim() });
-            }}
-            className="mt-3 grid gap-2 sm:grid-cols-[2fr_1fr_auto]"
-          >
-            <input
-              value={repository}
-              onChange={(event) => setRepository(event.target.value)}
-              placeholder="workspace/repo-slug"
-              aria-label="Repository"
-              spellCheck={false}
-              className={`font-mono ${inputClass}`}
-            />
-            <input
-              value={branch}
-              onChange={(event) => setBranch(event.target.value)}
-              placeholder="main branch"
-              aria-label="Branch"
-              spellCheck={false}
-              className={`font-mono ${inputClass}`}
-            />
-            <button
-              type="submit"
-              disabled={busy || !repository.includes('/')}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              Clone
-            </button>
-            <p className="text-xs text-gray-500 sm:col-span-3">
-              The current checkout is discarded — anything not pushed is lost.
-            </p>
-          </form>
-        ) : null}
-        {addingFiles ? (
-          <form
-            aria-label="Add files to the repository"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void uploadFiles(fileInput.current?.files ?? null);
-            }}
-            className="mt-3 grid gap-2 border-t border-gray-200 pt-3 sm:grid-cols-[1fr_1fr_auto] dark:border-gray-800"
-          >
-            <label className="block text-sm">
-              <span className="mb-1 block text-xs font-medium text-gray-500">
-                Folder (optional)
-              </span>
-              <input
-                value={folder}
-                onChange={(event) => setFolder(event.target.value)}
-                placeholder="docs/assets"
-                autoComplete="off"
-                spellCheck={false}
-                className={`font-mono ${inputClass}`}
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block text-xs font-medium text-gray-500">Files</span>
-              <input
-                ref={fileInput}
-                type="file"
-                multiple
-                required
-                className="block w-full text-sm file:mr-2 file:rounded-md file:border file:border-gray-300 file:bg-white file:px-2 file:py-1 file:text-xs dark:file:border-gray-700 dark:file:bg-gray-900"
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={uploading}
-              className="self-end rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {uploading ? 'Adding…' : 'Add to checkout'}
-            </button>
-            <p className="text-xs text-gray-500 sm:col-span-3">
-              The files land in the checkout as they are, uncommitted. A code project keeps no files
-              of its own: what a chat should have belongs in the repository.
-            </p>
-          </form>
-        ) : null}
-        {uploaded ? (
-          <p className="mt-2 text-xs text-green-700 dark:text-green-400">{uploaded}</p>
-        ) : null}
       </section>
 
       <section className={sectionClass}>
@@ -364,37 +218,34 @@ export default function CodeSections({
             <textarea
               value={envText}
               onChange={(event) => setEnvText(event.target.value)}
-              rows={8}
+              rows={6}
               spellCheck={false}
-              placeholder={'NPM_TOKEN=…\nDATABASE_URL=postgres://…'}
               aria-label=".env contents"
+              placeholder={'NPM_TOKEN=…\nDATABASE_URL=postgres://…'}
               className={`font-mono ${inputClass}`}
             />
-            <div className="flex items-center gap-2">
-              <p className="text-xs text-gray-500">
-                Replaces every variable with what is pasted here. Values are sealed on the sandbox
-                worker and never shown again.
+            <div className="flex items-center justify-end gap-2">
+              <p className="mr-auto text-xs text-gray-500">
+                Replaces every variable. Values are sealed on the worker and never shown again.
               </p>
               <button
                 type="button"
-                disabled={busy}
                 onClick={() => setEnvOpen(false)}
-                className="ml-auto rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900"
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                disabled={busy}
+                disabled={busy || !envText.trim()}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                Save
+                {busy ? 'Saving…' : 'Save'}
               </button>
             </div>
           </form>
         ) : null}
       </section>
-
       {error ? (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
@@ -419,7 +270,9 @@ function Pill({
     amber: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
   };
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${tones[tone]}`}>
+    <span
+      className={`rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${tones[tone]}`}
+    >
       {children}
     </span>
   );

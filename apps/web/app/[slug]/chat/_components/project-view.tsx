@@ -21,6 +21,7 @@ import { DialogFooter } from './chat-nav';
 import AttachmentChip from './attachment-chip';
 import ShareModal from './share-modal';
 import ToolsPopover from './tools-popover';
+import Markdown from './markdown';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -34,6 +35,7 @@ export default function ProjectView({
   before = null,
   aside = null,
   defaultInstructions = null,
+  readme = null,
 }: {
   slug: string;
   tenantId: string;
@@ -56,6 +58,11 @@ export default function ProjectView({
    * shown so it can be read and changed, kept the moment Save is pressed.
    */
   defaultInstructions?: string | null;
+  /**
+   * A code project's README, rendered in place of a typed description —
+   * the repository describes itself.
+   */
+  readme?: { path: string; text: string } | null;
 }) {
   const router = useRouter();
   const { project, role, files, memory, chats } = initial;
@@ -153,6 +160,14 @@ export default function ProjectView({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
+        <Link
+          href={indexHref}
+          aria-label={variant === 'code' ? 'Back to Code' : 'Back to Projects'}
+          title={variant === 'code' ? 'Back to Code' : 'Back to Projects'}
+          className="shrink-0 rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+        >
+          <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+        </Link>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold">{project.name}</h1>
           <p className="truncate text-xs text-gray-500">
@@ -163,7 +178,7 @@ export default function ProjectView({
               : `Shared by ${project.ownerName ?? 'its owner'} · you can ${canEdit ? 'edit' : 'view'}`}
           </p>
         </div>
-        {canEdit ? (
+        {canEdit && variant !== 'code' ? (
           <ToolsPopover
             tenantId={tenantId}
             selected={project.toolConfig?.connectors ?? null}
@@ -219,6 +234,23 @@ export default function ProjectView({
             </details>
           ) : null}
           {before}
+          {variant === 'code' ? (
+            <section className={sectionClass}>
+              <div className="mb-2">
+                <h2 className="text-sm font-semibold">README</h2>
+                <p className="text-xs text-gray-500">
+                  {readme
+                    ? `${readme.path} on the project’s branch, as Bitbucket has it.`
+                    : 'The repository’s README, when it has one.'}
+                </p>
+              </div>
+              {readme ? (
+                <Markdown text={readme.text} />
+              ) : (
+                <p className="text-sm text-gray-500">No README was found in the repository.</p>
+              )}
+            </section>
+          ) : null}
           <section className={sectionClass}>
             <h2 className="mb-2 text-sm font-semibold">About</h2>
             {canEdit ? (
@@ -230,14 +262,16 @@ export default function ProjectView({
                   maxLength={200}
                   className={inputClass}
                 />
-                <input
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  placeholder="Description (optional)"
-                  aria-label="Description"
-                  maxLength={2000}
-                  className={inputClass}
-                />
+                {variant === 'code' ? null : (
+                  <input
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    placeholder="Description (optional)"
+                    aria-label="Description"
+                    maxLength={2000}
+                    className={inputClass}
+                  />
+                )}
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-gray-500">
                     Instructions — what every chat in this project should know and how it should
@@ -272,7 +306,7 @@ export default function ProjectView({
               </div>
             ) : (
               <div className="space-y-2 text-sm">
-                {project.description ? <p>{project.description}</p> : null}
+                {project.description && variant !== 'code' ? <p>{project.description}</p> : null}
                 {project.instructions ? (
                   <div>
                     <p className="text-xs font-medium text-gray-500">Instructions</p>

@@ -1,24 +1,22 @@
 'use client';
 
 /**
- * The new-code-project form. The repository comes from the person's own
- * Bitbucket (a picker fed by their grant, or typed as workspace/repo);
- * the `.env` is pasted as a file's text and parsed on the server — only
- * the pairs reach the sandbox worker, which seals them, and nothing
- * here ever shows a value again. Lines that were not variables are
- * reported back after creation so a person knows what did not take.
+ * The new-code-project form. The repository is picked from the person's
+ * own Bitbucket — browsed workspace → project → repositories, or searched
+ * by name across everything they belong to — never typed; the `.env` is
+ * pasted as a file's text and parsed on the server (only the pairs reach
+ * the sandbox worker, which seals them, and nothing here shows a value
+ * again); the instructions start from a developer's brief. Nothing is
+ * cloned yet: the first chat in the project does that.
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
-
-interface RepoChoice {
-  fullName: string;
-  mainBranch: string | null;
-}
+import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -34,33 +32,15 @@ export default function NewCodeProject({
 }) {
   const router = useRouter();
   const [name, setName] = useState('');
-  const [repository, setRepository] = useState('');
+  const [chosen, setChosen] = useState<RepoChoice | null>(null);
   const [branch, setBranch] = useState('');
   const [env, setEnv] = useState('');
   const [instructions, setInstructions] = useState(DEFAULT_CODE_INSTRUCTIONS);
-  const [choices, setChoices] = useState<RepoChoice[]>([]);
-  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const search = (query: string) => {
-    setRepository(query);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (!bitbucketConnected) return;
-    searchTimer.current = setTimeout(() => {
-      void (async () => {
-        setSearching(true);
-        const listed = await getJson<{ repos: RepoChoice[] }>(
-          `/api/tenant/${tenantId}/code/repos?q=${encodeURIComponent(query.split('/').pop() ?? query)}`
-        );
-        setSearching(false);
-        if (listed.data) setChoices(listed.data.repos.slice(0, 12));
-      })();
-    }, 300);
-  };
 
   const create = async () => {
+    if (!chosen) return;
     setBusy(true);
     setError(null);
     const result = await sendJsonFull<{ projectId: string; envProblems: string[] }>(
@@ -68,7 +48,7 @@ export default function NewCodeProject({
       'POST',
       {
         name: name.trim(),
-        repository: repository.trim(),
+        repository: chosen.fullName,
         branch: branch.trim(),
         env,
         instructions: instructions.trim(),
@@ -86,11 +66,17 @@ export default function NewCodeProject({
     router.refresh();
   };
 
-  const chosen = choices.find((choice) => choice.fullName === repository);
-
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
+        <Link
+          href={`/${slug}/code`}
+          aria-label="Back to Code"
+          title="Back to Code"
+          className="rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+        >
+          <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+        </Link>
         <h1 className="flex-1 text-sm font-semibold">New code project</h1>
       </header>
       <form
@@ -106,7 +92,7 @@ export default function NewCodeProject({
             <Link href={`/${slug}/connectors`} className="underline">
               on the Connectors page
             </Link>
-            . A code project clones with your own Bitbucket access.
+            . A code project reads and clones its repository with your own Bitbucket access.
           </p>
         ) : null}
 
@@ -122,40 +108,50 @@ export default function NewCodeProject({
           />
         </label>
 
-        <div className="grid gap-3 sm:grid-cols-[2fr_1fr]">
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-medium text-gray-500">Repository</span>
-            <input
-              value={repository}
-              onChange={(event) => search(event.target.value)}
-              placeholder="workspace/repo-slug"
-              autoComplete="off"
-              spellCheck={false}
-              required
-              list="code-project-repos"
-              className={`font-mono ${inputClass}`}
+        <div className="block text-sm">
+          <span className="mb-1 block text-xs font-medium text-gray-500">Repository</span>
+          {chosen ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-gray-300 px-2 py-1.5 dark:border-gray-700">
+              <span className="min-w-0 flex-1 truncate font-mono text-sm">{chosen.fullName}</span>
+              {chosen.mainBranch ? (
+                <span className="text-xs text-gray-500">main branch {chosen.mainBranch}</span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  setChosen(null);
+                  setBranch('');
+                }}
+                className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+              >
+                Choose another
+              </button>
+            </div>
+          ) : (
+            <RepositoryBrowser
+              tenantId={tenantId}
+              enabled={bitbucketConnected}
+              onChoose={(repo) => setChosen(repo)}
             />
-            <datalist id="code-project-repos">
-              {choices.map((choice) => (
-                <option key={choice.fullName} value={choice.fullName} />
-              ))}
-            </datalist>
-            <span className="mt-1 block text-xs text-gray-500">
-              {searching ? 'Searching Bitbucket…' : 'Type to search your Bitbucket repositories.'}
-            </span>
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-medium text-gray-500">Branch</span>
+          )}
+        </div>
+
+        {chosen ? (
+          <label className="block text-sm sm:max-w-xs">
+            <span className="mb-1 block text-xs font-medium text-gray-500">Branch (optional)</span>
             <input
               value={branch}
               onChange={(event) => setBranch(event.target.value)}
-              placeholder={chosen?.mainBranch ?? 'main branch'}
+              placeholder={chosen.mainBranch ?? 'main branch'}
               autoComplete="off"
               spellCheck={false}
               className={`font-mono ${inputClass}`}
             />
+            <span className="mt-1 block text-xs text-gray-500">
+              The branch the checkout starts on; chats branch from it when a change calls for one.
+            </span>
           </label>
-        </div>
+        ) : null}
 
         <label className="block text-sm">
           <span className="mb-1 block text-xs font-medium text-gray-500">
@@ -164,7 +160,7 @@ export default function NewCodeProject({
           <textarea
             value={env}
             onChange={(event) => setEnv(event.target.value)}
-            rows={8}
+            rows={6}
             spellCheck={false}
             placeholder={'NPM_TOKEN=…\nDATABASE_URL=postgres://…\nAPI_BASE_URL=https://…'}
             className={`font-mono ${inputClass}`}
@@ -210,15 +206,182 @@ export default function NewCodeProject({
           </Link>
           <button
             type="submit"
-            disabled={
-              busy || !bitbucketConnected || !name.trim() || !repository.trim().includes('/')
-            }
+            disabled={busy || !bitbucketConnected || !name.trim() || !chosen}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {busy ? 'Creating…' : 'Create and clone'}
+            {busy ? 'Creating…' : 'Create project'}
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Bitbucket, browsed: the workspaces the person belongs to, a workspace's
+ * projects, and the repositories under the chosen one — or a search by
+ * name across every workspace. Each list is fetched as it is needed.
+ */
+function RepositoryBrowser({
+  tenantId,
+  enabled,
+  onChoose,
+}: {
+  tenantId: string;
+  enabled: boolean;
+  onChoose: (repo: RepoChoice) => void;
+}) {
+  const base = `/api/tenant/${tenantId}/code`;
+  const [workspaces, setWorkspaces] = useState<BrowseWorkspace[] | null>(null);
+  const [workspace, setWorkspace] = useState('');
+  const [projects, setProjects] = useState<BrowseProject[] | null>(null);
+  const [project, setProject] = useState('');
+  const [query, setQuery] = useState('');
+  const [repos, setRepos] = useState<RepoChoice[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void getJson<{ workspaces: BrowseWorkspace[] }>(`${base}/bitbucket/workspaces`).then(
+      (result) => {
+        if (result.data) {
+          setWorkspaces(result.data.workspaces);
+          if (result.data.workspaces.length === 1) setWorkspace(result.data.workspaces[0]!.slug);
+        } else setError(result.error ?? 'Bitbucket could not be read.');
+      }
+    );
+  }, [base, enabled]);
+
+  useEffect(() => {
+    setProjects(null);
+    setProject('');
+    if (!workspace) return;
+    void getJson<{ projects: BrowseProject[] }>(
+      `${base}/bitbucket/projects?workspace=${encodeURIComponent(workspace)}`
+    ).then((result) => {
+      if (result.data) setProjects(result.data.projects);
+      else setError(result.error ?? 'The workspace’s projects could not be read.');
+    });
+  }, [base, workspace]);
+
+  // The repository list follows the workspace, the project and the search
+  // text; typing waits a beat so a fast typist makes one request.
+  useEffect(() => {
+    if (!enabled) return;
+    if (!workspace && !query.trim()) {
+      setRepos(null);
+      return;
+    }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      void (async () => {
+        setLoading(true);
+        setError(null);
+        const parts = [
+          workspace ? `workspace=${encodeURIComponent(workspace)}` : '',
+          project ? `project=${encodeURIComponent(project)}` : '',
+          query.trim() ? `q=${encodeURIComponent(query.trim())}` : '',
+        ].filter(Boolean);
+        const listed = await getJson<{ repos: RepoChoice[] }>(`${base}/repos?${parts.join('&')}`);
+        setLoading(false);
+        if (listed.data) setRepos(listed.data.repos);
+        else setError(listed.error ?? 'The repositories could not be read.');
+      })();
+    }, 250);
+  }, [base, enabled, workspace, project, query]);
+
+  return (
+    <div className="space-y-2 rounded-md border border-gray-300 p-3 dark:border-gray-700">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-500">Workspace</span>
+          <select
+            value={workspace}
+            onChange={(event) => setWorkspace(event.target.value)}
+            disabled={!enabled || workspaces === null}
+            className={inputClass}
+          >
+            <option value="">{workspaces === null ? 'Loading…' : 'All workspaces'}</option>
+            {(workspaces ?? []).map((entry) => (
+              <option key={entry.slug} value={entry.slug}>
+                {entry.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-500">Project</span>
+          <select
+            value={project}
+            onChange={(event) => setProject(event.target.value)}
+            disabled={!workspace || projects === null}
+            className={inputClass}
+          >
+            <option value="">
+              {!workspace ? 'Pick a workspace' : projects === null ? 'Loading…' : 'All projects'}
+            </option>
+            {(projects ?? []).map((entry) => (
+              <option key={entry.key} value={entry.key}>
+                {entry.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-500">Search by name</span>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="billing"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={!enabled}
+            className={inputClass}
+          />
+        </label>
+      </div>
+      {error ? (
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      ) : null}
+      {repos === null ? (
+        <p className="text-xs text-gray-500">
+          {loading ? 'Searching Bitbucket…' : 'Pick a workspace, or search every one by name.'}
+        </p>
+      ) : repos.length === 0 ? (
+        <p className="text-xs text-gray-500">
+          {loading ? 'Searching Bitbucket…' : 'No repositories match.'}
+        </p>
+      ) : (
+        <ul
+          aria-label="Repositories"
+          className="max-h-64 divide-y divide-gray-200 overflow-y-auto rounded-md border border-gray-200 dark:divide-gray-800 dark:border-gray-800"
+        >
+          {repos.map((repo) => (
+            <li key={repo.fullName}>
+              <button
+                type="button"
+                onClick={() => onChoose(repo)}
+                className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
+              >
+                <Icon path={ICONS.branch} className="h-4 w-4 shrink-0 text-gray-400" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{repo.name}</span>
+                  <span className="block truncate font-mono text-xs text-gray-500">
+                    {repo.fullName}
+                    {repo.projectKey ? ` · ${repo.projectKey}` : ''}
+                    {repo.mainBranch ? ` · ${repo.mainBranch}` : ''}
+                  </span>
+                </span>
+                <Icon path={ICONS.chevron} className="h-4 w-4 shrink-0 text-gray-400" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

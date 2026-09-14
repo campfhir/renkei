@@ -25,9 +25,9 @@ import {
 } from '@/lib/chat/local-tools';
 import { friendlyLlmError, textOfResult } from '@/lib/chat/turn-runner';
 
-export const DELEGATE_DEFAULT_STEPS = 15;
-export const DELEGATE_MAX_STEPS = 40;
-export const DELEGATE_WALL_CLOCK_MS = 8 * 60_000;
+export const DELEGATE_DEFAULT_STEPS = 40;
+export const DELEGATE_MAX_STEPS = 200;
+export const DELEGATE_WALL_CLOCK_MS = 45 * 60_000;
 const RESULT_MAX_CHARS = 30_000;
 const REPORT_MAX_CHARS = 20_000;
 const TASK_MAX_CHARS = 20_000;

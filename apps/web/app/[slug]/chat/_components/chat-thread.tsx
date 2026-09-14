@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
@@ -305,6 +306,13 @@ export default function ChatThread({
 
   const currentModel = models.find((model) => model.id === modelId) ?? null;
   const title = chat?.title ?? (newChatProject ? `New chat in ${newChatProject.name}` : 'New chat');
+  // A chat in a project has a way back to it.
+  const backHref =
+    chat?.projectId && chat.projectName
+      ? projectHref(slug, chat.projectId, chat.projectKind)
+      : newChatProject
+        ? projectHref(slug, newChatProject.id, newChatProject.kind)
+        : null;
   // A chat in a code project: its checkout's changes and environment are
   // a button away in the title bar.
   const codeProjectId =
@@ -323,6 +331,16 @@ export default function ChatThread({
   return (
     <>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
+        {backHref ? (
+          <Link
+            href={backHref}
+            aria-label="Back to project"
+            title="Back to the project"
+            className="shrink-0 rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+          </Link>
+        ) : null}
         <ChatTitle
           title={title}
           project={

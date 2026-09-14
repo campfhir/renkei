@@ -1,9 +1,9 @@
 /**
  * Code projects: the ones this person can open, and creation. Creating
- * one is a chat project with a repository on it: the row is written,
+ * one is a chat project with a repository on it: the row is written and
  * the `.env` (if pasted) goes to the sandbox worker under the project's
- * scope, and a clone is started with the person's own Bitbucket grant —
- * the page then polls until the checkout reads ready.
+ * scope. Nothing is cloned yet — the first chat in the project clones
+ * the repository with the chatting person's own Bitbucket grant.
  */
 
 import type { NextRequest } from 'next/server';
@@ -25,9 +25,7 @@ import {
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
-import { replaceProjectEnv, startProjectClone } from '@/lib/code/projects';
-import { resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
-import { getOrigin } from '@/lib/get-origin';
+import { replaceProjectEnv } from '@/lib/code/projects';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 const DOTENV_MAX_CHARS = 200_000;
@@ -77,15 +75,6 @@ export async function POST(
   const dotenv = typeof body.env === 'string' ? body.env : '';
   if (dotenv.length > DOTENV_MAX_CHARS) return jsonError(413, 'invalid', 'The .env is too large.');
 
-  // The credential first: a project whose repository cannot be reached is
-  // not worth a row.
-  const origin = await getOrigin(request);
-  const credential = await resolveWorkspaceGitCredential(
-    { tenantId, subject: session.subject, origin: origin.ok ? origin.val : '' },
-    { write: false }
-  );
-  if (typeof credential === 'string') return jsonError(409, 'bitbucket', credential);
-
   const projectId = await createProject(db, {
     tenantId,
     ownerSubject: session.subject,
@@ -106,9 +95,6 @@ export async function POST(
     if (!env.ok) return jsonError(env.status, 'env', env.message);
     problems.push(...env.val.problems);
   }
-  const clone = await startProjectClone(db, project, credential);
-  if (!clone.ok) return jsonError(clone.status, 'clone', clone.message);
-
   recordAuditEvent({
     tenantId,
     actorSubject: session.subject,

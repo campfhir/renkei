@@ -28,7 +28,7 @@ import {
 } from '@renkei/agent-llm';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxConfig } from '@renkei/sandbox-client';
-import { codeProjectContext } from '@/lib/code/turn';
+import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -285,12 +285,17 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       project?.toolConfig ?? null,
       userDefault
     );
+    // A code project's turn is a working session with far higher limits
+    // than an ordinary chat's (lib/code/turn.ts); the tool surface lives
+    // as long as the turn may.
+    const limits = project?.kind === 'code' ? CODE_TURN_LIMITS : undefined;
+    const wallClockMs = limits?.wallClockMs ?? DEFAULT_TURN_LIMITS.wallClockMs;
     const surface = await resolveChatToolSurface(db, {
       tenantId: input.tenantId,
       subject: input.session.subject,
       roles: input.session.roles,
       config: toolConfig,
-      ttlSeconds: Math.ceil(DEFAULT_TURN_LIMITS.wallClockMs / 1000) + 15 * 60,
+      ttlSeconds: Math.ceil(wallClockMs / 1000) + 15 * 60,
     });
     release = surface.release;
 
@@ -313,7 +318,10 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     // A code project's checkout, when it is there to work in: the code_*
     // tools bound to it, and what the prompt says about it either way.
-    const code = project?.kind === 'code' ? await codeProjectContext(project) : null;
+    const code =
+      project?.kind === 'code'
+        ? await codeProjectContext(db, project, { subject: input.session.subject })
+        : null;
     const baseLocalTools = input.localTools ?? [
       ...(await chatLocalTools(db, localContext, toolConfig, filesAllowed)),
       ...(code?.tools ?? []),
@@ -365,6 +373,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         channel,
         store,
         log,
+        ...(limits ? { limits } : {}),
       },
       {
         turnId: input.turnId,

@@ -53,6 +53,7 @@ export default async function CodeProjectPage({
       initial={view}
       variant="code"
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
+      readme={view.code.readme}
       aside={
         <RepoTree
           key="tree"
