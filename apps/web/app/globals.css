@@ -985,17 +985,17 @@ input[type='number']::-webkit-inner-spin-button {
   color: var(--color-sky-300);
 }
 
-/* A folded block — thinking, a tool call — with its result inside. */
+/* A folded block — thinking, a tool call — with its result inside. No
+ * border: the chevron alone signals that the line expands. */
 .chat-fold {
   margin: 0.4rem 0;
-  border: 1px solid var(--color-gray-200);
-  border-radius: 0.5rem;
   font-size: 0.8125rem;
 }
 .chat-fold > summary,
 .chat-fold > .chat-fold-static {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.4rem;
   padding: 0.35rem 0.6rem;
   color: var(--color-gray-600);
@@ -1007,14 +1007,16 @@ input[type='number']::-webkit-inner-spin-button {
 .chat-fold > summary::-webkit-details-marker {
   display: none;
 }
-.chat-fold[open] > summary {
-  border-bottom: 1px solid var(--color-gray-200);
-}
 .chat-fold > :not(summary) {
   padding: 0.5rem 0.6rem;
 }
-.chat-fold-error {
-  border-color: color-mix(in oklab, var(--color-red-500) 40%, transparent);
+.chat-fold-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  transform: rotate(90deg);
+}
+.chat-fold[open] > summary .chat-fold-chevron {
+  transform: rotate(-90deg);
 }
 .chat-fold-error > summary {
   color: var(--color-red-700);
@@ -1031,15 +1033,9 @@ input[type='number']::-webkit-inner-spin-button {
   padding: 0.5rem;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .chat-fold {
-    border-color: var(--color-gray-800);
-  }
   :root:not([data-theme='light']) .chat-fold > summary,
   :root:not([data-theme='light']) .chat-fold > .chat-fold-static {
     color: var(--color-gray-400);
-  }
-  :root:not([data-theme='light']) .chat-fold[open] > summary {
-    border-color: var(--color-gray-800);
   }
   :root:not([data-theme='light']) .chat-fold-error > summary {
     color: var(--color-red-300);
@@ -1049,15 +1045,9 @@ input[type='number']::-webkit-inner-spin-button {
   }
 }
 
-:root[data-theme='dark'] .chat-fold {
-  border-color: var(--color-gray-800);
-}
 :root[data-theme='dark'] .chat-fold > summary,
 :root[data-theme='dark'] .chat-fold > .chat-fold-static {
   color: var(--color-gray-400);
-}
-:root[data-theme='dark'] .chat-fold[open] > summary {
-  border-color: var(--color-gray-800);
 }
 :root[data-theme='dark'] .chat-fold-error > summary {
   color: var(--color-red-300);
