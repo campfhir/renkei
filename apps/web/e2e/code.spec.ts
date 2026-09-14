@@ -138,6 +138,129 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
+/** `chat_messages.content`: the content envelope — `renc1:` + the secretbox. */
+function sealContent(plaintext: string): string {
+  return `renc1:${secretbox(plaintext)}`;
+}
+
+/**
+ * A finished turn in the seeded chat, as the runner leaves one in a code
+ * project: the prompt, the clone step the runner wrote (a tool_use the
+ * model never made, with its result row), the model's own commit call
+ * with its result, and the reply.
+ */
+async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
+  const turnId = `88888888-8888-4888-8888-8888888888${ids.digit}3`;
+  const rows: {
+    seq: number;
+    role: string;
+    kind: string;
+    stop: string | null;
+    blocks: unknown[];
+  }[] = [
+    {
+      seq: 1,
+      role: 'user',
+      kind: 'prompt',
+      stop: null,
+      blocks: [{ type: 'text', text: 'Why does the invoice job retry forever?' }],
+    },
+    {
+      seq: 2,
+      role: 'assistant',
+      kind: 'assistant',
+      stop: 'tool_use',
+      blocks: [
+        {
+          type: 'tool_use',
+          id: 'prelude_e2e_clone',
+          name: 'code_clone',
+          input: { repository: 'acme/billing-service', branch: 'main' },
+        },
+      ],
+    },
+    {
+      seq: 3,
+      role: 'user',
+      kind: 'tool_results',
+      stop: null,
+      blocks: [
+        {
+          type: 'tool_result',
+          toolUseId: 'prelude_e2e_clone',
+          content:
+            'Cloned acme/billing-service @ main — 4.1 MB on the sandbox, 12s. The code_* tools work in it now.',
+        },
+      ],
+    },
+    {
+      seq: 4,
+      role: 'assistant',
+      kind: 'assistant',
+      stop: 'tool_use',
+      blocks: [
+        {
+          type: 'tool_use',
+          id: 'toolu_e2e_commit',
+          name: 'code_git_commit',
+          input: { message: 'Cap invoice retries at MAX_ATTEMPTS', newBranch: 'fix/retry-cap' },
+        },
+      ],
+    },
+    {
+      seq: 5,
+      role: 'user',
+      kind: 'tool_results',
+      stop: null,
+      blocks: [
+        {
+          type: 'tool_result',
+          toolUseId: 'toolu_e2e_commit',
+          content: 'Committed 3f2a9c1 on fix/retry-cap.',
+        },
+      ],
+    },
+    {
+      seq: 6,
+      role: 'assistant',
+      kind: 'assistant',
+      stop: 'end_turn',
+      blocks: [
+        {
+          type: 'text',
+          text: 'The retry loop had no ceiling; it now stops at MAX_ATTEMPTS, committed on fix/retry-cap.',
+        },
+      ],
+    },
+  ];
+  const client = await db();
+  try {
+    await client.query(
+      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
+       VALUES ($1, $2, $3, 'completed', 2, 900, 120, NOW())`,
+      [turnId, E2E_TENANT_ID, ids.seededChatId]
+    );
+    for (const row of rows) {
+      await client.query(
+        `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, stop_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8)`,
+        [
+          E2E_TENANT_ID,
+          ids.seededChatId,
+          turnId,
+          row.seq,
+          row.role,
+          row.kind,
+          sealContent(JSON.stringify(row.blocks)),
+          row.stop,
+        ]
+      );
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 /**
  * A checkout for the seeded project, as a first chat would leave it: the
  * stub worker clones it under the project's own scope and the row points
@@ -409,6 +532,27 @@ test.describe('code projects', () => {
     await main.getByRole('link', { name: 'Back to project' }).click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
+
+    // ── A finished turn in the project's chat: the clone step reads as a
+    //    sentence after the prompt, the commit by its own name, each with
+    //    its git glyph, both opening to their input and result ──
+    await seedTranscript(ids);
+    await main.getByRole('link', { name: ids.seededChatTitle }).click();
+    await expect(main.getByText('Why does the invoice job retry forever?')).toBeVisible();
+    const work = main.locator('details.chat-fold').first();
+    await expect(work).toContainText('2 tool calls');
+    await work.locator('> summary').click();
+    const steps = work.locator('ol > li > details.chat-fold');
+    const cloneStep = steps.filter({ hasText: 'Cloned the repository' });
+    await expect(cloneStep).toBeVisible();
+    await cloneStep.locator('> summary').click();
+    await expect(cloneStep.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
+    const commitStep = steps.filter({ hasText: 'Called Commit' });
+    await expect(commitStep).toBeVisible();
+    await expect(main.getByText('Calling', { exact: false })).toHaveCount(0);
+    await shot('code-chat-transcript.png');
+    await main.getByRole('link', { name: 'Back to project' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
 
     // ── A new code project through the form: the repository browsed on
     //    Bitbucket (workspace → project → repositories), a .env pasted,

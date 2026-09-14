@@ -32,6 +32,7 @@ import {
   type LlmUsage,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
+import { randomUUID } from 'node:crypto';
 import type { McpClient, McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext, LocalToolSet } from './local-tools';
 import type { ChatStreamEvent } from './stream-events';
@@ -138,12 +139,26 @@ export interface TurnRunnerDeps {
   log?: (message: string, fields: Record<string, unknown>) => void;
 }
 
+/**
+ * A step the turn takes before the model speaks — a code project's
+ * clone — shown and kept exactly like a tool call the model made: a
+ * tool_use block the runner writes, the pending state while it runs,
+ * its result row, and a fresh assistant row for the reply after it.
+ * The model sees the pair in its history like any other round.
+ */
+export interface PreludeStep {
+  name: string;
+  input: Record<string, unknown>;
+  run: () => Promise<McpToolResult>;
+}
+
 export interface TurnInput {
   turnId: string;
   assistantMessage: { id: string; seq: number; createdAt: Date };
   system: string;
   history: LlmMessage[];
   thinkingBudget: number | null;
+  prelude?: PreludeStep[];
 }
 
 const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -430,9 +445,124 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       createdAt: assistant.createdAt.toISOString(),
     });
 
+  /**
+   * The tool_results row after a round: stored, streamed, pushed into the
+   * conversation, and the files it carried kept.
+   */
+  const appendResultsRow = async (resultBlocks: LlmContentBlock[], produced: ArtifactFile[]) => {
+    const resultsRow = await store.appendMessage({
+      role: 'user',
+      kind: 'tool_results',
+      status: 'complete',
+      blocks: resultBlocks,
+    });
+    emit({
+      type: 'message_start',
+      messageId: resultsRow.id,
+      turnId: input.turnId,
+      seq: resultsRow.seq,
+      role: 'user',
+      kind: 'tool_results',
+      llmModelId: null,
+      provider: null,
+      model: null,
+      createdAt: resultsRow.createdAt.toISOString(),
+    });
+    resultBlocks.forEach((block, index) => {
+      emit({ type: 'block_start', messageId: resultsRow.id, index, block: toChatBlock(block) });
+      emit({ type: 'block_stop', messageId: resultsRow.id, index });
+    });
+    emit({
+      type: 'message_end',
+      messageId: resultsRow.id,
+      status: 'complete',
+      stopReason: null,
+      usage: null,
+      error: null,
+    });
+    messages.push({ role: 'user', content: resultBlocks });
+    if (produced.length > 0) {
+      try {
+        for (const artifact of await store.storeArtifacts(resultsRow.id, produced)) {
+          emit({ type: 'artifact', messageId: resultsRow.id, attachment: artifact });
+        }
+      } catch (error) {
+        // A file that could not be kept is not a reason to stop answering.
+        log('chat artifact not stored: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  };
+
+  /** A fresh assistant row for the next reply, announced. */
+  const startNextAssistant = async () => {
+    const nextRow = await store.appendMessage({
+      role: 'assistant',
+      kind: 'assistant',
+      status: 'streaming',
+      blocks: [],
+    });
+    assistant = nextRow;
+    blocks = [];
+    dirty = false;
+    announceAssistant();
+  };
+
   announceAssistant();
 
   try {
+    for (const step of input.prelude ?? []) {
+      if (cancelRequested || channel.cancelRequested)
+        return await finalize('canceled', null, 'canceled');
+      const use: LlmContentBlock = {
+        type: 'tool_use',
+        id: `prelude_${randomUUID()}`,
+        name: step.name,
+        input: step.input,
+      };
+      blocks = [use];
+      emit({ type: 'block_start', messageId: assistant.id, index: 0, block: toChatBlock(use) });
+      emit({ type: 'block_stop', messageId: assistant.id, index: 0, block: toChatBlock(use) });
+      await flush({ status: 'complete', stopReason: 'tool_use', usage: null, error: null });
+      emit({
+        type: 'message_end',
+        messageId: assistant.id,
+        status: 'complete',
+        stopReason: 'tool_use',
+        usage: null,
+        error: null,
+      });
+      messages.push({ role: 'assistant', content: [use] });
+      emit({ type: 'tool_call_start', messageId: assistant.id, toolUseId: use.id, name: use.name });
+      let outcome: McpToolResult;
+      try {
+        outcome = await step.run();
+      } catch (error) {
+        outcome = {
+          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+          meta: {},
+        };
+      }
+      const text = textOfResult(outcome);
+      await appendResultsRow(
+        [
+          {
+            type: 'tool_result',
+            toolUseId: use.id,
+            content: clip(
+              text || (outcome.isError ? 'The step failed.' : '(no output)'),
+              limits.toolResultMaxChars
+            ),
+            ...(outcome.isError ? { isError: true } : {}),
+          },
+        ],
+        []
+      );
+      await startNextAssistant();
+    }
+
     for (;;) {
       if (cancelRequested || channel.cancelRequested)
         return await finalize('canceled', null, 'canceled');
@@ -684,61 +814,8 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       }
       // Every tool_use must be answered; a break above cannot leave one
       // unanswered because we returned.
-      const resultBlocks: LlmContentBlock[] = [...results, ...attachments];
-      const resultsRow = await store.appendMessage({
-        role: 'user',
-        kind: 'tool_results',
-        status: 'complete',
-        blocks: resultBlocks,
-      });
-      emit({
-        type: 'message_start',
-        messageId: resultsRow.id,
-        turnId: input.turnId,
-        seq: resultsRow.seq,
-        role: 'user',
-        kind: 'tool_results',
-        llmModelId: null,
-        provider: null,
-        model: null,
-        createdAt: resultsRow.createdAt.toISOString(),
-      });
-      resultBlocks.forEach((block, index) => {
-        emit({ type: 'block_start', messageId: resultsRow.id, index, block: toChatBlock(block) });
-        emit({ type: 'block_stop', messageId: resultsRow.id, index });
-      });
-      emit({
-        type: 'message_end',
-        messageId: resultsRow.id,
-        status: 'complete',
-        stopReason: null,
-        usage: null,
-        error: null,
-      });
-      messages.push({ role: 'user', content: resultBlocks });
-      if (produced.length > 0) {
-        try {
-          for (const artifact of await store.storeArtifacts(resultsRow.id, produced)) {
-            emit({ type: 'artifact', messageId: resultsRow.id, attachment: artifact });
-          }
-        } catch (error) {
-          // A file that could not be kept is not a reason to stop answering.
-          log('chat artifact not stored: {message}', {
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      const nextRow = await store.appendMessage({
-        role: 'assistant',
-        kind: 'assistant',
-        status: 'streaming',
-        blocks: [],
-      });
-      assistant = nextRow;
-      blocks = [];
-      dirty = false;
-      announceAssistant();
+      await appendResultsRow([...results, ...attachments], produced);
+      await startNextAssistant();
     }
   } catch (error) {
     log('chat turn crashed: {message}', {

@@ -87,7 +87,9 @@ async function readOne(context: LocalToolContext, chatId: string) {
   if (!chat) return errorResult('No such chat.');
   const transcript = await transcriptOf(context.db, context.tenantId, chat, READ_MAX_CHARS);
   if (!transcript) return textResult(`${titleOf(chat)} (${dateOf(chat)}) has no text to show.`);
-  return textResult(`${titleOf(chat)} (last active ${dateOf(chat)}), chat id ${chat.id}:\n\n${transcript}`);
+  return textResult(
+    `${titleOf(chat)} (last active ${dateOf(chat)}), chat id ${chat.id}:\n\n${transcript}`
+  );
 }
 
 async function search(context: LocalToolContext, query: string, limit: number) {
@@ -147,11 +149,13 @@ export function recallTools(): LocalTool[] {
           properties: {
             query: {
               type: 'string',
-              description: 'Keywords to search for in chat titles and messages. Omit to list recent chats instead.',
+              description:
+                'Keywords to search for in chat titles and messages. Omit to list recent chats instead.',
             },
             chatId: {
               type: 'string',
-              description: "A chat id from an earlier result, to read that chat's messages in full.",
+              description:
+                "A chat id from an earlier result, to read that chat's messages in full.",
             },
             limit: {
               type: 'integer',

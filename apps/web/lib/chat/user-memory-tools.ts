@@ -23,7 +23,8 @@ export function userMemoryTools(): LocalTool[] {
         },
       },
       async execute(input, context) {
-        if (context.projectId) return errorResult('This chat is in a project; use project_memory_remember.');
+        if (context.projectId)
+          return errorResult('This chat is in a project; use project_memory_remember.');
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const note = typeof input.note === 'string' ? input.note.trim() : '';
         if (!note) return errorResult('Nothing to remember: `note` is empty.');
@@ -50,7 +51,8 @@ export function userMemoryTools(): LocalTool[] {
         },
       },
       async execute(input, context) {
-        if (context.projectId) return errorResult('This chat is in a project; use project_memory_forget.');
+        if (context.projectId)
+          return errorResult('This chat is in a project; use project_memory_forget.');
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const id = typeof input.id === 'string' ? input.id : '';
         const deleted = await forgetUserMemory(context.db, context.tenantId, context.subject, {
@@ -68,7 +70,8 @@ export function userMemoryTools(): LocalTool[] {
       },
       readOnly: true,
       async execute(_input, context) {
-        if (context.projectId) return errorResult('This chat is in a project; use project_memory_list.');
+        if (context.projectId)
+          return errorResult('This chat is in a project; use project_memory_list.');
         const memory = await readUserMemory(context.db, context.tenantId, context.subject, {
           maxEntries: 100,
         });

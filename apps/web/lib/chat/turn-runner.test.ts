@@ -312,6 +312,69 @@ describe('runChatTurn', () => {
     expect(watched.events.some((event) => event.type === 'tool_call_start')).toBe(true);
   });
 
+  it('runs a prelude step before the model, kept and shown like a tool call', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-prelude');
+    const watched = watch(channel);
+    let ran = 0;
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([text('Cloned, and here is the answer')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      {
+        ...inputFor('turn-prelude'),
+        prelude: [
+          {
+            name: 'code_clone',
+            input: { repository: 'acme/demo', branch: 'main' },
+            async run() {
+              ran += 1;
+              return textResult('Cloned acme/demo @ main — 4.1 MB on the sandbox, 12s.');
+            },
+          },
+        ],
+      }
+    );
+    expect(outcome.status).toBe('completed');
+    expect(ran).toBe(1);
+    // One model call: the step is the runner's, not the model's.
+    expect(outcome.iterations).toBe(1);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows.map((row) => `${row.role}/${row.kind}/${row.status}`)).toEqual([
+      'assistant/assistant/complete',
+      'user/tool_results/complete',
+      'assistant/assistant/complete',
+    ]);
+    expect(rows[0].blocks).toEqual([
+      {
+        type: 'tool_use',
+        id: expect.stringMatching(/^prelude_/),
+        name: 'code_clone',
+        input: { repository: 'acme/demo', branch: 'main' },
+      },
+    ]);
+    expect(rows[1].blocks[0]).toMatchObject({
+      type: 'tool_result',
+      content: 'Cloned acme/demo @ main — 4.1 MB on the sandbox, 12s.',
+    });
+    expect(rows[2].blocks).toEqual([{ type: 'text', text: 'Cloned, and here is the answer' }]);
+    // The stream showed the step pending, then its result, then the reply.
+    const types = watched.events.map((event) => event.type);
+    expect(types.indexOf('tool_call_start')).toBeGreaterThan(-1);
+    expect(types.indexOf('tool_call_start')).toBeLessThan(types.lastIndexOf('message_start'));
+    const state = watched.state();
+    expect(state.messages).toHaveLength(3);
+    expect(state.messages[0].blocks[0]).toMatchObject({ type: 'tool_use', name: 'code_clone' });
+    expect(state.pendingToolCalls).toEqual([]);
+  });
+
   it("adds a discovery tool result's discoveredTools to the active set for later turns", async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-2d');

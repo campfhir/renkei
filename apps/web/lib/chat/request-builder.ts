@@ -30,7 +30,7 @@ export interface SystemPromptInput {
       /** Why it is not ready, when it is not — cloning, or a clone that failed. */
       notReady: string | null;
       envNames: string[];
-      /** The checkout was cloned for this very turn. */
+      /** The checkout is being cloned as this turn's first step. */
       clonedNow?: boolean;
     } | null;
   } | null;
@@ -118,7 +118,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         `This is a code project on the repository ${code.repoFullName}` +
           (code.branch ? ` (branch ${code.branch})` : '') +
           (code.ready
-            ? `.${code.clonedNow ? ' It was just cloned into the sandbox for this chat.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}`
+            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}`
             : `. Its checkout is not usable right now (${code.notReady ?? 'not ready'}), so the code_* tools are not available in this turn; say so if the person asks for work in the repository.`)
       );
     }

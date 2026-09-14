@@ -381,6 +381,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         system,
         history,
         thinkingBudget: input.thinkingBudget,
+        ...(code?.prelude ? { prelude: [code.prelude] } : {}),
       }
     );
   } catch (error) {

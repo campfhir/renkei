@@ -17,6 +17,7 @@ import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
 import type { ChatBlock, ChatMessageView, TurnView } from '@/lib/chat/views';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
+import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
 import Markdown from './markdown';
@@ -28,14 +29,53 @@ import Markdown from './markdown';
  * remembered, an old chat was reached into) stand out from the general
  * run of tool calls at a glance.
  */
+const GIT_ICONS = {
+  clone: ICONS.gitClone,
+  commit: ICONS.gitCommit,
+  push: ICONS.gitPush,
+  pull: ICONS.gitPull,
+  branch: ICONS.gitBranch,
+  checkout: ICONS.gitCheckout,
+  merge: ICONS.gitMerge,
+  rebase: ICONS.gitRebase,
+  stash: ICONS.gitStash,
+  pullRequest: ICONS.gitPullRequest,
+};
+
 function toolIconFor(name: string): string {
   if (name.startsWith('project_memory_') || name.startsWith('chat_memory_')) return ICONS.memory;
+  const git = gitGlyphFor(name);
+  if (git) return GIT_ICONS[git];
   if (name === 'code_write_file' || name === 'code_edit_file') return ICONS.diff;
   if (name === 'code_run') return ICONS.terminal;
-  if (name.startsWith('code_git_')) return ICONS.branch;
+  if (name === 'code_delegate') return ICONS.group;
   if (name.startsWith('code_')) return ICONS.file;
   if (name === 'chat_recall_chats') return ICONS.history;
   return ICONS.tool;
+}
+
+/** The tool's name as shown: the code tools' own, else the generic one. */
+function toolLabel(name: string): string {
+  return codeToolLabel(name)?.label ?? friendlyToolName(name, null);
+}
+
+/**
+ * One tool call's line: "Calling X", "Called X", "Failed: X" — or, for a
+ * step that reads as a sentence (the clone), that sentence.
+ */
+function callLine(name: string, state: 'pending' | 'done' | 'failed'): ReactNode {
+  const own = codeToolLabel(name);
+  const sentence =
+    own && (state === 'pending' ? own.pending : state === 'done' ? own.done : own.failed);
+  if (sentence) return <span className="font-medium">{sentence}</span>;
+  return (
+    <>
+      {state === 'pending' ? 'Calling ' : state === 'failed' ? 'Failed: ' : 'Called '}
+      <span className="font-medium" title={name}>
+        {toolLabel(name)}
+      </span>
+    </>
+  );
 }
 
 /** What the owner may do to a prompt of theirs while nothing is running. */
@@ -363,10 +403,7 @@ function WorkFold({
     label =
       current.kind === 'call' && isPending(current) ? (
         <>
-          Calling{' '}
-          <span className="font-medium" title={current.block.name}>
-            {friendlyToolName(current.block.name, null)}
-          </span>
+          {callLine(current.block.name, 'pending')}
           <span className="chat-dots" aria-hidden="true" />
         </>
       ) : (
@@ -435,10 +472,10 @@ function WorkFold({
                   <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
                     <summary>
                       <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
-                      {pending ? 'Calling ' : step.result?.isError ? 'Failed: ' : 'Called '}
-                      <span className="font-medium" title={step.block.name}>
-                        {friendlyToolName(step.block.name, null)}
-                      </span>
+                      {callLine(
+                        step.block.name,
+                        pending ? 'pending' : step.result?.isError ? 'failed' : 'done'
+                      )}
                       {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
                       {counts ? <Counts added={counts.added} deleted={counts.deleted} /> : null}
                       <Icon
