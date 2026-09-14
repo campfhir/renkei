@@ -40,14 +40,21 @@ export default function RepoTree({ tenantId, projectId }: { tenantId: string; pr
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [source, setSource] = useState<Source | null>(null);
+  const [branch, setBranch] = useState<string | null>(null);
 
   const load = useCallback(
     async (path: string) => {
       setListings((current) => ({ ...current, [path]: { state: 'loading' } }));
-      const result = await getJson<{ path: string; entries: Entry[]; source: Source }>(
-        `${base}?path=${encodeURIComponent(path)}`
-      );
-      if (result.data) setSource(result.data.source);
+      const result = await getJson<{
+        path: string;
+        entries: Entry[];
+        source: Source;
+        branch: string;
+      }>(`${base}?path=${encodeURIComponent(path)}`);
+      if (result.data) {
+        setSource(result.data.source);
+        setBranch(result.data.branch);
+      }
       setListings((current) => ({
         ...current,
         [path]: result.data
@@ -127,18 +134,34 @@ export default function RepoTree({ tenantId, projectId }: { tenantId: string; pr
     });
   };
 
+  // The branch the tree shows: the checkout's working branch once a chat
+  // has cloned; before that the branch the project was pointed at, as it
+  // is on Bitbucket — origin/<branch>.
+  const branchLine = branch ? (
+    <p
+      className="mb-2 flex items-center gap-1.5 text-xs text-gray-500"
+      title={
+        source === 'checkout'
+          ? 'The working branch of the checkout on the sandbox, uncommitted changes included.'
+          : 'As it is on Bitbucket — nothing is cloned yet.'
+      }
+    >
+      <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+      <span className="truncate font-mono">
+        {source === 'checkout' ? branch : `origin/${branch}`}
+      </span>
+      <span className="shrink-0 text-[11px] text-gray-400">
+        {source === 'checkout' ? 'working branch' : 'not cloned yet'}
+      </span>
+    </p>
+  ) : null;
+
   return (
     <div>
-      <ul role="tree" aria-label="Repository files" className="font-mono">
+      {branchLine}
+      <ul role="tree" aria-label="Files" className="font-mono">
         {renderDir('', 0)}
       </ul>
-      {source ? (
-        <p className="mt-2 text-[11px] text-gray-400">
-          {source === 'checkout'
-            ? 'From the checkout on the sandbox, uncommitted changes included.'
-            : 'From Bitbucket, on the project’s branch — nothing is cloned yet.'}
-        </p>
-      ) : null}
     </div>
   );
 }

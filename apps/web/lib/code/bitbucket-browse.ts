@@ -161,7 +161,7 @@ export async function listSource(
   fullName: string,
   branch: string,
   path: string
-): Promise<{ ok: true; entries: SourceEntry[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; entries: SourceEntry[]; ref: string } | { ok: false; error: string }> {
   const [workspace, slug] = fullName.split('/');
   if (!workspace || !slug) return { ok: false, error: 'The repository name is not usable.' };
   const base = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
@@ -201,7 +201,7 @@ export async function listSource(
     const rank = (kind: string) => (kind === 'dir' ? 0 : 1);
     return rank(a.kind) - rank(b.kind) || a.path.localeCompare(b.path);
   });
-  return { ok: true, entries };
+  return { ok: true, entries, ref };
 }
 
 /**

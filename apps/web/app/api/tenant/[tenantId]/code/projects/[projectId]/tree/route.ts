@@ -53,7 +53,12 @@ export async function GET(
       const rank = (kind: string) => (kind === 'dir' ? 0 : 1);
       return rank(a.kind) - rank(b.kind) || a.path.localeCompare(b.path);
     });
-    return NextResponse.json({ path: listed.val.path, entries, source: 'checkout' });
+    return NextResponse.json({
+      path: listed.val.path,
+      entries,
+      source: 'checkout',
+      branch: workspace.branch,
+    });
   }
 
   const listed = await listSource(
@@ -63,5 +68,10 @@ export async function GET(
     path
   );
   if (!listed.ok) return jsonError(409, 'tree', listed.error);
-  return NextResponse.json({ path, entries: listed.entries, source: 'bitbucket' });
+  return NextResponse.json({
+    path,
+    entries: listed.entries,
+    source: 'bitbucket',
+    branch: listed.ref,
+  });
 }

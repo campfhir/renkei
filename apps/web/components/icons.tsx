@@ -56,8 +56,8 @@ export const ICONS = {
   gitStash: 'M4 7l8-4 8 4-8 4zM4 12l8 4 8-4M4 17l8 4 8-4',
   gitPullRequest:
     'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 9v12M6 21a0 0 0 0 0 0 0M18 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 15V9a3 3 0 0 0-3-3h-4M13 3l-3 3 3 3',
-  /** Two columns of lines with a plus and a minus — a diff. */
-  diff: 'M8 4v16M4 8h8M4 16h8M16 12h4M14 12h.01',
+  /** A plus over a minus — ±, a diff. */
+  diff: 'M12 3.5v9M7.5 8h9M6 19h12',
   folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
   upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',
   download: 'M12 4v12M8 12l4 4 4-4M5 16v4h14v-4',

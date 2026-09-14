@@ -222,14 +222,14 @@ export default function ProjectView({
           <aside
             className={`${sectionClass} sticky top-4 max-h-[calc(100vh-6rem)] overflow-y-auto`}
           >
-            <h2 className="mb-2 text-sm font-semibold">Repository files</h2>
+            <h2 className="mb-1 text-sm font-semibold">Files</h2>
             {aside}
           </aside>
         ) : null}
         <div className="space-y-4">
           {aside && !wide ? (
             <details className={sectionClass}>
-              <summary className="cursor-pointer text-sm font-semibold">Repository files</summary>
+              <summary className="cursor-pointer text-sm font-semibold">Files</summary>
               <div className="mt-2">{aside}</div>
             </details>
           ) : null}

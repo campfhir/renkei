@@ -375,9 +375,7 @@ test.describe('code projects', () => {
     await expect(page.getByText('Your code project')).toBeVisible();
     // A code project keeps no files of its own, picks its tools per chat,
     // and describes itself through its README; its chats are listed here.
-    await expect(main.getByRole('heading', { level: 2, name: 'Files', exact: true })).toHaveCount(
-      0
-    );
+    await expect(main.getByRole('button', { name: 'Add files' })).toHaveCount(0);
     await expect(main.getByRole('button', { name: 'Tools' })).toHaveCount(0);
     await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
@@ -403,10 +401,11 @@ test.describe('code projects', () => {
       'https://bitbucket.org/acme/billing-service'
     );
     // The tree is there before any checkout, read from Bitbucket.
-    if (mobile) await main.getByText('Repository files', { exact: true }).click();
-    const tree = main.getByRole('tree', { name: 'Repository files' });
+    if (mobile) await main.getByText('Files', { exact: true }).click();
+    const tree = main.getByRole('tree', { name: 'Files' });
     await expect(tree.getByText('package.json')).toBeVisible();
-    await expect(main.getByText(/From Bitbucket, on the project’s branch/)).toBeVisible();
+    await expect(main.getByText('origin/main')).toBeVisible();
+    await expect(main.getByText('not cloned yet', { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('code-project-not-cloned.png');
 
@@ -426,9 +425,10 @@ test.describe('code projects', () => {
     // ── The repository tree, now from the checkout: beside the sections on
     //    a wide screen, folded above them on a narrow one; folders open as
     //    they are clicked ──
-    if (mobile) await main.getByText('Repository files', { exact: true }).click();
+    if (mobile) await main.getByText('Files', { exact: true }).click();
     await expect(tree.getByText('package.json')).toBeVisible();
-    await expect(main.getByText(/From the checkout on the sandbox/)).toBeVisible();
+    await expect(main.getByText('working branch', { exact: true })).toBeVisible();
+    await expect(main.getByText('origin/main')).toHaveCount(0);
     await tree.getByRole('button', { name: 'src' }).click();
     await expect(tree.getByText('billing.ts')).toBeVisible();
     await shot('code-project-tree.png');
