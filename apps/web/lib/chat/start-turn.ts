@@ -22,7 +22,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
-import { sandboxConfig } from '@renkei/sandbox-client';
+import { sandboxConfig, sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -333,6 +333,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       hasDiscoverableTools: discoveryTool !== null,
       hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
+      hasWorkspaces: toolConfig.connectors.includes('sandbox') && sandboxWorkspacesEnabled(),
       filesAllowed,
       now: new Date(),
     });

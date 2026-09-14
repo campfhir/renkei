@@ -45,7 +45,7 @@ export interface BitbucketAccess {
 
 /** The caller's live Bitbucket token, refreshed when stale. */
 export async function resolveBitbucketAccess(
-  context: MCPToolContext
+  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<BitbucketAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');

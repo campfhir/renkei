@@ -67,6 +67,7 @@ import * as secretsStore from './secrets-store';
 import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './browser';
 import { SecretVault } from './secret-vault';
 import { secretSummary } from './secrets';
+import { createWorkspaceHandlers } from './workspace-endpoints';
 import { logger } from './logger';
 
 /**
@@ -87,12 +88,20 @@ export interface BrowserVerbs {
     maxChars: number,
     secret?: unknown
   ): Promise<BrowserPageState>;
-  select(target: BrowserTarget, ref: unknown, values: unknown, maxChars: number): Promise<BrowserPageState>;
+  select(
+    target: BrowserTarget,
+    ref: unknown,
+    values: unknown,
+    maxChars: number
+  ): Promise<BrowserPageState>;
   press(target: BrowserTarget, key: unknown, maxChars: number): Promise<BrowserPageState>;
   scroll(target: BrowserTarget, input: unknown, maxChars: number): Promise<BrowserPageState>;
   back(target: BrowserTarget, maxChars: number): Promise<BrowserPageState>;
   run(target: BrowserTarget, steps: unknown, maxChars: number): Promise<BrowserRunResult>;
-  screenshot(target: BrowserTarget, fullPage: boolean): Promise<{ bytes: Buffer; url: string; title: string }>;
+  screenshot(
+    target: BrowserTarget,
+    fullPage: boolean
+  ): Promise<{ bytes: Buffer; url: string; title: string }>;
   close(target: BrowserTarget): Promise<boolean>;
 }
 
@@ -106,6 +115,8 @@ export interface SandboxServerDeps {
   browser?: BrowserVerbs | null;
   /** The in-memory secret vault; the server makes its own when not given (tests share one with the browser). */
   vault?: SecretVault;
+  /** Code workspaces (SANDBOX_WORKSPACES_ENABLED); off answers every workspace and env verb 503. */
+  workspaces?: boolean;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -222,7 +233,12 @@ function secretWire(summary: SandboxSecretSummary) {
 }
 
 function pageWire(state: BrowserPageState) {
-  return { url: state.url, title: state.title, snapshot: state.snapshot, truncated: state.truncated };
+  return {
+    url: state.url,
+    title: state.title,
+    snapshot: state.snapshot,
+    truncated: state.truncated,
+  };
 }
 
 /**
@@ -259,8 +275,12 @@ function expiryFromNow(batchId: string | null): Date {
 export function createSandboxServer(deps: SandboxServerDeps): Server {
   const maxFileBytes = deps.maxFileBytes ?? orgMaxFileBytes;
   const vault = deps.vault ?? new SecretVault();
+  const workspaces = createWorkspaceHandlers({ db: deps.db, enabled: deps.workspaces === true });
 
-  async function handleFetch(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+  async function handleFetch(
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     const named = validateFilename(str(body.filename));
@@ -279,7 +299,12 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
 
     const headroom = await quotaHeadroom(deps.db, target, batchId);
     if (!headroom.ok) {
-      return sendError(response, 429, 'quota_exceeded', 'Too many files staged — delete some first.');
+      return sendError(
+        response,
+        429,
+        'quota_exceeded',
+        'Too many files staged — delete some first.'
+      );
     }
     if (headroom.remaining <= 0) {
       return sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
@@ -335,7 +360,11 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     sendJson(response, 200, summaryWire(summary));
   }
 
-  async function handleWrite(request: IncomingMessage, url: URL, response: ServerResponse): Promise<void> {
+  async function handleWrite(
+    request: IncomingMessage,
+    url: URL,
+    response: ServerResponse
+  ): Promise<void> {
     const tenantId = url.searchParams.get('tenantId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     const named = validateFilename(url.searchParams.get('filename') ?? '');
@@ -349,7 +378,12 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
 
     const headroom = await quotaHeadroom(deps.db, target, batchId);
     if (!headroom.ok) {
-      return sendError(response, 429, 'quota_exceeded', 'Too many files staged — delete some first.');
+      return sendError(
+        response,
+        429,
+        'quota_exceeded',
+        'Too many files staged — delete some first.'
+      );
     }
     if (headroom.remaining <= 0) {
       return sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
@@ -381,7 +415,10 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     sendJson(response, 200, summaryWire(summary));
   }
 
-  async function handleList(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+  async function handleList(
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     const batchId = batchIdOf(body.batchId) ?? undefined;
@@ -389,7 +426,10 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     sendJson(response, 200, { files: files.map(summaryWire) });
   }
 
-  async function handleStat(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+  async function handleStat(
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     const fileId = str(body.fileId);
@@ -403,7 +443,10 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     });
   }
 
-  async function handleRead(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+  async function handleRead(
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     const fileId = str(body.fileId);
@@ -420,7 +463,10 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     response.end(bytes);
   }
 
-  async function handleDelete(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+  async function handleDelete(
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     const fileId = str(body.fileId);
@@ -453,7 +499,11 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
       return null;
     }
-    const cap = Math.min(await maxFileBytes(target.tenantId), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
+    const cap = Math.min(
+      await maxFileBytes(target.tenantId),
+      DEFAULT_MAX_FILE_BYTES,
+      headroom.remaining
+    );
     const produced = await produce();
     if (produced.bytes.byteLength > cap) {
       sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
@@ -509,7 +559,11 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     try {
       switch (op) {
         case 'navigate':
-          return sendJson(response, 200, pageWire(await browser.navigate(target, str(body.url), maxChars)));
+          return sendJson(
+            response,
+            200,
+            pageWire(await browser.navigate(target, str(body.url), maxChars))
+          );
         case 'snapshot':
           return sendJson(response, 200, pageWire(await browser.snapshot(target, maxChars)));
         case 'click':
@@ -530,7 +584,11 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
             )
           );
         case 'select':
-          return sendJson(response, 200, pageWire(await browser.select(target, body.ref, body.values, maxChars)));
+          return sendJson(
+            response,
+            200,
+            pageWire(await browser.select(target, body.ref, body.values, maxChars))
+          );
         case 'press':
           return sendJson(response, 200, pageWire(await browser.press(target, body.key, maxChars)));
         case 'scroll':
@@ -578,7 +636,11 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
           );
           if (!staged || !shot) return;
           const taken: { url: string; title: string } = shot;
-          return sendJson(response, 200, { file: summaryWire(staged), url: taken.url, title: taken.title });
+          return sendJson(response, 200, {
+            file: summaryWire(staged),
+            url: taken.url,
+            title: taken.title,
+          });
         }
         default:
           return sendError(response, 404, 'unknown_operation');
@@ -670,7 +732,12 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
         if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
         const until = Date.now() + unlockWindowMs(body.unlockMs);
         if (!vault.unlock(secret.id, secret.sealed, given.passphrase, until)) {
-          return sendError(response, 403, 'bad_passphrase', 'That passphrase does not open this secret.');
+          return sendError(
+            response,
+            403,
+            'bad_passphrase',
+            'That passphrase does not open this secret.'
+          );
         }
         return sendJson(response, 200, { secret: secretWire(secretSummary(secret, vault)) });
       }
@@ -726,8 +793,12 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';
     const browserOp = op.startsWith('browser/') ? op.slice('browser/'.length) : null;
     const secretsOp = op.startsWith('secrets/') ? op.slice('secrets/'.length) : null;
-    const jsonHandler = browserOp !== null || secretsOp !== null ? null : jsonHandlers[op];
-    if (browserOp === null && secretsOp === null && !jsonHandler) {
+    const workspacesOp = op.startsWith('workspaces/') ? op.slice('workspaces/'.length) : null;
+    const envOp = op.startsWith('env/') ? op.slice('env/'.length) : null;
+    const prefixed =
+      browserOp !== null || secretsOp !== null || workspacesOp !== null || envOp !== null;
+    const jsonHandler = prefixed ? null : jsonHandlers[op];
+    if (!prefixed && !jsonHandler) {
       return sendError(response, 404, 'unknown_operation');
     }
     const raw = await readBody(request, MAX_JSON_BYTES);
@@ -741,6 +812,9 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     if (!isRecord(parsedBody)) return sendError(response, 400, 'bad_request');
     if (browserOp !== null) return handleBrowser(browserOp, parsedBody, response);
     if (secretsOp !== null) return handleSecrets(secretsOp, parsedBody, response);
+    if (workspacesOp !== null)
+      return workspaces.handleWorkspaces(workspacesOp, parsedBody, response);
+    if (envOp !== null) return workspaces.handleEnv(envOp, parsedBody, response);
     await jsonHandler!(parsedBody, response);
   }
 
@@ -776,6 +850,8 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
           });
         }
       }
+      // Workspaces past their lifetime: the checkout, then the row.
+      await workspaces.sweep(SWEEP_BATCH);
       // Secrets past their lifetime: the key first, then the row.
       const expiredSecrets = await secretsStore.listExpiredSecrets(deps.db, SWEEP_BATCH);
       for (const secret of expiredSecrets) {

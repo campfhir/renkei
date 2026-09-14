@@ -48,7 +48,11 @@ export type AuditAction =
   | 'sandbox.secret.created'
   | 'sandbox.secret.unlocked'
   | 'sandbox.secret.locked'
-  | 'sandbox.secret.revoked';
+  | 'sandbox.secret.revoked'
+  | 'sandbox.workspace.cloned'
+  | 'sandbox.workspace.deleted'
+  | 'sandbox.env.set'
+  | 'sandbox.env.deleted';
 
 export interface AuditEventInput {
   tenantId: string;

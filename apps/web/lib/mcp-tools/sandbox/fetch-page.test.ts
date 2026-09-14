@@ -11,6 +11,7 @@
 jest.mock('@/lib/sandbox/service-client', () => ({
   sandboxConfig: jest.fn(() => ({ url: 'http://sandbox.internal:8092', key: 'k' })),
   sandboxBrowserEnabled: jest.fn(() => false),
+  sandboxWorkspacesEnabled: jest.fn(() => false),
   clientFailure: jest.fn((error: { kind: string; type?: string; message?: string }) => ({
     status: 400,
     message: error.message ?? `failed: ${error.type ?? error.kind}`,

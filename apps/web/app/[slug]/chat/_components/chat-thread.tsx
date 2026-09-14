@@ -43,6 +43,8 @@ interface ThreadProps {
   newChatProject: { id: string; name: string } | null;
   /** The org has file storage; without it the composer offers no uploads. */
   uploadsEnabled: boolean;
+  /** A first message to start the box with (a new chat opened from a workspace). */
+  initialDraft?: string | null;
 }
 
 /** The typed text of a prompt row, without the attachment excerpts the model saw. */
@@ -75,6 +77,7 @@ export default function ChatThread({
   initialMessages,
   models,
   newChatProject,
+  initialDraft = null,
   uploadsEnabled,
 }: ThreadProps) {
   const router = useRouter();
@@ -402,6 +405,7 @@ export default function ChatThread({
           onSubmit={onComposerSubmit}
           editing={editing ? { text: promptTextOf(editing) } : null}
           onCancelEdit={() => setEditing(null)}
+          draft={initialDraft}
           onStop={stop}
           modelControl={
             <ModelSelect

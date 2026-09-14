@@ -304,13 +304,27 @@ CMD ["pnpm", "--filter", "@renkei/worker-onbase", "start"]
 # tested with, plus its system libraries and fonts, into /ms-playwright
 # where the unprivileged worker can read it — no distro Chromium of a
 # different version, no download at container start.
+#
+# It also carries a developer's toolchain for the code workspaces behind
+# the sandbox_workspace_* tools (apps/worker-sandbox/src/workspaces.ts):
+# git for the checkout, ripgrep for search, and the languages and build
+# tools a typical repository's own commands expect — Node and pnpm are
+# already here; python3 with venv and pip, make and a C toolchain for
+# native modules, jq, curl, unzip. util-linux supplies setpriv, which is
+# how the worker drops each caller's commands to their own uid (and how
+# the entrypoint drops itself when workspaces are off).
 FROM node:24-bookworm-slim AS sandbox
 ARG PNPM_VERSION
 
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends dumb-init ca-certificates && \
+    apt-get install -y --no-install-recommends \
+      dumb-init ca-certificates util-linux \
+      git ripgrep openssh-client \
+      python3 python3-venv python3-pip \
+      build-essential pkg-config \
+      jq curl unzip zip less procps && \
     rm -rf /var/lib/apt/lists/* && \
     npm install -g pnpm@${PNPM_VERSION}
 
@@ -343,14 +357,22 @@ COPY --chown=worker:nodejs apps/worker-sandbox/tsconfig.json ./apps/worker-sandb
 
 # The scratch disk itself — a dedicated volume mounts here in compose so the
 # staged bytes survive a container restart but stay off every other image.
-RUN mkdir -p /data && chown worker:nodejs /data
+# The workspace volume is a second one, apart from it: checkouts belong to
+# per-caller uids and must never share a directory with the staged files.
+RUN mkdir -p /data /workspaces && chown worker:nodejs /data && chmod 711 /workspaces
 
-USER worker
+# No `USER worker` here, unlike every other stage: the entrypoint decides.
+# Without SANDBOX_WORKSPACES_ENABLED it drops to `worker` before the
+# process starts, exactly as before; with it the worker stays root so each
+# caller's commands can be dropped to their own uid (see the script).
+COPY docker/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint
+RUN chmod 755 /usr/local/bin/sandbox-entrypoint
 
 ARG GIT_COMMIT
 ENV NODE_ENV=production \
     GIT_COMMIT=${GIT_COMMIT} \
     SANDBOX_DATA_DIR=/data \
+    SANDBOX_WORKSPACES_DIR=/workspaces \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 EXPOSE 8092
@@ -360,7 +382,7 @@ EXPOSE 8092
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://localhost:' + (process.env.SANDBOX_WORKER_PORT || 8092) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
-ENTRYPOINT ["dumb-init", "--"]
+ENTRYPOINT ["dumb-init", "--", "sandbox-entrypoint"]
 CMD ["pnpm", "--filter", "@renkei/worker-sandbox", "start"]
 
 # Migration stage - runs migrations only

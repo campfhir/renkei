@@ -970,6 +970,17 @@ export interface ResourceAccessGrants {
   tenant_id: string;
 }
 
+export interface SandboxEnvSecrets {
+  created_at: Generated<Timestamp>;
+  id: string;
+  last_used_at: Timestamp | null;
+  name: string;
+  sealed: string;
+  subject: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface SandboxFiles {
   batch_id: string | null;
   content_type: string | null;
@@ -993,6 +1004,22 @@ export interface SandboxSecrets {
   last_used_at: Timestamp | null;
   name: string;
   sealed: string;
+  subject: string;
+  tenant_id: string;
+}
+
+export interface SandboxWorkspaces {
+  branch: string;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  expires_at: Timestamp;
+  id: string;
+  last_used_at: Generated<Timestamp>;
+  provider: string;
+  repo_full_name: string;
+  size_bytes: Generated<Int8>;
+  status: Generated<string>;
+  storage_key: string;
   subject: string;
   tenant_id: string;
 }
@@ -1199,8 +1226,10 @@ export interface DB {
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;
   resource_access_grants: ResourceAccessGrants;
+  sandbox_env_secrets: SandboxEnvSecrets;
   sandbox_files: SandboxFiles;
   sandbox_secrets: SandboxSecrets;
+  sandbox_workspaces: SandboxWorkspaces;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   tenant_domains: TenantDomains;

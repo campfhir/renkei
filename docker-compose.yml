@@ -40,8 +40,9 @@ services:
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
       # On in dev so the sandbox_browser_* tools are there to try; must
-      # match worker-sandbox's setting below.
+      # match worker-sandbox's setting below. Same for the code workspaces.
       SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
+      SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.
       RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000
@@ -244,14 +245,24 @@ services:
       target: sandbox
     image: renkei-sandbox:latest
     container_name: renkei-worker-sandbox
+    # The env file carries TOKEN_ENCRYPTION_KEY, the fallback key for
+    # workspace environment secrets when SANDBOX_ENV_SECRETS_KEY is unset.
+    env_file:
+      - apps/web/.env.development
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
       SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
+      # Code workspaces (docs/sandbox-workspaces-design.md): on by default
+      # in the dev stack, same variable on both sides. The env-secret key
+      # defaults to the dev TOKEN_ENCRYPTION_KEY fallback inside the worker.
+      SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
+      SANDBOX_ENV_SECRETS_KEY: ${SANDBOX_ENV_SECRETS_KEY:-}
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=1024
     volumes:
       - sandbox_data:/data
+      - sandbox_workspaces:/workspaces
     # Same sizing as the deploy stack (docker-compose.yaml): the browser
     # needs headroom and a real /dev/shm, and should be the last thing the
     # kernel kills. Export SANDBOX_WORKER_MEMORY to raise the cap.
@@ -281,4 +292,5 @@ services:
 volumes:
   postgres_data:
   sandbox_data:
+  sandbox_workspaces:
   azurite_data:
