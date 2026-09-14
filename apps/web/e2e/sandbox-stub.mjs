@@ -1,0 +1,196 @@
+/**
+ * A stand-in for apps/worker-sandbox, for the browser suite: the handful
+ * of workspace and environment verbs the Code pages drive, answered from
+ * memory with the worker's own wire shapes. No git, no disk, no Bitbucket
+ * — a clone "runs" for a moment and then reads ready, which is enough to
+ * exercise the page that follows it. State is per (tenantId, subject),
+ * exactly as the real worker scopes it, so the three Playwright projects
+ * running side by side never see each other's checkouts.
+ *
+ * Started by playwright.config.ts as a second webServer, on the port the
+ * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
+ */
+
+/* global process, Buffer, setTimeout, URL, console */
+
+import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
+
+const PORT = Number(process.env.SANDBOX_STUB_PORT ?? '8092');
+const API_KEY = process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key';
+/** How long a stubbed clone stays "cloning" before it reads ready. */
+const CLONE_MS = Number(process.env.SANDBOX_STUB_CLONE_MS ?? '1500');
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
+const RESERVED = new Set(['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS']);
+
+/** scope key → { workspaces: Map<id, workspace>, env: Map<name, variable> } */
+const scopes = new Map();
+
+function scopeOf(body) {
+  const key = `${body.tenantId}\n${body.subject}`;
+  if (!scopes.has(key)) scopes.set(key, { workspaces: new Map(), env: new Map() });
+  return scopes.get(key);
+}
+
+function json(response, status, body) {
+  const payload = JSON.stringify(body);
+  response.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(payload),
+  });
+  response.end(payload);
+}
+
+function error(response, status, type, message) {
+  json(response, status, { error: { type, message } });
+}
+
+function envWire(variable) {
+  return { ...variable };
+}
+
+function readBody(request) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+function setVariable(scope, name, value) {
+  if (!ENV_NAME.test(name) || RESERVED.has(name)) {
+    return `${name} is not a usable variable name.`;
+  }
+  if (typeof value !== 'string' || !value) return `${name}: a value is required.`;
+  const now = new Date().toISOString();
+  const existing = scope.env.get(name);
+  scope.env.set(name, {
+    id: existing?.id ?? randomUUID(),
+    name,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    lastUsedAt: existing?.lastUsedAt ?? null,
+  });
+  return null;
+}
+
+function handleWorkspaces(op, body, response) {
+  const scope = scopeOf(body);
+  switch (op) {
+    case 'clone': {
+      if (!/^https:\/\/bitbucket\.org\/.+\.git$/.test(body.cloneUrl ?? '') || !body.authHeader) {
+        return error(response, 400, 'bad_request');
+      }
+      const now = new Date();
+      const workspace = {
+        id: randomUUID(),
+        provider: body.provider,
+        repoFullName: body.repoFullName,
+        branch: body.branch || '(default)',
+        status: 'cloning',
+        error: null,
+        sizeBytes: 0,
+        createdAt: now.toISOString(),
+        lastUsedAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+      };
+      scope.workspaces.set(workspace.id, workspace);
+      // A repository named "fails" clones badly, so the page's failure
+      // state can be looked at too.
+      setTimeout(() => {
+        if (!scope.workspaces.has(workspace.id)) return;
+        if (/\/fails$/.test(workspace.repoFullName)) {
+          workspace.status = 'failed';
+          workspace.error = 'repository not found';
+        } else {
+          workspace.status = 'ready';
+          workspace.branch = body.branch || 'main';
+          workspace.sizeBytes = 4_321_000;
+        }
+      }, CLONE_MS);
+      return json(response, 200, { workspace });
+    }
+    case 'list':
+      return json(response, 200, { workspaces: [...scope.workspaces.values()] });
+    case 'get': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      return json(response, 200, { workspace });
+    }
+    case 'delete': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found');
+      scope.workspaces.delete(workspace.id);
+      return json(response, 200, {
+        deleted: true,
+        id: workspace.id,
+        repoFullName: workspace.repoFullName,
+      });
+    }
+    default:
+      return error(response, 404, 'unknown_operation');
+  }
+}
+
+function handleEnv(op, body, response) {
+  const scope = scopeOf(body);
+  switch (op) {
+    case 'list':
+      return json(response, 200, { variables: [...scope.env.values()].map(envWire) });
+    case 'set': {
+      const failure = setVariable(scope, body.name ?? '', body.value);
+      if (failure) return error(response, 400, 'bad_request', failure);
+      return json(response, 200, { variable: envWire(scope.env.get(body.name)) });
+    }
+    case 'replace': {
+      const values = body.values && typeof body.values === 'object' ? body.values : null;
+      if (!values) return error(response, 400, 'bad_request', 'values must be an object.');
+      for (const [name, value] of Object.entries(values)) {
+        if (!ENV_NAME.test(name) || RESERVED.has(name)) {
+          return error(response, 400, 'bad_request', `${name} is not a usable variable name.`);
+        }
+        if (typeof value !== 'string' || !value) {
+          return error(response, 400, 'bad_request', `${name}: a value is required.`);
+        }
+      }
+      for (const name of [...scope.env.keys()]) if (!(name in values)) scope.env.delete(name);
+      for (const [name, value] of Object.entries(values)) setVariable(scope, name, value);
+      return json(response, 200, { variables: [...scope.env.values()].map(envWire) });
+    }
+    case 'delete': {
+      if (!scope.env.has(body.name ?? '')) return error(response, 404, 'not_found');
+      scope.env.delete(body.name);
+      return json(response, 200, { deleted: true, name: body.name });
+    }
+    default:
+      return error(response, 404, 'unknown_operation');
+  }
+}
+
+const server = createServer((request, response) => {
+  const url = new URL(request.url ?? '/', 'http://stub.internal');
+  if (request.method === 'GET' && url.pathname === '/health')
+    return json(response, 200, { ok: true });
+  if (request.headers.authorization !== `Bearer ${API_KEY}`) {
+    return error(response, 401, 'unauthorized');
+  }
+  if (request.method !== 'POST') return error(response, 405, 'method_not_allowed');
+  const op = url.pathname.startsWith('/v1/') ? url.pathname.slice(4) : '';
+  void readBody(request).then((body) => {
+    if (!body.tenantId || !body.subject) return error(response, 400, 'bad_request');
+    if (op.startsWith('workspaces/'))
+      return handleWorkspaces(op.slice('workspaces/'.length), body, response);
+    if (op.startsWith('env/')) return handleEnv(op.slice('env/'.length), body, response);
+    return error(response, 404, 'unknown_operation');
+  });
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`sandbox stub listening on 127.0.0.1:${PORT}`);
+});

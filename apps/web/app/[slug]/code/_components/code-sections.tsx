@@ -217,7 +217,7 @@ export default function CodeSections({
               type="button"
               disabled={busy}
               onClick={() => setEnvOpen((value) => !value)}
-              className="ml-auto text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+              className="ml-auto whitespace-nowrap text-xs font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
             >
               {code.env.length ? 'Replace .env' : 'Add .env'}
             </button>
