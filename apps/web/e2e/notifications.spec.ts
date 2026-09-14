@@ -172,7 +172,12 @@ test('notifications — mark all as read reaches rows past the page, show more l
   await expect(page.getByText('Notification 099', { exact: true })).toBeVisible();
   await expect(page.getByText('Notification 100', { exact: true })).toHaveCount(0);
 
+  // The pill stays out of the way until the person actually scrolls to the
+  // end of the loaded list — it must not be sitting over content unscrolled.
   const showMore = page.getByRole('button', { name: 'Show more' });
+  await expect(showMore).toHaveCount(0);
+  await page.getByText('Notification 099', { exact: true }).scrollIntoViewIfNeeded();
+  await page.mouse.wheel(0, 400);
   await expect(showMore).toBeVisible();
   await shot(page, testInfo, 'review-notifications-show-more-and-mark-all', false);
 

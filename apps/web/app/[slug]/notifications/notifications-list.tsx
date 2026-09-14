@@ -144,6 +144,10 @@ export default function NotificationsList({
   const [extraRows, setExtraRows] = useState<NotificationCard[]>([]);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
+  // The button itself only shows once the person has actually scrolled to
+  // the end of what's loaded — see the sentinel effect below.
+  const [nearBottom, setNearBottom] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Deduped by id: a refresh can shift `rows`' window enough to overlap the
   // oldest `extraRows` page at the edges, and `rows` — always the current
@@ -193,6 +197,25 @@ export default function NotificationsList({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [confirming, busy]);
+
+  // The "Show more" pill floats over the viewport, so it must not appear
+  // until there's blank space under the list for it to float over — the
+  // spacer below IS that space, and doubles as the scroll trigger: once
+  // the person scrolls it into view, they've reached the end of what's
+  // loaded, which is exactly when the pill should show up. The browser
+  // keeps tracking the same element's position as the page grows (a
+  // "Show more" click adds rows above it), so this only needs to
+  // reattach when the sentinel itself is mounted or unmounted.
+  useEffect(() => {
+    const element = sentinelRef.current;
+    if (!element || !hasMore || typeof IntersectionObserver === 'undefined') {
+      setNearBottom(false);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => setNearBottom(entry.isIntersecting));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasMore]);
 
   const toggle = (id: string) => {
     setSelected((current) => {
@@ -632,14 +655,21 @@ export default function NotificationsList({
         </section>
       ))}
 
+      {/* The sentinel IS the padding: blank space under the last card so
+          the floating pill below never lands on top of content, and the
+          trigger for showing it — scrolling this into view means the
+          person has actually reached the end of the list. */}
+      {hasMore ? <div ref={sentinelRef} className="h-16" aria-hidden="true" /> : null}
+
       {/* Floating "Show more" — the same pill as chat's "Jump to latest"
           (message-list.tsx), same styling, different positioning: that one
           is `sticky` inside a bounded, scrolling message pane; this page
           has no such pane, the whole document scrolls, so this is `fixed`
           to the viewport instead — a floating CTA rather than a sticky
           footer. Hidden in selection mode so it never competes with the
-          fixed multi-select footer below. */}
-      {hasMore && !selectionMode ? (
+          fixed multi-select footer below, and hidden until the sentinel
+          above says the person has actually scrolled down to it. */}
+      {hasMore && nearBottom && !selectionMode ? (
         <div className="fixed inset-x-0 bottom-4 z-20 flex justify-center">
           <button
             type="button"
