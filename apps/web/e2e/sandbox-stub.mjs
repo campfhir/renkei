@@ -305,6 +305,19 @@ function handleBitbucket(url, response) {
     const repo = BITBUCKET.repos.find((entry) => entry.full_name === `${one[1]}/${one[2]}`);
     return repo ? json(response, 200, repo) : error(response, 404, 'not_found');
   }
+  const listing = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.*)$/.exec(path);
+  if (listing && (listing[4] === '' || listing[4].endsWith('/'))) {
+    const dir = decodeURIComponent(listing[4].replace(/\/$/, ''));
+    const entries = TREE[dir];
+    if (!entries) return error(response, 404, 'not_found');
+    return json(response, 200, {
+      values: entries.map((entry) =>
+        entry.kind === 'dir'
+          ? { type: 'commit_directory', path: entry.path }
+          : { type: 'commit_file', path: entry.path, size: entry.sizeBytes }
+      ),
+    });
+  }
   const file = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.+)$/.exec(path);
   if (file) {
     if (decodeURIComponent(file[4]) !== 'README.md') return error(response, 404, 'not_found');

@@ -279,6 +279,11 @@ test.describe('code projects', () => {
       'href',
       'https://bitbucket.org/acme/billing-service'
     );
+    // The tree is there before any checkout, read from Bitbucket.
+    if (mobile) await main.getByText('Repository files', { exact: true }).click();
+    const tree = main.getByRole('tree', { name: 'Repository files' });
+    await expect(tree.getByText('package.json')).toBeVisible();
+    await expect(main.getByText(/From Bitbucket, on the project’s branch/)).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('code-project-not-cloned.png');
 
@@ -295,11 +300,12 @@ test.describe('code projects', () => {
     await expect(repository.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
     await shot('code-project-ready.png');
 
-    // ── The repository tree: beside the sections on a wide screen, folded
-    //    above them on a narrow one; folders open as they are clicked ──
+    // ── The repository tree, now from the checkout: beside the sections on
+    //    a wide screen, folded above them on a narrow one; folders open as
+    //    they are clicked ──
     if (mobile) await main.getByText('Repository files', { exact: true }).click();
-    const tree = main.getByRole('tree', { name: 'Repository files' });
     await expect(tree.getByText('package.json')).toBeVisible();
+    await expect(main.getByText(/From the checkout on the sandbox/)).toBeVisible();
     await tree.getByRole('button', { name: 'src' }).click();
     await expect(tree.getByText('billing.ts')).toBeVisible();
     await shot('code-project-tree.png');

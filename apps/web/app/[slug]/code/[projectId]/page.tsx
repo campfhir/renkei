@@ -54,14 +54,7 @@ export default async function CodeProjectPage({
       variant="code"
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
       readme={view.code.readme}
-      aside={
-        <RepoTree
-          key="tree"
-          tenantId={tenant.id}
-          projectId={projectId}
-          ready={view.code.workspace?.status === 'ready'}
-        />
-      }
+      aside={<RepoTree key="tree" tenantId={tenant.id} projectId={projectId} />}
       before={
         <CodeSections
           key="code"

@@ -274,6 +274,9 @@ function RepositoryBrowser({
       setRepos(null);
       return;
     }
+    // A request the filters have moved past is dropped when it answers,
+    // so a slow workspace-wide listing never overwrites a narrower one.
+    let stale = false;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       void (async () => {
@@ -285,11 +288,15 @@ function RepositoryBrowser({
           query.trim() ? `q=${encodeURIComponent(query.trim())}` : '',
         ].filter(Boolean);
         const listed = await getJson<{ repos: RepoChoice[] }>(`${base}/repos?${parts.join('&')}`);
+        if (stale) return;
         setLoading(false);
         if (listed.data) setRepos(listed.data.repos);
         else setError(listed.error ?? 'The repositories could not be read.');
       })();
     }, 250);
+    return () => {
+      stale = true;
+    };
   }, [base, enabled, workspace, project, query]);
 
   return (

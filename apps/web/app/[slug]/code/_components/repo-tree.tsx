@@ -1,10 +1,12 @@
 'use client';
 
 /**
- * The checkout's folders and files as a tree, one directory fetched as
- * it is opened (`…/code/projects/[id]/tree?path=`), directories first.
- * A look at the repository's shape from the project page; the chat's
- * tools are what read and change it.
+ * The repository's folders and files as a tree, one directory fetched as
+ * it is opened (`…/code/projects/[id]/tree?path=`), directories first —
+ * from the checkout on the sandbox once a chat has made one, and from
+ * Bitbucket on the project's branch before that, so the shape of the
+ * repository is there to look at without cloning anything. A look, not a
+ * workbench: the chat's tools are what read and change it.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -20,6 +22,8 @@ interface Entry {
 type Listing =
   { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready'; entries: Entry[] };
 
+type Source = 'checkout' | 'bitbucket';
+
 function nameOf(path: string): string {
   const index = path.lastIndexOf('/');
   return index < 0 ? path : path.slice(index + 1);
@@ -31,26 +35,19 @@ function size(value: number): string {
   return `${(value / 1_048_576).toFixed(1)} MB`;
 }
 
-export default function RepoTree({
-  tenantId,
-  projectId,
-  ready,
-}: {
-  tenantId: string;
-  projectId: string;
-  /** The checkout reads ready; otherwise the tree says why there is none. */
-  ready: boolean;
-}) {
+export default function RepoTree({ tenantId, projectId }: { tenantId: string; projectId: string }) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}/tree`;
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [source, setSource] = useState<Source | null>(null);
 
   const load = useCallback(
     async (path: string) => {
       setListings((current) => ({ ...current, [path]: { state: 'loading' } }));
-      const result = await getJson<{ path: string; entries: Entry[] }>(
+      const result = await getJson<{ path: string; entries: Entry[]; source: Source }>(
         `${base}?path=${encodeURIComponent(path)}`
       );
+      if (result.data) setSource(result.data.source);
       setListings((current) => ({
         ...current,
         [path]: result.data
@@ -62,18 +59,14 @@ export default function RepoTree({
   );
 
   useEffect(() => {
-    if (ready) void load('');
-  }, [ready, load]);
+    void load('');
+  }, [load]);
 
   const toggle = (path: string) => {
     const next = !open[path];
     setOpen((current) => ({ ...current, [path]: next }));
     if (next && !listings[path]) void load(path);
   };
-
-  if (!ready) {
-    return <p className="text-xs text-gray-500">The tree appears once the repository is cloned.</p>;
-  }
 
   const renderDir = (path: string, depth: number) => {
     const listing = listings[path];
@@ -135,8 +128,17 @@ export default function RepoTree({
   };
 
   return (
-    <ul role="tree" aria-label="Repository files" className="font-mono">
-      {renderDir('', 0)}
-    </ul>
+    <div>
+      <ul role="tree" aria-label="Repository files" className="font-mono">
+        {renderDir('', 0)}
+      </ul>
+      {source ? (
+        <p className="mt-2 text-[11px] text-gray-400">
+          {source === 'checkout'
+            ? 'From the checkout on the sandbox, uncommitted changes included.'
+            : 'From Bitbucket, on the project’s branch — nothing is cloned yet.'}
+        </p>
+      ) : null}
+    </div>
   );
 }

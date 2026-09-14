@@ -135,6 +135,75 @@ export async function listRepositories(
   return { ok: true, repos };
 }
 
+export interface SourceEntry {
+  path: string;
+  kind: 'file' | 'dir';
+  sizeBytes: number | null;
+}
+
+const SOURCE_PAGES = 5;
+
+/** The branch to read: the project's, else the repository's main branch. */
+async function refOf(auth: BitbucketAuth, base: string, branch: string): Promise<string | null> {
+  if (branch) return branch;
+  const repo = await bbJson(auth, ['repository'], base);
+  if (!repo.ok) return null;
+  return str(rec(repo.body.mainbranch).name) || null;
+}
+
+/**
+ * One directory of the repository as Bitbucket has it on the branch —
+ * the tree a project page shows before anything is cloned. Directories
+ * first, then files with sizes; a few pages at most.
+ */
+export async function listSource(
+  auth: BitbucketAuth,
+  fullName: string,
+  branch: string,
+  path: string
+): Promise<{ ok: true; entries: SourceEntry[] } | { ok: false; error: string }> {
+  const [workspace, slug] = fullName.split('/');
+  if (!workspace || !slug) return { ok: false, error: 'The repository name is not usable.' };
+  const base = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
+  const ref = await refOf(auth, base, branch);
+  if (!ref) return { ok: false, error: 'The repository’s branch could not be read.' };
+  const clean = path.replace(/^\/+|\/+$/g, '');
+  const dir = clean
+    ? clean
+        .split('/')
+        .map((part) => encodeURIComponent(part))
+        .join('/') + '/'
+    : '';
+  const entries: SourceEntry[] = [];
+  let next: string | null = `${base}/src/${encodeURIComponent(ref)}/${dir}?pagelen=100`;
+  for (let page = 0; next && page < SOURCE_PAGES; page += 1) {
+    const listed = await bbJson(auth, ['repository'], next);
+    if (!listed.ok) return listed;
+    for (const entry of values(listed.body)) {
+      const entryPath = str(entry.path);
+      const type = str(entry.type);
+      if (!entryPath) continue;
+      if (type === 'commit_directory')
+        entries.push({ path: entryPath, kind: 'dir', sizeBytes: null });
+      else if (type === 'commit_file') {
+        entries.push({
+          path: entryPath,
+          kind: 'file',
+          sizeBytes: typeof entry.size === 'number' ? entry.size : null,
+        });
+      }
+    }
+    const nextUrl = str(listed.body.next);
+    // Bitbucket hands back an absolute URL; the client takes the path.
+    next = nextUrl ? nextUrl.replace(/^https?:\/\/[^/]+\/2\.0/, '') : null;
+  }
+  entries.sort((a, b) => {
+    const rank = (kind: string) => (kind === 'dir' ? 0 : 1);
+    return rank(a.kind) - rank(b.kind) || a.path.localeCompare(b.path);
+  });
+  return { ok: true, entries };
+}
+
 /**
  * The repository's README on a branch (the project's, or the
  * repository's main branch), as Markdown text — or null when there is
@@ -149,13 +218,8 @@ export async function readReadme(
   const [workspace, slug] = fullName.split('/');
   if (!workspace || !slug) return null;
   const base = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
-  let ref = branch;
-  if (!ref) {
-    const repo = await bbJson(auth, ['repository'], base);
-    if (!repo.ok) return null;
-    ref = str(rec(repo.body.mainbranch).name);
-    if (!ref) return null;
-  }
+  const ref = await refOf(auth, base, branch);
+  if (!ref) return null;
   for (const name of README_NAMES) {
     const file = await bbRawText(
       auth,
