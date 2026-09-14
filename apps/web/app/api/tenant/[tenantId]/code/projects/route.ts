@@ -54,10 +54,14 @@ export async function POST(
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
   const body = await readJsonBody(request);
-  const name = optionalString(body.name, PROJECT_NAME_MAX_CHARS);
-  if (!name) return jsonError(400, 'invalid', 'Give the project a name');
   const repo = validateRepoFullName(body.repository);
   if (!repo.ok) return jsonError(400, 'invalid', repo.message);
+  // The repository names the project unless the person renamed it; the
+  // slug alone (not `workspace/repo`) reads like a project name.
+  const name =
+    optionalString(body.name, PROJECT_NAME_MAX_CHARS) ||
+    repo.fullName.split('/').pop() ||
+    repo.fullName;
   let branch = '';
   if (typeof body.branch === 'string' && body.branch.trim()) {
     const ref = validateGitRef(body.branch);
