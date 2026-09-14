@@ -443,12 +443,17 @@ export interface ChatProjects {
   description: string | null;
   id: Generated<string>;
   instructions: string | null;
+  kind: Generated<string>;
   name: string;
   owner_subject: string;
   published_to_org: Generated<boolean>;
+  repo_branch: string | null;
+  repo_full_name: string | null;
+  repo_provider: string | null;
   tenant_id: string;
   tool_config: Json | null;
   updated_at: Generated<Timestamp>;
+  workspace_id: string | null;
 }
 
 export interface Chats {

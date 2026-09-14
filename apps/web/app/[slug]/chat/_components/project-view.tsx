@@ -7,7 +7,7 @@
  * route and refreshes the server data.
  */
 
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
@@ -29,15 +29,28 @@ export default function ProjectView({
   slug,
   tenantId,
   initial,
+  variant = 'chat',
+  before = null,
 }: {
   slug: string;
   tenantId: string;
   initial: ProjectViewData;
+  /**
+   * A code project is a chat project with a repository on it: the same
+   * page, listed under Code, deleted through the code route (which takes
+   * the checkout and the environment with it), and headed by the
+   * repository and environment sections the caller passes in `before`.
+   */
+  variant?: 'chat' | 'code';
+  before?: ReactNode;
 }) {
   const router = useRouter();
   const { project, role, files, memory, chats } = initial;
   const canEdit = role !== 'viewer';
   const base = `/api/tenant/${tenantId}/chat/projects/${project.id}`;
+  const indexHref = variant === 'code' ? `/${slug}/code` : `/${slug}/chat/projects`;
+  const deleteRoute =
+    variant === 'code' ? `/api/tenant/${tenantId}/code/projects/${project.id}` : base;
 
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description ?? '');
@@ -112,10 +125,10 @@ export default function ProjectView({
 
   const remove = async () => {
     setBusy(true);
-    const result = await sendJsonFull(base, 'DELETE');
+    const result = await sendJsonFull(deleteRoute, 'DELETE');
     setBusy(false);
     if (!result.error) {
-      router.push(`/${slug}/chat/projects`);
+      router.push(indexHref);
       router.refresh();
     }
   };
@@ -128,8 +141,8 @@ export default function ProjectView({
           <p className="truncate text-xs text-gray-500">
             {role === 'owner'
               ? project.publishedToOrg
-                ? 'Your project · published to the organization'
-                : 'Your project'
+                ? `Your ${variant === 'code' ? 'code ' : ''}project · published to the organization`
+                : `Your ${variant === 'code' ? 'code ' : ''}project`
               : `Shared by ${project.ownerName ?? 'its owner'} · you can ${canEdit ? 'edit' : 'view'}`}
           </p>
         </div>
@@ -167,6 +180,7 @@ export default function ProjectView({
       </header>
 
       <div className="mx-auto max-w-3xl space-y-4 p-4">
+        {before}
         <section className={sectionClass}>
           <h2 className="mb-2 text-sm font-semibold">About</h2>
           {canEdit ? (
@@ -399,8 +413,9 @@ export default function ProjectView({
       {confirmDelete ? (
         <Modal title="Delete project" onClose={() => setConfirmDelete(false)}>
           <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">
-            The project's files, memory and shares are deleted. Chats inside it are kept and simply
-            leave the project.
+            {variant === 'code'
+              ? 'The project’s checkout on the sandbox, its environment variables, files, memory and shares are deleted — anything not pushed is lost. Chats inside it are kept and simply leave the project.'
+              : "The project's files, memory and shares are deleted. Chats inside it are kept and simply leave the project."}
           </p>
           <DialogFooter
             busy={busy}

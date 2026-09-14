@@ -994,6 +994,27 @@ export async function sbEnvSet(
   return variable ? { ok: true, val: variable } : malformed();
 }
 
+/**
+ * Replace the whole set — a pasted .env file. Every name given is set,
+ * every name absent is removed; the worker refuses the lot if any entry
+ * is unacceptable. An empty map clears them.
+ */
+export async function sbEnvReplace(
+  target: SandboxTarget,
+  values: Record<string, string>
+): Promise<ClientResult<WireEnvVariable[]>> {
+  const result = await callJson('env/replace', { ...target, values });
+  if (!result.ok) return result;
+  if (!isRecord(result.val) || !Array.isArray(result.val.variables)) return malformed();
+  const variables: WireEnvVariable[] = [];
+  for (const raw of result.val.variables) {
+    const variable = envVariableOf(raw);
+    if (!variable) return malformed();
+    variables.push(variable);
+  }
+  return { ok: true, val: variables };
+}
+
 export async function sbEnvDelete(
   target: SandboxTarget,
   name: string

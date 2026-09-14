@@ -22,7 +22,8 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
-import { sandboxConfig, sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
+import { sandboxConfig } from '@renkei/sandbox-client';
+import { codeProjectContext } from '@/lib/code/turn';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -289,26 +290,32 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     release = surface.release;
 
     const readOnly = input.settings?.readOnly ?? false;
+    const [rows, person] = await Promise.all([
+      listMessages(db, input.tenantId, input.chat.id),
+      getIdentityDisplay(input.tenantId, input.session.subject),
+    ]);
     const localContext = {
       db,
       tenantId: input.tenantId,
       subject: input.session.subject,
       chatId: input.chat.id,
       projectId: input.chat.projectId,
+      userEmail: person?.email ?? null,
       readOnly,
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
-    const baseLocalTools =
-      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed));
+    // A code project's checkout, when it is there to work in: the code_*
+    // tools bound to it, and what the prompt says about it either way.
+    const code = project?.kind === 'code' ? await codeProjectContext(project) : null;
+    const baseLocalTools = input.localTools ?? [
+      ...(await chatLocalTools(db, localContext, toolConfig, filesAllowed)),
+      ...(code?.tools ?? []),
+    ];
     const discoveryTool = findToolsTool(surface.discoverable);
     const localTools = createLocalToolSet(
       discoveryTool ? [...baseLocalTools, discoveryTool] : baseLocalTools
     );
 
-    const [rows, person] = await Promise.all([
-      listMessages(db, input.tenantId, input.chat.id),
-      getIdentityDisplay(input.tenantId, input.session.subject),
-    ]);
     const history = buildHistory(
       rows,
       {
@@ -326,14 +333,13 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const system = buildSystemPrompt({
       personName: person?.displayName ?? person?.email ?? null,
       orgName: null,
-      project: context.project,
+      project: context.project ? { ...context.project, code: code?.prompt ?? null } : null,
       userMemoryText: context.userMemoryText,
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasDiscoverableTools: discoveryTool !== null,
       hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
-      hasWorkspaces: toolConfig.connectors.includes('sandbox') && sandboxWorkspacesEnabled(),
       filesAllowed,
       now: new Date(),
     });
@@ -425,6 +431,7 @@ export async function chatPromptContext(
           instructions: project.instructions,
           memoryText: await projectMemoryText(db, tenantId, project.id),
           files: files.filter((row) => row.project_id === project.id).map(shape),
+          code: null,
         }
       : null,
     userMemoryText: project

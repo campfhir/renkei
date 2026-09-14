@@ -40,11 +40,14 @@ interface ThreadProps {
   initialChat: ChatView | null;
   initialMessages: ChatMessageView[];
   models: ModelOption[];
-  newChatProject: { id: string; name: string } | null;
+  newChatProject: { id: string; name: string; kind: 'chat' | 'code' } | null;
   /** The org has file storage; without it the composer offers no uploads. */
   uploadsEnabled: boolean;
-  /** A first message to start the box with (a new chat opened from a workspace). */
-  initialDraft?: string | null;
+}
+
+/** A code project's page lives under Code; a chat project's under Chat. */
+function projectHref(slug: string, projectId: string, kind: 'chat' | 'code' | null): string {
+  return kind === 'code' ? `/${slug}/code/${projectId}` : `/${slug}/chat/projects/${projectId}`;
 }
 
 /** The typed text of a prompt row, without the attachment excerpts the model saw. */
@@ -77,7 +80,6 @@ export default function ChatThread({
   initialMessages,
   models,
   newChatProject,
-  initialDraft = null,
   uploadsEnabled,
 }: ThreadProps) {
   const router = useRouter();
@@ -319,13 +321,13 @@ export default function ChatThread({
               ? {
                   id: chat.projectId,
                   name: chat.projectName,
-                  href: `/${slug}/chat/projects/${chat.projectId}`,
+                  href: projectHref(slug, chat.projectId, chat.projectKind),
                 }
               : newChatProject
                 ? {
                     id: newChatProject.id,
                     name: newChatProject.name,
-                    href: `/${slug}/chat/projects/${newChatProject.id}`,
+                    href: projectHref(slug, newChatProject.id, newChatProject.kind),
                   }
                 : null
           }
@@ -405,7 +407,6 @@ export default function ChatThread({
           onSubmit={onComposerSubmit}
           editing={editing ? { text: promptTextOf(editing) } : null}
           onCancelEdit={() => setEditing(null)}
-          draft={initialDraft}
           onStop={stop}
           modelControl={
             <ModelSelect

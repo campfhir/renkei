@@ -9,56 +9,68 @@ run the project's own commands, commit, push, open a pull request.
 
 ## What a person sees
 
-On the connectors page, two cards appear where the deployment enables
-workspaces (`SANDBOX_WORKSPACES_ENABLED=true` on the web app and the
-sandbox worker):
+A **Code** section in the app menu, beside Chat, where the deployment
+enables workspaces (`SANDBOX_WORKSPACES_ENABLED=true` on the web app and
+the sandbox worker). It holds **code projects** — a chat project with a
+repository on it, kept apart from ordinary chats:
 
-- **Code workspaces** — clone one of your Bitbucket repositories (a
-  picker fed by your own grant; a branch, optional) into the sandbox.
-  The clone runs on the worker in the background and the card polls
-  until it reads _Ready_. Each workspace has **Open in chat**, which
-  starts a chat whose first message names the workspace, and Delete. At
-  most three per person; a week's lifetime, extended on use.
-- **Workspace environment** — the variables your workspace commands run
-  with (`NPM_TOKEN`, a test database URL, an API key a project needs). A
-  value is sealed on the worker and never shown again, to you or to the
-  model.
+- **New code project** asks for a name, one of your Bitbucket
+  repositories (a picker fed by your own grant; a branch, optional), the
+  text of a `.env` — pasted as it is — and instructions. Creating it
+  starts the clone; the project page follows it until it reads _Ready_.
+- **The project page** shows the repository and its checkout (clone
+  again, change repository), the environment as names (replace by
+  pasting a `.env` again, remove one), and everything a chat project's
+  page has: instructions, files, memory, toolset, the chats inside it,
+  sharing. Values are never shown again, to anyone.
+- **New chat** starts a chat in the project. Its chats appear under the
+  project in the Code section and on its page, never among the person's
+  ordinary chats.
 
-In a chat, the model has the `sandbox_workspace_*` tools (below) and a
-brief in its system prompt on how to work in one; Jira, Confluence and
-the rest of the person's connectors are there beside them as always, so
-"fix PROJ-123 in the billing service and open a PR" is one conversation.
-The same tools are available to an agent run, in the owner's workspaces.
+In such a chat the model has the `code_*` tools (below) bound to the
+project's checkout and a brief in its system prompt on how to work in
+one; Jira, Confluence and the rest of the person's connectors are there
+beside them as always, so "fix PROJ-123 and open a PR" is one
+conversation. The tools exist nowhere else — not in other chats, not on
+the MCP surface — because they name no workspace: the project is the
+workspace.
+
+The checkout and the environment belong to the **project**, not to
+whoever is chatting: the worker scopes them by the subject
+`code-project:<id>`, so every member works in one checkout with one
+environment, and the worker's per-caller isolation becomes per-project
+isolation. What is personal is the credential: a push or pull spends the
+chatting person's own Bitbucket grant, and a commit is authored as them.
 
 ## The tools
 
-| Tool                           | Kind | What it does                                                                                              |
-| ------------------------------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| `sandbox_workspace_list`       | Read | Your workspaces: id, repository, branch, state, size, expiry.                                             |
-| `sandbox_workspace_clone`      | Act  | Clone `workspace/repo` (a branch, a depth) with your Bitbucket grant; answers at once, the clone runs on. |
-| `sandbox_workspace_delete`     | Act  | Remove a workspace and its checkout.                                                                      |
-| `sandbox_workspace_ls`         | Read | One directory's entries.                                                                                  |
-| `sandbox_workspace_find`       | Read | Paths matching a glob (`.gitignore` honoured).                                                            |
-| `sandbox_workspace_grep`       | Read | Regex search of contents, as `path:line: text`.                                                           |
-| `sandbox_workspace_read_file`  | Read | A file's text with line numbers, in line ranges.                                                          |
-| `sandbox_workspace_write_file` | Act  | Create or replace a file.                                                                                 |
-| `sandbox_workspace_edit_file`  | Act  | Replace one exact snippet (must be unique, or `replaceAll`).                                              |
-| `sandbox_workspace_run`        | Act  | A bash command in the checkout, as you, with your environment; exit code and both streams.                |
-| `sandbox_workspace_git_status` | Read | Branch, changed files, a diff summary or the full diff, recent log.                                       |
-| `sandbox_workspace_git_commit` | Act  | Stage (all or listed paths) and commit as you, optionally on a new branch.                                |
-| `sandbox_workspace_git_push`   | Act  | Push the current branch to origin with your grant; never force.                                           |
-| `sandbox_workspace_git_pull`   | Act  | Fast-forward from origin, or fetch and switch to another remote branch.                                   |
-| `sandbox_workspace_list_env`   | Read | The names of your environment variables — never a value.                                                  |
+Local tools of the chat (`apps/web/lib/code/tools.ts`), added to a turn
+when the project's checkout is ready (`lib/code/turn.ts`):
 
-The clone, pull and push verbs exist only for a caller who holds a
-Bitbucket grant the org has not switched off; the rest work on checkouts
-that already exist. A pull request is `bitbucket_create_pull_request`, as
-before.
+| Tool              | Kind | What it does                                                                                |
+| ----------------- | ---- | ------------------------------------------------------------------------------------------- |
+| `code_ls`         | Read | One directory's entries.                                                                    |
+| `code_find`       | Read | Paths matching a glob (`.gitignore` honoured).                                              |
+| `code_grep`       | Read | Regex search of contents, as `path:line: text`.                                             |
+| `code_read_file`  | Read | A file's text with line numbers, in line ranges.                                            |
+| `code_write_file` | Act  | Create or replace a file.                                                                   |
+| `code_edit_file`  | Act  | Replace one exact snippet (must be unique, or `replaceAll`).                                |
+| `code_run`        | Act  | A bash command in the checkout, with the project's environment; exit code and both streams. |
+| `code_git_status` | Read | Branch, changed files, a diff summary or the full diff, recent log.                         |
+| `code_git_commit` | Act  | Stage (all or listed paths) and commit as the person, optionally on a new branch.           |
+| `code_git_push`   | Act  | Push the current branch to origin with the person's grant; never force.                     |
+| `code_git_pull`   | Act  | Fast-forward from origin, or fetch and switch to another remote branch.                     |
+| `code_env_names`  | Read | The names of the project's environment variables — never a value.                           |
+
+A pull request is `bitbucket_create_pull_request`, as before. The worker
+verbs behind these (`/v1/workspaces/*`, `/v1/env/*` on
+`apps/worker-sandbox`) are reachable only from the web app with the
+bearer key; nothing on the MCP surface reaches a checkout.
 
 ## Why a shell, after "curated verbs, not a shell"
 
 The sandbox design doc drew a hard line: every verb is one bounded thing
-the worker does, never an arbitrary command. `sandbox_workspace_run`
+the worker does, never an arbitrary command. `code_run`
 crosses it on purpose, because a repository's own commands — its test
 runner, its build, its package manager, its linter — are the whole point
 of working in a checkout, and there is no curated verb for "whatever
@@ -70,16 +82,17 @@ _who runs it and where_, and that is where the containment now lives.
 **Who.** The sandbox image's entrypoint (`docker/sandbox-entrypoint.sh`)
 keeps the worker as root only when workspaces are enabled, and only so
 that every command it starts for a caller can be dropped with `setpriv`
-to **that caller's own unprivileged uid** — derived from their
-`(tenantId, subject)` (`execUidFor`), stable across restarts, far above
-any system account — with no supplementary groups, no capabilities, and
+to **that caller's own unprivileged uid** — derived from the worker's
+`(tenantId, subject)` scope (`execUidFor`), which for a code project is
+the project itself, stable across restarts, far above any system
+account — with no supplementary groups, no capabilities, and
 `no-new-privs` so a setuid binary cannot climb back. The worker itself
 does nothing as root but spawn, chown and read.
 
 **Where.** A second volume (`SANDBOX_WORKSPACES_DIR`, default
-`/workspaces`, mode 0711) holds `<tenant>/<sha256(subject)>/` per caller
-at 0700, owned by their uid, with their `home/` (caches, dotfiles) and one
-directory per checkout, named by id, never by repository. The staged-file
+`/workspaces`, mode 0711) holds `<tenant>/<sha256(scope)>/` per project
+at 0700, owned by its uid, with a `home/` (caches, dotfiles) and its
+checkout, named by id, never by repository. The staged-file
 disk (`/data`) is root's, and the worker sets `umask 077` at boot, so
 nothing it creates from then on is readable by any caller's uid. One
 caller's `cat` of another's checkout, or of `/proc/<worker>/environ`
@@ -115,22 +128,28 @@ placement is not enough.
 the worker's own user with no per-caller isolation; startup logs that
 plainly. Fine for one person; wrong for a shared deployment.
 
-## Secrets: the model sees names, never values
+## The `.env`: the model sees names, never values
 
 A project's commands need credentials — a registry token, a database
 URL, an API key — and a credential in a tool result is a credential in
 a transcript. So, as with browser secrets, values go around the model:
 
-- **Supplied in the UI, never over MCP.** The Workspace environment card
-  (`/api/tenant/[tenantId]/sandbox/env`) sets and removes variables with
-  the person's own session. `sandbox_workspace_list_env` lists names.
+- **Supplied on the project, never over MCP.** The `.env` is pasted when
+  the project is made and replaced from its page
+  (`/api/tenant/[tenantId]/code/projects/[projectId]/env`), with the
+  person's own session. It is parsed in the web app (`parseDotenv`:
+  comments, `export`, quotes, multi-line double-quoted values) and only
+  the pairs travel on; lines that were not variables are reported back.
+  `code_env_names` lists names.
 - **Sealed by the worker, under its own key.** A value passes through
   the web app once, on the way in, and the worker seals it
   (`sandbox_env_secrets`, an `env1.` envelope over `@renkei/crypto`'s
   secretbox) under `SANDBOX_ENV_SECRETS_KEY` — a key the web app does
   not need to hold — falling back to `TOKEN_ENCRYPTION_KEY` for a
   one-key deployment. Nothing can read it back but the worker, at exec
-  time, into that one process's environment.
+  time, into that one process's environment. Replacing the `.env`
+  replaces the whole set on the worker (`env/replace`), so what the
+  project's commands see is always exactly what was last pasted.
 - **Scrubbed from every answer.** The worker opens the caller's values
   once per request and runs every string it returns for a workspace —
   command output, file text, grep lines, git's own messages — through
@@ -146,8 +165,9 @@ it is for — is, of course, the point.
 
 ## Git credentials
 
-A clone, pull or push spends the person's own Bitbucket grant: the web
-app resolves the token (the same resolver the `bitbucket_*` tools use,
+A clone, pull or push spends the acting person's own Bitbucket grant —
+the creator's for the clone, the chatting person's for a push or pull:
+the web app resolves the token (the same resolver the `bitbucket_*` tools use,
 the same requested ∩ granted scope check — `repository` to clone or
 pull, `repository:write` to push), turns it into git's Basic
 `x-token-auth` header, and hands the worker that header in the request
@@ -155,7 +175,7 @@ body for one call. The worker puts it in that one git process's
 environment as an `http.extraheader` config entry — never in argv (a
 `ps` away), never in `.git/config` (at rest on the volume) — and it is
 gone when the process exits. The stored remote URL carries no
-credential, so `git fetch` typed into `sandbox_workspace_run` fails by
+credential, so `git fetch` typed into `code_run` fails by
 design; the git tools are the way to reach the remote.
 
 Commits are authored as the person: their org email when the identity
@@ -165,20 +185,24 @@ knows it, else a no-reply address on their Bitbucket username.
 
 | Bound                            | Value                            |
 | -------------------------------- | -------------------------------- |
-| Workspaces per person            | 3                                |
+| Checkouts per project            | 1 (a new clone replaces it)      |
 | Lifetime since last use          | 7 days (the worker's sweep)      |
 | Checkout size                    | 2 GB                             |
 | Default clone depth              | 100 commits (`depth: 0` for all) |
 | Command timeout                  | 2 min default, 10 min max        |
 | Command output to model          | 30k chars default, 100k max      |
-| Processes per caller             | 512 (RLIMIT_NPROC)               |
+| Processes per project            | 512 (RLIMIT_NPROC)               |
 | Largest file a command may write | 512 MB (RLIMIT_FSIZE)            |
-| Environment variables            | 50 per person, 8 KB each         |
+| Environment variables            | 50 per project, 8 KB each        |
 
 A workspace's row (`sandbox_workspaces`, migration 101) is the metadata
 half; the sweep that retires expired staged files retires expired
 checkouts the same way — bytes first, then the row. A clone that never
 finished (a crash mid-clone) sits in `cloning` until its lifetime lapses.
+The code project (`chat_projects` with `kind = 'code'`, migration 102)
+keeps a soft reference to its checkout; when the worker no longer has
+it, the project page says so and offers to clone again, and the chat's
+prompt says the tools are not available until it is.
 
 ## What it deliberately is not
 

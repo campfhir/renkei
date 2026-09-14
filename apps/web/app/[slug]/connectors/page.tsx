@@ -12,19 +12,10 @@ import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
 import SandboxSecrets from './sandbox-secrets';
-import SandboxWorkspaces from './sandbox-workspaces';
-import SandboxEnv from './sandbox-env';
 import { AddConnectorButton, RemovableProducts } from './catalog-controls';
 import type { CatalogItem } from './add-connector-modal';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
-import {
-  sandboxBrowserEnabled,
-  sandboxWorkspacesEnabled,
-  sbEnvList,
-  sbSecretsList,
-  sbWorkspaceList,
-} from '@/lib/sandbox/service-client';
-import { WORKSPACE_MAX_PER_SUBJECT } from '@renkei/connector-sandbox';
+import { sandboxBrowserEnabled, sbSecretsList } from '@/lib/sandbox/service-client';
 import {
   WEBEX_USER,
   ATLASSIAN,
@@ -168,16 +159,6 @@ export default async function ConnectorsPage({
   const browserSecrets = sandboxBrowserEnabled()
     ? await sbSecretsList({ tenantId: tenant.id, subject: session.subject })
     : null;
-
-  // Code workspaces and their environment likewise live on the worker; the
-  // cards exist only where the deployment enables workspaces, and the
-  // environment listing is names — never values.
-  const [codeWorkspaces, envVariables] = sandboxWorkspacesEnabled()
-    ? await Promise.all([
-        sbWorkspaceList({ tenantId: tenant.id, subject: session.subject }),
-        sbEnvList({ tenantId: tenant.id, subject: session.subject }),
-      ])
-    : [null, null];
 
   // Filtered to catalog-known scopes: a ceiling saved before the granular
   // migration is all classic and degrades to the defaults until re-saved.
@@ -443,27 +424,6 @@ export default async function ConnectorsPage({
               <RemovableProducts
                 tenantId={tenant.id}
                 products={removable(catalog, ['fileshares'])}
-              />
-            </div>
-          )}
-
-          {codeWorkspaces && (
-            <div className="mb-6 break-inside-avoid">
-              <SandboxWorkspaces
-                slug={slug}
-                tenantId={tenant.id}
-                workspaces={codeWorkspaces.ok ? codeWorkspaces.val : []}
-                bitbucketConnected={bitbucketGrant !== undefined}
-                maxWorkspaces={WORKSPACE_MAX_PER_SUBJECT}
-              />
-            </div>
-          )}
-
-          {envVariables && (
-            <div className="mb-6 break-inside-avoid">
-              <SandboxEnv
-                tenantId={tenant.id}
-                variables={envVariables.ok ? envVariables.val : []}
               />
             </div>
           )}

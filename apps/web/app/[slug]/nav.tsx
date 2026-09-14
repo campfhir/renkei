@@ -9,6 +9,7 @@ import { useNotifications } from '@/components/notification-center';
 import { useMediaQuery } from '@/lib/use-media-query';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
+import { CodeList } from './code/_components/code-nav';
 
 interface NavProps {
   slug: string;
@@ -171,6 +172,20 @@ export default function AppNav({
         { href: `/${slug}/chat/memory`, label: 'Memory' },
       ],
       extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
+    },
+    {
+      // Code projects — a repository to work in, apart from ordinary chats:
+      // their own section, their own list, and the chats inside them are
+      // found here rather than among the person's chats above.
+      label: 'Code',
+      items: [
+        {
+          href: `/${slug}/code`,
+          label: 'Code',
+          plus: { href: `/${slug}/code/new`, label: 'New code project' },
+        },
+      ],
+      extra: chats ? <CodeList slug={slug} data={chats} /> : null,
     },
   ];
 

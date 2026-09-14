@@ -1,14 +1,14 @@
 /**
- * The repositories the signed-in person may clone — for the connectors
- * page's picker. Reads Bitbucket with their own grant: the workspaces
- * they belong to, then each workspace's repositories, filtered by `q`
- * against the full name. Bounded (a few pages), and read-only.
+ * The repositories the signed-in person may put in a code project — for
+ * the new-project form's picker. Reads Bitbucket with their own grant:
+ * the workspaces they belong to, then each workspace's repositories,
+ * filtered by `q` against the name. Bounded, and read-only.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/session';
 import { getOrigin } from '@/lib/get-origin';
-import { sandboxWorkspacesEnabled } from '@/lib/sandbox/service-client';
+import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
 import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { bbJson, rec, str, values } from '@/lib/mcp-tools/bitbucket/client';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
@@ -34,7 +34,6 @@ export async function GET(
 
   const query = (request.nextUrl.searchParams.get('q') ?? '').trim().toLowerCase();
   const origin = await getOrigin(request);
-  const requestOrigin = origin.ok ? origin.val : '';
 
   // The auth only needs the caller's identity and origin; every other
   // field of the tool context is a Jira concern this route never touches.
@@ -44,7 +43,7 @@ export async function GET(
   const context = {
     tenantId,
     subject: session.subject,
-    origin: requestOrigin,
+    origin: origin.ok ? origin.val : '',
   } as MCPToolContext;
   const auth = oauthBitbucketAuth(context);
 

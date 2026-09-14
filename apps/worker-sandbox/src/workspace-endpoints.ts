@@ -830,6 +830,42 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         if (!deleted) return sendError(response, 404, 'not_found');
         return sendJson(response, 200, { deleted: true, name: deleted.name });
       }
+      case 'replace': {
+        // The whole set at once — a pasted .env file: every name in it is
+        // set, every name not in it is removed, nothing stored unless all
+        // of it is acceptable. An empty map clears the caller's variables.
+        if (!isRecord(body.values)) {
+          return sendError(response, 400, 'bad_request', 'values must be an object.');
+        }
+        const entries: Array<{ name: string; value: string }> = [];
+        for (const [rawName, rawValue] of Object.entries(body.values)) {
+          const name = validateEnvName(rawName);
+          if (!name.ok) return sendError(response, 400, 'bad_request', name.message);
+          const value = validateEnvValue(rawValue);
+          if (!value.ok) {
+            return sendError(response, 400, 'bad_request', `${name.name}: ${value.message}`);
+          }
+          entries.push({ name: name.name, value: value.value });
+        }
+        if (entries.length > ENV_MAX_PER_SUBJECT) {
+          return sendError(response, 429, 'env_limit', `At most ${ENV_MAX_PER_SUBJECT} variables.`);
+        }
+        const keep = new Set(entries.map((entry) => entry.name));
+        for (const existing of await envStore.listEnvSecrets(db, target)) {
+          if (!keep.has(existing.name)) await envStore.deleteEnvSecret(db, target, existing.name);
+        }
+        const rows = [];
+        for (const entry of entries) {
+          rows.push(
+            await envStore.upsertEnvSecret(db, {
+              ...target,
+              name: entry.name,
+              sealed: sealEnvValue(entry.value, key),
+            })
+          );
+        }
+        return sendJson(response, 200, { variables: rows.map(envWire) });
+      }
       default:
         return sendError(response, 404, 'unknown_operation');
     }

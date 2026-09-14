@@ -195,8 +195,8 @@ services:
   # addresses, so it cannot reach the other compose services either.
   #
   # SANDBOX_WORKSPACES_ENABLED=true in .env (again read by both) adds code
-  # workspaces: a person's Bitbucket repository cloned onto the second
-  # volume below, where a chat can read, edit, run the project's own
+  # projects: a Bitbucket repository cloned onto the second volume below,
+  # where the project's chats can read, edit, run the project's own
   # commands, commit and push (docs/sandbox-workspaces-design.md). The
   # container then runs its supervisor as root so every caller's commands
   # can be dropped to that caller's own uid (docker/sandbox-entrypoint.sh).
@@ -260,8 +260,8 @@ services:
       # don't register. SANDBOX_BROWSER_ENABLED=true in .env (read by this
       # service AND worker-sandbox) additionally registers the
       # sandbox_browser_* tools; unset, they don't exist. Likewise
-      # SANDBOX_WORKSPACES_ENABLED=true for the sandbox_workspace_* tools
-      # and the Code workspaces card on the connectors page.
+      # SANDBOX_WORKSPACES_ENABLED=true for the Code section — code
+      # projects, each a repository a chat works in with the code_* tools.
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.

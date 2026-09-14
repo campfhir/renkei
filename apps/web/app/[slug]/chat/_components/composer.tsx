@@ -43,7 +43,6 @@ export default function Composer({
   modelControl,
   editing,
   onCancelEdit,
-  draft = null,
 }: {
   tenantId: string;
   chatId: string | null;
@@ -59,10 +58,8 @@ export default function Composer({
   /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
   editing: { text: string } | null;
   onCancelEdit: () => void;
-  /** Text the box starts with — a new chat opened from somewhere with a task in mind. */
-  draft?: string | null;
 }) {
-  const [text, setText] = useState(draft ?? '');
+  const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);

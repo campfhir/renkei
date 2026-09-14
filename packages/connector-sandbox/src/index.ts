@@ -166,3 +166,5 @@ export {
   type WorkspaceProvider,
   type SandboxWorkspaceSummary,
 } from './workspaces';
+
+export { parseDotenv, type ParsedDotenv } from './dotenv';

@@ -583,21 +583,8 @@ export async function registerRenkeiTools(
   if (sandboxAvailable) {
     // No scope gate and no per-caller grant to check: every signed-in
     // caller on a deployment that runs worker-sandbox gets the same
-    // scratch space, scoped to their own (tenantId, subject). The one
-    // exception is the workspace git verbs (clone, pull, push), which
-    // spend the caller's Bitbucket grant: offered only when they hold one
-    // AND the org has not switched Bitbucket off for them — the same two
-    // conditions the bitbucket_* tools themselves stand on.
-    const bitbucketGit =
-      bitbucketAvailable &&
-      projection.allows({
-        id: 'sandbox_workspace_clone',
-        connector: BITBUCKET_MCP_CONNECTOR,
-        kind: 'act',
-      });
-    registerSandboxTools(withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR), context, {
-      workspaces: { bitbucketGit },
-    });
+    // scratch space, scoped to their own (tenantId, subject).
+    registerSandboxTools(withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR), context);
   }
   if (webSearchAvailable) {
     // No scope gate and no per-caller grant: one org-wide deployment and

@@ -18,6 +18,8 @@ export interface LocalToolContext {
   subject: string;
   chatId: string;
   projectId: string | null;
+  /** The person's email from the identity spine, when known — a commit author needs one. */
+  userEmail?: string | null;
   /** Org read-only mode: local tools that write refuse under it. */
   readOnly: boolean;
 }

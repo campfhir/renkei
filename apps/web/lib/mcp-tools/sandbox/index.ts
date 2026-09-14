@@ -21,11 +21,9 @@
  * a headless browser the worker owns: named verbs by element ref, never a
  * selector or a script, with screenshots landing in this same scratch space.
  *
- * The sandbox_workspace_* tools (./workspace.ts) are the one deliberate
- * step past "never a shell": a repository the person cloned, in which the
- * model may run the project's own commands — as that person's own
- * unprivileged uid on the worker, with their environment secrets set and
- * masked out of every answer (docs/sandbox-workspaces-design.md).
+ * The worker's code workspaces are deliberately NOT here: a repository is
+ * worked in from a code project's chats through the code_* local tools
+ * (apps/web/lib/code/tools.ts), never through the MCP surface.
  */
 
 import { z } from 'zod';
@@ -41,7 +39,6 @@ import {
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { registerSandboxBrowserTools } from './browser';
-import { registerSandboxWorkspaceTools, type WorkspaceToolOptions } from './workspace';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
 import { completeUploadSlot, finalizeUploadSlot } from '@/lib/upload-executors';
 import { getDatabase } from '@renkei/db';
@@ -59,7 +56,6 @@ import {
   clientFailure,
   sandboxConfig,
   sandboxBrowserEnabled,
-  sandboxWorkspacesEnabled,
 } from '@/lib/sandbox/service-client';
 
 /** The connector key the sandbox capabilities register under. */
@@ -83,20 +79,10 @@ function filenameOfUrl(url: string): string {
 
 const TEXT_TYPES = /^(text\/|application\/(json|xml|x-yaml|yaml|javascript|ld\+json))/i;
 
-export function registerSandboxTools(
-  server: McpServer,
-  context: MCPToolContext,
-  options: { workspaces?: WorkspaceToolOptions } = {}
-): void {
+export function registerSandboxTools(server: McpServer, context: MCPToolContext): void {
   // The browser verbs register only where the worker actually runs one
   // (SANDBOX_BROWSER_ENABLED on both sides) — see ./browser.ts.
   if (sandboxBrowserEnabled()) registerSandboxBrowserTools(server, context);
-  // Likewise the code-workspace verbs (SANDBOX_WORKSPACES_ENABLED) — see
-  // ./workspace.ts. The git verbs additionally need the caller's own
-  // Bitbucket, which the registry decides.
-  if (sandboxWorkspacesEnabled()) {
-    registerSandboxWorkspaceTools(server, context, options.workspaces ?? { bitbucketGit: false });
-  }
 
   server.registerTool(
     'sandbox_download_url',

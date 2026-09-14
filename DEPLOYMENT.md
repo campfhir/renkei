@@ -219,12 +219,13 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `sandbox_secrets` table) need no key of their own in `.env`: each is
   sealed under a passphrase the person holds, and unlocked keys live only
   in this worker's memory — restarting it locks every secret until its
-  owner unlocks it again. **Code workspaces** (`docs/sandbox-workspaces-design.md`):
+  owner unlocks it again. **Code projects** (`docs/sandbox-workspaces-design.md`):
   set `SANDBOX_WORKSPACES_ENABLED=true` in `.env` — again read by BOTH the
-  web app (the `sandbox_workspace_*` tools and the Code workspaces card)
-  and this worker — to let people clone their Bitbucket repositories into
-  the sandbox and have a chat work in them: read, edit, run the project's
-  own commands, commit, push. Checkouts live on a second named volume
+  web app (the Code section and the `code_*` tools its chats get) and
+  this worker — to let people make a code project from one of their
+  Bitbucket repositories, paste its `.env`, and have the project's chats
+  work in it: read, edit, run the project's own commands, commit, push.
+  Checkouts live on a second named volume
   (`renkei-sandbox-workspaces` / `sandbox_workspaces`) at
   `SANDBOX_WORKSPACES_DIR` (default `/workspaces`), a week since last use.
   With the flag set the container's entrypoint keeps the worker **root**
@@ -236,7 +237,7 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   need it), so a deployment that enables workspaces should give this
   service its own network with a route out and none to postgres or the
   other workers. `SANDBOX_ENV_SECRETS_KEY` (`openssl rand -base64 32`)
-  seals the environment variables people hand their commands
+  seals the `.env` a code project's commands run with
   (migration 101, `sandbox_env_secrets`); it falls back to
   `TOKEN_ENCRYPTION_KEY`, and a dedicated key is the recommendation so the
   web app never holds one that opens them. Entrypoint:
