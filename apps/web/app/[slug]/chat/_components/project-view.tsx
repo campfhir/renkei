@@ -7,7 +7,7 @@
  * route and refreshes the server data.
  */
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMediaQuery } from '@/lib/use-media-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -73,6 +73,8 @@ export default function ProjectView({
     variant === 'code' ? `/api/tenant/${tenantId}/code/projects/${project.id}` : base;
 
   const [name, setName] = useState(project.name);
+  const [renamingHeader, setRenamingHeader] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [description, setDescription] = useState(project.description ?? '');
   const [instructions, setInstructions] = useState(
     project.instructions ?? defaultInstructions ?? ''
@@ -94,6 +96,40 @@ export default function ProjectView({
     name !== project.name ||
     description !== (project.description ?? '') ||
     instructions !== (project.instructions ?? '');
+
+  useEffect(() => {
+    if (renamingHeader) nameInputRef.current?.select();
+  }, [renamingHeader]);
+
+  const startRenaming = () => {
+    if (!canEdit) return;
+    setName(project.name);
+    setRenamingHeader(true);
+  };
+
+  // The header's own quick rename: it saves just the name, immediately,
+  // separately from the About section's Save (which also carries
+  // description and instructions).
+  const renameFromHeader = async () => {
+    const next = name.trim();
+    if (!next || next === project.name) {
+      setName(project.name);
+      setRenamingHeader(false);
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    const result = await sendJsonFull(base, 'PATCH', { name: next });
+    setSaving(false);
+    setRenamingHeader(false);
+    if (result.error) {
+      setSaveError(result.error);
+      setName(project.name);
+      return;
+    }
+    setSavedAt(Date.now());
+    router.refresh();
+  };
 
   const save = async () => {
     setSaving(true);
@@ -169,7 +205,48 @@ export default function ProjectView({
           <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
         </Link>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-sm font-semibold">{project.name}</h1>
+          {renamingHeader ? (
+            <input
+              ref={nameInputRef}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              onBlur={() => void renameFromHeader()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void renameFromHeader();
+                } else if (event.key === 'Escape') {
+                  setName(project.name);
+                  setRenamingHeader(false);
+                }
+              }}
+              maxLength={200}
+              aria-label="Project name"
+              disabled={saving}
+              className="w-full rounded-md border border-blue-400 bg-white px-1.5 py-0.5 text-sm font-semibold outline-none dark:border-blue-700 dark:bg-gray-900"
+            />
+          ) : (
+            <div className="group flex min-w-0 items-center gap-1.5">
+              <h1
+                className={`truncate text-sm font-semibold ${canEdit ? 'cursor-text' : ''}`}
+                onDoubleClick={startRenaming}
+                title={canEdit ? 'Double-click to rename' : undefined}
+              >
+                {project.name}
+              </h1>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={startRenaming}
+                  aria-label="Rename project"
+                  title="Rename"
+                  className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 lg:opacity-0 lg:group-hover:opacity-100 lg:focus:opacity-100 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+                >
+                  <Icon path={ICONS.pencil} className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          )}
           <p className="truncate text-xs text-gray-500">
             {role === 'owner'
               ? project.publishedToOrg
