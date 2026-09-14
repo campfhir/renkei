@@ -99,7 +99,10 @@ describe('codeProjectContext', () => {
   }, 10_000);
 
   it('answers the step with an error when the clone fails', async () => {
-    get.mockResolvedValueOnce({ ok: false, err: { kind: 'op', type: 'not_found', status: 404 } });
+    get.mockResolvedValueOnce({
+      ok: false,
+      err: { kind: 'op', type: 'not_found', message: undefined, status: 404 },
+    });
     clone.mockResolvedValue({ ok: true, val: workspace('cloning') });
     get.mockResolvedValueOnce({
       ok: true,
