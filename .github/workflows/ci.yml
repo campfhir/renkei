@@ -23,6 +23,13 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+        env:
+          # Whole-monorepo type-aware linting (parserOptions.project in
+          # eslint.config.js) builds one TS program across every workspace
+          # package. That now outgrows Node's default old-space ceiling
+          # (~4GB) and OOM-kills the runner; raise it well under the
+          # runner's 16GB before that ceiling gets hit again.
+          NODE_OPTIONS: --max-old-space-size=8192
 
       - name: Typecheck
         run: pnpm typecheck
