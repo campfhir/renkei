@@ -7,6 +7,8 @@ import { resolveResourceAccess } from '@/lib/chat/access';
 import { loadCodeProjectView } from '@/lib/code/project-view';
 import ProjectView from '../../chat/_components/project-view';
 import CodeSections from '../_components/code-sections';
+import RepoTree from '../_components/repo-tree';
+import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 
 /**
  * One code project: its repository's checkout and its environment on
@@ -40,6 +42,9 @@ export default async function CodeProjectPage({
   if (!access) notFound();
   const view = await loadCodeProjectView(db, tenant.id, session.subject, projectId, access);
   if (!view) notFound();
+  // The two elements handed to the client view carry keys: React checks
+  // server-made elements it finds among siblings on the client the way it
+  // checks a list, and a key is what satisfies it.
   return (
     <ProjectView
       key={projectId}
@@ -47,8 +52,18 @@ export default async function CodeProjectPage({
       tenantId={tenant.id}
       initial={view}
       variant="code"
+      defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
+      aside={
+        <RepoTree
+          key="tree"
+          tenantId={tenant.id}
+          projectId={projectId}
+          ready={view.code.workspace?.status === 'ready'}
+        />
+      }
       before={
         <CodeSections
+          key="code"
           tenantId={tenant.id}
           projectId={projectId}
           code={view.code}

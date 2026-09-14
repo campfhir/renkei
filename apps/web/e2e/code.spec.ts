@@ -203,12 +203,15 @@ test.describe('code projects', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-index.png');
 
-    // ── The menu: a Code entry and a "+ New" only — projects and their
-    //    chats are listed on the Code page, and the chat is NOT among the
+    // ── The menu: Code sits in the Chat section beside Projects, with no
+    //    "+" of its own — the Code page's button makes projects; projects
+    //    and their chats are listed there, and the chat is NOT among the
     //    person's ordinary chats ──
     await openMenu();
-    await expect(menu.getByRole('link', { name: 'Code', exact: true })).toBeVisible();
-    await expect(menu.getByRole('link', { name: 'New code project' })).toBeVisible();
+    const codeEntry = menu.getByRole('link', { name: 'Code', exact: true });
+    await expect(codeEntry).toBeVisible();
+    await expect(menu.getByRole('link', { name: 'Projects', exact: true })).toBeVisible();
+    await expect(menu.getByRole('link', { name: 'New code project' })).toHaveCount(0);
     await expect(menu.getByRole('link', { name: ids.seededName })).toHaveCount(0);
     await expect(menu.getByRole('link', { name: ids.seededChatTitle })).toHaveCount(0);
     if (!mobile) await shot('code-menu.png');
@@ -219,7 +222,9 @@ test.describe('code projects', () => {
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
     await expect(page.getByText('Your code project')).toBeVisible();
     // A code project keeps no files of its own; its chats are listed here.
-    await expect(main.getByRole('heading', { level: 2, name: 'Files' })).toHaveCount(0);
+    await expect(main.getByRole('heading', { level: 2, name: 'Files', exact: true })).toHaveCount(
+      0
+    );
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
     ).toBeVisible();
@@ -241,6 +246,26 @@ test.describe('code projects', () => {
     await expect(repository.getByText('Ready')).toBeVisible({ timeout: 15_000 });
     await expect(repository.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
     await shot('code-project-ready.png');
+
+    // ── The repository tree: beside the sections on a wide screen, folded
+    //    above them on a narrow one; folders open as they are clicked ──
+    if (mobile) await main.getByText('Repository files', { exact: true }).click();
+    const tree = main.getByRole('tree', { name: 'Repository files' });
+    await expect(tree.getByText('package.json')).toBeVisible();
+    await tree.getByRole('button', { name: 'src' }).click();
+    await expect(tree.getByText('billing.ts')).toBeVisible();
+    await shot('code-project-tree.png');
+
+    // ── Instructions: a project made without any shows the developer's
+    //    brief, unsaved until Save; then it is the project's own ──
+    const about = sectionOf('About');
+    await expect(about.getByLabel(/^Instructions/)).toHaveValue(/test-first/);
+    await expect(about.getByText(/not saved yet/)).toBeVisible();
+    await about.getByRole('button', { name: 'Save' }).click();
+    await expect(about.getByText('Saved.')).toBeVisible();
+    await page.reload();
+    await expect(sectionOf('About').getByLabel(/^Instructions/)).toHaveValue(/test-first/);
+    await expect(sectionOf('About').getByText(/not saved yet/)).toHaveCount(0);
 
     // ── A person's files go into the checkout, not onto the project ──
     await repository.getByRole('button', { name: 'Add files' }).click();
@@ -308,6 +333,27 @@ test.describe('code projects', () => {
     await expect(crumb).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-new.png');
+
+    // ── The title bar's code buttons: Changes carries the checkout's
+    //    +added −deleted and opens every diff (side by side on a wide
+    //    screen); Environment opens the project's variables ──
+    const changes = main.getByRole('button', { name: 'Changes' });
+    await expect(changes).toContainText('+3');
+    await expect(changes).toContainText('−1');
+    await changes.click();
+    const changesDialog = page.getByRole('dialog', { name: 'Changes' });
+    await expect(changesDialog.getByText('src/billing.ts')).toBeVisible();
+    await expect(changesDialog.getByText(/MAX_ATTEMPTS/).first()).toBeVisible();
+    await expect(
+      changesDialog.getByRole('button', { name: 'Ask the chat to open a pull request' })
+    ).toBeVisible();
+    await shot('code-chat-changes.png');
+    await changesDialog.getByRole('button', { name: 'Close' }).click();
+    await main.getByRole('button', { name: 'Environment' }).click();
+    const envDialog = page.getByRole('dialog', { name: 'Environment' });
+    await expect(envDialog.getByText('API_BASE_URL')).toBeVisible();
+    await shot('code-chat-env.png');
+    await envDialog.getByRole('button', { name: 'Close' }).click();
     await crumb.click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();

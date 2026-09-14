@@ -28,6 +28,10 @@ import type { DB } from '@renkei/db';
 import {
   CLONE_DEFAULT_DEPTH,
   COMMIT_MESSAGE_MAX_CHARS,
+  DIFF_DEFAULT_CONTEXT,
+  DIFF_MAX_CHARS,
+  DIFF_MAX_CONTEXT,
+  DIFF_MAX_UNTRACKED,
   ENV_MAX_PER_SUBJECT,
   FIND_MAX_RESULTS,
   GIT_OUTPUT_MAX_CHARS,
@@ -634,6 +638,97 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     sendJson(response, 200, parts);
   }
 
+  /**
+   * The working tree against HEAD as one unified diff — tracked changes
+   * from git itself, untracked files each diffed against nothing so a
+   * new file shows as all additions — with per-file added/deleted line
+   * counts. `context` is the lines around each hunk (a page can ask for
+   * more than the model would); `paths` narrows it to some files. The
+   * text is bounded; when cut, `truncated` says so and the counts still
+   * cover everything. `statOnly` skips the text and answers the counts.
+   */
+  async function gitDiff(
+    workspace: store.StoredWorkspace,
+    env: OpenedEnv,
+    body: Body,
+    response: ServerResponse
+  ) {
+    const context =
+      typeof body.context === 'number' && Number.isFinite(body.context)
+        ? Math.min(DIFF_MAX_CONTEXT, Math.max(0, Math.floor(body.context)))
+        : DIFF_DEFAULT_CONTEXT;
+    const paths: string[] = [];
+    if (Array.isArray(body.paths)) {
+      for (const raw of body.paths.slice(0, 200)) {
+        const path = validateWorkspacePath(raw);
+        if (!path.ok) return sendError(response, 400, 'bad_path', path.message);
+        if (path.path) paths.push(path.path);
+      }
+    }
+    const statOnly = body.statOnly === true;
+    const input = runInputFor(workspace, env, 60_000);
+    const branch = await currentBranch(workspace, env);
+    const scope = paths.length ? paths : ['.'];
+    const tracked = statOnly
+      ? null
+      : await runGit(input, ['diff', `-U${context}`, 'HEAD', '--', ...scope]);
+    const numstat = await runGit(input, ['diff', '--numstat', 'HEAD', '--', ...scope]);
+    const untrackedList = await runGit(input, [
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '--',
+      ...scope,
+    ]);
+    const files: { path: string; added: number; deleted: number; status: string }[] = [];
+    for (const line of numstat.stdout.split('\n')) {
+      const [added, deleted, ...rest] = line.split('\t');
+      const path = rest.join('\t');
+      if (!path) continue;
+      files.push({
+        path,
+        added: added === '-' ? 0 : Number(added) || 0,
+        deleted: deleted === '-' ? 0 : Number(deleted) || 0,
+        status: 'modified',
+      });
+    }
+    const pieces = [tracked?.stdout ?? ''];
+    const untracked = untrackedList.stdout.split('\n').filter(Boolean);
+    for (const path of untracked.slice(0, DIFF_MAX_UNTRACKED)) {
+      const one = statOnly
+        ? null
+        : await runGit(input, ['diff', '--no-index', `-U${context}`, '--', '/dev/null', path]);
+      const stat = await runGit(input, [
+        'diff',
+        '--no-index',
+        '--numstat',
+        '--',
+        '/dev/null',
+        path,
+      ]);
+      const [added] = stat.stdout.split('\t');
+      files.push({
+        path,
+        added: added === '-' || added === undefined ? 0 : Number(added) || 0,
+        deleted: 0,
+        status: 'untracked',
+      });
+      if (one) pieces.push(one.stdout);
+    }
+    for (const path of untracked.slice(DIFF_MAX_UNTRACKED)) {
+      files.push({ path, added: 0, deleted: 0, status: 'untracked' });
+    }
+    const joined = pieces.filter(Boolean).join('');
+    const truncated = joined.length > DIFF_MAX_CHARS;
+    await store.touchWorkspace(db, workspace.id, { branch });
+    sendJson(response, 200, {
+      branch,
+      diff: scrubEnv(truncated ? joined.slice(0, DIFF_MAX_CHARS) : joined, env),
+      files: files.map((file) => ({ ...file, path: scrubEnv(file.path, env) })),
+      truncated,
+    });
+  }
+
   async function gitCommit(
     workspace: store.StoredWorkspace,
     env: OpenedEnv,
@@ -890,6 +985,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     edit,
     exec,
     'git-status': gitStatus,
+    'git-diff': gitDiff,
     'git-commit': gitCommit,
     'git-push': gitPush,
     'git-pull': gitPull,

@@ -29,7 +29,8 @@ jest.mock('./env-secrets-store', () => ({
   deleteEnvSecret: jest.fn(),
 }));
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -37,7 +38,7 @@ import type { AddressInfo } from 'node:net';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
-import { setWorkspacesRootForTests, workspaceDir } from './workspaces';
+import { identityFor, setWorkspacesRootForTests, workspaceDir } from './workspaces';
 import { resetEnvSecretsKeyForTests, sealEnvValue, envSecretsKey } from './env-secrets';
 
 const workspaceStore = jest.requireMock<Record<string, jest.Mock>>('./workspace-store');
@@ -226,6 +227,66 @@ describe('editing', () => {
         })
       ).status
     ).toBe(400);
+  });
+});
+
+describe('git-diff', () => {
+  it('diffs tracked changes and untracked files against HEAD with counts', async () => {
+    const dir = workspaceDir(STORAGE_KEY);
+    const git = (...args: string[]) =>
+      execFileSync('git', args, {
+        cwd: dir,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 't',
+          GIT_AUTHOR_EMAIL: 't@x',
+          GIT_COMMITTER_NAME: 't',
+          GIT_COMMITTER_EMAIL: 't@x',
+        },
+        stdio: 'pipe',
+      });
+    git('init', '-q', '-b', 'main');
+    await writeFile(join(dir, 'tracked.txt'), 'one\ntwo\nthree\n');
+    git('add', 'tracked.txt');
+    git('commit', '-q', '-m', 'base');
+    await writeFile(join(dir, 'tracked.txt'), 'one\n2\nthree\nfour\n');
+    await writeFile(join(dir, 'fresh.txt'), 'new\n');
+    // Under root the worker drops git to the caller's uid, which must be
+    // able to reach the checkout the way a real clone (owned by it) is.
+    const identity = identityFor(TARGET);
+    if (identity) {
+      for (const parent of [root, join(root, 'tenant-1'), join(root, 'tenant-1', 'hash')]) {
+        await chmod(parent, 0o755);
+      }
+      execFileSync('chown', ['-R', `${identity.uid}:${identity.gid}`, dir], { stdio: 'pipe' });
+    }
+    const result = await post(enabledBase, 'workspaces/git-diff', {
+      ...TARGET,
+      id: 'ws-1',
+      context: 1,
+    });
+    expect(result.status).toBe(200);
+    expect(result.json.branch).toBe('main');
+    expect(result.json.truncated).toBe(false);
+    expect(result.json.files).toEqual(
+      expect.arrayContaining([
+        { path: 'tracked.txt', added: 2, deleted: 1, status: 'modified' },
+        { path: 'fresh.txt', added: 1, deleted: 0, status: 'untracked' },
+      ])
+    );
+    expect(result.json.diff).toContain('+++ b/tracked.txt');
+    expect(result.json.diff).toContain('@@ -1,3 +1,4 @@');
+    expect(result.json.diff).toContain('--- /dev/null');
+    expect(result.json.diff).toContain('+new');
+    const narrowed = await post(enabledBase, 'workspaces/git-diff', {
+      ...TARGET,
+      id: 'ws-1',
+      paths: ['fresh.txt'],
+    });
+    expect(narrowed.json.files).toEqual([
+      { path: 'fresh.txt', added: 1, deleted: 0, status: 'untracked' },
+    ]);
+    expect(narrowed.json.diff).not.toContain('tracked.txt');
   });
 });
 

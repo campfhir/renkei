@@ -32,6 +32,7 @@ import MessageList from './message-list';
 import ModelSelect from './model-select';
 import ToolsPopover from './tools-popover';
 import ShareModal from './share-modal';
+import CodeChatTools from '../../code/_components/code-chat-tools';
 
 interface ThreadProps {
   slug: string;
@@ -304,6 +305,14 @@ export default function ChatThread({
 
   const currentModel = models.find((model) => model.id === modelId) ?? null;
   const title = chat?.title ?? (newChatProject ? `New chat in ${newChatProject.name}` : 'New chat');
+  // A chat in a code project: its checkout's changes and environment are
+  // a button away in the title bar.
+  const codeProjectId =
+    chat?.projectKind === 'code' && chat.projectId
+      ? chat.projectId
+      : !chat && newChatProject?.kind === 'code'
+        ? newChatProject.id
+        : null;
   const lastTurn = state.turn;
   const canRetry =
     isOwner &&
@@ -335,6 +344,17 @@ export default function ChatThread({
           onRename={chat ? rename : null}
         />
         <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
+        {codeProjectId ? (
+          <CodeChatTools
+            tenantId={tenantId}
+            projectId={codeProjectId}
+            canEdit={isOwner}
+            running={running}
+            onAsk={
+              isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null
+            }
+          />
+        ) : null}
         {isOwner ? (
           <>
             <ToolsPopover tenantId={tenantId} selected={connectors} onChange={changeConnectors} />

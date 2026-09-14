@@ -945,6 +945,49 @@ export async function sbWorkspaceGitStatus(
   };
 }
 
+export interface WireDiffFile {
+  path: string;
+  added: number;
+  deleted: number;
+  status: 'modified' | 'untracked';
+}
+
+/**
+ * The working tree against HEAD: one unified diff (untracked files
+ * included, each against nothing) and per-file line counts. `context`
+ * is the lines around each hunk; `paths` narrows to some files.
+ */
+export async function sbWorkspaceGitDiff(
+  target: SandboxTarget,
+  input: { id: string; context?: number; paths?: string[]; statOnly?: boolean }
+): Promise<
+  ClientResult<{ branch: string; diff: string; files: WireDiffFile[]; truncated: boolean }>
+> {
+  const result = await workspaceCall('git-diff', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !Array.isArray(value.files)) return malformed();
+  const files: WireDiffFile[] = [];
+  for (const raw of value.files) {
+    if (!isRecord(raw)) return malformed();
+    files.push({
+      path: str(raw.path),
+      added: typeof raw.added === 'number' ? raw.added : 0,
+      deleted: typeof raw.deleted === 'number' ? raw.deleted : 0,
+      status: raw.status === 'untracked' ? 'untracked' : 'modified',
+    });
+  }
+  return {
+    ok: true,
+    val: {
+      branch: str(value.branch),
+      diff: str(value.diff),
+      files,
+      truncated: value.truncated === true,
+    },
+  };
+}
+
 export async function sbWorkspaceGitCommit(
   target: SandboxTarget,
   input: {

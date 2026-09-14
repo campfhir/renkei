@@ -20,7 +20,12 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
+import {
+  resolveAgentLlm,
+  type LlmContentBlock,
+  type LlmUsage,
+  type ResolvedLlm,
+} from '@renkei/agent-llm';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxConfig } from '@renkei/sandbox-client';
 import { codeProjectContext } from '@/lib/code/turn';
@@ -302,6 +307,8 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       projectId: input.chat.projectId,
       userEmail: person?.email ?? null,
       readOnly,
+      llm: input.llm,
+      recordUsage: (usage: LlmUsage) => store.recordUsage(usage),
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     // A code project's checkout, when it is there to work in: the code_*

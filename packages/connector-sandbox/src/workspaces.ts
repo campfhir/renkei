@@ -56,6 +56,13 @@ export const GREP_MAX_MATCHES = 200;
 export const GREP_MAX_LINE_CHARS = 400;
 export const GREP_PATTERN_MAX_CHARS = 512;
 export const GIT_OUTPUT_MAX_CHARS = 40_000;
+/** The working tree's diff, as the worker returns it, for the page and the model alike. */
+export const DIFF_MAX_CHARS = 400_000;
+/** Context lines around a hunk a caller may ask for. */
+export const DIFF_DEFAULT_CONTEXT = 3;
+export const DIFF_MAX_CONTEXT = 200;
+/** Untracked files diffed one by one; past this the rest are named only. */
+export const DIFF_MAX_UNTRACKED = 200;
 export const COMMIT_MESSAGE_MAX_CHARS = 4_000;
 
 export const PATH_MAX_CHARS = 1_024;

@@ -18,6 +18,7 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbWorkspaceExec: jest.fn(),
   sbWorkspaceFind: jest.fn(),
   sbWorkspaceGitCommit: jest.fn(),
+  sbWorkspaceGitDiff: jest.fn(),
   sbWorkspaceGitPull: jest.fn(),
   sbWorkspaceGitPush: jest.fn(),
   sbWorkspaceGitStatus: jest.fn(),
@@ -63,12 +64,20 @@ function tools() {
   return new Map(list.map((tool) => [tool.def.name, tool]));
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  // A clean working tree unless a test says otherwise.
+  client.sbWorkspaceGitDiff.mockResolvedValue({
+    ok: true,
+    val: { branch: 'main', diff: '', files: [], truncated: false },
+  });
+});
 
 describe('the set', () => {
   it('names every verb and marks the reads', () => {
     const set = tools();
     expect([...set.keys()].sort()).toEqual([
+      'code_delegate',
       'code_edit_file',
       'code_env_names',
       'code_find',
@@ -86,6 +95,57 @@ describe('the set', () => {
     expect(set.get('code_env_names')!.readOnly).toBe(true);
     expect(set.get('code_run')!.readOnly).toBeUndefined();
     expect(set.get('code_edit_file')!.readOnly).toBeUndefined();
+  });
+});
+
+describe('file changes carry their diff', () => {
+  it('appends the file’s fenced diff to a write and counts changes after a run', async () => {
+    client.sbWorkspaceWrite.mockResolvedValue({
+      ok: true,
+      val: { path: 'src/a.ts', created: false, sizeBytes: 20 },
+    });
+    client.sbWorkspaceGitDiff.mockResolvedValue({
+      ok: true,
+      val: {
+        branch: 'main',
+        diff: 'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n',
+        files: [{ path: 'src/a.ts', added: 1, deleted: 1, status: 'modified' }],
+        truncated: false,
+      },
+    });
+    const written = await tools()
+      .get('code_write_file')!
+      .execute({ path: 'src/a.ts', content: 'y\n' }, context);
+    expect(client.sbWorkspaceGitDiff).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      paths: ['src/a.ts'],
+    });
+    expect(written.content[0]!.text).toBe(
+      'Replaced src/a.ts (20 B).\n\n```diff\ndiff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n\n```'
+    );
+    client.sbWorkspaceExec.mockResolvedValue({
+      ok: true,
+      val: {
+        exitCode: 0,
+        signal: null,
+        stdout: 'ok\n',
+        stderr: '',
+        timedOut: false,
+        truncated: false,
+        durationMs: 100,
+        timeoutMs: 120_000,
+        sizeBytes: 10,
+        unreadableEnv: [],
+      },
+    });
+    const ran = await tools().get('code_run')!.execute({ command: 'make' }, context);
+    expect(client.sbWorkspaceGitDiff).toHaveBeenLastCalledWith(TARGET, {
+      id: WS_ID,
+      statOnly: true,
+    });
+    expect(ran.content[0]!.text).toContain(
+      '--- working tree (uncommitted changes) ---\n  +1 −1 src/a.ts'
+    );
   });
 });
 

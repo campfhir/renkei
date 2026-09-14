@@ -167,24 +167,15 @@ export default function AppNav({
           plus: { href: `/${slug}/chat/new`, label: 'New chat' },
         },
         { href: `/${slug}/chat/projects`, label: 'Projects' },
+        // Code projects — a repository to work in, apart from ordinary
+        // chats. The menu only opens the door: the projects, and the chats
+        // inside each, are listed on the Code page and on the project's own
+        // page, never here and never among the person's chats below.
+        { href: `/${slug}/code`, label: 'Code' },
         { href: `/${slug}/chat/prompts`, label: 'Prompt libraries' },
         { href: `/${slug}/chat/memory`, label: 'Memory' },
       ],
       extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
-    },
-    {
-      // Code projects — a repository to work in, apart from ordinary chats.
-      // The menu only opens the door: the projects, and the chats inside
-      // each, are listed on the Code page and on the project's own page,
-      // never here and never among the person's chats above.
-      label: 'Code',
-      items: [
-        {
-          href: `/${slug}/code`,
-          label: 'Code',
-          plus: { href: `/${slug}/code/new`, label: 'New code project' },
-        },
-      ],
     },
   ];
 

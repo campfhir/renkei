@@ -39,6 +39,7 @@ import {
   sbWorkspaceExec,
   sbWorkspaceFind,
   sbWorkspaceGitCommit,
+  sbWorkspaceGitDiff,
   sbWorkspaceGitPull,
   sbWorkspaceGitPush,
   sbWorkspaceGitStatus,
@@ -50,6 +51,11 @@ import {
 } from '@renkei/sandbox-client';
 import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
 import { commitAuthorFor, resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { codeDelegateTool } from './delegate';
+import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
+
+/** How much of a file's diff rides back on a write or edit, for the model and the page. */
+const TOOL_DIFF_MAX_CHARS = 24_000;
 
 /** What binds the tools to one project's checkout. */
 export interface CodeToolBinding {
@@ -132,7 +138,33 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
   const failed = (error: Parameters<typeof clientFailure>[0]) =>
     errorResult(clientFailure(error).message);
 
-  return [
+  /**
+   * The file's diff against HEAD after a write or edit, fenced so the chat
+   * renders it as one and the model sees exactly what changed. Best
+   * effort: a diff that cannot be had leaves the result as it was.
+   */
+  const fencedDiffOf = async (path: string): Promise<string> => {
+    const diff = await sbWorkspaceGitDiff(target, { id: workspaceId, paths: [path] });
+    if (!diff.ok || !diff.val.diff.trim()) return '';
+    const clipped = clipOutput(diff.val.diff, TOOL_DIFF_MAX_CHARS);
+    return `\n\n${DIFF_FENCE_OPEN}${clipped.text}${DIFF_FENCE_CLOSE}`;
+  };
+
+  /** What the working tree now has changed, after a command that may have changed it. */
+  const changedFilesNote = async (): Promise<string> => {
+    const diff = await sbWorkspaceGitDiff(target, { id: workspaceId, statOnly: true });
+    if (!diff.ok || diff.val.files.length === 0) return '';
+    const lines = diff.val.files
+      .slice(0, 50)
+      .map(
+        (file) =>
+          `  +${file.added} −${file.deleted} ${file.path}${file.status === 'untracked' ? ' (new)' : ''}`
+      );
+    const more = diff.val.files.length > 50 ? `\n  … and ${diff.val.files.length - 50} more` : '';
+    return `\n--- working tree (uncommitted changes) ---\n${lines.join('\n')}${more}`;
+  };
+
+  const tools: LocalTool[] = [
     {
       def: {
         name: 'code_ls',
@@ -307,7 +339,8 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         });
         if (!written.ok) return failed(written.err);
         return textResult(
-          `${written.val.created ? 'Created' : 'Replaced'} ${written.val.path} (${bytes(written.val.sizeBytes)}).`
+          `${written.val.created ? 'Created' : 'Replaced'} ${written.val.path} (${bytes(written.val.sizeBytes)}).` +
+            (await fencedDiffOf(written.val.path))
         );
       },
     },
@@ -340,7 +373,8 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         });
         if (!edited.ok) return failed(edited.err);
         return textResult(
-          `Edited ${edited.val.path} (${edited.val.replacements} replacement${edited.val.replacements === 1 ? '' : 's'}).`
+          `Edited ${edited.val.path} (${edited.val.replacements} replacement${edited.val.replacements === 1 ? '' : 's'}).` +
+            (await fencedDiffOf(edited.val.path))
         );
       },
     },
@@ -376,7 +410,8 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         });
         if (!ran.ok) return failed(ran.err);
         const rendered = renderRun(ran.val, num(input.maxChars) ?? EXEC_OUTPUT_DEFAULT_CHARS);
-        return rendered.ok ? textResult(rendered.text) : errorResult(rendered.text);
+        const text = rendered.text + (await changedFilesNote());
+        return rendered.ok ? textResult(text) : errorResult(text);
       },
     },
     {
@@ -558,4 +593,6 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       },
     },
   ];
+  // The sub-agent gets these same tools (minus pushing and delegating).
+  return [...tools, codeDelegateTool(tools)];
 }

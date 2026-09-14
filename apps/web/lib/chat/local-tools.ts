@@ -9,7 +9,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import type { LlmToolDef } from '@renkei/agent-llm';
+import type { LlmToolDef, LlmUsage, ResolvedLlm } from '@renkei/agent-llm';
 import type { McpToolResult } from '@renkei/mcp-client';
 
 export interface LocalToolContext {
@@ -22,6 +22,13 @@ export interface LocalToolContext {
   userEmail?: string | null;
   /** Org read-only mode: local tools that write refuse under it. */
   readOnly: boolean;
+  /**
+   * The model answering this turn, for a tool that runs a bounded loop
+   * of its own (a code project's sub-agent); absent, such tools refuse.
+   */
+  llm?: ResolvedLlm;
+  /** Where a nested loop's token usage is recorded — the turn's own sink. */
+  recordUsage?: (usage: LlmUsage) => Promise<void>;
 }
 
 export interface LocalTool {

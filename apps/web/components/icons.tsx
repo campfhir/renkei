@@ -43,6 +43,8 @@ export const ICONS = {
   /** A ring around a dot — the unread badge, "put it back". */
   unreadDot: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 12h.01',
   folder: 'M3 19V5h6l2 3h10v11z',
+  /** Two columns of lines with a plus and a minus — a diff. */
+  diff: 'M8 4v16M4 8h8M4 16h8M16 12h4M14 12h.01',
   folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
   upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',
   download: 'M12 4v12M8 12l4 4 4-4M5 16v4h14v-4',

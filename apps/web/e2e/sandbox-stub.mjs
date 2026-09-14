@@ -23,6 +23,35 @@ const CLONE_MS = Number(process.env.SANDBOX_STUB_CLONE_MS ?? '1500');
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const RESERVED = new Set(['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS']);
 
+/** A checkout's shape, for the tree on the project page. */
+const TREE = {
+  '': [
+    { path: 'src', kind: 'dir', sizeBytes: null },
+    { path: 'package.json', kind: 'file', sizeBytes: 812 },
+    { path: 'README.md', kind: 'file', sizeBytes: 1204 },
+  ],
+  src: [
+    { path: 'src/billing.ts', kind: 'file', sizeBytes: 4410 },
+    { path: 'src/index.ts', kind: 'file', sizeBytes: 302 },
+  ],
+};
+
+/** What the checkout has uncommitted, for the Changes button and its diff. */
+const SAMPLE_DIFF = `diff --git a/src/billing.ts b/src/billing.ts
+index 1111111..2222222 100644
+--- a/src/billing.ts
++++ b/src/billing.ts
+@@ -10,7 +10,9 @@ export async function retryInvoice(job: InvoiceJob) {
+   const attempt = job.attempts + 1;
+-  if (attempt > 3) throw new Error('gave up');
++  if (attempt > MAX_ATTEMPTS) {
++    return { status: 'failed', reason: 'max attempts reached' };
++  }
+   await sleep(backoff(attempt));
+   return run(job, attempt);
+ }
+`;
+
 /** scope key → { workspaces: Map<id, workspace>, env: Map<name, variable> } */
 const scopes = new Map();
 
@@ -130,6 +159,28 @@ function handleWorkspaces(op, body, response) {
       const workspace = scope.workspaces.get(body.id ?? '');
       if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
       return json(response, 200, { workspace: wire(workspace) });
+    }
+    case 'ls': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      if (workspace.status !== 'ready')
+        return error(response, 409, 'not_ready', 'That workspace is still cloning.');
+      const path = body.path ?? '';
+      const listing = TREE[path];
+      if (!listing) return error(response, 404, 'not_found', `${path} is not a directory.`);
+      return json(response, 200, { path, entries: listing });
+    }
+    case 'git-diff': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      if (workspace.status !== 'ready')
+        return error(response, 409, 'not_ready', 'That workspace is still cloning.');
+      return json(response, 200, {
+        branch: workspace.branch,
+        diff: body.statOnly ? '' : SAMPLE_DIFF,
+        files: [{ path: 'src/billing.ts', added: 3, deleted: 1, status: 'modified' }],
+        truncated: false,
+      });
     }
     case 'delete': {
       const workspace = scope.workspaces.get(body.id ?? '');

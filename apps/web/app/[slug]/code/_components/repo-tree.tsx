@@ -1,0 +1,142 @@
+'use client';
+
+/**
+ * The checkout's folders and files as a tree, one directory fetched as
+ * it is opened (`…/code/projects/[id]/tree?path=`), directories first.
+ * A look at the repository's shape from the project page; the chat's
+ * tools are what read and change it.
+ */
+
+import { useCallback, useEffect, useState } from 'react';
+import { Icon, ICONS } from '@/components/icons';
+import { getJson } from '@/lib/fetch-json';
+
+interface Entry {
+  path: string;
+  kind: 'file' | 'dir' | 'link' | 'other';
+  sizeBytes: number | null;
+}
+
+type Listing =
+  { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready'; entries: Entry[] };
+
+function nameOf(path: string): string {
+  const index = path.lastIndexOf('/');
+  return index < 0 ? path : path.slice(index + 1);
+}
+
+function size(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1_048_576) return `${Math.round(value / 1024)} KB`;
+  return `${(value / 1_048_576).toFixed(1)} MB`;
+}
+
+export default function RepoTree({
+  tenantId,
+  projectId,
+  ready,
+}: {
+  tenantId: string;
+  projectId: string;
+  /** The checkout reads ready; otherwise the tree says why there is none. */
+  ready: boolean;
+}) {
+  const base = `/api/tenant/${tenantId}/code/projects/${projectId}/tree`;
+  const [listings, setListings] = useState<Record<string, Listing>>({});
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  const load = useCallback(
+    async (path: string) => {
+      setListings((current) => ({ ...current, [path]: { state: 'loading' } }));
+      const result = await getJson<{ path: string; entries: Entry[] }>(
+        `${base}?path=${encodeURIComponent(path)}`
+      );
+      setListings((current) => ({
+        ...current,
+        [path]: result.data
+          ? { state: 'ready', entries: result.data.entries }
+          : { state: 'error', message: result.error ?? 'Could not list the folder.' },
+      }));
+    },
+    [base]
+  );
+
+  useEffect(() => {
+    if (ready) void load('');
+  }, [ready, load]);
+
+  const toggle = (path: string) => {
+    const next = !open[path];
+    setOpen((current) => ({ ...current, [path]: next }));
+    if (next && !listings[path]) void load(path);
+  };
+
+  if (!ready) {
+    return <p className="text-xs text-gray-500">The tree appears once the repository is cloned.</p>;
+  }
+
+  const renderDir = (path: string, depth: number) => {
+    const listing = listings[path];
+    if (!listing || listing.state === 'loading') {
+      return <li className="py-1 pl-2 text-xs text-gray-400">Loading…</li>;
+    }
+    if (listing.state === 'error') {
+      return (
+        <li className="py-1 pl-2 text-xs text-red-600 dark:text-red-400">{listing.message}</li>
+      );
+    }
+    if (listing.entries.length === 0) {
+      return <li className="py-1 pl-2 text-xs text-gray-400">Empty.</li>;
+    }
+    return listing.entries.map((entry) => {
+      const name = nameOf(entry.path);
+      const indent = { paddingLeft: `${depth * 12 + 4}px` };
+      if (entry.kind === 'dir') {
+        const expanded = open[entry.path] === true;
+        return (
+          <li key={entry.path}>
+            <button
+              type="button"
+              onClick={() => toggle(entry.path)}
+              aria-expanded={expanded}
+              style={indent}
+              className="flex w-full items-center gap-1.5 rounded py-0.5 pr-2 text-left text-xs hover:bg-gray-100 dark:hover:bg-gray-900"
+            >
+              <Icon
+                path={ICONS.chevron}
+                className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${expanded ? 'rotate-90' : ''}`}
+              />
+              <Icon path={ICONS.folder} className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span className="truncate">{name}</span>
+            </button>
+            {expanded ? <ul>{renderDir(entry.path, depth + 1)}</ul> : null}
+          </li>
+        );
+      }
+      return (
+        <li
+          key={entry.path}
+          style={indent}
+          className="flex items-center gap-1.5 py-0.5 pr-2 text-xs text-gray-700 dark:text-gray-300"
+          title={entry.path}
+        >
+          <span className="inline-block h-3 w-3 shrink-0" />
+          <Icon path={ICONS.file} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          <span className="min-w-0 flex-1 truncate">
+            {name}
+            {entry.kind === 'link' ? ' →' : ''}
+          </span>
+          {entry.sizeBytes !== null ? (
+            <span className="shrink-0 text-[10px] text-gray-400">{size(entry.sizeBytes)}</span>
+          ) : null}
+        </li>
+      );
+    });
+  };
+
+  return (
+    <ul role="tree" aria-label="Repository files" className="font-mono">
+      {renderDir('', 0)}
+    </ul>
+  );
+}
