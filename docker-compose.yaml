@@ -193,6 +193,21 @@ services:
   # reads to register those tools. The browser's every connection goes
   # through an in-process egress proxy that refuses private and internal
   # addresses, so it cannot reach the other compose services either.
+  #
+  # SANDBOX_WORKSPACES_ENABLED=true in .env (again read by both) adds code
+  # projects: a Bitbucket repository cloned onto the second volume below,
+  # where the project's chats can read, edit, run the project's own
+  # commands, commit and push (docs/sandbox-workspaces-design.md). The
+  # container then runs its supervisor as root so every caller's commands
+  # can be dropped to that caller's own uid (docker/sandbox-entrypoint.sh).
+  # Those commands DO have this container's network — a project's own
+  # install and tests need the internet — so on a deployment with
+  # workspaces enabled give this service its own network with a route out
+  # and no route to postgres or the other workers; the bearer keys and
+  # database password those hold are never in a command's environment, but
+  # the network should not be either. SANDBOX_ENV_SECRETS_KEY in .env
+  # (`openssl rand -base64 32`) seals the environment variables people hand
+  # their commands; it falls back to TOKEN_ENCRYPTION_KEY.
   worker-sandbox:
     image: scotteremiaroden/renkei-sandbox:latest
     container_name: renkei-worker-sandbox
@@ -207,6 +222,7 @@ services:
       NODE_OPTIONS: --max-old-space-size=1024
     volumes:
       - renkei-sandbox-data:/data
+      - renkei-sandbox-workspaces:/workspaces
     # The browser is the memory hog in this stack: a busy session runs
     # 300-500MB, up to eight at once. The reservation asks the host to keep
     # that much for it; the limit stops a runaway page from taking the box
@@ -243,7 +259,9 @@ services:
       # run without an agent scratch space — the sandbox_* tools simply
       # don't register. SANDBOX_BROWSER_ENABLED=true in .env (read by this
       # service AND worker-sandbox) additionally registers the
-      # sandbox_browser_* tools; unset, they don't exist.
+      # sandbox_browser_* tools; unset, they don't exist. Likewise
+      # SANDBOX_WORKSPACES_ENABLED=true for the Code section — code
+      # projects, each a repository a chat works in with the code_* tools.
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.
@@ -269,3 +287,4 @@ services:
 volumes:
   renkei-postgres:
   renkei-sandbox-data:
+  renkei-sandbox-workspaces:

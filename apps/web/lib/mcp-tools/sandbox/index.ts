@@ -20,6 +20,10 @@
  * The sandbox_browser_* tools (./browser.ts) are the same shape applied to
  * a headless browser the worker owns: named verbs by element ref, never a
  * selector or a script, with screenshots landing in this same scratch space.
+ *
+ * The worker's code workspaces are deliberately NOT here: a repository is
+ * worked in from a code project's chats through the code_* local tools
+ * (apps/web/lib/code/tools.ts), never through the MCP surface.
  */
 
 import { z } from 'zod';

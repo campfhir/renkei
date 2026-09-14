@@ -130,6 +130,8 @@ export const EXPECTED_MIGRATIONS = [
   '098-llm-calls-model',
   '099-agent-run-resume',
   '100-idp-groups',
+  '101-sandbox-workspaces',
+  '102-code-projects',
 ];
 
 export interface MigrationStatus {

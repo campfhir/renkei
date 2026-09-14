@@ -20,9 +20,15 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
+import {
+  resolveAgentLlm,
+  type LlmContentBlock,
+  type LlmUsage,
+  type ResolvedLlm,
+} from '@renkei/agent-llm';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxConfig } from '@renkei/sandbox-client';
+import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -279,36 +285,52 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       project?.toolConfig ?? null,
       userDefault
     );
+    // A code project's turn is a working session with far higher limits
+    // than an ordinary chat's (lib/code/turn.ts); the tool surface lives
+    // as long as the turn may.
+    const limits = project?.kind === 'code' ? CODE_TURN_LIMITS : undefined;
+    const wallClockMs = limits?.wallClockMs ?? DEFAULT_TURN_LIMITS.wallClockMs;
     const surface = await resolveChatToolSurface(db, {
       tenantId: input.tenantId,
       subject: input.session.subject,
       roles: input.session.roles,
       config: toolConfig,
-      ttlSeconds: Math.ceil(DEFAULT_TURN_LIMITS.wallClockMs / 1000) + 15 * 60,
+      ttlSeconds: Math.ceil(wallClockMs / 1000) + 15 * 60,
     });
     release = surface.release;
 
     const readOnly = input.settings?.readOnly ?? false;
+    const [rows, person] = await Promise.all([
+      listMessages(db, input.tenantId, input.chat.id),
+      getIdentityDisplay(input.tenantId, input.session.subject),
+    ]);
     const localContext = {
       db,
       tenantId: input.tenantId,
       subject: input.session.subject,
       chatId: input.chat.id,
       projectId: input.chat.projectId,
+      userEmail: person?.email ?? null,
       readOnly,
+      llm: input.llm,
+      recordUsage: (usage: LlmUsage) => store.recordUsage(usage),
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
-    const baseLocalTools =
-      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed));
+    // A code project's checkout, when it is there to work in: the code_*
+    // tools bound to it, and what the prompt says about it either way.
+    const code =
+      project?.kind === 'code'
+        ? await codeProjectContext(db, project, { subject: input.session.subject })
+        : null;
+    const baseLocalTools = input.localTools ?? [
+      ...(await chatLocalTools(db, localContext, toolConfig, filesAllowed)),
+      ...(code?.tools ?? []),
+    ];
     const discoveryTool = findToolsTool(surface.discoverable);
     const localTools = createLocalToolSet(
       discoveryTool ? [...baseLocalTools, discoveryTool] : baseLocalTools
     );
 
-    const [rows, person] = await Promise.all([
-      listMessages(db, input.tenantId, input.chat.id),
-      getIdentityDisplay(input.tenantId, input.session.subject),
-    ]);
     const history = buildHistory(
       rows,
       {
@@ -326,7 +348,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const system = buildSystemPrompt({
       personName: person?.displayName ?? person?.email ?? null,
       orgName: null,
-      project: context.project,
+      project: context.project ? { ...context.project, code: code?.prompt ?? null } : null,
       userMemoryText: context.userMemoryText,
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
@@ -351,6 +373,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         channel,
         store,
         log,
+        ...(limits ? { limits } : {}),
       },
       {
         turnId: input.turnId,
@@ -358,6 +381,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         system,
         history,
         thinkingBudget: input.thinkingBudget,
+        ...(code?.prelude ? { prelude: [code.prelude] } : {}),
       }
     );
   } catch (error) {
@@ -424,6 +448,7 @@ export async function chatPromptContext(
           instructions: project.instructions,
           memoryText: await projectMemoryText(db, tenantId, project.id),
           files: files.filter((row) => row.project_id === project.id).map(shape),
+          code: null,
         }
       : null,
     userMemoryText: project

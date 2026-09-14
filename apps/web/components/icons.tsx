@@ -43,6 +43,21 @@ export const ICONS = {
   /** A ring around a dot — the unread badge, "put it back". */
   unreadDot: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 12h.01',
   folder: 'M3 19V5h6l2 3h10v11z',
+  /** Git, one glyph per verb: for the code tools' calls in a chat. */
+  gitClone: 'M4 5h16v14H4zM12 9v6M9 12l3 3 3-3',
+  gitCommit: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6',
+  gitPush: 'M12 20V8M8 12l4-4 4 4M5 4h14',
+  gitPull: 'M12 4v12M8 12l4 4 4-4M5 20h14',
+  gitBranch:
+    'M6 3v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 12c0 4-4 3-12 3',
+  gitCheckout: 'M6 3v18M6 9c0 3 3 3 6 3h5M14 9l3 3-3 3',
+  gitMerge: 'M6 3v18M6 9c0 4 4 4 9 4M18 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+  gitRebase: 'M6 21V9M6 9l-3 3M6 9l3 3M18 3v12M18 15l-3-3M18 15l3-3M9 12h6',
+  gitStash: 'M4 7l8-4 8 4-8 4zM4 12l8 4 8-4M4 17l8 4 8-4',
+  gitPullRequest:
+    'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 9v12M6 21a0 0 0 0 0 0 0M18 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 15V9a3 3 0 0 0-3-3h-4M13 3l-3 3 3 3',
+  /** A plus over a minus — ±, a diff. */
+  diff: 'M12 3.5v9M7.5 8h9M6 19h12',
   folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
   upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',
   download: 'M12 4v12M8 12l4 4 4-4M5 16v4h14v-4',

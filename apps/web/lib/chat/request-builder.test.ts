@@ -177,6 +177,60 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('2026-09-04T10:00:00.000Z');
   });
 
+  it('describes a code project’s repository and how to work in it', () => {
+    const base = {
+      personName: null,
+      orgName: null,
+      userMemoryText: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: false,
+      now: new Date('2026-09-04T10:00:00Z'),
+    };
+    const ready = buildSystemPrompt({
+      ...base,
+      project: {
+        name: 'Billing',
+        instructions: null,
+        memoryText: null,
+        files: [],
+        code: {
+          repoFullName: 'acme/billing',
+          branch: 'main',
+          ready: true,
+          notReady: null,
+          envNames: ['NPM_TOKEN'],
+        },
+      },
+    });
+    expect(ready).toContain('code project on the repository acme/billing (branch main)');
+    expect(ready).toContain('NPM_TOKEN');
+    expect(ready).toContain('code_edit_file');
+    expect(ready).toContain('never ask for a secret');
+
+    const cloning = buildSystemPrompt({
+      ...base,
+      project: {
+        name: 'Billing',
+        instructions: null,
+        memoryText: null,
+        files: [],
+        code: {
+          repoFullName: 'acme/billing',
+          branch: '',
+          ready: false,
+          notReady: 'the clone is still running',
+          envNames: [],
+        },
+      },
+    });
+    expect(cloning).toContain('not usable right now (the clone is still running)');
+    expect(cloning).not.toContain('code_edit_file');
+  });
+
   it('says how to hand the person a file, and which formats it can be', () => {
     const prompt = buildSystemPrompt({
       personName: null,

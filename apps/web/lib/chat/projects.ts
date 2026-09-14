@@ -10,16 +10,36 @@ import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
 import { openText, sealText } from './content-crypto';
 
+/**
+ * A chat project, or a code project: the latter is the same row with a
+ * repository on it — a checkout on the sandbox worker and an environment
+ * its commands run with (migration 102, docs/sandbox-workspaces-design.md).
+ */
+export type ProjectKind = 'chat' | 'code';
+
+export interface ProjectRepo {
+  provider: string;
+  /** `workspace/repo`, as the provider names it. */
+  fullName: string;
+  /** Empty means the repository's default branch. */
+  branch: string;
+}
+
 export interface ProjectRow {
   id: string;
   tenantId: string;
   ownerSubject: string;
+  kind: ProjectKind;
   name: string;
   description: string | null;
   /** Decrypted; null when none set. */
   instructions: string | null;
   toolConfig: ChatToolConfig | null;
   publishedToOrg: boolean;
+  /** A code project's repository; null on a chat project. */
+  repo: ProjectRepo | null;
+  /** A code project's checkout on the sandbox worker, once cloned. */
+  workspaceId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -28,11 +48,16 @@ const PROJECT_COLUMNS = [
   'id',
   'tenant_id',
   'owner_subject',
+  'kind',
   'name',
   'description',
   'instructions',
   'tool_config',
   'published_to_org',
+  'repo_provider',
+  'repo_full_name',
+  'repo_branch',
+  'workspace_id',
   'created_at',
   'updated_at',
 ] as const;
@@ -44,11 +69,16 @@ function rowOf(raw: {
   id: string;
   tenant_id: string;
   owner_subject: string;
+  kind: string;
   name: string;
   description: string | null;
   instructions: string | null;
   tool_config: unknown;
   published_to_org: boolean;
+  repo_provider: string | null;
+  repo_full_name: string | null;
+  repo_branch: string | null;
+  workspace_id: string | null;
   created_at: Date;
   updated_at: Date;
 }): ProjectRow {
@@ -56,11 +86,21 @@ function rowOf(raw: {
     id: raw.id,
     tenantId: raw.tenant_id,
     ownerSubject: raw.owner_subject,
+    kind: raw.kind === 'code' ? 'code' : 'chat',
     name: raw.name,
     description: raw.description,
     instructions: raw.instructions ? openText(raw.instructions) : null,
     toolConfig: parseToolConfig(raw.tool_config),
     publishedToOrg: raw.published_to_org,
+    repo:
+      raw.kind === 'code' && raw.repo_provider && raw.repo_full_name
+        ? {
+            provider: raw.repo_provider,
+            fullName: raw.repo_full_name,
+            branch: raw.repo_branch ?? '',
+          }
+        : null,
+    workspaceId: raw.workspace_id,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   };
@@ -136,6 +176,8 @@ export async function createProject(
     description: string | null;
     instructions: string | null;
     toolConfig: ChatToolConfig | null;
+    /** A code project names its repository; absent means a chat project. */
+    repo?: ProjectRepo;
   }
 ): Promise<string | null> {
   let instructions: string | null = null;
@@ -153,6 +195,14 @@ export async function createProject(
       description: input.description,
       instructions,
       tool_config: input.toolConfig ? toolConfigJson(input.toolConfig) : null,
+      ...(input.repo
+        ? {
+            kind: 'code',
+            repo_provider: input.repo.provider,
+            repo_full_name: input.repo.fullName,
+            repo_branch: input.repo.branch || null,
+          }
+        : {}),
     })
     .returning('id')
     .executeTakeFirstOrThrow();
@@ -165,6 +215,10 @@ export interface ProjectPatch {
   instructions?: string | null;
   toolConfig?: ChatToolConfig | null;
   publishedToOrg?: boolean;
+  /** A code project's repository, when it is re-pointed. */
+  repo?: ProjectRepo;
+  /** The checkout on the worker: set when a clone starts, cleared when it is dropped. */
+  workspaceId?: string | null;
 }
 
 /** Keyed by project id only — the caller has already resolved edit rights. */
@@ -195,6 +249,14 @@ export async function updateProject(
         ? { tool_config: patch.toolConfig ? toolConfigJson(patch.toolConfig) : null }
         : {}),
       ...(patch.publishedToOrg !== undefined ? { published_to_org: patch.publishedToOrg } : {}),
+      ...(patch.repo !== undefined
+        ? {
+            repo_provider: patch.repo.provider,
+            repo_full_name: patch.repo.fullName,
+            repo_branch: patch.repo.branch || null,
+          }
+        : {}),
+      ...(patch.workspaceId !== undefined ? { workspace_id: patch.workspaceId } : {}),
       updated_at: sql<Date>`NOW()`,
     })
     .where('tenant_id', '=', tenantId)

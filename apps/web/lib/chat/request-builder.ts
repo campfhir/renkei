@@ -21,6 +21,18 @@ export interface SystemPromptInput {
     instructions: string | null;
     memoryText: string | null;
     files: { id: string; filename: string; contentType: string; sizeBytes: number }[];
+    /** A code project: the repository the code_* tools work in, and its environment's names. */
+    code?: {
+      repoFullName: string;
+      branch: string;
+      /** The checkout is on the worker and usable; false means the tools are not offered. */
+      ready: boolean;
+      /** Why it is not ready, when it is not — cloning, or a clone that failed. */
+      notReady: string | null;
+      envNames: string[];
+      /** The checkout is being cloned as this turn's first step. */
+      clonedNow?: boolean;
+    } | null;
   } | null;
   /** Memory carried across every chat this person owns; null inside a project. */
   userMemoryText: string | null;
@@ -64,6 +76,15 @@ const KNOWLEDGE_BRIEF = `search_knowledge finds what the organization has indexe
  */
 const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools listed here. Before asking the person for something a tool could look up (a colleague's email or user id, an issue key, a document link) or saying a capability is unavailable, call find_tools with a short description of what you need, or a connector name — matching tools become callable right away.`;
 
+/**
+ * A code project is a way of working, not just a tool family: the model
+ * that treats the checkout like a careful developer would (look before
+ * editing, run the project's own checks, commit small, never paste a
+ * secret) does well; the one that guesses at files or asks for a token
+ * does not.
+ */
+const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. Whether to work on a new branch is your call from what the person asks: a change meant for review goes on a branch of its own, a quick fix or an experiment they want on the current branch stays there. For a change with independent parts, or an investigation that would flood this conversation, hand a self-contained task to a sub-agent with code_delegate (its own instructions, the same tools, no pushing) and read its report critically — you own the result. Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. Say what you changed and what you ran.`;
+
 function fileLine(file: { id: string; filename: string; contentType: string; sizeBytes: number }) {
   return `- ${file.filename} (${file.contentType}, ${Math.round(file.sizeBytes / 1024)} KB, attachment id ${file.id})`;
 }
@@ -89,6 +110,16 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     if (input.project.files.length > 0) {
       project.push(
         `Project files (read one with chat_read_attachment, or stage it into the sandbox with chat_attach_to_sandbox):\n${input.project.files.map(fileLine).join('\n')}`
+      );
+    }
+    if (input.project.code) {
+      const code = input.project.code;
+      project.push(
+        `This is a code project on the repository ${code.repoFullName}` +
+          (code.branch ? ` (branch ${code.branch})` : '') +
+          (code.ready
+            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}`
+            : `. Its checkout is not usable right now (${code.notReady ?? 'not ready'}), so the code_* tools are not available in this turn; say so if the person asks for work in the repository.`)
       );
     }
     sections.push(project.join('\n\n'));

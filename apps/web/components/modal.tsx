@@ -18,10 +18,13 @@ export default function Modal({
   title,
   onClose,
   children,
+  size = 'md',
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  /** 'wide' for content that needs the room — a diff side by side. */
+  size?: 'md' | 'wide';
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -41,7 +44,7 @@ export default function Modal({
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-950"
+        className={`w-full ${size === 'wide' ? 'max-w-6xl' : 'max-w-md'} rounded-xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-950`}
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold">{title}</h2>

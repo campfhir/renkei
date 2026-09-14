@@ -70,6 +70,7 @@ export async function loadChatView(
       title: chat.title,
       projectId: chat.projectId,
       projectName: project?.name ?? null,
+      projectKind: project?.kind ?? null,
       llmModelId: chat.llmModelId,
       toolConfig: chat.toolConfig,
       thinkingEnabled: chat.thinkingEnabled,

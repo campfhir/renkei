@@ -46,6 +46,16 @@ function describe(event: AuditEventRow): string {
       return `saved sanitizer script “${event.targetLabel ?? 'unnamed'}”`;
     case 'sanitizer.script_deleted':
       return `deleted sanitizer script “${event.targetLabel ?? 'unnamed'}”`;
+    case 'code.project.created':
+      return `created code project “${event.targetLabel ?? 'unnamed'}”`;
+    case 'code.project.cloned':
+      return `cloned the repository of code project “${event.targetLabel ?? 'unnamed'}”`;
+    case 'code.project.deleted':
+      return `deleted code project “${event.targetLabel ?? 'unnamed'}”`;
+    case 'code.env.replaced':
+      return `replaced the environment of code project “${event.targetLabel ?? 'unnamed'}”`;
+    case 'code.env.deleted':
+      return `removed a variable from the environment of code project “${event.targetLabel ?? 'unnamed'}”`;
     case 'settings.updated': {
       const changed =
         typeof details.changed === 'object' && details.changed !== null

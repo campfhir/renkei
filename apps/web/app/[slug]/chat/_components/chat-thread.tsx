@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
@@ -32,6 +33,10 @@ import MessageList from './message-list';
 import ModelSelect from './model-select';
 import ToolsPopover from './tools-popover';
 import ShareModal from './share-modal';
+import { CodeChatButtons, useCodeChatTools } from '../../code/_components/code-chat-tools';
+import { Counts } from '../../code/_components/diff-view';
+import OverflowMenu, { type OverflowItem } from './overflow-menu';
+import { useMediaQuery } from '@/lib/use-media-query';
 
 interface ThreadProps {
   slug: string;
@@ -40,9 +45,14 @@ interface ThreadProps {
   initialChat: ChatView | null;
   initialMessages: ChatMessageView[];
   models: ModelOption[];
-  newChatProject: { id: string; name: string } | null;
+  newChatProject: { id: string; name: string; kind: 'chat' | 'code' } | null;
   /** The org has file storage; without it the composer offers no uploads. */
   uploadsEnabled: boolean;
+}
+
+/** A code project's page lives under Code; a chat project's under Chat. */
+function projectHref(slug: string, projectId: string, kind: 'chat' | 'code' | null): string {
+  return kind === 'code' ? `/${slug}/code/${projectId}` : `/${slug}/chat/projects/${projectId}`;
 }
 
 /** The typed text of a prompt row, without the attachment excerpts the model saw. */
@@ -100,6 +110,9 @@ export default function ChatThread({
   );
   const isOwner = chat === null || chat.role === 'owner';
   const running = activeTurnId !== null;
+  // Below `sm` the title bar keeps only Tools as a button of its own and
+  // folds the rest into an overflow menu, so the chat's name stays readable.
+  const compact = !useMediaQuery('(min-width: 640px)', true);
   const lastPrompt = useRef<ComposerSubmit | null>(null);
 
   // One EventSource per running turn.
@@ -299,6 +312,45 @@ export default function ChatThread({
 
   const currentModel = models.find((model) => model.id === modelId) ?? null;
   const title = chat?.title ?? (newChatProject ? `New chat in ${newChatProject.name}` : 'New chat');
+  // A chat in a project has a way back to it.
+  const backHref =
+    chat?.projectId && chat.projectName
+      ? projectHref(slug, chat.projectId, chat.projectKind)
+      : newChatProject
+        ? projectHref(slug, newChatProject.id, newChatProject.kind)
+        : null;
+  // A chat in a code project: its checkout's changes and environment are
+  // a button away in the title bar.
+  const codeProjectId =
+    chat?.projectKind === 'code' && chat.projectId
+      ? chat.projectId
+      : !chat && newChatProject?.kind === 'code'
+        ? newChatProject.id
+        : null;
+  const codeTools = useCodeChatTools({
+    tenantId,
+    projectId: codeProjectId,
+    canEdit: isOwner,
+    running,
+    onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
+  });
+  const overflow: OverflowItem[] = [];
+  if (codeProjectId) {
+    overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
+    if (isOwner)
+      overflow.push({ label: 'Add files', icon: ICONS.upload, onSelect: codeTools.openFiles });
+    overflow.push({
+      label: 'Changes',
+      icon: ICONS.diff,
+      onSelect: codeTools.openChanges,
+      extra:
+        codeTools.stat && codeTools.stat.files > 0 ? (
+          <Counts added={codeTools.stat.added} deleted={codeTools.stat.deleted} />
+        ) : undefined,
+    });
+  }
+  if (isOwner && chat)
+    overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
   const lastTurn = state.turn;
   const canRetry =
     isOwner &&
@@ -309,6 +361,16 @@ export default function ChatThread({
   return (
     <>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
+        {backHref ? (
+          <Link
+            href={backHref}
+            aria-label="Back to project"
+            title="Back to the project"
+            className="shrink-0 rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+          </Link>
+        ) : null}
         <ChatTitle
           title={title}
           project={
@@ -316,13 +378,13 @@ export default function ChatThread({
               ? {
                   id: chat.projectId,
                   name: chat.projectName,
-                  href: `/${slug}/chat/projects/${chat.projectId}`,
+                  href: projectHref(slug, chat.projectId, chat.projectKind),
                 }
               : newChatProject
                 ? {
                     id: newChatProject.id,
                     name: newChatProject.name,
-                    href: `/${slug}/chat/projects/${newChatProject.id}`,
+                    href: projectHref(slug, newChatProject.id, newChatProject.kind),
                   }
                 : null
           }
@@ -330,24 +392,41 @@ export default function ChatThread({
           onRename={chat ? rename : null}
         />
         <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
-        {isOwner ? (
+        {compact ? (
           <>
-            <ToolsPopover tenantId={tenantId} selected={connectors} onChange={changeConnectors} />
-            {chat ? (
-              <button
-                type="button"
-                onClick={() => setShare(true)}
-                aria-label="Share chat"
-                title="Share"
-                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-              >
-                <Icon path={ICONS.share} className="h-4 w-4" />
-                <span className="hidden sm:inline">Share</span>
-              </button>
+            {isOwner ? (
+              <ToolsPopover tenantId={tenantId} selected={connectors} onChange={changeConnectors} />
+            ) : null}
+            <OverflowMenu items={overflow} />
+          </>
+        ) : (
+          <>
+            {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
+            {isOwner ? (
+              <>
+                <ToolsPopover
+                  tenantId={tenantId}
+                  selected={connectors}
+                  onChange={changeConnectors}
+                />
+                {chat ? (
+                  <button
+                    type="button"
+                    onClick={() => setShare(true)}
+                    aria-label="Share chat"
+                    title="Share"
+                    className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+                  >
+                    <Icon path={ICONS.share} className="h-4 w-4" />
+                    <span>Share</span>
+                  </button>
+                ) : null}
+              </>
             ) : null}
           </>
-        ) : null}
+        )}
       </header>
+      {codeTools.modals}
 
       {chat && !isOwner ? (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">

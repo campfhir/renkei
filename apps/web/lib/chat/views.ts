@@ -67,6 +67,8 @@ export interface ChatView {
   title: string | null;
   projectId: string | null;
   projectName: string | null;
+  /** Which section the project lives under; null outside a project. */
+  projectKind: 'chat' | 'code' | null;
   llmModelId: string | null;
   toolConfig: ChatToolConfigView | null;
   thinkingEnabled: boolean;

@@ -20,10 +20,23 @@
  *     answers every browser verb "not enabled" — closed, never open.
  *   SANDBOX_BROWSER_EXECUTABLE — optional Chromium binary; by default
  *     playwright-core resolves its own installed headless shell.
+ *   SANDBOX_WORKSPACES_ENABLED — `true` to serve code workspaces (a
+ *     repository cloned here, commands run in it — see workspaces.ts);
+ *     unset answers every workspace verb "not enabled". When enabled the
+ *     process should run as root so each caller's commands can be dropped
+ *     to their own uid (docker/sandbox-entrypoint.sh does exactly that);
+ *     without root it still works, unisolated, and says so below.
+ *   SANDBOX_WORKSPACES_DIR — where checkouts live, default /workspaces
+ *     (its own volume, apart from the staged-file disk).
+ *   SANDBOX_ENV_SECRETS_KEY — seals workspace environment secrets; falls
+ *     back to TOKEN_ENCRYPTION_KEY, and without either the env verbs are
+ *     closed.
  */
 
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { ensureDataRoot } from './disk';
+import { canIsolateByUid, ensureWorkspacesRoot } from './workspaces';
+import { envSecretsEnabled } from './env-secrets';
 import { createSandboxServer } from './server';
 import { BrowserSessions } from './browser';
 import { SecretVault } from './secret-vault';
@@ -73,6 +86,26 @@ async function main(): Promise<void> {
 
   await ensureDataRoot();
 
+  const workspacesEnabled = envFlag('SANDBOX_WORKSPACES_ENABLED');
+  if (workspacesEnabled) {
+    // Nothing this process creates from here on is readable by the uids
+    // a caller's commands run as: a staged file, a log, a lock.
+    process.umask(0o077);
+    await ensureWorkspacesRoot();
+    if (!canIsolateByUid()) {
+      logger.warn(
+        'workspaces are enabled but this process is not root: commands run as the worker user with NO per-caller isolation — fine for one developer, wrong for a shared deployment',
+        { component: 'worker-sandbox/workspaces' }
+      );
+    }
+    if (!envSecretsEnabled()) {
+      logger.warn(
+        'workspaces are enabled without SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY: environment secrets are closed',
+        { component: 'worker-sandbox/workspaces' }
+      );
+    }
+  }
+
   const port = Number(process.env.SANDBOX_WORKER_PORT ?? '8092');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     fatal(`SANDBOX_WORKER_PORT is not a usable port: ${process.env.SANDBOX_WORKER_PORT}`);
@@ -87,13 +120,27 @@ async function main(): Promise<void> {
     ? new BrowserSessions({ secrets: createSecretResolver(dbResult.val, vault) })
     : null;
 
-  const server = createSandboxServer({ db: dbResult.val, apiKeys, browser, vault });
+  const server = createSandboxServer({
+    db: dbResult.val,
+    apiKeys,
+    browser,
+    vault,
+    workspaces: workspacesEnabled,
+  });
   server.listen(port, '0.0.0.0', () => {
-    logger.info('started {application} {version} on port {port} (browser {browser})', {
-      component: 'worker-sandbox/server',
-      port,
-      browser: browser ? 'enabled' : 'disabled',
-    });
+    logger.info(
+      'started {application} {version} on port {port} (browser {browser}, workspaces {workspaces})',
+      {
+        component: 'worker-sandbox/server',
+        port,
+        browser: browser ? 'enabled' : 'disabled',
+        workspaces: workspacesEnabled
+          ? canIsolateByUid()
+            ? 'enabled, per-caller uids'
+            : 'enabled, UNISOLATED'
+          : 'disabled',
+      }
+    );
   });
 
   const shutdown = (signal: string): void => {

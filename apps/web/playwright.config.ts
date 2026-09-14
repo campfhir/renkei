@@ -61,22 +61,35 @@ export default defineConfig({
       use: { ...devices['iPhone 14'] },
     },
   ],
-  webServer: {
-    command: 'pnpm dev',
-    url: BASE_URL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    env: {
-      ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
-      ...(process.env.TOKEN_ENCRYPTION_KEY
-        ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
-        : {}),
-      // instrumentation.ts refuses to boot without this, so a shot run dies
-      // before the first page loads. Passed through when set, exactly like
-      // the other two — no key is invented here.
-      ...(process.env.LOG_ENCRYPTION_KEY
-        ? { LOG_ENCRYPTION_KEY: process.env.LOG_ENCRYPTION_KEY }
-        : {}),
+  webServer: [
+    {
+      // A stand-in sandbox worker for the Code pages (e2e/sandbox-stub.mjs):
+      // the app reaches it at the SANDBOX_WORKER_URL the env file names.
+      command: 'node e2e/sandbox-stub.mjs',
+      url: 'http://127.0.0.1:8092/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
     },
-  },
+    {
+      command: 'pnpm dev',
+      url: BASE_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
+        ...(process.env.TOKEN_ENCRYPTION_KEY
+          ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
+          : {}),
+        // instrumentation.ts refuses to boot without this, so a shot run dies
+        // before the first page loads. Passed through when set, exactly like
+        // the other two — no key is invented here.
+        ...(process.env.LOG_ENCRYPTION_KEY
+          ? { LOG_ENCRYPTION_KEY: process.env.LOG_ENCRYPTION_KEY }
+          : {}),
+        // Bitbucket is the stub too (e2e/sandbox-stub.mjs): the browser in
+        // the new-project form and a project page's README read from it.
+        BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
+      },
+    },
+  ],
 });

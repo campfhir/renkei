@@ -332,10 +332,22 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     label: 'Renkei sandbox',
     summary:
       'A per-person scratch space for staging files between connectors, with an isolated ' +
-      'headless browser where the deployment enables it.',
+      'headless browser and code workspaces (a Bitbucket repository to work in) where the ' +
+      'deployment enables them.',
     toolPrefix: 'sandbox_*',
     category: 'renkei',
-    keywords: ['scratch', 'files', 'browser', 'staging', 'download', 'upload'],
+    keywords: [
+      'scratch',
+      'files',
+      'browser',
+      'staging',
+      'download',
+      'upload',
+      'code',
+      'repository',
+      'workspace',
+      'git',
+    ],
     grantProviders: [],
     userConnectable: false,
     togglable: true,

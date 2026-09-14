@@ -26,7 +26,13 @@ import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guar
 /** Refresh when the token is inside this window of expiry. */
 const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
-export const BITBUCKET_API_BASE = 'https://api.bitbucket.org/2.0';
+/**
+ * Bitbucket Cloud's API. A deployment may point it elsewhere
+ * (BITBUCKET_API_BASE_URL) — the browser suite runs the app against a
+ * stand-in that answers the few endpoints the Code pages read.
+ */
+export const BITBUCKET_API_BASE =
+  process.env.BITBUCKET_API_BASE_URL?.replace(/\/+$/, '') || 'https://api.bitbucket.org/2.0';
 
 export interface BitbucketAccess {
   accessToken: string;
@@ -45,7 +51,7 @@ export interface BitbucketAccess {
 
 /** The caller's live Bitbucket token, refreshed when stale. */
 export async function resolveBitbucketAccess(
-  context: MCPToolContext
+  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<BitbucketAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');

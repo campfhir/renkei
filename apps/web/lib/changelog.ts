@@ -43,7 +43,109 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
+    date: '2026-09-14',
+    heading: 'Code projects: a repository to work in',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Code projects',
+        detail:
+          'Under Chat, a new Code page holds projects with a Bitbucket repository on them: pick the repository by browsing your workspaces and projects, or by searching by name, and every chat inside the project can read, search and edit the code, run its own tests and builds, commit, push, and open a pull request — with Jira and your other connectors beside it. Code chats run as long working sessions rather than under an ordinary chat’s limits.',
+      },
+      {
+        kind: 'added',
+        title: 'A .env the model never sees',
+        detail:
+          'Paste the repository’s .env when you make the project, or replace it later from the project page or the chat’s Environment button. Values are sealed on the sandbox and never shown again — not to you, not to the model; commands get them in their environment, and they are masked out of everything the model reads. Only the names are listed.',
+      },
+      {
+        kind: 'added',
+        title: 'The first chat clones the repository, and says so',
+        detail:
+          'Nothing is cloned when a project is made. The first message in a chat clones the repository into the sandbox with your own Bitbucket access, shown right under your message as “Cloning the repository…” and then “Cloned the repository” with the result. Before that the project page already shows the file tree and README straight from Bitbucket, with the branch the project points at.',
+      },
+      {
+        kind: 'added',
+        title: 'Every edit shows its diff',
+        detail:
+          'When the chat writes or edits a file, the call in the transcript opens to that file’s diff, side by side on a wide screen and stacked on a phone, with +added −deleted on the line. A Changes button in the chat’s title bar carries the checkout’s uncommitted totals and opens every diff with the context lines you want, and a button there asks the chat to commit, push and open a pull request.',
+      },
+      {
+        kind: 'added',
+        title: 'Add files to the repository from the chat',
+        detail:
+          'An Add files button in a code chat takes files you pick or drop and puts them in the repository’s checkout as untracked files the chat can read, use and commit.',
+      },
+      {
+        kind: 'added',
+        title: 'The chat can hand work to sub-agents',
+        detail:
+          'A code chat can give a self-contained task, with its own instructions, to a sub-agent that works in the same repository and reports back — for independent parts of a larger change, or an investigation that would flood the conversation. The chat you are talking to stays in charge of committing and pushing.',
+      },
+      {
+        kind: 'added',
+        title: 'A developer’s brief by default',
+        detail:
+          'A new code project starts with standing instructions — read the repository first, work test-first, keep changes small and complete, run the project’s own checks, keep the docs true, commit with clear messages — shown in the form and on the project page so you can change them before or after.',
+      },
+      {
+        kind: 'changed',
+        title: 'Git calls read as git',
+        detail:
+          'Commit, push, pull, clone, branch, merge and pull request calls in a chat carry their own names and glyphs in the transcript, and a diff is marked ±.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
+    heading: 'Connectors you choose, a theme you choose, and a few fixes',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Your Connectors page shows what you use',
+        detail:
+          'The Connectors page lists the connectors you added or connected, and the rest sit behind “Add connector” — a search over what your organization offers, by name or by what you would type (“email”, “tickets”). Administrators set up connectors from a searchable catalog, one page per connector, and can limit a connector to people in named sign-in groups.',
+      },
+      {
+        kind: 'added',
+        title: 'Light, dark, or follow the system',
+        detail:
+          'Preferences gains an Appearance setting. The choice is remembered in the browser too, so a page never flashes the wrong theme while it loads.',
+      },
+      {
+        kind: 'added',
+        title: 'WebEx attachments can be staged and read',
+        detail:
+          'A WebEx message’s attachments can be pulled into your sandbox scratch space with your own access, so their text can be read and the file forwarded into Jira, OnBase or Confluence. Message lists now say when a message carries files.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Jira update notifications link to the ticket',
+        detail:
+          'A notification for an issue the assistant updated rendered as plain text; it now opens the issue like the ones for created, commented and transitioned issues.',
+      },
+      {
+        kind: 'fixed',
+        title: 'WebEx room lists were cut at thirty',
+        detail:
+          'Listing rooms walks every page and can be searched by title, with a total and an offset for the next page, instead of showing the first thirty and no more.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A new chat kept the tools you picked',
+        detail:
+          'Toggling the toolset before a chat’s first message was lost the moment the chat was created. It is kept now — and the assistant is nudged to look up a tool it has not been offered up front before asking you for something a lookup could supply.',
+      },
+      {
+        kind: 'changed',
+        title: 'Tool calls fold without boxes',
+        detail:
+          'Thinking and tool calls in a chat fold on a plain line with a chevron rather than a boxed card.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
     heading: 'OnBase Administration: who can see what',
     entries: [
       {
@@ -79,7 +181,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-14',
     entries: [
       {
         kind: 'added',

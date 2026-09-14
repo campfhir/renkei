@@ -31,7 +31,7 @@ export default async function NewChatPage({
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
 
-  let project: { id: string; name: string } | null = null;
+  let project: { id: string; name: string; kind: 'chat' | 'code' } | null = null;
   if (projectId) {
     const access = await resolveResourceAccess(
       db,
@@ -41,7 +41,7 @@ export default async function NewChatPage({
       projectId
     );
     const row = access ? await getProjectRow(db, tenant.id, projectId) : null;
-    if (row) project = { id: row.id, name: row.name };
+    if (row) project = { id: row.id, name: row.name, kind: row.kind };
   }
   const [models, uploadsEnabled] = await Promise.all([
     listChatModels(db, tenant.id),

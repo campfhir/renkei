@@ -19,11 +19,22 @@ export interface ProjectListItem {
   ownerName: string | null;
   role: 'owner' | 'member';
   updatedAt: string;
+  /** A code project's repository (`workspace/repo`); null on a chat project. */
+  repoFullName: string | null;
 }
 
+/**
+ * The menu's Chat section: chats and chat projects. Code projects are
+ * kept apart — the Code page lists them, and a chat in a code project
+ * is never listed among the person's ordinary chats: it belongs to its
+ * repository, and the project's page is where it is found.
+ */
 export interface ChatSidebarData {
   chats: ChatListItem[];
   projects: ProjectListItem[];
+  code: {
+    projects: ProjectListItem[];
+  };
 }
 
 function item(
@@ -89,28 +100,38 @@ export async function loadChatSidebar(
     ...projects.map((project) => project.ownerSubject),
   ]);
   const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+  const codeProjectIds = new Set(
+    projects.filter((project) => project.kind === 'code').map((project) => project.id)
+  );
   const projectNameOf = (chat: ChatRow) =>
     chat.projectId ? (projectNames.get(chat.projectId) ?? null) : null;
-  return {
-    chats: [
-      ...owned.map((chat) => item(chat, 'owner', null, projectNameOf(chat))),
-      ...granted.map((chat) =>
-        item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
+  const allChats: ChatListItem[] = [
+    ...owned.map((chat) => item(chat, 'owner', null, projectNameOf(chat))),
+    ...granted.map((chat) =>
+      item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
+    ),
+    ...inProjects
+      .filter((chat) => !grantedIds.has(chat.id))
+      .map((chat) =>
+        item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
       ),
-      ...inProjects
-        .filter((chat) => !grantedIds.has(chat.id))
-        .map((chat) =>
-          item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
-        ),
-    ],
-    projects: projects.map((project) => ({
-      id: project.id,
-      name: project.name,
-      ownerSubject: project.ownerSubject,
-      ownerName:
-        project.ownerSubject === subject ? null : (names.get(project.ownerSubject) ?? null),
-      role: project.ownerSubject === subject ? 'owner' : 'member',
-      updatedAt: project.updatedAt.toISOString(),
-    })),
+  ];
+  const inCode = (chat: ChatListItem) =>
+    chat.projectId !== null && codeProjectIds.has(chat.projectId);
+  const listItem = (project: (typeof projects)[number]): ProjectListItem => ({
+    id: project.id,
+    name: project.name,
+    ownerSubject: project.ownerSubject,
+    ownerName: project.ownerSubject === subject ? null : (names.get(project.ownerSubject) ?? null),
+    role: project.ownerSubject === subject ? 'owner' : 'member',
+    updatedAt: project.updatedAt.toISOString(),
+    repoFullName: project.repo?.fullName ?? null,
+  });
+  return {
+    chats: allChats.filter((chat) => !inCode(chat)),
+    projects: projects.filter((project) => project.kind === 'chat').map(listItem),
+    code: {
+      projects: projects.filter((project) => project.kind === 'code').map(listItem),
+    },
   };
 }
