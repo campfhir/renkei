@@ -35,7 +35,9 @@ export default async function NotificationsPage({
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/notifications`));
 
   const dbResult = getDatabase();
-  const rows = dbResult.ok
+  // One extra row, never rendered, just to answer "is there more?" without
+  // a second count query — PAGE_SIZE + 1 rows back means yes.
+  const fetched = dbResult.ok
     ? await dbResult.val
         .selectFrom('agent_notifications')
         .selectAll()
@@ -44,9 +46,26 @@ export default async function NotificationsPage({
         .where('tenant_id', '=', tenant.id)
         .where('subject', '=', session.subject)
         .orderBy('created_at', 'desc')
-        .limit(PAGE_SIZE)
+        .limit(PAGE_SIZE + 1)
         .execute()
     : [];
+  const hasMore = fetched.length > PAGE_SIZE;
+  const rows = hasMore ? fetched.slice(0, PAGE_SIZE) : fetched;
+
+  // A person can have more unread notifications than fit in PAGE_SIZE — the
+  // ones past it never render, so they can never be clicked read one at a
+  // time. "Mark all as read" has to reach every one of them, which means
+  // knowing the true total, not just what's on the page.
+  const unreadTotal = dbResult.ok
+    ? await dbResult.val
+        .selectFrom('agent_notifications')
+        .select((eb) => eb.fn.countAll<string>().as('count'))
+        .where('tenant_id', '=', tenant.id)
+        .where('subject', '=', session.subject)
+        .where('read_at', 'is', null)
+        .executeTakeFirst()
+    : undefined;
+  const unreadCount = Number(unreadTotal?.count ?? 0);
 
   const cards: NotificationCard[] = rows.map((row) => ({
     id: row.id,
@@ -84,7 +103,13 @@ export default async function NotificationsPage({
           Nothing yet. When one of your agents files a ticket or sends a message, it lands here.
         </p>
       ) : (
-        <NotificationsList tenantId={tenant.id} slug={slug} rows={cards} />
+        <NotificationsList
+          tenantId={tenant.id}
+          slug={slug}
+          rows={cards}
+          unreadCount={unreadCount}
+          initialHasMore={hasMore}
+        />
       )}
     </div>
   );
