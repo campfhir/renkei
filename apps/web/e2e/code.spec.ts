@@ -492,9 +492,17 @@ test.describe('code projects', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-new.png');
 
+    // On a phone the title bar keeps Tools and folds the rest into "More".
+    const action = async (name: string) => {
+      if (mobile) {
+        await main.getByRole('button', { name: 'More' }).click();
+        await main.getByRole('menuitem', { name }).click();
+      } else await main.getByRole('button', { name }).click();
+    };
+
     // ── Add files: picked (or dropped) files land in the checkout,
     //    untracked, for the chat's tools ──
-    await main.getByRole('button', { name: 'Add files' }).click();
+    await action('Add files');
     const filesDialog = page.getByRole('dialog', { name: 'Add files' });
     await expect(filesDialog.getByText(/land as untracked files/)).toBeVisible();
     await filesDialog.getByLabel('Folder (optional)').fill('docs');
@@ -512,7 +520,10 @@ test.describe('code projects', () => {
     // ── Changes carries the checkout's +added −deleted and opens every
     //    diff (side by side on a wide screen); Environment opens the
     //    project's variables ──
-    const changes = main.getByRole('button', { name: 'Changes' });
+    if (mobile) await main.getByRole('button', { name: 'More' }).click();
+    const changes = mobile
+      ? main.getByRole('menuitem', { name: 'Changes' })
+      : main.getByRole('button', { name: 'Changes' });
     await expect(changes).toContainText('+3');
     await expect(changes).toContainText('−1');
     await changes.click();
@@ -524,7 +535,7 @@ test.describe('code projects', () => {
     ).toBeVisible();
     await shot('code-chat-changes.png');
     await changesDialog.getByRole('button', { name: 'Close' }).click();
-    await main.getByRole('button', { name: 'Environment' }).click();
+    await action('Environment');
     const envDialog = page.getByRole('dialog', { name: 'Environment' });
     await expect(envDialog.getByText('API_BASE_URL')).toBeVisible();
     await shot('code-chat-env.png');

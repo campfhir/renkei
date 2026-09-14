@@ -145,7 +145,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-14',
     heading: 'OnBase Administration: who can see what',
     entries: [
       {
@@ -181,7 +181,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-14',
     entries: [
       {
         kind: 'added',

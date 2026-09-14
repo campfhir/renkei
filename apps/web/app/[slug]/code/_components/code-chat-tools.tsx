@@ -1,19 +1,20 @@
 'use client';
 
 /**
- * A code project's chat gets two buttons in its title bar, beside Tools:
- * **Environment** — the project's variables, to look at, replace by
- * pasting a `.env`, or prune, without leaving the chat — and
- * **Changes**, with the checkout's uncommitted +added −deleted on it,
- * opening every diff side by side on a wide screen and stacked on a
+ * A code project's chat gets three actions in its title bar, beside
+ * Tools — their own buttons on a wide screen, items of the overflow menu
+ * on a narrow one: **Environment** — the project's variables, to look
+ * at, replace by pasting a `.env`, or prune, without leaving the chat;
+ * **Add files**, which puts files a person picks or drops straight into
+ * the checkout, untracked, for the chat's tools to read, use and commit;
+ * and **Changes**, with the checkout's uncommitted +added −deleted on
+ * it, opening every diff side by side on a wide screen and stacked on a
  * narrow one, with the lines of context to taste and a button that asks
- * the chat to commit, push and open a pull request — and **Add files**,
- * which puts files a person picks or drops straight into the checkout,
- * untracked, for the chat's tools to read, use and commit. The counts
- * refresh when a turn ends, since that is when the checkout changes.
+ * the chat to commit, push and open a pull request. The counts refresh
+ * when a turn ends, since that is when the checkout changes.
  */
 
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -45,12 +46,28 @@ const CONTEXTS = [3, 10, 25, 100] as const;
 export const PULL_REQUEST_ASK =
   'Commit the current changes on a new branch with a clear message, push it, and open a pull request on Bitbucket that says what changed and why.';
 
-const buttonClass =
-  'flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900';
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-export default function CodeChatTools({
+/** What the title bar renders for a code chat, wherever it puts the buttons. */
+export interface CodeChatToolsHandle {
+  /** The checkout's uncommitted totals, when a checkout is there. */
+  stat: { added: number; deleted: number; files: number } | null;
+  openEnvironment: () => void;
+  openFiles: () => void;
+  openChanges: () => void;
+  /** The dialogs — rendered once by the caller, outside any menu that closes. */
+  modals: ReactNode;
+}
+
+/**
+ * The state and dialogs behind a code chat's title-bar actions. The bar
+ * decides where the triggers go (its own buttons on a wide screen, an
+ * overflow menu on a narrow one); the dialogs live here, outside either,
+ * so a menu closing never takes an open dialog with it. With no project
+ * the hook is inert.
+ */
+export function useCodeChatTools({
   tenantId,
   projectId,
   canEdit,
@@ -58,21 +75,22 @@ export default function CodeChatTools({
   onAsk,
 }: {
   tenantId: string;
-  projectId: string;
+  projectId: string | null;
   /** The person may change the environment and ask the chat to act. */
   canEdit: boolean;
   /** A turn is in flight: the counts refresh when it ends. */
   running: boolean;
   /** Sends a message to the chat as the person — the pull request ask. */
   onAsk: ((text: string) => Promise<boolean>) | null;
-}) {
-  const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
+}): CodeChatToolsHandle {
+  const base = `/api/tenant/${tenantId}/code/projects/${projectId ?? ''}`;
   const [stat, setStat] = useState<{ added: number; deleted: number; files: number } | null>(null);
   const [changesOpen, setChangesOpen] = useState(false);
   const [envOpen, setEnvOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
 
   const refreshStat = useCallback(async () => {
+    if (!projectId) return;
     const result = await getJson<DiffPayload>(`${base}/diff?context=0`);
     if (!result.data || !result.data.available) {
       setStat(null);
@@ -88,47 +106,14 @@ export default function CodeChatTools({
         { added: 0, deleted: 0, files: 0 }
       )
     );
-  }, [base]);
+  }, [base, projectId]);
 
   useEffect(() => {
     if (!running) void refreshStat();
   }, [running, refreshStat]);
 
-  return (
+  const modals = projectId ? (
     <>
-      <button
-        type="button"
-        onClick={() => setEnvOpen(true)}
-        aria-label="Environment"
-        title="The project's environment variables"
-        className={buttonClass}
-      >
-        <Icon path={ICONS.chip} className="h-4 w-4" />
-        <span className="hidden sm:inline">Environment</span>
-      </button>
-      {canEdit ? (
-        <button
-          type="button"
-          onClick={() => setFilesOpen(true)}
-          aria-label="Add files"
-          title="Add files to the repository's checkout"
-          className={buttonClass}
-        >
-          <Icon path={ICONS.upload} className="h-4 w-4" />
-          <span className="hidden sm:inline">Add files</span>
-        </button>
-      ) : null}
-      <button
-        type="button"
-        onClick={() => setChangesOpen(true)}
-        aria-label="Changes"
-        title="Uncommitted changes in the checkout"
-        className={buttonClass}
-      >
-        <Icon path={ICONS.diff} className="h-4 w-4" />
-        <span className="hidden sm:inline">Changes</span>
-        {stat && stat.files > 0 ? <Counts added={stat.added} deleted={stat.deleted} /> : null}
-      </button>
       {changesOpen ? (
         <ChangesModal
           base={base}
@@ -158,6 +143,66 @@ export default function CodeChatTools({
           }}
         />
       ) : null}
+    </>
+  ) : null;
+
+  return {
+    stat,
+    openEnvironment: () => setEnvOpen(true),
+    openFiles: () => setFilesOpen(true),
+    openChanges: () => setChangesOpen(true),
+    modals,
+  };
+}
+
+const buttonClass =
+  'flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900';
+
+/** The three buttons as the wide title bar shows them. */
+export function CodeChatButtons({
+  tools,
+  canEdit,
+}: {
+  tools: CodeChatToolsHandle;
+  canEdit: boolean;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={tools.openEnvironment}
+        aria-label="Environment"
+        title="The project's environment variables"
+        className={buttonClass}
+      >
+        <Icon path={ICONS.chip} className="h-4 w-4" />
+        <span>Environment</span>
+      </button>
+      {canEdit ? (
+        <button
+          type="button"
+          onClick={tools.openFiles}
+          aria-label="Add files"
+          title="Add files to the repository's checkout"
+          className={buttonClass}
+        >
+          <Icon path={ICONS.upload} className="h-4 w-4" />
+          <span>Add files</span>
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={tools.openChanges}
+        aria-label="Changes"
+        title="Uncommitted changes in the checkout"
+        className={buttonClass}
+      >
+        <Icon path={ICONS.diff} className="h-4 w-4" />
+        <span>Changes</span>
+        {tools.stat && tools.stat.files > 0 ? (
+          <Counts added={tools.stat.added} deleted={tools.stat.deleted} />
+        ) : null}
+      </button>
     </>
   );
 }

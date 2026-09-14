@@ -33,7 +33,10 @@ import MessageList from './message-list';
 import ModelSelect from './model-select';
 import ToolsPopover from './tools-popover';
 import ShareModal from './share-modal';
-import CodeChatTools from '../../code/_components/code-chat-tools';
+import { CodeChatButtons, useCodeChatTools } from '../../code/_components/code-chat-tools';
+import { Counts } from '../../code/_components/diff-view';
+import OverflowMenu, { type OverflowItem } from './overflow-menu';
+import { useMediaQuery } from '@/lib/use-media-query';
 
 interface ThreadProps {
   slug: string;
@@ -107,6 +110,9 @@ export default function ChatThread({
   );
   const isOwner = chat === null || chat.role === 'owner';
   const running = activeTurnId !== null;
+  // Below `sm` the title bar keeps only Tools as a button of its own and
+  // folds the rest into an overflow menu, so the chat's name stays readable.
+  const compact = !useMediaQuery('(min-width: 640px)', true);
   const lastPrompt = useRef<ComposerSubmit | null>(null);
 
   // One EventSource per running turn.
@@ -321,6 +327,30 @@ export default function ChatThread({
       : !chat && newChatProject?.kind === 'code'
         ? newChatProject.id
         : null;
+  const codeTools = useCodeChatTools({
+    tenantId,
+    projectId: codeProjectId,
+    canEdit: isOwner,
+    running,
+    onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
+  });
+  const overflow: OverflowItem[] = [];
+  if (codeProjectId) {
+    overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
+    if (isOwner)
+      overflow.push({ label: 'Add files', icon: ICONS.upload, onSelect: codeTools.openFiles });
+    overflow.push({
+      label: 'Changes',
+      icon: ICONS.diff,
+      onSelect: codeTools.openChanges,
+      extra:
+        codeTools.stat && codeTools.stat.files > 0 ? (
+          <Counts added={codeTools.stat.added} deleted={codeTools.stat.deleted} />
+        ) : undefined,
+    });
+  }
+  if (isOwner && chat)
+    overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
   const lastTurn = state.turn;
   const canRetry =
     isOwner &&
@@ -362,35 +392,41 @@ export default function ChatThread({
           onRename={chat ? rename : null}
         />
         <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
-        {codeProjectId ? (
-          <CodeChatTools
-            tenantId={tenantId}
-            projectId={codeProjectId}
-            canEdit={isOwner}
-            running={running}
-            onAsk={
-              isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null
-            }
-          />
-        ) : null}
-        {isOwner ? (
+        {compact ? (
           <>
-            <ToolsPopover tenantId={tenantId} selected={connectors} onChange={changeConnectors} />
-            {chat ? (
-              <button
-                type="button"
-                onClick={() => setShare(true)}
-                aria-label="Share chat"
-                title="Share"
-                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-              >
-                <Icon path={ICONS.share} className="h-4 w-4" />
-                <span className="hidden sm:inline">Share</span>
-              </button>
+            {isOwner ? (
+              <ToolsPopover tenantId={tenantId} selected={connectors} onChange={changeConnectors} />
+            ) : null}
+            <OverflowMenu items={overflow} />
+          </>
+        ) : (
+          <>
+            {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
+            {isOwner ? (
+              <>
+                <ToolsPopover
+                  tenantId={tenantId}
+                  selected={connectors}
+                  onChange={changeConnectors}
+                />
+                {chat ? (
+                  <button
+                    type="button"
+                    onClick={() => setShare(true)}
+                    aria-label="Share chat"
+                    title="Share"
+                    className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+                  >
+                    <Icon path={ICONS.share} className="h-4 w-4" />
+                    <span>Share</span>
+                  </button>
+                ) : null}
+              </>
             ) : null}
           </>
-        ) : null}
+        )}
       </header>
+      {codeTools.modals}
 
       {chat && !isOwner ? (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
