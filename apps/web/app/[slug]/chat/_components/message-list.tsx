@@ -394,10 +394,8 @@ function WorkFold({
   return (
     <details className={`chat-fold ${failed ? 'chat-fold-error' : ''}`}>
       <summary>
-        <span className="flex items-center gap-1.5">
-          {icon}
-          {label}
-        </span>
+        {icon}
+        {label}
         <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
       </summary>
       <ol className="space-y-2">
@@ -423,14 +421,12 @@ function WorkFold({
                 <li key={index}>
                   <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
                     <summary>
-                      <span className="flex items-center gap-1.5">
-                        <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
-                        {pending ? 'Calling ' : step.result?.isError ? 'Failed: ' : 'Called '}
-                        <span className="font-medium" title={step.block.name}>
-                          {friendlyToolName(step.block.name, null)}
-                        </span>
-                        {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
+                      <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
+                      {pending ? 'Calling ' : step.result?.isError ? 'Failed: ' : 'Called '}
+                      <span className="font-medium" title={step.block.name}>
+                        {friendlyToolName(step.block.name, null)}
                       </span>
+                      {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
                       <Icon
                         path={ICONS.chevron}
                         className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
