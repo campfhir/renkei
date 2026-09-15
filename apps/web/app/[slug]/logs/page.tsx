@@ -1,6 +1,6 @@
-import { redirect, notFound } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { signInUrl } from '@/lib/sign-in-url';
+import { requireAuth } from '@/lib/require-auth';
 import { searchLogs } from './actions';
 import LogsViewer from './logs-viewer';
 import { defaultLogWindow, DEFAULT_LOG_LEVELS } from './window';
@@ -22,6 +22,8 @@ export default async function LogsPage({
   const tenant = await tenantForSlug(slug);
   if (!tenant) notFound();
 
+  await requireAuth(tenant.id, `/${slug}/logs`);
+
   // Computed here, not in both places: the server render and the picker the
   // client seeds from have to agree about what is being searched.
   const window = defaultLogWindow();
@@ -34,13 +36,6 @@ export default async function LogsPage({
     sort: 'desc',
     accountId: accountId ?? null,
   });
-
-  // Arriving with a dead session cookie is normal. Send them to authenticate
-  // rather than rendering a page that says "sign in" without being able to
-  // start it.
-  if (initial.signedOut) {
-    redirect(signInUrl(tenant.id, `/${slug}/logs`));
-  }
 
   return (
     <LogsViewer

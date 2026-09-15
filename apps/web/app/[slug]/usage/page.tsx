@@ -1,6 +1,6 @@
-import { redirect, notFound } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { signInUrl } from '@/lib/sign-in-url';
+import { requireAuth } from '@/lib/require-auth';
 import { getUsageReport, getAvailableTools } from './actions';
 import UsageViewer from './usage-viewer';
 
@@ -17,16 +17,12 @@ export default async function UsagePage({ params }: { params: Promise<{ slug: st
   const tenant = await tenantForSlug(slug);
   if (!tenant) notFound();
 
+  await requireAuth(tenant.id, `/${slug}/usage`);
+
   const [initial, tools] = await Promise.all([
     getUsageReport(tenant.id, 7),
     getAvailableTools(tenant.id),
   ]);
-
-  // Arriving with a dead session cookie is normal. Send them to authenticate
-  // rather than rendering a page that says "sign in" without offering it.
-  if (initial.signedOut) {
-    redirect(signInUrl(tenant.id, `/${slug}/usage`));
-  }
 
   return <UsageViewer slug={slug} tenantId={tenant.id} initial={initial} tools={tools} />;
 }
