@@ -24,6 +24,7 @@ import {
 } from '@/lib/chat/projects';
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
+import { codeProjectAccess, codeProjectAccessMessage } from '@/lib/code/access';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 import { replaceProjectEnv } from '@/lib/code/projects';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -52,6 +53,16 @@ export async function POST(
   const { db, session } = ready.context;
   if (!sandboxWorkspacesEnabled()) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
+  }
+  // The same bar the Code page shows: a Bitbucket connection that can
+  // clone, push and open pull requests, or no project.
+  const access = await codeProjectAccess(db, tenantId, session.subject);
+  if (!access.ok) {
+    return jsonError(
+      403,
+      'bitbucket',
+      codeProjectAccessMessage(access) ?? 'Connect Bitbucket first.'
+    );
   }
   const body = await readJsonBody(request);
   const repo = validateRepoFullName(body.repository);
