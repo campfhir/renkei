@@ -67,6 +67,7 @@ const workspace = (
   createdAt: '',
   lastUsedAt: '',
   expiresAt: '',
+  worker: null,
   ...extra,
 });
 
@@ -89,7 +90,7 @@ describe('codeProjectContext', () => {
   it('starts a clone when there is no checkout and hands the turn a step that waits for it', async () => {
     clone.mockResolvedValue({ ok: true, val: workspace('cloning') });
     get.mockResolvedValueOnce({ ok: true, val: workspace('cloning') });
-    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready', { worker: 'sbx-7f3a' }) });
     const context = await codeProjectContext(db, project(null), { subject: 'alice' });
     expect(clone).toHaveBeenCalledTimes(1);
     expect(context?.prompt).toMatchObject({ ready: true, clonedNow: true });
@@ -99,7 +100,9 @@ describe('codeProjectContext', () => {
     });
     const result = await context!.prelude!.run();
     expect(result.isError).toBe(false);
-    expect(result.content[0]!.text).toMatch(/^Cloned acme\/billing @ main — 4\.1 MB/);
+    expect(result.content[0]!.text).toMatch(
+      /^Cloned acme\/billing @ main — 4\.1 MB on the sandbox \(worker sbx-7f3a\)/
+    );
   }, 10_000);
 
   it('answers the step with an error when the clone fails', async () => {
@@ -145,7 +148,11 @@ describe('codeProjectContext', () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     await codeProjectContext(db, project('ws-1'), { subject: 'alice' });
     row.mockResolvedValue(project('ws-1'));
-    clone.mockResolvedValue({ ok: false, status: 502, message: 'Could not reach the sandbox service.' });
+    clone.mockResolvedValue({
+      ok: false,
+      status: 502,
+      message: 'Could not reach the sandbox service.',
+    });
     const recovered = await bound().recover!('ws-1');
     expect(recovered).toEqual({ ok: false, message: 'Could not reach the sandbox service.' });
   });

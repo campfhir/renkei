@@ -216,7 +216,7 @@ export async function codeProjectContext(
         const seconds = Math.round((Date.now() - started) / 1000);
         if (current.status === 'ready') {
           return textResult(
-            `Cloned ${repoFullName} @ ${current.branch} — ${bytes(current.sizeBytes)} on the sandbox, ${seconds}s. The code_* tools work in it now.`
+            `Cloned ${repoFullName} @ ${current.branch} — ${bytes(current.sizeBytes)} on the sandbox${current.worker ? ` (worker ${current.worker})` : ''}, ${seconds}s. The code_* tools work in it now.`
           );
         }
         if (current.status === 'failed') {
