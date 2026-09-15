@@ -177,6 +177,15 @@ function inputFor(turnId: string): TurnInput {
   };
 }
 
+/** Polls until `predicate` is true, instead of racing a fixed sleep against the flush timer. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitUntil: timed out');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 function watch(channel: TurnChannel): { events: ChatStreamEvent[]; state: () => ThreadState } {
   const events: ChatStreamEvent[] = [];
   let state = initialThreadState([], null);
@@ -749,12 +758,10 @@ describe('runChatTurn', () => {
       inputFor('turn-stage')
     );
     // A heartbeat tick lands while the model call is still in flight.
-    await new Promise((resolve) => setTimeout(resolve, 45));
-    expect(fake.stages).toContain('model');
+    await waitUntil(() => fake.stages.includes('model'));
     model.release?.();
     // ...and again once the reply calls a tool.
-    await new Promise((resolve) => setTimeout(resolve, 45));
-    expect(fake.stages).toContain('tool:agent_patch_steps');
+    await waitUntil(() => fake.stages.includes('tool:agent_patch_steps'));
     gates.get('agent_patch_steps')!();
     await run;
   });
