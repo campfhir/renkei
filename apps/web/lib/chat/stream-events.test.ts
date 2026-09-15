@@ -80,6 +80,39 @@ describe('applyStreamEvent', () => {
     });
   });
 
+  it('keeps the partial JSON, not a lying empty input, when the turn ends before block_stop', () => {
+    // A timeout/error/cancel ends the message while a tool call's
+    // arguments are still streaming — turn-runner.ts's finalize() emits
+    // message_end straight away, with no block_stop for that block. The
+    // reducer must not synthesize `input` from the block_start placeholder.
+    const state = reduce([
+      start('a', 1),
+      {
+        type: 'block_start',
+        messageId: 'a',
+        index: 0,
+        block: { type: 'tool_use', id: 't', name: 'agent_patch_steps', input: {} },
+      },
+      { type: 'input_json_delta', messageId: 'a', index: 0, partialJson: '{"agentId": "ID"' },
+      {
+        type: 'message_end',
+        messageId: 'a',
+        status: 'interrupted',
+        stopReason: null,
+        usage: null,
+        error: 'The reply stopped unexpectedly and did not finish.',
+      },
+    ]);
+    expect(state.messages[0].status).toBe('interrupted');
+    expect(state.messages[0].blocks[0]).toEqual({
+      type: 'tool_use',
+      id: 't',
+      name: 'agent_patch_steps',
+      input: {},
+      partialJson: '{"agentId": "ID"',
+    });
+  });
+
   it('ignores a duplicate message_start and orders messages by seq', () => {
     const state = reduce([start('b', 5), start('a', 3), start('b', 5)]);
     expect(state.messages.map((message) => message.id)).toEqual(['a', 'b']);

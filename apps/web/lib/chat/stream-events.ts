@@ -189,6 +189,15 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         ),
       };
     case 'message_end':
+      // A tool_use block's `input` only ever becomes real at its own
+      // block_stop (the server sends the parsed args there, replacing the
+      // whole block — see turn-runner.ts). A block that still carries
+      // `partialJson` here never got one: the turn ended (error, timeout,
+      // cancel) mid-argument-stream, and `input` is still the `{}`
+      // placeholder block_start opened with. Leaving `partialJson` in
+      // place keeps the raw partial args on screen — the true, if
+      // incomplete, record of what streamed — instead of a synthesized
+      // `input` that looks like the model called the tool with nothing.
       return {
         ...state,
         messages: replaceMessage(state.messages, event.messageId, (message) => ({
@@ -197,12 +206,6 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
           stopReason: event.stopReason,
           usage: event.usage,
           error: event.error,
-          // A closed message has no partial JSON left to show.
-          blocks: message.blocks.map((block) =>
-            block.type === 'tool_use' && block.partialJson !== undefined
-              ? { type: 'tool_use', id: block.id, name: block.name, input: block.input }
-              : block
-          ),
         })),
       };
     case 'tool_call_start':
