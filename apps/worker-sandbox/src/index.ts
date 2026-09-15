@@ -35,7 +35,7 @@
 
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { ensureDataRoot } from './disk';
-import { canIsolateByUid, ensureWorkspacesRoot } from './workspaces';
+import { canIsolateByUid, ensureWorkspacesRoot, verifyUidIsolation } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
 import { createSandboxServer } from './server';
 import { BrowserSessions } from './browser';
@@ -97,6 +97,19 @@ async function main(): Promise<void> {
         'workspaces are enabled but this process is not root: commands run as the worker user with NO per-caller isolation — fine for one developer, wrong for a shared deployment',
         { component: 'worker-sandbox/workspaces' }
       );
+    } else {
+      // Root only so that each caller's commands can be dropped to their
+      // own uid; if that drop cannot happen, the alternative is running
+      // every caller's commands as root, which is not an option — so this
+      // is fatal here, with the cause, rather than a failed spawn on
+      // every command later.
+      const problem = await verifyUidIsolation();
+      if (problem) {
+        fatal(
+          `workspaces are enabled and this process is root, but a command cannot be dropped to a caller's uid: ${problem}. ` +
+            'The sandbox image (docker/Dockerfile, target sandbox) supplies setpriv from util-linux, and the container needs CAP_SETUID, CAP_SETGID and CAP_SETPCAP (Docker grants them by default).'
+        );
+      }
     }
     if (!envSecretsEnabled()) {
       logger.warn(

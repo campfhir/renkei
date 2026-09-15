@@ -69,6 +69,7 @@ import {
 } from './env-secrets';
 import {
   WorkspacePathError,
+  checkoutExists,
   cloneRepository,
   containedPath,
   findFiles,
@@ -186,6 +187,28 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         409,
         'not_ready',
         `That workspace's clone failed (${workspace.error ?? 'unknown reason'}); delete it and clone again.`
+      );
+      return null;
+    }
+    if (!(await checkoutExists(workspace.storageKey))) {
+      // A ready row whose bytes are gone: the container was recreated
+      // without the workspaces volume mounted, or the directory was
+      // removed by hand. Nothing here can bring it back — the clone URL
+      // and the credential were the clone request's — so the row says
+      // so, once, and the project page offers to clone again. Left as
+      // ready, every verb would answer a bare `spawn setpriv ENOENT`.
+      const error =
+        'The checkout is no longer on the worker’s disk (its volume was replaced or the directory was removed).';
+      logger.warn('workspace {id} is ready but its checkout is missing from disk', {
+        component: 'worker-sandbox/workspaces',
+        id: workspace.id,
+      });
+      await store.setWorkspaceStatus(db, workspace.id, 'failed', { error });
+      sendError(
+        response,
+        409,
+        'not_ready',
+        `That workspace’s checkout is gone from the worker’s disk (its volume was replaced or the directory was removed). It is now marked failed; the chat clones the repository again on its own, as does the project page.`
       );
       return null;
     }

@@ -201,6 +201,25 @@ A workspace's row (`sandbox_workspaces`, migration 101) is the metadata
 half; the sweep that retires expired staged files retires expired
 checkouts the same way — bytes first, then the row. A clone that never
 finished (a crash mid-clone) sits in `cloning` until its lifetime lapses.
+A ready row whose directory is gone — the container recreated without
+the workspaces volume mounted, the directory removed by hand — is marked
+`failed` the first time a verb reaches for it, with a message that says
+it will be cloned again. The chat does that itself, mid-turn: the model
+has no clone tool, but every `code_*` tool is wrapped (`lib/code/tools.ts`)
+so that a "not ready" answer re-reads the project, adopts a newer clone
+if another chat already made one, otherwise clones again with the
+chatting person's grant, waits for it as the turn's first step would,
+and runs the same call again in the new checkout — saying so at the top
+of its answer. One clone is shared by every tool that hits the wall at
+the same time. After two consecutive losses in one turn the tools stop
+trying and every call answers the same refusal, telling the model to
+stop and tell the person: a checkout that keeps vanishing is the
+worker's volume, not something another clone fixes. The next turn's
+prelude starts afresh; before that check every such verb answered a bare
+`spawn setpriv ENOENT`, Node's word for a working directory that is not
+there, which reads as a missing binary. The worker also proves at boot,
+when it is root, that setpriv can drop a command to another uid, and
+refuses to start otherwise.
 The code project (`chat_projects` with `kind = 'code'`, migration 102)
 keeps a soft reference to its checkout; when the worker no longer has
 it, the project page says so and offers to clone again, and the chat's

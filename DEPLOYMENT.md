@@ -228,11 +228,18 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   Checkouts live on a second named volume
   (`renkei-sandbox-workspaces` / `sandbox_workspaces`) at
   `SANDBOX_WORKSPACES_DIR` (default `/workspaces`), a week since last use.
+  That volume has to be mounted: without it the checkouts sit in the
+  container's own filesystem and vanish when it is recreated, after which
+  every command in a checkout the database still calls ready answers
+  that the checkout is gone and the project has to be cloned again.
   With the flag set the container's entrypoint keeps the worker **root**
   so every caller's commands can be dropped (setpriv) to that caller's own
   unprivileged uid — their checkout and home are theirs alone, the staged
   files and the worker's own environment are root's; without the flag the
-  entrypoint drops to `worker` before starting, exactly as before. A
+  entrypoint drops to `worker` before starting, exactly as before. At
+  boot, when root, the worker proves the drop works (setpriv present,
+  `CAP_SETUID`/`CAP_SETGID`/`CAP_SETPCAP` held — Docker's defaults) and
+  refuses to start otherwise, saying why. A
   command has the container's network (a project's install and tests
   need it), so a deployment that enables workspaces should give this
   service its own network with a route out and none to postgres or the

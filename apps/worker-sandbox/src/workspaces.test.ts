@@ -24,9 +24,11 @@ import {
   listDirectory,
   newWorkspaceStorageKey,
   readWorkspaceFile,
+  runProcess,
   runShell,
   setWorkspacesRootForTests,
   shellPrelude,
+  verifyUidIsolation,
   workspaceDir,
   wrapCommand,
   writeWorkspaceFile,
@@ -109,6 +111,37 @@ describe('wrapCommand', () => {
     expect(env.GIT_CONFIG_KEY_0).toBe('http.https://bitbucket.org/.extraheader');
     expect(env.GIT_CONFIG_VALUE_0).toBe('Authorization: Basic xyz');
     expect(shellPrelude()).toMatch(/^ulimit -u \d+ -f \d+ -c 0/);
+  });
+});
+
+describe('a command that never starts', () => {
+  // Node reports a vanished working directory and a missing executable
+  // with the same `spawn <file> ENOENT`; the result must say which.
+  const input = (cwd: string) => ({ cwd, home: root, identity: null, env: {}, timeoutMs: 5_000 });
+
+  it('blames the working directory when it is gone, not the command', async () => {
+    const result = await runProcess(input(join(root, 'vanished')), 'bash', ['-c', 'true']);
+    expect(result.exitCode).toBeNull();
+    expect(result.timedOut).toBe(false);
+    expect(result.stderr).toContain('spawn bash ENOENT');
+    expect(result.stderr).toContain('working directory no longer exists');
+  });
+
+  it('says when the command itself is missing', async () => {
+    const result = await runProcess(input(root), 'renkei-no-such-command', ['--version']);
+    expect(result.exitCode).toBeNull();
+    expect(result.stderr).toContain('no such command on this worker');
+  });
+
+  it('proves at boot whether a uid drop works here, and says why when it cannot', async () => {
+    const problem = await verifyUidIsolation();
+    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+      expect(problem).toBeNull();
+    } else {
+      // Not root: setpriv (or its absence) explains itself.
+      expect(problem).toEqual(expect.any(String));
+      expect(problem).not.toBe('');
+    }
   });
 });
 

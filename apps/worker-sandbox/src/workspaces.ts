@@ -87,6 +87,41 @@ export function canIsolateByUid(): boolean {
   return typeof process.getuid === 'function' && process.getuid() === 0;
 }
 
+/** An unprivileged uid no caller is ever given (`nobody`); the boot probe drops to it. */
+const PROBE_UID = 65_534;
+
+/**
+ * Prove, once at boot, that dropping a command to another uid works here:
+ * setpriv is installed, on the PATH a command gets, and this process holds
+ * the capabilities the drop needs (CAP_SETUID, CAP_SETGID, CAP_SETPCAP).
+ * Null when it does; otherwise what went wrong, for the operator. Without
+ * this, a missing setpriv would surface only as `spawn setpriv ENOENT` on
+ * every command a caller ever runs, and a container started without those
+ * capabilities as a setpriv error on each — never at startup, where the
+ * deployment can be fixed.
+ */
+export async function verifyUidIsolation(): Promise<string | null> {
+  const result = await runProcess(
+    {
+      cwd: '/',
+      home: '/',
+      identity: { uid: PROBE_UID, gid: PROBE_UID },
+      env: {},
+      timeoutMs: 15_000,
+    },
+    'id',
+    ['-u']
+  );
+  if (result.exitCode === 0 && result.stdout.trim() === String(PROBE_UID)) return null;
+  const said = `${result.stderr}\n${result.stdout}`
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-2)
+    .join(' ');
+  return said || `exit ${result.exitCode ?? 'none'}${result.signal ? ` (${result.signal})` : ''}`;
+}
+
 /** The uid/gid a caller's processes run as — null when this worker is not root. */
 export interface ExecIdentity {
   uid: number;
@@ -110,6 +145,22 @@ export function workspaceDir(storageKey: string): string {
 
 function callerDir(storageKey: string): string {
   return dirname(workspaceDir(storageKey));
+}
+
+/**
+ * Whether a checkout is still where its row says. A ready row can outlive
+ * its bytes: a deployment that recreates the container without the
+ * workspaces volume mounted loses every checkout, and a directory can be
+ * removed by hand. Every command in such a checkout would otherwise fail
+ * with a bare `spawn setpriv ENOENT` — Node's word for a working directory
+ * that is not there, indistinguishable from a missing executable.
+ */
+export async function checkoutExists(storageKey: string): Promise<boolean> {
+  try {
+    return (await stat(workspaceDir(storageKey))).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 export function homeDir(storageKey: string): string {
@@ -247,6 +298,29 @@ export function shellPrelude(): string {
   return `ulimit -u ${EXEC_MAX_PROCESSES} -f ${fileKb} -c 0 2>/dev/null\n`;
 }
 
+/**
+ * What a spawn that never started should say. Node reports a working
+ * directory that no longer exists with the same `spawn <file> ENOENT` as
+ * an executable it cannot find, and for a command dropped through setpriv
+ * the file named is always setpriv — so the bare message says nothing
+ * about which it was. Only one of the two is worth saying.
+ */
+async function spawnFailure(
+  cwd: string,
+  file: string,
+  error: NodeJS.ErrnoException
+): Promise<string> {
+  if (error.code !== 'ENOENT') return error.message;
+  try {
+    await stat(cwd);
+  } catch {
+    return `${error.message}: the working directory no longer exists on disk.`;
+  }
+  return file === 'setpriv'
+    ? `${error.message}: setpriv (util-linux) is not installed on this worker, so a command cannot be dropped to the caller's uid.`
+    : `${error.message}: no such command on this worker.`;
+}
+
 function collect(
   child: ChildProcess,
   stream: 'stdout' | 'stderr',
@@ -319,22 +393,34 @@ export function runProcess(input: RunInput, file: string, args: string[]): Promi
       setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS).unref();
     }, input.timeoutMs);
 
-    const finish = (exitCode: number | null, signal: string | null, failure?: string): void => {
-      if (settled) return;
+    const settle = (): boolean => {
+      if (settled) return false;
       settled = true;
       clearTimeout(timer);
+      return true;
+    };
+    const answer = (exitCode: number | null, signal: string | null, failure?: string): void =>
       resolvePromise({
         exitCode,
         signal,
         stdout: stdout(),
-        stderr: failure ? `${stderr()}${failure}` : stderr(),
+        stderr: failure ? `${stderr()}\n${failure}` : stderr(),
         timedOut,
         truncated,
         durationMs: Date.now() - started,
       });
-    };
-    child.on('error', (error) => finish(null, null, `\n${error.message}`));
-    child.on('close', (code, signal) => finish(code, signal));
+    // A spawn that fails emits 'error' and then 'close' (with a negative
+    // code): the first settles the result, synchronously, and only then
+    // is what to say about it worked out.
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      if (!settle()) return;
+      void spawnFailure(input.cwd, wrapped.file, error).then((failure) =>
+        answer(null, null, failure)
+      );
+    });
+    child.on('close', (code, signal) => {
+      if (settle()) answer(code, signal);
+    });
   });
 }
 
