@@ -47,8 +47,8 @@ export function createTurnStore(
     async flushAssistant(id, blocks, patch) {
       await updateMessageContent(db, id, blocks, patch);
     },
-    heartbeat(iterations) {
-      return heartbeatTurn(db, scope.turnId, iterations);
+    heartbeat(iterations, stage) {
+      return heartbeatTurn(db, scope.turnId, iterations, stage);
     },
     async finishTurn(outcome) {
       await finishTurn(db, scope.turnId, outcome);
