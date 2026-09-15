@@ -56,7 +56,7 @@ export default async function MemoryPanel({
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Summary (compacted {new Date(summary.updated_at).toISOString().slice(0, 10)})
           </p>
-          <p className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200">
+          <p className="whitespace-pre-wrap break-words text-sm text-gray-800 dark:text-gray-200">
             {summary.content}
           </p>
         </div>

@@ -168,7 +168,7 @@ export default function LogsViewer({
       </header>
 
       {error && (
-        <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+        <p className="break-words rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
           {error}
           {/* A session can expire while this page sits open. Offer the way back
               rather than leaving a filter change silently failing. */}

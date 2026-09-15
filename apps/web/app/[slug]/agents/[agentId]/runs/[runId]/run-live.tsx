@@ -125,7 +125,9 @@ export default function RunLive({
       </div>
       {pauseCard ? (
         <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-          <p className="mb-2 whitespace-pre-wrap text-sm font-medium">{pauseCard.summary}</p>
+          <p className="mb-2 whitespace-pre-wrap break-words text-sm font-medium">
+            {pauseCard.summary}
+          </p>
           {pauseCard.kind === 'question' ? (
             <QuestionActions tenantId={tenantId} itemId={pauseCard.id} form={questionForm} />
           ) : (

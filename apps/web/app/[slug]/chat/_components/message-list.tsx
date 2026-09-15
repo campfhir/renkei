@@ -282,7 +282,7 @@ function UserMessage({
     .trim();
   return (
     <div className="group flex flex-col items-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 text-sm whitespace-pre-wrap text-white">
+      <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 text-sm whitespace-pre-wrap break-words text-white">
         {text}
         {message.attachments.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -446,7 +446,10 @@ function WorkFold({
           switch (step.kind) {
             case 'thinking':
               return (
-                <li key={index} className="whitespace-pre-wrap text-gray-600 dark:text-gray-400">
+                <li
+                  key={index}
+                  className="whitespace-pre-wrap break-words text-gray-600 dark:text-gray-400"
+                >
                   {step.text}
                   {live && index === shown.length - 1 ? <Cursor /> : null}
                 </li>

@@ -496,7 +496,7 @@ export default function NotificationsList({
                         tree, named by the headline. Selection clicks are
                         intercepted above before the anchor navigates.
                       */}
-                      <p className="text-sm font-medium">
+                      <p className="break-words text-sm font-medium">
                         {row.refUrl ? (
                           <a
                             href={row.refUrl}

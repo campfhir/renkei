@@ -507,6 +507,7 @@ body {
 .log-table [data-expanded] td {
   background: var(--bl-surface-2);
   white-space: normal;
+  word-break: break-word;
 }
 .log-table [data-expanded] pre {
   margin: 0;
@@ -604,6 +605,7 @@ body {
   margin: 0;
   font-size: 0.8125rem;
   color: var(--bl-text);
+  word-break: break-word;
 }
 .log-cards [data-log-card-detail] pre {
   margin: 0.5rem 0 0;
