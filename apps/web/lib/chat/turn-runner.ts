@@ -59,8 +59,13 @@ export interface TurnStore {
       error?: string | null;
     }
   ): Promise<void>;
-  /** Refreshes the turn's liveness; true when a cancel was requested. */
-  heartbeat(iterations: number): Promise<boolean>;
+  /**
+   * Refreshes the turn's liveness; true when a cancel was requested.
+   * `stage` is what the loop is doing right now ('model', 'tool:<name>'),
+   * null between rounds — persisted so a turn that never comes back says
+   * where it was stuck, not just that it stopped.
+   */
+  heartbeat(iterations: number, stage: string | null): Promise<boolean>;
   finishTurn(outcome: TurnOutcome): Promise<void>;
   recordUsage(usage: LlmUsage): Promise<void>;
   /**
@@ -339,6 +344,29 @@ export function friendlyLlmError(kind: LlmErrorKind): string {
   }
 }
 
+/**
+ * Bounds a promise that has no cancellation of its own (a local tool's
+ * `execute`, unlike an MCP call, carries no AbortSignal). The loser keeps
+ * running orphaned in the background — nothing here can stop it — but the
+ * turn is no longer held hostage to it, and the rejection is a real error
+ * the caller's own catch logs, not a heartbeat that quietly outlives it.
+ */
+function raceTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 function clip(text: string, max: number): string {
   return text.length > max
     ? `${text.slice(0, max)}\n…[${text.length - max} more characters clipped]`
@@ -382,6 +410,11 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const totals = { inputTokens: 0, outputTokens: 0 };
   const attachmentBudget = { blocks: 0, base64Chars: 0 };
   let cancelRequested = false;
+  // What the loop is doing right now, for the heartbeat to persist — see
+  // TurnStore.heartbeat. Read fresh on every tick, so it always reflects
+  // the stage in flight when the tick fires, not the stage when the timer
+  // was set up.
+  let stage: string | null = null;
 
   const emit = (event: ChatStreamEvent) => channel.emit(event);
 
@@ -397,7 +430,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     tick += 1;
     if (dirty) void flush();
     if (tick % 8 === 0) {
-      void store.heartbeat(iterations).then((requested) => {
+      void store.heartbeat(iterations, stage).then((requested) => {
         if (requested) {
           cancelRequested = true;
           channel.requestCancel();
@@ -650,6 +683,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         dirty = true;
       };
 
+      stage = 'model';
       const result = await streamOrComplete(
         llm.provider,
         {
@@ -665,6 +699,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         },
         { onEvent: mirror, signal: controller.signal }
       );
+      stage = null;
 
       if (!result.ok) {
         if (result.err.type === 'aborted' || cancelRequested) {
@@ -745,7 +780,16 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const runTool = async (use: (typeof toolUses)[number]): Promise<McpToolResult> => {
         try {
           if (deps.localTools.has(use.name)) {
-            return await deps.localTools.run(use.name, use.input, deps.localContext);
+            // Unlike an MCP call, a local tool has no AbortSignal of its own —
+            // it is an in-process await with nothing to cancel it. Race it
+            // against the same budget an MCP call gets so a local tool that
+            // never settles can't hold the turn (and its heartbeat) open
+            // forever; the orphaned call keeps running, but the loop moves on.
+            return await raceTimeout(
+              deps.localTools.run(use.name, use.input, deps.localContext),
+              limits.toolTimeoutMs,
+              `local tool ${use.name} timed out`
+            );
           }
           if (deps.mcp) {
             return await deps.mcp.callTool(use.name, argsOf(use.input), limits.toolTimeoutMs);
@@ -784,7 +828,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             name: use.name,
           });
         }
+        stage = `tool:${group.map((use) => use.name).join(',')}`;
         const outcomes = await Promise.all(group.map(runTool));
+        stage = null;
         for (const [index, use] of group.entries()) {
           const outcome = outcomes[index];
           const text = textOfResult(outcome);
