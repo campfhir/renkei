@@ -36,7 +36,13 @@ jest.mock('@/lib/sandbox/workspace-git', () => ({
   }),
 }));
 
-import { codeTools, numberedLines, renderRun } from './tools';
+import {
+  MAX_CHECKOUT_RECOVERIES_PER_TURN,
+  codeTools,
+  numberedLines,
+  renderRun,
+  type CheckoutRecovery,
+} from './tools';
 import type { LocalToolContext } from '@/lib/chat/local-tools';
 
 const client = jest.requireMock<Record<string, jest.Mock>>('@renkei/sandbox-client');
@@ -54,15 +60,27 @@ const context: LocalToolContext = {
   readOnly: false,
 };
 
-function tools() {
+function tools(recover?: (lostWorkspaceId: string) => Promise<CheckoutRecovery>) {
   const list = codeTools({
     target: TARGET,
     workspaceId: WS_ID,
     repoFullName: 'acme/demo',
     origin: 'https://r.example',
+    ...(recover ? { recover } : {}),
   });
   return new Map(list.map((tool) => [tool.def.name, tool]));
 }
+
+const NEW_WS_ID = '22222222-2222-4222-8222-222222222222';
+const checkoutGone = {
+  ok: false,
+  err: {
+    kind: 'op',
+    type: 'not_ready',
+    message: 'That workspace’s checkout is gone from the worker’s disk.',
+    status: 409,
+  },
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -95,6 +113,93 @@ describe('the set', () => {
     expect(set.get('code_env_names')!.readOnly).toBe(true);
     expect(set.get('code_run')!.readOnly).toBeUndefined();
     expect(set.get('code_edit_file')!.readOnly).toBeUndefined();
+  });
+});
+
+describe('a checkout lost mid-turn', () => {
+  it('is brought back once and the call runs again in the new checkout, saying so', async () => {
+    client.sbWorkspaceLs
+      .mockResolvedValueOnce(checkoutGone)
+      .mockResolvedValueOnce({ ok: true, val: { path: '', entries: [{ path: 'README.md', kind: 'file', sizeBytes: 12 }] } });
+    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({ ok: true, workspaceId: NEW_WS_ID, seconds: 7, how: 'cloned' }));
+    const set = tools(recover);
+    const result = await set.get('code_ls')!.execute({}, context);
+    expect(recover).toHaveBeenCalledWith(WS_ID);
+    expect(client.sbWorkspaceLs).toHaveBeenNthCalledWith(1, TARGET, { id: WS_ID, path: '' });
+    expect(client.sbWorkspaceLs).toHaveBeenNthCalledWith(2, TARGET, { id: NEW_WS_ID, path: '' });
+    expect(result.isError).toBe(false);
+    expect(result.content[0]!.text).toBe(
+      '[The checkout had gone from the sandbox; it was cloned again (7s) and this call ran again in the new one.]\n\nREADME.md (12 B)'
+    );
+    // Every tool now works in the new checkout, with no further recovery.
+    client.sbWorkspaceRead.mockResolvedValue({ ok: true, val: { path: 'a', text: 'x', truncated: false, sizeBytes: 1 } });
+    await set.get('code_read_file')!.execute({ path: 'a' }, context);
+    expect(client.sbWorkspaceRead).toHaveBeenCalledWith(TARGET, expect.objectContaining({ id: NEW_WS_ID }));
+    expect(recover).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one recovery between reads that hit the wall together', async () => {
+    client.sbWorkspaceLs.mockResolvedValueOnce(checkoutGone).mockResolvedValue({ ok: true, val: { path: '', entries: [] } });
+    client.sbWorkspaceGrep.mockResolvedValueOnce(checkoutGone).mockResolvedValue({ ok: true, val: { matches: [], truncated: false } });
+    let release: (value: CheckoutRecovery) => void = () => {};
+    const recover = jest.fn(() => new Promise<CheckoutRecovery>((resolve) => (release = resolve)));
+    const set = tools(recover);
+    const both = Promise.all([
+      set.get('code_ls')!.execute({}, context),
+      set.get('code_grep')!.execute({ pattern: 'x' }, context),
+    ]);
+    await new Promise((resolve) => setImmediate(resolve));
+    release({ ok: true, workspaceId: NEW_WS_ID, seconds: 3, how: 'adopted' });
+    const [ls, grep] = await both;
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(ls.isError).toBe(false);
+    expect(grep.isError).toBe(false);
+    expect(grep.content[0]!.text).toMatch(/^\[The checkout had been replaced by a newer clone \(3s\)/);
+  });
+
+  it('answers the worker’s error, with why, when the checkout cannot come back', async () => {
+    client.sbWorkspaceLs.mockResolvedValue(checkoutGone);
+    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({ ok: false, message: 'Bitbucket is not connected.' }));
+    const result = await tools(recover).get('code_ls')!.execute({}, context);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toBe(
+      'That workspace’s checkout is gone from the worker’s disk. Cloning it again did not work: Bitbucket is not connected.'
+    );
+  });
+
+  it('stops trying past the per-turn limit and tells the model to stop', async () => {
+    client.sbWorkspaceLs.mockResolvedValue(checkoutGone);
+    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({ ok: true, workspaceId: NEW_WS_ID, seconds: 1, how: 'cloned' }));
+    const set = tools(recover);
+    for (let attempt = 0; attempt < MAX_CHECKOUT_RECOVERIES_PER_TURN; attempt += 1) {
+      const result = await set.get('code_ls')!.execute({}, context);
+      // Recovered, but the retried call found it gone again.
+      expect(result.isError).toBe(true);
+    }
+    expect(recover).toHaveBeenCalledTimes(MAX_CHECKOUT_RECOVERIES_PER_TURN);
+    const refused = await set.get('code_run')!.execute({ command: 'true' }, context);
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]!.text).toMatch(/lost 2 times in this turn .* Stop and tell the person/);
+    expect(client.sbWorkspaceExec).not.toHaveBeenCalled();
+    expect(recover).toHaveBeenCalledTimes(MAX_CHECKOUT_RECOVERIES_PER_TURN);
+  });
+
+  it('leaves a missing file alone: only a missing checkout is recovered', async () => {
+    client.sbWorkspaceRead.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op', type: 'not_found', message: 'No such file: nope.ts', status: 404 },
+    });
+    const recover = jest.fn();
+    const result = await tools(recover).get('code_read_file')!.execute({ path: 'nope.ts' }, context);
+    expect(result.isError).toBe(true);
+    expect(recover).not.toHaveBeenCalled();
+  });
+
+  it('without a way back, the worker’s error is the answer', async () => {
+    client.sbWorkspaceLs.mockResolvedValue(checkoutGone);
+    const result = await tools().get('code_ls')!.execute({}, context);
+    expect(result.isError).toBe(true);
+    expect(client.sbWorkspaceLs).toHaveBeenCalledTimes(1);
   });
 });
 

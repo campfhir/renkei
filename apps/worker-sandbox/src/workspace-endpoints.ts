@@ -208,7 +208,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         response,
         409,
         'not_ready',
-        `That workspace’s checkout is gone from the worker’s disk (its volume was replaced or the directory was removed). It is now marked failed; the next chat message, or the project page, clones the repository again — there is no tool for that in this turn.`
+        `That workspace’s checkout is gone from the worker’s disk (its volume was replaced or the directory was removed). It is now marked failed; the chat clones the repository again on its own, as does the project page.`
       );
       return null;
     }

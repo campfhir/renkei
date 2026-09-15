@@ -12,6 +12,7 @@ jest.mock('@renkei/sandbox-client', () => ({
   clientFailure: jest.fn(() => ({ status: 400, message: 'failed' })),
 }));
 jest.mock('./projects', () => ({ startProjectClone: jest.fn() }));
+jest.mock('@/lib/chat/projects', () => ({ getProjectRow: jest.fn() }));
 jest.mock('./tools', () => ({
   codeTools: jest.fn(() => [{ def: { name: 'code_ls' }, execute: jest.fn() }]),
 }));
@@ -23,12 +24,15 @@ jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: () => 'https://r.exampl
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { sbWorkspaceGet } from '@renkei/sandbox-client';
-import type { ProjectRow } from '@/lib/chat/projects';
+import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import { startProjectClone } from './projects';
+import { codeTools, type CodeToolBinding } from './tools';
 import { CLONE_STEP_NAME, codeProjectContext } from './turn';
 
 const get = sbWorkspaceGet as jest.MockedFunction<typeof sbWorkspaceGet>;
 const clone = startProjectClone as jest.MockedFunction<typeof startProjectClone>;
+const row = getProjectRow as jest.MockedFunction<typeof getProjectRow>;
+const bound = () => (codeTools as jest.Mock).mock.calls[0]![0] as CodeToolBinding;
 const db = {} as Kysely<DB>;
 
 function project(workspaceId: string | null): ProjectRow {
@@ -113,6 +117,38 @@ describe('codeProjectContext', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('The clone failed: repository not found');
   }, 10_000);
+
+  it('hands the tools a way back: a checkout lost mid-turn is cloned again and waited for', async () => {
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    const context = await codeProjectContext(db, project('ws-1'), { subject: 'alice' });
+    expect(context?.tools).toHaveLength(1);
+    // The row still names the lost checkout: nothing newer to adopt.
+    row.mockResolvedValue(project('ws-1'));
+    clone.mockResolvedValue({ ok: true, val: workspace('cloning', { id: 'ws-2' }) });
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready', { id: 'ws-2' }) });
+    const recovered = await bound().recover!('ws-1');
+    expect(clone).toHaveBeenCalledTimes(1);
+    expect(recovered).toMatchObject({ ok: true, workspaceId: 'ws-2', how: 'cloned' });
+  }, 10_000);
+
+  it('adopts a newer clone another chat already made instead of cloning again', async () => {
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    await codeProjectContext(db, project('ws-1'), { subject: 'alice' });
+    row.mockResolvedValue(project('ws-9'));
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready', { id: 'ws-9' }) });
+    const recovered = await bound().recover!('ws-1');
+    expect(clone).not.toHaveBeenCalled();
+    expect(recovered).toMatchObject({ ok: true, workspaceId: 'ws-9', how: 'adopted' });
+  });
+
+  it('says why when the checkout cannot come back', async () => {
+    get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
+    await codeProjectContext(db, project('ws-1'), { subject: 'alice' });
+    row.mockResolvedValue(project('ws-1'));
+    clone.mockResolvedValue({ ok: false, status: 502, message: 'Could not reach the sandbox service.' });
+    const recovered = await bound().recover!('ws-1');
+    expect(recovered).toEqual({ ok: false, message: 'Could not reach the sandbox service.' });
+  });
 
   it('resumes waiting on a clone an earlier turn started', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('cloning') });

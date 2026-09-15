@@ -34,6 +34,7 @@ import {
 } from '@renkei/connector-sandbox';
 import {
   clientFailure,
+  type SandboxClientError,
   sbEnvList,
   sbWorkspaceEdit,
   sbWorkspaceExec,
@@ -50,12 +51,18 @@ import {
   type SandboxTarget,
 } from '@renkei/sandbox-client';
 import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
+import type { McpToolResult } from '@renkei/mcp-client';
 import { commitAuthorFor, resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
 import { codeDelegateTool } from './delegate';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
 
 /** How much of a file's diff rides back on a write or edit, for the model and the page. */
 const TOOL_DIFF_MAX_CHARS = 24_000;
+
+/** A checkout made usable again mid-turn: the id to work in from now on, or why not. */
+export type CheckoutRecovery =
+  | { ok: true; workspaceId: string; seconds: number; how: 'cloned' | 'adopted' }
+  | { ok: false; message: string };
 
 /** What binds the tools to one project's checkout. */
 export interface CodeToolBinding {
@@ -65,6 +72,104 @@ export interface CodeToolBinding {
   repoFullName: string;
   /** The deployment's origin, for the Bitbucket app reader when a token needs refreshing. */
   origin: string;
+  /**
+   * Bring the checkout back when the worker says it is gone (lib/code/turn.ts):
+   * clone it again, or adopt one another turn already cloned. Absent, a
+   * lost checkout is simply the error the worker gave.
+   */
+  recover?: (lostWorkspaceId: string) => Promise<CheckoutRecovery>;
+}
+
+/**
+ * Times in one turn the checkout may be lost and brought back before the
+ * tools stop trying: a checkout that keeps vanishing is a deployment
+ * problem (its volume, its worker), not something another clone fixes.
+ */
+export const MAX_CHECKOUT_RECOVERIES_PER_TURN = 2;
+
+/** The worker's word for a checkout that is not there to work in — never for a missing file. */
+function checkoutLost(error: SandboxClientError): boolean {
+  if (error.kind !== 'op') return false;
+  if (error.type === 'not_ready') return true;
+  return error.type === 'not_found' && /workspace/i.test(error.message ?? '');
+}
+
+const CHECKOUT_LOST_META = 'checkoutLost';
+
+/**
+ * The tool, with its checkout brought back when the worker says it is
+ * gone. A verb that answers "not ready" (the checkout vanished from the
+ * worker's disk, its row was retired, or another turn's clone is still
+ * running) recovers it once — one clone, shared by every tool that hits
+ * the same wall at the same time — and runs again against the new
+ * checkout, saying so at the top of its answer. Past the per-turn limit,
+ * every tool refuses with the same words, so the model stops rather
+ * than looping on a checkout that will not stay.
+ */
+function withCheckoutRecovery(
+  tool: LocalTool,
+  state: {
+    recover: (lostWorkspaceId: string) => Promise<CheckoutRecovery>;
+    current: () => string;
+    adopt: (workspaceId: string) => void;
+    attempts: number;
+    inFlight: Promise<CheckoutRecovery> | null;
+    exhausted: string | null;
+  }
+): LocalTool {
+  return {
+    ...tool,
+    async execute(input, context) {
+      if (state.exhausted) return errorResult(state.exhausted);
+      const first = await tool.execute(input, context);
+      if (first.meta[CHECKOUT_LOST_META] !== true) return first;
+      const giveUp = (): McpToolResult => {
+        state.exhausted =
+          `The checkout was lost ${state.attempts} times in this turn and is not coming back; ` +
+          'the code_* tools are unavailable for the rest of it. Stop and tell the person: the sandbox worker or its workspaces volume needs looking at.';
+        return errorResult(state.exhausted);
+      };
+      if (!state.inFlight) {
+        if (state.attempts >= MAX_CHECKOUT_RECOVERIES_PER_TURN) return giveUp();
+        state.attempts += 1;
+        state.inFlight = state
+          .recover(state.current())
+          .catch((error: unknown): CheckoutRecovery => ({
+            ok: false,
+            message: error instanceof Error ? error.message : String(error),
+          }))
+          .finally(() => {
+            state.inFlight = null;
+          });
+      }
+      const recovered = await state.inFlight;
+      if (!recovered.ok) {
+        if (state.attempts >= MAX_CHECKOUT_RECOVERIES_PER_TURN) return giveUp();
+        return errorResult(
+          `${first.content[0]?.text ?? 'The checkout is gone.'} Cloning it again did not work: ${recovered.message}`
+        );
+      }
+      state.adopt(recovered.workspaceId);
+      const second = await tool.execute(input, context);
+      // Brought back and gone again at once: the limit is on consecutive
+      // losses, and this is one.
+      if (second.meta[CHECKOUT_LOST_META] === true) {
+        return state.attempts >= MAX_CHECKOUT_RECOVERIES_PER_TURN ? giveUp() : second;
+      }
+      const note =
+        recovered.how === 'cloned'
+          ? `[The checkout had gone from the sandbox; it was cloned again (${recovered.seconds}s) and this call ran again in the new one.]`
+          : `[The checkout had been replaced by a newer clone (${recovered.seconds}s); this call ran again in it.]`;
+      const [head, ...rest] = second.content;
+      return {
+        ...second,
+        content: [
+          { ...(head ?? { type: 'text' }), text: `${note}\n\n${head?.text ?? ''}` },
+          ...rest,
+        ],
+      };
+    },
+  };
 }
 
 function str(value: unknown): string {
@@ -134,9 +239,14 @@ const pathProperty = (description: string) => ({
 });
 
 export function codeTools(binding: CodeToolBinding): LocalTool[] {
-  const { target, workspaceId } = binding;
-  const failed = (error: Parameters<typeof clientFailure>[0]) =>
-    errorResult(clientFailure(error).message);
+  const { target } = binding;
+  // Read at call time, not bound at construction: a recovery moves every
+  // tool to the new checkout at once.
+  let workspaceId = binding.workspaceId;
+  const failed = (error: Parameters<typeof clientFailure>[0]): McpToolResult => ({
+    ...errorResult(clientFailure(error).message),
+    meta: checkoutLost(error) ? { [CHECKOUT_LOST_META]: true } : {},
+  });
 
   /**
    * The file's diff against HEAD after a write or edit, fenced so the chat
@@ -593,6 +703,23 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       },
     },
   ];
+  // One recovery state for the whole turn: the tools share the clone
+  // that brings the checkout back, the count of times it was lost, and
+  // the refusal once that count is spent.
+  const recover = binding.recover;
+  const recovery = recover
+    ? {
+        recover,
+        current: () => workspaceId,
+        adopt: (id: string) => {
+          workspaceId = id;
+        },
+        attempts: 0,
+        inFlight: null,
+        exhausted: null,
+      }
+    : null;
+  const recovering = recovery ? tools.map((tool) => withCheckoutRecovery(tool, recovery)) : tools;
   // The sub-agent gets these same tools (minus pushing and delegating).
-  return [...tools, codeDelegateTool(tools)];
+  return [...recovering, codeDelegateTool(recovering)];
 }

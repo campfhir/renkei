@@ -172,9 +172,7 @@ describe('a checkout that vanished from disk', () => {
       const result = await post(enabledBase, op, { ...TARGET, id: 'ws-gone', command: 'true' });
       expect(result.status).toBe(409);
       expect(result.json.error.type).toBe('not_ready');
-      expect(result.json.error.message).toMatch(
-        /checkout is gone .*next chat message.*clones the repository again/
-      );
+      expect(result.json.error.message).toMatch(/checkout is gone .*clones the repository again/);
     }
     expect(workspaceStore.setWorkspaceStatus).toHaveBeenCalledWith(
       expect.anything(),
