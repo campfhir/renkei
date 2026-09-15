@@ -92,7 +92,7 @@ export interface FailureSignature {
  * wall clock; truncated to the day and stepped back, then read as an
  * instant in that same zone again.
  */
-function sinceLocal(days: number, timeZone: string): RawBuilder<Date> {
+export function sinceLocal(days: number, timeZone: string): RawBuilder<Date> {
   return sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${Math.max(0, days - 1)})) AT TIME ZONE ${timeZone})`;
 }
 
@@ -102,7 +102,7 @@ function sinceLocal(days: number, timeZone: string): RawBuilder<Date> {
  * expression: each `${timeZone}` is its own bound parameter, so a repeat
  * is a different expression to Postgres and the query is rejected.
  */
-function localDayOf(column: string, timeZone: string): RawBuilder<string> {
+export function localDayOf(column: string, timeZone: string): RawBuilder<string> {
   return sql<string>`to_char(${sql.ref(column)} AT TIME ZONE ${timeZone}, 'YYYY-MM-DD')`;
 }
 

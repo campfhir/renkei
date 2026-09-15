@@ -73,6 +73,16 @@ function adminSections(slug: string): AdminSection[] {
       ],
     },
     {
+      label: 'Usage',
+      areas: [
+        {
+          href: `${admin}/usage`,
+          label: 'Organization usage',
+          detail: 'Token spend by chat, chat projects, code projects and agents; who is using it, and which agents do the most work per token.',
+        },
+      ],
+    },
+    {
       label: 'Data and policy',
       areas: [
         {
