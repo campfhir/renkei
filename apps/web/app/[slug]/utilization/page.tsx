@@ -1,6 +1,6 @@
-import { redirect, notFound } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { signInUrl } from '@/lib/sign-in-url';
+import { requireAuth } from '@/lib/require-auth';
 import { getUtilizationReport } from './actions';
 import { DEFAULT_PERIOD_KEY } from './window';
 import { headers } from 'next/headers';
@@ -16,15 +16,14 @@ export default async function UtilizationPage({ params }: { params: Promise<{ sl
   const tenant = await tenantForSlug(slug);
   if (!tenant) notFound();
 
+  await requireAuth(tenant.id, `/${slug}/utilization`);
+
   // The first render has no browser to ask, so it uses the zone the
   // viewer's proxy or CDN forwards when one does; the client re-fetches in
   // its own zone the moment the period changes, and the footnote names
   // the zone in use either way.
   const forwardedZone = (await headers()).get('x-vercel-ip-timezone') ?? undefined;
   const initial = await getUtilizationReport(tenant.id, DEFAULT_PERIOD_KEY, forwardedZone);
-  if (initial.signedOut) {
-    redirect(signInUrl(tenant.id, `/${slug}/utilization`));
-  }
 
   return <UtilizationViewer slug={slug} tenantId={tenant.id} initial={initial} />;
 }
