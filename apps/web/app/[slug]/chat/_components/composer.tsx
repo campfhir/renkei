@@ -238,19 +238,28 @@ export default function Composer({
             {queue.map((item, index) => (
               <li
                 key={item.id}
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300"
+                className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300"
               >
-                <span className="w-5 shrink-0 text-right text-xs text-gray-400">{index + 1}.</span>
+                <span className="w-5 shrink-0 pt-0.5 text-right text-xs text-gray-400">
+                  {index + 1}.
+                </span>
                 <Icon
                   path={item.isCompact ? ICONS.package : ICONS.chat}
-                  className="h-4 w-4 shrink-0 text-gray-400"
+                  className="mt-0.5 h-4 w-4 shrink-0 text-gray-400"
                 />
-                <span className="flex-1 truncate">{item.label}</span>
+                {/* Wraps rather than truncating — this is the one place meant
+                    for reading a queued item in full — but each item's own
+                    height is capped and scrolls on its own, so one very long
+                    message can't push the rest of the list (or the modal)
+                    out; the list below has its own cap for many items. */}
+                <div className="max-h-24 min-w-0 flex-1 overflow-y-auto py-0.5 break-words whitespace-pre-wrap">
+                  {item.label}
+                </div>
                 <button
                   type="button"
                   onClick={() => onRemoveQueued(item.id)}
                   aria-label={`Remove "${item.label}" from the queue`}
-                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                 >
                   <Icon path={ICONS.close} className="h-3.5 w-3.5" />
                 </button>
