@@ -16,6 +16,7 @@ function row(
     stopReason: null,
     usage: null,
     error: null,
+    summaryId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...partial,
@@ -144,6 +145,46 @@ describe('buildHistory', () => {
     );
     expect(history).toEqual([]);
   });
+
+  it('excludes messages folded into a compaction summary', () => {
+    const history = buildHistory(
+      [
+        row({ seq: 1, role: 'user', summaryId: 's1', blocks: [{ type: 'text', text: 'old' }] }),
+        row({
+          seq: 2,
+          role: 'assistant',
+          summaryId: 's1',
+          blocks: [{ type: 'text', text: 'old reply' }],
+        }),
+        row({ seq: 3, role: 'user', blocks: [{ type: 'text', text: 'recent' }] }),
+      ],
+      target,
+      null
+    );
+    expect(history).toEqual([{ role: 'user', content: [{ type: 'text', text: 'recent' }] }]);
+  });
+
+  it('merges consecutive same-role rows into one wire message (a paste split across several prompt rows)', () => {
+    const history = buildHistory(
+      [
+        row({ seq: 1, role: 'user', blocks: [{ type: 'text', text: 'part one' }] }),
+        row({ seq: 2, role: 'user', blocks: [{ type: 'text', text: 'part two' }] }),
+        row({ seq: 3, role: 'assistant', blocks: [{ type: 'text', text: 'ok' }] }),
+      ],
+      target,
+      null
+    );
+    expect(history).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'part one' },
+          { type: 'text', text: 'part two' },
+        ],
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+    ]);
+  });
 });
 
 describe('buildSystemPrompt', () => {
@@ -160,6 +201,7 @@ describe('buildSystemPrompt', () => {
         ],
       },
       userMemoryText: null,
+      chatSummary: null,
       chatFiles: [],
       hasTools: true,
       hasDiscoverableTools: false,
@@ -182,6 +224,7 @@ describe('buildSystemPrompt', () => {
       personName: null,
       orgName: null,
       userMemoryText: null,
+      chatSummary: null,
       chatFiles: [],
       hasTools: true,
       hasDiscoverableTools: false,
@@ -237,6 +280,7 @@ describe('buildSystemPrompt', () => {
       orgName: null,
       project: null,
       userMemoryText: null,
+      chatSummary: null,
       chatFiles: [],
       hasTools: true,
       hasDiscoverableTools: false,
@@ -259,6 +303,7 @@ describe('buildSystemPrompt with search_knowledge', () => {
     orgName: null,
     project: null,
     userMemoryText: null,
+    chatSummary: null,
     chatFiles: [],
     hasTools: true,
     hasDiscoverableTools: false,
@@ -285,6 +330,7 @@ describe('buildSystemPrompt with find_tools', () => {
     orgName: null,
     project: null,
     userMemoryText: null,
+    chatSummary: null,
     chatFiles: [],
     hasTools: true,
     hasKnowledge: false,
@@ -310,6 +356,7 @@ describe('buildSystemPrompt without file storage', () => {
       orgName: null,
       project: null,
       userMemoryText: null,
+      chatSummary: null,
       chatFiles: [],
       hasTools: true,
       hasDiscoverableTools: false,
@@ -324,6 +371,43 @@ describe('buildSystemPrompt without file storage', () => {
   });
 });
 
+describe('buildSystemPrompt with a chat summary', () => {
+  it('mentions the summary when compaction has run, and stays quiet otherwise', () => {
+    const withSummary = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: 'Set up the repo and fixed the failing build.',
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: true,
+      now: new Date('2026-09-04T00:00:00Z'),
+    });
+    expect(withSummary).toContain('Set up the repo and fixed the failing build.');
+    expect(withSummary).toContain('condensed to keep it within context');
+
+    const without = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: true,
+      now: new Date('2026-09-04T00:00:00Z'),
+    });
+    expect(without).not.toContain('condensed to keep it within context');
+  });
+});
+
 describe('buildSystemPrompt with user memory', () => {
   it('mentions memory only outside a project', () => {
     const withMemory = buildSystemPrompt({
@@ -331,6 +415,7 @@ describe('buildSystemPrompt with user memory', () => {
       orgName: null,
       project: null,
       userMemoryText: '- [2026-09-01 10:00] Prefers concise answers',
+      chatSummary: null,
       chatFiles: [],
       hasTools: true,
       hasDiscoverableTools: false,
@@ -346,6 +431,7 @@ describe('buildSystemPrompt with user memory', () => {
       orgName: null,
       project: { name: 'Launch', instructions: null, memoryText: null, files: [] },
       userMemoryText: '- [2026-09-01 10:00] Prefers concise answers',
+      chatSummary: null,
       chatFiles: [],
       hasTools: true,
       hasDiscoverableTools: false,

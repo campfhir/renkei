@@ -36,6 +36,8 @@ export interface SystemPromptInput {
   } | null;
   /** Memory carried across every chat this person owns; null inside a project. */
   userMemoryText: string | null;
+  /** The chat's rolling compaction summary (compaction.ts); null until one exists. */
+  chatSummary: string | null;
   chatFiles: { id: string; filename: string; contentType: string; sizeBytes: number }[];
   hasTools: boolean;
   /**
@@ -96,6 +98,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   if (input.orgName) who.push(`The organization is ${input.orgName}.`);
   who.push(`The current date and time is ${input.now.toISOString()} (UTC).`);
   sections.push(who.join(' '));
+
+  if (input.chatSummary) {
+    sections.push(
+      `Earlier in this conversation (condensed to keep it within context — the original messages are no longer sent, only this summary):\n${input.chatSummary}`
+    );
+  }
 
   if (input.project) {
     const project: string[] = [`This chat belongs to the project "${input.project.name}".`];
@@ -193,6 +201,9 @@ export function buildHistory(
   const ordered = messages
     .filter((message) => message.id !== exclude)
     .filter((message) => message.status !== 'failed')
+    // Folded into the chat's summary (compaction.ts): the summary carries
+    // this content now, sent once as system-prompt text, not per message.
+    .filter((message) => message.summaryId === null)
     .sort((a, b) => a.seq - b.seq);
 
   const out: LlmMessage[] = [];
@@ -223,7 +234,16 @@ export function buildHistory(
       blocks = blocks.filter((block) => block.type !== 'tool_result' || calls.has(block.toolUseId));
     }
     if (blocks.length === 0) continue;
-    out.push({ role: message.role, content: blocks });
+    // Consecutive same-role rows (a paste chunked into several prompt rows
+    // by start-turn.ts, most directly) merge into one wire message: the
+    // Messages API expects turns to alternate, and two rows of one role
+    // are one turn split for storage, not two turns.
+    const previousOut = out[out.length - 1];
+    if (previousOut && previousOut.role === message.role) {
+      previousOut.content.push(...blocks);
+    } else {
+      out.push({ role: message.role, content: blocks });
+    }
   }
   // A conversation must open with the person, and the model answers a
   // person: leading assistant rows (from a deleted first prompt) go.

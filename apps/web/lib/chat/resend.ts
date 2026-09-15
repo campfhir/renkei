@@ -49,12 +49,50 @@ export interface Resent extends StartedTurn {
   removedArtifactIds: string[];
 }
 
-/** The typed text of a stored prompt: its first text block, without the attachment excerpts. */
-export function promptTextOf(content: string): string {
+/** A stored row's first text block, without the attachment excerpts riding behind it, untrimmed. */
+function rawPromptText(content: string): string {
   const blocks = openBlocks(content);
   const first = blocks.find((block) => block.type === 'text');
   if (!first || first.type !== 'text') return '';
-  return first.text.replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '').trim();
+  return first.text.replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '');
+}
+
+/** The typed text of a stored prompt: its first text block, without the attachment excerpts. */
+export function promptTextOf(content: string): string {
+  return rawPromptText(content).trim();
+}
+
+/**
+ * A resend-as-is has to see the WHOLE original paste, not just the row the
+ * person clicked: start-turn.ts's chunkedUserBlocks splits a large paste
+ * across several `prompt` rows sharing one turn_id, in seq order, and their
+ * chunks concatenate back to the original text exactly (no separator, and
+ * untrimmed here so a chunk boundary mid-whitespace survives) — trimmed
+ * only once, at the end, matching a single-row prompt's own trim. A row
+ * with no turn (an older chat) falls back to its own text.
+ */
+async function originalPromptText(
+  db: Kysely<DB>,
+  tenantId: string,
+  chatId: string,
+  prompt: { turn_id: string | null; content: string }
+): Promise<string> {
+  if (!prompt.turn_id) return promptTextOf(prompt.content);
+  const rows = await db
+    .selectFrom('chat_messages')
+    .select(['content'])
+    .where('tenant_id', '=', tenantId)
+    .where('chat_id', '=', chatId)
+    .where('turn_id', '=', prompt.turn_id)
+    .where('role', '=', 'user')
+    .where('kind', '=', 'prompt')
+    .orderBy('seq', 'asc')
+    .execute();
+  if (rows.length === 0) return promptTextOf(prompt.content);
+  return rows
+    .map((row) => rawPromptText(row.content))
+    .join('')
+    .trim();
 }
 
 export async function resendFromMessage(
@@ -69,7 +107,7 @@ export async function resendFromMessage(
 
   const prompt = await db
     .selectFrom('chat_messages')
-    .select(['id', 'seq', 'kind', 'content'])
+    .select(['id', 'seq', 'kind', 'content', 'turn_id'])
     .where('tenant_id', '=', input.tenantId)
     .where('chat_id', '=', access.chat.id)
     .where('id', '=', input.messageId)
@@ -77,7 +115,10 @@ export async function resendFromMessage(
   if (!prompt) return err('NOT_FOUND' as const);
   if (prompt.kind !== 'prompt') return err('NOT_PROMPT' as const);
 
-  const text = input.text !== null ? input.text : promptTextOf(prompt.content);
+  const text =
+    input.text !== null
+      ? input.text
+      : await originalPromptText(db, input.tenantId, access.chat.id, prompt);
   const ownUploads = await db
     .selectFrom('chat_attachments')
     .select('id')
