@@ -254,25 +254,34 @@ export default function ChatThread({
 
   /**
    * While a turn is running — a reply OR a compaction pass, `running`
-   * covers both — a new Send queues instead of being rejected, and drains
-   * one at a time as each turn ends. `submit`/`forceCompact` above are the
-   * "not running" path; queuing is the only thing added here.
+   * covers both — a new Send queues instead of being rejected, and the
+   * moment `running` goes false this effect drains the next one on its
+   * own: nobody has to click anything for a queued message to go out.
+   * Each item keeps its own id so the composer can list them and let the
+   * person remove any one, not just clear the whole queue.
    */
-  type QueuedItem = { kind: 'message'; input: ComposerSubmit } | { kind: 'compact' };
+  type QueuedItem =
+    { id: number; kind: 'message'; input: ComposerSubmit } | { id: number; kind: 'compact' };
   const [queue, setQueue] = useState<QueuedItem[]>([]);
+  const nextQueueId = useRef(0);
   const queueOrSend = useCallback(
     (input: ComposerSubmit): Promise<boolean> => {
       if (!running) return submit(input);
-      setQueue((current) => [...current, { kind: 'message', input }]);
+      nextQueueId.current += 1;
+      setQueue((current) => [...current, { id: nextQueueId.current, kind: 'message', input }]);
       return Promise.resolve(true);
     },
     [running, submit]
   );
   const queueOrCompact = useCallback((): Promise<boolean> => {
     if (!running) return forceCompact();
-    setQueue((current) => [...current, { kind: 'compact' }]);
+    nextQueueId.current += 1;
+    setQueue((current) => [...current, { id: nextQueueId.current, kind: 'compact' }]);
     return Promise.resolve(true);
   }, [running, forceCompact]);
+  const removeQueued = useCallback((id: number) => {
+    setQueue((current) => current.filter((item) => item.id !== id));
+  }, []);
   useEffect(() => {
     if (running || queue.length === 0) return;
     const [next, ...rest] = queue;
@@ -280,6 +289,17 @@ export default function ChatThread({
     if (next.kind === 'compact') void forceCompact();
     else void submit(next.input);
   }, [running, queue, submit, forceCompact]);
+  const queueView = queue.map((item) => ({
+    id: item.id,
+    isCompact: item.kind === 'compact',
+    label:
+      item.kind === 'compact'
+        ? 'Compact this conversation'
+        : item.input.text.trim() ||
+          (item.input.attachments.length > 0
+            ? `${item.input.attachments.length} file${item.input.attachments.length === 1 ? '' : 's'}`
+            : 'Message'),
+  }));
 
   /**
    * Resend a prompt as it was, or with the text now in the box: the server
@@ -546,7 +566,8 @@ export default function ChatThread({
           ensureChatId={async () => (await ensureChat())?.id ?? null}
           disabled={sending || models.length === 0}
           running={running}
-          queueCount={queue.length}
+          queue={queueView}
+          onRemoveQueued={removeQueued}
           onClearQueue={() => setQueue([])}
           uploads={uploadsEnabled}
           onSubmit={onComposerSubmit}

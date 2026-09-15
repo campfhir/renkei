@@ -29,6 +29,13 @@ export interface ComposerSubmit {
   attachments: AttachmentView[];
 }
 
+/** One queued send, shown in order with what it will do and how to drop it. */
+export interface QueuedComposerItem {
+  id: number;
+  label: string;
+  isCompact: boolean;
+}
+
 const MAX_ROWS = 10;
 
 export default function Composer({
@@ -37,7 +44,8 @@ export default function Composer({
   ensureChatId,
   disabled,
   running,
-  queueCount,
+  queue,
+  onRemoveQueued,
   onClearQueue,
   uploads,
   onSubmit,
@@ -53,8 +61,9 @@ export default function Composer({
   ensureChatId: () => Promise<string | null>;
   disabled: boolean;
   running: boolean;
-  /** Messages sent while running, waiting for it to finish. */
-  queueCount: number;
+  /** Sends waiting for the current turn to finish, oldest first — auto-sent one at a time, no click needed. */
+  queue: QueuedComposerItem[];
+  onRemoveQueued: (id: number) => void;
   onClearQueue: () => void;
   /** Files can be attached at all — false when the org has no storage. */
   uploads: boolean;
@@ -181,19 +190,46 @@ export default function Composer({
           </button>
         </div>
       ) : null}
-      {queueCount > 0 ? (
-        <div className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
-          <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">
-            {queueCount} message{queueCount === 1 ? '' : 's'} queued — sent once this finishes.
-          </span>
-          <button
-            type="button"
-            onClick={onClearQueue}
-            className="rounded px-1.5 py-0.5 font-medium hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
-            Clear
-          </button>
+      {queue.length > 0 ? (
+        <div className="mb-2 rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400">
+            <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1">
+              {queue.length} queued — sent one at a time, automatically, once this finishes.
+            </span>
+            {queue.length > 1 ? (
+              <button
+                type="button"
+                onClick={onClearQueue}
+                className="rounded px-1.5 py-0.5 font-medium hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                Clear all
+              </button>
+            ) : null}
+          </div>
+          <ul className="max-h-32 overflow-y-auto border-t border-gray-100 dark:border-gray-800">
+            {queue.map((item, index) => (
+              <li
+                key={item.id}
+                className="flex items-center gap-2 px-3 py-1 text-xs text-gray-600 dark:text-gray-400"
+              >
+                <span className="w-4 shrink-0 text-right text-gray-400">{index + 1}.</span>
+                <Icon
+                  path={item.isCompact ? ICONS.package : ICONS.chat}
+                  className="h-3.5 w-3.5 shrink-0 text-gray-400"
+                />
+                <span className="flex-1 truncate">{item.label}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveQueued(item.id)}
+                  aria-label={`Remove "${item.label}" from the queue`}
+                  className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                >
+                  <Icon path={ICONS.close} className="h-3 w-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       <div
