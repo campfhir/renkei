@@ -383,37 +383,45 @@ test.describe('chat compaction', () => {
       await expect(page.getByRole('heading', { level: 1, name: ids.queueTitle })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
 
-      // Queue a plain message. With one item, there is nothing to bulk-clear.
+      // Queue a plain message. One item stays inline, plain and simple —
+      // no dialog to open for a queue of one.
       const box = page.getByRole('textbox', { name: 'Message' });
       await box.fill('Left this for when it is free.');
       await page.getByRole('button', { name: 'Queue this message' }).click();
       await expect(box).toHaveValue('');
-      await expect(page.getByText('1 queued', { exact: false })).toBeVisible();
       await expect(page.getByText('Left this for when it is free.')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Clear all' })).toBeHidden();
+      await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
 
       // Queue a second, different kind of send — a compaction pass, picked
-      // from the prompt picker — and see both listed, oldest first.
+      // from the prompt picker. With more than one, the inline row collapses
+      // to a summary; the individual items move behind "View".
       await box.press('/');
       await page.getByRole('button', { name: /Compact this conversation/ }).click();
       await expect(page.getByText('2 queued', { exact: false })).toBeVisible();
-      await expect(page.getByText('Compact this conversation')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Clear all' })).toBeVisible();
+      await expect(page.getByText('Left this for when it is free.')).toBeHidden();
 
-      // Pick and choose: remove just the first one.
-      await page
+      await page.getByRole('button', { name: 'View' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Queued (2)' });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByText('Left this for when it is free.')).toBeVisible();
+      await expect(dialog.getByText('Compact this conversation')).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Clear all' })).toBeVisible();
+
+      // Pick and choose: remove just the first one. Back down to one item,
+      // the dialog closes itself and that item returns inline.
+      await dialog
         .getByRole('button', { name: 'Remove "Left this for when it is free." from the queue' })
         .click();
-      await expect(page.getByText('Left this for when it is free.')).toBeHidden();
+      await expect(dialog).toBeHidden();
       await expect(page.getByText('Compact this conversation')).toBeVisible();
-      await expect(page.getByText('1 queued', { exact: false })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Clear all' })).toBeHidden();
+      await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
 
       // The other process finishes its reply — nobody clicks anything, the
       // queued compaction pass sends itself the moment the model is free.
-      await client.query(`UPDATE chat_turns SET status = 'completed', finished_at = NOW() WHERE id = $1`, [
-        ids.queueTurnId,
-      ]);
+      await client.query(
+        `UPDATE chat_turns SET status = 'completed', finished_at = NOW() WHERE id = $1`,
+        [ids.queueTurnId]
+      );
       await expect(page.getByText(/queued/)).toBeHidden({ timeout: 10_000 });
       await expect
         .poll(

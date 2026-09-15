@@ -19,6 +19,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import Modal from '@/components/modal';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
 import AttachmentChip from './attachment-chip';
@@ -83,6 +84,7 @@ export default function Composer({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [prompts, setPrompts] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Editing starts with the old text in the box and the cursor at its end.
@@ -95,6 +97,11 @@ export default function Composer({
       element.setSelectionRange(editing.text.length, editing.text.length);
     }
   }, [editing]);
+  // Once there is at most one item left — dequeued, removed, or drained on
+  // its own — that item belongs inline again, not behind a dialog.
+  useEffect(() => {
+    if (queue.length <= 1) setQueueOpen(false);
+  }, [queue.length]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const grow = useCallback(() => {
@@ -190,47 +197,76 @@ export default function Composer({
           </button>
         </div>
       ) : null}
-      {queue.length > 0 ? (
-        <div className="mb-2 rounded-md border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-          <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400">
-            <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
-            <span className="flex-1">
-              {queue.length} queued — sent one at a time, automatically, once this finishes.
-            </span>
-            {queue.length > 1 ? (
-              <button
-                type="button"
-                onClick={onClearQueue}
-                className="rounded px-1.5 py-0.5 font-medium hover:bg-gray-100 dark:hover:bg-gray-800"
-              >
-                Clear all
-              </button>
-            ) : null}
-          </div>
-          <ul className="max-h-32 overflow-y-auto border-t border-gray-100 dark:border-gray-800">
+      {queue.length === 1 ? (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
+          <Icon
+            path={queue[0].isCompact ? ICONS.package : ICONS.chat}
+            className="h-3.5 w-3.5 shrink-0 text-gray-400"
+          />
+          <span className="flex-1 truncate">{queue[0].label}</span>
+          <span className="shrink-0 text-gray-400">queued</span>
+          <button
+            type="button"
+            onClick={() => onRemoveQueued(queue[0].id)}
+            aria-label={`Remove "${queue[0].label}" from the queue`}
+            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.close} className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : queue.length > 1 ? (
+        <button
+          type="button"
+          onClick={() => setQueueOpen(true)}
+          className="mb-2 flex w-full items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800"
+        >
+          <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            {queue.length} queued — sent one at a time, automatically, once this finishes.
+          </span>
+          <span className="shrink-0 font-medium text-blue-600 dark:text-blue-400">View</span>
+        </button>
+      ) : null}
+      {queueOpen ? (
+        <Modal title={`Queued (${queue.length})`} onClose={() => setQueueOpen(false)}>
+          <p className="mb-2 text-xs text-gray-500">
+            Sent one at a time, automatically, once the current reply finishes — nothing here needs
+            a click to go out.
+          </p>
+          <ul className="max-h-72 space-y-1 overflow-y-auto">
             {queue.map((item, index) => (
               <li
                 key={item.id}
-                className="flex items-center gap-2 px-3 py-1 text-xs text-gray-600 dark:text-gray-400"
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300"
               >
-                <span className="w-4 shrink-0 text-right text-gray-400">{index + 1}.</span>
+                <span className="w-5 shrink-0 text-right text-xs text-gray-400">{index + 1}.</span>
                 <Icon
                   path={item.isCompact ? ICONS.package : ICONS.chat}
-                  className="h-3.5 w-3.5 shrink-0 text-gray-400"
+                  className="h-4 w-4 shrink-0 text-gray-400"
                 />
                 <span className="flex-1 truncate">{item.label}</span>
                 <button
                   type="button"
                   onClick={() => onRemoveQueued(item.id)}
                   aria-label={`Remove "${item.label}" from the queue`}
-                  className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                 >
-                  <Icon path={ICONS.close} className="h-3 w-3" />
+                  <Icon path={ICONS.close} className="h-3.5 w-3.5" />
                 </button>
               </li>
             ))}
           </ul>
-        </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={onClearQueue}
+              className="rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            >
+              Clear all
+            </button>
+          </div>
+        </Modal>
       ) : null}
       <div
         onDragOver={(event) => {
