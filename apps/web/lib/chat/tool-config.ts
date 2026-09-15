@@ -20,6 +20,16 @@ export const CHAT_CORE_CONNECTORS: readonly string[] = ['agents', 'cards', 'know
 /** Always offered whatever the toolset, because they carry no connector risk. */
 export const CHAT_ALWAYS_TOOLS: readonly string[] = ['whoami'];
 
+/**
+ * On in every chat of a code project, whatever the toolset says: the
+ * project's repository lives on Bitbucket, and the code_* tools stop at
+ * the push — opening the pull request, reading its comments, watching
+ * the pipeline are the connector's own tools. A code chat without them
+ * would be told by its own prompt to call bitbucket_create_pull_request
+ * and have nowhere to find it. The picker shows these checked and locked.
+ */
+export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket'];
+
 export interface ChatToolConfig {
   connectors: string[];
 }
@@ -54,6 +64,25 @@ export function effectiveToolConfig(
   userDefault: ChatToolConfig | null = null
 ): ChatToolConfig {
   return chat ?? project ?? userDefault ?? defaultToolConfig();
+}
+
+/**
+ * The toolset with `required` on as well — a fresh config, sorted like a
+ * parsed one, so a chat's own choice never turns a required connector off.
+ */
+export function withRequiredConnectors(
+  config: ChatToolConfig,
+  required: readonly string[]
+): ChatToolConfig {
+  return { connectors: [...new Set([...config.connectors, ...required])].sort() };
+}
+
+/** What a chat in this project gets: its toolset, plus what the project's kind requires. */
+export function projectToolConfig(
+  config: ChatToolConfig,
+  projectKind: 'chat' | 'code' | null | undefined
+): ChatToolConfig {
+  return projectKind === 'code' ? withRequiredConnectors(config, CODE_PROJECT_CONNECTORS) : config;
 }
 
 /** The jsonb form — a fresh literal, since the pg driver serializes objects itself. */

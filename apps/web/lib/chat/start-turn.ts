@@ -41,7 +41,7 @@ import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
 import { buildHistory, buildSystemPrompt } from './request-builder';
-import { effectiveToolConfig } from './tool-config';
+import { effectiveToolConfig, projectToolConfig } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { resolveChatToolSurface } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
@@ -280,10 +280,12 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       input.chat.toolConfig || project?.toolConfig
         ? null
         : await getDefaultChatTools(input.tenantId, input.session.subject);
-    const toolConfig = effectiveToolConfig(
-      input.chat.toolConfig,
-      project?.toolConfig ?? null,
-      userDefault
+    // A code project's chats always carry the Bitbucket connector on top
+    // of whatever was chosen (tool-config.ts): the code_* tools push, the
+    // connector's tools open the pull request.
+    const toolConfig = projectToolConfig(
+      effectiveToolConfig(input.chat.toolConfig, project?.toolConfig ?? null, userDefault),
+      project?.kind
     );
     // A code project's turn is a working session with far higher limits
     // than an ordinary chat's (lib/code/turn.ts); the tool surface lives

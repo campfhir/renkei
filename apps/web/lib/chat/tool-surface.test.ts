@@ -1,5 +1,11 @@
 import { partitionChatTools, readOnlyToolNames } from './tool-surface';
-import { effectiveToolConfig, parseToolConfig } from './tool-config';
+import {
+  CODE_PROJECT_CONNECTORS,
+  effectiveToolConfig,
+  parseToolConfig,
+  projectToolConfig,
+  withRequiredConnectors,
+} from './tool-config';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 
 function descriptor(
@@ -113,5 +119,46 @@ describe('tool config', () => {
     expect(effectiveToolConfig(null, null)).toEqual({
       connectors: ['agents', 'cards', 'knowledge', 'sandbox'],
     });
+  });
+});
+
+describe('withRequiredConnectors', () => {
+  it('adds what is required, once, sorted, without touching the input', () => {
+    const chosen = { connectors: ['jira', 'atlassian-bitbucket'] };
+    expect(withRequiredConnectors(chosen, ['atlassian-bitbucket', 'agents'])).toEqual({
+      connectors: ['agents', 'atlassian-bitbucket', 'jira'],
+    });
+    expect(chosen).toEqual({ connectors: ['jira', 'atlassian-bitbucket'] });
+  });
+
+  it('turns an empty toolset into just the required set', () => {
+    expect(withRequiredConnectors({ connectors: [] }, ['atlassian-bitbucket'])).toEqual({
+      connectors: ['atlassian-bitbucket'],
+    });
+  });
+});
+
+describe('projectToolConfig', () => {
+  it('always carries Bitbucket in a code project, whatever the chat chose', () => {
+    expect(CODE_PROJECT_CONNECTORS).toContain('atlassian-bitbucket');
+    // The core set, when nothing was chosen.
+    expect(projectToolConfig(effectiveToolConfig(null, null), 'code').connectors).toEqual([
+      'agents',
+      'atlassian-bitbucket',
+      'cards',
+      'knowledge',
+      'sandbox',
+    ]);
+    // A chat that turned everything off still gets it.
+    expect(projectToolConfig({ connectors: [] }, 'code').connectors).toEqual([
+      'atlassian-bitbucket',
+    ]);
+  });
+
+  it('leaves a chat project, or no project, alone', () => {
+    const chosen = { connectors: ['jira'] };
+    expect(projectToolConfig(chosen, 'chat')).toBe(chosen);
+    expect(projectToolConfig(chosen, null)).toBe(chosen);
+    expect(projectToolConfig(chosen, undefined)).toBe(chosen);
   });
 });
