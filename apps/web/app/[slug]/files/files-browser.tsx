@@ -21,6 +21,7 @@ import { getJson, sendJson } from '@/lib/fetch-json';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
+import { LoadingRegion, SkeletonHeading, SkeletonTable } from '@/components/skeleton';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -368,7 +369,12 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
   };
 
   if (shares === null) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>;
+    return (
+      <LoadingRegion label="Loading file shares…">
+        <SkeletonHeading subtitle={false} actions={2} className="mb-4" />
+        <SkeletonTable rows={6} columns={3} />
+      </LoadingRegion>
+    );
   }
   if (shares.length === 0) {
     return (
@@ -511,7 +517,9 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         {error ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
 
         {loading ? (
-          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading…</p>
+          <LoadingRegion label="Loading folder…" className="mt-3">
+            <SkeletonTable rows={5} columns={3} />
+          </LoadingRegion>
         ) : shown.length === 0 && !error ? (
           <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
             {entries.length === 0 ? 'This folder is empty.' : 'Nothing matches the filter.'}

@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from 'react';
 import { formatIsGeneric } from '@renkei/redaction';
+import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 interface DetectorInfo {
   key: string;
@@ -135,7 +136,13 @@ export default function RedactionForm({ slug }: { slug: string }) {
     }
   }
 
-  if (!config) return <p className="text-sm text-gray-500">Loading…</p>;
+  if (!config) {
+    return (
+      <LoadingRegion label="Loading redaction settings…">
+        <SkeletonForm fields={4} />
+      </LoadingRegion>
+    );
+  }
 
   // A shape with no fixed text of its own matches anything else of that shape.
   // Said before saving, not discovered afterwards in a mangled tool result.

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 
 /**
  * The decision controls of an APPROVAL card — a `needsApproval` step's
@@ -25,7 +25,7 @@ export default function ApprovalActions({
   tenantId: string;
   itemId: string;
 }): React.ReactNode {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export default function ApprovalActions({
         typeof body === 'object' && body !== null ? { ...body } : {};
       if (response.status === 502 && typeof record.warning === 'string') {
         setNotice(record.warning);
-        router.refresh();
+        refresh();
         return;
       }
       if (!response.ok) {
@@ -55,7 +55,7 @@ export default function ApprovalActions({
         );
         return;
       }
-      router.refresh();
+      refresh();
     } finally {
       setBusy(false);
     }
@@ -75,14 +75,14 @@ export default function ApprovalActions({
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => void decide('approve')}
-          disabled={busy}
+          disabled={busy || pending}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           Approve
         </button>
         <button
           onClick={() => void decide('decline')}
-          disabled={busy}
+          disabled={busy || pending}
           className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
         >
           Decline

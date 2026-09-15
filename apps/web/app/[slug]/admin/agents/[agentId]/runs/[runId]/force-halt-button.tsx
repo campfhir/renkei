@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 import { sendJsonFull } from '@/lib/fetch-json';
 
 export default function ForceHaltButton({
@@ -20,7 +20,7 @@ export default function ForceHaltButton({
   agentId: string;
   runId: string;
 }) {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,7 +44,7 @@ export default function ForceHaltButton({
       setError(result.error);
       return;
     }
-    router.refresh();
+    refresh();
   };
 
   return (
@@ -52,11 +52,11 @@ export default function ForceHaltButton({
       <button
         type="button"
         onClick={() => void forceHalt()}
-        disabled={busy}
+        disabled={busy || pending}
         title="Force this run to a stop — for a run that is genuinely stuck and won't cancel on its own"
         className="rounded-md border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:border-red-500 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40"
       >
-        {busy ? 'Halting…' : 'Force halt'}
+        {busy || pending ? 'Halting…' : 'Force halt'}
       </button>
       {error ? <span className="text-xs text-red-600 dark:text-red-400">{error}</span> : null}
     </span>

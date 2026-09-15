@@ -14,7 +14,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { invokeAgentRun } from '@/lib/agents/invoke-client';
@@ -145,7 +145,7 @@ export function AgentsList({
   /** Someone else's agents this viewer holds access grants on. */
   shared?: SharedAgentCard[];
 }) {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ranNow, setRanNow] = useState<string | null>(null);
@@ -164,10 +164,10 @@ export function AgentsList({
     if (!anyStale || staleRefreshes.current >= 20) return;
     const timer = setTimeout(() => {
       staleRefreshes.current += 1;
-      router.refresh();
+      refresh();
     }, 3_000);
     return () => clearTimeout(timer);
-  }, [anyStale, agents, router]);
+  }, [anyStale, agents, refresh]);
 
   const runNow = async (agent: StoredAgent, confirm = false) => {
     setBusy(agent.id);
@@ -201,7 +201,7 @@ export function AgentsList({
     const result = await sendJsonFull(`/api/tenant/${tenantId}/agents/${agent.id}`, 'DELETE');
     setBusy(null);
     if (result.error) setError(result.error);
-    else router.refresh();
+    else refresh();
   };
 
   if (agents.length === 0 && shared.length === 0) {
@@ -307,7 +307,7 @@ export function AgentsList({
               <IconButton
                 label="Run now"
                 icon="play"
-                disabled={busy === agent.id}
+                disabled={busy === agent.id || pending}
                 onClick={() => runNow(agent)}
               />
             ) : null}
@@ -322,7 +322,7 @@ export function AgentsList({
                 label="Delete"
                 icon="trash"
                 danger
-                disabled={busy === agent.id}
+                disabled={busy === agent.id || pending}
                 onClick={() => remove(agent)}
               />
             ) : null}

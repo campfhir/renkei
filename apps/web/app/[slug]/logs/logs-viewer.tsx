@@ -18,6 +18,7 @@ import {
 import { signInUrl } from '@/lib/sign-in-url';
 import { searchLogs, type LogSearchResult } from './actions';
 import { describeWindow, DEFAULT_WINDOW_DAYS, DEFAULT_LOG_LEVELS, type LogWindow } from './window';
+import { Spinner } from '@/components/skeleton';
 
 /** The levels this gateway actually writes, in severity order. */
 const LEVELS = ['debug', 'info', 'warn', 'error', 'critical'];
@@ -235,7 +236,12 @@ export default function LogsViewer({
           <span>
             {ordered.length} record{ordered.length === 1 ? '' : 's'}
           </span>
-          <span className={pending ? 'text-sky-500' : 'invisible'}>loading…</span>
+          <span
+            className={`inline-flex items-center gap-1.5 ${pending ? 'text-sky-500' : 'invisible'}`}
+          >
+            <Spinner size={3} className="border-sky-200 border-t-sky-500 dark:border-sky-900" />
+            loading…
+          </span>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">

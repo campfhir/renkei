@@ -10,6 +10,7 @@
 import { useState, useTransition } from 'react';
 import { getPersonTokenTrend, type PersonTrendReport } from './actions';
 import { TREND_PERIODS, type TrendBucket } from './trend-window';
+import { LoadingLine } from '@/components/skeleton';
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -145,7 +146,7 @@ export default function TokenTrendChart({
             ))}
           </select>
         )}
-        {pending && <span className="text-xs text-gray-500">Loading…</span>}
+        {pending && <LoadingLine size="xs" />}
       </div>
       {report.error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{report.error}</p>

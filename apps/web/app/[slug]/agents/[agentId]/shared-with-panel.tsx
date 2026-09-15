@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { LoadingRegion, SkeletonList } from '@/components/skeleton';
 
 interface Grant {
   id: string;
@@ -42,7 +43,11 @@ export default function SharedWithPanel({
   }
 
   if (grants === null) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>;
+    return (
+      <LoadingRegion label="Loading who has access…">
+        <SkeletonList rows={2} />
+      </LoadingRegion>
+    );
   }
 
   const activeGrants = grants.filter((g) => !g.expired);

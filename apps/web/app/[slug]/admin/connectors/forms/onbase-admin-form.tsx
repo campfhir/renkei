@@ -12,6 +12,7 @@ import {
   hintClass,
 } from './shared';
 import type { OnBaseConfig, OnBaseTestResult } from './onbase-form';
+import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 /* ----------------------------------------------------------------------- */
 
@@ -121,7 +122,9 @@ export function OnBaseAdminForm({ slug, origin }: { slug: string; origin: string
   if (state.loading)
     return (
       <Card title="OnBase Administration" status={null}>
-        Loading…
+        <LoadingRegion label="Loading settings…">
+          <SkeletonForm fields={3} />
+        </LoadingRegion>
       </Card>
     );
   if (state.error) {

@@ -9,7 +9,7 @@
  */
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 import { sendJsonFull } from '@/lib/fetch-json';
 
 export default function CancelButton({
@@ -21,7 +21,7 @@ export default function CancelButton({
   agentId: string;
   runId: string;
 }) {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +40,7 @@ export default function CancelButton({
       return;
     }
     setDone(true);
-    router.refresh();
+    refresh();
   };
 
   return (
@@ -48,7 +48,7 @@ export default function CancelButton({
       <button
         type="button"
         onClick={() => void cancel()}
-        disabled={busy || done}
+        disabled={busy || pending || done}
         title="Stop this run — it will not go any further"
         className="rounded-md border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:border-red-500 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40"
       >

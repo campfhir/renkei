@@ -13,6 +13,7 @@ import Modal from '@/components/modal';
 import LocalTime from '@/components/local-time';
 import { chatClient } from '@/lib/chat/client';
 import type { GrantRole, GrantView, ResourceKind } from '@/lib/chat/access';
+import { LoadingRegion, SkeletonList } from '@/components/skeleton';
 
 interface Person {
   subject: string;
@@ -207,7 +208,9 @@ export default function ShareModal({
         <div>
           <p className="mb-1 text-xs font-medium text-gray-500">Who has access</p>
           {grants === null ? (
-            <p className="text-gray-500">Loading…</p>
+            <LoadingRegion label="Loading who has access…">
+              <SkeletonList rows={2} />
+            </LoadingRegion>
           ) : grants.length === 0 ? (
             <p className="text-gray-500">Nobody yet.</p>
           ) : (

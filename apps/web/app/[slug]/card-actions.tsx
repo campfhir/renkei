@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 
 /**
  * Approve/dismiss controls for one suggested card. Approval needs a Jira
@@ -21,7 +21,7 @@ export default function CardActions({
   itemId: string;
   dismissOnly?: boolean;
 }): React.ReactNode {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [projectKey, setProjectKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export default function CardActions({
         setError(message);
         return;
       }
-      router.refresh();
+      refresh();
     } finally {
       setBusy(false);
     }
@@ -76,7 +76,7 @@ export default function CardActions({
       )}
       <button
         onClick={() => void decide('dismiss')}
-        disabled={busy}
+        disabled={busy || pending}
         className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
       >
         Dismiss

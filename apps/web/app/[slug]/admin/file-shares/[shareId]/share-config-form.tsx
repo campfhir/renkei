@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation';
 import { getJson, sendJson } from '@/lib/fetch-json';
 import ShareConfigFields, { draftPayload, emptyDraft } from '../share-config-fields';
 import type { ShareDraft } from '../share-config-fields';
+import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 interface ShareResponse {
   share: {
@@ -58,7 +59,11 @@ export default function ShareConfigForm({ slug, shareId }: { slug: string; share
   }, [load]);
 
   if (!draft) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>;
+    return (
+      <LoadingRegion label="Loading share settings…">
+        <SkeletonForm fields={5} />
+      </LoadingRegion>
+    );
   }
 
   const save = async () => {

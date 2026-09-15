@@ -19,6 +19,7 @@ import {
   hintClass,
   SaveRow,
 } from './shared';
+import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 /* ----------------------------------------------------------------------- */
 
@@ -95,7 +96,9 @@ export function WebexUserForm({ slug, origin }: { slug: string; origin: string |
   if (state.loading)
     return (
       <Card title="WebEx (user access)" status={null}>
-        Loading…
+        <LoadingRegion label="Loading settings…">
+          <SkeletonForm fields={3} />
+        </LoadingRegion>
       </Card>
     );
   if (state.error) {

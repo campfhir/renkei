@@ -15,7 +15,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 import { invokeAgentRun } from '@/lib/agents/invoke-client';
 import { Icon, ICONS } from '@/components/icons';
 import ConfirmRunModal from '../confirm-run-modal';
@@ -31,7 +31,7 @@ export default function RunNowButton({
   agentId: string;
   agentName: string;
 }) {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +53,7 @@ export default function RunNowButton({
       case 'started':
         setConfirmMessage(null);
         setStartedRunId(result.runId);
-        router.refresh();
+        refresh();
     }
   };
 
@@ -61,13 +61,13 @@ export default function RunNowButton({
     <div className="flex flex-col items-end gap-1">
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || pending}
         onClick={() => void start()}
         title="Start a run now, without waiting for a trigger."
         className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
       >
         <Icon path={ICONS.play} className="h-3.5 w-3.5" />
-        {busy ? 'Starting…' : 'Run now'}
+        {busy || pending ? 'Starting…' : 'Run now'}
       </button>
       {startedRunId ? (
         <Link

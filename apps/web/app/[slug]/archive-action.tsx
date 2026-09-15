@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 
 /**
  * Archive/unarchive control for one decided card. Archiving only changes
@@ -17,7 +17,7 @@ export default function ArchiveAction({
   itemId: string;
   archived: boolean;
 }): React.ReactNode {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +38,7 @@ export default function ArchiveAction({
         setError(message);
         return;
       }
-      router.refresh();
+      refresh();
     } finally {
       setBusy(false);
     }
@@ -48,7 +48,7 @@ export default function ArchiveAction({
     <div className="mt-2 flex items-center gap-2">
       <button
         onClick={() => void toggle()}
-        disabled={busy}
+        disabled={busy || pending}
         className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-900"
       >
         {archived ? 'Unarchive' : 'Archive'}

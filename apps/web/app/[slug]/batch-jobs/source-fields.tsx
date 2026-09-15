@@ -22,6 +22,7 @@ import { getJson } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
 import type { AfterProcessingValue } from '@/lib/batch-jobs/pipeline-form-value';
 import FolderPicker from './new/folder-picker';
+import { LoadingLine } from '@/components/skeleton';
 
 export type GroupingStrategy = 'whole-file' | 'filename-pattern';
 
@@ -149,7 +150,7 @@ export default function SourceFields({
           File share
         </label>
         {shares === null ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">Loading your file shares…</p>
+          <LoadingLine label="Loading your file shares…" />
         ) : connectedShares.length === 0 ? (
           <p className="text-sm text-gray-500 dark:text-gray-400">
             You have not connected a file share yet. Connect one on the{' '}

@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { CONTENT_KINDS, describeKinds } from '@/lib/email-sanitizer/content-kinds';
 import type { CleanerScriptKind } from '@renkei/email-sanitizer';
+import { LoadingLine } from '@/components/skeleton';
 
 /**
  * Monaco is a few megabytes and touches `window` on import, so it is loaded
@@ -14,8 +15,8 @@ import type { CleanerScriptKind } from '@renkei/email-sanitizer';
 const ScriptEditor = dynamic(() => import('./script-editor'), {
   ssr: false,
   loading: () => (
-    <div className="rounded-md border border-gray-300 p-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-      Loading editor…
+    <div className="rounded-md border border-gray-300 p-3 dark:border-gray-700">
+      <LoadingLine size="xs" label="Loading editor…" />
     </div>
   ),
 });
