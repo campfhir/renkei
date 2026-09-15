@@ -19,6 +19,7 @@ import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import DiffView, { Counts } from './diff-view';
+import { LoadingLine, Spinner } from '@/components/skeleton';
 
 interface DiffFileStat {
   path: string;
@@ -405,7 +406,10 @@ function ChangesModal({
               : 'The checkout is not ready.'}
           </span>
         ) : (
-          <span>Loading…</span>
+          <span className="inline-flex items-center gap-1.5">
+            <Spinner size={3} />
+            Loading…
+          </span>
         )}
         {totals ? <Counts added={totals.added} deleted={totals.deleted} /> : null}
         <label className="ml-auto flex items-center gap-1.5">
@@ -517,7 +521,7 @@ function EnvironmentModal({
         What the project’s commands run with. Values are never shown — not here, not to the model.
       </p>
       {variables === null ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <LoadingLine label="Loading variables…" />
       ) : variables.length === 0 ? (
         <p className="text-sm text-gray-500">No environment variables.</p>
       ) : (

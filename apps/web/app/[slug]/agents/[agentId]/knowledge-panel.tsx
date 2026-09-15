@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
+import { LoadingRegion, SkeletonList } from '@/components/skeleton';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -41,7 +42,9 @@ export default function KnowledgePanel({
   tenantId: string;
   agentId: string;
 }) {
-  const [notes, setNotes] = useState<NoteRow[]>([]);
+  // null until the first load answers: "No notes yet." must not flash
+  // at someone whose notes are simply still on their way.
+  const [notes, setNotes] = useState<NoteRow[] | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,11 +130,17 @@ export default function KnowledgePanel({
         instructions. The agent can add its own with the knowledge tools.
       </p>
 
-      {notes.length === 0 && !draft ? (
+      {notes === null ? (
+        <LoadingRegion label="Loading notes…">
+          <SkeletonList rows={3} />
+        </LoadingRegion>
+      ) : null}
+
+      {notes !== null && notes.length === 0 && !draft ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">No notes yet.</p>
       ) : null}
 
-      {notes.length > 0 ? (
+      {notes !== null && notes.length > 0 ? (
         <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
           <label className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
             <input
@@ -193,7 +202,7 @@ export default function KnowledgePanel({
       ) : null}
 
       <ul className="space-y-2">
-        {notes.map((note) => (
+        {(notes ?? []).map((note) => (
           <li
             key={note.noteId}
             className="rounded-md border border-gray-200 p-3 dark:border-gray-800"

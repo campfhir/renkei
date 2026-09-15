@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 
 /**
  * "Start fresh": wipe this agent's memory (summary + entries). Two-click —
@@ -15,7 +15,7 @@ export default function ClearMemoryButton({
   tenantId: string;
   agentId: string;
 }) {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -24,7 +24,7 @@ export default function ClearMemoryButton({
     try {
       await fetch(`/api/tenant/${tenantId}/agents/${agentId}/memory`, { method: 'DELETE' });
       setArmed(false);
-      router.refresh();
+      refresh();
     } finally {
       setBusy(false);
     }
@@ -34,7 +34,7 @@ export default function ClearMemoryButton({
     <span className="flex items-center gap-2 text-xs">
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || pending}
         onClick={() => void clear()}
         className="rounded-md bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700 disabled:opacity-50"
       >

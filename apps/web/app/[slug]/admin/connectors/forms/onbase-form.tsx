@@ -11,6 +11,7 @@ import {
   labelClass,
   hintClass,
 } from './shared';
+import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 /* ----------------------------------------------------------------------- */
 
@@ -128,7 +129,9 @@ export function OnBaseForm({ slug, origin }: { slug: string; origin: string | nu
   if (state.loading)
     return (
       <Card title="OnBase" status={null}>
-        Loading…
+        <LoadingRegion label="Loading settings…">
+          <SkeletonForm fields={3} />
+        </LoadingRegion>
       </Card>
     );
   if (state.error) {

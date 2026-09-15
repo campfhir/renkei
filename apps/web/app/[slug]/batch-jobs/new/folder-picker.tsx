@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson } from '@/lib/fetch-json';
+import { LoadingLine } from '@/components/skeleton';
 
 interface EntryView {
   name: string;
@@ -112,7 +113,7 @@ export default function FolderPicker({
       {error ? (
         <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
       ) : folders === null ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
+        <LoadingLine label="Loading folders…" />
       ) : folders.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">No subfolders here.</p>
       ) : (

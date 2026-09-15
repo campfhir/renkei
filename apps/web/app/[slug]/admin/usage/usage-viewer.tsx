@@ -15,6 +15,7 @@ import { ORG_USAGE_PERIODS, activeUserPercent, formatTokens, type OrgBucket } fr
 import type { EfficientAgentRow, TopAgentRow, TopUserRow, OrgToolRow } from '@/lib/usage/org-usage';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { Leaderboard } from '@/components/leaderboard';
+import { LoadingLine } from '@/components/skeleton';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -42,7 +43,8 @@ interface Segment {
 }
 
 function legendFor(series: Series): { label: string; className: string }[] {
-  if (series === 'tokens') return TOKEN_SEGMENTS.map(({ label, className }) => ({ label, className }));
+  if (series === 'tokens')
+    return TOKEN_SEGMENTS.map(({ label, className }) => ({ label, className }));
   if (series === 'runs')
     return [
       { label: 'Succeeded', className: 'bg-blue-500' },
@@ -64,7 +66,11 @@ function segmentsOf(bucket: OrgBucket, series: Series): Segment[] {
   }
   if (series === 'runs') {
     return [
-      { label: 'Succeeded', value: Math.max(0, bucket.runs - bucket.failures), className: 'bg-blue-500' },
+      {
+        label: 'Succeeded',
+        value: Math.max(0, bucket.runs - bucket.failures),
+        className: 'bg-blue-500',
+      },
       { label: 'Failed', value: bucket.failures, className: 'bg-red-500' },
     ];
   }
@@ -195,7 +201,8 @@ export default function OrgUsageViewer({
     0
   );
   const failureRate = activity.runs > 0 ? (activity.failures / activity.runs) * 100 : 0;
-  const toolErrorRate = activity.toolCalls > 0 ? (activity.toolErrors / activity.toolCalls) * 100 : 0;
+  const toolErrorRate =
+    activity.toolCalls > 0 ? (activity.toolErrors / activity.toolCalls) * 100 : 0;
   const activePct = activeUserPercent(activity.activeUsers, activity.totalUsers);
   const periodLabel =
     ORG_USAGE_PERIODS.find((period) => period.key === report.periodKey)?.label ??
@@ -241,7 +248,7 @@ export default function OrgUsageViewer({
             {period.label}
           </button>
         ))}
-        {pending && <span className="text-sm text-gray-500">Loading…</span>}
+        {pending && <LoadingLine />}
       </nav>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -389,7 +396,9 @@ export default function OrgUsageViewer({
             </Link>
           )}
           valueOf={(row) => row.efficiency}
-          formatValue={(row) => `${row.efficiency.toFixed(1)} / 1k · ${formatTokens(row.tokensPerRun)}/run`}
+          formatValue={(row) =>
+            `${row.efficiency.toFixed(1)} / 1k · ${formatTokens(row.tokensPerRun)}/run`
+          }
           barClassName="bg-emerald-500"
         />
       </div>

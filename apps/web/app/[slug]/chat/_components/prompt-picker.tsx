@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Modal from '@/components/modal';
 import { getJson } from '@/lib/fetch-json';
+import { LoadingLine } from '@/components/skeleton';
 
 interface PickerPrompt {
   id: string;
@@ -63,7 +64,7 @@ export default function PromptPicker({
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       <div className="max-h-80 overflow-y-auto">
         {prompts === null ? (
-          <p className="text-sm text-gray-500">Loading…</p>
+          <LoadingLine label="Loading prompts…" />
         ) : shown.length === 0 ? (
           <p className="text-sm text-gray-500">
             {prompts.length === 0 ? 'No prompts yet — create a library first.' : 'No matches.'}

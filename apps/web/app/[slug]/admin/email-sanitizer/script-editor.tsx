@@ -24,6 +24,7 @@ import { useEffect, useState } from 'react';
 import Editor, { loader, type Monaco } from '@monaco-editor/react';
 import * as monacoEditor from 'monaco-editor';
 import { CLEANER_TYPES } from '@/lib/email-sanitizer/cleaner-types';
+import { LoadingLine } from '@/components/skeleton';
 
 let configured = false;
 
@@ -140,9 +141,7 @@ export default function ScriptEditor({
         value={value}
         onChange={(next) => onChange(next ?? '')}
         beforeMount={handleBeforeMount}
-        loading={
-          <div className="p-3 text-xs text-gray-500 dark:text-gray-400">Loading editor…</div>
-        }
+        loading={<LoadingLine size="xs" className="p-3" label="Loading editor…" />}
         options={{
           minimap: { enabled: false },
           lineNumbers: 'on',

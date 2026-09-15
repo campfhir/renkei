@@ -6,6 +6,7 @@ import { SOURCE_OPTIONS } from './source-options';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { searchMyKnowledge, type KnowledgeSearchHit, type KnowledgeSearchResult } from './actions';
 import { signInUrl } from '@/lib/sign-in-url';
+import { LoadingLine } from '@/components/skeleton';
 
 const K_OPTIONS = [10, 20, 30];
 
@@ -547,7 +548,7 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
         them: <code>printers not working ticket:ENG-787</code>.
       </p>
 
-      {!hasSearched && busy && <p className="text-sm text-gray-600 dark:text-gray-400">Loading…</p>}
+      {!hasSearched && busy && <LoadingLine label="Searching…" />}
 
       {result?.error && (
         <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">

@@ -28,6 +28,7 @@ import {
 import { TOP_TOOLS } from './window';
 import { friendlyToolName } from '@/lib/tool-name';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
+import { LoadingLine, LoadingRegion, SkeletonText } from '@/components/skeleton';
 
 const PERIODS = [
   { days: 1, label: '24 hours' },
@@ -338,7 +339,11 @@ function ToolDetailDialog({
           ))}
         </dl>
 
-        {!detail && <p className="mt-4 text-sm text-gray-500">Loading…</p>}
+        {!detail && (
+          <LoadingRegion label="Loading details…" className="mt-4">
+            <SkeletonText lines={3} />
+          </LoadingRegion>
+        )}
         {detail?.error && (
           <p className="mt-4 text-sm text-red-600 dark:text-red-400">{detail.error}</p>
         )}
@@ -588,7 +593,7 @@ export default function UsageViewer({
             ))}
           </span>
         )}
-        {pending && <span className="text-sm text-gray-500">Loading…</span>}
+        {pending && <LoadingLine />}
       </nav>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">

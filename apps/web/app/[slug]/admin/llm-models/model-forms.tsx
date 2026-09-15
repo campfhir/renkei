@@ -10,6 +10,7 @@
 import RemoveButton from '@/components/remove-button';
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { LoadingRegion, SkeletonCards } from '@/components/skeleton';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -245,7 +246,11 @@ export default function ModelForms({ slug }: { slug: string }) {
   };
 
   if (models === null && !loadError) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>;
+    return (
+      <LoadingRegion label="Loading models…">
+        <SkeletonCards count={2} lines={1} chips={2} />
+      </LoadingRegion>
+    );
   }
 
   return (

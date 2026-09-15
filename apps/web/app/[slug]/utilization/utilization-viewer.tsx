@@ -25,6 +25,7 @@ import {
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { Leaderboard } from '@/components/leaderboard';
 import type { EfficientAgentRow } from '@/lib/usage/org-usage';
+import { LoadingLine } from '@/components/skeleton';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -219,7 +220,7 @@ export default function UtilizationViewer({
             {period.label}
           </button>
         ))}
-        {pending && <span className="text-sm text-gray-500">Loading…</span>}
+        {pending && <LoadingLine />}
       </nav>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -304,7 +305,9 @@ export default function UtilizationViewer({
           </Link>
         )}
         valueOf={(row) => row.efficiency}
-        formatValue={(row) => `${row.efficiency.toFixed(1)} / 1k · ${formatTokens(row.tokensPerRun)}/run`}
+        formatValue={(row) =>
+          `${row.efficiency.toFixed(1)} / 1k · ${formatTokens(row.tokensPerRun)}/run`
+        }
         barClassName="bg-emerald-500"
       />
 

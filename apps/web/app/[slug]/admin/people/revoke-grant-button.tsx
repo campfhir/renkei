@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 
 /**
  * The one interactive element on the people page, split out because the
@@ -21,7 +21,7 @@ export default function RevokeGrantButton({
   accountId: string;
   displayName: string;
 }) {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,7 +43,7 @@ export default function RevokeGrantButton({
         setError(typeof data.error === 'string' ? data.error : 'Revoke failed');
         return;
       }
-      router.refresh();
+      refresh();
     } catch {
       setError('Could not reach the server');
     } finally {
@@ -56,7 +56,7 @@ export default function RevokeGrantButton({
       <button
         type="button"
         onClick={() => void revoke()}
-        disabled={busy}
+        disabled={busy || pending}
         aria-label={`Disconnect ${providerLabel}`}
         title={`Disconnect ${providerLabel}`}
         className="rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-900/30 dark:hover:text-red-400"

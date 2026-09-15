@@ -4,6 +4,7 @@ import RemoveButton from '@/components/remove-button';
 import { useRef, useState, useEffect } from 'react';
 import { isEmailCategory } from '@/lib/email-sanitizer-guards';
 import { humanizeSystemName } from '@/lib/email-sanitizer-display';
+import { LoadingRegion, SkeletonCards } from '@/components/skeleton';
 
 type Category = 'human' | 'system_notification' | 'marketing';
 
@@ -414,7 +415,11 @@ export default function ReviewList({ tenantId }: { tenantId: string }) {
       </div>
 
       {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
-      {!error && !items && <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>}
+      {!error && !items && (
+        <LoadingRegion label="Loading messages…">
+          <SkeletonCards count={3} lines={1} chips={1} />
+        </LoadingRegion>
+      )}
       {!error && items && items.length === 0 && (
         <p className="text-sm text-gray-500 dark:text-gray-400">Nothing here yet.</p>
       )}

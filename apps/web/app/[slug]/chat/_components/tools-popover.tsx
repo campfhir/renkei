@@ -13,6 +13,7 @@ import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ConnectorOption } from '@/lib/chat/tool-surface';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
+import { LoadingLine } from '@/components/skeleton';
 
 /** Catalog label for a capability key, falling back to the key itself. */
 function connectorLabel(key: string): string {
@@ -89,7 +90,7 @@ export default function ToolsPopover({
               : 'Connectors the assistant may use in this chat.'}
           </p>
           {options === null ? (
-            <p className="px-1 text-xs text-gray-500">Loading…</p>
+            <LoadingLine size="xs" className="px-1" label="Loading connectors…" />
           ) : options.length === 0 ? (
             <p className="px-1 text-xs text-gray-500">
               Nothing connected yet — link a connector on the Connectors page.

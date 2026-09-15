@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import { LoadingRegion, SkeletonList } from '@/components/skeleton';
 
 /**
  * The owner's sharing control, opened from the overview header's Share
@@ -170,7 +171,9 @@ function PeopleWithAccess({ tenantId, agentId }: { tenantId: string; agentId: st
       </div>
 
       {grants === null ? (
-        <p className="mt-3 text-gray-500 dark:text-gray-400">Loading…</p>
+        <LoadingRegion label="Loading who has access…" className="mt-3">
+          <SkeletonList rows={2} />
+        </LoadingRegion>
       ) : grants.length === 0 ? (
         <p className="mt-3 text-gray-500 dark:text-gray-400">Nobody has access right now.</p>
       ) : (

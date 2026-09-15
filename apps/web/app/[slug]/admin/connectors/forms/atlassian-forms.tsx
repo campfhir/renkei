@@ -27,6 +27,7 @@ import {
   hintClass,
   SaveRow,
 } from './shared';
+import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 /* ----------------------------------------------------------------------- */
 
@@ -208,7 +209,9 @@ function AtlassianAppForm({
   if (state.loading)
     return (
       <Card title={title} status={null}>
-        Loading…
+        <LoadingRegion label="Loading settings…">
+          <SkeletonForm fields={3} />
+        </LoadingRegion>
       </Card>
     );
   if (state.error) {

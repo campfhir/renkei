@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 import {
   checkQuestionAnswers,
   flattenFormFields,
@@ -35,7 +35,7 @@ export default function QuestionActions({
   itemId: string;
   form: FormNode[];
 }): React.ReactNode {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const fields = flattenFormFields(form);
   const [answers, setAnswers] = useState<Record<string, QuestionAnswerValue>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -77,7 +77,7 @@ export default function QuestionActions({
         typeof body === 'object' && body !== null ? { ...body } : {};
       if (response.status === 502 && typeof record.warning === 'string') {
         setNotice(record.warning);
-        router.refresh();
+        refresh();
         return;
       }
       if (!response.ok) {
@@ -102,7 +102,7 @@ export default function QuestionActions({
         );
         return;
       }
-      router.refresh();
+      refresh();
     } finally {
       setBusy(false);
     }
@@ -122,7 +122,7 @@ export default function QuestionActions({
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => void submit()}
-          disabled={busy}
+          disabled={busy || pending}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {fields.length > 0 ? 'Send the answers' : 'Send'}

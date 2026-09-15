@@ -14,7 +14,7 @@
  */
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRefresh } from '@/lib/use-refresh';
 import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
 
@@ -43,7 +43,7 @@ export default function AgentEnabledToggle({
   agent: StoredAgent;
   onError?: (message: string) => void;
 }): React.ReactNode {
-  const router = useRouter();
+  const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState(false);
 
   const toggle = async () => {
@@ -55,7 +55,7 @@ export default function AgentEnabledToggle({
     );
     setBusy(false);
     if (result.error) onError?.(result.error);
-    else router.refresh();
+    else refresh();
   };
 
   return (
@@ -65,7 +65,7 @@ export default function AgentEnabledToggle({
       aria-checked={agent.enabled}
       aria-label={agent.enabled ? 'Turn agent off' : 'Turn agent on'}
       title={agent.enabled ? 'On — click to turn off' : 'Off — click to turn on'}
-      disabled={busy}
+      disabled={busy || pending}
       onClick={toggle}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
         agent.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-700'

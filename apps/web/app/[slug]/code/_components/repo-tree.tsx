@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson } from '@/lib/fetch-json';
+import { LoadingLine } from '@/components/skeleton';
 
 interface Entry {
   path: string;
@@ -78,7 +79,11 @@ export default function RepoTree({ tenantId, projectId }: { tenantId: string; pr
   const renderDir = (path: string, depth: number) => {
     const listing = listings[path];
     if (!listing || listing.state === 'loading') {
-      return <li className="py-1 pl-2 text-xs text-gray-400">Loading…</li>;
+      return (
+        <li className="py-1 pl-2">
+          <LoadingLine size="xs" />
+        </li>
+      );
     }
     if (listing.state === 'error') {
       return (
