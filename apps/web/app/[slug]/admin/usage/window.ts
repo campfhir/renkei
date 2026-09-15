@@ -1,22 +1,20 @@
 /**
- * The usage page's period and bucket arithmetic — kept apart from the
+ * Organization Usage's period and bucket arithmetic — kept apart from the
  * server action so it runs in a test without a database, the same split
- * the tools page (usage/window.ts) and the person page (trend-window.ts)
- * make. This one generalizes the person page's token-only bucketing to
- * every series the page charts, so all of them bucket identically.
+ * `utilization/window.ts` and `usage/window.ts` make.
  */
 
-import type { UtilizationDay } from '@/lib/usage/user-utilization';
+import type { OrgDay } from '@/lib/usage/org-usage';
 
 export { formatTokens } from '@/lib/format-tokens';
 
-export interface UtilizationPeriod {
+export interface UsagePeriod {
   key: string;
   label: string;
   days: number;
 }
 
-export const UTILIZATION_PERIODS: readonly UtilizationPeriod[] = [
+export const ORG_USAGE_PERIODS: readonly UsagePeriod[] = [
   { key: '1w', label: '7 days', days: 7 },
   { key: '1m', label: '30 days', days: 30 },
   { key: '1q', label: '90 days', days: 90 },
@@ -26,10 +24,10 @@ export const UTILIZATION_PERIODS: readonly UtilizationPeriod[] = [
 export const DEFAULT_PERIOD_KEY = '1m';
 
 /** A period key as typed by a client call — never trusted, always resolved. */
-export function resolvePeriod(key: string | undefined): UtilizationPeriod {
+export function resolvePeriod(key: string | undefined): UsagePeriod {
   return (
-    UTILIZATION_PERIODS.find((period) => period.key === key) ??
-    UTILIZATION_PERIODS.find((period) => period.key === DEFAULT_PERIOD_KEY)!
+    ORG_USAGE_PERIODS.find((period) => period.key === key) ??
+    ORG_USAGE_PERIODS.find((period) => period.key === DEFAULT_PERIOD_KEY)!
   );
 }
 
@@ -42,13 +40,15 @@ export function granularityFor(days: number): Granularity {
   return 'month';
 }
 
-export interface UtilizationBucket {
+export interface OrgBucket {
   /** Bucket start, YYYY-MM-DD — the x-axis key. */
   bucket: string;
   /** "Aug 12", or "Aug 2026" for a monthly bucket. */
   label: string;
-  inputTokens: number;
-  outputTokens: number;
+  chatTokens: number;
+  chatProjectTokens: number;
+  codeProjectTokens: number;
+  agentTokens: number;
   runs: number;
   failures: number;
   toolCalls: number;
@@ -100,19 +100,19 @@ function labelOf(bucket: string, granularity: Granularity): string {
 
 /**
  * Every calendar day in the window — quiet ones included, in the viewer's
- * zone — grouped into buckets sized for the period, oldest first.
- * Zero-filling first and grouping second is what keeps a quiet week
- * honestly flat.
+ * zone — grouped into buckets sized for the period, oldest first. Each
+ * surface's input and output tokens are combined into one figure per
+ * bucket; the split still shows in the headline stat tiles.
  */
-export function bucketUtilization(
-  rows: UtilizationDay[],
+export function bucketOrgSeries(
+  rows: OrgDay[],
   days: number,
   now: Date,
   timeZone: string
-): UtilizationBucket[] {
+): OrgBucket[] {
   const found = new Map(rows.map((row) => [row.day, row]));
   const granularity = granularityFor(days);
-  const buckets = new Map<string, UtilizationBucket>();
+  const buckets = new Map<string, OrgBucket>();
   for (let back = days - 1; back >= 0; back -= 1) {
     const day = localDay(now, back, timeZone);
     const row = found.get(day);
@@ -122,8 +122,10 @@ export function bucketUtilization(
       bucket = {
         bucket: key,
         label: labelOf(key, granularity),
-        inputTokens: 0,
-        outputTokens: 0,
+        chatTokens: 0,
+        chatProjectTokens: 0,
+        codeProjectTokens: 0,
+        agentTokens: 0,
         runs: 0,
         failures: 0,
         toolCalls: 0,
@@ -132,8 +134,10 @@ export function bucketUtilization(
       buckets.set(key, bucket);
     }
     if (row) {
-      bucket.inputTokens += row.inputTokens;
-      bucket.outputTokens += row.outputTokens;
+      bucket.chatTokens += row.chatInputTokens + row.chatOutputTokens;
+      bucket.chatProjectTokens += row.chatProjectInputTokens + row.chatProjectOutputTokens;
+      bucket.codeProjectTokens += row.codeProjectInputTokens + row.codeProjectOutputTokens;
+      bucket.agentTokens += row.agentInputTokens + row.agentOutputTokens;
       bucket.runs += row.runs;
       bucket.failures += row.failures;
       bucket.toolCalls += row.toolCalls;
@@ -143,32 +147,8 @@ export function bucketUtilization(
   return [...buckets.values()];
 }
 
-/** Average tokens a run costs — the efficiency number; 0 when nothing ran. */
-export function tokensPerRun(inputTokens: number, outputTokens: number, runs: number): number {
-  if (runs <= 0) return 0;
-  return Math.round((inputTokens + outputTokens) / runs);
-}
-
-/** The engine's error taxonomy, in words the owner will recognize. */
-export function failureKindLabel(kind: string | null): string {
-  switch (kind) {
-    case 'step_failed':
-      return 'a step failed';
-    case 'llm_auth':
-      return 'model credentials rejected';
-    case 'llm_rate_limit':
-      return 'model rate-limited';
-    case 'llm_error':
-      return 'model error';
-    case 'timeout':
-      return 'timed out';
-    case 'guard':
-      return 'hit a limit';
-    case 'config':
-      return 'configuration';
-    case null:
-      return 'failed';
-    default:
-      return kind.replace(/_/g, ' ');
-  }
+/** What share of the org signed in AND spent at least one token in the window. */
+export function activeUserPercent(activeUsers: number, totalUsers: number): number {
+  if (totalUsers <= 0) return 0;
+  return Math.round((activeUsers / totalUsers) * 100);
 }

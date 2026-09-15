@@ -22,6 +22,12 @@ import {
   type FailureSignature,
   type UtilizationTotals,
 } from '@/lib/usage/user-utilization';
+import {
+  getMostEfficientAgents,
+  getSurfaceTokenTotals,
+  type EfficientAgentRow,
+  type OrgTokenTotals,
+} from '@/lib/usage/org-usage';
 import { bucketUtilization, resolvePeriod, type UtilizationBucket } from './window';
 
 export interface UtilizationReport {
@@ -33,6 +39,10 @@ export interface UtilizationReport {
   series: UtilizationBucket[];
   agents: AgentUtilizationRow[];
   attention: FailureSignature[];
+  /** This person's own tokens, split the same way Organization Usage splits the org's. */
+  surfaceTokens: OrgTokenTotals;
+  /** This person's own agents, ranked by tool calls per token — no active-user rate here, there's only one person. */
+  efficientAgents: EfficientAgentRow[];
   error?: string;
   signedOut?: boolean;
 }
@@ -46,6 +56,13 @@ const ZERO: UtilizationTotals = {
   failures: 0,
   toolCalls: 0,
   toolErrors: 0,
+};
+
+const ZERO_SURFACE_TOKENS: OrgTokenTotals = {
+  chat: { input: 0, output: 0 },
+  chatProjects: { input: 0, output: 0 },
+  codeProjects: { input: 0, output: 0 },
+  agents: { input: 0, output: 0 },
 };
 
 export async function getUtilizationReport(
@@ -65,6 +82,8 @@ export async function getUtilizationReport(
     series: [],
     agents: [],
     attention: [],
+    surfaceTokens: ZERO_SURFACE_TOKENS,
+    efficientAgents: [],
   };
 
   const session = await getSessionFromCookies(tenantId);
@@ -79,11 +98,13 @@ export async function getUtilizationReport(
   const subject = session.subject;
 
   try {
-    const [totals, daily, agents, attention] = await Promise.all([
+    const [totals, daily, agents, attention, surfaceTokens, efficientAgents] = await Promise.all([
       getUtilizationTotals(db, tenantId, subject, period.days, timeZone),
       getUtilizationSeries(db, tenantId, subject, period.days, timeZone),
       getAgentUtilization(db, tenantId, subject, period.days, timeZone),
       getFailureSignatures(db, tenantId, subject, period.days, timeZone),
+      getSurfaceTokenTotals(db, tenantId, period.days, timeZone, subject),
+      getMostEfficientAgents(db, tenantId, period.days, timeZone, 10, 3, subject),
     ]);
     return {
       periodKey: period.key,
@@ -93,6 +114,8 @@ export async function getUtilizationReport(
       series: bucketUtilization(daily, period.days, new Date(), timeZone),
       agents,
       attention,
+      surfaceTokens,
+      efficientAgents,
     };
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };

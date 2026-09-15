@@ -22,6 +22,9 @@ import {
   tokensPerRun,
   type UtilizationBucket,
 } from './window';
+import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
+import { Leaderboard } from '@/components/leaderboard';
+import type { EfficientAgentRow } from '@/lib/usage/org-usage';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -258,6 +261,8 @@ export default function UtilizationViewer({
         />
       </section>
 
+      <TokenSurfaceBreakdown tokens={report.surfaceTokens} />
+
       <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
         <figcaption className="mb-3 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -283,6 +288,25 @@ export default function UtilizationViewer({
         </figcaption>
         <Chart points={report.series} series={series} />
       </figure>
+
+      <Leaderboard<EfficientAgentRow>
+        heading="Most efficient agents"
+        hint="Your agents' tool calls per 1,000 tokens, among succeeded runs — real work per token, not just cheap runs."
+        rows={report.efficientAgents}
+        empty="None of your agents have 3 or more succeeded runs in this period yet."
+        keyOf={(row) => row.agentId}
+        labelOf={(row) => (
+          <Link
+            href={`/${slug}/agents/${row.agentId}`}
+            className="text-blue-600 hover:underline dark:text-blue-400"
+          >
+            {row.name}
+          </Link>
+        )}
+        valueOf={(row) => row.efficiency}
+        formatValue={(row) => `${row.efficiency.toFixed(1)} / 1k · ${formatTokens(row.tokensPerRun)}/run`}
+        barClassName="bg-emerald-500"
+      />
 
       {report.attention.length > 0 && (
         <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
