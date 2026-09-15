@@ -225,6 +225,26 @@ reported as such rather than read as blank. The worker logs unhandled
 rejections instead of dying of them, and logs an uncaught exception
 before exiting, so a restart is never silent.
 
+**Across replicas and restarts.** After every verb the worker writes what
+a session is once its process is gone — the context's storage state
+(cookies, local storage), the page's URL, and the ref signatures of the
+last snapshot — to the shared data disk (`<SANDBOX_DATA_DIR>/browser-state`,
+`src/browser-state.ts`), sealed with AES-GCM under a key HKDF-derived from
+the worker's env-secrets key and the caller's identity, so one caller's
+file opens for no other and nothing opens without the deployment's key.
+A call that lands where no session is held — another replica behind the
+same name, or the same worker after a restart or an idle close — reads
+it back: the new context starts with the cookies, a verb that needs a
+page reopens the saved URL (a navigate just goes where it is told, with
+the cookies), and a click by a ref from the last snapshot still finds its
+element by signature. A live DOM is not portable and is not pretended to
+be: the page is opened as it loads now. The file lives a day, is dropped
+by `sandbox_browser_close`, and is never written without the key (then
+sessions are one process's memory, and the worker says so at boot).
+Deliberately not saved: the secret values a session typed — a resumed
+session does not mask a value typed before the resume — and unlocked
+browser secrets, which stay in the replica that unlocked them.
+
 **Pages that keep rendering.** Real sites are single-page apps: the
 network goes quiet before the app has painted, analytics beacons keep it
 from ever going quiet, and a framework re-creates DOM nodes on every

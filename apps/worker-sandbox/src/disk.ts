@@ -19,6 +19,11 @@ export function setDataRootForTests(dir: string): void {
   dataRoot = dir;
 }
 
+/** The staged-file disk's root — shared by every replica that mounts the volume. */
+export function getDataRoot(): string {
+  return dataRoot;
+}
+
 function subjectSegment(subject: string): string {
   return createHash('sha256').update(subject).digest('hex');
 }

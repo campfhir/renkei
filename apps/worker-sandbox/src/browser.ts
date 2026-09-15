@@ -78,6 +78,7 @@ import {
 import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
 import { logger } from './logger';
+import type { BrowserStateStore, SavedBrowserState } from './browser-state';
 
 export type BrowserErrorType =
   | 'browser_unavailable'
@@ -122,6 +123,13 @@ export type ResolveSecret = (
 export interface BrowserSessionsDeps {
   /** Default: playwright-core's chromium, headless, behind the egress proxy. */
   launch?: LaunchBrowser;
+  /**
+   * Where a session's portable state (cookies, URL, last refs) is kept
+   * between calls, so another replica — or this one after a restart —
+   * resumes it (browser-state.ts). Absent, a session is this process's
+   * memory and nothing more.
+   */
+  state?: BrowserStateStore | null;
   /** Default: the real loopback proxy; tests may hand in a stub. */
   proxy?: () => Promise<EgressProxy>;
   now?: () => number;
@@ -249,7 +257,10 @@ export class BrowserSessions {
   private readonly idleMs: number;
   private readonly maxSessions: number;
   private readonly secrets: ResolveSecret | null;
+  private readonly stateStore: BrowserStateStore | null;
   private readonly sessions = new Map<string, Session>();
+  /** A session being opened for a caller, so two calls arriving together share one. */
+  private readonly opening = new Map<string, Promise<Session>>();
   /** Why each caller's most recent session ended, so the next refusal can say. */
   private readonly lastLoss = new Map<string, SessionLoss>();
   private browser: Browser | null = null;
@@ -265,6 +276,7 @@ export class BrowserSessions {
     this.idleMs = deps.idleMs ?? BROWSER_SESSION_IDLE_MS;
     this.maxSessions = deps.maxSessions ?? BROWSER_MAX_SESSIONS;
     this.secrets = deps.secrets ?? null;
+    this.stateStore = deps.state ?? null;
     this.sweep = setInterval(() => void this.sweepIdle(), deps.sweepIntervalMs ?? 60_000);
     this.sweep.unref();
   }
@@ -318,11 +330,59 @@ export class BrowserSessions {
     return this.launching;
   }
 
-  private async openSession(target: BrowserTarget): Promise<Session> {
+  /** The caller's saved state, when there is a store and something in it. */
+  private async savedState(target: BrowserTarget): Promise<SavedBrowserState | null> {
+    if (!this.stateStore) return null;
+    try {
+      return await this.stateStore.load(target);
+    } catch (error) {
+      logger.warn('could not read a saved browser session: {error}', {
+        component: 'worker-sandbox/browser',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * What the next call — anywhere — needs to carry on: written after every
+   * verb, serialized behind the session's queue. Never fatal: a session
+   * that cannot be saved still answers.
+   */
+  private async persist(session: Session): Promise<void> {
+    if (!this.stateStore) return;
+    try {
+      const page = session.page.isClosed() ? null : session.page;
+      await this.stateStore.save(session.target, {
+        url: page?.url() ?? 'about:blank',
+        storageState: await session.context.storageState(),
+        refSignatures: Array.from(session.refSignatures.entries()),
+        savedAt: this.now(),
+      });
+    } catch (error) {
+      logger.warn('could not save a browser session: {error}', {
+        component: 'worker-sandbox/browser',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private openSession(target: BrowserTarget, saved: SavedBrowserState | null): Promise<Session> {
     const key = sessionKey(target);
     const existing = this.sessions.get(key);
-    if (existing) return existing;
+    if (existing) return Promise.resolve(existing);
+    const inFlight = this.opening.get(key);
+    if (inFlight) return inFlight;
+    const opened = this.createSession(target, saved).finally(() => this.opening.delete(key));
+    this.opening.set(key, opened);
+    return opened;
+  }
 
+  private async createSession(
+    target: BrowserTarget,
+    saved: SavedBrowserState | null
+  ): Promise<Session> {
+    const key = sessionKey(target);
     while (this.sessions.size >= this.maxSessions) {
       let oldest: Session | undefined;
       for (const session of this.sessions.values()) {
@@ -338,6 +398,9 @@ export class BrowserSessions {
       acceptDownloads: false,
       serviceWorkers: 'block',
       ignoreHTTPSErrors: false,
+      // Cookies and local storage from wherever this caller's session was
+      // last: a login made on another replica holds here.
+      ...(saved ? { storageState: saved.storageState } : {}),
     });
     context.setDefaultTimeout(BROWSER_ACTION_TIMEOUT_MS);
     context.setDefaultNavigationTimeout(BROWSER_NAVIGATION_TIMEOUT_MS);
@@ -350,7 +413,7 @@ export class BrowserSessions {
       lastUsedAt: this.now(),
       queue: Promise.resolve(),
       secretValues: new Set(),
-      refSignatures: new Map(),
+      refSignatures: new Map(saved?.refSignatures ?? []),
       crashed: false,
     };
     const watchCrash = (watched: Page) =>
@@ -388,6 +451,8 @@ export class BrowserSessions {
     for (const session of Array.from(this.sessions.values())) {
       if (session.lastUsedAt < cutoff) await this.closeSession(session, 'idle');
     }
+    // Saved sessions outlive an idle close on purpose; only their own TTL ends them.
+    await this.stateStore?.sweep(this.now()).catch(() => 0);
     if (this.sessions.size === 0 && this.browser && !this.launching) {
       const browser = this.browser;
       this.browser = null;
@@ -407,8 +472,15 @@ export class BrowserSessions {
     work: (session: Session, page: Page) => Promise<T>
   ): Promise<T> {
     let session = this.sessions.get(sessionKey(target));
+    // A session this process does not hold may still be on the shared
+    // disk — left by another replica, or by this one before a restart or
+    // an idle close. Its cookies come back with the context either way;
+    // a verb that needs an open page also gets the saved page reopened.
+    let resumeUrl: string | null = null;
     if (!session) {
-      if (!create) {
+      const saved = await this.savedState(target);
+      const resumable = saved !== null && /^https?:/i.test(saved.url);
+      if (!create && !resumable) {
         const loss = this.lastLoss.get(sessionKey(target));
         throw new BrowserOpError(
           'no_session',
@@ -417,16 +489,25 @@ export class BrowserSessions {
             'so the actions follow in the same call.'
         );
       }
-      session = await this.openSession(target);
+      session = await this.openSession(target, saved);
+      if (!create && resumable && session.page.url() === 'about:blank') resumeUrl = saved.url;
     }
     const current = session;
     const run = current.queue.then(async () => {
       current.lastUsedAt = this.now();
-      const page = await this.activePage(current);
+      let page = await this.activePage(current);
+      if (resumeUrl) {
+        // Reopened as it loads now; if it will not load, the verb's own
+        // reading of the page says so.
+        await page.goto(resumeUrl).catch(() => {});
+        await this.settle(page);
+        page = await this.activePage(current);
+      }
       try {
         return await work(current, page);
       } finally {
         current.lastUsedAt = this.now();
+        await this.persist(current);
       }
     });
     current.queue = run.catch(() => undefined);
@@ -959,13 +1040,19 @@ export class BrowserSessions {
     });
   }
 
-  /** Close a caller's session; true when there was one. */
+  /** Close a caller's session, here and on disk; true when there was one. */
   async close(target: BrowserTarget): Promise<boolean> {
     const session = this.sessions.get(sessionKey(target));
-    if (!session) return false;
-    await session.queue;
-    await this.closeSession(session, 'closed');
-    return true;
+    if (session) {
+      await session.queue;
+      await this.closeSession(session, 'closed');
+    }
+    let saved = false;
+    if (this.stateStore) {
+      saved = (await this.savedState(target)) !== null;
+      await this.stateStore.remove(target).catch(() => undefined);
+    }
+    return session !== undefined || saved;
   }
 
   /** Close everything — every context, the browser, the proxy. */
