@@ -4,7 +4,10 @@
  * Which connectors this chat may use. The core set is on when nothing
  * has been chosen; toggling anything pins an explicit list on the chat.
  * The list comes from the person's own catalog, so a connector they have
- * not linked never appears here.
+ * not linked never appears here — except one the chat's project requires
+ * (`locked`, e.g. Bitbucket in a code project), which is shown checked
+ * and cannot be unchecked, or, when the person has not linked it, as
+ * missing, with where to link it.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -26,6 +29,7 @@ export default function ToolsPopover({
   onChange,
   context = 'chat',
   slug,
+  locked,
 }: {
   tenantId: string;
   /** null = the core set. */
@@ -43,6 +47,13 @@ export default function ToolsPopover({
   context?: 'chat' | 'project';
   /** Only used in project context, to link out to where the personal default lives. */
   slug?: string;
+  /**
+   * Connectors that are always on in this chat, whatever is chosen — a
+   * code project's Bitbucket (tool-config.ts's CODE_PROJECT_CONNECTORS).
+   * The server adds them to every turn's toolset too; here they render
+   * checked and disabled so the picker says what the turn will do.
+   */
+  locked?: readonly string[];
 }) {
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<ConnectorOption[] | null>(null);
@@ -65,8 +76,15 @@ export default function ToolsPopover({
     });
   }, [open, options, tenantId]);
 
-  const effective = new Set(selected ?? userDefault ?? core);
+  const lockedKeys = locked ?? [];
+  const effective = new Set([...(selected ?? userDefault ?? core), ...lockedKeys]);
   const count = selected ? selected.length : null;
+  // A required connector the person has not linked: nothing in the catalog
+  // for it, so no row below would mention it — and it is the one the chat
+  // most needs to say something about.
+  const missingLocked = lockedKeys.filter(
+    (key) => options !== null && !options.some((option) => option.key === key)
+  );
 
   return (
     <div ref={ref} className="relative">
@@ -96,26 +114,71 @@ export default function ToolsPopover({
               Nothing connected yet — link a connector on the Connectors page.
             </p>
           ) : (
-            options.map((option) => (
-              <label
-                key={option.key}
-                className="flex items-center gap-2 rounded px-1 py-1 hover:bg-gray-100 dark:hover:bg-gray-800"
-              >
-                <input
-                  type="checkbox"
-                  checked={effective.has(option.key)}
-                  onChange={(event) => {
-                    const next = new Set(effective);
-                    if (event.target.checked) next.add(option.key);
-                    else next.delete(option.key);
-                    onChange([...next].sort());
-                  }}
-                />
-                <span className="flex-1">{connectorLabel(option.key)}</span>
-                <span className="text-xs text-gray-400">{option.count}</span>
-              </label>
-            ))
+            options.map((option) => {
+              const isLocked = lockedKeys.includes(option.key);
+              return (
+                <label
+                  key={option.key}
+                  title={isLocked ? 'Always on in a code project' : undefined}
+                  className={`flex items-center gap-2 rounded px-1 py-1 ${
+                    isLocked ? 'cursor-default' : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={effective.has(option.key)}
+                    disabled={isLocked}
+                    aria-label={
+                      isLocked
+                        ? `${connectorLabel(option.key)} (always on in a code project)`
+                        : undefined
+                    }
+                    onChange={(event) => {
+                      const next = new Set(effective);
+                      if (event.target.checked) next.add(option.key);
+                      else next.delete(option.key);
+                      onChange([...next].sort());
+                    }}
+                  />
+                  <span className="flex-1">{connectorLabel(option.key)}</span>
+                  {isLocked ? (
+                    <Icon path={ICONS.lock} className="h-3.5 w-3.5 text-gray-400" />
+                  ) : null}
+                  <span className="text-xs text-gray-400">{option.count}</span>
+                </label>
+              );
+            })
           )}
+          {missingLocked.map((key) => (
+            <div
+              key={key}
+              className="flex items-center gap-2 rounded px-1 py-1 text-gray-400"
+              title="Always on in a code project, but not linked yet"
+            >
+              <input
+                type="checkbox"
+                checked
+                disabled
+                readOnly
+                aria-label={`${connectorLabel(key)} (always on in a code project, not linked yet)`}
+              />
+              <span className="flex-1">
+                {connectorLabel(key)}
+                {' — '}
+                {slug ? (
+                  <a
+                    href={`/${slug}/connectors`}
+                    className="text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    not linked yet
+                  </a>
+                ) : (
+                  'not linked yet'
+                )}
+              </span>
+              <Icon path={ICONS.lock} className="h-3.5 w-3.5" />
+            </div>
+          ))}
           {selected ? (
             <button
               type="button"

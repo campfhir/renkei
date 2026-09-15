@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
+import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import {
   applyStreamEvent,
   initialThreadState,
@@ -395,7 +396,13 @@ export default function ChatThread({
         {compact ? (
           <>
             {isOwner ? (
-              <ToolsPopover tenantId={tenantId} selected={connectors} onChange={changeConnectors} />
+              <ToolsPopover
+                tenantId={tenantId}
+                selected={connectors}
+                onChange={changeConnectors}
+                slug={slug}
+                locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+              />
             ) : null}
             <OverflowMenu items={overflow} />
           </>
@@ -408,6 +415,8 @@ export default function ChatThread({
                   tenantId={tenantId}
                   selected={connectors}
                   onChange={changeConnectors}
+                  slug={slug}
+                  locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
                 />
                 {chat ? (
                   <button

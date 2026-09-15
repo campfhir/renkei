@@ -8,11 +8,17 @@ export default function CodeIndex({
   slug,
   projects,
   enabled,
+  canCreate,
+  accessNotice,
 }: {
   slug: string;
   projects: ProjectListItem[];
   /** The deployment runs code workspaces; without them nothing here can be made. */
   enabled: boolean;
+  /** This person's Bitbucket connection carries what a project runs on (lib/code/access.ts). */
+  canCreate: boolean;
+  /** When it does not: what to connect, said the Connectors page's way. */
+  accessNotice: string | null;
 }) {
   const mine = projects.filter((project) => project.role === 'owner');
   const shared = projects.filter((project) => project.role !== 'owner');
@@ -21,7 +27,7 @@ export default function CodeIndex({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
         <h1 className="flex-1 text-sm font-semibold">Code</h1>
-        {enabled ? (
+        {enabled && canCreate ? (
           <Link
             href={`/${slug}/code/new`}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
@@ -41,6 +47,17 @@ export default function CodeIndex({
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
             Code workspaces are not enabled on this deployment. An operator turns them on with
             SANDBOX_WORKSPACES_ENABLED on the web app and the sandbox worker.
+          </p>
+        ) : !canCreate && accessNotice ? (
+          <p
+            role="status"
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            {accessNotice}{' '}
+            <Link href={`/${slug}/connectors`} className="underline">
+              Open Connectors
+            </Link>
+            . A code project clones, pushes and opens pull requests with your own Bitbucket access.
           </p>
         ) : null}
         <Group slug={slug} title="Mine" projects={mine} empty="You have no code projects yet." />
