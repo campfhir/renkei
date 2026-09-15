@@ -71,8 +71,9 @@ export const ICONS = {
   /** A four-point spark — thinking, and the prompt libraries. */
   sparkle:
     'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
-  /** A brain — the model's own reasoning (extended thinking). Two lobes and
-   *  the fissure only: at 14px the finer sulci of the full glyph smear. */
+  /** A brain — the model's own reasoning (extended thinking), and the
+   *  Memory door. Two lobes and the fissure only: at 14px the finer sulci
+   *  of the full glyph smear. */
   brain:
     'M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18ZM12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18ZM15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4',
   /** A wrench — the tools a chat may use. */
@@ -89,6 +90,8 @@ export const ICONS = {
   /** The app menu's doors, one glyph each, so a row is known before it is read. */
   /** A house — Home. */
   home: 'M3 11l9-8 9 8v10h-6v-6h-6v6H3z',
+  /** A closed book, its ribbon hanging out at the foot — Knowledge. */
+  book: 'M4 15.5v-11A2.5 2.5 0 0 1 6.5 2H20v16H6.5a2.5 2.5 0 0 1 0-5H20M9 18v4l1.75-1.25L12.5 22v-4',
   /** A bot's head, antenna up — Agents. */
   agent:
     'M5 9h14v11H5zM12 9V6M12 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M9.5 14.5h.01M14.5 14.5h.01M5 13H3v3h2M19 13h2v3h-2',
@@ -100,9 +103,6 @@ export const ICONS = {
   code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
   /** A square speech bubble with lines of text — the Prompt libraries door. */
   promptLibrary: 'M4 4h16v12h-9l-4 4v-4H4zM8 8h8M8 12h5',
-  /** A thought bubble — what the assistant remembers, the Memory door. */
-  thought:
-    'M8 14a3.5 3.5 0 0 1-.6-6.95A5 5 0 0 1 17 6.5a3.75 3.75 0 0 1 .5 7.5zM6 18h.01M3.5 21h.01',
   /** The account menu's rows. */
   /** Three sliders — Preferences. */
   sliders: 'M4 7h16M4 12h16M4 17h16M15 5v4M9 10v4M13 15v4',

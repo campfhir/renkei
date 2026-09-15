@@ -155,7 +155,7 @@ export default function AppNav({
       items: [
         { href: `/${slug}`, label: 'Home', icon: ICONS.home, exact: true },
         { href: `/${slug}/agents`, label: 'Agents', icon: ICONS.agent },
-        { href: `/${slug}/knowledge`, label: 'Knowledge', icon: ICONS.brain },
+        { href: `/${slug}/knowledge`, label: 'Knowledge', icon: ICONS.book },
         { href: `/${slug}/files`, label: 'Files', icon: ICONS.folder },
       ],
     },
@@ -176,7 +176,7 @@ export default function AppNav({
         // the same glyph and naming their project.
         { href: `/${slug}/code`, label: 'Code', icon: ICONS.code },
         { href: `/${slug}/chat/prompts`, label: 'Prompt libraries', icon: ICONS.promptLibrary },
-        { href: `/${slug}/chat/memory`, label: 'Memory', icon: ICONS.thought },
+        { href: `/${slug}/chat/memory`, label: 'Memory', icon: ICONS.brain },
       ],
       extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
     },
