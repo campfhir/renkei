@@ -98,6 +98,13 @@ export const chatClient = {
   cancelTurn: (tenantId: string, chatId: string, turnId: string) =>
     sendJsonFull(`${base(tenantId)}/chats/${chatId}/turns/${turnId}/cancel`, 'POST'),
 
+  /** Force a compaction pass now — /compact, or "compact this chat" picked from the prompt picker. */
+  compact: (tenantId: string, chatId: string) =>
+    sendJsonFull<{ turnId: string; code?: string }>(
+      `${base(tenantId)}/chats/${chatId}/compact`,
+      'POST'
+    ),
+
   streamUrl: (tenantId: string, chatId: string, turnId: string) =>
     `${base(tenantId)}/chats/${chatId}/turns/${turnId}/stream`,
 

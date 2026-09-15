@@ -61,6 +61,13 @@ export type ChatStreamEvent =
   | { type: 'tool_call_start'; messageId: string; toolUseId: string; name: string }
   /** A tool handed back a file; it is stored and listed under Artifacts. */
   | { type: 'artifact'; messageId: string; attachment: AttachmentView }
+  /**
+   * A compaction pass reporting how far it has folded (compaction.ts) —
+   * from a compaction turn (turn.kind === 'compaction') or from the
+   * chat_compact tool running inside an ordinary reply turn alike, so
+   * either way the thread can show it live.
+   */
+  | { type: 'compaction_progress'; turnId: string; foldedSoFar: number; totalToFold: number }
   | {
       type: 'snapshot';
       turn: TurnView;
@@ -75,6 +82,14 @@ export type ChatStreamEvent =
    */
   | { type: 'truncate'; fromSeq: number; removedArtifactIds: string[] };
 
+export interface CompactionProgress {
+  turnId: string;
+  /** 'running' while folding; 'done'/'failed' once its turn_end arrives — left in state as a marker, not cleared. */
+  status: 'running' | 'done' | 'failed';
+  foldedSoFar: number;
+  totalToFold: number;
+}
+
 export interface ThreadState {
   messages: ChatMessageView[];
   /** Tool calls currently executing, by tool_use id. */
@@ -82,6 +97,8 @@ export interface ThreadState {
   turn: TurnView | null;
   /** Files tools produced in this chat, oldest first. */
   artifacts: AttachmentView[];
+  /** A compaction pass in progress right now, live or reconnected mid-way. */
+  compaction: CompactionProgress | null;
 }
 
 function withArtifacts(current: AttachmentView[], added: AttachmentView[]): AttachmentView[] {
@@ -211,14 +228,39 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         : { ...state, pendingToolCalls: [...state.pendingToolCalls, event.toolUseId] };
     case 'artifact':
       return { ...state, artifacts: withArtifacts(state.artifacts, [event.attachment]) };
+    case 'compaction_progress':
+      return {
+        ...state,
+        compaction: {
+          turnId: event.turnId,
+          status: 'running',
+          foldedSoFar: event.foldedSoFar,
+          totalToFold: event.totalToFold,
+        },
+      };
     case 'snapshot': {
       const turnId = event.turn.id;
       const others = state.messages.filter((message) => message.turnId !== turnId);
+      const known = state.compaction?.turnId === turnId ? state.compaction : null;
       return {
         messages: [...others, ...event.messages].sort((a, b) => a.seq - b.seq),
         pendingToolCalls: [],
         turn: event.turn,
         artifacts: withArtifacts(state.artifacts, event.artifacts ?? []),
+        compaction:
+          event.turn.kind === 'compaction'
+            ? {
+                turnId,
+                status:
+                  event.turn.status === 'running'
+                    ? 'running'
+                    : event.turn.status === 'completed'
+                      ? 'done'
+                      : 'failed',
+                foldedSoFar: known?.foldedSoFar ?? 0,
+                totalToFold: known?.totalToFold ?? 0,
+              }
+            : known,
       };
     }
     case 'truncate': {
@@ -228,17 +270,23 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         pendingToolCalls: [],
         turn: null,
         artifacts: state.artifacts.filter((artifact) => !removed.has(artifact.id)),
+        compaction: null,
       };
     }
     case 'turn_end':
       return {
         ...state,
         pendingToolCalls: [],
+        compaction:
+          state.compaction && state.compaction.turnId === event.turnId
+            ? { ...state.compaction, status: event.status === 'completed' ? 'done' : 'failed' }
+            : state.compaction,
         turn: state.turn
           ? { ...state.turn, status: event.status, error: event.error }
           : {
               id: event.turnId,
               status: event.status,
+              kind: 'reply',
               error: event.error,
               startedAt: new Date(0).toISOString(),
               finishedAt: null,
@@ -268,5 +316,5 @@ export function initialThreadState(
   activeTurn: TurnView | null,
   artifacts: AttachmentView[] = []
 ): ThreadState {
-  return { messages, pendingToolCalls: [], turn: activeTurn, artifacts };
+  return { messages, pendingToolCalls: [], turn: activeTurn, artifacts, compaction: null };
 }

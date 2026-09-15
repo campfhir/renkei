@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Modal from '@/components/modal';
 import { getJson } from '@/lib/fetch-json';
 import { LoadingLine } from '@/components/skeleton';
+import { Icon, ICONS } from '@/components/icons';
 
 interface PickerPrompt {
   id: string;
@@ -18,18 +19,27 @@ interface PickerPrompt {
   libraryName: string;
 }
 
+const COMPACT_COMMAND = {
+  title: 'Compact this conversation',
+  detail: '/compact · summarize the older part of this chat to free up context',
+};
+
 export default function PromptPicker({
   tenantId,
   onClose,
   onPick,
+  onCompact,
 }: {
   tenantId: string;
   onClose: () => void;
   onPick: (body: string) => void;
+  /** Runs a compaction pass instead of inserting text. */
+  onCompact: () => void;
 }) {
   const [prompts, setPrompts] = useState<PickerPrompt[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const showCompact = 'compact'.includes(query.trim().toLowerCase());
 
   useEffect(() => {
     void getJson<{ prompts: PickerPrompt[] }>(
@@ -63,12 +73,27 @@ export default function PromptPicker({
       />
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
       <div className="max-h-80 overflow-y-auto">
+        {showCompact ? (
+          <button
+            type="button"
+            onClick={onCompact}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            <Icon path={ICONS.package} className="h-4 w-4 shrink-0 text-gray-500" />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{COMPACT_COMMAND.title}</span>
+              <span className="block truncate text-xs text-gray-500">{COMPACT_COMMAND.detail}</span>
+            </span>
+          </button>
+        ) : null}
         {prompts === null ? (
           <LoadingLine label="Loading prompts…" />
         ) : shown.length === 0 ? (
-          <p className="text-sm text-gray-500">
-            {prompts.length === 0 ? 'No prompts yet — create a library first.' : 'No matches.'}
-          </p>
+          showCompact ? null : (
+            <p className="text-sm text-gray-500">
+              {prompts.length === 0 ? 'No prompts yet — create a library first.' : 'No matches.'}
+            </p>
+          )
         ) : (
           shown.map((prompt) => (
             <button

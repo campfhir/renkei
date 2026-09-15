@@ -132,6 +132,8 @@ export const EXPECTED_MIGRATIONS = [
   '100-idp-groups',
   '101-sandbox-workspaces',
   '102-code-projects',
+  '103-chat-summaries',
+  '104-chat-turn-kind',
 ];
 
 export interface MigrationStatus {

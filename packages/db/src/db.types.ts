@@ -420,6 +420,7 @@ export interface ChatMessages {
   seq: number;
   status: Generated<string>;
   stop_reason: string | null;
+  summary_id: string | null;
   tenant_id: string;
   turn_id: string | null;
   updated_at: Generated<Timestamp>;
@@ -471,6 +472,17 @@ export interface Chats {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ChatSummaries {
+  chat_id: string;
+  content: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  folded_count: number;
+  id: Generated<string>;
+  tenant_id: string;
+  through_seq: number;
+}
+
 export interface ChatTurns {
   cancel_requested_at: Timestamp | null;
   chat_id: string;
@@ -479,6 +491,7 @@ export interface ChatTurns {
   id: Generated<string>;
   input_tokens: Generated<number>;
   iterations: Generated<number>;
+  kind: Generated<string>;
   llm_model_id: string | null;
   output_tokens: Generated<number>;
   started_at: Generated<Timestamp>;
@@ -1191,6 +1204,7 @@ export interface DB {
   chat_messages: ChatMessages;
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;
+  chat_summaries: ChatSummaries;
   chat_turns: ChatTurns;
   chat_user_memories: ChatUserMemories;
   chats: Chats;

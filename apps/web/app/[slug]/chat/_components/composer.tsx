@@ -19,6 +19,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import Modal from '@/components/modal';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
 import AttachmentChip from './attachment-chip';
@@ -29,6 +30,13 @@ export interface ComposerSubmit {
   attachments: AttachmentView[];
 }
 
+/** One queued send, shown in order with what it will do and how to drop it. */
+export interface QueuedComposerItem {
+  id: number;
+  label: string;
+  isCompact: boolean;
+}
+
 const MAX_ROWS = 10;
 
 export default function Composer({
@@ -37,8 +45,12 @@ export default function Composer({
   ensureChatId,
   disabled,
   running,
+  queue,
+  onRemoveQueued,
+  onClearQueue,
   uploads,
   onSubmit,
+  onCompact,
   onStop,
   modelControl,
   editing,
@@ -50,9 +62,16 @@ export default function Composer({
   ensureChatId: () => Promise<string | null>;
   disabled: boolean;
   running: boolean;
+  /** Sends waiting for the current turn to finish, oldest first — auto-sent one at a time, no click needed. */
+  queue: QueuedComposerItem[];
+  onRemoveQueued: (id: number) => void;
+  onClearQueue: () => void;
   /** Files can be attached at all — false when the org has no storage. */
   uploads: boolean;
+  /** While running, this queues instead of sending — the caller decides which. */
   onSubmit: (input: ComposerSubmit) => Promise<boolean>;
+  /** Forces a compaction pass — /compact, or picked from the prompt picker. */
+  onCompact: () => Promise<boolean>;
   onStop: () => Promise<void>;
   modelControl: ReactNode;
   /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
@@ -65,6 +84,7 @@ export default function Composer({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [prompts, setPrompts] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Editing starts with the old text in the box and the cursor at its end.
@@ -77,6 +97,11 @@ export default function Composer({
       element.setSelectionRange(editing.text.length, editing.text.length);
     }
   }, [editing]);
+  // Once there is at most one item left — dequeued, removed, or drained on
+  // its own — that item belongs inline again, not behind a dialog.
+  useEffect(() => {
+    if (queue.length <= 1) setQueueOpen(false);
+  }, [queue.length]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const grow = useCallback(() => {
@@ -120,13 +145,16 @@ export default function Composer({
 
   const send = useCallback(async () => {
     const trimmed = text.trim();
-    if ((!trimmed && attachments.length === 0) || disabled || running || uploading > 0) return;
+    // Sending while running is not blocked here — the caller (onSubmit)
+    // queues it and returns true; only an actually-empty box or an
+    // in-flight upload stops the person from queuing.
+    if ((!trimmed && attachments.length === 0) || disabled || uploading > 0) return;
     const ok = await onSubmit({ text: trimmed, attachments });
     if (ok) {
       setText('');
       setAttachments([]);
     }
-  }, [text, attachments, disabled, running, uploading, onSubmit]);
+  }, [text, attachments, disabled, uploading, onSubmit]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === '/' && text === '') {
@@ -168,6 +196,86 @@ export default function Composer({
             Cancel
           </button>
         </div>
+      ) : null}
+      {queue.length === 1 ? (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
+          <Icon
+            path={queue[0].isCompact ? ICONS.package : ICONS.chat}
+            className="h-3.5 w-3.5 shrink-0 text-gray-400"
+          />
+          <span className="flex-1 truncate">{queue[0].label}</span>
+          <span className="shrink-0 text-gray-400">queued</span>
+          <button
+            type="button"
+            onClick={() => onRemoveQueued(queue[0].id)}
+            aria-label={`Remove "${queue[0].label}" from the queue`}
+            className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.close} className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : queue.length > 1 ? (
+        <button
+          type="button"
+          onClick={() => setQueueOpen(true)}
+          className="mb-2 flex w-full items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800"
+        >
+          <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            {queue.length} queued — sent one at a time, automatically, once this finishes.
+          </span>
+          <span className="shrink-0 font-medium text-blue-600 dark:text-blue-400">View</span>
+        </button>
+      ) : null}
+      {queueOpen ? (
+        <Modal title={`Queued (${queue.length})`} onClose={() => setQueueOpen(false)}>
+          <p className="mb-2 text-xs text-gray-500">
+            Sent one at a time, automatically, once the current reply finishes — nothing here needs
+            a click to go out.
+          </p>
+          <ul className="max-h-72 space-y-1 overflow-y-auto">
+            {queue.map((item, index) => (
+              <li
+                key={item.id}
+                className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-300"
+              >
+                <span className="w-5 shrink-0 pt-0.5 text-right text-xs text-gray-400">
+                  {index + 1}.
+                </span>
+                <Icon
+                  path={item.isCompact ? ICONS.package : ICONS.chat}
+                  className="mt-0.5 h-4 w-4 shrink-0 text-gray-400"
+                />
+                {/* Wraps rather than truncating — this is the one place meant
+                    for reading a queued item in full — but each item's own
+                    height is capped and scrolls on its own, so one very long
+                    message can't push the rest of the list (or the modal)
+                    out; the list below has its own cap for many items. */}
+                <div className="max-h-24 min-w-0 flex-1 overflow-y-auto py-0.5 break-words whitespace-pre-wrap">
+                  {item.label}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onRemoveQueued(item.id)}
+                  aria-label={`Remove "${item.label}" from the queue`}
+                  className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                >
+                  <Icon path={ICONS.close} className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={onClearQueue}
+              className="rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            >
+              Clear all
+            </button>
+          </div>
+        </Modal>
       ) : null}
       <div
         onDragOver={(event) => {
@@ -211,7 +319,7 @@ export default function Composer({
               void upload(files);
             }
           }}
-          placeholder={running ? 'Replying…' : 'Message Renkei'}
+          placeholder={running ? 'Replying… Enter queues the next message' : 'Message Renkei'}
           rows={1}
           disabled={disabled}
           aria-label="Message"
@@ -254,6 +362,18 @@ export default function Composer({
           {running ? (
             <button
               type="button"
+              onClick={() => void send()}
+              aria-label="Queue this message"
+              title="Sends once the current reply finishes"
+              disabled={disabled || uploading > 0 || (!text.trim() && attachments.length === 0)}
+              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
+            >
+              <Icon path={ICONS.send} className="h-5 w-5" />
+            </button>
+          ) : null}
+          {running ? (
+            <button
+              type="button"
               onClick={() => void onStop()}
               aria-label="Stop"
               className="rounded-md bg-gray-900 p-1.5 text-white hover:bg-gray-700 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-300"
@@ -288,6 +408,10 @@ export default function Composer({
             setText((current) => (current ? `${current}\n${body}` : body));
             setPrompts(false);
             textareaRef.current?.focus();
+          }}
+          onCompact={() => {
+            setPrompts(false);
+            void onCompact();
           }}
         />
       ) : null}

@@ -13,12 +13,13 @@ import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isUuid } from '@/lib/uuid';
-import type { TurnStatus, TurnView } from './views';
+import type { TurnKind, TurnStatus, TurnView } from './views';
 
 export interface TurnRow {
   id: string;
   chatId: string;
   status: TurnStatus;
+  kind: TurnKind;
   llmModelId: string | null;
   thinkingBudget: number | null;
   iterations: number;
@@ -35,6 +36,7 @@ const TURN_COLUMNS = [
   'id',
   'chat_id',
   'status',
+  'kind',
   'llm_model_id',
   'thinking_budget',
   'iterations',
@@ -46,6 +48,10 @@ const TURN_COLUMNS = [
   'updated_at',
   'finished_at',
 ] as const;
+
+function turnKindOf(value: string): TurnKind {
+  return value === 'compaction' ? 'compaction' : 'reply';
+}
 
 export function turnStatusOf(value: string): TurnStatus {
   return value === 'running' ||
@@ -65,6 +71,7 @@ function rowOf(raw: {
   id: string;
   chat_id: string;
   status: string;
+  kind: string;
   llm_model_id: string | null;
   thinking_budget: number | null;
   iterations: number;
@@ -80,6 +87,7 @@ function rowOf(raw: {
     id: raw.id,
     chatId: raw.chat_id,
     status: turnStatusOf(raw.status),
+    kind: turnKindOf(raw.kind),
     llmModelId: raw.llm_model_id,
     thinkingBudget: raw.thinking_budget,
     iterations: raw.iterations,
@@ -97,6 +105,7 @@ export function toTurnView(turn: TurnRow): TurnView {
   return {
     id: turn.id,
     status: turn.status,
+    kind: turn.kind,
     error: turn.error,
     startedAt: turn.startedAt.toISOString(),
     finishedAt: turn.finishedAt ? turn.finishedAt.toISOString() : null,
@@ -114,6 +123,7 @@ export async function createTurn(
     chatId: string;
     llmModelId: string | null;
     thinkingBudget: number | null;
+    kind?: TurnKind;
   }
 ): Promise<Result<string, 'ALREADY_RUNNING' | 'DB_ERROR'>> {
   try {
@@ -123,6 +133,7 @@ export async function createTurn(
         tenant_id: input.tenantId,
         chat_id: input.chatId,
         status: 'running',
+        kind: input.kind ?? 'reply',
         llm_model_id: input.llmModelId,
         thinking_budget: input.thinkingBudget,
       })

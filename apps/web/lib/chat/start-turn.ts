@@ -34,7 +34,8 @@ import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
-import { listMessages, insertMessage } from './messages';
+import { compactChat, latestChatSummary, needsCompaction } from './compaction';
+import { listMessages, insertMessage, type InsertedMessage } from './messages';
 import { createTurn, finishTurn } from './turns';
 import { touchChat, type ChatRow } from './store';
 import { getProjectRow } from './projects';
@@ -53,7 +54,55 @@ import { chatLocalTools } from './chat-local-tools';
 import { readProjectMemory, renderProjectMemory } from './memory';
 import { readUserMemory, renderUserMemory } from './user-memory';
 
-export const USER_MESSAGE_MAX_CHARS = 100_000;
+/**
+ * The hard ceiling on one Send: past this, even chunking is refused (an
+ * abuse/DoS guard, not a working limit — see PASTE_CHUNK_CHARS below).
+ */
+export const USER_MESSAGE_MAX_CHARS = 1_000_000;
+
+/**
+ * A paste past this size is split across several `prompt` rows rather than
+ * stored as one giant message — matches attachments.ts's INLINE_EXCERPT_CHARS,
+ * so a huge paste and a huge file excerpt land at the same working size.
+ * Chunk boundaries prefer the last newline so a chunk rarely cuts mid-line,
+ * but the chunks always concatenate back to the original text exactly:
+ * resend.ts's unedited-resend path depends on that to reconstruct it.
+ */
+const PASTE_CHUNK_CHARS = 40_000;
+
+/** Splits `text` on newlines near `chunkChars`; chunks.join('') === text always. */
+export function splitPaste(text: string, chunkChars: number): string[] {
+  if (text.length <= chunkChars) return [text];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + chunkChars, text.length);
+    if (end < text.length) {
+      const lastBreak = text.lastIndexOf('\n', end);
+      if (lastBreak > start + chunkChars * 0.5) end = lastBreak + 1;
+    }
+    chunks.push(text.slice(start, end));
+    start = end;
+  }
+  return chunks;
+}
+
+/**
+ * One block array per `prompt` row: a single row when the text fits (today's
+ * shape, unchanged), otherwise one row per chunk with the extra blocks
+ * (attachment excerpts) riding the last one — same place they always sat,
+ * right after the person's own text.
+ */
+function chunkedUserBlocks(text: string, extraBlocks: LlmContentBlock[]): LlmContentBlock[][] {
+  const chunks = text ? splitPaste(text, PASTE_CHUNK_CHARS) : [];
+  if (chunks.length <= 1) {
+    return [[...(chunks[0] ? [{ type: 'text' as const, text: chunks[0] }] : []), ...extraBlocks]];
+  }
+  return chunks.map((chunk, index) => [
+    { type: 'text' as const, text: chunk },
+    ...(index === chunks.length - 1 ? extraBlocks : []),
+  ]);
+}
 
 /**
  * Thinking spends part of the output budget; keep room for the answer.
@@ -127,10 +176,6 @@ export async function startChatTurn(
   const settings = settingsResult.ok ? settingsResult.val : null;
   const redactor = settings ? createOutboundRedactor(input.tenantId, settings) : null;
   const redacted = redactor ? redactor.apply(text) : { text, counts: {} };
-  const userBlocks: LlmContentBlock[] = [
-    ...(redacted.text ? [{ type: 'text' as const, text: redacted.text }] : []),
-    ...(input.extraBlocks ?? []),
-  ];
 
   const thinkingBudget =
     chat.thinkingEnabled && llm.providerName === 'anthropic'
@@ -147,15 +192,20 @@ export async function startChatTurn(
         thinkingBudget,
       });
       if (!turn.ok) return turn;
-      const user = await insertMessage(trx, {
-        tenantId: input.tenantId,
-        chatId: chat.id,
-        turnId: turn.val,
-        role: 'user',
-        kind: 'prompt',
-        status: 'complete',
-        blocks: userBlocks,
-      });
+      let user: InsertedMessage | null = null;
+      for (const blocks of chunkedUserBlocks(redacted.text, input.extraBlocks ?? [])) {
+        const inserted = await insertMessage(trx, {
+          tenantId: input.tenantId,
+          chatId: chat.id,
+          turnId: turn.val,
+          role: 'user',
+          kind: 'prompt',
+          status: 'complete',
+          blocks,
+        });
+        if (!inserted) return err('CONTENT_KEY' as const);
+        user = inserted;
+      }
       if (!user) return err('CONTENT_KEY' as const);
       const assistant = await insertMessage(trx, {
         tenantId: input.tenantId,
@@ -302,10 +352,34 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     release = surface.release;
 
     const readOnly = input.settings?.readOnly ?? false;
-    const [rows, person] = await Promise.all([
+    const [initialRows, person] = await Promise.all([
       listMessages(db, input.tenantId, input.chat.id),
       getIdentityDisplay(input.tenantId, input.session.subject),
     ]);
+    // Compaction runs before history is built, not as a background sweep:
+    // the guarantee is that THIS turn's request stays bounded. A failed or
+    // unavailable model leaves every message as it was for the next turn's
+    // check to retry — never a reason to fail the turn that triggered it.
+    let rows = initialRows;
+    if (needsCompaction(rows)) {
+      try {
+        const compacted = await compactChat(db, {
+          tenantId: input.tenantId,
+          chatId: input.chat.id,
+          llm: input.llm,
+          createdBy: 'auto',
+          messages: rows,
+          onProgress: (progress) =>
+            channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
+        });
+        if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id);
+      } catch (error) {
+        log('chat auto-compaction failed: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    const chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id);
     const localContext = {
       db,
       tenantId: input.tenantId,
@@ -316,6 +390,8 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       readOnly,
       llm: input.llm,
       recordUsage: (usage: LlmUsage) => store.recordUsage(usage),
+      emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>
+        channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     // A code project's checkout, when it is there to work in: the code_*
@@ -352,6 +428,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       orgName: null,
       project: context.project ? { ...context.project, code: code?.prompt ?? null } : null,
       userMemoryText: context.userMemoryText,
+      chatSummary: chatSummary?.content ?? null,
       chatFiles: context.chatFiles,
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasDiscoverableTools: discoveryTool !== null,

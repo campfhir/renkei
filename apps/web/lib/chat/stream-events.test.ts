@@ -109,7 +109,14 @@ describe('applyStreamEvent', () => {
         start('a', 2),
         {
           type: 'snapshot',
-          turn: { id: 'turn', status: 'running', error: null, startedAt: 'x', finishedAt: null },
+          turn: {
+            id: 'turn',
+            status: 'running',
+            kind: 'reply',
+            error: null,
+            startedAt: 'x',
+            finishedAt: null,
+          },
           messages: [{ ...other, id: 'a2', turnId: 'turn', seq: 2 }],
         },
       ],
@@ -154,5 +161,87 @@ describe('applyStreamEvent', () => {
     expect(truncated.messages.map((message) => message.id)).toEqual(['p']);
     expect(truncated.artifacts).toEqual([]);
     expect(truncated.turn).toBeNull();
+  });
+
+  it('tracks a compaction pass live, then marks it done on its own turn_end', () => {
+    const running = reduce([
+      { type: 'compaction_progress', turnId: 'ct', foldedSoFar: 0, totalToFold: 50 },
+      { type: 'compaction_progress', turnId: 'ct', foldedSoFar: 25, totalToFold: 50 },
+    ]);
+    expect(running.compaction).toEqual({
+      turnId: 'ct',
+      status: 'running',
+      foldedSoFar: 25,
+      totalToFold: 50,
+    });
+
+    const done = applyStreamEvent(running, {
+      type: 'turn_end',
+      turnId: 'ct',
+      status: 'completed',
+      error: null,
+    });
+    expect(done.compaction).toEqual({
+      turnId: 'ct',
+      status: 'done',
+      foldedSoFar: 25,
+      totalToFold: 50,
+    });
+
+    const failed = applyStreamEvent(running, {
+      type: 'turn_end',
+      turnId: 'ct',
+      status: 'failed',
+      error: 'model unavailable',
+    });
+    expect(failed.compaction?.status).toBe('failed');
+  });
+
+  it('leaves compaction alone when turn_end belongs to a different turn', () => {
+    const state = reduce([
+      { type: 'compaction_progress', turnId: 'ct', foldedSoFar: 5, totalToFold: 10 },
+      { type: 'turn_end', turnId: 'some-other-turn', status: 'completed', error: null },
+    ]);
+    expect(state.compaction).toEqual({
+      turnId: 'ct',
+      status: 'running',
+      foldedSoFar: 5,
+      totalToFold: 10,
+    });
+  });
+
+  it('reconnecting mid-compaction (a snapshot on a compaction turn) shows it running with no counts yet', () => {
+    const state = reduce([
+      {
+        type: 'snapshot',
+        turn: {
+          id: 'ct',
+          status: 'running',
+          kind: 'compaction',
+          error: null,
+          startedAt: 'x',
+          finishedAt: null,
+        },
+        messages: [],
+      },
+    ]);
+    expect(state.compaction).toEqual({
+      turnId: 'ct',
+      status: 'running',
+      foldedSoFar: 0,
+      totalToFold: 0,
+    });
+  });
+
+  it('clears compaction on truncate', () => {
+    const state = reduce([
+      { type: 'compaction_progress', turnId: 'ct', foldedSoFar: 1, totalToFold: 2 },
+    ]);
+    const truncated = applyStreamEvent(state, {
+      type: 'truncate',
+      fromSeq: 1,
+      removedArtifactIds: [],
+    });
+    expect(truncated.compaction).toBeNull();
   });
 });

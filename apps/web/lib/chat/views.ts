@@ -12,6 +12,8 @@ export type MessageRole = 'user' | 'assistant';
 export type MessageKind = 'prompt' | 'assistant' | 'tool_results';
 export type MessageStatus = 'complete' | 'streaming' | 'canceled' | 'interrupted' | 'failed';
 export type TurnStatus = 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
+/** 'compaction': a chat_compact pass riding the turn machinery, no messages of its own. */
+export type TurnKind = 'reply' | 'compaction';
 
 /** A content block as rendered: attachments carry size, not bytes. */
 export type ChatBlock =
@@ -53,6 +55,7 @@ export interface AttachmentView {
 export interface TurnView {
   id: string;
   status: TurnStatus;
+  kind: TurnKind;
   error: string | null;
   startedAt: string;
   finishedAt: string | null;

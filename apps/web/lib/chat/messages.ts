@@ -27,6 +27,8 @@ export interface StoredMessage {
   stopReason: string | null;
   usage: LlmUsage | null;
   error: string | null;
+  /** The compaction pass that folded this message, if any (compaction.ts). */
+  summaryId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +48,7 @@ const MESSAGE_COLUMNS = [
   'stop_reason',
   'usage',
   'error',
+  'summary_id',
   'created_at',
   'updated_at',
 ] as const;
@@ -131,6 +134,7 @@ function rowOf(raw: {
   stop_reason: string | null;
   usage: unknown;
   error: string | null;
+  summary_id: string | null;
   created_at: Date;
   updated_at: Date;
 }): StoredMessage {
@@ -149,6 +153,7 @@ function rowOf(raw: {
     stopReason: raw.stop_reason,
     usage: usageOf(raw.usage),
     error: raw.error,
+    summaryId: raw.summary_id,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   };
@@ -234,6 +239,27 @@ export async function insertMessage(
     .returning(['id', 'seq', 'created_at'])
     .executeTakeFirstOrThrow();
   return { id: inserted.id, seq: inserted.seq, createdAt: inserted.created_at };
+}
+
+/**
+ * Compaction's write: attributes the folded messages to the summary that
+ * just absorbed them (compaction.ts). Idempotent — a message already
+ * attributed to an earlier summary is left alone by the caller's own
+ * selection, never re-pointed here.
+ */
+export async function attributeMessagesToSummary(
+  db: Kysely<DB> | Transaction<DB>,
+  tenantId: string,
+  messageIds: string[],
+  summaryId: string
+): Promise<void> {
+  if (messageIds.length === 0) return;
+  await db
+    .updateTable('chat_messages')
+    .set({ summary_id: summaryId })
+    .where('tenant_id', '=', tenantId)
+    .where('id', 'in', messageIds)
+    .execute();
 }
 
 export interface AssistantPatch {

@@ -80,6 +80,8 @@ export const ICONS = {
     'M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18ZM12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18ZM15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4',
   /** A wrench — the tools a chat may use. */
   tool: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
+  /** A packing box, its flaps seamed — folding older messages away, boxed for later. */
+  package: 'M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5L12 12l8-4.5M12 12v9M8 5.25l8 4.5',
   /** A bookmark — a note saved to memory. */
   memory: 'M6 3h12v18l-6-4-6 4z',
   /** A circular back-arrow around a clock face — reaching into past chats. */
