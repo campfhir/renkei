@@ -204,7 +204,8 @@ finished (a crash mid-clone) sits in `cloning` until its lifetime lapses.
 A ready row whose directory is gone — the container recreated without
 the workspaces volume mounted, the directory removed by hand — is marked
 `failed` the first time a verb reaches for it, with a message that says
-to clone again; before that check every such verb answered a bare
+the next chat message (or the project page) clones it again — the model
+has no clone tool; the turn's prelude re-clones a failed checkout; before that check every such verb answered a bare
 `spawn setpriv ENOENT`, Node's word for a working directory that is not
 there, which reads as a missing binary. The worker also proves at boot,
 when it is root, that setpriv can drop a command to another uid, and
