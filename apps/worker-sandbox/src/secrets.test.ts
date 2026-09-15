@@ -59,7 +59,7 @@ describe('createSecretResolver', () => {
   afterEach(() => vault.close());
 
   it('types the value when the secret is unlocked and the page is on a scoped host', async () => {
-    vault.unlock(ROW.id, SEALED, PASSPHRASE, Date.now() + 60_000);
+    await vault.unlock(TARGET, ROW.id, SEALED, PASSPHRASE, Date.now() + 60_000);
     const resolve = createSecretResolver({} as Kysely<DB>, vault);
     await expect(
       resolve(TARGET, { name: 'vendor-portal', field: 'password' }, 'portal.vendor.com')

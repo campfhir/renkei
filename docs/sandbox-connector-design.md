@@ -294,15 +294,26 @@ around the model entirely:
   `sandbox_secrets` (migration 090) carries the sealed blob plus the
   non-secret half (name, field names, hosts, expiry); the table plus every
   Renkei key yields nothing.
-- _Unlocked for a window, in memory, in the worker._ Unlocking sends the
-  passphrase to `apps/worker-sandbox` for the length of one request; the
-  worker derives the key, proves it opens the blob (GCM's tag refuses a
-  wrong passphrase before anything is held), and keeps the key in
-  `SecretVault` (`src/secret-vault.ts`) until the window closes — 8 hours
-  by default, 24 at most — or the person locks it, or the process restarts.
-  Nothing about the unlock is written anywhere, which is why the UI asks
-  the worker for lock state rather than a column. The secret itself
-  expires (30 days by default, 90 at most) and is swept like a staged file.
+- _Unlocked for a window, in the worker._ Unlocking sends the passphrase
+  to `apps/worker-sandbox` for the length of one request; the worker
+  derives the key and proves it opens the blob (GCM's tag refuses a wrong
+  passphrase before anything is held). `SecretVault` (`src/secret-vault.ts`)
+  then holds the derived key until the window closes — 8 hours by
+  default, 24 at most — or the person locks it. Where it holds it depends
+  on the deployment. With an env-secrets key (`SANDBOX_ENV_SECRETS_KEY`,
+  else `TOKEN_ENCRYPTION_KEY`) the held key goes to the shared data disk
+  (`<SANDBOX_DATA_DIR>/secret-keys`, `src/secret-key-store.ts`), sealed
+  with AES-GCM under a key HKDF-derived from that env-secrets key and the
+  secret's owner and id, and is read back on every use — so every sandbox
+  replica can type the secret, a restart does not lock it, and a lock on
+  any replica deletes the file and locks all. That is a deliberate
+  widening of the original "memory only" rule: for the window, the
+  deployment's key plus the disk opens the secret (never the passphrase
+  and never a value; only the derived key is written). Without an
+  env-secrets key the vault is this process's memory and a restart locks
+  everything, as before. Either way the UI asks the worker for lock state
+  rather than a column. The secret itself expires (30 days by default, 90
+  at most) and is swept like a staged file.
 - _Scoped to hosts._ A secret names 1–8 hostnames (`portal.vendor.com`,
   `*.vendor.com`) it may be typed on, required at creation. The worker
   resolves a type step's reference against the page's **current** host
