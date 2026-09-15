@@ -77,6 +77,16 @@ export async function readFile(storageKey: string): Promise<Buffer | undefined> 
   return readFileBytes(path);
 }
 
+/** Whether the bytes for a storage key are on this instance's disk. */
+export async function fileExists(storageKey: string): Promise<boolean> {
+  try {
+    await stat(resolvePath(storageKey));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function deleteFile(storageKey: string): Promise<void> {
   await rm(resolvePath(storageKey), { force: true });
 }

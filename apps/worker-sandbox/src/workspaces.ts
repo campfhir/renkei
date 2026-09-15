@@ -544,6 +544,20 @@ export function isCheckoutStorageKey(storageKey: string): boolean {
   );
 }
 
+/**
+ * How long past its expiry a row whose bytes are on no instance's disk
+ * waits before any instance drops it. With several sandbox instances each
+ * sweeping the shared rows, an expired row whose checkout or file is on
+ * ANOTHER instance's disk must be left for that instance — it alone can
+ * remove the bytes. A row nobody claims within this grace has no bytes
+ * anywhere (the disk was replaced, the directory removed) and goes.
+ */
+export const ORPHAN_GRACE_MS = 24 * 60 * 60_000;
+
+export function orphanedByNow(expiresAt: Date, now = Date.now()): boolean {
+  return expiresAt.getTime() + ORPHAN_GRACE_MS < now;
+}
+
 export async function removeWorkspace(storageKey: string): Promise<void> {
   if (!isCheckoutStorageKey(storageKey)) {
     throw new Error(

@@ -257,8 +257,28 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   seals the `.env` a code project's commands run with
   (migration 101, `sandbox_env_secrets`); it falls back to
   `TOKEN_ENCRYPTION_KEY`, and a dedicated key is the recommendation so the
-  web app never holds one that opens them. Entrypoint:
-  `pnpm --filter @renkei/worker-sandbox start`.
+  web app never holds one that opens them. **Stateful**, unlike the queue
+  workers: its checkouts, staged bytes, browser sessions and unlocked keys
+  are on its own disk and in its own memory, with only the rows in the
+  database. Replicas on one host share those disks and work; replicas
+  on separate disks do not — see "More than one sandbox replica" below.
+  Entrypoint: `pnpm --filter @renkei/worker-sandbox start`.
+
+**More than one sandbox replica:** fine on one host, because Compose
+replicas of a service share its named volumes — and the sandbox worker
+keeps nothing about checkouts or staged files in memory; every verb loads
+the row from Postgres and reads the disk. So `scale: N` works as long as
+the service mounts BOTH volumes, `renkei-sandbox-data:/data` and
+`renkei-sandbox-workspaces:/workspaces`. Mount only the first and each
+replica keeps its checkouts in its own writable layer: a clone lands on
+one replica and the next call, on another, finds nothing and reports the
+checkout gone (and a recreate wipes them all). Two things stay per
+replica whatever the volumes: browser sessions and unlocked secret keys
+are live process state, so a `sandbox_browser_*` call that lands on a
+different replica from the one holding the session does not find it —
+run one replica if the browser tools matter. Each replica's sweep removes
+only bytes it can see and leaves the rest a day past expiry, so replicas
+on separate disks (several hosts) never delete each other's rows early.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key

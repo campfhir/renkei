@@ -222,7 +222,10 @@ answer says whether it has the project's other files (this checkout
 alone was removed) or none at all (a worker without the volume, or a
 second instance behind one address), names itself (hostname, uptime),
 and every workspace it describes carries `worker` for the same
-comparison; a clone whose directory is missing straight after `du`
+comparison. Replicas of the worker on one host are fine when they share
+both named volumes — nothing about a checkout lives in memory, every
+verb reads the disk — and each replica's sweep removes only bytes it can
+see (DEPLOYMENT.md, "More than one sandbox replica"); a clone whose directory is missing straight after `du`
 measured it is marked failed rather than ready; before that check every such verb answered a bare
 `spawn setpriv ENOENT`, Node's word for a working directory that is not
 there, which reads as a missing binary. The worker also proves at boot,

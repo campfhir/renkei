@@ -81,6 +81,7 @@ import {
   measureWorkspace,
   newWorkspaceStorageKey,
   readWorkspaceFile,
+  orphanedByNow,
   removeWorkspace,
   workerInstance,
   workerUptime,
@@ -1144,13 +1145,23 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
   }
 
-  /** Expired checkouts lose their bytes, then their row; one failure never stops the batch. */
+  /**
+   * Expired checkouts lose their bytes, then their row; one failure never
+   * stops the batch. Only a checkout on THIS instance's disk is this
+   * instance's to remove: with several instances sweeping the shared
+   * rows, one on another's disk is left for that instance, until the
+   * grace after which no instance has it and the row alone goes.
+   */
   async function sweep(limit: number): Promise<void> {
     if (!deps.enabled) return;
     const expired = await store.listExpiredWorkspaces(db, limit);
     for (const workspace of expired) {
       try {
-        await removeWorkspace(workspace.storageKey);
+        if (await checkoutExists(workspace.storageKey)) {
+          await removeWorkspace(workspace.storageKey);
+        } else if (!orphanedByNow(workspace.expiresAt)) {
+          continue;
+        }
         await store.deleteWorkspaceById(db, workspace.id);
       } catch (error) {
         logger.warn('sweep could not remove workspace {id}: {error}', {

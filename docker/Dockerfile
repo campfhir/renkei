@@ -141,7 +141,7 @@ ENV NODE_ENV=production \
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "require('http').get('http://127.0.0.1:3000/api/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
@@ -241,7 +241,7 @@ EXPOSE 8090
 # The service's own unauthenticated liveness endpoint (everything else on
 # the port requires the bearer key).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:' + (process.env.FILESHARES_WORKER_PORT || 8090) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.FILESHARES_WORKER_PORT || 8090) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker-fileshares", "start"]
@@ -286,7 +286,7 @@ EXPOSE 8091
 # The service's own unauthenticated liveness endpoint (everything else on
 # the port requires the bearer key).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:' + (process.env.ONBASE_WORKER_PORT || 8091) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.ONBASE_WORKER_PORT || 8091) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker-onbase", "start"]
@@ -383,7 +383,7 @@ EXPOSE 8092
 # The service's own unauthenticated liveness endpoint (everything else on
 # the port requires the bearer key).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:' + (process.env.SANDBOX_WORKER_PORT || 8092) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.SANDBOX_WORKER_PORT || 8092) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
 
 ENTRYPOINT ["dumb-init", "--", "sandbox-entrypoint"]
 CMD ["pnpm", "--filter", "@renkei/worker-sandbox", "start"]

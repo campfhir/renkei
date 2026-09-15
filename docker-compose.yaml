@@ -132,7 +132,7 @@ services:
     environment:
       <<: *database-urls
       FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
-      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
+      SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
     depends_on:
       postgres:
         condition: service_healthy
@@ -208,6 +208,18 @@ services:
   # the network should not be either. SANDBOX_ENV_SECRETS_KEY in .env
   # (`openssl rand -base64 32`) seals the environment variables people hand
   # their commands; it falls back to TOKEN_ENCRYPTION_KEY.
+  #
+  # STATEFUL, unlike the queue workers above: checkouts on /workspaces and
+  # staged bytes on /data, with only the rows in the database. Replicas
+  # (drop container_name, `scale: N`) work on one host BECAUSE they share
+  # the two named volumes below — the worker keeps nothing about either in
+  # memory and reads the disk on every call. Mount both, always: with
+  # only /data mounted, each replica keeps checkouts in its own writable
+  # layer, and a clone on one replica is "gone" on the next (Docker's DNS
+  # has no session affinity). Browser sessions and unlocked secret keys
+  # are live process state and stay per replica; run one replica if the
+  # sandbox_browser_* tools matter. DEPLOYMENT.md, "More than one sandbox
+  # replica".
   worker-sandbox:
     image: scotteremiaroden/renkei-sandbox:latest
     container_name: renkei-worker-sandbox
@@ -262,7 +274,7 @@ services:
       # sandbox_browser_* tools; unset, they don't exist. Likewise
       # SANDBOX_WORKSPACES_ENABLED=true for the Code section — code
       # projects, each a repository a chat works in with the code_* tools.
-      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
+      SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.
       RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000

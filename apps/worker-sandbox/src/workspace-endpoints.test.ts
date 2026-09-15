@@ -38,7 +38,13 @@ import type { AddressInfo } from 'node:net';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
-import { identityFor, setWorkspacesRootForTests, workspaceDir } from './workspaces';
+import { createWorkspaceHandlers } from './workspace-endpoints';
+import {
+  ORPHAN_GRACE_MS,
+  identityFor,
+  setWorkspacesRootForTests,
+  workspaceDir,
+} from './workspaces';
 import { resetEnvSecretsKeyForTests, sealEnvValue, envSecretsKey } from './env-secrets';
 
 const workspaceStore = jest.requireMock<Record<string, jest.Mock>>('./workspace-store');
@@ -206,6 +212,29 @@ describe('a checkout that vanished from disk', () => {
     expect(result.status).toBe(200);
     expect(result.json.workspace.worker).toEqual(expect.any(String));
     expect(result.json.workspace.worker).not.toBe('');
+  });
+});
+
+describe('the sweep across instances', () => {
+  it('removes only what is on this disk, leaves a fresh row for its own instance, drops an orphan', async () => {
+    const here = 'tenant-1/hash/ws-expired-here';
+    await mkdir(join(workspaceDir(here), 'src'), { recursive: true });
+    const expired = (id: string, storageKey: string, expiredAgoMs: number) => ({
+      ...readyWorkspace(),
+      id,
+      storageKey,
+      expiresAt: new Date(Date.now() - expiredAgoMs),
+    });
+    workspaceStore.listExpiredWorkspaces.mockResolvedValue([
+      expired('ws-expired-here', here, 60_000),
+      expired('ws-elsewhere-fresh', 'tenant-1/hash/ws-elsewhere-fresh', 60_000),
+      expired('ws-elsewhere-orphan', 'tenant-1/hash/ws-elsewhere-orphan', ORPHAN_GRACE_MS + 60_000),
+    ]);
+    workspaceStore.deleteWorkspaceById.mockResolvedValue(undefined);
+    await createWorkspaceHandlers({ db: {} as Kysely<DB>, enabled: true }).sweep(10);
+    const deleted = workspaceStore.deleteWorkspaceById.mock.calls.map((call) => call[1]);
+    expect(deleted.sort()).toEqual(['ws-elsewhere-orphan', 'ws-expired-here']);
+    await expect(readFile(join(workspaceDir(here), 'src'))).rejects.toThrow();
   });
 });
 
