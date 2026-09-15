@@ -57,6 +57,10 @@ function idsFor(project: string) {
     seededName: `Billing service (${digit})`,
     seededChatTitle: `Why does the invoice job retry? (${digit})`,
     newName: `Notifications gateway (${digit})`,
+    // A repository created on the fly, through the "Create new repository"
+    // tab — its own project so it never collides with the browsed-repo one.
+    createdRepoName: `Analytics pipeline (${digit})`,
+    createdRepoSlug: `analytics-pipeline-${digit}`,
   };
 }
 
@@ -95,9 +99,9 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     );
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = $2`, [
+    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = ANY($2)`, [
       E2E_TENANT_ID,
-      ids.newName,
+      [ids.newName, ids.createdRepoName],
     ]);
     // A code project with no checkout yet — the first chat makes one.
     await client.query(
@@ -121,9 +125,9 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   try {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = $2`, [
+    await client.query(`DELETE FROM chat_projects WHERE tenant_id = $1 AND name = ANY($2)`, [
       E2E_TENANT_ID,
-      ids.newName,
+      [ids.newName, ids.createdRepoName],
     ]);
   } finally {
     await client.end();
@@ -573,7 +577,7 @@ test.describe('code projects', () => {
     await expect(page.getByText('Connect Bitbucket first')).toHaveCount(0);
     const create = page.getByRole('button', { name: 'Create project' });
     await expect(create).toBeDisabled();
-    await page.getByLabel('Name', { exact: true }).fill(ids.newName);
+    await page.getByLabel(/^Name/).fill(ids.newName);
     const workspacePick = page.getByRole('combobox', { name: /^Workspace/ });
     await expect(workspacePick).toBeEnabled({ timeout: 15_000 });
     await workspacePick.selectOption('acme');
@@ -614,5 +618,69 @@ test.describe('code projects', () => {
     await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
     await expect(main.getByRole('link', { name: ids.newName })).toHaveCount(0);
     await expect(main.getByRole('link', { name: ids.seededName })).toBeVisible();
+  });
+
+  test('new project via a freshly created Bitbucket repository', async ({ page }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const shot = (name: string) =>
+      page.screenshot({
+        path: path.join(
+          import.meta.dirname,
+          '..',
+          'test-results',
+          'screens',
+          testInfo.project.name,
+          name
+        ),
+        fullPage: false,
+      });
+    const main = page.getByRole('main');
+    const sectionOf = (name: string) =>
+      main.locator('section', { has: page.getByRole('heading', { level: 2, name }) });
+
+    // ── "Create new repository", beside "Choose existing": pick the
+    //    workspace and project, name it, and an empty repo appears on
+    //    Bitbucket — used exactly like one the browser would have found ──
+    await page.goto(`/${E2E_SLUG}/code/new`);
+    await page.getByLabel(/^Name/).fill(ids.createdRepoName);
+    await page.getByRole('tab', { name: 'Create new' }).click();
+    const workspacePick = page.getByRole('combobox', { name: /^Workspace/ });
+    await expect(workspacePick).toBeEnabled({ timeout: 15_000 });
+    await workspacePick.selectOption('acme');
+    const projectPick = page.getByRole('combobox', { name: /^Project/ });
+    await expect(projectPick).toBeEnabled({ timeout: 15_000 });
+    await projectPick.selectOption('NOTIF');
+    const createRepo = page.getByRole('button', { name: 'Create repository', exact: true });
+    await expect(createRepo).toBeDisabled();
+    await page.getByLabel('Repository name').fill(ids.createdRepoName);
+    await expect(
+      page.getByText(`Creates acme/${ids.createdRepoSlug} — empty and private.`)
+    ).toBeVisible();
+    await expect(createRepo).toBeEnabled();
+    await shot('code-new-create-repo.png');
+    await createRepo.click();
+
+    // ── The created repo drops into the same "chosen" slot a browsed one
+    //    would; the rest of the form (branch placeholder, instructions,
+    //    Create project) behaves identically to an existing repository ──
+    await expect(page.getByText(`acme/${ids.createdRepoSlug}`)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Choose another' })).toBeVisible();
+    await expect(page.getByLabel('Branch (optional)')).toHaveAttribute(
+      'placeholder',
+      'main branch'
+    );
+    const create = page.getByRole('button', { name: 'Create project' });
+    await expect(create).toBeEnabled();
+    await create.click();
+    // First hit on these routes in this test (unlike the big walkthrough
+    // above, which has already warmed them up) — dev-mode's on-demand
+    // compile can outrun the default assertion timeout.
+    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code/[0-9a-f-]{36}$`), {
+      timeout: 20_000,
+    });
+    await expect(page.getByRole('heading', { level: 1, name: ids.createdRepoName })).toBeVisible();
+    const newRepo = sectionOf('Repository');
+    await expect(newRepo.getByText(`acme/${ids.createdRepoSlug}`)).toBeVisible();
+    await expect(newRepo.getByText('Not cloned yet')).toBeVisible();
   });
 });

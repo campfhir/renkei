@@ -2,12 +2,13 @@
 
 /**
  * The new-code-project form. The repository is picked from the person's
- * own Bitbucket — browsed workspace → project → repositories, or searched
- * by name across everything they belong to — never typed; the `.env` is
- * pasted as a file's text and parsed on the server (only the pairs reach
- * the sandbox worker, which seals them, and nothing here shows a value
- * again); the instructions start from a developer's brief. Nothing is
- * cloned yet: the first chat in the project does that.
+ * own Bitbucket — browsed workspace → project → repositories, searched by
+ * name across everything they belong to, or created fresh (empty) under a
+ * chosen workspace and project — never typed by hand for an existing repo;
+ * the `.env` is pasted as a file's text and parsed on the server (only the
+ * pairs reach the sandbox worker, which seals them, and nothing here shows
+ * a value again); the instructions start from a developer's brief. Nothing
+ * is cloned yet: the first chat in the project does that.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -16,6 +17,7 @@ import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
+import { repoSlugFromName } from '@/lib/code/repo-slug';
 import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
 
 const inputClass =
@@ -32,6 +34,7 @@ export default function NewCodeProject({
 }) {
   const router = useRouter();
   const [name, setName] = useState('');
+  const [repoMode, setRepoMode] = useState<'choose' | 'create'>('choose');
   const [chosen, setChosen] = useState<RepoChoice | null>(null);
   const [branch, setBranch] = useState('');
   const [env, setEnv] = useState('');
@@ -116,17 +119,49 @@ export default function NewCodeProject({
               </button>
             </div>
           ) : (
-            <RepositoryBrowser
-              tenantId={tenantId}
-              enabled={bitbucketConnected}
-              onChoose={(repo) => {
-                setChosen(repo);
-                // The repository names the project until the person types
-                // over it — an initial value, not a placeholder, so it is
-                // part of what gets created and stays theirs to rename.
-                setName((current) => current || repo.name);
-              }}
-            />
+            <div className="space-y-2">
+              <div role="tablist" className="flex gap-1">
+                {(['choose', 'create'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={repoMode === tab}
+                    onClick={() => setRepoMode(tab)}
+                    className={`rounded-md px-2 py-1 text-xs font-medium ${
+                      repoMode === tab
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800'
+                    }`}
+                  >
+                    {tab === 'choose' ? 'Choose existing' : 'Create new'}
+                  </button>
+                ))}
+              </div>
+              {repoMode === 'choose' ? (
+                <RepositoryBrowser
+                  tenantId={tenantId}
+                  enabled={bitbucketConnected}
+                  onChoose={(repo) => {
+                    setChosen(repo);
+                    // The repository names the project until the person
+                    // types over it — an initial value, not a placeholder,
+                    // so it is part of what gets created and stays theirs
+                    // to rename.
+                    setName((current) => current || repo.name);
+                  }}
+                />
+              ) : (
+                <CreateRepository
+                  tenantId={tenantId}
+                  enabled={bitbucketConnected}
+                  onCreated={(repo) => {
+                    setChosen(repo);
+                    setName((current) => current || repo.name);
+                  }}
+                />
+              )}
+            </div>
           )}
         </div>
 
@@ -225,29 +260,16 @@ export default function NewCodeProject({
 }
 
 /**
- * Bitbucket, browsed: the workspaces the person belongs to, a workspace's
- * projects, and the repositories under the chosen one — or a search by
- * name across every workspace. Each list is fetched as it is needed.
+ * The workspace → project pair every Bitbucket picker starts from —
+ * shared by the "choose existing" browser and the "create new" form, so
+ * they stay in sync instead of fetching this twice.
  */
-function RepositoryBrowser({
-  tenantId,
-  enabled,
-  onChoose,
-}: {
-  tenantId: string;
-  enabled: boolean;
-  onChoose: (repo: RepoChoice) => void;
-}) {
-  const base = `/api/tenant/${tenantId}/code`;
+function useWorkspaceAndProject(base: string, enabled: boolean) {
   const [workspaces, setWorkspaces] = useState<BrowseWorkspace[] | null>(null);
   const [workspace, setWorkspace] = useState('');
   const [projects, setProjects] = useState<BrowseProject[] | null>(null);
   const [project, setProject] = useState('');
-  const [query, setQuery] = useState('');
-  const [repos, setRepos] = useState<RepoChoice[] | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -272,6 +294,39 @@ function RepositoryBrowser({
       else setError(result.error ?? 'The workspace’s projects could not be read.');
     });
   }, [base, workspace]);
+
+  return { workspaces, workspace, setWorkspace, projects, project, setProject, error };
+}
+
+/**
+ * Bitbucket, browsed: the workspaces the person belongs to, a workspace's
+ * projects, and the repositories under the chosen one — or a search by
+ * name across every workspace. Each list is fetched as it is needed.
+ */
+function RepositoryBrowser({
+  tenantId,
+  enabled,
+  onChoose,
+}: {
+  tenantId: string;
+  enabled: boolean;
+  onChoose: (repo: RepoChoice) => void;
+}) {
+  const base = `/api/tenant/${tenantId}/code`;
+  const {
+    workspaces,
+    workspace,
+    setWorkspace,
+    projects,
+    project,
+    setProject,
+    error: browseError,
+  } = useWorkspaceAndProject(base, enabled);
+  const [query, setQuery] = useState('');
+  const [repos, setRepos] = useState<RepoChoice[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The repository list follows the workspace, the project and the search
   // text; typing waits a beat so a fast typist makes one request.
@@ -356,9 +411,9 @@ function RepositoryBrowser({
           />
         </label>
       </div>
-      {error ? (
+      {error || browseError ? (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400">
-          {error}
+          {error ?? browseError}
         </p>
       ) : null}
       {repos === null ? (
@@ -396,6 +451,129 @@ function RepositoryBrowser({
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * A brand-new, empty Bitbucket repository: pick the workspace and the
+ * project it belongs to, give it a name, and create it — the resulting
+ * repository is handed back exactly as one the browser would have found,
+ * so the rest of the form (branch, .env, instructions) treats it the
+ * same either way.
+ */
+function CreateRepository({
+  tenantId,
+  enabled,
+  onCreated,
+}: {
+  tenantId: string;
+  enabled: boolean;
+  onCreated: (repo: RepoChoice) => void;
+}) {
+  const base = `/api/tenant/${tenantId}/code`;
+  const {
+    workspaces,
+    workspace,
+    setWorkspace,
+    projects,
+    project,
+    setProject,
+    error: browseError,
+  } = useWorkspaceAndProject(base, enabled);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const slug = repoSlugFromName(name);
+
+  const create = async () => {
+    if (!workspace || !project || !slug) return;
+    setBusy(true);
+    setError(null);
+    const result = await sendJsonFull<{ repo: RepoChoice }>(`${base}/bitbucket/repos`, 'POST', {
+      workspace,
+      project,
+      name: name.trim(),
+    });
+    setBusy(false);
+    if (result.error || !result.data) {
+      setError(result.error ?? 'The repository could not be created.');
+      return;
+    }
+    onCreated(result.data.repo);
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border border-gray-300 p-3 dark:border-gray-700">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-500">Workspace</span>
+          <select
+            value={workspace}
+            onChange={(event) => setWorkspace(event.target.value)}
+            disabled={!enabled || workspaces === null}
+            className={inputClass}
+          >
+            <option value="">{workspaces === null ? 'Loading…' : 'Pick a workspace'}</option>
+            {(workspaces ?? []).map((entry) => (
+              <option key={entry.slug} value={entry.slug}>
+                {entry.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-500">Project</span>
+          <select
+            value={project}
+            onChange={(event) => setProject(event.target.value)}
+            disabled={!workspace || projects === null}
+            className={inputClass}
+          >
+            <option value="">
+              {!workspace ? 'Pick a workspace first' : projects === null ? 'Loading…' : 'Pick a project'}
+            </option>
+            {(projects ?? []).map((entry) => (
+              <option key={entry.key} value={entry.key}>
+                {entry.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className="block">
+        <span className="mb-1 block text-xs text-gray-500">Repository name</span>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          maxLength={100}
+          placeholder="billing-service"
+          autoComplete="off"
+          spellCheck={false}
+          disabled={!enabled}
+          className={`font-mono ${inputClass}`}
+        />
+        <span className="mt-1 block text-xs text-gray-500">
+          {name.trim() && workspace
+            ? `Creates ${workspace}/${slug || '…'} — empty and private.`
+            : 'An empty, private repository — the first chat clones it once it has something to work with.'}
+        </span>
+      </label>
+      {error || browseError ? (
+        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+          {error ?? browseError}
+        </p>
+      ) : null}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => void create()}
+          disabled={busy || !enabled || !workspace || !project || !slug}
+          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {busy ? 'Creating…' : 'Create repository'}
+        </button>
+      </div>
     </div>
   );
 }

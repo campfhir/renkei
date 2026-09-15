@@ -279,7 +279,7 @@ Invoices, dunning and the nightly jobs.
 - \`pnpm test\`
 `;
 
-function handleBitbucket(url, response) {
+function handleBitbucket(request, url, response) {
   const path = url.pathname.slice('/bitbucket/2.0'.length);
   // The membership listing the app reads (bare /workspaces is deprecated
   // and refuses newer tokens): workspace_access rows wrapping each workspace.
@@ -308,7 +308,30 @@ function handleBitbucket(url, response) {
   }
   const one = /^\/repositories\/([^/]+)\/([^/]+)$/.exec(path);
   if (one) {
-    const repo = BITBUCKET.repos.find((entry) => entry.full_name === `${one[1]}/${one[2]}`);
+    const [, workspace, slug] = one;
+    const fullName = `${workspace}/${slug}`;
+    if (request.method === 'POST') {
+      // Repository creation: the new-project form's "Create new
+      // repository" tab. An empty repo — no mainbranch until something
+      // is pushed to it, same as the real, freshly created thing.
+      // Re-creating the same full_name replaces it rather than refusing,
+      // so re-running the suite against a stub left over from a previous
+      // run behaves the same as a clean one.
+      void readBody(request).then((body) => {
+        const created = {
+          full_name: fullName,
+          name: body.name || slug,
+          project: { key: body.project?.key ?? '' },
+          updated_on: new Date().toISOString(),
+        };
+        const existing = BITBUCKET.repos.findIndex((entry) => entry.full_name === fullName);
+        if (existing === -1) BITBUCKET.repos.push(created);
+        else BITBUCKET.repos[existing] = created;
+        json(response, 200, created);
+      });
+      return;
+    }
+    const repo = BITBUCKET.repos.find((entry) => entry.full_name === fullName);
     return repo ? json(response, 200, repo) : error(response, 404, 'not_found');
   }
   const listing = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.*)$/.exec(path);
@@ -341,7 +364,7 @@ const server = createServer((request, response) => {
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
-  if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(url, response);
+  if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   if (request.headers.authorization !== `Bearer ${API_KEY}`) {
     return error(response, 401, 'unauthorized');
   }
