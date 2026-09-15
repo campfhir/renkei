@@ -173,7 +173,7 @@ describe('a checkout that vanished from disk', () => {
       expect(result.status).toBe(409);
       expect(result.json.error.type).toBe('not_ready');
       expect(result.json.error.message).toMatch(
-        /checkout is gone .* next chat message .* clones the repository again/
+        /checkout is gone .*next chat message.*clones the repository again/
       );
     }
     expect(workspaceStore.setWorkspaceStatus).toHaveBeenCalledWith(
