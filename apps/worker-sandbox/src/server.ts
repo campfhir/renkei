@@ -115,7 +115,7 @@ export interface SandboxServerDeps {
   maxFileBytes?: (tenantId: string) => Promise<number>;
   /** The browser, when SANDBOX_BROWSER_ENABLED; null/absent answers every browser verb 503. */
   browser?: BrowserVerbs | null;
-  /** The in-memory secret vault; the server makes its own when not given (tests share one with the browser). */
+  /** The secret vault; the server makes its own (in-memory) when not given (tests share one with the browser). */
   vault?: SecretVault;
   /** Code workspaces (SANDBOX_WORKSPACES_ENABLED); off answers every workspace and env verb 503. */
   workspaces?: boolean;
@@ -657,8 +657,9 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
 
   /**
    * Browser secrets: sealed here, under a passphrase this process sees
-   * only for the length of the request; the derived key lives in the
-   * vault until its window closes. Every operation is scoped to the
+   * only for the length of the request; the derived key is held by the
+   * vault until its window closes (on the shared disk, sealed, when the
+   * deployment has a key for that — secret-key-store.ts). Every operation is scoped to the
    * caller's own (tenantId, subject), and no response ever carries a
    * value — the one exception is the generated passphrase, returned from
    * `create` exactly once, when the caller asked this worker to make one.
@@ -714,16 +715,18 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
           expiresAt: new Date(Date.now() + secretTtlMs(body.ttlMs)),
         });
         const until = Date.now() + unlockWindowMs(body.unlockMs);
-        vault.unlock(stored.id, sealed, passphrase, until);
+        await vault.unlock(target, stored.id, sealed, passphrase, until);
         return sendJson(response, 200, {
-          secret: secretWire(secretSummary(stored, vault)),
+          secret: secretWire(await secretSummary(stored, vault)),
           passphrase: generated ? passphrase : null,
         });
       }
       case 'list': {
         const rows = await secretsStore.listSecrets(deps.db, target);
         return sendJson(response, 200, {
-          secrets: rows.map((row) => secretWire(secretSummary(row, vault))),
+          secrets: await Promise.all(
+            rows.map(async (row) => secretWire(await secretSummary(row, vault)))
+          ),
         });
       }
       case 'unlock': {
@@ -733,7 +736,7 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
         const given = validatePassphrase(body.passphrase);
         if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
         const until = Date.now() + unlockWindowMs(body.unlockMs);
-        if (!vault.unlock(secret.id, secret.sealed, given.passphrase, until)) {
+        if (!(await vault.unlock(target, secret.id, secret.sealed, given.passphrase, until))) {
           return sendError(
             response,
             403,
@@ -741,20 +744,24 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
             'That passphrase does not open this secret.'
           );
         }
-        return sendJson(response, 200, { secret: secretWire(secretSummary(secret, vault)) });
+        return sendJson(response, 200, {
+          secret: secretWire(await secretSummary(secret, vault)),
+        });
       }
       case 'lock': {
         const id = str(body.id);
         const secret = id ? await secretsStore.getSecret(deps.db, target, id) : undefined;
         if (!secret) return sendError(response, 404, 'not_found');
-        vault.lock(secret.id);
-        return sendJson(response, 200, { secret: secretWire(secretSummary(secret, vault)) });
+        await vault.lock(secret.id);
+        return sendJson(response, 200, {
+          secret: secretWire(await secretSummary(secret, vault)),
+        });
       }
       case 'revoke': {
         const id = str(body.id);
         const deleted = id ? await secretsStore.deleteSecret(deps.db, target, id) : undefined;
         if (!deleted) return sendError(response, 404, 'not_found');
-        vault.lock(deleted.id);
+        await vault.lock(deleted.id);
         return sendJson(response, 200, { revoked: true, id: deleted.id, name: deleted.name });
       }
       default:
@@ -874,11 +881,13 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       }
       // Workspaces past their lifetime: the checkout, then the row.
       await workspaces.sweep(SWEEP_BATCH);
-      // Secrets past their lifetime: the key first, then the row.
+      // Secrets past their lifetime: the key first, then the row; and
+      // held keys past their window, wherever they are kept.
+      await vault.sweepExpired();
       const expiredSecrets = await secretsStore.listExpiredSecrets(deps.db, SWEEP_BATCH);
       for (const secret of expiredSecrets) {
         try {
-          vault.lock(secret.id);
+          await vault.lock(secret.id);
           await secretsStore.deleteSecretById(deps.db, secret.id);
         } catch (error) {
           logger.warn('sweep could not remove secret {id}: {error}', {

@@ -217,9 +217,12 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   rejection" / "uncaught exception" is the worker itself. Browser secrets
   (migration 090, the
   `sandbox_secrets` table) need no key of their own in `.env`: each is
-  sealed under a passphrase the person holds, and unlocked keys live only
-  in this worker's memory — restarting it locks every secret until its
-  owner unlocks it again. **Code projects** (`docs/sandbox-workspaces-design.md`):
+  sealed under a passphrase the person holds. An unlocked secret's derived
+  key is kept on `/data` for its window, sealed under
+  `SANDBOX_ENV_SECRETS_KEY` (else `TOKEN_ENCRYPTION_KEY`) narrowed to its
+  owner, so every replica can type it and a restart does not lock it;
+  without either key it lives in this worker's memory and a restart locks
+  every secret until its owner unlocks it again. **Code projects** (`docs/sandbox-workspaces-design.md`):
   set `SANDBOX_WORKSPACES_ENABLED=true` in `.env` — again read by BOTH the
   web app (the Code section and the `code_*` tools its chats get) and
   this worker — to let people make a code project from one of their
@@ -273,9 +276,10 @@ the service mounts BOTH volumes, `renkei-sandbox-data:/data` and
 replica keeps its checkouts in its own writable layer: a clone lands on
 one replica and the next call, on another, finds nothing and reports the
 checkout gone (and a recreate wipes them all). Two things stay per
-replica whatever the volumes: unlocked browser secret keys are live
-process state, so a secret unlocked on one replica is locked on the
-others. Browser sessions themselves do carry over — after every call the
+replica whatever the volumes: nothing, once `/data` is shared and the
+worker has `SANDBOX_ENV_SECRETS_KEY` (else `TOKEN_ENCRYPTION_KEY`) —
+unlocked browser secret keys are sealed onto `/data` for their window
+(above), and browser sessions carry over — after every call the
 worker seals the session's cookies, page URL and last refs onto `/data`
 under a key derived from `SANDBOX_ENV_SECRETS_KEY` (else
 `TOKEN_ENCRYPTION_KEY`) and the caller, and whichever replica answers

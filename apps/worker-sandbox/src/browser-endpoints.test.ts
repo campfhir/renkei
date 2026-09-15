@@ -390,11 +390,11 @@ describe('secrets', () => {
       username: 'alice',
       password: 'hunter2!',
     });
-    expect(vault.open('secret-1', inserted.sealed)).toEqual({
+    expect(await vault.open(TARGET, 'secret-1', inserted.sealed)).toEqual({
       username: 'alice',
       password: 'hunter2!',
     });
-    vault.lock('secret-1');
+    await vault.lock('secret-1');
   });
 
   it('keeps a caller-chosen passphrase out of the response, and refuses a weak one', async () => {
@@ -407,7 +407,7 @@ describe('secrets', () => {
     });
     expect(chosen.status).toBe(200);
     expect(((await chosen.json()) as { passphrase: string | null }).passphrase).toBeNull();
-    vault.lock('secret-1');
+    await vault.lock('secret-1');
 
     const weak = await post('/v1/secrets/create', {
       ...TARGET,
@@ -445,7 +445,7 @@ describe('secrets', () => {
     });
     expect(wrong.status).toBe(403);
     expect(((await wrong.json()) as { error: { type: string } }).error.type).toBe('bad_passphrase');
-    expect(vault.unlockedUntil('secret-1')).toBeNull();
+    expect(await vault.unlockedUntil(TARGET, 'secret-1')).toBeNull();
 
     const right = await post('/v1/secrets/unlock', {
       ...TARGET,
@@ -475,7 +475,7 @@ describe('secrets', () => {
     secretsStore.deleteSecret.mockResolvedValueOnce({ id: 'secret-1', name: 'vendor-portal' });
     const revoked = await post('/v1/secrets/revoke', { ...TARGET, id: 'secret-1' });
     expect(await revoked.json()).toEqual({ revoked: true, id: 'secret-1', name: 'vendor-portal' });
-    expect(vault.unlockedUntil('secret-1')).toBeNull();
+    expect(await vault.unlockedUntil(TARGET, 'secret-1')).toBeNull();
 
     secretsStore.getSecret.mockResolvedValueOnce(undefined);
     expect(

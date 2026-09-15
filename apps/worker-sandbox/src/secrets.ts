@@ -49,7 +49,7 @@ export function createSecretResolver(db: Kysely<DB>, vault: SecretVault): Secret
         `Secret "${ref.name}" may only be typed on ${secret.hosts.join(', ')} — the page is on ${pageHost || 'no host'}.`
       );
     }
-    const fields = vault.open(secret.id, secret.sealed);
+    const fields = await vault.open(target, secret.id, secret.sealed);
     if (!fields) {
       throw new BrowserOpError(
         'secret_unavailable',
@@ -69,7 +69,10 @@ export function createSecretResolver(db: Kysely<DB>, vault: SecretVault): Secret
 }
 
 /** A stored row as every listing describes it, with the vault's word on its lock state. */
-export function secretSummary(secret: StoredSecret, vault: SecretVault): SandboxSecretSummary {
+export async function secretSummary(
+  secret: StoredSecret,
+  vault: SecretVault
+): Promise<SandboxSecretSummary> {
   return {
     id: secret.id,
     name: secret.name,
@@ -78,6 +81,9 @@ export function secretSummary(secret: StoredSecret, vault: SecretVault): Sandbox
     createdAt: secret.createdAt,
     expiresAt: secret.expiresAt,
     lastUsedAt: secret.lastUsedAt,
-    unlockedUntil: vault.unlockedUntil(secret.id),
+    unlockedUntil: await vault.unlockedUntil(
+      { tenantId: secret.tenantId, subject: secret.subject },
+      secret.id
+    ),
   };
 }

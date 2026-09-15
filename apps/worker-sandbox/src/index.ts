@@ -36,6 +36,7 @@
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { ensureDataRoot, getDataRoot } from './disk';
 import { createBrowserStateStore } from './browser-state';
+import { createSecretKeyStore } from './secret-key-store';
 import { canIsolateByUid, ensureWorkspacesRoot, verifyUidIsolation } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
 import { createSandboxServer } from './server';
@@ -126,10 +127,19 @@ async function main(): Promise<void> {
   }
 
   // The browser launches lazily on the first navigate, so enabling it costs
-  // nothing until an agent actually opens a page. The secret vault is the
-  // one place a browser secret's key exists — in memory, until its unlock
-  // window closes or this process exits.
-  const vault = new SecretVault();
+  // nothing until an agent actually opens a page. The secret vault holds
+  // a browser secret's key between an unlock and its expiry — on the
+  // shared data disk, sealed, so every replica can type it and a restart
+  // does not lock it; in this process's memory when there is no key to
+  // seal with.
+  const secretKeys = createSecretKeyStore(getDataRoot());
+  if (!secretKeys) {
+    logger.warn(
+      'unlocked browser secrets live in this process only (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal them on disk): another replica, or this one after a restart, sees them locked',
+      { component: 'worker-sandbox/secrets' }
+    );
+  }
+  const vault = new SecretVault({ store: secretKeys });
   let browser: BrowserSessions | null = null;
   if (envFlag('SANDBOX_BROWSER_ENABLED')) {
     // Sessions are kept on the data disk between calls so a replica that
