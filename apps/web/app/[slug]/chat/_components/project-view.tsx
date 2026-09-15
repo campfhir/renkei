@@ -429,11 +429,13 @@ export default function ProjectView({
               </div>
             ) : (
               <div className="space-y-2 text-sm">
-                {project.description && variant !== 'code' ? <p>{project.description}</p> : null}
+                {project.description && variant !== 'code' ? (
+                  <p className="break-words">{project.description}</p>
+                ) : null}
                 {project.instructions ? (
                   <div>
                     <p className="text-xs font-medium text-gray-500">Instructions</p>
-                    <p className="whitespace-pre-wrap">{project.instructions}</p>
+                    <p className="whitespace-pre-wrap break-words">{project.instructions}</p>
                   </div>
                 ) : (
                   <p className="text-gray-500">No instructions.</p>

@@ -162,7 +162,7 @@ export default function MemoryIndex({
                 </li>
               ) : (
                 <li key={entry.id} className="flex items-start gap-2 py-2">
-                  <span className="min-w-0 flex-1 whitespace-pre-wrap">
+                  <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
                     {entry.content}
                     <span className="block text-xs text-gray-500">
                       <LocalTime at={entry.createdAt} format="date" />

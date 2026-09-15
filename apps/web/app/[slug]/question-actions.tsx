@@ -148,7 +148,9 @@ function FormNodeView({
 }): React.ReactNode {
   if (node.kind === 'paragraph') {
     return (
-      <p className="whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-300">{node.text}</p>
+      <p className="whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-300">
+        {node.text}
+      </p>
     );
   }
   if (node.kind === 'group') {

@@ -110,7 +110,7 @@ export default async function ActionableCards({
                 {item.archived_at !== null && ' · archived'}
               </span>
             </div>
-            <p className="my-2 whitespace-pre-wrap text-sm">{item.summary}</p>
+            <p className="my-2 whitespace-pre-wrap break-words text-sm">{item.summary}</p>
 
             <RelatedEvidence evidence={item.evidence} />
 
@@ -267,7 +267,11 @@ function PauseOutcome({
           : record.reason === 'run-ended' || record.reason === 'agent-disabled'
             ? 'The run ended before anyone decided.'
             : 'Nobody decided in time — the run treated it as not approved.';
-  return <p className="whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-400">{wording}</p>;
+  return (
+    <p className="whitespace-pre-wrap break-words text-sm text-gray-600 dark:text-gray-400">
+      {wording}
+    </p>
+  );
 }
 
 /**

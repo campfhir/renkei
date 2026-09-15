@@ -250,7 +250,7 @@ export function AgentsList({
           <AgentEnabledToggle tenantId={tenantId} agent={agent} onError={setError} />
         </div>
 
-        <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">
+        <p className="mt-1.5 break-words text-sm text-gray-600 dark:text-gray-400">
           {agent.descriptionStatus === 'stale' ? (
             <span className="flex items-center gap-2 italic text-gray-400 dark:text-gray-500">
               <span

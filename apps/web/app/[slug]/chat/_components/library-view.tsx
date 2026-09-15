@@ -183,7 +183,7 @@ export default function LibraryView({
                   </>
                 ) : null}
               </div>
-              <p className="text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-300">
+              <p className="text-sm whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
                 {prompt.body}
               </p>
               <p className="mt-1 text-xs text-gray-400">
