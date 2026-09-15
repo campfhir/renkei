@@ -34,7 +34,8 @@
  */
 
 import { closeDatabase, getDatabase } from '@renkei/db';
-import { ensureDataRoot } from './disk';
+import { ensureDataRoot, getDataRoot } from './disk';
+import { createBrowserStateStore } from './browser-state';
 import { canIsolateByUid, ensureWorkspacesRoot, verifyUidIsolation } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
 import { createSandboxServer } from './server';
@@ -129,9 +130,19 @@ async function main(): Promise<void> {
   // one place a browser secret's key exists — in memory, until its unlock
   // window closes or this process exits.
   const vault = new SecretVault();
-  const browser = envFlag('SANDBOX_BROWSER_ENABLED')
-    ? new BrowserSessions({ secrets: createSecretResolver(dbResult.val, vault) })
-    : null;
+  let browser: BrowserSessions | null = null;
+  if (envFlag('SANDBOX_BROWSER_ENABLED')) {
+    // Sessions are kept on the data disk between calls so a replica that
+    // did not open one can carry it on; sealed, so only with a key.
+    const state = createBrowserStateStore(getDataRoot());
+    if (!state) {
+      logger.warn(
+        'browser sessions live in this process only (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal them on disk): a call that lands on another replica, or after a restart, starts over',
+        { component: 'worker-sandbox/browser' }
+      );
+    }
+    browser = new BrowserSessions({ secrets: createSecretResolver(dbResult.val, vault), state });
+  }
 
   const server = createSandboxServer({
     db: dbResult.val,

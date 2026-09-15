@@ -273,10 +273,15 @@ the service mounts BOTH volumes, `renkei-sandbox-data:/data` and
 replica keeps its checkouts in its own writable layer: a clone lands on
 one replica and the next call, on another, finds nothing and reports the
 checkout gone (and a recreate wipes them all). Two things stay per
-replica whatever the volumes: browser sessions and unlocked secret keys
-are live process state, so a `sandbox_browser_*` call that lands on a
-different replica from the one holding the session does not find it —
-run one replica if the browser tools matter. Each replica's sweep removes
+replica whatever the volumes: unlocked browser secret keys are live
+process state, so a secret unlocked on one replica is locked on the
+others. Browser sessions themselves do carry over — after every call the
+worker seals the session's cookies, page URL and last refs onto `/data`
+under a key derived from `SANDBOX_ENV_SECRETS_KEY` (else
+`TOKEN_ENCRYPTION_KEY`) and the caller, and whichever replica answers
+next resumes from it (`docs/sandbox-connector-design.md`, "Across
+replicas and restarts"); without either key, sessions stay per replica
+and the worker says so at boot. Each replica's sweep removes
 only bytes it can see and leaves the rest a day past expiry, so replicas
 on separate disks (several hosts) never delete each other's rows early.
 

@@ -13,6 +13,7 @@
 import { EventEmitter } from 'node:events';
 import type { Browser } from 'playwright-core';
 import { BrowserOpError, BrowserSessions } from './browser';
+import type { BrowserStateStore, SavedBrowserState } from './browser-state';
 
 interface FakeLocator {
   count: jest.Mock;
@@ -59,6 +60,9 @@ interface FakeContext extends EventEmitter {
   setDefaultNavigationTimeout: jest.Mock;
   waitForEvent: (name: string, options: { timeout: number }) => Promise<FakePage>;
   closed: boolean;
+  storageState: jest.Mock;
+  /** What newContext was asked for. */
+  options: Record<string, unknown>;
 }
 
 interface FakeBrowser extends EventEmitter {
@@ -150,6 +154,11 @@ function fakeContext(): FakeContext {
   });
   emitter.setDefaultTimeout = jest.fn();
   emitter.setDefaultNavigationTimeout = jest.fn();
+  emitter.options = {};
+  emitter.storageState = jest.fn(async () => ({
+    cookies: [{ name: 'sid', value: 'from-this-context' }],
+    origins: [],
+  }));
   emitter.waitForEvent = (name, options) =>
     new Promise<FakePage>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -170,8 +179,9 @@ function fakeBrowser(): FakeBrowser {
   browser.contexts = [];
   browser.connected = true;
   browser.isConnected = () => browser.connected;
-  browser.newContext = jest.fn(async () => {
+  browser.newContext = jest.fn(async (options: Record<string, unknown> = {}) => {
     const context = fakeContext();
+    context.options = options;
     browser.contexts.push(context);
     return context;
   });
@@ -217,6 +227,104 @@ async function expectBrowserError(
   }
   throw new Error(`expected a ${type} error`);
 }
+
+/** A store two "replicas" (two managers) share, as the data volume would be. */
+function memoryStore(): BrowserStateStore & { files: Map<string, SavedBrowserState> } {
+  const files = new Map<string, SavedBrowserState>();
+  const key = (target: { tenantId: string; subject: string }) =>
+    `${target.tenantId}\n${target.subject}`;
+  return {
+    files,
+    load: async (target) => files.get(key(target)) ?? null,
+    save: async (target, state) => {
+      files.set(key(target), state);
+    },
+    remove: async (target) => {
+      files.delete(key(target));
+    },
+    sweep: async () => 0,
+  };
+}
+
+describe('sessions across replicas', () => {
+  it('saves the session after every call and another replica resumes it, cookies and page', async () => {
+    const store = memoryStore();
+    const here = build({ state: store });
+    await here.sessions.navigate(ALICE, 'https://example.com/inbox', 5000);
+    const saved = store.files.get('tenant-1\nauth0|alice')!;
+    expect(saved.url).toBe('https://example.com/inbox');
+    expect(saved.storageState.cookies).toEqual([{ name: 'sid', value: 'from-this-context' }]);
+
+    const there = build({ state: store });
+    const page = await there.sessions.snapshot(ALICE, 5000);
+    expect(page.url).toBe('https://example.com/inbox');
+    const context = there.browsers[0]!.contexts[0]!;
+    expect(context.options.storageState).toEqual(saved.storageState);
+    expect(context.openPages[0]!.goto).toHaveBeenCalledWith('https://example.com/inbox');
+    expect(there.sessions.sessionCount()).toBe(1);
+  });
+
+  it('a navigate on another replica carries the cookies without reopening the old page', async () => {
+    const store = memoryStore();
+    const here = build({ state: store });
+    await here.sessions.navigate(ALICE, 'https://example.com/inbox', 5000);
+    const there = build({ state: store });
+    await there.sessions.navigate(ALICE, 'https://example.com/settings', 5000);
+    const context = there.browsers[0]!.contexts[0]!;
+    expect(context.options.storageState).toBeDefined();
+    const page = context.openPages[0]!;
+    expect(page.goto).toHaveBeenCalledTimes(1);
+    expect(page.goto).toHaveBeenCalledWith('https://example.com/settings', expect.anything());
+  });
+
+  it('resumes after an idle close on the same replica, and after the browser exits', async () => {
+    const store = memoryStore();
+    const { sessions, clock, browsers } = build({ state: store, idleMs: 1000 });
+    await sessions.navigate(ALICE, 'https://example.com/inbox', 5000);
+    clock.now += 5_000;
+    await (sessions as unknown as { sweepIdle: () => Promise<void> }).sweepIdle();
+    expect(sessions.sessionCount()).toBe(0);
+    expect(store.files.size).toBe(1);
+    await sessions.snapshot(ALICE, 5000);
+    expect(sessions.sessionCount()).toBe(1);
+    await browsers[browsers.length - 1]!.close();
+    expect(sessions.sessionCount()).toBe(0);
+    await expect(sessions.snapshot(ALICE, 5000)).resolves.toMatchObject({
+      url: 'https://example.com/inbox',
+    });
+  });
+
+  it('does not reopen a saved page that is not a web page', async () => {
+    const store = memoryStore();
+    store.files.set('tenant-1\nauth0|alice', {
+      url: 'about:blank',
+      storageState: { cookies: [], origins: [] },
+      refSignatures: [],
+      savedAt: 0,
+    });
+    const { sessions } = build({ state: store });
+    await expectBrowserError(sessions.snapshot(ALICE, 5000), 'no_session');
+  });
+
+  it('close forgets the saved session everywhere', async () => {
+    const store = memoryStore();
+    const here = build({ state: store });
+    await here.sessions.navigate(ALICE, 'https://example.com/inbox', 5000);
+    const there = build({ state: store });
+    expect(await there.sessions.close(ALICE)).toBe(true);
+    expect(store.files.size).toBe(0);
+    await expectBrowserError(here.sessions.snapshot(ALICE, 5000), 'no_session').catch(() => {
+      // The session here is still open in memory; that is the replica's own.
+    });
+  });
+
+  it('without a store, a session is this process only', async () => {
+    const { sessions } = build();
+    await sessions.navigate(ALICE, 'https://example.com/inbox', 5000);
+    const other = build();
+    await expectBrowserError(other.sessions.snapshot(ALICE, 5000), 'no_session');
+  });
+});
 
 describe('sessions and isolation', () => {
   it('opens one context per caller, reuses it, and never shares it', async () => {
