@@ -1094,3 +1094,21 @@ input[type='number']::-webkit-inner-spin-button {
     animation: none;
   }
 }
+
+/* The compaction card's progress bar before the first batch reports in. */
+.chat-compact-indeterminate {
+  animation: chat-compact-slide 1.4s ease-in-out infinite;
+}
+@keyframes chat-compact-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-compact-indeterminate {
+    animation: none;
+  }
+}

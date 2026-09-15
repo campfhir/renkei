@@ -37,8 +37,11 @@ export default function Composer({
   ensureChatId,
   disabled,
   running,
+  queueCount,
+  onClearQueue,
   uploads,
   onSubmit,
+  onCompact,
   onStop,
   modelControl,
   editing,
@@ -50,9 +53,15 @@ export default function Composer({
   ensureChatId: () => Promise<string | null>;
   disabled: boolean;
   running: boolean;
+  /** Messages sent while running, waiting for it to finish. */
+  queueCount: number;
+  onClearQueue: () => void;
   /** Files can be attached at all — false when the org has no storage. */
   uploads: boolean;
+  /** While running, this queues instead of sending — the caller decides which. */
   onSubmit: (input: ComposerSubmit) => Promise<boolean>;
+  /** Forces a compaction pass — /compact, or picked from the prompt picker. */
+  onCompact: () => Promise<boolean>;
   onStop: () => Promise<void>;
   modelControl: ReactNode;
   /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
@@ -120,13 +129,16 @@ export default function Composer({
 
   const send = useCallback(async () => {
     const trimmed = text.trim();
-    if ((!trimmed && attachments.length === 0) || disabled || running || uploading > 0) return;
+    // Sending while running is not blocked here — the caller (onSubmit)
+    // queues it and returns true; only an actually-empty box or an
+    // in-flight upload stops the person from queuing.
+    if ((!trimmed && attachments.length === 0) || disabled || uploading > 0) return;
     const ok = await onSubmit({ text: trimmed, attachments });
     if (ok) {
       setText('');
       setAttachments([]);
     }
-  }, [text, attachments, disabled, running, uploading, onSubmit]);
+  }, [text, attachments, disabled, uploading, onSubmit]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === '/' && text === '') {
@@ -166,6 +178,21 @@ export default function Composer({
             className="rounded px-1.5 py-0.5 font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40"
           >
             Cancel
+          </button>
+        </div>
+      ) : null}
+      {queueCount > 0 ? (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <Icon path={ICONS.clock} className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            {queueCount} message{queueCount === 1 ? '' : 's'} queued — sent once this finishes.
+          </span>
+          <button
+            type="button"
+            onClick={onClearQueue}
+            className="rounded px-1.5 py-0.5 font-medium hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            Clear
           </button>
         </div>
       ) : null}
@@ -211,7 +238,7 @@ export default function Composer({
               void upload(files);
             }
           }}
-          placeholder={running ? 'Replying…' : 'Message Renkei'}
+          placeholder={running ? 'Replying… Enter queues the next message' : 'Message Renkei'}
           rows={1}
           disabled={disabled}
           aria-label="Message"
@@ -254,6 +281,18 @@ export default function Composer({
           {running ? (
             <button
               type="button"
+              onClick={() => void send()}
+              aria-label="Queue this message"
+              title="Sends once the current reply finishes"
+              disabled={disabled || uploading > 0 || (!text.trim() && attachments.length === 0)}
+              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
+            >
+              <Icon path={ICONS.send} className="h-5 w-5" />
+            </button>
+          ) : null}
+          {running ? (
+            <button
+              type="button"
               onClick={() => void onStop()}
               aria-label="Stop"
               className="rounded-md bg-gray-900 p-1.5 text-white hover:bg-gray-700 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-300"
@@ -288,6 +327,10 @@ export default function Composer({
             setText((current) => (current ? `${current}\n${body}` : body));
             setPrompts(false);
             textareaRef.current?.focus();
+          }}
+          onCompact={() => {
+            setPrompts(false);
+            void onCompact();
           }}
         />
       ) : null}

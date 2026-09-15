@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
+import type { CompactionProgress } from '@/lib/chat/stream-events';
 import type { ChatBlock, ChatMessageView, TurnView } from '@/lib/chat/views';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
 import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
@@ -43,6 +44,7 @@ const GIT_ICONS = {
 };
 
 function toolIconFor(name: string): string {
+  if (name === 'chat_compact') return ICONS.package;
   if (name.startsWith('project_memory_') || name.startsWith('chat_memory_')) return ICONS.memory;
   const git = gitGlyphFor(name);
   if (git) return GIT_ICONS[git];
@@ -90,6 +92,7 @@ export default function MessageList({
   pendingToolCalls,
   running,
   turn,
+  compaction,
   empty,
   promptActions,
 }: {
@@ -98,6 +101,7 @@ export default function MessageList({
   pendingToolCalls: string[];
   running: boolean;
   turn: TurnView | null;
+  compaction: CompactionProgress | null;
   empty: ReactNode;
   promptActions: PromptActions | null;
 }) {
@@ -110,7 +114,7 @@ export default function MessageList({
     const element = scroller.current;
     if (!element || !pinned) return;
     element.scrollTop = element.scrollHeight;
-  }, [messages, pinned]);
+  }, [messages, compaction, pinned]);
 
   // The box itself shrinks when a phone's keyboard opens (chat-frame.tsx);
   // a reader at the bottom should still be at the bottom afterwards.
@@ -171,6 +175,7 @@ export default function MessageList({
         {turn && turn.status !== 'running' && turn.status !== 'completed' && turn.error ? (
           <p className="text-xs text-gray-500">{turn.error}</p>
         ) : null}
+        {compaction ? <CompactionCard progress={compaction} /> : null}
       </div>
       {!pinned ? (
         <button
@@ -262,6 +267,53 @@ function segment(messages: ChatMessageView[], results: Map<string, ToolResult>):
     }
   }
   return out;
+}
+
+/**
+ * One inline card for whatever compaction is doing right now — a
+ * dedicated compaction turn (/compact, or asked for in chat) or the
+ * chat_compact tool running inside an ordinary reply. Left in place after
+ * it finishes (status 'done'/'failed') as a small record, rather than
+ * disappearing the moment the turn ends.
+ */
+function CompactionCard({ progress }: { progress: CompactionProgress }) {
+  const { status, foldedSoFar, totalToFold } = progress;
+  const pct = totalToFold > 0 ? Math.round((foldedSoFar / totalToFold) * 100) : null;
+  const label =
+    status === 'running'
+      ? pct !== null
+        ? `Compacting the conversation… ${foldedSoFar} of ${totalToFold}`
+        : 'Compacting the conversation…'
+      : status === 'failed'
+        ? 'Compaction failed.'
+        : totalToFold > 0
+          ? `Compacted ${totalToFold} earlier message${totalToFold === 1 ? '' : 's'} into a summary.`
+          : 'Nothing to compact — the conversation is already tight.';
+  return (
+    <div className="flex max-w-md items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
+      <Icon
+        path={ICONS.package}
+        className={`mt-0.5 h-4 w-4 shrink-0 ${
+          status === 'running'
+            ? 'text-blue-500'
+            : status === 'failed'
+              ? 'text-red-500'
+              : 'text-gray-400'
+        }`}
+      />
+      <div className="min-w-0 flex-1">
+        <p>{label}</p>
+        {status === 'running' ? (
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+            <div
+              className={`h-full rounded-full bg-blue-500 ${pct === null ? 'chat-compact-indeterminate w-1/3' : 'transition-[width]'}`}
+              style={pct !== null ? { width: `${pct}%` } : undefined}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function UserMessage({

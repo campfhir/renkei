@@ -166,6 +166,7 @@ export default function ChatThread({
         turn: {
           id: started.turnId,
           status: 'running',
+          kind: 'reply',
           error: null,
           startedAt: new Date().toISOString(),
           finishedAt: null,
@@ -195,8 +196,37 @@ export default function ChatThread({
     []
   );
 
+  /**
+   * Force a compaction pass: /compact, or "Compact this conversation" from
+   * the prompt picker. Rides the same turn machinery as a reply (an
+   * optimistic compaction_progress event stands in for begin()'s
+   * optimistic prompt row — there is no message of its own to show yet).
+   */
+  const forceCompact = useCallback(async (): Promise<boolean> => {
+    setError(null);
+    const target = await ensureChat();
+    if (!target) return false;
+    const started = await chatClient.compact(tenantId, target.id);
+    if (started.error || !started.data) {
+      setError(started.error ?? 'Compaction could not be started.');
+      return false;
+    }
+    dispatch({
+      type: 'compaction_progress',
+      turnId: started.data.turnId,
+      foldedSoFar: 0,
+      totalToFold: 0,
+    });
+    setActiveTurnId(started.data.turnId);
+    return true;
+  }, [ensureChat, tenantId]);
+
   const submit = useCallback(
     async (input: ComposerSubmit): Promise<boolean> => {
+      // A slash command, not a message — /compact runs the same fold a
+      // person could ask the model for in plain language, directly rather
+      // than waiting on the model to decide to call the tool.
+      if (input.text.trim().toLowerCase() === '/compact') return forceCompact();
       setError(null);
       setSending(true);
       const target = await ensureChat();
@@ -219,8 +249,37 @@ export default function ChatThread({
       if (!chat) router.replace(`/${slug}/chat/${target.id}`);
       return true;
     },
-    [ensureChat, tenantId, modelId, state.messages, chat, router, slug, begin]
+    [forceCompact, ensureChat, tenantId, modelId, state.messages, chat, router, slug, begin]
   );
+
+  /**
+   * While a turn is running — a reply OR a compaction pass, `running`
+   * covers both — a new Send queues instead of being rejected, and drains
+   * one at a time as each turn ends. `submit`/`forceCompact` above are the
+   * "not running" path; queuing is the only thing added here.
+   */
+  type QueuedItem = { kind: 'message'; input: ComposerSubmit } | { kind: 'compact' };
+  const [queue, setQueue] = useState<QueuedItem[]>([]);
+  const queueOrSend = useCallback(
+    (input: ComposerSubmit): Promise<boolean> => {
+      if (!running) return submit(input);
+      setQueue((current) => [...current, { kind: 'message', input }]);
+      return Promise.resolve(true);
+    },
+    [running, submit]
+  );
+  const queueOrCompact = useCallback((): Promise<boolean> => {
+    if (!running) return forceCompact();
+    setQueue((current) => [...current, { kind: 'compact' }]);
+    return Promise.resolve(true);
+  }, [running, forceCompact]);
+  useEffect(() => {
+    if (running || queue.length === 0) return;
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    if (next.kind === 'compact') void forceCompact();
+    else void submit(next.input);
+  }, [running, queue, submit, forceCompact]);
 
   /**
    * Resend a prompt as it was, or with the text now in the box: the server
@@ -260,8 +319,8 @@ export default function ChatThread({
   );
 
   const onComposerSubmit = useCallback(
-    (input: ComposerSubmit) => (editing ? resend(editing, input) : submit(input)),
-    [editing, resend, submit]
+    (input: ComposerSubmit) => (editing ? resend(editing, input) : queueOrSend(input)),
+    [editing, resend, queueOrSend]
   );
 
   const rename = useCallback(
@@ -450,6 +509,7 @@ export default function ChatThread({
         pendingToolCalls={state.pendingToolCalls}
         running={running}
         turn={state.turn}
+        compaction={state.compaction}
         promptActions={
           isOwner && chat && !running && !sending
             ? { onResend: setConfirmResend, onEdit: setEditing }
@@ -486,8 +546,11 @@ export default function ChatThread({
           ensureChatId={async () => (await ensureChat())?.id ?? null}
           disabled={sending || models.length === 0}
           running={running}
+          queueCount={queue.length}
+          onClearQueue={() => setQueue([])}
           uploads={uploadsEnabled}
           onSubmit={onComposerSubmit}
+          onCompact={queueOrCompact}
           editing={editing ? { text: promptTextOf(editing) } : null}
           onCancelEdit={() => setEditing(null)}
           onStop={stop}

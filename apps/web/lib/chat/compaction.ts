@@ -16,22 +16,40 @@
  *  - auto: start-turn.ts checks needsCompaction before every turn's
  *    buildHistory and compacts first when the unfolded history has grown
  *    past the threshold — the guarantee that a turn's own request stays
- *    bounded, not a background sweep.
+ *    bounded, not a background sweep. Progress rides the reply turn's own
+ *    (already open) channel, ahead of the model's own reply.
  *  - tool: the model calls the chat_compact local tool (compaction-tools.ts)
- *    when it judges the conversation is getting long — effective from the
- *    NEXT turn on, since the turn already in flight built its history
- *    before the call.
- *  - user: a person forces it directly (the compact API route).
+ *    when it judges the conversation is getting long — the fold itself is
+ *    visible on the reply turn's channel as it runs, but its EFFECT (a
+ *    smaller history) starts the NEXT turn, since the turn already in
+ *    flight built its history before the call.
+ *  - user: a person asks in chat, or types /compact — startCompactionTurn
+ *    below, which runs the pass on a turn of its own so the person watches
+ *    it happen the same way they watch a reply stream in.
+ *
+ * A pass folds in batches of CHAT_COMPACT_BATCH_MESSAGES rather than one
+ * call over the whole fold set: smaller prompts, and — the reason it is
+ * batched at all — a real fold-count progress a caller can show, not a
+ * simulated one. Batches commit together, not one at a time: a failure
+ * partway through throws and nothing is written, so a retry starts over
+ * clean rather than compounding a half-applied summary.
  *
  * Failure posture matches memory-compaction.ts: a failed or unavailable
  * model leaves every message as it was, for the next check to retry —
  * never a reason to fail the turn that triggered the check.
  */
 
+import { after } from 'next/server';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import type { LlmContentBlock, ResolvedLlm } from '@renkei/agent-llm';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
+import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei/agent-llm';
+import { resolveChatAccess } from './access';
 import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
+import { createTurn, finishTurn } from './turns';
+import { openTurnChannel } from './turn-events';
+import { logger } from '@/lib/logger';
 
 /** A chat is compacted once its unfolded history passes this many characters. */
 export const CHAT_COMPACT_CHAR_THRESHOLD = 320_000;
@@ -41,11 +59,13 @@ export const CHAT_COMPACT_KEEP_RECENT = 20;
 export const CHAT_COMPACT_MIN_FOLD = 6;
 /** Folded per pass — bounds the summarization call; a backlog drains over several passes. */
 const CHAT_COMPACT_MAX_FOLD_MESSAGES = 200;
-/** The ceiling on what one pass's prompt carries, whatever the fold set's raw size. */
-const CHAT_COMPACT_MAX_TRANSCRIPT_CHARS = 180_000;
+/** Folded per model call within a pass — small prompts, and real progress between them. */
+const CHAT_COMPACT_BATCH_MESSAGES = 25;
+/** The ceiling on what one batch's prompt carries, whatever the batch's raw size. */
+const CHAT_COMPACT_MAX_TRANSCRIPT_CHARS = 60_000;
 /** Per message, inside that transcript — one giant tool result should not crowd out the rest. */
 const CHAT_COMPACT_PER_MESSAGE_MAX_CHARS = 4_000;
-/** The rolling summary's ceiling, enforced at compaction time. */
+/** The rolling summary's ceiling, enforced after every batch. */
 export const CHAT_SUMMARY_MAX_CHARS = 12_000;
 
 export type ChatSummaryCreator = 'auto' | 'tool' | 'user';
@@ -187,6 +207,11 @@ const COMPACTION_SYSTEM_PROMPT =
   'Write plain compact prose or short bullet lines, oldest first. ' +
   `Stay under ${CHAT_SUMMARY_MAX_CHARS} characters. Reply with the summary text only.`;
 
+export interface CompactProgress {
+  foldedSoFar: number;
+  totalToFold: number;
+}
+
 export interface CompactChatInput {
   tenantId: string;
   chatId: string;
@@ -194,6 +219,8 @@ export interface CompactChatInput {
   createdBy: ChatSummaryCreator;
   /** Already-fetched rows, when the caller has them (start-turn.ts does). */
   messages?: StoredMessage[];
+  /** Called after each batch — real counts, since a batch is a real unit of work. */
+  onProgress?: (progress: CompactProgress) => void;
 }
 
 export interface CompactChatResult {
@@ -202,25 +229,17 @@ export interface CompactChatResult {
   throughSeq: number;
 }
 
-/**
- * Runs one compaction pass, or returns null when there is nothing worth
- * folding (fewer than CHAT_COMPACT_MIN_FOLD messages outside the keep-recent
- * window) — distinct from a failure, which throws.
- */
-export async function compactChat(
-  db: Kysely<DB>,
-  input: CompactChatInput
-): Promise<CompactChatResult | null> {
-  const messages = input.messages ?? (await listMessages(db, input.tenantId, input.chatId));
-  const candidates = foldCandidates(unfoldedOf(messages));
-  if (candidates.length < CHAT_COMPACT_MIN_FOLD) return null;
-
-  const previous = await latestChatSummary(db, input.tenantId, input.chatId);
+/** One batch's fold: the running summary in, the updated one out. */
+async function foldBatch(
+  llm: ResolvedLlm,
+  runningSummary: string | null,
+  batch: StoredMessage[]
+): Promise<string> {
   const prompt =
-    (previous ? `Earlier summary:\n${previous.content}\n\n` : 'Earlier summary: (none yet)\n\n') +
-    `Conversation to fold in, oldest first:\n${renderTranscript(candidates)}`;
-
-  const llm = input.llm;
+    (runningSummary
+      ? `Earlier summary:\n${runningSummary}\n\n`
+      : 'Earlier summary: (none yet)\n\n') +
+    `Conversation to fold in, oldest first:\n${renderTranscript(batch)}`;
   const completion = await llm.provider.complete({
     system: COMPACTION_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
@@ -236,14 +255,46 @@ export async function compactChat(
     .join('\n')
     .trim();
   if (!summary) throw new Error('the model returned an empty summary');
+  return clip(summary, CHAT_SUMMARY_MAX_CHARS);
+}
 
+/**
+ * Runs one compaction pass, or returns null when there is nothing worth
+ * folding (fewer than CHAT_COMPACT_MIN_FOLD messages outside the keep-recent
+ * window) — distinct from a failure, which throws. Batches run one after
+ * another (each reads the previous batch's summary), reporting progress as
+ * they go; nothing is written to the database until every batch succeeds.
+ */
+export async function compactChat(
+  db: Kysely<DB>,
+  input: CompactChatInput
+): Promise<CompactChatResult | null> {
+  const messages = input.messages ?? (await listMessages(db, input.tenantId, input.chatId));
+  const candidates = foldCandidates(unfoldedOf(messages));
+  const total = candidates.length;
+  // Reported even for a no-op pass, so a caller watching this turn's
+  // channel (startCompactionTurn) always sees at least one update — "there
+  // was nothing to fold" is a real outcome, not silence.
+  input.onProgress?.({ foldedSoFar: 0, totalToFold: total });
+  if (candidates.length < CHAT_COMPACT_MIN_FOLD) return null;
+
+  let runningSummary = (await latestChatSummary(db, input.tenantId, input.chatId))?.content ?? null;
+  for (let start = 0; start < candidates.length; start += CHAT_COMPACT_BATCH_MESSAGES) {
+    const batch = candidates.slice(start, start + CHAT_COMPACT_BATCH_MESSAGES);
+    runningSummary = await foldBatch(input.llm, runningSummary, batch);
+    input.onProgress?.({ foldedSoFar: Math.min(start + batch.length, total), totalToFold: total });
+  }
+
+  // candidates.length >= CHAT_COMPACT_MIN_FOLD (> 0) guarantees the loop
+  // above ran at least once, so foldBatch's return replaced the null.
+  if (runningSummary === null) throw new Error('unreachable: no batch ran');
   const throughSeq = candidates[candidates.length - 1].seq;
   const inserted = await db
     .insertInto('chat_summaries')
     .values({
       tenant_id: input.tenantId,
       chat_id: input.chatId,
-      content: clip(summary, CHAT_SUMMARY_MAX_CHARS),
+      content: runningSummary,
       through_seq: throughSeq,
       folded_count: candidates.length,
       created_by: input.createdBy,
@@ -261,4 +312,103 @@ export async function compactChat(
   );
 
   return { summaryId: inserted.id, foldedCount: candidates.length, throughSeq };
+}
+
+export type StartCompactionError =
+  'NOT_FOUND' | 'FORBIDDEN' | 'ALREADY_RUNNING' | 'NO_MODEL' | 'MODEL_ERROR' | 'DB_ERROR';
+
+export interface StartedCompactionTurn {
+  turnId: string;
+}
+
+/**
+ * A compaction pass a PERSON asked for directly (chat text, /compact, or a
+ * future button), run on a turn of its own so it streams the same way a
+ * reply does: the one-running-turn-per-chat constraint (chat_turns' partial
+ * unique index) serializes it against a reply exactly as it would two
+ * replies, and the browser's existing turn/EventSource machinery needs no
+ * special case to watch it.
+ */
+export async function startCompactionTurn(
+  db: Kysely<DB>,
+  input: {
+    tenantId: string;
+    session: { subject: string; roles: string[] };
+    chatId: string;
+    defer?: (task: () => Promise<void>) => void;
+  }
+): Promise<Result<StartedCompactionTurn, StartCompactionError>> {
+  const defer = input.defer ?? ((task) => after(task));
+  const access = await resolveChatAccess(db, input.tenantId, input.session.subject, input.chatId);
+  if (!access) return err('NOT_FOUND' as const);
+  if (access.role !== 'owner') return err('FORBIDDEN' as const);
+  const chat = access.chat;
+
+  const llmResult = await resolveAgentLlm(db, input.tenantId, chat.llmModelId ?? null);
+  if (!llmResult.ok) {
+    return err(
+      llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
+      {
+        message: llmResult.err.message,
+      }
+    );
+  }
+  const llm = llmResult.val;
+
+  const turn = await createTurn(db, {
+    tenantId: input.tenantId,
+    chatId: chat.id,
+    llmModelId: llm.modelConfigId,
+    thinkingBudget: null,
+    kind: 'compaction',
+  });
+  if (!turn.ok) {
+    return err(
+      turn.err.type === 'ALREADY_RUNNING' ? ('ALREADY_RUNNING' as const) : ('DB_ERROR' as const),
+      {
+        message: turn.err.message,
+      }
+    );
+  }
+  const turnId = turn.val;
+  defer(() => runCompactionTurn(db, { tenantId: input.tenantId, chatId: chat.id, turnId, llm }));
+  return ok({ turnId });
+}
+
+async function runCompactionTurn(
+  db: Kysely<DB>,
+  input: { tenantId: string; chatId: string; turnId: string; llm: ResolvedLlm }
+): Promise<void> {
+  const channel = openTurnChannel(input.turnId);
+  let status: 'completed' | 'failed' = 'completed';
+  let error: string | null = null;
+  try {
+    await compactChat(db, {
+      tenantId: input.tenantId,
+      chatId: input.chatId,
+      llm: input.llm,
+      createdBy: 'user',
+      onProgress: (progress) =>
+        channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
+    });
+  } catch (caught) {
+    status = 'failed';
+    error = caught instanceof Error ? caught.message : String(caught);
+    logger.warn('chat compaction turn failed: {message}', {
+      component: 'chat/compaction',
+      tenantId: input.tenantId,
+      chatId: input.chatId,
+      turnId: input.turnId,
+      message: error,
+    });
+  }
+  await finishTurn(db, input.turnId, {
+    status,
+    error,
+    iterations: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+  });
+  channel.emit({ type: 'turn_end', turnId: input.turnId, status, error });
+  channel.close();
 }

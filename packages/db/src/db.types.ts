@@ -491,6 +491,7 @@ export interface ChatTurns {
   id: Generated<string>;
   input_tokens: Generated<number>;
   iterations: Generated<number>;
+  kind: Generated<string>;
   llm_model_id: string | null;
   output_tokens: Generated<number>;
   started_at: Generated<Timestamp>;

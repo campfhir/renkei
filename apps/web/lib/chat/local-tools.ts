@@ -29,6 +29,12 @@ export interface LocalToolContext {
   llm?: ResolvedLlm;
   /** Where a nested loop's token usage is recorded — the turn's own sink. */
   recordUsage?: (usage: LlmUsage) => Promise<void>;
+  /**
+   * Where a tool that runs a long-ish operation of its own (chat_compact)
+   * reports live progress — the turn's own channel, already open. Absent
+   * for a context with no turn behind it (none today).
+   */
+  emitProgress?: (progress: { foldedSoFar: number; totalToFold: number }) => void;
 }
 
 export interface LocalTool {

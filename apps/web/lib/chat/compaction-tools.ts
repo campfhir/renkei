@@ -33,6 +33,7 @@ export function compactionTools(): LocalTool[] {
             chatId: context.chatId,
             llm: context.llm,
             createdBy: 'tool',
+            onProgress: context.emitProgress,
           });
         } catch (error) {
           return errorResult(

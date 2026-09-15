@@ -369,6 +369,8 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
           llm: input.llm,
           createdBy: 'auto',
           messages: rows,
+          onProgress: (progress) =>
+            channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
         if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id);
       } catch (error) {
@@ -388,6 +390,8 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       readOnly,
       llm: input.llm,
       recordUsage: (usage: LlmUsage) => store.recordUsage(usage),
+      emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>
+        channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     // A code project's checkout, when it is there to work in: the code_*
