@@ -90,6 +90,9 @@ export interface ChatListItem {
   projectId: string | null;
   /** The project's name; null outside a project. */
   projectName: string | null;
+  /** Which kind of project that is — a chat in a code project is listed
+   *  with a different mark than one in a chat project. Null outside one. */
+  projectKind: 'chat' | 'code' | null;
   updatedAt: string;
   lastMessageAt: string | null;
   archived: boolean;

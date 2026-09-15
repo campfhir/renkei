@@ -86,6 +86,40 @@ export const ICONS = {
   fileText: 'M6 21V3h8l4 4v14zM14 3v4h4M9 12h6M9 16h6',
   fileSheet: 'M6 21V3h8l4 4v14zM14 3v4h4M9 11h6v7H9zM9 14.5h6M12 11v7',
   fileImage: 'M6 21V3h8l4 4v14zM14 3v4h4M9.5 11h.01M8 17.5l3-3.5 2 2 1.5-1.5 1.5 2',
+  /** The app menu's doors, one glyph each, so a row is known before it is read. */
+  /** A house — Home. */
+  home: 'M3 11l9-8 9 8v10h-6v-6h-6v6H3z',
+  /** A bot's head, antenna up — Agents. */
+  agent:
+    'M5 9h14v11H5zM12 9V6M12 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M9.5 14.5h.01M14.5 14.5h.01M5 13H3v3h2M19 13h2v3h-2',
+  /** A round speech bubble — an ordinary chat, and the Chat door. */
+  chat: 'M7.9 20A9 9 0 1 0 4 16.1L2 22z',
+  /** Three sheets fanned out — a chat in a project, and the Projects door. */
+  pages: 'M4 8h11v13H4zM7 8V5h11v13h-3M10 5V2h11v13h-3',
+  /** Angle brackets around a slash — a chat in a code project, and the Code door. */
+  code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
+  /** A square speech bubble with lines of text — the Prompt libraries door. */
+  promptLibrary: 'M4 4h16v12h-9l-4 4v-4H4zM8 8h8M8 12h5',
+  /** A thought bubble — what the assistant remembers, the Memory door. */
+  thought:
+    'M8 14a3.5 3.5 0 0 1-.6-6.95A5 5 0 0 1 17 6.5a3.75 3.75 0 0 1 .5 7.5zM6 18h.01M3.5 21h.01',
+  /** The account menu's rows. */
+  /** Three sliders — Preferences. */
+  sliders: 'M4 7h16M4 12h16M4 17h16M15 5v4M9 10v4M13 15v4',
+  /** A plug — Connectors. */
+  plug: 'M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4',
+  /** Stacked layers — Batch jobs. */
+  layers: 'M4 7l8-4 8 4-8 4zM4 12l8 4 8-4M4 17l8 4 8-4',
+  /** Bars — My usage. */
+  chart: 'M4 20h16M7 17v-6M12 17V5M17 17v-3',
+  /** A pulse line — Activity. */
+  activity: 'M3 12h4l3-7 4 14 3-7h4',
+  /** A building — the Organization console. */
+  building: 'M3 21h18M5 21V4h9v17M14 10h5v11M8 8h2M8 12h2M8 16h2',
+  /** An i in a circle — About. */
+  info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01',
+  /** An arrow leaving a door — Sign out. */
+  signOut: 'M10 4H5v16h5M14 8l4 4-4 4M8 12h10',
 };
 
 export function Icon({

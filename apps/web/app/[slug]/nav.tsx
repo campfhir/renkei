@@ -40,6 +40,8 @@ function initialsOf(name: string): string {
 interface NavItem {
   href: string;
   label: string;
+  /** The row's glyph (components/icons.tsx), so a place is known at a glance. */
+  icon: string;
   /** Paths under `href` that belong to a sibling item, not this one. */
   except?: string[];
   /** Only the exact path counts — Home, whose prefix is every page. */
@@ -151,10 +153,10 @@ export default function AppNav({
     {
       label: 'Workspace',
       items: [
-        { href: `/${slug}`, label: 'Home', exact: true },
-        { href: `/${slug}/agents`, label: 'Agents' },
-        { href: `/${slug}/knowledge`, label: 'Knowledge' },
-        { href: `/${slug}/files`, label: 'Files' },
+        { href: `/${slug}`, label: 'Home', icon: ICONS.home, exact: true },
+        { href: `/${slug}/agents`, label: 'Agents', icon: ICONS.agent },
+        { href: `/${slug}/knowledge`, label: 'Knowledge', icon: ICONS.brain },
+        { href: `/${slug}/files`, label: 'Files', icon: ICONS.folder },
       ],
     },
     {
@@ -163,17 +165,18 @@ export default function AppNav({
         {
           href: `/${slug}/chat`,
           label: 'Chat',
+          icon: ICONS.chat,
           except: [`/${slug}/chat/projects`, `/${slug}/chat/prompts`, `/${slug}/chat/memory`],
           plus: { href: `/${slug}/chat/new`, label: 'New chat' },
         },
-        { href: `/${slug}/chat/projects`, label: 'Projects' },
-        // Code projects — a repository to work in, apart from ordinary
-        // chats. The menu only opens the door: the projects, and the chats
-        // inside each, are listed on the Code page and on the project's own
-        // page, never here and never among the person's chats below.
-        { href: `/${slug}/code`, label: 'Code' },
-        { href: `/${slug}/chat/prompts`, label: 'Prompt libraries' },
-        { href: `/${slug}/chat/memory`, label: 'Memory' },
+        { href: `/${slug}/chat/projects`, label: 'Projects', icon: ICONS.pages },
+        // Code projects — a repository to work in. The menu only opens the
+        // door: the projects are listed on the Code page and made there; the
+        // chats inside each sit among the person's chats below, marked with
+        // the same glyph and naming their project.
+        { href: `/${slug}/code`, label: 'Code', icon: ICONS.code },
+        { href: `/${slug}/chat/prompts`, label: 'Prompt libraries', icon: ICONS.promptLibrary },
+        { href: `/${slug}/chat/memory`, label: 'Memory', icon: ICONS.thought },
       ],
       extra: chats ? <ChatList slug={slug} tenantId={tenantId} data={chats} /> : null,
     },
@@ -183,22 +186,24 @@ export default function AppNav({
   // organization console for operators. Groups are separated by rules.
   const accountGroups: NavItem[][] = [
     [
-      { href: `/${slug}/notifications`, label: 'Notifications' },
-      { href: `/${slug}/preferences`, label: 'Preferences' },
-      { href: `/${slug}/connectors`, label: 'Connectors' },
+      { href: `/${slug}/notifications`, label: 'Notifications', icon: ICONS.bell },
+      { href: `/${slug}/preferences`, label: 'Preferences', icon: ICONS.sliders },
+      { href: `/${slug}/connectors`, label: 'Connectors', icon: ICONS.plug },
     ],
     [
-      { href: `/${slug}/batch-jobs`, label: 'Batch jobs' },
-      { href: `/${slug}/usage`, label: 'Tools' },
-      { href: `/${slug}/utilization`, label: 'My usage' },
+      { href: `/${slug}/batch-jobs`, label: 'Batch jobs', icon: ICONS.layers },
+      { href: `/${slug}/usage`, label: 'Tools', icon: ICONS.tool },
+      { href: `/${slug}/utilization`, label: 'My usage', icon: ICONS.chart },
       // Mail review is deliberately unlinked, not removed: it is the only
       // place a person can correct how their own mail was classified, and
       // there is no admin equivalent by design. The route still works for
       // anyone who has it bookmarked or is sent there.
-      { href: `/${slug}/logs`, label: 'Activity' },
+      { href: `/${slug}/logs`, label: 'Activity', icon: ICONS.activity },
     ],
-    ...(isOperator ? [[{ href: `/${slug}/admin`, label: 'Organization' }]] : []),
-    [{ href: `/${slug}/about`, label: 'About' }],
+    ...(isOperator
+      ? [[{ href: `/${slug}/admin`, label: 'Organization', icon: ICONS.building }]]
+      : []),
+    [{ href: `/${slug}/about`, label: 'About', icon: ICONS.info }],
   ];
 
   async function signOut() {
@@ -234,13 +239,17 @@ export default function AppNav({
                   <Link
                     href={item.href}
                     aria-current={here ? 'page' : undefined}
-                    className={`block min-w-0 flex-1 rounded-lg px-3 py-2 text-sm ${
+                    className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-sm ${
                       here
                         ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                         : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
                     }`}
                   >
-                    {item.label}
+                    <Icon
+                      path={item.icon}
+                      className={`h-4 w-4 shrink-0 ${here ? '' : 'text-gray-500 dark:text-gray-400'}`}
+                    />
+                    <span className="truncate">{item.label}</span>
                   </Link>
                   {item.plus ? (
                     <Link
@@ -347,9 +356,13 @@ export default function AppNav({
                           key={item.href}
                           href={item.href}
                           role="menuitem"
-                          className="flex w-full items-center justify-between px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
+                          className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
                         >
-                          {item.label}
+                          <Icon
+                            path={item.icon}
+                            className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400"
+                          />
+                          <span className="flex-1 truncate">{item.label}</span>
                           {item.label === 'Notifications' && unread > 0 ? (
                             <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                               {unread > 9 ? '9+' : unread}
@@ -364,9 +377,13 @@ export default function AppNav({
                     role="menuitem"
                     onClick={() => void signOut()}
                     disabled={signingOut}
-                    className="block w-full border-t border-gray-200 px-4 py-2 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-800 dark:hover:bg-gray-900"
+                    className="flex w-full items-center gap-2.5 border-t border-gray-200 px-4 py-2 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-800 dark:hover:bg-gray-900"
                   >
-                    {signingOut ? 'Signing out…' : 'Sign out'}
+                    <Icon
+                      path={ICONS.signOut}
+                      className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400"
+                    />
+                    <span>{signingOut ? 'Signing out…' : 'Sign out'}</span>
                   </button>
                 </div>
               )}

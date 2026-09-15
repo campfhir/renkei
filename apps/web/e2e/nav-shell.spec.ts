@@ -48,6 +48,20 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
 
   await expect(column).toBeVisible();
   await expect(column.getByRole('link', { name: 'Projects' })).toBeVisible();
+  // Every door in the column carries its own glyph.
+  for (const name of [
+    'Home',
+    'Agents',
+    'Knowledge',
+    'Files',
+    'Chat',
+    'Projects',
+    'Code',
+    'Prompt libraries',
+    'Memory',
+  ]) {
+    await expect(column.getByRole('link', { name, exact: true }).locator('svg')).toHaveCount(1);
+  }
   // The chat list and its search live in the menu on every page, not just the chat's.
   await expect(column.getByRole('searchbox', { name: 'Find a chat' })).toBeVisible();
   await expect(column.getByRole('link', { name: 'Connectors' })).toHaveCount(0);
@@ -60,6 +74,10 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
   const menu = page.getByRole('menu');
   await expect(menu.getByRole('menuitem', { name: 'Connectors' })).toBeVisible();
   await expect(menu.getByRole('menuitem', { name: 'My usage' })).toBeVisible();
+  // Its rows carry glyphs too, Sign out included.
+  for (const name of ['Notifications', 'Preferences', 'Connectors', 'Organization', 'Sign out']) {
+    await expect(menu.getByRole('menuitem', { name }).locator('svg')).toHaveCount(1);
+  }
   await shot('account-menu.png');
   await menu.getByRole('menuitem', { name: 'Organization' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();

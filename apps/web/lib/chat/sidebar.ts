@@ -1,8 +1,9 @@
 /**
  * The menu's chat list: the viewer's chats (archived ones too, flagged),
  * the chats shared with them by name, the chats in the projects they
- * belong to, and those projects — loaded by the tenant layout for every
- * page, since the list sits in the app menu.
+ * belong to — chat projects and code projects alike, each row marked
+ * with which — and those projects — loaded by the tenant layout for
+ * every page, since the list sits in the app menu.
  */
 
 import type { Kysely } from 'kysely';
@@ -24,10 +25,11 @@ export interface ProjectListItem {
 }
 
 /**
- * The menu's Chat section: chats and chat projects. Code projects are
- * kept apart — the Code page lists them, and a chat in a code project
- * is never listed among the person's ordinary chats: it belongs to its
- * repository, and the project's page is where it is found.
+ * The menu's Chat section: every chat the person can open — ordinary
+ * ones, those in chat projects and those in code projects, each row
+ * saying which kind and naming its project — and the chat projects a
+ * chat can be moved into. Code projects are kept apart: the Code page
+ * lists them, and the menu only opens that door.
  */
 export interface ChatSidebarData {
   chats: ChatListItem[];
@@ -41,13 +43,14 @@ function item(
   chat: ChatRow,
   via: ChatListItem['via'],
   ownerName: string | null,
-  projectName: string | null
+  project: { name: string; kind: 'chat' | 'code' } | null
 ): ChatListItem {
   return {
     id: chat.id,
     title: chat.title,
     projectId: chat.projectId,
-    projectName,
+    projectName: project?.name ?? null,
+    projectKind: project?.kind ?? null,
     updatedAt: chat.updatedAt.toISOString(),
     lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
     archived: chat.archivedAt !== null,
@@ -99,25 +102,20 @@ export async function loadChatSidebar(
     ...inProjects.map((chat) => chat.ownerSubject),
     ...projects.map((project) => project.ownerSubject),
   ]);
-  const projectNames = new Map(projects.map((project) => [project.id, project.name]));
-  const codeProjectIds = new Set(
-    projects.filter((project) => project.kind === 'code').map((project) => project.id)
+  const projectsById = new Map(
+    projects.map((project) => [project.id, { name: project.name, kind: project.kind }])
   );
-  const projectNameOf = (chat: ChatRow) =>
-    chat.projectId ? (projectNames.get(chat.projectId) ?? null) : null;
+  const projectOf = (chat: ChatRow) =>
+    chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null;
   const allChats: ChatListItem[] = [
-    ...owned.map((chat) => item(chat, 'owner', null, projectNameOf(chat))),
+    ...owned.map((chat) => item(chat, 'owner', null, projectOf(chat))),
     ...granted.map((chat) =>
-      item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
+      item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectOf(chat))
     ),
     ...inProjects
       .filter((chat) => !grantedIds.has(chat.id))
-      .map((chat) =>
-        item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectNameOf(chat))
-      ),
+      .map((chat) => item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectOf(chat))),
   ];
-  const inCode = (chat: ChatListItem) =>
-    chat.projectId !== null && codeProjectIds.has(chat.projectId);
   const listItem = (project: (typeof projects)[number]): ProjectListItem => ({
     id: project.id,
     name: project.name,
@@ -128,7 +126,7 @@ export async function loadChatSidebar(
     repoFullName: project.repo?.fullName ?? null,
   });
   return {
-    chats: allChats.filter((chat) => !inCode(chat)),
+    chats: allChats,
     projects: projects.filter((project) => project.kind === 'chat').map(listItem),
     code: {
       projects: projects.filter((project) => project.kind === 'code').map(listItem),

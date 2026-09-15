@@ -358,16 +358,21 @@ test.describe('code projects', () => {
     await shot('code-index.png');
 
     // ── The menu: Code sits in the Chat section beside Projects, with no
-    //    "+" of its own — the Code page's button makes projects; projects
-    //    and their chats are listed there, and the chat is NOT among the
-    //    person's ordinary chats ──
+    //    "+" of its own — the Code page's button makes projects, and the
+    //    projects are listed there, not here. The chat inside one IS among
+    //    the person's chats, marked as a code chat and naming its project
+    //    beneath its title ──
     await openMenu();
     const codeEntry = menu.getByRole('link', { name: 'Code', exact: true });
     await expect(codeEntry).toBeVisible();
+    await expect(codeEntry.locator('svg')).toHaveCount(1);
     await expect(menu.getByRole('link', { name: 'Projects', exact: true })).toBeVisible();
     await expect(menu.getByRole('link', { name: 'New code project' })).toHaveCount(0);
-    await expect(menu.getByRole('link', { name: ids.seededName })).toHaveCount(0);
-    await expect(menu.getByRole('link', { name: ids.seededChatTitle })).toHaveCount(0);
+    await expect(menu.getByRole('link', { name: ids.seededName, exact: true })).toHaveCount(0);
+    const chatRow = menu.getByRole('link', { name: ids.seededChatTitle });
+    await expect(chatRow).toBeVisible();
+    await expect(chatRow.locator('[data-kind="code"]')).toHaveCount(1);
+    await expect(chatRow.getByText(ids.seededName)).toBeVisible();
     if (!mobile) await shot('code-menu.png');
     if (mobile) await page.getByRole('button', { name: 'Close menu' }).click();
 
@@ -388,6 +393,20 @@ test.describe('code projects', () => {
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
     const readme = sectionOf('README');
     await expect(readme.getByRole('heading', { name: 'Billing service' })).toBeVisible();
+    await expect(readme.getByRole('heading', { name: 'Running it' })).toBeVisible();
+    // The chats come right after the environment — what the page is opened
+    // for — with the README beneath them, and the README folds away.
+    const headings = await main.getByRole('heading', { level: 2 }).allTextContents();
+    const at = (name: string) => headings.findIndex((text) => text.startsWith(name));
+    expect(at('Environment')).toBeGreaterThan(at('Repository'));
+    expect(at('Chats in this project')).toBeGreaterThan(at('Environment'));
+    expect(at('README')).toBeGreaterThan(at('Chats in this project'));
+    expect(at('About')).toBeGreaterThan(at('README'));
+    await readme.getByRole('heading', { level: 2, name: 'README' }).click();
+    await expect(readme.getByRole('heading', { name: 'Running it' })).toBeHidden();
+    await expect(readme.getByRole('heading', { level: 2, name: 'README' })).toBeVisible();
+    await shot('code-project-readme-folded.png');
+    await readme.getByRole('heading', { level: 2, name: 'README' }).click();
     await expect(readme.getByRole('heading', { name: 'Running it' })).toBeVisible();
     // A subheading sits under its title, not beside it.
     const memoryTitle = main.getByRole('heading', { level: 2, name: 'Memory' });
