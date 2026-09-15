@@ -312,7 +312,9 @@ CMD ["pnpm", "--filter", "@renkei/worker-onbase", "start"]
 # already here; python3 with venv and pip, make and a C toolchain for
 # native modules, jq, curl, unzip. util-linux supplies setpriv, which is
 # how the worker drops each caller's commands to their own uid (and how
-# the entrypoint drops itself when workspaces are off).
+# the entrypoint drops itself when workspaces are off); the build checks
+# it is there, because a missing one would show up only as a failed spawn
+# on every command a caller runs.
 FROM node:24-bookworm-slim AS sandbox
 ARG PNPM_VERSION
 
@@ -326,7 +328,8 @@ RUN apt-get update && \
       build-essential pkg-config \
       jq curl unzip zip less procps && \
     rm -rf /var/lib/apt/lists/* && \
-    npm install -g pnpm@${PNPM_VERSION}
+    npm install -g pnpm@${PNPM_VERSION} && \
+    setpriv --version >/dev/null
 
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.

@@ -159,6 +159,30 @@ describe('scope', () => {
   });
 });
 
+describe('a checkout that vanished from disk', () => {
+  it('marks the workspace failed and says to clone again, on any verb', async () => {
+    workspaceStore.getWorkspace.mockImplementation(
+      async (_db: unknown, target: { subject: string }, id: string) =>
+        target.subject === 'alice' && id === 'ws-gone'
+          ? { ...readyWorkspace(), id: 'ws-gone', storageKey: 'tenant-1/hash/ws-gone' }
+          : undefined
+    );
+    workspaceStore.setWorkspaceStatus.mockResolvedValue(undefined);
+    for (const op of ['workspaces/git-status', 'workspaces/exec']) {
+      const result = await post(enabledBase, op, { ...TARGET, id: 'ws-gone', command: 'true' });
+      expect(result.status).toBe(409);
+      expect(result.json.error.type).toBe('not_ready');
+      expect(result.json.error.message).toMatch(/checkout is gone .* clone the repository again/);
+    }
+    expect(workspaceStore.setWorkspaceStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      'ws-gone',
+      'failed',
+      { error: expect.stringContaining('no longer on the worker') }
+    );
+  });
+});
+
 describe('secrets never leave as text', () => {
   it('masks a value a command prints', async () => {
     const result = await post(enabledBase, 'workspaces/exec', {

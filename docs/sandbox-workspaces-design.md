@@ -201,6 +201,14 @@ A workspace's row (`sandbox_workspaces`, migration 101) is the metadata
 half; the sweep that retires expired staged files retires expired
 checkouts the same way — bytes first, then the row. A clone that never
 finished (a crash mid-clone) sits in `cloning` until its lifetime lapses.
+A ready row whose directory is gone — the container recreated without
+the workspaces volume mounted, the directory removed by hand — is marked
+`failed` the first time a verb reaches for it, with a message that says
+to clone again; before that check every such verb answered a bare
+`spawn setpriv ENOENT`, Node's word for a working directory that is not
+there, which reads as a missing binary. The worker also proves at boot,
+when it is root, that setpriv can drop a command to another uid, and
+refuses to start otherwise.
 The code project (`chat_projects` with `kind = 'code'`, migration 102)
 keeps a soft reference to its checkout; when the worker no longer has
 it, the project page says so and offers to clone again, and the chat's
