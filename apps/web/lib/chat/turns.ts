@@ -26,6 +26,10 @@ export interface TurnRow {
   outputTokens: number;
   cancelRequestedAt: Date | null;
   error: string | null;
+  /** What the runner was doing when it last heartbeat: 'model', 'tool:<name>', or null between rounds. */
+  stage: string | null;
+  /** When the current `stage` began — distinct from `updatedAt`, which refreshes every flush tick regardless. */
+  stageAt: Date | null;
   startedAt: Date;
   updatedAt: Date;
   finishedAt: Date | null;
@@ -42,6 +46,8 @@ const TURN_COLUMNS = [
   'output_tokens',
   'cancel_requested_at',
   'error',
+  'stage',
+  'stage_at',
   'started_at',
   'updated_at',
   'finished_at',
@@ -72,6 +78,8 @@ function rowOf(raw: {
   output_tokens: number;
   cancel_requested_at: Date | null;
   error: string | null;
+  stage: string | null;
+  stage_at: Date | null;
   started_at: Date;
   updated_at: Date;
   finished_at: Date | null;
@@ -87,6 +95,8 @@ function rowOf(raw: {
     outputTokens: raw.output_tokens,
     cancelRequestedAt: raw.cancel_requested_at,
     error: raw.error,
+    stage: raw.stage,
+    stageAt: raw.stage_at,
     startedAt: raw.started_at,
     updatedAt: raw.updated_at,
     finishedAt: raw.finished_at,
@@ -167,15 +177,29 @@ export async function getActiveTurn(db: Kysely<DB>, chatId: string): Promise<Tur
   return raw ? rowOf(raw) : null;
 }
 
-/** Refreshes liveness; answers whether a cancel was requested meanwhile. */
+/**
+ * Refreshes liveness; answers whether a cancel was requested meanwhile.
+ *
+ * `stage` names what the loop is doing right now (or null between rounds).
+ * `updated_at` always advances — it is the flush-timer heartbeat the
+ * janitor's staleness check reads. `stage_at` only advances when `stage`
+ * itself changes, so a turn stuck in one stage leaves behind how long it
+ * has been stuck there, not just that the process was still alive.
+ */
 export async function heartbeatTurn(
   db: Kysely<DB>,
   turnId: string,
-  iterations: number
+  iterations: number,
+  stage: string | null
 ): Promise<boolean> {
   const row = await db
     .updateTable('chat_turns')
-    .set({ updated_at: sql<Date>`NOW()`, iterations })
+    .set({
+      updated_at: sql<Date>`NOW()`,
+      iterations,
+      stage,
+      stage_at: sql<Date>`CASE WHEN stage IS DISTINCT FROM ${stage} THEN NOW() ELSE stage_at END`,
+    })
     .where('id', '=', turnId)
     .where('status', '=', 'running')
     .returning('cancel_requested_at')
