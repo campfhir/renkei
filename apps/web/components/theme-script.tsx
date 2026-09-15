@@ -15,6 +15,12 @@
  * theme-sync.tsx corrects a stale or absent local cache against that
  * preference right after hydration; the one-frame gap only shows up the
  * first time a person's preference reaches a browser that's never seen it.
+ *
+ * Only a full page load runs it. A `<script>` React inserts on a
+ * client-side mount of this layout never executes, and neither does one
+ * React rebuilt after recovering from a hydration error — so this script
+ * is the no-flash fast path, and theme-sync.tsx (which applies the mode in
+ * force on mount, unconditionally) is what guarantees the attribute exists.
  */
 export default function ThemeScript({ tenantId }: { tenantId: string }) {
   const script = `(function(){try{var k="renkei:theme:${tenantId}";var m=localStorage.getItem(k);if(m!=="light"&&m!=="dark"&&m!=="auto")m="auto";var resolved=m==="auto"?(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"):m;document.documentElement.setAttribute("data-theme",resolved);}catch(e){}})();`;

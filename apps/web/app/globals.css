@@ -6,12 +6,23 @@
  * as `data-theme` on <html> by app/theme-script.tsx before first paint, so
  * `dark:` instead follows that attribute — set to 'dark' for an explicit
  * dark choice, and (by the same script, resolved from `matchMedia`) for
- * "Auto" whenever the system is currently dark. A visitor with JavaScript
- * disabled never gets `data-theme` at all and falls back to whatever the
- * plain `:root`/`@media` rules below say, which is why those keep their
- * system-preference block rather than switching to the attribute too.
+ * "Auto" whenever the system is currently dark. A page with no `data-theme`
+ * at all — JavaScript disabled, or the moment before anything has set it —
+ * follows the system, the same as the plain `:root`/`@media` rules below
+ * do: the variant's second branch. Without it those two disagreed, and a
+ * page missing the attribute under a dark system came out half and half —
+ * dark background variables, light `dark:` utilities.
  */
-@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+      @slot;
+    }
+  }
+}
 
 :root {
   --background: #ffffff;

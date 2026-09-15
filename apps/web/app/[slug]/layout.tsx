@@ -102,11 +102,16 @@ export default async function TenantLayout({
 
   // ThemeScript has to be the very first thing this layout renders — see
   // its own comment — so both return paths lead with it rather than nesting
-  // it inside `shell`.
+  // it inside `shell`. ThemeSync follows on both paths too: it is what
+  // guarantees `data-theme` exists when the script never ran (a client-side
+  // mount of this layout), and a signed-out visitor's 'auto' still has to
+  // follow the system. With no session there is no saved preference to
+  // hand it, so it follows whatever this browser cached.
   if (!session) {
     return (
       <>
         <ThemeScript tenantId={tenant.id} />
+        <ThemeSync tenantId={tenant.id} mode={null} />
         {shell}
       </>
     );

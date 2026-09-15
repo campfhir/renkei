@@ -2,10 +2,12 @@
 
 /**
  * Auto/Light/Dark, applied the instant it's picked — not just on save — so
- * choosing one is its own preview. Saving is what makes it survive a reload
- * or follow to another browser; picking without saving still lasts for this
- * browser's next visit via the same localStorage cache theme-script.tsx
- * reads (see lib/theme.ts), just not anywhere else.
+ * choosing one is its own preview. The pick goes into this browser's cache
+ * (see lib/theme.ts), which is how the shell's ThemeSync — this tab's and
+ * every other open tab's — learns to render it and, for Auto, to start
+ * following the system again. Saving is what makes it survive: on the next
+ * full load the saved preference wins and overwrites an unsaved pick, and
+ * only the saved one follows to another browser.
  */
 
 import { useState } from 'react';
@@ -18,13 +20,7 @@ const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] 
   { value: 'dark', label: 'Dark', hint: '' },
 ];
 
-export default function ThemeForm({
-  tenantId,
-  initial,
-}: {
-  tenantId: string;
-  initial: ThemeMode;
-}) {
+export default function ThemeForm({ tenantId, initial }: { tenantId: string; initial: ThemeMode }) {
   const [mode, setMode] = useState<ThemeMode>(initial);
   const [saved, setSaved] = useState<ThemeMode>(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
