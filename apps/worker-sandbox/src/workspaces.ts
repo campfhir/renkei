@@ -47,6 +47,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
+  chmod,
   chown,
   lstat,
   mkdir,
@@ -121,8 +122,17 @@ async function chownIf(path: string, identity: ExecIdentity | null): Promise<voi
 
 export async function ensureWorkspacesRoot(): Promise<void> {
   // Traversable by everyone, listable by nobody but root: a caller's uid
-  // reaches its own 0700 directory by name and nothing else.
+  // reaches its own 0700 directory by name and nothing else. mkdir's
+  // `mode` is only what the OS applies at creation time — it goes
+  // through the process umask like any other creation call, and this
+  // worker raises its umask to 0077 before it ever calls this (so
+  // nothing else it creates, a log or a lock, is readable by a caller's
+  // uid). 0711 under a 0077 umask becomes 0700, which would seal every
+  // caller's uid out of the root it needs to just walk through, so the
+  // mode is set again with chmod, which — unlike mkdir — always applies
+  // exactly what it is given, regardless of umask.
   await mkdir(workspacesRoot, { recursive: true, mode: 0o711 });
+  await chmod(workspacesRoot, 0o711);
 }
 
 /** The caller's directory and home, owned by their uid, ahead of a clone. */
@@ -131,7 +141,11 @@ export async function ensureCallerDirs(
   identity: ExecIdentity | null
 ): Promise<void> {
   const caller = callerDir(storageKey);
-  await mkdir(dirname(caller), { recursive: true, mode: 0o711 });
+  const tenantDir = dirname(caller);
+  // Same traversable-not-listable shape, and the same umask hazard, as
+  // the workspaces root above.
+  await mkdir(tenantDir, { recursive: true, mode: 0o711 });
+  await chmod(tenantDir, 0o711);
   await mkdir(caller, { recursive: true, mode: 0o700 });
   await chownIf(caller, identity);
   const home = homeDir(storageKey);
