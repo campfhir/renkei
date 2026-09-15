@@ -90,8 +90,8 @@ export const ICONS = {
   /** The app menu's doors, one glyph each, so a row is known before it is read. */
   /** A house — Home. */
   home: 'M3 11l9-8 9 8v10h-6v-6h-6v6H3z',
-  /** A closed book, its ribbon hanging out at the foot — Knowledge. */
-  book: 'M4 15.5v-11A2.5 2.5 0 0 1 6.5 2H20v16H6.5a2.5 2.5 0 0 1 0-5H20M9 18v4l1.75-1.25L12.5 22v-4',
+  /** A closed book, its ribbon coming out of the pages at the foot — Knowledge. */
+  book: 'M4 15.5v-11A2.5 2.5 0 0 1 6.5 2H20v16h-6M8 18H6.5a2.5 2.5 0 0 1 0-5H20M9 13v8l2-1.5 2 1.5v-8',
   /** A bot's head, antenna up — Agents. */
   agent:
     'M5 9h14v11H5zM12 9V6M12 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M9.5 14.5h.01M14.5 14.5h.01M5 13H3v3h2M19 13h2v3h-2',
