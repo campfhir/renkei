@@ -6,6 +6,13 @@
  * token. The tenant-wide counterpart to `user-utilization.ts`, read from
  * the same content-free ledgers.
  *
+ * A couple of functions here (`getSurfaceTokenTotals`,
+ * `getMostEfficientAgents`) also take an optional `ownerSubject` that
+ * narrows the same query to one person's own chats and agents — "My
+ * usage" reuses them rather than re-deriving the same SQL for a
+ * single-subject case. Null is always what widens back to the whole
+ * tenant.
+ *
  * The one thing `llm_calls` (085) cannot say on its own is which CHAT a
  * `purpose = 'chat'` row belongs to — that ledger carries no chat id, only
  * a subject. So the chat/chat-project/code-project split is read instead
@@ -90,11 +97,18 @@ function surfaceOf(rows: readonly ChatBucketRow[], bucket: string): SurfaceToken
     : EMPTY_SURFACE;
 }
 
-export async function getOrgTokenTotals(
+/**
+ * Token totals by surface — org-wide when `ownerSubject` is null (the
+ * Organization Usage page), or narrowed to one person's own chats,
+ * projects and agents when it isn't (the "My usage" page). Null is the
+ * only way to widen, matching `getAgentUsageSummaries`'s convention.
+ */
+export async function getSurfaceTokenTotals(
   db: Kysely<DB>,
   tenantId: string,
   days: number,
-  timeZone: string
+  timeZone: string,
+  ownerSubject: string | null = null
 ): Promise<OrgTokenTotals> {
   const since = sinceLocal(days, timeZone);
   const [chatResult, agentRow] = await Promise.all([
@@ -107,6 +121,7 @@ export async function getOrgTokenTotals(
       JOIN chats c ON c.id = ct.chat_id
       LEFT JOIN chat_projects cp ON cp.id = c.project_id
       WHERE ct.tenant_id = ${tenantId} AND ct.started_at >= ${since}
+        ${ownerSubject === null ? sql`` : sql`AND c.owner_subject = ${ownerSubject}`}
       GROUP BY bucket
     `.execute(db),
     sql<{ input_tokens: string; output_tokens: string }>`
@@ -114,6 +129,7 @@ export async function getOrgTokenTotals(
              COALESCE(SUM(output_tokens), 0) AS output_tokens
       FROM llm_calls
       WHERE tenant_id = ${tenantId} AND agent_id IS NOT NULL AND created_at >= ${since}
+        ${ownerSubject === null ? sql`` : sql`AND subject = ${ownerSubject}`}
     `.execute(db),
   ]);
   return {
@@ -449,6 +465,10 @@ export interface EfficientAgentRow {
  * `minSucceededRuns` keeps a single lucky run from topping the list —
  * three by default, low enough for a new agent to qualify within a normal
  * reporting window.
+ *
+ * `ownerSubject` narrows to one person's own agents (the "My usage" page);
+ * null ranks every agent in the tenant (Organization Usage). Null is the
+ * only way to widen.
  */
 export async function getMostEfficientAgents(
   db: Kysely<DB>,
@@ -456,7 +476,8 @@ export async function getMostEfficientAgents(
   days: number,
   timeZone: string,
   limit = 10,
-  minSucceededRuns = 3
+  minSucceededRuns = 3,
+  ownerSubject: string | null = null
 ): Promise<EfficientAgentRow[]> {
   const since = sinceLocal(days, timeZone);
   const rows = await sql<{
@@ -473,6 +494,7 @@ export async function getMostEfficientAgents(
     FROM agent_run_log f
     JOIN agents a ON a.id = f.agent_id
     WHERE f.tenant_id = ${tenantId} AND f.status = 'succeeded' AND f.created_at >= ${since}
+      ${ownerSubject === null ? sql`` : sql`AND f.owner_subject = ${ownerSubject}`}
     GROUP BY a.id, a.name
     HAVING COUNT(*) >= ${minSucceededRuns}
   `.execute(db);

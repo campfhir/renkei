@@ -8,6 +8,8 @@
 
 import type { UtilizationDay } from '@/lib/usage/user-utilization';
 
+export { formatTokens } from '@/lib/format-tokens';
+
 export interface UtilizationPeriod {
   key: string;
   label: string;
@@ -145,13 +147,6 @@ export function bucketUtilization(
 export function tokensPerRun(inputTokens: number, outputTokens: number, runs: number): number {
   if (runs <= 0) return 0;
   return Math.round((inputTokens + outputTokens) / runs);
-}
-
-/** 1234 → "1.2k", 1234567 → "1.2M"; small numbers as they are. */
-export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return n.toLocaleString('en-US');
 }
 
 /** The engine's error taxonomy, in words the owner will recognize. */

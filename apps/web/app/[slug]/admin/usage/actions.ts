@@ -15,7 +15,7 @@ import {
   getMostEfficientAgents,
   getOrgActivityTotals,
   getOrgDailySeries,
-  getOrgTokenTotals,
+  getSurfaceTokenTotals,
   getTopAgentsByTokens,
   getTopToolsOrg,
   getTopUsers,
@@ -97,7 +97,7 @@ export async function getOrgUsageReport(
   try {
     const [tokens, activity, daily, topUsers, topAgents, efficientAgents, topTools] =
       await Promise.all([
-        getOrgTokenTotals(db, tenantId, period.days, timeZone),
+        getSurfaceTokenTotals(db, tenantId, period.days, timeZone),
         getOrgActivityTotals(db, tenantId, period.days, timeZone),
         getOrgDailySeries(db, tenantId, period.days, timeZone),
         getTopUsers(db, tenantId, period.days, timeZone, includeAgentsInTopUsers),

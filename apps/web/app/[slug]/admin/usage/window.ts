@@ -6,6 +6,8 @@
 
 import type { OrgDay } from '@/lib/usage/org-usage';
 
+export { formatTokens } from '@/lib/format-tokens';
+
 export interface UsagePeriod {
   key: string;
   label: string;
@@ -143,13 +145,6 @@ export function bucketOrgSeries(
     }
   }
   return [...buckets.values()];
-}
-
-/** 1234 → "1.2k", 1234567 → "1.2M"; small numbers as they are. */
-export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return n.toLocaleString('en-US');
 }
 
 /** What share of the org signed in AND spent at least one token in the window. */

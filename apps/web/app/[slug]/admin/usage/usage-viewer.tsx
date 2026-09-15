@@ -13,6 +13,8 @@ import Link from 'next/link';
 import { getOrgUsageReport, type OrgUsageReport } from './actions';
 import { ORG_USAGE_PERIODS, activeUserPercent, formatTokens, type OrgBucket } from './window';
 import type { EfficientAgentRow, TopAgentRow, TopUserRow, OrgToolRow } from '@/lib/usage/org-usage';
+import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
+import { Leaderboard } from '@/components/leaderboard';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -154,97 +156,6 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
-/** One row of the surface breakdown: its own tokens against the org total. */
-function SurfaceRow({
-  label,
-  input,
-  output,
-  shareOfTotal,
-  className,
-}: {
-  label: string;
-  input: number;
-  output: number;
-  shareOfTotal: number;
-  className: string;
-}) {
-  return (
-    <li>
-      <div className="flex items-baseline justify-between gap-2 text-sm">
-        <span className="min-w-0 truncate">{label}</span>
-        <span className="shrink-0 tabular-nums text-gray-600 dark:text-gray-400">
-          {formatTokens(input + output)}
-          <span className="ml-1 text-xs text-gray-400">
-            ({formatTokens(input)} in · {formatTokens(output)} out)
-          </span>
-        </span>
-      </div>
-      <div
-        className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800"
-        aria-hidden="true"
-      >
-        <div className={`h-full rounded-full ${className}`} style={{ width: `${shareOfTotal}%` }} />
-      </div>
-    </li>
-  );
-}
-
-/** A ranked list with a bar proportional to the leader — the shared leaderboard shape. */
-function Leaderboard<Row>({
-  heading,
-  hint,
-  rows,
-  empty,
-  keyOf,
-  labelOf,
-  valueOf,
-  formatValue,
-  barClassName = 'bg-blue-500',
-}: {
-  heading: string;
-  hint: string;
-  rows: Row[];
-  empty: string;
-  keyOf: (row: Row) => string;
-  labelOf: (row: Row) => React.ReactNode;
-  valueOf: (row: Row) => number;
-  formatValue: (row: Row) => string;
-  barClassName?: string;
-}) {
-  const largest = rows.reduce((max, row) => Math.max(max, valueOf(row)), 0);
-  return (
-    <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
-      <h2 className="text-sm font-semibold">{heading}</h2>
-      <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{hint}</p>
-      {rows.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">{empty}</p>
-      ) : (
-        <ol className="space-y-2">
-          {rows.map((row) => (
-            <li key={keyOf(row)}>
-              <div className="flex items-baseline justify-between gap-2 text-sm">
-                <span className="min-w-0 truncate">{labelOf(row)}</span>
-                <span className="shrink-0 tabular-nums text-gray-600 dark:text-gray-400">
-                  {formatValue(row)}
-                </span>
-              </div>
-              <div
-                className="mt-1 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800"
-                aria-hidden="true"
-              >
-                <div
-                  className={`h-full rounded-full ${barClassName}`}
-                  style={{ width: `${largest > 0 ? (valueOf(row) / largest) * 100 : 0}%` }}
-                />
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
-  );
-}
-
 export default function OrgUsageViewer({
   slug,
   tenantId,
@@ -279,17 +190,16 @@ export default function OrgUsageViewer({
   }
 
   const { tokens, activity } = report;
-  const surfaceTotals = [tokens.chat, tokens.chatProjects, tokens.codeProjects, tokens.agents];
-  const totalTokens = surfaceTotals.reduce((sum, surface) => sum + surface.input + surface.output, 0);
+  const totalTokens = (['chat', 'chatProjects', 'codeProjects', 'agents'] as const).reduce(
+    (sum, key) => sum + tokens[key].input + tokens[key].output,
+    0
+  );
   const failureRate = activity.runs > 0 ? (activity.failures / activity.runs) * 100 : 0;
   const toolErrorRate = activity.toolCalls > 0 ? (activity.toolErrors / activity.toolCalls) * 100 : 0;
   const activePct = activeUserPercent(activity.activeUsers, activity.totalUsers);
   const periodLabel =
     ORG_USAGE_PERIODS.find((period) => period.key === report.periodKey)?.label ??
     `${report.days} days`;
-
-  const shareOf = (surface: { input: number; output: number }) =>
-    totalTokens > 0 ? ((surface.input + surface.output) / totalTokens) * 100 : 0;
 
   return (
     <div className="flex flex-col gap-5" data-wide-page>
@@ -369,39 +279,7 @@ export default function OrgUsageViewer({
         />
       </section>
 
-      <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
-        <h2 className="mb-3 text-sm font-semibold">Tokens by surface</h2>
-        <ul className="space-y-3">
-          <SurfaceRow
-            label="Chat"
-            input={tokens.chat.input}
-            output={tokens.chat.output}
-            shareOfTotal={shareOf(tokens.chat)}
-            className="bg-blue-500"
-          />
-          <SurfaceRow
-            label="Chat projects"
-            input={tokens.chatProjects.input}
-            output={tokens.chatProjects.output}
-            shareOfTotal={shareOf(tokens.chatProjects)}
-            className="bg-teal-500"
-          />
-          <SurfaceRow
-            label="Code projects"
-            input={tokens.codeProjects.input}
-            output={tokens.codeProjects.output}
-            shareOfTotal={shareOf(tokens.codeProjects)}
-            className="bg-amber-500"
-          />
-          <SurfaceRow
-            label="Agents"
-            input={tokens.agents.input}
-            output={tokens.agents.output}
-            shareOfTotal={shareOf(tokens.agents)}
-            className="bg-purple-500"
-          />
-        </ul>
-      </section>
+      <TokenSurfaceBreakdown tokens={tokens} />
 
       <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
         <figcaption className="mb-3 flex flex-wrap items-center gap-2">

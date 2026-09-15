@@ -404,6 +404,21 @@ test('tools — headline cards', async ({ page }, testInfo) => {
   await shot(page, testInfo, 'tools-top-cards');
 });
 
+test('my usage — surface breakdown and efficiency', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/utilization`);
+  await expect(page.getByRole('heading', { name: 'My usage' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Tokens by surface' })).toBeVisible();
+  // The seeded llm_calls rows all belong to this same subject, so the
+  // agent surface here matches the org page's agent total exactly.
+  await expect(page.getByRole('heading', { name: 'Most efficient agents' })).toBeVisible();
+  // Also linked from the agent table and (for this agent) the attention
+  // panel, so this page — unlike the org one — needs .first() here.
+  await expect(
+    page.getByRole('link', { name: 'Triage yesterday into tickets' }).first()
+  ).toBeVisible();
+  await shot(page, testInfo, 'my-usage-surface-and-efficiency');
+});
+
 test.describe('admin — organization usage', () => {
   test('overview', async ({ page }, testInfo) => {
     await page.goto(`/${E2E_SLUG}/admin/usage`);
