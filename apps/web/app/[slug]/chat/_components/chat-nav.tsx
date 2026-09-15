@@ -3,11 +3,13 @@
 /**
  * The chat list under the app menu's Chat section, on every page: mine
  * grouped by day (archived ones behind a switch), then the ones shared
- * with me; a row is just its title — no project or owner subheading here,
- * the chat's own title bar and the Projects/Code pages already carry that.
- * Row actions live behind a "⋯" menu — the notifications list's idiom —
- * and every mutation goes through a route and then router.refresh(), so
- * the layout's server data is the truth.
+ * with me. A row leads with a mark for what it is — a round bubble for an
+ * ordinary chat, fanned pages for one in a chat project, angle brackets
+ * for one in a code project — then its title, with the project's name
+ * beneath when it sits in one (no owner line: the chat's own title bar
+ * carries that). Row actions live behind a "⋯" menu — the notifications
+ * list's idiom — and every mutation goes through a route and then
+ * router.refresh(), so the layout's server data is the truth.
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -215,7 +217,17 @@ function StateFilter({
 function matches(chat: ChatListItem, filter: string): boolean {
   const needle = filter.trim().toLowerCase();
   if (!needle) return true;
-  return (chat.title ?? 'new chat').toLowerCase().includes(needle);
+  return (
+    (chat.title ?? 'new chat').toLowerCase().includes(needle) ||
+    (chat.projectName ?? '').toLowerCase().includes(needle)
+  );
+}
+
+/** The mark at the head of a row: which kind of chat this is. */
+function kindOf(chat: ChatListItem): { kind: 'chat' | 'project' | 'code'; path: string } {
+  if (chat.projectKind === 'code') return { kind: 'code', path: ICONS.code };
+  if (chat.projectId) return { kind: 'project', path: ICONS.pages };
+  return { kind: 'chat', path: ICONS.chat };
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -248,6 +260,13 @@ function ChatRow({
   const menuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuOpen, menuRef, () => setMenuOpen(false));
   const isOwner = chat.via === 'owner';
+  const mark = kindOf(chat);
+  // A chat in a code project belongs to its repository: it is not moved
+  // into a chat project from here.
+  const actions: ('rename' | 'move' | 'share' | 'archive' | 'delete')[] =
+    mark.kind === 'code'
+      ? ['rename', 'share', 'archive', 'delete']
+      : ['rename', 'move', 'share', 'archive', 'delete'];
 
   const run = async (action: () => Promise<{ error: string | null }>) => {
     setBusy(true);
@@ -266,14 +285,29 @@ function ChatRow({
     <div className={`${rowClass} ${active ? activeClass : ''}`}>
       <Link
         href={`/${slug}/chat/${chat.id}`}
-        className={`min-w-0 flex-1 truncate ${chat.archived ? 'text-gray-500' : ''}`}
+        className={`flex min-w-0 flex-1 items-center gap-2 ${chat.archived ? 'text-gray-500' : ''}`}
       >
-        {chat.title ?? 'New chat'}
-        {chat.archived ? (
-          <span className="ml-1.5 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
-            archived
+        <span
+          data-kind={mark.kind}
+          className={`shrink-0 ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'}`}
+        >
+          <Icon path={mark.path} className="h-4 w-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate">
+            {chat.title ?? 'New chat'}
+            {chat.archived ? (
+              <span className="ml-1.5 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                archived
+              </span>
+            ) : null}
           </span>
-        ) : null}
+          {chat.projectName ? (
+            <span className="block truncate text-[11px] font-normal leading-tight text-gray-500">
+              {chat.projectName}
+            </span>
+          ) : null}
+        </span>
       </Link>
       {isOwner ? (
         <div ref={menuRef} className="relative">
@@ -287,7 +321,7 @@ function ChatRow({
           </button>
           {menuOpen ? (
             <div className="absolute right-0 z-40 mt-1 w-40 overflow-hidden rounded-md border border-gray-200 bg-white text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
-              {(['rename', 'move', 'share', 'archive', 'delete'] as const).map((item) => (
+              {actions.map((item) => (
                 <button
                   key={item}
                   type="button"

@@ -23,9 +23,11 @@ repository on it, kept apart from ordinary chats:
   pasting a `.env` again, remove one), and everything a chat project's
   page has: instructions, files, memory, toolset, the chats inside it,
   sharing. Values are never shown again, to anyone.
-- **New chat** starts a chat in the project. Its chats appear under the
-  project in the Code section and on its page, never among the person's
-  ordinary chats.
+- **New chat** starts a chat in the project. Its chats are listed on the
+  project's page, right under its environment, and among the person's
+  chats in the app menu — marked with the Code glyph and naming the
+  project beneath the title, so they are told apart from ordinary chats
+  and from chats in chat projects at a glance.
 
 In such a chat the model has the `code_*` tools (below) bound to the
 project's checkout and a brief in its system prompt on how to work in

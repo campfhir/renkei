@@ -4,7 +4,9 @@
  * A project's page: instructions (editors), files (editors upload, all
  * download), memory (editors add and remove), the toolset chats inherit,
  * the chats inside it, and sharing (owner). Every change goes through a
- * route and refreshes the server data.
+ * route and refreshes the server data. On a code project the chats come
+ * right after the repository and environment — what a developer opens
+ * the page for — and the README folds beneath them.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -193,6 +195,39 @@ export default function ProjectView({
     }
   };
 
+  // The chats inside the project, each with the mark the app menu gives
+  // its kind. A code project shows them right under its environment; a
+  // chat project after its memory.
+  const chatsSection = (
+    <section className={sectionClass}>
+      <h2 className="mb-2 text-sm font-semibold">Chats in this project</h2>
+      {chats.length === 0 ? (
+        <p className="text-sm text-gray-500">No chats yet.</p>
+      ) : (
+        <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
+          {chats.map((chat) => (
+            <li key={chat.id}>
+              <Link
+                href={`/${slug}/chat/${chat.id}`}
+                className="flex items-center gap-2 py-1.5 hover:underline"
+              >
+                <Icon
+                  path={variant === 'code' ? ICONS.code : ICONS.pages}
+                  className="h-4 w-4 shrink-0 text-gray-400"
+                />
+                <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
+                <span className="text-xs text-gray-500">
+                  {chat.ownerName ? `${chat.ownerName} · ` : ''}
+                  <LocalTime at={chat.updatedAt} format="date" />
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
@@ -311,21 +346,32 @@ export default function ProjectView({
             </details>
           ) : null}
           {before}
+          {variant === 'code' ? chatsSection : null}
           {variant === 'code' ? (
             <section className={sectionClass}>
-              <div className="mb-2">
-                <h2 className="text-sm font-semibold">README</h2>
-                <p className="text-xs text-gray-500">
-                  {readme
-                    ? `${readme.path} on the project’s branch, as Bitbucket has it.`
-                    : 'The repository’s README, when it has one.'}
-                </p>
-              </div>
-              {readme ? (
-                <Markdown text={readme.text} />
-              ) : (
-                <p className="text-sm text-gray-500">No README was found in the repository.</p>
-              )}
+              <details open className="group">
+                <summary className="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden">
+                  <Icon
+                    path={ICONS.chevron}
+                    className="mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <h2 className="text-sm font-semibold">README</h2>
+                    <p className="text-xs text-gray-500">
+                      {readme
+                        ? `${readme.path} on the project’s branch, as Bitbucket has it.`
+                        : 'The repository’s README, when it has one.'}
+                    </p>
+                  </span>
+                </summary>
+                <div className="mt-3">
+                  {readme ? (
+                    <Markdown text={readme.text} />
+                  ) : (
+                    <p className="text-sm text-gray-500">No README was found in the repository.</p>
+                  )}
+                </div>
+              </details>
             </section>
           ) : null}
           <section className={sectionClass}>
@@ -521,29 +567,7 @@ export default function ProjectView({
             ) : null}
           </section>
 
-          <section className={sectionClass}>
-            <h2 className="mb-2 text-sm font-semibold">Chats in this project</h2>
-            {chats.length === 0 ? (
-              <p className="text-sm text-gray-500">No chats yet.</p>
-            ) : (
-              <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-                {chats.map((chat) => (
-                  <li key={chat.id}>
-                    <Link
-                      href={`/${slug}/chat/${chat.id}`}
-                      className="flex items-center gap-2 py-1.5 hover:underline"
-                    >
-                      <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
-                      <span className="text-xs text-gray-500">
-                        {chat.ownerName ? `${chat.ownerName} · ` : ''}
-                        <LocalTime at={chat.updatedAt} format="date" />
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          {variant === 'code' ? null : chatsSection}
 
           {role === 'owner' ? (
             <section className={sectionClass}>

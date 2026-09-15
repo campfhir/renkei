@@ -273,8 +273,10 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
       .getByRole('navigation', { name: 'Chats' })
       .getByRole('link', { name: rowName });
     await expect(row).toBeVisible();
-    // The row names the chat's project underneath.
+    // The row names the chat's project underneath, and leads with the mark
+    // of a chat in a chat project (a code project's chats get another).
     await expect(row.getByText('Sprint hygiene')).toBeVisible();
+    await expect(row.locator('[data-kind="project"]')).toHaveCount(1);
     await expect(page.getByRole('link', { name: 'Prompt libraries' })).toBeVisible();
     const archivedRow = page
       .getByRole('navigation', { name: 'Chats' })

@@ -79,7 +79,7 @@ function Group({
                 href={`/${slug}/code/${project.id}`}
                 className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
               >
-                <Icon path={ICONS.terminal} className="h-5 w-5 shrink-0 text-gray-400" />
+                <Icon path={ICONS.code} className="h-5 w-5 shrink-0 text-gray-400" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{project.name}</span>
                   <span className="block truncate font-mono text-xs text-gray-500">
