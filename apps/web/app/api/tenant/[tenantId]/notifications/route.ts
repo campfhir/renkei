@@ -11,6 +11,11 @@
  * comes back so the poller advances its cursor by OUR clock — a browser
  * running a few minutes fast would otherwise skip rows for good, and one
  * running slow would replay them.
+ *
+ * The same GET also serves the notifications page's "Show more": `before`
+ * pages backward past the page's own PAGE_SIZE. MAX_LIMIT matches that
+ * PAGE_SIZE (apps/web/app/[slug]/notifications/page.tsx) so one click loads
+ * one full page rather than several partial ones.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -18,7 +23,7 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 
 const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 50;
+const MAX_LIMIT = 100;
 
 export interface NotificationView {
   id: string;
@@ -61,6 +66,14 @@ export async function GET(
   // poller would otherwise get stuck on it forever, one 400 at a time.
   const validSince = since && !Number.isNaN(since.getTime()) ? since : null;
 
+  // `before` is the notifications PAGE's cursor, not the poller's: "Show
+  // more" pages backward in time past PAGE_SIZE, the mirror image of
+  // `since` paging forward. The two are never sent together in practice,
+  // but nothing stops them combining if they ever were.
+  const beforeRaw = search.get('before');
+  const before = beforeRaw ? new Date(beforeRaw) : null;
+  const validBefore = before && !Number.isNaN(before.getTime()) ? before : null;
+
   const requested = Number(search.get('limit') ?? DEFAULT_LIMIT);
   const limit = Number.isFinite(requested)
     ? Math.min(Math.max(Math.trunc(requested), 1), MAX_LIMIT)
@@ -90,6 +103,7 @@ export async function GET(
     .limit(limit);
 
   if (validSince) query = query.where('created_at', '>', validSince);
+  if (validBefore) query = query.where('created_at', '<', validBefore);
   if (search.get('unreadOnly') === 'true') query = query.where('read_at', 'is', null);
 
   const [rows, unread] = await Promise.all([

@@ -23,7 +23,7 @@
  *  - Any Delete           → modal confirmation before the API call.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConnectorIcon from '@/components/connector-icon';
@@ -60,6 +60,39 @@ export interface NotificationCard {
   createdAt: string;
 }
 
+/** One row as the polling/paging API (route.ts) shapes it, camelCased. */
+interface NotificationApiRow {
+  id: string;
+  kind: string;
+  connector: string | null;
+  entity: string | null;
+  headline: string;
+  refUrl: string | null;
+  agentId: string | null;
+  agentName: string | null;
+  runId: string | null;
+  meta: unknown;
+  readAt: string | null;
+  createdAt: string;
+}
+
+function toCard(row: NotificationApiRow): NotificationCard {
+  return {
+    id: row.id,
+    kind: row.kind,
+    connector: row.connector,
+    entity: row.entity,
+    headline: row.headline,
+    refUrl: row.refUrl,
+    agentId: row.agentId,
+    agentName: row.agentName,
+    runId: row.runId,
+    meta: row.meta ?? null,
+    unread: row.readAt === null,
+    createdAt: row.createdAt,
+  };
+}
+
 /** A day heading a person recognises without doing arithmetic. */
 function dayLabel(when: Date, today: Date): string {
   const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -73,10 +106,21 @@ export default function NotificationsList({
   tenantId,
   slug,
   rows,
+  unreadCount,
+  initialHasMore,
 }: {
   tenantId: string;
   slug: string;
   rows: NotificationCard[];
+  /**
+   * The TRUE unread total, not just how many of the loaded rows are
+   * unread — the page only ever fetches the newest PAGE_SIZE, so beyond
+   * that this is the only number that reflects reality, and the only way
+   * "Mark all as read" can promise to reach rows that never rendered.
+   */
+  unreadCount: number;
+  /** Whether the server page's own query was cut off at PAGE_SIZE. */
+  initialHasMore: boolean;
 }) {
   const router = useRouter();
   const { refresh } = useNotifications();
@@ -88,11 +132,36 @@ export default function NotificationsList({
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [markingAll, setMarkingAll] = useState(false);
+  // Optimistic: sits between the real unreadCount prop and "0 unread now",
+  // so a still-loading server refresh doesn't flash the button back.
+  const [allMarkedRead, setAllMarkedRead] = useState(false);
+
+  // "Show more" pages: older rows fetched past what the server page sent,
+  // appended after it. `rows` itself is re-queried (freshest PAGE_SIZE) on
+  // every AutoRefresh, so these are kept separate and only ever grow —
+  // losing them on a background refresh would undo the person's own click.
+  const [extraRows, setExtraRows] = useState<NotificationCard[]>([]);
+  const [hasMore, setHasMore] = useState(initialHasMore);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // The button itself only shows once the person has actually scrolled to
+  // the end of what's loaded — see the sentinel effect below.
+  const [nearBottom, setNearBottom] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Deduped by id: a refresh can shift `rows`' window enough to overlap the
+  // oldest `extraRows` page at the edges, and `rows` — always the current
+  // truth — wins.
+  const allRows = useMemo(() => {
+    const seen = new Set(rows.map((row) => row.id));
+    const older = extraRows.filter((row) => !seen.has(row.id));
+    return [...rows, ...older];
+  }, [rows, extraRows]);
 
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const selectionMode = selected.size > 0;
-  const visible = rows.filter((row) => !removed.has(row.id));
+  const visible = allRows.filter((row) => !removed.has(row.id));
   const allSelected = selectionMode && selected.size === visible.length;
 
   // One open menu at a time; outside click or Escape closes it — the same
@@ -128,6 +197,25 @@ export default function NotificationsList({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [confirming, busy]);
+
+  // The "Show more" pill floats over the viewport, so it must not appear
+  // until there's blank space under the list for it to float over — the
+  // spacer below IS that space, and doubles as the scroll trigger: once
+  // the person scrolls it into view, they've reached the end of what's
+  // loaded, which is exactly when the pill should show up. The browser
+  // keeps tracking the same element's position as the page grows (a
+  // "Show more" click adds rows above it), so this only needs to
+  // reattach when the sentinel itself is mounted or unmounted.
+  useEffect(() => {
+    const element = sentinelRef.current;
+    if (!element || !hasMore || typeof IntersectionObserver === 'undefined') {
+      setNearBottom(false);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => setNearBottom(entry.isIntersecting));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasMore]);
 
   const toggle = (id: string) => {
     setSelected((current) => {
@@ -171,6 +259,71 @@ export default function NotificationsList({
     if (isUnread(row)) void setRead([row.id], true);
   };
 
+  /**
+   * Reaches every unread notification, including the ones past PAGE_SIZE
+   * that never made it into `rows` — the one action in this file that is
+   * NOT scoped to what's loaded, because it exists specifically for the
+   * rows that can't be. The API call is a single `{ all: true }` update,
+   * not one id per row.
+   */
+  async function markAllRead() {
+    setMarkingAll(true);
+    try {
+      await fetch(`/api/tenant/${tenantId}/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true }),
+      });
+      setReadOverride((current) => {
+        const next = new Map(current);
+        for (const row of allRows) next.set(row.id, true);
+        return next;
+      });
+      setAllMarkedRead(true);
+      refresh();
+      router.refresh();
+    } catch {
+      // The next poll or refresh reconciles; the optimistic state stands.
+    } finally {
+      setMarkingAll(false);
+    }
+  }
+
+  /**
+   * "Show more": one page further back than whatever's currently loaded,
+   * cursored on the oldest row's own timestamp so it can't skip or repeat
+   * rows regardless of how many pages are already in.
+   */
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    const oldest = allRows[allRows.length - 1];
+    if (!oldest) {
+      setHasMore(false);
+      return;
+    }
+    setLoadingMore(true);
+    try {
+      const url = new URL(`/api/tenant/${tenantId}/notifications`, window.location.origin);
+      url.searchParams.set('before', oldest.createdAt);
+      url.searchParams.set('limit', '100');
+      const response = await fetch(url.toString());
+      if (!response.ok) return;
+      const body: unknown = await response.json();
+      const parsed: { notifications?: NotificationApiRow[] } =
+        typeof body === 'object' && body !== null ? body : {};
+      const fresh = Array.isArray(parsed.notifications) ? parsed.notifications : [];
+      const mapped = fresh.map(toCard);
+      setExtraRows((current) => [...current, ...mapped]);
+      // Fewer than asked for means the table ran out, not the limit.
+      if (mapped.length < 100) setHasMore(false);
+    } catch {
+      // Leave hasMore as it was — the button stays up so the person can
+      // just try again, same as any other network hiccup on this page.
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   async function deleteIds(ids: string[]) {
     setBusy(true);
     try {
@@ -211,8 +364,26 @@ export default function NotificationsList({
     else days.push({ label, rows: [row] });
   }
 
+  const showMarkAllRead = !allMarkedRead && unreadCount > 0 && !selectionMode;
+
   return (
     <div className="space-y-6">
+      {showMarkAllRead ? (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            {unreadCount} unread{unreadCount > visible.length ? ' (some not shown below)' : ''}
+          </span>
+          <button
+            type="button"
+            disabled={markingAll}
+            onClick={() => void markAllRead()}
+            className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.check} className="h-4 w-4" />
+            {markingAll ? 'Marking…' : 'Mark all as read'}
+          </button>
+        </div>
+      ) : null}
       {days.map((day) => (
         <section key={day.label}>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -243,6 +414,15 @@ export default function NotificationsList({
                   ? `/${slug}/agents/${row.agentId}`
                   : null;
               const inAppLabel = batch ? 'Open batch' : 'Open agent';
+              // Every row without a link of its own — a saved note, a
+              // created card, a run failure — still belongs to a run, and
+              // that run is never nothing to show. Without this fallback
+              // the card was unopenable: no refUrl (nothing outside
+              // Renkei to point at) and no agentHref (only agent_edited /
+              // agent_disabled / batch rows get one), so tapping it did
+              // nothing at all.
+              const usesRunHrefAsPrimary = !row.refUrl && !agentHref && runHref !== null;
+              const primaryInAppHref = agentHref ?? (usesRunHrefAsPrimary ? runHref : null);
               return (
                 <li key={row.id} className="relative">
                   <div
@@ -261,7 +441,7 @@ export default function NotificationsList({
                           ? 'border-blue-200 bg-blue-50/40 dark:border-blue-900 dark:bg-blue-950/20'
                           : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950'
                     } ${
-                      row.refUrl || agentHref
+                      row.refUrl || primaryInAppHref
                         ? 'transition-colors hover:border-blue-400 dark:hover:border-blue-700'
                         : ''
                     }`}
@@ -336,9 +516,9 @@ export default function NotificationsList({
                           >
                             {row.headline}
                           </a>
-                        ) : agentHref ? (
+                        ) : primaryInAppHref ? (
                           <Link
-                            href={agentHref}
+                            href={primaryInAppHref}
                             onClick={(event) => {
                               if (
                                 selectionMode ||
@@ -414,7 +594,7 @@ export default function NotificationsList({
                               {inAppLabel}
                             </Link>
                           ) : null}
-                          {runHref ? (
+                          {runHref && !usesRunHrefAsPrimary ? (
                             <Link
                               role="menuitem"
                               href={runHref}
@@ -474,6 +654,33 @@ export default function NotificationsList({
           </ul>
         </section>
       ))}
+
+      {/* The sentinel IS the padding: blank space under the last card so
+          the floating pill below never lands on top of content, and the
+          trigger for showing it — scrolling this into view means the
+          person has actually reached the end of the list. */}
+      {hasMore ? <div ref={sentinelRef} className="h-16" aria-hidden="true" /> : null}
+
+      {/* Floating "Show more" — the same pill as chat's "Jump to latest"
+          (message-list.tsx), same styling, different positioning: that one
+          is `sticky` inside a bounded, scrolling message pane; this page
+          has no such pane, the whole document scrolls, so this is `fixed`
+          to the viewport instead — a floating CTA rather than a sticky
+          footer. Hidden in selection mode so it never competes with the
+          fixed multi-select footer below, and hidden until the sentinel
+          above says the person has actually scrolled down to it. */}
+      {hasMore && nearBottom && !selectionMode ? (
+        <div className="fixed inset-x-0 bottom-4 z-20 flex justify-center">
+          <button
+            type="button"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+            className="rounded-full border border-gray-300 bg-white px-4 py-1.5 text-xs font-medium shadow-lg hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+          >
+            {loadingMore ? 'Loading…' : 'Show more'}
+          </button>
+        </div>
+      ) : null}
 
       {/* Sticky multi-select footer — appears with the first selected card.
           Three rows, three visual weights: select all/none is a neutral

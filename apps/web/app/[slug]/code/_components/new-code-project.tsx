@@ -50,7 +50,7 @@ export default function NewCodeProject({
       `/api/tenant/${tenantId}/code/projects`,
       'POST',
       {
-        name: name.trim(),
+        name: name.trim() || chosen.name,
         repository: chosen.fullName,
         branch: branch.trim(),
         env,
@@ -99,18 +99,6 @@ export default function NewCodeProject({
           </p>
         ) : null}
 
-        <label className="block text-sm">
-          <span className="mb-1 block text-xs font-medium text-gray-500">Name</span>
-          <input
-            autoFocus
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={200}
-            required
-            className={inputClass}
-          />
-        </label>
-
         <div className="block text-sm">
           <span className="mb-1 block text-xs font-medium text-gray-500">Repository</span>
           {chosen ? (
@@ -154,18 +142,41 @@ export default function NewCodeProject({
                 <RepositoryBrowser
                   tenantId={tenantId}
                   enabled={bitbucketConnected}
-                  onChoose={(repo) => setChosen(repo)}
+                  onChoose={(repo) => {
+                    setChosen(repo);
+                    // The repository names the project until the person
+                    // types over it — an initial value, not a placeholder,
+                    // so it is part of what gets created and stays theirs
+                    // to rename.
+                    setName((current) => current || repo.name);
+                  }}
                 />
               ) : (
                 <CreateRepository
                   tenantId={tenantId}
                   enabled={bitbucketConnected}
-                  onCreated={(repo) => setChosen(repo)}
+                  onCreated={(repo) => {
+                    setChosen(repo);
+                    setName((current) => current || repo.name);
+                  }}
                 />
               )}
             </div>
           )}
         </div>
+
+        <label className="block text-sm">
+          <span className="mb-1 block text-xs font-medium text-gray-500">
+            Name (optional — defaults to the repository’s name)
+          </span>
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={chosen?.name ?? ''}
+            maxLength={200}
+            className={inputClass}
+          />
+        </label>
 
         {chosen ? (
           <label className="block text-sm sm:max-w-xs">
@@ -237,7 +248,7 @@ export default function NewCodeProject({
           </Link>
           <button
             type="submit"
-            disabled={busy || !bitbucketConnected || !name.trim() || !chosen}
+            disabled={busy || !bitbucketConnected || !chosen}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {busy ? 'Creating…' : 'Create project'}

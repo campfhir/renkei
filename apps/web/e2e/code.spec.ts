@@ -577,7 +577,7 @@ test.describe('code projects', () => {
     await expect(page.getByText('Connect Bitbucket first')).toHaveCount(0);
     const create = page.getByRole('button', { name: 'Create project' });
     await expect(create).toBeDisabled();
-    await page.getByLabel('Name', { exact: true }).fill(ids.newName);
+    await page.getByLabel(/^Name/).fill(ids.newName);
     const workspacePick = page.getByRole('combobox', { name: /^Workspace/ });
     await expect(workspacePick).toBeEnabled({ timeout: 15_000 });
     await workspacePick.selectOption('acme');
@@ -642,7 +642,7 @@ test.describe('code projects', () => {
     //    workspace and project, name it, and an empty repo appears on
     //    Bitbucket — used exactly like one the browser would have found ──
     await page.goto(`/${E2E_SLUG}/code/new`);
-    await page.getByLabel('Name', { exact: true }).fill(ids.createdRepoName);
+    await page.getByLabel(/^Name/).fill(ids.createdRepoName);
     await page.getByRole('tab', { name: 'Create new' }).click();
     const workspacePick = page.getByRole('combobox', { name: /^Workspace/ });
     await expect(workspacePick).toBeEnabled({ timeout: 15_000 });
