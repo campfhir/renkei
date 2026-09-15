@@ -69,6 +69,7 @@ import {
 } from './env-secrets';
 import {
   WorkspacePathError,
+  callerDirExists,
   checkoutExists,
   cloneRepository,
   containedPath,
@@ -81,6 +82,8 @@ import {
   newWorkspaceStorageKey,
   readWorkspaceFile,
   removeWorkspace,
+  workerInstance,
+  workerUptime,
   runGit,
   runShell,
   workspaceDir,
@@ -131,6 +134,9 @@ export function workspaceWire(summary: SandboxWorkspaceSummary) {
     createdAt: summary.createdAt.toISOString(),
     lastUsedAt: summary.lastUsedAt.toISOString(),
     expiresAt: summary.expiresAt.toISOString(),
+    // Which worker answered: beside the same field on a later answer, a
+    // person can see whether one worker cloned and another lost it.
+    worker: workerInstance(),
   };
 }
 
@@ -191,24 +197,35 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       return null;
     }
     if (!(await checkoutExists(workspace.storageKey))) {
-      // A ready row whose bytes are gone: the container was recreated
-      // without the workspaces volume mounted, or the directory was
-      // removed by hand. Nothing here can bring it back — the clone URL
-      // and the credential were the clone request's — so the row says
-      // so, once, and the project page offers to clone again. Left as
-      // ready, every verb would answer a bare `spawn setpriv ENOENT`.
-      const error =
-        'The checkout is no longer on the worker’s disk (its volume was replaced or the directory was removed).';
-      logger.warn('workspace {id} is ready but its checkout is missing from disk', {
+      // A ready row whose bytes are gone. Nothing here can bring it back —
+      // the clone URL and the credential were the clone request's — so the
+      // row says so, once, and the chat or the project page clones again.
+      // Left as ready, every verb would answer a bare `spawn setpriv
+      // ENOENT`. WHY it is gone is the useful part: a worker with no
+      // directory for this caller at all never held the checkout (it was
+      // started without the workspaces volume, or it is a second instance
+      // behind the same address), while a caller directory that is there
+      // minus this checkout means the checkout alone was removed.
+      const callerOnDisk = await callerDirExists(workspace.storageKey);
+      const where = `worker ${workerInstance()}, up ${workerUptime()}`;
+      const why = callerOnDisk
+        ? `this worker has the project’s other files but not this checkout, so the checkout alone was removed (${where})`
+        : `this worker has no files for this project at all, so it is not the worker that cloned it — one started without the workspaces volume mounted, or a second worker instance behind the same address (${where})`;
+      logger.warn('workspace {id} is ready but its checkout is missing from disk: {why}', {
         component: 'worker-sandbox/workspaces',
         id: workspace.id,
+        why,
+        callerOnDisk,
+        worker: workerInstance(),
       });
-      await store.setWorkspaceStatus(db, workspace.id, 'failed', { error });
+      await store.setWorkspaceStatus(db, workspace.id, 'failed', {
+        error: `The checkout is no longer on the worker’s disk: ${why}.`,
+      });
       sendError(
         response,
         409,
         'not_ready',
-        `That workspace’s checkout is gone from the worker’s disk (its volume was replaced or the directory was removed). It is now marked failed; the chat clones the repository again on its own, as does the project page.`
+        `That workspace’s checkout is gone from the worker’s disk: ${why}. It is now marked failed; the chat clones the repository again on its own, as does the project page.`
       );
       return null;
     }
@@ -314,6 +331,19 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         return;
       }
       const sizeBytes = await measureWorkspace(workspaceDir(storageKey));
+      // Measured and then checked once more: a checkout that is not there
+      // straight after its own clone means this worker's disk is not
+      // keeping files, and the row should say that rather than `ready`.
+      if (!(await checkoutExists(storageKey))) {
+        const error = `The checkout vanished right after cloning on worker ${workerInstance()} (up ${workerUptime()}): this worker’s workspaces disk is not keeping files.`;
+        logger.error('workspace {id} vanished right after cloning', {
+          component: 'worker-sandbox/workspaces',
+          id: row.id,
+          worker: workerInstance(),
+        });
+        await store.setWorkspaceStatus(db, row.id, 'failed', { error });
+        return;
+      }
       await store.setWorkspaceStatus(db, row.id, 'ready', { sizeBytes, branch: outcome.branch });
       logger.info('workspace cloned {repo} ({bytes} bytes)', {
         component: 'worker-sandbox/workspaces',

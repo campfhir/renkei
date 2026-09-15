@@ -21,9 +21,11 @@ import {
   getWorkspacesRoot,
   grepFiles,
   homeDir,
+  isCheckoutStorageKey,
   listDirectory,
   newWorkspaceStorageKey,
   readWorkspaceFile,
+  removeWorkspace,
   runProcess,
   runShell,
   setWorkspacesRootForTests,
@@ -111,6 +113,30 @@ describe('wrapCommand', () => {
     expect(env.GIT_CONFIG_KEY_0).toBe('http.https://bitbucket.org/.extraheader');
     expect(env.GIT_CONFIG_VALUE_0).toBe('Authorization: Basic xyz');
     expect(shellPrelude()).toMatch(/^ulimit -u \d+ -f \d+ -c 0/);
+  });
+});
+
+describe('removing a checkout', () => {
+  it('accepts only a key that names exactly one checkout', () => {
+    expect(isCheckoutStorageKey('tenant/abc123/uuid')).toBe(true);
+    for (const bad of [
+      '',
+      'tenant',
+      'tenant/abc123',
+      'tenant//uuid',
+      '../x/y',
+      'a/../b',
+      'a/b/c/d',
+      '/a/b',
+    ]) {
+      expect(isCheckoutStorageKey(bad)).toBe(false);
+    }
+  });
+
+  it('refuses a malformed key rather than reaching for more than one checkout', async () => {
+    await expect(removeWorkspace('')).rejects.toThrow(/malformed storage key/);
+    await expect(removeWorkspace('tenant/abc123')).rejects.toThrow(/malformed storage key/);
+    await expect(removeWorkspace('tenant/abc123/uuid')).resolves.toBeUndefined();
   });
 });
 

@@ -46,6 +46,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import {
   chmod,
   chown,
@@ -156,11 +157,41 @@ function callerDir(storageKey: string): string {
  * that is not there, indistinguishable from a missing executable.
  */
 export async function checkoutExists(storageKey: string): Promise<boolean> {
+  return isDirectory(workspaceDir(storageKey));
+}
+
+/**
+ * Whether this worker has the caller's directory at all — their home and
+ * whatever checkouts they had. When a ready row's checkout is missing,
+ * this tells two failures apart: a worker whose disk never held this
+ * caller (one started without the workspaces volume mounted, or a second
+ * instance behind the same address) from a checkout that was removed on
+ * the disk that has everything else.
+ */
+export async function callerDirExists(storageKey: string): Promise<boolean> {
+  return isDirectory(callerDir(storageKey));
+}
+
+async function isDirectory(path: string): Promise<boolean> {
   try {
-    return (await stat(workspaceDir(storageKey))).isDirectory();
+    return (await stat(path)).isDirectory();
   } catch {
     return false;
   }
+}
+
+/** This worker, as a person reading a transcript or a log can tell one from another. */
+export function workerInstance(): string {
+  return hostname();
+}
+
+/** How long this process has been up, for the same reader. */
+export function workerUptime(): string {
+  const seconds = Math.floor(process.uptime());
+  if (seconds < 120) return `${seconds}s`;
+  if (seconds < 7_200) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 172_800) return `${Math.floor(seconds / 3_600)}h`;
+  return `${Math.floor(seconds / 86_400)}d`;
 }
 
 export function homeDir(storageKey: string): string {
@@ -499,7 +530,26 @@ export async function measureWorkspace(dir: string): Promise<number> {
   return Number.isFinite(kb) ? kb * 1024 : 0;
 }
 
+/**
+ * A storage key names exactly one checkout: tenant, caller hash, checkout
+ * id. Anything else (an empty key, one that climbs) would make the
+ * recursive removal below reach for a caller's whole directory or the
+ * volume itself, so it is refused rather than trusted.
+ */
+export function isCheckoutStorageKey(storageKey: string): boolean {
+  const segments = storageKey.split('/');
+  return (
+    segments.length === 3 &&
+    segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+  );
+}
+
 export async function removeWorkspace(storageKey: string): Promise<void> {
+  if (!isCheckoutStorageKey(storageKey)) {
+    throw new Error(
+      `refusing to remove a workspace with a malformed storage key: ${JSON.stringify(storageKey)}`
+    );
+  }
   await rm(workspaceDir(storageKey), { recursive: true, force: true });
 }
 

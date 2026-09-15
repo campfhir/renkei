@@ -231,7 +231,17 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   That volume has to be mounted: without it the checkouts sit in the
   container's own filesystem and vanish when it is recreated, after which
   every command in a checkout the database still calls ready answers
-  that the checkout is gone and the project has to be cloned again.
+  that the checkout is gone and the project has to be cloned again. That
+  answer says which of two things it found: a worker with no files for
+  the project at all (started without the volume, or a second instance
+  behind the same address — there must be exactly one `worker-sandbox`,
+  since checkouts live on its disk, not in the database) or the
+  project's files minus this one checkout (removed). Every workspace the
+  worker describes carries `worker`, its hostname, and the chat's clone
+  step prints it, so a clone on one worker and a loss on another read as
+  two different names; `docker ps --filter name=sandbox` and
+  `docker inspect renkei-worker-sandbox --format '{{json .Mounts}}'` are
+  the checks on the host.
   With the flag set the container's entrypoint keeps the worker **root**
   so every caller's commands can be dropped (setpriv) to that caller's own
   unprivileged uid — their checkout and home are theirs alone, the staged

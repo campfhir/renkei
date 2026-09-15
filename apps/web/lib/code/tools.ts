@@ -277,6 +277,26 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
   const tools: LocalTool[] = [
     {
       def: {
+        name: 'code_clone',
+        description:
+          'Make sure the repository’s checkout is on the sandbox, cloning it again if it is gone. ' +
+          'Normally never needed: every code_* tool brings a lost checkout back on its own before ' +
+          'answering. Use it only when a tool reported the checkout gone and did not recover it. ' +
+          'Never re-clones a checkout that is present, so nothing uncommitted is lost.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      async execute() {
+        // A probe, nothing more: the recovery wrapper around every tool
+        // turns a "gone" answer into a clone and a second run of this.
+        const listed = await sbWorkspaceLs(target, { id: workspaceId, path: '' });
+        if (!listed.ok) return failed(listed.err);
+        return textResult(
+          `The checkout of ${binding.repoFullName} is on the sandbox and usable (${listed.val.entries.length} entries at its root); nothing to clone.`
+        );
+      },
+    },
+    {
+      def: {
         name: 'code_ls',
         description:
           'The entries of one directory in the repository (files with sizes, directories, links). ' +

@@ -580,6 +580,8 @@ export interface WireWorkspace {
   createdAt: string;
   lastUsedAt: string;
   expiresAt: string;
+  /** The worker instance that answered, when it says; two of them behind one address is a deployment fault this makes visible. */
+  worker: string | null;
 }
 
 function workspaceOf(value: unknown): WireWorkspace | null {
@@ -601,6 +603,7 @@ function workspaceOf(value: unknown): WireWorkspace | null {
     createdAt: str(value.createdAt),
     lastUsedAt: str(value.lastUsedAt),
     expiresAt: str(value.expiresAt),
+    worker: optStr(value.worker) ?? null,
   };
 }
 

@@ -95,6 +95,7 @@ describe('the set', () => {
   it('names every verb and marks the reads', () => {
     const set = tools();
     expect([...set.keys()].sort()).toEqual([
+      'code_clone',
       'code_delegate',
       'code_edit_file',
       'code_env_names',
@@ -120,8 +121,16 @@ describe('a checkout lost mid-turn', () => {
   it('is brought back once and the call runs again in the new checkout, saying so', async () => {
     client.sbWorkspaceLs
       .mockResolvedValueOnce(checkoutGone)
-      .mockResolvedValueOnce({ ok: true, val: { path: '', entries: [{ path: 'README.md', kind: 'file', sizeBytes: 12 }] } });
-    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({ ok: true, workspaceId: NEW_WS_ID, seconds: 7, how: 'cloned' }));
+      .mockResolvedValueOnce({
+        ok: true,
+        val: { path: '', entries: [{ path: 'README.md', kind: 'file', sizeBytes: 12 }] },
+      });
+    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({
+      ok: true,
+      workspaceId: NEW_WS_ID,
+      seconds: 7,
+      how: 'cloned',
+    }));
     const set = tools(recover);
     const result = await set.get('code_ls')!.execute({}, context);
     expect(recover).toHaveBeenCalledWith(WS_ID);
@@ -132,15 +141,25 @@ describe('a checkout lost mid-turn', () => {
       '[The checkout had gone from the sandbox; it was cloned again (7s) and this call ran again in the new one.]\n\nREADME.md (12 B)'
     );
     // Every tool now works in the new checkout, with no further recovery.
-    client.sbWorkspaceRead.mockResolvedValue({ ok: true, val: { path: 'a', text: 'x', truncated: false, sizeBytes: 1 } });
+    client.sbWorkspaceRead.mockResolvedValue({
+      ok: true,
+      val: { path: 'a', text: 'x', truncated: false, sizeBytes: 1 },
+    });
     await set.get('code_read_file')!.execute({ path: 'a' }, context);
-    expect(client.sbWorkspaceRead).toHaveBeenCalledWith(TARGET, expect.objectContaining({ id: NEW_WS_ID }));
+    expect(client.sbWorkspaceRead).toHaveBeenCalledWith(
+      TARGET,
+      expect.objectContaining({ id: NEW_WS_ID })
+    );
     expect(recover).toHaveBeenCalledTimes(1);
   });
 
   it('shares one recovery between reads that hit the wall together', async () => {
-    client.sbWorkspaceLs.mockResolvedValueOnce(checkoutGone).mockResolvedValue({ ok: true, val: { path: '', entries: [] } });
-    client.sbWorkspaceGrep.mockResolvedValueOnce(checkoutGone).mockResolvedValue({ ok: true, val: { matches: [], truncated: false } });
+    client.sbWorkspaceLs
+      .mockResolvedValueOnce(checkoutGone)
+      .mockResolvedValue({ ok: true, val: { path: '', entries: [] } });
+    client.sbWorkspaceGrep
+      .mockResolvedValueOnce(checkoutGone)
+      .mockResolvedValue({ ok: true, val: { matches: [], truncated: false } });
     let release: (value: CheckoutRecovery) => void = () => {};
     const recover = jest.fn(() => new Promise<CheckoutRecovery>((resolve) => (release = resolve)));
     const set = tools(recover);
@@ -154,12 +173,17 @@ describe('a checkout lost mid-turn', () => {
     expect(recover).toHaveBeenCalledTimes(1);
     expect(ls.isError).toBe(false);
     expect(grep.isError).toBe(false);
-    expect(grep.content[0]!.text).toMatch(/^\[The checkout had been replaced by a newer clone \(3s\)/);
+    expect(grep.content[0]!.text).toMatch(
+      /^\[The checkout had been replaced by a newer clone \(3s\)/
+    );
   });
 
   it('answers the worker’s error, with why, when the checkout cannot come back', async () => {
     client.sbWorkspaceLs.mockResolvedValue(checkoutGone);
-    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({ ok: false, message: 'Bitbucket is not connected.' }));
+    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({
+      ok: false,
+      message: 'Bitbucket is not connected.',
+    }));
     const result = await tools(recover).get('code_ls')!.execute({}, context);
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toBe(
@@ -169,7 +193,12 @@ describe('a checkout lost mid-turn', () => {
 
   it('stops trying past the per-turn limit and tells the model to stop', async () => {
     client.sbWorkspaceLs.mockResolvedValue(checkoutGone);
-    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({ ok: true, workspaceId: NEW_WS_ID, seconds: 1, how: 'cloned' }));
+    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({
+      ok: true,
+      workspaceId: NEW_WS_ID,
+      seconds: 1,
+      how: 'cloned',
+    }));
     const set = tools(recover);
     for (let attempt = 0; attempt < MAX_CHECKOUT_RECOVERIES_PER_TURN; attempt += 1) {
       const result = await set.get('code_ls')!.execute({}, context);
@@ -179,9 +208,39 @@ describe('a checkout lost mid-turn', () => {
     expect(recover).toHaveBeenCalledTimes(MAX_CHECKOUT_RECOVERIES_PER_TURN);
     const refused = await set.get('code_run')!.execute({ command: 'true' }, context);
     expect(refused.isError).toBe(true);
-    expect(refused.content[0]!.text).toMatch(/lost 2 times in this turn .* Stop and tell the person/);
+    expect(refused.content[0]!.text).toMatch(
+      /lost 2 times in this turn .* Stop and tell the person/
+    );
     expect(client.sbWorkspaceExec).not.toHaveBeenCalled();
     expect(recover).toHaveBeenCalledTimes(MAX_CHECKOUT_RECOVERIES_PER_TURN);
+  });
+
+  it('code_clone is a probe: present means nothing to do, gone means the wrapper brings it back', async () => {
+    client.sbWorkspaceLs.mockResolvedValueOnce({
+      ok: true,
+      val: { path: '', entries: [{ path: 'README.md', kind: 'file', sizeBytes: 1 }] },
+    });
+    const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({
+      ok: true,
+      workspaceId: NEW_WS_ID,
+      seconds: 4,
+      how: 'cloned',
+    }));
+    const set = tools(recover);
+    const present = await set.get('code_clone')!.execute({}, context);
+    expect(present.isError).toBe(false);
+    expect(present.content[0]!.text).toMatch(/usable \(1 entries at its root\); nothing to clone/);
+    expect(recover).not.toHaveBeenCalled();
+
+    client.sbWorkspaceLs
+      .mockResolvedValueOnce(checkoutGone)
+      .mockResolvedValueOnce({ ok: true, val: { path: '', entries: [] } });
+    const gone = await set.get('code_clone')!.execute({}, context);
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(gone.isError).toBe(false);
+    expect(gone.content[0]!.text).toMatch(
+      /^\[The checkout had gone from the sandbox; it was cloned again \(4s\)/
+    );
   });
 
   it('leaves a missing file alone: only a missing checkout is recovered', async () => {
@@ -190,7 +249,9 @@ describe('a checkout lost mid-turn', () => {
       err: { kind: 'op', type: 'not_found', message: 'No such file: nope.ts', status: 404 },
     });
     const recover = jest.fn();
-    const result = await tools(recover).get('code_read_file')!.execute({ path: 'nope.ts' }, context);
+    const result = await tools(recover)
+      .get('code_read_file')!
+      .execute({ path: 'nope.ts' }, context);
     expect(result.isError).toBe(true);
     expect(recover).not.toHaveBeenCalled();
   });

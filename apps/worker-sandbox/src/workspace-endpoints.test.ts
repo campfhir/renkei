@@ -173,6 +173,10 @@ describe('a checkout that vanished from disk', () => {
       expect(result.status).toBe(409);
       expect(result.json.error.type).toBe('not_ready');
       expect(result.json.error.message).toMatch(/checkout is gone .*clones the repository again/);
+      // The caller's directory (tenant-1/hash) is there: only this checkout was removed.
+      expect(result.json.error.message).toMatch(
+        /checkout alone was removed \(worker \S+, up \S+\)/
+      );
     }
     expect(workspaceStore.setWorkspaceStatus).toHaveBeenCalledWith(
       expect.anything(),
@@ -180,6 +184,28 @@ describe('a checkout that vanished from disk', () => {
       'failed',
       { error: expect.stringContaining('no longer on the worker') }
     );
+  });
+
+  it('says when this worker never had the project at all', async () => {
+    workspaceStore.getWorkspace.mockImplementation(
+      async (_db: unknown, target: { subject: string }, id: string) =>
+        target.subject === 'alice' && id === 'ws-elsewhere'
+          ? { ...readyWorkspace(), id: 'ws-elsewhere', storageKey: 'tenant-1/other-hash/ws-1' }
+          : undefined
+    );
+    workspaceStore.setWorkspaceStatus.mockResolvedValue(undefined);
+    const result = await post(enabledBase, 'workspaces/ls', { ...TARGET, id: 'ws-elsewhere' });
+    expect(result.status).toBe(409);
+    expect(result.json.error.message).toMatch(
+      /no files for this project at all.*second worker instance behind the same address/
+    );
+  });
+
+  it('names the worker that answers, on every workspace it describes', async () => {
+    const result = await post(enabledBase, 'workspaces/get', { ...TARGET, id: 'ws-1' });
+    expect(result.status).toBe(200);
+    expect(result.json.workspace.worker).toEqual(expect.any(String));
+    expect(result.json.workspace.worker).not.toBe('');
   });
 });
 

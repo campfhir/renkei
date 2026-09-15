@@ -215,7 +215,15 @@ the same time. After two consecutive losses in one turn the tools stop
 trying and every call answers the same refusal, telling the model to
 stop and tell the person: a checkout that keeps vanishing is the
 worker's volume, not something another clone fixes. The next turn's
-prelude starts afresh; before that check every such verb answered a bare
+prelude starts afresh. The model also has `code_clone`, a probe that
+reports the checkout present or, through the same wrapper, brings it
+back — it never re-clones a checkout that is there. The worker's "gone"
+answer says whether it has the project's other files (this checkout
+alone was removed) or none at all (a worker without the volume, or a
+second instance behind one address), names itself (hostname, uptime),
+and every workspace it describes carries `worker` for the same
+comparison; a clone whose directory is missing straight after `du`
+measured it is marked failed rather than ready; before that check every such verb answered a bare
 `spawn setpriv ENOENT`, Node's word for a working directory that is not
 there, which reads as a missing binary. The worker also proves at boot,
 when it is root, that setpriv can drop a command to another uid, and
