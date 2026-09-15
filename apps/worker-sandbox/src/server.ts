@@ -68,6 +68,7 @@ import * as secretsStore from './secrets-store';
 import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './browser';
 import { SecretVault } from './secret-vault';
 import { secretSummary } from './secrets';
+import { orphanedByNow } from './workspaces';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import { logger } from './logger';
 
@@ -851,10 +852,17 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
   // skipped so the sweep keeps making progress.
   const sweep = setInterval(() => {
     void (async () => {
+      // Only a file on THIS instance's disk is this instance's to remove
+      // (several instances sweep the same rows); one elsewhere waits for
+      // its instance, until the grace after which the row alone goes.
       const expired = await store.listExpired(deps.db, SWEEP_BATCH);
       for (const file of expired) {
         try {
-          await disk.deleteFile(file.storageKey);
+          if (await disk.fileExists(file.storageKey)) {
+            await disk.deleteFile(file.storageKey);
+          } else if (!orphanedByNow(file.expiresAt)) {
+            continue;
+          }
           await store.deleteById(deps.db, file.id);
         } catch (error) {
           logger.warn('sweep could not remove {id}: {error}', {

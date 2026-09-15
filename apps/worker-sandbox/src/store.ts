@@ -180,7 +180,12 @@ export async function getFile(
     .where('id', '=', fileId)
     .executeTakeFirst();
   if (!row) return undefined;
-  return { id: row.id, filename: row.filename, contentType: row.content_type, storageKey: row.storage_key };
+  return {
+    id: row.id,
+    filename: row.filename,
+    contentType: row.content_type,
+    storageKey: row.storage_key,
+  };
 }
 
 export async function deleteFile(
@@ -196,14 +201,22 @@ export async function deleteFile(
     .returning(['id', 'filename', 'content_type', 'storage_key'])
     .executeTakeFirst();
   if (!row) return undefined;
-  return { id: row.id, filename: row.filename, contentType: row.content_type, storageKey: row.storage_key };
+  return {
+    id: row.id,
+    filename: row.filename,
+    contentType: row.content_type,
+    storageKey: row.storage_key,
+  };
 }
 
 /** Rows past their expiry — the sweep deletes each one's bytes, then this row. */
-export async function listExpired(db: Kysely<DB>, limit: number): Promise<StoredFile[]> {
+export async function listExpired(
+  db: Kysely<DB>,
+  limit: number
+): Promise<(StoredFile & { expiresAt: Date })[]> {
   const rows = await db
     .selectFrom('sandbox_files')
-    .select(['id', 'filename', 'content_type', 'storage_key'])
+    .select(['id', 'filename', 'content_type', 'storage_key', 'expires_at'])
     .where('expires_at', '<', new Date())
     .limit(limit)
     .execute();
@@ -212,6 +225,7 @@ export async function listExpired(db: Kysely<DB>, limit: number): Promise<Stored
     filename: row.filename,
     contentType: row.content_type,
     storageKey: row.storage_key,
+    expiresAt: row.expires_at,
   }));
 }
 
