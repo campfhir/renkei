@@ -8,17 +8,21 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   childEnvironment,
   cloneRepository,
   containedPath,
+  ensureCallerDirs,
+  ensureWorkspacesRoot,
   findFiles,
+  getWorkspacesRoot,
   grepFiles,
   homeDir,
   listDirectory,
+  newWorkspaceStorageKey,
   readWorkspaceFile,
   runShell,
   setWorkspacesRootForTests,
@@ -105,6 +109,41 @@ describe('wrapCommand', () => {
     expect(env.GIT_CONFIG_KEY_0).toBe('http.https://bitbucket.org/.extraheader');
     expect(env.GIT_CONFIG_VALUE_0).toBe('Authorization: Basic xyz');
     expect(shellPrelude()).toMatch(/^ulimit -u \d+ -f \d+ -c 0/);
+  });
+});
+
+describe('directory permissions under a restrictive umask', () => {
+  // The real worker raises its umask to 0077 before it ever touches the
+  // workspaces volume, so a caller's uid reads nothing else it creates.
+  // mkdir's `mode` option goes through that umask like any other
+  // creation call — only chmod, applied after, is immune to it. Without
+  // that chmod, /workspaces and each tenant's directory would end up
+  // 0700 (umask 0077 clears every group/other bit from a requested
+  // 0711), sealing every caller's uid out of a root it only needs to
+  // walk through — exactly the "could not create leading directories:
+  // Permission denied" a real clone would then hit.
+  const modeOf = async (path: string) => (await stat(path)).mode & 0o777;
+
+  it('leaves the workspaces root traversable by everyone', async () => {
+    const previous = process.umask(0o077);
+    try {
+      await ensureWorkspacesRoot();
+    } finally {
+      process.umask(previous);
+    }
+    expect(await modeOf(getWorkspacesRoot())).toBe(0o711);
+  });
+
+  it("leaves a tenant's directory traversable by everyone", async () => {
+    const storageKey = newWorkspaceStorageKey('umask-tenant', 'someone');
+    const previous = process.umask(0o077);
+    try {
+      await ensureCallerDirs(storageKey, null);
+    } finally {
+      process.umask(previous);
+    }
+    const tenantDir = join(getWorkspacesRoot(), 'umask-tenant');
+    expect(await modeOf(tenantDir)).toBe(0o711);
   });
 });
 
