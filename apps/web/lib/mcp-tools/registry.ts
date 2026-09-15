@@ -125,6 +125,26 @@ async function grantRow(
     .executeTakeFirst();
 }
 
+/**
+ * requested ∩ granted, for a provider whose OAuth app fixes its scopes on
+ * the consumer/client registration rather than letting the authorize step
+ * narrow them (Zoom, Bitbucket) — so the token always carries the app's
+ * full configured set, and only intersecting with what the user actually
+ * requested preserves their narrowing.
+ *
+ * `granted` is trusted only when it shares at least one entry with
+ * `requested`; otherwise it is in a vocabulary this app does not
+ * recognize (observed for Bitbucket: `read:repository:bitbucket-legacy`
+ * etc., sharing no strings with the classic scope names requested_scopes
+ * stores) and intersecting against it would silently zero out every
+ * tool. An unrecognized or absent granted list falls back to requested
+ * alone, exactly like a token whose scopes are simply unknown.
+ */
+export function narrowedScopes(requested: string[], granted: string[] | null | undefined): string[] {
+  const recognized = granted && granted.some((scope) => requested.includes(scope)) ? granted : null;
+  return recognized ? requested.filter((scope) => recognized.includes(scope)) : requested;
+}
+
 export async function resolveConnectorAvailability(
   db: Kysely<DB>,
   tenantId: string,
@@ -166,11 +186,8 @@ export async function resolveConnectorAvailability(
   // requested alone otherwise.
   const zoomGrantRow = await grantRow(db, tenantId, ZOOM, subject);
   const zoomAvailable = zoomGrantRow !== undefined;
-  const zoomGranted = zoomGrantRow?.granted_scopes;
   const zoomScopes = zoomGrantRow
-    ? zoomGranted
-      ? zoomGrantRow.requested_scopes.filter((scope) => zoomGranted.includes(scope))
-      : zoomGrantRow.requested_scopes
+    ? narrowedScopes(zoomGrantRow.requested_scopes, zoomGrantRow.granted_scopes)
     : [];
 
   // The Confluence tools register only when this caller has connected the
@@ -186,15 +203,14 @@ export async function resolveConnectorAvailability(
 
   // Bitbucket inverts the Atlassian rule the same way Zoom does: the token
   // ALWAYS carries the OAuth consumer's full scope set (Bitbucket cannot
-  // narrow at consent), so bare granted would erase the user's narrowing.
-  // Requested ∩ granted when both are known; requested alone otherwise.
+  // narrow at consent), so bare granted would erase the user's narrowing —
+  // see narrowedScopes for the shared rule, including why an unrecognized
+  // granted format (observed for Bitbucket) falls back to requested alone
+  // instead of intersecting to nothing.
   const bitbucketGrantRow = await grantRow(db, tenantId, ATLASSIAN_BITBUCKET, subject);
   const bitbucketAvailable = bitbucketGrantRow !== undefined;
-  const bitbucketGranted = bitbucketGrantRow?.granted_scopes;
   const bitbucketScopes = bitbucketGrantRow
-    ? bitbucketGranted
-      ? bitbucketGrantRow.requested_scopes.filter((scope) => bitbucketGranted.includes(scope))
-      : bitbucketGrantRow.requested_scopes
+    ? narrowedScopes(bitbucketGrantRow.requested_scopes, bitbucketGrantRow.granted_scopes)
     : [];
 
   // File shares are the one connector with no provider_grants row: the
