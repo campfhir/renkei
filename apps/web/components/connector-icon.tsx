@@ -57,9 +57,9 @@ const BRAND: Record<string, string> = {
   // A neutral sky blue: no vendor mark is shipped (GLYPH_ONLY), so the
   // globe below carries the colour.
   'web-search': '#0284C7',
-  // A teal of our own: no vendor mark is shipped (GLYPH_ONLY), so the
-  // channel glyph below carries the colour.
-  mirth: '#0F766E',
+  // The red-orange of the shipped Mirth Connect mark, so the fallback
+  // channel glyph reads as the same product.
+  mirth: '#D2492F',
 };
 
 /** Fallback: the connector's initial on a neutral tile. */
