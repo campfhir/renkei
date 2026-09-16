@@ -271,16 +271,44 @@ export const FINISH_STEP_DEF: PromptToolDef = {
           'With stop: true when the instruction says to end silently / do nothing — no reply, ' +
           'no notification, no follow-up automations. Omit otherwise.',
       },
-      remember: {
-        type: 'string',
-        description:
-          'A fact FUTURE runs of this agent need and could not rediscover — chiefly what this ' +
-          'step acted on (e.g. "replied to message 123 about the outage") or a durable ' +
-          'preference it learned. One sentence with identifiers. Not a summary of the step, ' +
-          'not the saved result. Omit when nothing future runs need — that is most steps.',
-      },
     },
     required: ['outcome', 'summary'],
+  },
+};
+
+export const REMEMBER_TOOL = 'remember';
+
+/**
+ * Free, offered on every action step, and deliberately its OWN call rather
+ * than a field on finish_step. Memory used to ride along as finish_step's
+ * `remember` argument, which made every declared outcome a chance to also
+ * (implicitly) write a memory entry — the two decisions ("what happened to
+ * this step" and "what should future runs know") are not the same
+ * decision, and bolting the second onto the first is exactly how a model
+ * ends up filling in `remember` out of habit alongside a routine success.
+ * A separate call means memory is written only when the model has
+ * deliberately decided there is something worth keeping — most steps
+ * never call this at all, which is correct, not an omission.
+ */
+export const REMEMBER_DEF: PromptToolDef = {
+  name: REMEMBER_TOOL,
+  description:
+    'Explicitly record one fact FUTURE runs of this agent need and could not rediscover — ' +
+    'chiefly what this step acted on (e.g. "replied to message 123 about the outage") or a ' +
+    'durable preference learned this run. One sentence with identifiers. Not a summary of the ' +
+    'step, not the saved result, not routine progress. Call this only when you have decided ' +
+    'there truly is something worth remembering — that is most steps NOT calling it, never a ' +
+    'field to fill in alongside finish_step. Free: it never counts against your tool budget, ' +
+    'and you may call it more than once if there is more than one fact to keep.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      note: {
+        type: 'string',
+        description: 'The fact to remember, one sentence with identifiers.',
+      },
+    },
+    required: ['note'],
   },
 };
 
@@ -341,7 +369,7 @@ export const SYSTEM_PROMPT = [
   'When THIS STEP’s own action does not apply to this input at all — out of scope, no valid target, already handled, or the step’s own instructions rule it out — that is not a failure: declare outcome "skipped" with a summary saying why. No tool is called, nothing is saved, and the automation moves on to the next step exactly as if this step had done nothing; it does not end the automation by itself.',
   'An empty result is NOT a skip: a search or lookup that runs cleanly but finds nothing has produced an answer — declare success and save that nothing was found (or, when the step lists a failure code for it, declare failure with that code so the configured handling decides). Skip only when this step’s own action does not apply here — never as a way to end the whole automation; an instruction saying the automation itself is out of scope has its own step for that.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
-  'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled. Record via finish_step’s remember field only what future runs must know to avoid repeating or contradicting this one; routine outcomes are not worth remembering.',
+  'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled. When there is a fact future runs must know to avoid repeating or contradicting this one, call remember explicitly to record it — it is a separate, free call, never a side effect of declaring this step’s outcome; routine outcomes are not worth remembering.',
 ].join(' ');
 
 /**
@@ -362,8 +390,8 @@ export interface RunContextInput {
 /**
  * The context block itself, '' when the agent has none of the three.
  * Order: guardrails, knowledge, then memory LAST — memory is the one part
- * that can change mid-run (a step's `remember`), and a change invalidates
- * the cached prefix only from where it sits.
+ * that can change mid-run (a step's explicit `remember` call), and a
+ * change invalidates the cached prefix only from where it sits.
  */
 export function runContextBlock(context: RunContextInput): string {
   return [
@@ -748,7 +776,8 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
     `Step: ${input.step.name}`,
     `Instruction: ${rendered.text}`,
     `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (` +
-      (input.offersTime ? `finish_step and ${RESOLVE_TIME_TOOL} are free` : 'finish_step is free') +
+      `finish_step and ${REMEMBER_TOOL} are always free` +
+      (input.offersTime ? `, and so is ${RESOLVE_TIME_TOOL}` : '') +
       '). Spend them deliberately — one well-chosen call beats several exploratory ones. When ' +
       'the budget runs out you will be asked to declare the outcome from what you have already seen.',
     ...(input.offersTime
