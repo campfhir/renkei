@@ -34,6 +34,7 @@ import {
   newPreviewId,
   previewToolMeta,
 } from '../widgets';
+import { REF_ARGS } from './resolve';
 
 /** What index.ts lends the generated tools. */
 export interface OperationRuntime {
@@ -85,10 +86,22 @@ function schemaFor(type: ParamType): z.ZodTypeAny {
   }
 }
 
+/**
+ * A reference argument (see resolve.ts) also accepts a name: an integer
+ * id becomes int-or-string, a list of them a list of either. The wrapper
+ * in index.ts resolves the name before the handler runs.
+ */
 function fieldFor(param: ParamSpec): z.ZodTypeAny {
-  const base = schemaFor(param.type).describe(
-    param.type === 'iso-date' ? `${param.description} ISO 8601.` : param.description
-  );
+  const ref = REF_ARGS[param.name];
+  let schema = schemaFor(param.type);
+  if (ref && param.type === 'int') schema = z.union([z.number().int(), z.string().min(1)]);
+  if (ref && param.type === 'int[]') {
+    schema = z.array(z.union([z.number().int(), z.string().min(1)]));
+  }
+  const description =
+    (param.type === 'iso-date' ? `${param.description} ISO 8601.` : param.description) +
+    (ref ? ` Accepts the ${ref.replace(/_/g, ' ')} id or its name.` : '');
+  const base = schema.describe(description);
   return param.required ? base : base.optional();
 }
 

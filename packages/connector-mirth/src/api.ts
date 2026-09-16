@@ -151,11 +151,13 @@ export function unwrapMap(value: unknown): Record<string, unknown> {
       if (Array.isArray(pair) && pair.length >= 1) result[String(pair[0])] = pair[1] ?? null;
       continue;
     }
-    // Mixed: the first string-valued key is the map key, the other the value.
-    const keyField = keys.find((key) => typeof entry[key] === 'string');
-    if (keyField === undefined) continue;
-    const valueField = keys.find((key) => key !== keyField);
-    result[String(entry[keyField])] = valueField === undefined ? null : entry[valueField];
+    // Mixed: XStream writes the key first and the value second, whatever
+    // their types ({"int": 0, "string": "sourceConnector"} is 0 → name), and
+    // JSON.parse keeps that order.
+    if (keys.length < 1) continue;
+    const key = entry[keys[0]];
+    if (typeof key !== 'string' && typeof key !== 'number') continue;
+    result[String(key)] = keys.length > 1 ? entry[keys[1]] : null;
   }
   return result;
 }

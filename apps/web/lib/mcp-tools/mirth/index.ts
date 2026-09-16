@@ -53,6 +53,14 @@ import {
 import { NO_SUCH_INSTANCE } from './mirth-auth';
 import type { MirthAuth } from './mirth-auth';
 import { registerOperationTools, type OperationRuntime } from './operations';
+import {
+  REF_KINDS,
+  createDirectory,
+  isRefKind,
+  resolveRef,
+  withReferenceResolution,
+  type Directory,
+} from './resolve';
 
 /** The connector key the Mirth capabilities register under. */
 export const MIRTH_MCP_CONNECTOR = 'mirth';
@@ -207,8 +215,21 @@ function queryOf(
   return query;
 }
 
-const instanceIdField = z.string().uuid().describe('From mirth_list_instances.');
-const channelIdField = z.string().min(1).describe('The channel id (from mirth_list_channels).');
+const instanceIdField = z
+  .string()
+  .min(1)
+  .describe(
+    "From mirth_list_instances: the instance's id, its name, or its environment label (when " +
+      'only one instance carries it).'
+  );
+const channelIdField = z
+  .string()
+  .min(1)
+  .describe('The channel id or its name (from mirth_list_channels).');
+/** A connector of the channel the same call names: its metaDataId (0 = source) or its name. */
+const connectorField = z
+  .union([z.number().int().nonnegative(), z.string().min(1)])
+  .describe('A connector metaDataId (0 = source, 1.. = destinations) or its name.');
 
 /** The message search filters Mirth's GET /channels/{id}/messages accepts, as a model sees them. */
 const messageFilterFields = {
@@ -249,10 +270,11 @@ function messageQuery(
 }
 
 export function registerMirthTools(
-  server: McpServer,
+  rawServer: McpServer,
   _context: MCPToolContext,
   auth: MirthAuth,
-  exposure: MirthToolExposure
+  exposure: MirthToolExposure,
+  options: { directory?: Directory } = {}
 ): void {
   /**
    * The per-call exposure gate for act tools: the caller's own connection,
@@ -293,6 +315,24 @@ export function registerMirthTools(
     }
     return { ok: true, response: answered.val };
   };
+
+  /**
+   * Names ↔ ids (resolve.ts). Every tool registered on `server` below gets
+   * its `instanceId` and reference arguments (channelId, alertId, metaDataId…)
+   * resolved from a name before its handler runs, and a legend of the ids
+   * its answer mentions after — so handlers only ever see ids.
+   */
+  const scope = auth.target();
+  const directory =
+    options.directory ??
+    createDirectory(
+      call,
+      typeof scope === 'string' ? 'denied' : `${scope.tenantId}|${scope.subject}`
+    );
+  const server = withReferenceResolution(rawServer, {
+    listConnected: () => auth.listConnected(),
+    directory,
+  });
 
   const getJson = async (
     instanceId: string,
@@ -351,6 +391,89 @@ export function registerMirthTools(
       return textResult(
         `Mirth instances you can use:\n${connected.map((entry) => instanceLine(entry)).join('\n')}`
       );
+    }
+  );
+
+  const refKindField = z
+    .enum(REF_KINDS)
+    .describe(
+      'What the values are: channel, alert, user, code_template, connector (needs channelId)…'
+    );
+
+  server.registerTool(
+    'mirth_resolve_ids',
+    {
+      title: 'Mirth · Read — Look up ids by name',
+      description:
+        'The id for each name given — channels, channel groups, tags, alerts, code templates ' +
+        'and libraries, users, resources, database tasks, or the connectors of one channel. ' +
+        'Every other mirth_* tool already accepts a name wherever it takes an id; this is for ' +
+        'when the id itself is wanted (an XML document, a report). A name that is ambiguous ' +
+        'lists the candidates rather than guessing.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        instanceId: instanceIdField,
+        kind: refKindField,
+        names: z.array(z.string().min(1)).min(1).max(200),
+        channelId: channelIdField.optional().describe('For kind "connector": whose connectors.'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const instanceId = str(args.instanceId);
+      if (!isRefKind(args.kind)) return errText('kind is not one of the known reference kinds.');
+      const kind = args.kind;
+      const names = Array.isArray(args.names) ? args.names.map(String) : [];
+      const scope = kind === 'connector' ? { channelId: str(args.channelId) || undefined } : {};
+      const lines: string[] = [];
+      let failures = 0;
+      for (const name of names) {
+        const resolved = await resolveRef(directory, instanceId, kind, name, scope);
+        if (resolved.ok)
+          lines.push(
+            `${name} = ${resolved.id}${resolved.name && resolved.name !== name ? ` (${resolved.name})` : ''}`
+          );
+        else {
+          failures += 1;
+          lines.push(`${name}: ${resolved.message}`);
+        }
+      }
+      return failures === names.length ? errText(lines.join('\n')) : textResult(lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'mirth_resolve_names',
+    {
+      title: 'Mirth · Read — Look up names by id',
+      description:
+        'The human-readable name for each id given — channels, channel groups, tags, alerts, ' +
+        'code templates and libraries, users, resources, database tasks, or the connectors of ' +
+        'one channel (metaDataIds). Answers of other mirth_* tools already carry a legend for ' +
+        'the ids they mention; this is for ids found elsewhere (a document, a log line).',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        instanceId: instanceIdField,
+        kind: refKindField,
+        ids: z
+          .array(z.union([z.string().min(1), z.number().int()]))
+          .min(1)
+          .max(200),
+        channelId: channelIdField.optional().describe('For kind "connector": whose connectors.'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const instanceId = str(args.instanceId);
+      if (!isRefKind(args.kind)) return errText('kind is not one of the known reference kinds.');
+      const kind = args.kind;
+      const scope = kind === 'connector' ? { channelId: str(args.channelId) || undefined } : {};
+      const entries = await directory.entries(instanceId, kind, scope, true);
+      if (typeof entries === 'string') return errText(entries);
+      const byId = new Map(entries.map((entry) => [entry.id, entry.name]));
+      const ids = Array.isArray(args.ids) ? args.ids.map(String) : [];
+      const lines = ids.map(
+        (id) => `${id} = ${byId.get(id) ?? '(no such ' + kind.replace(/_/g, ' ') + ')'}`
+      );
+      return textResult(lines.join('\n'));
     }
   );
 
@@ -722,7 +845,9 @@ export function registerMirthTools(
         instanceId: instanceIdField,
         channelId: channelIdField,
         messageId: z.number().int().describe('From mirth_search_messages.'),
-        metaDataId: z.number().int().optional().describe('Only this connector (0 = source).'),
+        metaDataId: connectorField
+          .optional()
+          .describe('Only this connector (0 = source), by metaDataId or name.'),
         maxCharsPerPart: z.number().int().positive().optional().describe('Default 4000.'),
       }),
     },
@@ -812,13 +937,17 @@ export function registerMirthTools(
         limit: typeof args.limit === 'number' ? args.limit : 50,
       });
       if (!found.ok) return errText(found.message);
+      // User ids are integers the legend cannot recognise; name them here.
+      const users = await directory.entries(str(args.instanceId), 'user');
+      const usernames = new Map(typeof users === 'string' ? [] : users.map((u) => [u.id, u.name]));
       const lines = unwrapList(found.value).map((event) => {
         if (!isRecord(event)) return '';
         const attributes = unwrapMap(event.attributes);
+        const userLabel = `${textOf(event.userId)}${usernames.has(textOf(event.userId)) ? ` (${usernames.get(textOf(event.userId))})` : ''}`;
         const detail = Object.entries(attributes)
           .map(([key, value]) => `${key}=${clip(textOf(value), 120)}`)
           .join(', ');
-        return `#${textOf(event.id)} ${dateOf(event.eventTime)} ${str(event.level)} ${str(event.name)} — ${str(event.outcome)} — user ${textOf(event.userId)} from ${str(event.ipAddress)}${detail ? ` — ${detail}` : ''}`;
+        return `#${textOf(event.id)} ${dateOf(event.eventTime)} ${str(event.level)} ${str(event.name)} — ${str(event.outcome)} — user ${userLabel} from ${str(event.ipAddress)}${detail ? ` — ${detail}` : ''}`;
       });
       return textResult(
         clip(lines.filter(Boolean).join('\n') || 'No events match.', DEFAULT_MAX_CHARS)
@@ -853,7 +982,10 @@ export function registerMirthTools(
       title: 'Mirth · Read — One alert definition',
       description: 'The full definition of one alert (trigger, channels, actions) as JSON.',
       annotations: { readOnlyHint: true },
-      inputSchema: z.object({ instanceId: instanceIdField, alertId: z.string().min(1) }),
+      inputSchema: z.object({
+        instanceId: instanceIdField,
+        alertId: z.string().min(1).describe('The alert id or its name (from mirth_list_alerts).'),
+      }),
     },
     async (args: Record<string, unknown>) => {
       const alert = await getJson(
@@ -912,7 +1044,13 @@ export function registerMirthTools(
       title: 'Mirth · Read — One code template with its code',
       description: 'One code template by id, including its JavaScript.',
       annotations: { readOnlyHint: true },
-      inputSchema: z.object({ instanceId: instanceIdField, codeTemplateId: z.string().min(1) }),
+      inputSchema: z.object({
+        instanceId: instanceIdField,
+        codeTemplateId: z
+          .string()
+          .min(1)
+          .describe('The code template id or its name (from mirth_list_code_templates).'),
+      }),
     },
     async (args: Record<string, unknown>) => {
       const template = await getJson(
@@ -1200,7 +1338,7 @@ export function registerMirthTools(
       inputSchema: z.object({
         instanceId: instanceIdField,
         channelId: channelIdField,
-        metaDataId: z.number().int().nonnegative(),
+        metaDataId: connectorField,
         action: z.enum(['start', 'stop']),
       }),
     },
@@ -1341,7 +1479,7 @@ export function registerMirthTools(
         channelId: channelIdField,
         content: z.string().min(1).describe('The raw message.'),
         destinationMetaDataIds: z
-          .array(z.number().int().positive())
+          .array(connectorField)
           .optional()
           .describe('Only these destinations; default all.'),
         sourceMap: z
@@ -1397,7 +1535,7 @@ export function registerMirthTools(
           .optional()
           .describe('Overwrite the original messages (default false).'),
         destinationMetaDataIds: z
-          .array(z.number().int().positive())
+          .array(connectorField)
           .optional()
           .describe('Reprocess only through these destinations.'),
       }),

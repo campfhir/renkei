@@ -20,6 +20,7 @@ import type { InstanceConnection, MirthInstanceSummary } from '@renkei/connector
 import { registerMirthTools, type MirthToolExposure } from './index';
 import { NO_SUCH_INSTANCE } from './mirth-auth';
 import type { MirthAuth } from './mirth-auth';
+import type { Directory } from './resolve';
 import type { MCPToolContext } from '../common';
 
 const { mirthApi } = jest.requireMock<{ mirthApi: jest.Mock }>('@/lib/mirth/service-client');
@@ -70,6 +71,30 @@ function authOf(connection: InstanceConnection): MirthAuth {
   };
 }
 
+/** A fixed directory so names resolve without the worker: c1/c9 are channels, a1 an alert, t1 a template. */
+const directory: Directory = {
+  async entries(_instanceId, kind) {
+    switch (kind) {
+      case 'channel':
+        return [
+          { id: 'c1', name: 'ADT In' },
+          { id: 'c9', name: 'Nine' },
+        ];
+      case 'alert':
+        return [{ id: 'a1', name: 'Queue alert' }];
+      case 'code_template':
+        return [{ id: 't1', name: 'Helpers' }];
+      case 'connector':
+        return [
+          { id: '0', name: 'sourceConnector' },
+          { id: '1', name: 'To Lab' },
+        ];
+      default:
+        return [];
+    }
+  },
+};
+
 function register(
   connection: InstanceConnection = connectionOf(),
   exposure: MirthToolExposure = { write: true, destructive: true }
@@ -80,7 +105,7 @@ function register(
       handlers.set(name, handler);
     },
   } as unknown as McpServer;
-  registerMirthTools(server, contextOf(), authOf(connection), exposure);
+  registerMirthTools(server, contextOf(), authOf(connection), exposure, { directory });
   return handlers;
 }
 
@@ -250,6 +275,72 @@ describe('mirth_get_channel', () => {
   });
 });
 
+describe('names in place of ids', () => {
+  it('accepts an instance by environment label and a channel by name, and hands the handler ids', async () => {
+    mirthApi.mockResolvedValueOnce(
+      answer(200, '<channel><id>c1</id></channel>', 'application/xml')
+    );
+    const result = await register().get('mirth_get_channel')!({
+      instanceId: 'prod',
+      channelId: 'adt in',
+      format: 'xml',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/channels/c1',
+      accept: 'application/xml',
+    });
+  });
+
+  it('resolves a connector by name on the channel named in the same call', async () => {
+    mirthApi.mockResolvedValueOnce(answer(204, ''));
+    await register().get('mirth_control_connector')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'ADT In',
+      metaDataId: 'To Lab',
+      action: 'stop',
+    });
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'POST',
+      path: '/channels/c1/connector/1/_stop',
+      query: { returnErrors: true },
+    });
+  });
+
+  it('refuses an unknown name before any call, listing what exists', async () => {
+    const result = await register().get('mirth_channel_status')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'Radiology',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe(
+      'No channel named "Radiology" on this instance. Known: "ADT In", "Nine".'
+    );
+    expect(mirthApi).not.toHaveBeenCalled();
+  });
+
+  it('looks ids and names up explicitly in both directions', async () => {
+    const tools = register();
+    const ids = await tools.get('mirth_resolve_ids')!({
+      instanceId: INSTANCE_ID,
+      kind: 'channel',
+      names: ['ADT In', 'nine', 'Radiology'],
+    });
+    expect(ids.isError).toBeUndefined();
+    expect(textOf(ids)).toBe(
+      'ADT In = c1\nnine = c9 (Nine)\nRadiology: No channel named "Radiology" on this instance. Known: "ADT In", "Nine".'
+    );
+    const names = await tools.get('mirth_resolve_names')!({
+      instanceId: INSTANCE_ID,
+      kind: 'connector',
+      channelId: 'ADT In',
+      ids: [0, '1', '5'],
+    });
+    expect(textOf(names)).toBe('0 = sourceConnector\n1 = To Lab\n5 = (no such connector)');
+  });
+});
+
 describe('refusals', () => {
   it('phrases worker refusals and upstream verdicts for the model', async () => {
     const tools = register();
@@ -302,14 +393,17 @@ describe('exposure gates', () => {
     expect(mirthApi).not.toHaveBeenCalled();
   });
 
-  it('answers the shared not-connected refusal for an unknown instance', async () => {
-    const other = '22222222-2222-3333-4444-555555555555';
+  it('refuses an unknown instance by name before any call, naming what is connected', async () => {
     const result = await register().get('mirth_control_channels')!({
-      instanceId: other,
+      instanceId: 'qa',
       action: 'stop',
       channelIds: ['c1'],
     });
-    expect(textOf(result)).toBe(NO_SUCH_INSTANCE);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe(
+      'No connected Mirth instance is called "qa". Connected: Prod [prod].'
+    );
+    expect(mirthApi).not.toHaveBeenCalled();
   });
 });
 

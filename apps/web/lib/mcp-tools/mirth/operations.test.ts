@@ -44,10 +44,19 @@ describe('inputSchemaFor', () => {
       schema.safeParse({ instanceId: INSTANCE_ID, channelId: 'c1', messageId: '5' }).success
     ).toBe(false);
     expect(schema.safeParse({ instanceId: INSTANCE_ID, channelId: 'c1' }).success).toBe(false);
+    // metaDataId is a connector reference: an int id, or a connector name.
     expect(
-      schema.safeParse({ instanceId: INSTANCE_ID, channelId: 'c1', messageId: 5, metaDataId: 'x' })
+      schema.safeParse({ instanceId: INSTANCE_ID, channelId: 'c1', messageId: 5, metaDataId: true })
         .success
     ).toBe(false);
+    expect(
+      schema.safeParse({
+        instanceId: INSTANCE_ID,
+        channelId: 'c1',
+        messageId: 5,
+        metaDataId: 'To Lab',
+      }).success
+    ).toBe(true);
     expect(
       schema.safeParse({ instanceId: INSTANCE_ID, channelId: 'c1', messageId: 5, metaDataId: 1 })
         .success

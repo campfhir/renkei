@@ -45,6 +45,8 @@ const INSTANCE = '11111111-2222-3333-4444-555555555555';
 
 const ARGS: Record<string, Record<string, unknown>> = {
   mirth_list_instances: {},
+  mirth_resolve_ids: { instanceId: INSTANCE, kind: 'channel', names: ['x'] },
+  mirth_resolve_names: { instanceId: INSTANCE, kind: 'channel', ids: ['x'] },
   mirth_server_info: { instanceId: INSTANCE },
   mirth_list_channels: { instanceId: INSTANCE },
   mirth_get_channel: { instanceId: INSTANCE, channelId: 'c1' },

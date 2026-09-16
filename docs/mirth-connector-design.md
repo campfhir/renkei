@@ -108,6 +108,38 @@ tools read, because it is easier to unwrap than to parse XML without a
 dependency; XML is what they write, because it is Mirth's canonical form
 and round-trips without the JSON dialect's quirks.
 
+## Names, not just ids
+
+Mirth's API speaks ids everywhere — UUIDs for channels, alerts, code
+templates, libraries, groups, tags and resources, integers for users and
+connectors — and a person speaks names. Making every tool take both, and
+answer with both, was a requirement rather than a nicety:
+
+- **Inbound**, one wrapper (`withReferenceResolution`) around every tool
+  registration resolves `instanceId` (id, name or a unique environment
+  label — "prod") and every reference argument by name, using one naming
+  convention shared by the curated and generated tools (`REF_ARGS`: an
+  argument called `channelId` is a channel wherever it appears,
+  `metaDataId` a connector of the channel the same call names, and so
+  on). Handlers only ever see ids, so no tool has to know a name was
+  given. The rules are conservative: an exact id first, then an exact
+  name, then a case-folded name; a miss re-reads the listing once (a
+  channel created a moment ago must resolve); a UUID that matches nothing
+  passes through; a name that matches nothing or several things is
+  refused with the candidates — never a guess.
+- **Outbound**, a successful answer that mentions UUIDs gets a legend of
+  the ones the directory knows, minus those whose name is already in the
+  text, so a raw document from a generated tool still reads and the
+  curated tools (which print names beside ids) are not repeated.
+- **Explicitly**, `mirth_resolve_ids` / `mirth_resolve_names` for a list
+  in either direction, for the cases where the id itself is the point
+  (an XML document to hand back, a report).
+
+The directory behind it is the same listing routes the tools use, cached
+sixty seconds per caller, instance and kind — a burst of calls costs one
+listing — and it is injectable, so the tool tests run against a fixed
+table rather than a worker.
+
 ## The dedicated worker process
 
 Mirth servers live on private networks, which the web app's SSRF guard
