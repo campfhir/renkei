@@ -5,8 +5,14 @@
  * convenience, never the check.
  */
 
-import { isEnvironmentLabel, isToolAccess, parseBaseUrl } from '@renkei/connector-mirth';
-import type { InstanceInput, MirthCredentials, ToolAccess } from '@renkei/connector-mirth';
+import {
+  DEFAULT_MIRTH_PERMISSIONS,
+  isEnvironmentLabel,
+  isMirthPermission,
+  normalizePermissions,
+  parseBaseUrl,
+} from '@renkei/connector-mirth';
+import type { InstanceInput, MirthCredentials, MirthPermission } from '@renkei/connector-mirth';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -65,23 +71,28 @@ export function parseInstancePayload(body: unknown): { input: InstanceInput } | 
 }
 
 export interface ParsedExposure {
-  toolAccess: ToolAccess;
-  allowDestructive: boolean;
+  permissions: MirthPermission[];
 }
 
 /**
- * The LLM-exposure half of a connect or update body. Destructive without
- * write would be a lie on the card — the destructive tools require
- * read/write — so it is normalized away rather than stored.
+ * The LLM-exposure half of a connect or update body: the permission ids
+ * the person ticked. An unknown id is an error rather than silently
+ * dropped (a typo must not become "less than I asked for"); an absent list
+ * on connect means the read-only default.
  */
-export function parseExposurePayload(body: unknown): ParsedExposure | { error: string } {
+export function parseExposurePayload(
+  body: unknown,
+  options: { defaultToReads?: boolean } = {}
+): ParsedExposure | { error: string } {
   if (!isRecord(body)) return { error: 'A JSON object is required' };
-  const toolAccess = body.toolAccess;
-  if (!isToolAccess(toolAccess)) {
-    return { error: "toolAccess must be 'read' or 'read_write'" };
+  if (body.permissions === undefined) {
+    if (options.defaultToReads) return { permissions: [...DEFAULT_MIRTH_PERMISSIONS] };
+    return { error: 'permissions is required (a list of permission ids)' };
   }
-  const allowDestructive = body.allowDestructive === true && toolAccess === 'read_write';
-  return { toolAccess, allowDestructive };
+  if (!Array.isArray(body.permissions)) return { error: 'permissions must be a list of ids' };
+  const unknown = body.permissions.filter((value) => !isMirthPermission(value));
+  if (unknown.length) return { error: `Unknown permission: ${unknown.map(String).join(', ')}` };
+  return { permissions: normalizePermissions(body.permissions) };
 }
 
 export interface ParsedConnect extends ParsedExposure {
@@ -96,7 +107,7 @@ export interface ParsedConnect extends ParsedExposure {
 export function parseConnectPayload(body: unknown): ParsedConnect | { error: string } {
   if (!isRecord(body)) return { error: 'A JSON object is required' };
 
-  const exposure = parseExposurePayload(body);
+  const exposure = parseExposurePayload(body, { defaultToReads: true });
   if ('error' in exposure) return exposure;
 
   const username = cleanString(body.username);

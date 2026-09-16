@@ -6,23 +6,31 @@
  * account, the same gesture as the file-shares card. The admin registers
  * where a server lives; this card is who you are on it. Connecting
  * validates the credential against the live server before anything is
- * stored (a wrong password fails here, not later), and the checkboxes are
- * the person's LLM-exposure choice: whether the model's tools may act
- * (deploy, start/stop, send messages, edit configuration), and separately
- * whether they may run destructive operations (delete channels, purge
- * message stores…). Reading is what a connection is for, so it is always
- * on; Mirth's own roles still judge every request by the connected
- * account.
+ * stored (a wrong password fails here, not later).
+ *
+ * The permission grid is the person's choice of what their LLM's tools
+ * may do on that instance — named grants grouped by area (read channels,
+ * deploy channels, delete messages, restore the server…), with presets
+ * for the common shapes. A tick can hide access the person's Mirth
+ * account holds; it can never add any — Mirth still judges every request
+ * by the connected account.
  */
 
 import { useState } from 'react';
+import {
+  DEFAULT_MIRTH_PERMISSIONS,
+  MIRTH_PERMISSIONS,
+  MIRTH_PERMISSION_GROUPS,
+  MIRTH_PERMISSION_PRESETS,
+  normalizePermissions,
+  type MirthPermission,
+} from '@renkei/connector-mirth/pure';
 import { sendJson } from '@/lib/fetch-json';
 import { inputClass } from '../admin/mirth/instance-config-fields';
 
 export interface MirthConnectionView {
   username: string;
-  toolAccess: 'read' | 'read_write';
-  allowDestructive: boolean;
+  permissions: MirthPermission[];
 }
 
 export interface ConnectableMirthInstanceView {
@@ -36,59 +44,92 @@ export interface ConnectableMirthInstanceView {
 interface ConnectDraft {
   username: string;
   password: string;
-  write: boolean;
-  destructive: boolean;
+  permissions: MirthPermission[];
 }
 
-const EMPTY_DRAFT: ConnectDraft = { username: '', password: '', write: false, destructive: false };
+const emptyDraft = (): ConnectDraft => ({
+  username: '',
+  password: '',
+  permissions: [...DEFAULT_MIRTH_PERMISSIONS],
+});
 
-/** The exposure checkbox trio, shared by the connect form and the row. */
-function ExposureBoxes({
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id) => b.includes(id));
+}
+
+/**
+ * The permission grid: one row per area, its verbs as checkboxes, and the
+ * presets above it. `Read` is not forced on — a person may grant deploy
+ * without read if that is what they mean — but the presets all start
+ * from the reads.
+ */
+export function PermissionGrid({
   name,
-  write,
-  destructive,
+  value,
   disabled,
   onChange,
 }: {
   name: string;
-  write: boolean;
-  destructive: boolean;
+  value: MirthPermission[];
   disabled: boolean;
-  onChange: (write: boolean, destructive: boolean) => void;
+  onChange: (permissions: MirthPermission[]) => void;
 }) {
-  const boxClass = 'h-4 w-4 accent-blue-600';
+  const toggle = (id: MirthPermission, on: boolean) =>
+    onChange(normalizePermissions(on ? [...value, id] : value.filter((held) => held !== id)));
+
   return (
-    <span className="flex items-center gap-3">
-      <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-        <input type="checkbox" className={boxClass} checked disabled aria-label={`${name}: read`} />
-        Read
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-        <input
-          type="checkbox"
-          className={boxClass}
-          checked={write}
-          disabled={disabled}
-          aria-label={`${name}: act`}
-          onChange={(event) => {
-            const next = event.target.checked;
-            onChange(next, next ? destructive : false);
-          }}
-        />
-        Act
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-        <input
-          type="checkbox"
-          className={boxClass}
-          checked={destructive}
-          disabled={disabled || !write}
-          aria-label={`${name}: destructive`}
-          onChange={(event) => onChange(write, event.target.checked)}
-        />
-        Destructive
-      </label>
-    </span>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs text-gray-500 dark:text-gray-400">Presets:</span>
+        {MIRTH_PERMISSION_PRESETS.map((preset) => {
+          const active = sameSet(preset.permissions, value);
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              disabled={disabled}
+              title={preset.description}
+              onClick={() => onChange([...preset.permissions])}
+              className={`rounded-full border px-2 py-0.5 text-xs disabled:opacity-50 ${
+                active
+                  ? 'border-blue-600 bg-blue-600 text-white'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900'
+              }`}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+        {MIRTH_PERMISSION_GROUPS.map((group) => (
+          <div key={group} className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="w-28 shrink-0 text-xs font-medium text-gray-700 dark:text-gray-300">
+              {group}
+            </span>
+            {MIRTH_PERMISSIONS.filter((permission) => permission.group === group).map(
+              (permission) => (
+                <label
+                  key={permission.id}
+                  title={permission.description}
+                  className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400"
+                >
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-blue-600"
+                    checked={value.includes(permission.id)}
+                    disabled={disabled}
+                    aria-label={`${name}: ${permission.label}`}
+                    onChange={(event) => toggle(permission.id, event.target.checked)}
+                  />
+                  {permission.label.replace(/^(Read|Edit|Delete) /, (verb) => verb)}
+                </label>
+              )
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -101,7 +142,8 @@ export default function MirthConnector({
 }) {
   const [instances, setInstances] = useState(initialInstances);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<ConnectDraft>(EMPTY_DRAFT);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ConnectDraft>(emptyDraft());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -118,45 +160,31 @@ export default function MirthConnector({
     const saveError = await sendJson(
       `/api/tenant/${tenantId}/mirth/${instance.id}/connection`,
       'POST',
-      {
-        username: draft.username,
-        password: draft.password,
-        toolAccess: draft.write ? 'read_write' : 'read',
-        allowDestructive: draft.write && draft.destructive,
-      }
+      { username: draft.username, password: draft.password, permissions: draft.permissions }
     );
     setBusy(false);
     if (saveError) {
       setError(saveError);
       return;
     }
-    patchInstance(instance.id, {
-      username: draft.username,
-      toolAccess: draft.write ? 'read_write' : 'read',
-      allowDestructive: draft.write && draft.destructive,
-    });
+    patchInstance(instance.id, { username: draft.username, permissions: draft.permissions });
     setOpenId(null);
-    setDraft(EMPTY_DRAFT);
+    setDraft(emptyDraft());
   };
 
-  const saveExposure = async (
+  const savePermissions = async (
     instance: ConnectableMirthInstanceView,
-    write: boolean,
-    destructive: boolean
+    permissions: MirthPermission[]
   ) => {
     if (!instance.connection) return;
     const previous = instance.connection;
     // Controlled checkboxes must flip on click; an error rolls back.
-    patchInstance(instance.id, {
-      ...previous,
-      toolAccess: write ? 'read_write' : 'read',
-      allowDestructive: write && destructive,
-    });
+    patchInstance(instance.id, { ...previous, permissions });
     setError(null);
     const saveError = await sendJson(
       `/api/tenant/${tenantId}/mirth/${instance.id}/connection`,
       'POST',
-      { toolAccess: write ? 'read_write' : 'read', allowDestructive: write && destructive }
+      { permissions }
     );
     if (saveError) {
       setError(saveError);
@@ -184,6 +212,16 @@ export default function MirthConnector({
       return;
     }
     patchInstance(instance.id, null);
+    if (editingId === instance.id) setEditingId(null);
+  };
+
+  const summarize = (permissions: MirthPermission[]): string => {
+    const preset = MIRTH_PERMISSION_PRESETS.find((candidate) =>
+      sameSet(candidate.permissions, permissions)
+    );
+    if (preset) return preset.label;
+    if (permissions.length === 0) return 'No permissions';
+    return `${permissions.length} of ${MIRTH_PERMISSIONS.length} permissions`;
   };
 
   return (
@@ -191,9 +229,8 @@ export default function MirthConnector({
       <h2 className="text-base font-semibold">Mirth Connect</h2>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
         Your organization&apos;s Mirth Connect servers. Connect each with your own Mirth account —
-        what you can reach there is what that account can. The checkboxes are what your LLM&apos;s
-        tools may do (act: deploy, start/stop, send messages, edit configuration; destructive:
-        delete channels, purge message stores); Mirth still has the final say.
+        what you can reach there is what that account can. The permissions are what your LLM&apos;s
+        tools may do on that server; Mirth still has the final say.
       </p>
 
       <ul className="mt-3 space-y-3">
@@ -227,7 +264,7 @@ export default function MirthConnector({
                   disabled={busy}
                   onClick={() => {
                     setOpenId(instance.id);
-                    setDraft(EMPTY_DRAFT);
+                    setDraft(emptyDraft());
                     setError(null);
                   }}
                   className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
@@ -238,27 +275,37 @@ export default function MirthConnector({
             </div>
 
             {instance.connection ? (
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Connected as <span className="font-mono">{instance.connection.username}</span>
-                </span>
-                <span className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">LLM tools:</span>
-                  <ExposureBoxes
-                    name={`LLM tools on ${instance.name}`}
-                    write={instance.connection.toolAccess === 'read_write'}
-                    destructive={instance.connection.allowDestructive}
-                    disabled={busy}
-                    onChange={(write, destructive) =>
-                      void saveExposure(instance, write, destructive)
-                    }
-                  />
-                </span>
+              <div className="mt-2 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    Connected as <span className="font-mono">{instance.connection.username}</span>
+                    <span className="ml-2">
+                      · LLM tools: {summarize(instance.connection.permissions)}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(editingId === instance.id ? null : instance.id)}
+                    className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    {editingId === instance.id ? 'Done' : 'Change permissions'}
+                  </button>
+                </div>
+                {editingId === instance.id ? (
+                  <div className="border-t border-gray-200 pt-2 dark:border-gray-800">
+                    <PermissionGrid
+                      name={`LLM tools on ${instance.name}`}
+                      value={instance.connection.permissions}
+                      disabled={busy}
+                      onChange={(permissions) => void savePermissions(instance, permissions)}
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
             {openId === instance.id && !instance.connection ? (
-              <div className="mt-2 space-y-2 border-t border-gray-200 pt-2 dark:border-gray-800">
+              <div className="mt-2 space-y-3 border-t border-gray-200 pt-2 dark:border-gray-800">
                 <div className="grid gap-2 sm:grid-cols-2">
                   <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
                     Mirth username
@@ -281,40 +328,37 @@ export default function MirthConnector({
                     />
                   </label>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      Let the LLM tools:
-                    </span>
-                    <ExposureBoxes
-                      name={`LLM tools on ${instance.name}`}
-                      write={draft.write}
-                      destructive={draft.destructive}
-                      disabled={busy}
-                      onChange={(write, destructive) => setDraft({ ...draft, write, destructive })}
-                    />
-                  </span>
-                  <span className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        setOpenId(null);
-                        setError(null);
-                      }}
-                      className="rounded-md border border-gray-200 px-2.5 py-1 text-xs hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-gray-900"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy || !draft.username || !draft.password}
-                      onClick={() => void connect(instance)}
-                      className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {busy ? 'Checking credentials…' : 'Connect'}
-                    </button>
-                  </span>
+                <div>
+                  <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">
+                    Let the LLM tools on this server:
+                  </p>
+                  <PermissionGrid
+                    name={`LLM tools on ${instance.name}`}
+                    value={draft.permissions}
+                    disabled={busy}
+                    onChange={(permissions) => setDraft({ ...draft, permissions })}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setOpenId(null);
+                      setError(null);
+                    }}
+                    className="rounded-md border border-gray-200 px-2.5 py-1 text-xs hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-gray-900"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || !draft.username || !draft.password}
+                    onClick={() => void connect(instance)}
+                    className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {busy ? 'Checking credentials…' : 'Connect'}
+                  </button>
                 </div>
               </div>
             ) : null}

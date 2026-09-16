@@ -3,8 +3,8 @@
  * flow the connectors card drives. POST with credential fields validates
  * the credential against the live Mirth server (through the Mirth worker)
  * BEFORE anything is stored, then seals it under TOKEN_ENCRYPTION_KEY;
- * POST without credential fields updates only the LLM-exposure choice,
- * keeping the stored credential. DELETE forgets the connection, credential
+ * POST without credential fields updates only the permissions, keeping
+ * the stored credential. DELETE forgets the connection, credential
  * included, and asks the worker to end the Mirth session.
  *
  * The plaintext credential exists in the web process only for the duration
@@ -20,7 +20,7 @@ import {
   encryptCredentials,
   getConnection,
   getInstance,
-  updateConnectionExposure,
+  updateConnectionPermissions,
   upsertConnection,
 } from '@renkei/connector-mirth';
 import { getSessionFromRequest } from '@/lib/session';
@@ -70,13 +70,12 @@ export async function POST(
     if ('error' in exposure) {
       return NextResponse.json({ error: exposure.error }, { status: 400 });
     }
-    const updated = await updateConnectionExposure(
+    const updated = await updateConnectionPermissions(
       db,
       tenantId,
       instanceId,
       session.subject,
-      exposure.toolAccess,
-      exposure.allowDestructive
+      exposure.permissions
     );
     if (!updated.ok) {
       return NextResponse.json({ error: 'Could not update the connection' }, { status: 500 });
@@ -114,8 +113,7 @@ export async function POST(
   const stored = await upsertConnection(db, tenantId, instanceId, session.subject, {
     encryptedCredentials: encryptCredentials(parsed.credentials, keyResult.val),
     username: parsed.credentials.username,
-    toolAccess: parsed.toolAccess,
-    allowDestructive: parsed.allowDestructive,
+    permissions: parsed.permissions,
   });
   if (!stored.ok) {
     return NextResponse.json({ error: 'Could not store the connection' }, { status: 500 });
@@ -127,11 +125,7 @@ export async function POST(
     action: 'mirth.connected',
     targetKind: 'mirth-instance',
     targetLabel: instance.val.summary.name,
-    details: {
-      toolAccess: parsed.toolAccess,
-      allowDestructive: parsed.allowDestructive,
-      serverVersion: tested.val.version,
-    },
+    details: { permissions: parsed.permissions, serverVersion: tested.val.version },
   });
   return NextResponse.json({ ok: true, version: tested.val.version });
 }

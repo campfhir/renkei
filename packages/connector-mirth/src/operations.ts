@@ -21,14 +21,17 @@
  *     never travel through tool arguments here;
  *   - routes a curated tool already covers (marked in the tool module).
  *
- * `kind` is what the exposure gate reads: 'read' tools mount for any
- * connection, 'act' needs read/write, 'destructive' needs the separate
- * destructive consent and is preview + confirm only. Every DELETE and the
- * writes that remove data, purge stores or replace the server as a whole
- * are destructive — the same classification `isDestructiveRequest` makes.
+ * `permission` is what the exposure gate reads (permissions.ts): the tool
+ * registers when some connected instance grants it, and every call checks
+ * it again on the instance named. `kind` says how the tool behaves: 'read'
+ * is annotated read-only, 'act' writes, 'destructive' is preview + confirm
+ * only — every DELETE and the writes that remove data, purge stores or
+ * replace the server as a whole, the same classification
+ * `isDestructiveRequest` makes.
  */
 
 import type { HttpMethod } from './api';
+import type { MirthPermission } from './permissions';
 
 export type ParamType =
   | 'string'
@@ -61,6 +64,8 @@ export type OperationKind = 'read' | 'act' | 'destructive';
 export interface OperationSpec {
   /** The tool suffix: `mirth_<tool>`. */
   tool: string;
+  /** The permission a connection must grant for the tool to register and run. */
+  permission: MirthPermission;
   title: string;
   description: string;
   method: HttpMethod;
@@ -171,6 +176,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- channels
   {
     tool: 'get_channels',
+    permission: 'channels.read',
     title: 'Channel definitions',
     description:
       'The full definitions of all channels, or of the ids given (GET /channels) — as JSON or ' +
@@ -190,6 +196,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_channel_connector_names',
+    permission: 'channels.read',
     title: 'Connector names of a channel',
     description:
       'The metaDataId → connector name map of one channel (GET /channels/{channelId}/connectorNames).',
@@ -200,6 +207,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_channel_metadata_columns',
+    permission: 'channels.read',
     title: 'Custom metadata columns of a channel',
     description:
       'The custom metadata columns a channel stores per message (GET /channels/{channelId}/metaDataColumns).',
@@ -210,6 +218,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_ports_in_use',
+    permission: 'channels.read',
     title: 'Listener ports in use',
     description: 'Every listener port channels currently hold (GET /channels/portsInUse).',
     method: 'GET',
@@ -219,6 +228,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_channel_summaries',
+    permission: 'channels.read',
     title: 'Channel change summaries',
     description:
       'Which channels changed relative to a cached map of channel id → revision ' +
@@ -235,6 +245,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'set_channels_enabled',
+    permission: 'channels.edit',
     title: 'Enable or disable several channels',
     description: 'Set the enabled flag on many channels at once (POST /channels/_setEnabled).',
     method: 'POST',
@@ -251,6 +262,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'set_channels_initial_state',
+    permission: 'channels.edit',
     title: 'Set the deploy-time state of several channels',
     description:
       'Set the initial state (what a channel does when deployed) on many channels (POST /channels/_setInitialState).',
@@ -273,6 +285,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'delete_channels',
+    permission: 'channels.delete',
     title: 'Delete several channels',
     description:
       'Remove several channel definitions and their message stores (DELETE /channels?channelId=…). Permanent.',
@@ -283,6 +296,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_initial_channel_statuses',
+    permission: 'channels.read',
     title: 'First page of dashboard statuses',
     description:
       "A partial dashboard status list plus the ids still to fetch — the Administrator's " +
@@ -298,6 +312,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- messages
   {
     tool: 'process_raw_message',
+    permission: 'messages.send',
     title: 'Process a RawMessage object',
     description:
       'Process a new message through a channel from a RawMessage XML document — content plus ' +
@@ -315,6 +330,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_message_attachments',
+    permission: 'messages.read',
     title: 'Attachments of a message',
     description:
       'The attachments stored with one message, optionally with their content (GET /channels/{channelId}/messages/{messageId}/attachments).',
@@ -329,6 +345,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_message_attachment',
+    permission: 'messages.read',
     title: 'One attachment of a message',
     description:
       'One attachment by id, content included (GET /channels/{channelId}/messages/{messageId}/attachments/{attachmentId}).',
@@ -343,6 +360,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_dicom_message',
+    permission: 'messages.read',
     title: 'Reattached DICOM message',
     description:
       'Given a ConnectorMessage XML document, reattach its DICOM attachment data and return ' +
@@ -359,6 +377,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_max_message_id',
+    permission: 'messages.read',
     title: 'Highest message id of a channel',
     description:
       "The maximum message id in a channel's store (GET /channels/{channelId}/messages/maxMessageId).",
@@ -370,6 +389,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'delete_message',
+    permission: 'messages.delete',
     title: 'Delete one message',
     description:
       'Remove a single message, or one connector message of it, from the store (DELETE /channels/{channelId}/messages/{messageId}). Permanent.',
@@ -385,6 +405,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'remove_all_messages_for_channels',
+    permission: 'messages.delete',
     title: 'Purge the message stores of several channels',
     description:
       'Remove every message of several channels at once (DELETE /channels/_removeAllMessages). Permanent.',
@@ -399,6 +420,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'import_message',
+    permission: 'messages.send',
     title: 'Import a message into the store',
     description:
       "Insert a Message XML document into a channel's store without processing it " +
@@ -411,6 +433,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'import_messages_from_path',
+    permission: 'messages.send',
     title: 'Import messages from a server path',
     description:
       'Import every exported message under a path THE MIRTH SERVER can read, without processing ' +
@@ -424,10 +447,11 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       description: 'A file or directory path on the Mirth server.',
       required: true,
     },
-    kind: 'destructive',
+    kind: 'act',
   },
   {
     tool: 'export_messages',
+    permission: 'messages.send',
     title: 'Export messages to a server directory',
     description:
       'Write the messages matching a filter into a directory THE MIRTH SERVER can write ' +
@@ -471,6 +495,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'export_message_attachment',
+    permission: 'messages.send',
     title: 'Export one attachment to a server file',
     description:
       'Write one attachment to a file path THE MIRTH SERVER can write (POST /channels/{channelId}/messages/{messageId}/attachments/{attachmentId}/_export).',
@@ -492,6 +517,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'audit_accessed_phi_message',
+    permission: 'messages.read',
     title: 'Audit: a PHI message was viewed',
     description:
       "Record in Mirth's event log that the user viewed a message containing PHI (POST /channels/_auditAccessedPHIMessage).",
@@ -502,6 +528,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'audit_queried_phi_messages',
+    permission: 'messages.read',
     title: 'Audit: PHI messages were queried',
     description:
       "Record in Mirth's event log that the user queried a message panel containing PHI (POST /channels/_auditQueriedPHIMessage).",
@@ -512,6 +539,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'audit_export_messages',
+    permission: 'messages.read',
     title: 'Audit: messages were exported',
     description:
       "Record in Mirth's event log that the user exported messages (POST /channels/_auditExportMessages).",
@@ -522,6 +550,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'audit_export_messages_success',
+    permission: 'messages.read',
     title: 'Audit: a message export succeeded',
     description:
       "Record in Mirth's event log that a message export completed (POST /channels/_auditExportMessagesSuccess).",
@@ -533,6 +562,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- statistics
   {
     tool: 'clear_channel_statistics',
+    permission: 'messages.delete',
     title: 'Clear statistics of chosen channels or connectors',
     description:
       'Reset chosen counters (received / filtered / sent / error) for the channels and ' +
@@ -553,6 +583,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'clear_all_statistics',
+    permission: 'messages.delete',
     title: 'Clear every statistic on the server',
     description:
       'Reset all statistics, lifetime counters included, for every channel and connector (POST /channels/_clearAllStatistics). Irreversible.',
@@ -564,6 +595,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- channel groups
   {
     tool: 'bulk_update_channel_groups',
+    permission: 'channels.edit',
     title: 'Replace channel groups',
     description:
       'Update every channel group in one request — the groups to keep or change, and the ' +
@@ -590,6 +622,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- server / configuration
   {
     tool: 'get_server_id',
+    permission: 'server.read',
     title: 'Server id',
     description: 'The server id (GET /server/id).',
     method: 'GET',
@@ -600,6 +633,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_version',
+    permission: 'server.read',
     title: 'Server version',
     description: 'The Mirth Connect version (GET /server/version).',
     method: 'GET',
@@ -610,6 +644,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_build_date',
+    permission: 'server.read',
     title: 'Server build date',
     description: 'The build date of the server (GET /server/buildDate).',
     method: 'GET',
@@ -620,6 +655,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_status',
+    permission: 'server.read',
     title: 'Server status code',
     description:
       'The status of the server: 0 running, 1 starting, 2 stopping (GET /server/status).',
@@ -631,6 +667,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_timezone',
+    permission: 'server.read',
     title: 'Server time zone',
     description: 'The time zone of the server (GET /server/timezone).',
     method: 'GET',
@@ -641,6 +678,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_time',
+    permission: 'server.read',
     title: 'Server time',
     description: 'The current time on the server (GET /server/time).',
     method: 'GET',
@@ -650,6 +688,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_jvm',
+    permission: 'server.read',
     title: 'Server JVM',
     description: 'The name of the JVM running Mirth (GET /server/jvm).',
     method: 'GET',
@@ -660,6 +699,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_configuration',
+    permission: 'server.read',
     title: 'Whole server configuration (backup)',
     description:
       'The ServerConfiguration document — every channel, alert, code template, group, ' +
@@ -680,6 +720,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'restore_server_configuration',
+    permission: 'server.restore',
     title: 'Restore a whole server configuration',
     description:
       'Replace every channel, alert, code template, group, setting and script with a ' +
@@ -699,6 +740,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_charsets',
+    permission: 'server.read',
     title: 'Supported charsets',
     description: 'The charset encodings the server supports (GET /server/charsets).',
     method: 'GET',
@@ -708,6 +750,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_server_settings',
+    permission: 'server.configure',
     title: 'Update server settings',
     description:
       'Replace the server settings with a ServerSettings document (PUT /server/settings). Read them first with mirth_get_server_settings.',
@@ -719,6 +762,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_public_settings',
+    permission: 'server.read',
     title: 'Public server settings',
     description: 'The settings available to every user (GET /server/publicSettings).',
     method: 'GET',
@@ -728,6 +772,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_server_property',
+    permission: 'server.read',
     title: 'One configuration property',
     description:
       'A property from the CONFIGURATION table by group and name (GET /server/property).',
@@ -742,6 +787,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_encryption_settings',
+    permission: 'server.read',
     title: 'Encryption settings',
     description: "The server's encryption settings (GET /server/encryption).",
     method: 'GET',
@@ -751,6 +797,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'send_test_email',
+    permission: 'server.configure',
     title: 'Send a test email',
     description: 'Send a test email with the SMTP settings given (POST /server/_testEmail).',
     method: 'POST',
@@ -764,6 +811,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_update_settings',
+    permission: 'server.read',
     title: 'Update settings',
     description: 'The update-notification settings (GET /server/updateSettings).',
     method: 'GET',
@@ -773,6 +821,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_update_settings',
+    permission: 'server.configure',
     title: 'Change update settings',
     description: 'Replace the update-notification settings (PUT /server/updateSettings).',
     method: 'PUT',
@@ -783,6 +832,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_license_info',
+    permission: 'server.read',
     title: 'License info',
     description: 'License expiration and related information (GET /server/licenseInfo).',
     method: 'GET',
@@ -792,6 +842,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'generate_guid',
+    permission: 'server.read',
     title: 'Generate a GUID',
     description:
       'A new globally unique id from the server, for a new channel or code template (POST /server/_generateGUID).',
@@ -803,6 +854,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_database_drivers',
+    permission: 'server.read',
     title: 'Database drivers',
     description: 'The JDBC driver list channels can choose from (GET /server/databaseDrivers).',
     method: 'GET',
@@ -812,6 +864,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_database_drivers',
+    permission: 'server.configure',
     title: 'Replace the database driver list',
     description: 'Replace the JDBC driver list (PUT /server/databaseDrivers).',
     method: 'PUT',
@@ -822,6 +875,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_password_requirements',
+    permission: 'server.read',
     title: 'Password requirements',
     description: 'The password policy for Mirth users (GET /server/passwordRequirements).',
     method: 'GET',
@@ -831,6 +885,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_resources',
+    permission: 'server.read',
     title: 'Resources (library directories)',
     description:
       'The resource definitions — custom library directories channels load (GET /server/resources).',
@@ -841,6 +896,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_resources',
+    permission: 'server.configure',
     title: 'Replace the resources',
     description: 'Replace every resource definition (PUT /server/resources).',
     method: 'PUT',
@@ -851,6 +907,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'reload_resource',
+    permission: 'server.configure',
     title: 'Reload a resource',
     description:
       'Reload one resource and every library it carries (POST /server/resources/{resourceId}/_reload).',
@@ -861,6 +918,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_channel_dependencies',
+    permission: 'channels.read',
     title: 'Channel dependencies',
     description:
       'The deploy/undeploy ordering dependencies between channels (GET /server/channelDependencies).',
@@ -871,6 +929,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_channel_dependencies',
+    permission: 'channels.edit',
     title: 'Replace channel dependencies',
     description: 'Replace every channel dependency (PUT /server/channelDependencies).',
     method: 'PUT',
@@ -881,6 +940,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_channel_metadata',
+    permission: 'channels.read',
     title: 'Channel metadata',
     description:
       'Per-channel metadata: enabled flag, last modified, pruning settings (GET /server/channelMetadata).',
@@ -891,6 +951,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_channel_metadata',
+    permission: 'channels.edit',
     title: 'Replace channel metadata',
     description: 'Replace the per-channel metadata map (PUT /server/channelMetadata).',
     method: 'PUT',
@@ -901,6 +962,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_protocols_and_cipher_suites',
+    permission: 'server.read',
     title: 'TLS protocols and cipher suites',
     description:
       'The supported and enabled TLS protocols and cipher suites (GET /server/protocolsAndCipherSuites).',
@@ -911,6 +973,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_channel_tags',
+    permission: 'channels.edit',
     title: 'Replace channel tags',
     description:
       'Replace every channel tag (PUT /server/channelTags). Read them first with mirth_list_channel_groups.',
@@ -922,6 +985,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_rhino_language_version',
+    permission: 'server.read',
     title: 'Rhino language version',
     description:
       'The JavaScript language version the Rhino engine uses (GET /server/rhinoLanguageVersion).',
@@ -934,6 +998,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- users
   {
     tool: 'create_user',
+    permission: 'users.edit',
     title: 'Create a user',
     description:
       'Create a Mirth user (POST /users). Set the password afterwards with mirth_set_user_password.',
@@ -948,6 +1013,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_user',
+    permission: 'users.read',
     title: 'One user',
     description: 'A user by id or username (GET /users/{userIdOrName}).',
     method: 'GET',
@@ -957,6 +1023,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_current_user',
+    permission: 'users.read',
     title: 'The connected user',
     description: 'The Mirth user this connection is logged in as (GET /users/current).',
     method: 'GET',
@@ -966,6 +1033,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_user',
+    permission: 'users.edit',
     title: 'Update a user',
     description: "Replace a user's details (PUT /users/{userId}).",
     method: 'PUT',
@@ -978,6 +1046,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'delete_user',
+    permission: 'users.delete',
     title: 'Delete a user',
     description: 'Remove a Mirth user (DELETE /users/{userId}). Permanent.',
     method: 'DELETE',
@@ -989,6 +1058,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'check_password',
+    permission: 'users.read',
     title: 'Check a password against the policy',
     description:
       "Whether a candidate password satisfies the server's password requirements (POST /users/_checkPassword).",
@@ -1005,6 +1075,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'set_user_password',
+    permission: 'users.edit',
     title: "Set a user's password",
     description: "Replace a user's password (PUT /users/{userId}/password).",
     method: 'PUT',
@@ -1017,6 +1088,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'is_user_logged_in',
+    permission: 'users.read',
     title: 'Whether a user is logged in',
     description:
       'true if the user currently holds a session on the server (GET /users/{userId}/loggedIn).',
@@ -1030,6 +1102,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_user_preferences',
+    permission: 'users.read',
     title: "A user's preferences",
     description:
       "A user's preference map, optionally only the names given (GET /users/{userId}/preferences).",
@@ -1043,6 +1116,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_user_preference',
+    permission: 'users.read',
     title: 'One user preference',
     description: 'One preference value of a user (GET /users/{userId}/preferences/{name}).',
     method: 'GET',
@@ -1056,6 +1130,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_user_preferences',
+    permission: 'users.edit',
     title: 'Set several user preferences',
     description: 'Replace several preferences of a user (PUT /users/{userId}/preferences).',
     method: 'PUT',
@@ -1068,6 +1143,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'set_user_preference',
+    permission: 'users.edit',
     title: 'Set one user preference',
     description: 'Set one preference of a user (PUT /users/{userId}/preferences/{name}).',
     method: 'PUT',
@@ -1081,6 +1157,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'acknowledge_user_notification',
+    permission: 'users.edit',
     title: 'Acknowledge a user notification',
     description:
       'Mark the server notifications acknowledged for a user (POST /users/{userId}/notificationAcknowledged).',
@@ -1094,6 +1171,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- events
   {
     tool: 'get_max_event_id',
+    permission: 'events.read',
     title: 'Highest event id',
     description: 'The maximum event id in the database (GET /events/maxEventId).',
     method: 'GET',
@@ -1104,6 +1182,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_event',
+    permission: 'events.read',
     title: 'One event',
     description: 'One server event by id (GET /events/{eventId}).',
     method: 'GET',
@@ -1115,6 +1194,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'count_events',
+    permission: 'events.read',
     title: 'Count events matching a filter',
     description: 'How many server events match the filter (GET /events/count).',
     method: 'GET',
@@ -1125,6 +1205,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'export_events',
+    permission: 'events.read',
     title: 'Export all events',
     description:
       'Write every event to the application data directory on the server and return the file path (POST /events/_export).',
@@ -1137,6 +1218,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- alerts
   {
     tool: 'create_alert',
+    permission: 'alerts.edit',
     title: 'Create an alert',
     description: 'Create an alert from an AlertModel document (POST /alerts).',
     method: 'POST',
@@ -1150,6 +1232,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_alerts',
+    permission: 'alerts.read',
     title: 'Alert definitions',
     description: 'The full definitions of all alerts, or of the ids given (GET /alerts).',
     method: 'GET',
@@ -1159,6 +1242,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_alert_info',
+    permission: 'alerts.read',
     title: 'Alert editor info for one alert',
     description:
       'The alert model, protocol options and changed channel summaries the editor needs (POST /alerts/{alertId}/_getInfo).',
@@ -1174,6 +1258,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_alerts_info',
+    permission: 'alerts.read',
     title: 'Alert editor info (no alert)',
     description:
       'Protocol options and changed channel summaries for a new alert (POST /alerts/_getInfo).',
@@ -1189,6 +1274,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_alert_options',
+    permission: 'alerts.read',
     title: 'Alert protocol options',
     description:
       'The alert protocol options (email, channel, …) available on the server (GET /alerts/options).',
@@ -1199,6 +1285,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_alert',
+    permission: 'alerts.edit',
     title: 'Update an alert',
     description: 'Replace an alert with an AlertModel document (PUT /alerts/{alertId}).',
     method: 'PUT',
@@ -1209,6 +1296,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'delete_alert',
+    permission: 'alerts.delete',
     title: 'Delete an alert',
     description: 'Remove an alert (DELETE /alerts/{alertId}). Permanent.',
     method: 'DELETE',
@@ -1219,6 +1307,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- code templates
   {
     tool: 'get_code_template_library',
+    permission: 'code_templates.read',
     title: 'One code template library',
     description:
       'One library, optionally with its templates (GET /codeTemplateLibraries/{libraryId}).',
@@ -1232,6 +1321,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_code_template_libraries',
+    permission: 'code_templates.edit',
     title: 'Replace all code template libraries',
     description: 'Replace every code template library (PUT /codeTemplateLibraries).',
     method: 'PUT',
@@ -1243,6 +1333,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_code_templates',
+    permission: 'code_templates.read',
     title: 'Code templates',
     description: 'All code templates, or the ids given, with their code (GET /codeTemplates).',
     method: 'GET',
@@ -1252,6 +1343,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_code_template_summaries',
+    permission: 'code_templates.read',
     title: 'Code template change summaries',
     description:
       'Which templates changed relative to the revisions given (POST /codeTemplates/_getSummary).',
@@ -1263,6 +1355,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_code_template',
+    permission: 'code_templates.edit',
     title: 'Create or update a code template',
     description:
       'Save one code template (PUT /codeTemplates/{codeTemplateId}). The id in the path must match the document.',
@@ -1278,6 +1371,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'delete_code_template',
+    permission: 'code_templates.delete',
     title: 'Delete a code template',
     description: 'Remove a code template (DELETE /codeTemplates/{codeTemplateId}). Permanent.',
     method: 'DELETE',
@@ -1287,6 +1381,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'bulk_update_code_templates',
+    permission: 'code_templates.edit',
     title: 'Update libraries and templates in one request',
     description:
       'Replace the libraries, update chosen templates and remove others in a single request ' +
@@ -1321,6 +1416,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- extensions
   {
     tool: 'uninstall_extension',
+    permission: 'server.restore',
     title: 'Uninstall an extension',
     description:
       'Uninstall an extension by its path; takes effect after a server restart (POST /extensions/_uninstall).',
@@ -1337,6 +1433,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_extension',
+    permission: 'server.read',
     title: 'One extension',
     description: 'The metadata of one extension by name (GET /extensions/{extensionName}).',
     method: 'GET',
@@ -1346,6 +1443,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'is_extension_enabled',
+    permission: 'server.read',
     title: 'Whether an extension is enabled',
     description: 'The enabled state of an extension (GET /extensions/{extensionName}/enabled).',
     method: 'GET',
@@ -1356,6 +1454,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'set_extension_enabled',
+    permission: 'server.configure',
     title: 'Enable or disable an extension',
     description:
       'Enable or disable an extension; takes effect after a server restart (POST /extensions/{extensionName}/_setEnabled).',
@@ -1369,6 +1468,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_extension_properties',
+    permission: 'server.read',
     title: 'Properties of an extension',
     description:
       "An extension's stored properties, optionally only the keys given (GET /extensions/{extensionName}/properties).",
@@ -1382,6 +1482,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'update_extension_properties',
+    permission: 'server.configure',
     title: 'Set properties of an extension',
     description:
       "Replace or merge an extension's properties (PUT /extensions/{extensionName}/properties).",
@@ -1401,6 +1502,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   // ---------------------------------------------------------------- system / database tasks / usage
   {
     tool: 'get_system_info',
+    permission: 'server.read',
     title: 'System info',
     description: 'Information about the host system: OS, JVM, database (GET /system/info).',
     method: 'GET',
@@ -1410,6 +1512,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_system_stats',
+    permission: 'server.read',
     title: 'System stats',
     description: 'CPU, memory and disk statistics of the host (GET /system/stats).',
     method: 'GET',
@@ -1419,6 +1522,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_database_tasks',
+    permission: 'server.read',
     title: 'Database tasks',
     description: 'The pending database maintenance tasks (GET /databaseTasks).',
     method: 'GET',
@@ -1428,6 +1532,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'get_database_task',
+    permission: 'server.read',
     title: 'One database task',
     description: 'One database maintenance task by id (GET /databaseTasks/{databaseTaskId}).',
     method: 'GET',
@@ -1437,6 +1542,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'run_database_task',
+    permission: 'server.restore',
     title: 'Run a database task',
     description:
       'Execute a database maintenance task — these alter the message database (POST /databaseTasks/{databaseTaskId}/_run).',
@@ -1448,6 +1554,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'cancel_database_task',
+    permission: 'server.configure',
     title: 'Cancel a running database task',
     description:
       'Cancel a database maintenance task in progress (POST /databaseTasks/{databaseTaskId}/_cancel).',
@@ -1458,6 +1565,7 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
   },
   {
     tool: 'generate_usage_data',
+    permission: 'server.read',
     title: 'Generate the usage document',
     description:
       'Build the usage-statistics document from client and server data (POST /usageData/_generate).',

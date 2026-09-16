@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Mirth Connect">
+  <!--
+    Vector recreation of the official Mirth Connect app icon (NextGen
+    Healthcare), drawn from a reference image supplied in-session: a
+    red-orange tile with chamfered top-left and bottom-right corners, and
+    a white hub-and-spoke node graph. Geometry and colours were measured
+    from the reference, not estimated.
+  -->
+  <defs>
+    <linearGradient id="mirth-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F26026"/>
+      <stop offset="0.5" stop-color="#D2492F"/>
+      <stop offset="1" stop-color="#B82F36"/>
+    </linearGradient>
+  </defs>
+  <path d="M18.5 0H64V45.5L45.5 64H0V18.5Z" fill="url(#mirth-tile)"/>
+  <g stroke="#FFFFFF" stroke-width="1.9" stroke-linecap="round">
+    <path d="M29.8 32.5L19.6 18"/>
+    <path d="M29.8 32.5L46.8 19.6"/>
+    <path d="M29.8 32.5L47.2 36"/>
+    <path d="M29.8 32.5L17.6 42"/>
+    <path d="M29.8 32.5L40.4 46.8"/>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="29.8" cy="32.5" r="6"/>
+    <circle cx="19.6" cy="18" r="3.4"/>
+    <circle cx="46.8" cy="19.6" r="4.6"/>
+    <circle cx="47.2" cy="36" r="3.9"/>
+    <circle cx="17.6" cy="42" r="5"/>
+    <circle cx="40.4" cy="46.8" r="3"/>
+  </g>
+</svg>

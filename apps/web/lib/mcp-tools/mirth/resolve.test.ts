@@ -183,7 +183,7 @@ describe('resolveInstanceRef', () => {
       allowInsecureHttp: false,
       enabled: true,
     },
-    connection: { username: 'alice', toolAccess: 'read', allowDestructive: false },
+    connection: { username: 'alice', permissions: ['channels.read'] },
   });
   const instances = [
     connected('Mirth prod', 'prod', 'p'),
@@ -302,7 +302,7 @@ describe('withReferenceResolution', () => {
       allowInsecureHttp: false,
       enabled: true,
     },
-    connection: { username: 'alice', toolAccess: 'read', allowDestructive: false },
+    connection: { username: 'alice', permissions: ['channels.read'] },
   };
 
   it('hands the handler ids for the names given, and appends a legend to its answer', async () => {

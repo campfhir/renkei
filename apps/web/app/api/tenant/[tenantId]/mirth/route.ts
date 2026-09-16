@@ -36,8 +36,7 @@ export async function GET(
       connection: entry.connection
         ? {
             username: entry.connection.username,
-            toolAccess: entry.connection.toolAccess,
-            allowDestructive: entry.connection.allowDestructive,
+            permissions: entry.connection.permissions,
           }
         : null,
     })),

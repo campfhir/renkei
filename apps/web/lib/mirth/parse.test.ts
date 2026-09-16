@@ -57,25 +57,32 @@ describe('parseInstancePayload', () => {
 });
 
 describe('exposure and connect payloads', () => {
-  it('normalizes destructive away without write', () => {
-    expect(parseExposurePayload({ toolAccess: 'read', allowDestructive: true })).toEqual({
-      toolAccess: 'read',
-      allowDestructive: false,
+  it('validates permission ids, refusing unknown ones and folding order', () => {
+    expect(parseExposurePayload({ permissions: ['messages.send', 'channels.read'] })).toEqual({
+      permissions: ['channels.read', 'messages.send'],
     });
-    expect(parseExposurePayload({ toolAccess: 'read_write', allowDestructive: true })).toEqual({
-      toolAccess: 'read_write',
-      allowDestructive: true,
+    expect('error' in parseExposurePayload({ permissions: ['channels.nuke'] })).toBe(true);
+    expect('error' in parseExposurePayload({ permissions: 'channels.read' })).toBe(true);
+    expect('error' in parseExposurePayload({})).toBe(true);
+    expect(parseExposurePayload({}, { defaultToReads: true })).toEqual({
+      permissions: [
+        'channels.read',
+        'messages.read',
+        'alerts.read',
+        'code_templates.read',
+        'users.read',
+        'events.read',
+        'server.read',
+      ],
     });
-    expect('error' in parseExposurePayload({ toolAccess: 'admin' })).toBe(true);
   });
 
-  it('requires a username and password', () => {
-    expect('error' in parseConnectPayload({ toolAccess: 'read', username: 'a' })).toBe(true);
-    expect('error' in parseConnectPayload({ toolAccess: 'read', password: 'p' })).toBe(true);
-    expect(parseConnectPayload({ toolAccess: 'read', username: ' a ', password: 'p' })).toEqual({
-      toolAccess: 'read',
-      allowDestructive: false,
-      credentials: { username: 'a', password: 'p' },
-    });
+  it('requires a username and password, defaulting permissions to the reads', () => {
+    expect('error' in parseConnectPayload({ username: 'a' })).toBe(true);
+    expect('error' in parseConnectPayload({ password: 'p' })).toBe(true);
+    const parsed = parseConnectPayload({ username: ' a ', password: 'p', permissions: [] });
+    expect(parsed).toEqual({ permissions: [], credentials: { username: 'a', password: 'p' } });
+    const defaulted = parseConnectPayload({ username: 'a', password: 'p' });
+    expect('permissions' in defaulted && defaulted.permissions).toContain('channels.read');
   });
 });

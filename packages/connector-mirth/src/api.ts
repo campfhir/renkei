@@ -73,7 +73,6 @@ const DESTRUCTIVE_WRITE_PATTERNS: RegExp[] = [
   /^\/channels\/_removeChannels$/,
   /^\/channels\/[^/]+\/messages\/_remove$/,
   /^\/channels\/_removeAllMessagesPost$/,
-  /^\/channels\/[^/]+\/messages\/_importFromPath$/,
   /^\/channels\/_clearStatistics$/,
   /^\/channels\/_clearAllStatistics$/,
   /^\/server\/configuration$/,

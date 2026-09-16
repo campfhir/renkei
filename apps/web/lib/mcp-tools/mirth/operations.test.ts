@@ -8,7 +8,7 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import { MIRTH_OPERATIONS } from '@renkei/connector-mirth';
+import { MIRTH_OPERATIONS, MIRTH_PERMISSION_IDS } from '@renkei/connector-mirth';
 import type { OperationSpec } from '@renkei/connector-mirth';
 import type { MirthApiRequest } from '@/lib/mirth/service-client';
 import {
@@ -209,16 +209,17 @@ describe('registerOperationTools', () => {
     maxChars: 1_000,
   });
 
-  function register(kind: 'read' | 'act' | 'destructive'): Map<string, Handler> {
+  function register(granted: readonly string[]): Map<string, Handler> {
     const handlers = new Map<string, Handler>();
     const server = {
       registerTool: (name: string, _config: unknown, handler: Handler) => {
         handlers.set(name, handler);
       },
     } as unknown as McpServer;
-    registerOperationTools(server, runtime(), kind);
+    registerOperationTools(server, runtime(), new Set(granted));
     return handlers;
   }
+  const ALL = [...MIRTH_PERMISSION_IDS];
 
   beforeEach(() => {
     calls = [];
@@ -226,24 +227,26 @@ describe('registerOperationTools', () => {
     refusal = null;
   });
 
-  it('registers one tool per read and act operation, and a pair per destructive one', () => {
-    const read = [...register('read').keys()];
-    expect(read).toContain('mirth_get_server_version');
-    expect(read).not.toContain('mirth_update_alert');
-    expect(read).toHaveLength(MIRTH_OPERATIONS.filter((o) => o.kind === 'read').length);
-
-    const destructive = [...register('destructive').keys()];
-    expect(destructive).toContain('mirth_delete_alert_preview');
-    expect(destructive).toContain('mirth_delete_alert_confirm');
-    expect(destructive).not.toContain('mirth_delete_alert');
-    expect(destructive).toHaveLength(
-      2 * MIRTH_OPERATIONS.filter((o) => o.kind === 'destructive').length
+  it('registers one tool per granted operation, and a pair per destructive one', () => {
+    const serverReads = [...register(['server.read']).keys()];
+    expect(serverReads).toContain('mirth_get_server_version');
+    expect(serverReads).not.toContain('mirth_update_alert');
+    expect(serverReads).not.toContain('mirth_get_alerts');
+    expect(serverReads).toHaveLength(
+      MIRTH_OPERATIONS.filter((o) => o.permission === 'server.read').length
     );
+
+    const everything = [...register(ALL).keys()];
+    expect(everything).toContain('mirth_delete_alert_preview');
+    expect(everything).toContain('mirth_delete_alert_confirm');
+    expect(everything).not.toContain('mirth_delete_alert');
+    const destructive = MIRTH_OPERATIONS.filter((o) => o.kind === 'destructive').length;
+    expect(everything).toHaveLength(MIRTH_OPERATIONS.length + destructive);
   });
 
   it('runs a read operation and pretty-prints a JSON answer', async () => {
     answer = { status: 200, contentType: 'application/json', body: '{"map":{"entry":[]}}' };
-    const result = await register('read').get('mirth_get_user_preferences')!({
+    const result = await register(ALL).get('mirth_get_user_preferences')!({
       instanceId: INSTANCE_ID,
       userId: 7,
       name: ['a', 'b'],
@@ -258,20 +261,20 @@ describe('registerOperationTools', () => {
     ]);
   });
 
-  it('gates act operations on the write exposure before building anything', async () => {
-    refusal = 'Act tools are switched off';
-    const result = await register('act').get('mirth_update_alert')!({
+  it('gates an operation on its permission before building anything', async () => {
+    refusal = '"Edit alerts" is not enabled';
+    const result = await register(ALL).get('mirth_update_alert')!({
       instanceId: INSTANCE_ID,
       alertId: 'a1',
       alertModel: '<alertModel/>',
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toBe('Act tools are switched off');
+    expect(result.content[0].text).toBe('"Edit alerts" is not enabled');
     expect(calls).toEqual([]);
   });
 
   it('previews a destructive operation on a card and runs it on confirm', async () => {
-    const tools = register('destructive');
+    const tools = register(ALL);
     const preview = await tools.get('mirth_delete_alert_preview')!({
       instanceId: INSTANCE_ID,
       alertId: 'a1',
@@ -298,7 +301,7 @@ describe('registerOperationTools', () => {
 
   it('phrases an upstream failure as an error', async () => {
     answer = { status: 403, contentType: null, body: '' };
-    const result = await register('read').get('mirth_get_system_info')!({
+    const result = await register(ALL).get('mirth_get_system_info')!({
       instanceId: INSTANCE_ID,
     });
     expect(result.isError).toBe(true);

@@ -7,13 +7,14 @@
  * authenticated seam to apps/worker-mirth, which logs in as the caller's
  * stored account and lets Mirth judge the request.
  *
- * What this layer enforces is the person's LLM-EXPOSURE choice, stored on
- * the connection row: whether the model may use act tools on an instance,
- * and separately whether it may run destructive operations there
- * (deleting channels, purging message stores, removing users or alerts,
- * replacing a server configuration…). Exposure can hide access the person
- * holds; it can never mint any — which is why it is checked here, per
- * call, and deliberately not in the worker.
+ * What this layer enforces is the person's PERMISSIONS, stored on the
+ * connection row (packages/connector-mirth/src/permissions.ts): named
+ * grants a person recognises — read channels, deploy channels, delete
+ * messages, restore the server… Every tool names one; it registers when
+ * the caller holds it on some connected instance and re-checks it on the
+ * instance named, per call. Permissions can hide access the person holds;
+ * they can never mint any — which is why they are checked here and
+ * deliberately not in the worker.
  *
  * Coverage: the whole REST API, every route a named tool with its own
  * validated arguments. The curated tools below phrase the everyday
@@ -26,15 +27,15 @@
  * path and exposure gate. Nothing on the server is out of reach, and
  * nothing bypasses the gate.
  *
- * Registration is additionally shaped by the aggregate exposure (see
- * registry.ts): a caller who exposed no write anywhere gets no act tools
- * at all, and likewise for destructive — the tool list tells the truth.
+ * Permanent operations (delete a channel, purge messages, restore the
+ * server…) are additionally preview + confirm on a card, whatever the
+ * permission says: a human click sits between the model and the act.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { isRecord, textOf, unwrapList, unwrapMap } from '@renkei/connector-mirth';
-import type { ConnectedInstance } from '@renkei/connector-mirth';
+import { isRecord, mirthPermission, textOf, unwrapList, unwrapMap } from '@renkei/connector-mirth';
+import type { ConnectedInstance, MirthPermission } from '@renkei/connector-mirth';
 import type { MCPToolContext } from '../common';
 import { mirthApi } from '@/lib/mirth/service-client';
 import type {
@@ -60,24 +61,16 @@ import {
   resolveRef,
   withReferenceResolution,
   type Directory,
+  type RefKind,
 } from './resolve';
 
 /** The connector key the Mirth capabilities register under. */
 export const MIRTH_MCP_CONNECTOR = 'mirth';
 
-/** Which tool families the caller's aggregate exposure enables. */
+/** What the caller may do somewhere: the union of their instances' permissions. */
 export interface MirthToolExposure {
-  write: boolean;
-  destructive: boolean;
+  permissions: readonly string[];
 }
-
-const WRITE_OFF =
-  'Act tools are switched off for this Mirth instance — they can be enabled per instance on ' +
-  'the Connectors page in Renkei.';
-
-const DESTRUCTIVE_OFF =
-  'Destructive operations are switched off for this Mirth instance — they can be enabled per ' +
-  'instance on the Connectors page in Renkei.';
 
 const DEFAULT_MAX_CHARS = 60_000;
 /** Bulk channel operations run one request per id; keep the fan-out honest. */
@@ -106,16 +99,26 @@ function clip(text: string, maxChars: number): string {
   return `${text.slice(0, maxChars)}\n…[truncated at ${maxChars} of ${text.length} characters]`;
 }
 
+/** "channels: read, deploy; messages: read" — the permissions, grouped by area. */
+function permissionSummary(permissions: readonly MirthPermission[]): string {
+  if (permissions.length === 0) return 'none';
+  const byArea = new Map<string, string[]>();
+  for (const id of permissions) {
+    const [area, verb] = id.split('.');
+    const list = byArea.get(area) ?? [];
+    list.push(verb);
+    byArea.set(area, list);
+  }
+  return [...byArea.entries()]
+    .map(([area, verbs]) => `${area.replace('_', ' ')}: ${verbs.join(', ')}`)
+    .join('; ');
+}
+
 function instanceLine(connected: ConnectedInstance): string {
-  const exposure =
-    connected.connection.toolAccess !== 'read_write'
-      ? 'read'
-      : connected.connection.allowDestructive
-        ? 'read/write + destructive'
-        : 'read/write';
   return (
     `${connected.instance.name} [${connected.instance.environment}] — id ${connected.instance.id} — ` +
-    `${connected.instance.baseUrl} — connected as ${connected.connection.username} — tools here: ${exposure}`
+    `${connected.instance.baseUrl} — connected as ${connected.connection.username} — permissions: ` +
+    permissionSummary(connected.connection.permissions)
   );
 }
 
@@ -215,6 +218,20 @@ function queryOf(
   return query;
 }
 
+/** Looking names up reveals what exists, so a lookup needs that area's read permission. */
+const READ_PERMISSION_FOR_KIND: Record<RefKind, MirthPermission> = {
+  channel: 'channels.read',
+  channel_group: 'channels.read',
+  channel_tag: 'channels.read',
+  connector: 'channels.read',
+  alert: 'alerts.read',
+  code_template: 'code_templates.read',
+  code_template_library: 'code_templates.read',
+  user: 'users.read',
+  resource: 'server.read',
+  database_task: 'server.read',
+};
+
 const instanceIdField = z
   .string()
   .min(1)
@@ -284,14 +301,19 @@ export function registerMirthTools(
    */
   const exposureRefusal = async (
     instanceId: string,
-    need: 'write' | 'destructive'
+    permission: MirthPermission
   ): Promise<string | null> => {
     const connection = await auth.connection(instanceId);
     if (typeof connection === 'string') return connection;
-    if (connection.toolAccess !== 'read_write') return WRITE_OFF;
-    if (need === 'destructive' && !connection.allowDestructive) return DESTRUCTIVE_OFF;
-    return null;
+    if (connection.permissions.includes(permission)) return null;
+    return (
+      `"${mirthPermission(permission).label}" is not enabled for this Mirth instance — it can ` +
+      'be enabled per instance on the Connectors page in Renkei.'
+    );
   };
+
+  /** What this caller holds on some connected instance: the registration gate. */
+  const granted = new Set<string>(exposure.permissions);
 
   const targetFor = (instanceId: string): MirthTarget | string => {
     const target = auth.target();
@@ -333,6 +355,22 @@ export function registerMirthTools(
     listConnected: () => auth.listConnected(),
     directory,
   });
+
+  /**
+   * A tool registers only when the caller holds its permission on some
+   * connected instance — so the tool list tells the truth — and its
+   * handler re-checks the permission on the instance named, per call.
+   */
+  const gated = (permission: MirthPermission): McpServer =>
+    granted.has(permission)
+      ? server
+      : new Proxy(server, {
+          get(target, property, receiver) {
+            if (property === 'registerTool') return () => undefined;
+            const value: unknown = Reflect.get(target, property, receiver);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
 
   const getJson = async (
     instanceId: string,
@@ -422,6 +460,8 @@ export function registerMirthTools(
       const instanceId = str(args.instanceId);
       if (!isRefKind(args.kind)) return errText('kind is not one of the known reference kinds.');
       const kind = args.kind;
+      const refusal = await exposureRefusal(instanceId, READ_PERMISSION_FOR_KIND[kind]);
+      if (refusal) return errText(refusal);
       const names = Array.isArray(args.names) ? args.names.map(String) : [];
       const scope = kind === 'connector' ? { channelId: str(args.channelId) || undefined } : {};
       const lines: string[] = [];
@@ -465,6 +505,8 @@ export function registerMirthTools(
       const instanceId = str(args.instanceId);
       if (!isRefKind(args.kind)) return errText('kind is not one of the known reference kinds.');
       const kind = args.kind;
+      const refusal = await exposureRefusal(instanceId, READ_PERMISSION_FOR_KIND[kind]);
+      if (refusal) return errText(refusal);
       const scope = kind === 'connector' ? { channelId: str(args.channelId) || undefined } : {};
       const entries = await directory.entries(instanceId, kind, scope, true);
       if (typeof entries === 'string') return errText(entries);
@@ -477,7 +519,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('server.read').registerTool(
     'mirth_server_info',
     {
       title: 'Mirth · Read — Server version and status',
@@ -508,7 +550,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.read').registerTool(
     'mirth_list_channels',
     {
       title: 'Mirth · Read — List channels with their deployment state',
@@ -562,7 +604,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.read').registerTool(
     'mirth_get_channel',
     {
       title: 'Mirth · Read — One channel definition',
@@ -626,7 +668,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.read').registerTool(
     'mirth_channel_status',
     {
       title: 'Mirth · Read — Dashboard status of one channel and its connectors',
@@ -667,7 +709,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.read').registerTool(
     'mirth_channel_statistics',
     {
       title: 'Mirth · Read — Message statistics per channel',
@@ -706,7 +748,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.read').registerTool(
     'mirth_list_channel_groups',
     {
       title: 'Mirth · Read — Channel groups and tags',
@@ -742,7 +784,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('messages.read').registerTool(
     'mirth_search_messages',
     {
       title: 'Mirth · Read — Search the messages of a channel',
@@ -805,7 +847,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('messages.read').registerTool(
     'mirth_count_messages',
     {
       title: 'Mirth · Read — Count the messages matching a filter',
@@ -832,7 +874,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('messages.read').registerTool(
     'mirth_get_message',
     {
       title: 'Mirth · Read — One message with its connector content',
@@ -899,7 +941,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('events.read').registerTool(
     'mirth_list_events',
     {
       title: 'Mirth · Read — Server events (audit log)',
@@ -955,7 +997,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('alerts.read').registerTool(
     'mirth_list_alerts',
     {
       title: 'Mirth · Read — Alerts and their status',
@@ -976,7 +1018,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('alerts.read').registerTool(
     'mirth_get_alert',
     {
       title: 'Mirth · Read — One alert definition',
@@ -999,7 +1041,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('code_templates.read').registerTool(
     'mirth_list_code_templates',
     {
       title: 'Mirth · Read — Code template libraries and templates',
@@ -1038,7 +1080,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('code_templates.read').registerTool(
     'mirth_get_code_template',
     {
       title: 'Mirth · Read — One code template with its code',
@@ -1072,7 +1114,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('users.read').registerTool(
     'mirth_list_users',
     {
       title: 'Mirth · Read — Users of an instance',
@@ -1093,7 +1135,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('server.read').registerTool(
     'mirth_list_extensions',
     {
       title: 'Mirth · Read — Installed connectors and plugins',
@@ -1119,7 +1161,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('server.read').registerTool(
     'mirth_get_configuration_map',
     {
       title: 'Mirth · Read — The configuration map',
@@ -1146,7 +1188,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('server.read').registerTool(
     'mirth_get_global_scripts',
     {
       title: 'Mirth · Read — Global scripts',
@@ -1170,7 +1212,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('server.read').registerTool(
     'mirth_get_server_settings',
     {
       title: 'Mirth · Read — Server settings',
@@ -1190,17 +1232,14 @@ export function registerMirthTools(
     }
   );
 
-  // Every other GET route of the API, one named tool each.
-  registerOperationTools(server, runtime, 'read');
+  // Every route the curated tools do not phrase, one named tool each,
+  // for the permissions this caller holds somewhere.
+  registerOperationTools(server, runtime, granted);
 
   // -------------------------------------------------------------------
-  // Act tools — registered only when the caller exposed write somewhere,
-  // and re-gated per instance on every call (exposureRefusal).
+  // Act tools — each behind the permission it names, registered when the
+  // caller holds it somewhere and re-checked per instance on every call.
   // -------------------------------------------------------------------
-  if (!exposure.write) return;
-
-  // Every other non-destructive POST/PUT route of the API, one named tool each.
-  registerOperationTools(server, runtime, 'act');
 
   /** Run one per-channel POST for a bounded list of ids and report per id. */
   const perChannel = async (
@@ -1238,7 +1277,7 @@ export function registerMirthTools(
     .max(MAX_BULK_CHANNELS)
     .describe('Channel ids (from mirth_list_channels).');
 
-  server.registerTool(
+  gated('channels.deploy').registerTool(
     'mirth_deploy_channels',
     {
       title: 'Mirth · Act — Deploy (or redeploy) channels',
@@ -1254,7 +1293,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'channels.deploy');
       if (refusal) return errText(refusal);
       if (args.all === true) {
         const answered = await call(instanceId, 'redeploy all channels', {
@@ -1274,7 +1313,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.deploy').registerTool(
     'mirth_undeploy_channels',
     {
       title: 'Mirth · Act — Undeploy channels',
@@ -1285,7 +1324,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'channels.deploy');
       if (refusal) return errText(refusal);
       const ids = Array.isArray(args.channelIds) ? args.channelIds.map(String) : [];
       return perChannel(
@@ -1297,7 +1336,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.deploy').registerTool(
     'mirth_control_channels',
     {
       title: 'Mirth · Act — Start, stop, pause, resume or halt channels',
@@ -1313,7 +1352,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'channels.deploy');
       if (refusal) return errText(refusal);
       const action = str(args.action);
       if (!['start', 'stop', 'pause', 'resume', 'halt'].includes(action))
@@ -1328,7 +1367,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.deploy').registerTool(
     'mirth_control_connector',
     {
       title: 'Mirth · Act — Start or stop one connector of a channel',
@@ -1344,7 +1383,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'channels.deploy');
       if (refusal) return errText(refusal);
       const action = str(args.action) === 'stop' ? 'stop' : 'start';
       const answered = await call(instanceId, `${action} the connector`, {
@@ -1358,7 +1397,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.edit').registerTool(
     'mirth_set_channel_enabled',
     {
       title: 'Mirth · Act — Enable or disable a channel',
@@ -1373,7 +1412,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'channels.edit');
       if (refusal) return errText(refusal);
       const enabled = args.enabled === true;
       const answered = await call(instanceId, `${enabled ? 'enable' : 'disable'} the channel`, {
@@ -1386,7 +1425,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.edit').registerTool(
     'mirth_set_channel_initial_state',
     {
       title: 'Mirth · Act — Set the state a channel takes when deployed',
@@ -1400,7 +1439,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'channels.edit');
       if (refusal) return errText(refusal);
       const answered = await call(instanceId, 'set the initial state', {
         method: 'POST',
@@ -1412,7 +1451,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.edit').registerTool(
     'mirth_import_channel',
     {
       title: 'Mirth · Act — Create or update a channel from its XML',
@@ -1429,7 +1468,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'channels.edit');
       if (refusal) return errText(refusal);
       const xml = str(args.channelXml).trim();
       const idMatch = xml.match(/<channel[^>]*>[\s\S]*?<id>([^<]+)<\/id>/);
@@ -1465,7 +1504,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('messages.send').registerTool(
     'mirth_send_message',
     {
       title: 'Mirth · Act — Send a message through a channel',
@@ -1490,7 +1529,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'messages.send');
       if (refusal) return errText(refusal);
       const sourceMap = isRecord(args.sourceMap)
         ? Object.entries(args.sourceMap).map(([key, value]) => `${key}=${textOf(value)}`)
@@ -1516,7 +1555,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('messages.send').registerTool(
     'mirth_reprocess_messages',
     {
       title: 'Mirth · Act — Reprocess one message or a filtered set',
@@ -1542,7 +1581,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'messages.send');
       if (refusal) return errText(refusal);
       const channel = encodeURIComponent(str(args.channelId));
       const common = queryOf({
@@ -1580,7 +1619,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('server.configure').registerTool(
     'mirth_set_configuration_map',
     {
       title: 'Mirth · Act — Set configuration map entries',
@@ -1605,7 +1644,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'server.configure');
       if (refusal) return errText(refusal);
       const current = await getJson(
         instanceId,
@@ -1665,7 +1704,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('server.configure').registerTool(
     'mirth_set_global_scripts',
     {
       title: 'Mirth · Act — Update global scripts',
@@ -1684,7 +1723,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'server.configure');
       if (refusal) return errText(refusal);
       const current = await getJson(instanceId, 'read the global scripts', '/server/globalScripts');
       if (!current.ok) return errText(current.message);
@@ -1725,7 +1764,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('alerts.edit').registerTool(
     'mirth_set_alert_enabled',
     {
       title: 'Mirth · Act — Enable or disable an alert',
@@ -1739,7 +1778,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'write');
+      const refusal = await exposureRefusal(instanceId, 'alerts.edit');
       if (refusal) return errText(refusal);
       const enabled = args.enabled === true;
       const answered = await call(instanceId, `${enabled ? 'enable' : 'disable'} the alert`, {
@@ -1760,10 +1799,6 @@ export function registerMirthTools(
     the destructive path — and both re-check the per-instance opt-in,
     because the card can outlive a change of heart on the connectors page.
   */
-  if (!exposure.destructive) return;
-
-  // Every other destructive route of the API, as a named preview/confirm pair.
-  registerOperationTools(server, runtime, 'destructive');
 
   const previewGuidance = (what: string) =>
     `${what} is awaiting the user's decision on the preview card. Do not do it another ` +
@@ -1774,7 +1809,7 @@ export function registerMirthTools(
 
   const deleteChannelHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
     const instanceId = str(args.instanceId);
-    const refusal = await exposureRefusal(instanceId, 'destructive');
+    const refusal = await exposureRefusal(instanceId, 'channels.delete');
     if (refusal) return errText(refusal);
     const answered = await call(instanceId, 'delete the channel', {
       method: 'DELETE',
@@ -1785,7 +1820,7 @@ export function registerMirthTools(
       : errText(answered.message);
   };
 
-  server.registerTool(
+  gated('channels.delete').registerTool(
     'mirth_delete_channel_preview',
     {
       title: 'Mirth · Act — Preview deleting a channel before it happens',
@@ -1800,7 +1835,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'destructive');
+      const refusal = await exposureRefusal(instanceId, 'channels.delete');
       if (refusal) return errText(refusal);
       const names = await getJson(instanceId, 'find the channel', '/channels/idsAndNames');
       if (!names.ok) return errText(names.message);
@@ -1838,7 +1873,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('channels.delete').registerTool(
     'mirth_delete_channel_confirm',
     {
       title: 'Mirth · Act — Execute a confirmed channel deletion',
@@ -1868,7 +1903,7 @@ export function registerMirthTools(
 
   const removeMessagesHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
     const instanceId = str(args.instanceId);
-    const refusal = await exposureRefusal(instanceId, 'destructive');
+    const refusal = await exposureRefusal(instanceId, 'messages.delete');
     if (refusal) return errText(refusal);
     const channel = encodeURIComponent(str(args.channelId));
     const filter = messageQuery(args);
@@ -1895,7 +1930,7 @@ export function registerMirthTools(
       : errText(answered.message);
   };
 
-  server.registerTool(
+  gated('messages.delete').registerTool(
     'mirth_remove_messages_preview',
     {
       title: 'Mirth · Act — Preview removing messages before it happens',
@@ -1910,7 +1945,7 @@ export function registerMirthTools(
     },
     async (args: Record<string, unknown>) => {
       const instanceId = str(args.instanceId);
-      const refusal = await exposureRefusal(instanceId, 'destructive');
+      const refusal = await exposureRefusal(instanceId, 'messages.delete');
       if (refusal) return errText(refusal);
       const filter = messageQuery(args);
       if (args.all !== true && Object.keys(filter).length === 0) {
@@ -1959,7 +1994,7 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
+  gated('messages.delete').registerTool(
     'mirth_remove_messages_confirm',
     {
       title: 'Mirth · Act — Execute a confirmed message removal',
