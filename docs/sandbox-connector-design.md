@@ -107,6 +107,28 @@ cut. Anything that is not HTML goes through `@renkei/document-text`
 (PDF, Word, Excel, PowerPoint) or is returned as text when it is one;
 an unreadable format is refused with a pointer at `sandbox_download_url`.
 
+## `sandbox_render_document` — authoring, not fetching
+
+The other two staging tools bring in bytes that already exist somewhere
+else; this one is the odd source, because the "somewhere else" is the
+model's own writing. An agent that wants to hand a Word document, a slide
+deck, a PDF or a workbook to a connector — file Jira findings as a
+`.pptx` in a SharePoint library, say — has no bytes to fetch: it has to
+author them. `chat_write_file` (`apps/web/lib/chat/file-tools.ts`) already
+does exactly this for the interactive chat, in-process, because a chat
+tool can attach its result to the chat directly. An org agent has no such
+side door — everything it produces has to be a normal MCP tool result —
+so `sandbox_render_document` is the same rendering
+(`@renkei/document-render`: Markdown → `.docx`/`.pdf`/`.pptx` headings as
+slides, CSV/JSON/Markdown tables → `.xlsx`; every other extension kept as
+the text written) with the result staged here instead of attached there.
+From here it is exactly the `sandbox_fetch_from_fileshare` story again:
+request an upload endpoint from the destination connector, then
+`sandbox_send_to_upload` moves the staged bytes into place. The content
+argument is text either way — Markdown, CSV, JSON — never base64, so this
+does not reopen the no-bytes-as-arguments rule; it is what makes the rule
+possible for authored documents at all.
+
 ## `sandbox_send_to_upload` and slot ownership
 
 Completing a `*_request_*_upload` normally requires the slot's opaque
@@ -340,29 +362,30 @@ none exists or it is locked.
 
 ## Tool inventory
 
-| Tool                           | Kind | What it does                                                                                                                                                                   |
-| ------------------------------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `sandbox_download_url`         | Act  | Fetch an `https://` URL into the scratch space (SSRF-guarded, byte-capped).                                                                                                    |
-| `sandbox_fetch_page`           | Read | Fetch an `https://` URL through the same guard and answer its readable text — a page's title, main content and links, or a PDF/Office file's extracted text — keeping nothing. |
-| `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                     |
-| `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                             |
-| `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                 |
-| `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                      |
-| `sandbox_read_file`            | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`).                                                                                                     |
-| `sandbox_delete_file`          | Act  | Remove a staged file ahead of its TTL.                                                                                                                                         |
-| `sandbox_send_to_upload`       | Act  | Forward a staged file's bytes into a pending `*_request_*_upload` slot.                                                                                                        |
-| `sandbox_browser_navigate`     | Act  | Open an `https://` URL in the caller's browser session; answers a snapshot.                                                                                                    |
-| `sandbox_browser_snapshot`     | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls).                                                                                                               |
-| `sandbox_browser_click`        | Act  | Click an element by ref; answers the snapshot of wherever that led.                                                                                                            |
-| `sandbox_browser_type`         | Act  | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter.                                                              |
-| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values.                                                                                                         |
-| `sandbox_browser_select`       | Act  | Choose option(s) of a `<select>` by ref.                                                                                                                                       |
-| `sandbox_browser_press_key`    | Act  | Press one key (Escape, Tab, PageDown, ...) in the page.                                                                                                                        |
-| `sandbox_browser_scroll`       | Act  | Scroll the page up/down by pixels, or bring one ref into view.                                                                                                                 |
-| `sandbox_browser_run`          | Act  | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip.                                                                                             |
-| `sandbox_browser_back`         | Act  | Browser history back.                                                                                                                                                          |
-| `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                          |
-| `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                          |
+| Tool                           | Kind | What it does                                                                                                                                                                               |
+| ------------------------------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sandbox_download_url`         | Act  | Fetch an `https://` URL into the scratch space (SSRF-guarded, byte-capped).                                                                                                                |
+| `sandbox_fetch_page`           | Read | Fetch an `https://` URL through the same guard and answer its readable text — a page's title, main content and links, or a PDF/Office file's extracted text — keeping nothing.             |
+| `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                                 |
+| `sandbox_render_document`      | Act  | Render Markdown/CSV/JSON text (never bytes) into a `.docx`/`.pptx`/`.pdf`/`.xlsx` — or stage a text format as written — with `@renkei/document-render` (also what `chat_write_file` uses). |
+| `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                                         |
+| `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                             |
+| `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                                  |
+| `sandbox_read_file`            | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`).                                                                                                                 |
+| `sandbox_delete_file`          | Act  | Remove a staged file ahead of its TTL.                                                                                                                                                     |
+| `sandbox_send_to_upload`       | Act  | Forward a staged file's bytes into a pending `*_request_*_upload` slot.                                                                                                                    |
+| `sandbox_browser_navigate`     | Act  | Open an `https://` URL in the caller's browser session; answers a snapshot.                                                                                                                |
+| `sandbox_browser_snapshot`     | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls).                                                                                                                           |
+| `sandbox_browser_click`        | Act  | Click an element by ref; answers the snapshot of wherever that led.                                                                                                                        |
+| `sandbox_browser_type`         | Act  | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter.                                                                          |
+| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values.                                                                                                                     |
+| `sandbox_browser_select`       | Act  | Choose option(s) of a `<select>` by ref.                                                                                                                                                   |
+| `sandbox_browser_press_key`    | Act  | Press one key (Escape, Tab, PageDown, ...) in the page.                                                                                                                                    |
+| `sandbox_browser_scroll`       | Act  | Scroll the page up/down by pixels, or bring one ref into view.                                                                                                                             |
+| `sandbox_browser_run`          | Act  | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip.                                                                                                         |
+| `sandbox_browser_back`         | Act  | Browser history back.                                                                                                                                                                      |
+| `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                                      |
+| `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                                      |
 
 The browser tools exist only when `SANDBOX_BROWSER_ENABLED=true` on both
 the web app and the worker.

@@ -43,6 +43,7 @@ export default {
     '^@renkei/user-prefs/prefs$': '<rootDir>/../../packages/user-prefs/src/prefs.ts',
     '^@renkei/gates$': '<rootDir>/../../packages/gates/src/index.ts',
     '^@renkei/redaction$': '<rootDir>/../../packages/redaction/src/index.ts',
+    '^@renkei/document-render$': '<rootDir>/../../packages/document-render/src/index.ts',
     '^@renkei/document-text$': '<rootDir>/../../packages/document-text/src/index.ts',
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
