@@ -58,12 +58,12 @@ function Finding({ finding }: { finding: OptimizationFinding }) {
           </span>
         ) : null}
       </div>
-      <p className="text-gray-900 dark:text-gray-100">{finding.issue}</p>
-      <p className="mt-1 text-gray-700 dark:text-gray-300">
+      <p className="break-words text-gray-900 dark:text-gray-100">{finding.issue}</p>
+      <p className="mt-1 break-words text-gray-700 dark:text-gray-300">
         <span className="font-medium">Fix:</span> {finding.fix}
       </p>
       {finding.evidence ? (
-        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <p className="mt-1 break-words text-xs text-gray-500 dark:text-gray-400">
           <span className="font-medium">Evidence:</span> {finding.evidence}
         </p>
       ) : null}
@@ -222,7 +222,7 @@ export default function ImprovePanel({
 
       {report ? (
         <div className="mt-3 space-y-3">
-          <p className="text-sm text-gray-900 dark:text-gray-100">{report.summary}</p>
+          <p className="break-words text-sm text-gray-900 dark:text-gray-100">{report.summary}</p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Based on {report.evidence.runs} run{report.evidence.runs === 1 ? '' : 's'} (
             {report.evidence.failures} failed) over {report.evidence.windowDays} days, averaging{' '}

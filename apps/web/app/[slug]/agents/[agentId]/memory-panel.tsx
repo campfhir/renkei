@@ -67,7 +67,7 @@ export default async function MemoryPanel({
           {entries.map((entry) => (
             <li
               key={entry.id}
-              className="rounded-md border border-gray-100 px-3 py-1.5 text-sm dark:border-gray-900"
+              className="break-words rounded-md border border-gray-100 px-3 py-1.5 text-sm dark:border-gray-900"
             >
               <span className="mr-2 whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">
                 {new Date(entry.created_at).toISOString().slice(0, 16).replace('T', ' ')}

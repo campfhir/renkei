@@ -281,7 +281,10 @@ export default async function AgentOverviewPage({
             {agent.triggers.length > 0 ? (
               <ul className="mt-1 space-y-2">
                 {agent.triggers.map((trigger) => (
-                  <li key={trigger.id} className="text-sm text-gray-800 dark:text-gray-200">
+                  <li
+                    key={trigger.id}
+                    className="break-words text-sm text-gray-800 dark:text-gray-200"
+                  >
                     <span className="mr-2 inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                       {triggerBadge(trigger.draft.kind)}
                     </span>
@@ -290,7 +293,7 @@ export default async function AgentOverviewPage({
                       <span className="ml-2 text-xs text-gray-400">(off)</span>
                     ) : null}
                     {trigger.lastError ? (
-                      <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">
+                      <p className="mt-0.5 break-words text-xs text-red-600 dark:text-red-400">
                         Last error: {trigger.lastError}
                       </p>
                     ) : null}
@@ -311,10 +314,10 @@ export default async function AgentOverviewPage({
               </p>
               <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
                 {reviewNotes.map((note) => (
-                  <li key={note.issue}>
+                  <li key={note.issue} className="break-words">
                     {note.issue}
                     {note.fix ? (
-                      <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
+                      <p className="mt-0.5 break-words text-xs text-amber-700/80 dark:text-amber-300/70">
                         Suggestion: {note.fix}
                       </p>
                     ) : null}
