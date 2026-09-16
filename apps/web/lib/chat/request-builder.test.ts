@@ -324,6 +324,35 @@ describe('buildSystemPrompt with search_knowledge', () => {
   });
 });
 
+describe('buildSystemPrompt with the employee directory', () => {
+  const base = {
+    personName: null,
+    orgName: null,
+    project: null,
+    userMemoryText: null,
+    chatSummary: null,
+    chatFiles: [],
+    hasTools: true,
+    hasDiscoverableTools: false,
+    hasSandbox: false,
+    filesAllowed: true,
+    now: new Date('2026-09-04T00:00:00Z'),
+  };
+
+  it('says to prefer the directory over search_knowledge or files, and that it takes several names at once, only when offered', () => {
+    const withDirectory = buildSystemPrompt({ ...base, hasKnowledge: false, hasDirectory: true });
+    expect(withDirectory).toMatch(/outlook_search_users is the organization's live directory/);
+    expect(withDirectory).toMatch(/rather than reaching for a document, message or file/);
+    expect(withDirectory).toMatch(/several names or emails in one call/);
+
+    const withBoth = buildSystemPrompt({ ...base, hasKnowledge: true, hasDirectory: true });
+    expect(withBoth).toMatch(/rather than reaching for search_knowledge or a document/);
+
+    const without = buildSystemPrompt({ ...base, hasKnowledge: false, hasDirectory: false });
+    expect(without).not.toMatch(/outlook_search_users is the organization's live directory/);
+  });
+});
+
 describe('buildSystemPrompt with find_tools', () => {
   const base = {
     personName: null,

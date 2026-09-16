@@ -23,21 +23,27 @@ export const DIRECTORY_USER_SELECT =
   'businessPhones,mobilePhone';
 
 /**
- * Raw Graph user objects for a name-or-email fragment. Returns the error
- * sentence as a string, matching the convention the rest of the Graph
- * helpers use, so a caller decides the status code.
+ * Raw Graph user objects for one or more name-or-email fragments, in a
+ * single request — so looking up ten people costs one round trip, not ten.
+ * Graph's `$search` already ORs clauses together and returns each matching
+ * user once, so there is nothing to de-duplicate on the way back. Returns
+ * the error sentence as a string, matching the convention the rest of the
+ * Graph helpers use, so a caller decides the status code.
  */
 export async function searchDirectoryUsers(
   context: GraphCallContext,
   accessToken: string,
-  query: string,
+  query: string | string[],
   max: number
 ): Promise<Record<string, unknown>[] | string> {
   // Graph parses the search expression, so a quote the user typed would
   // terminate ours and produce a syntax error rather than a search.
-  const cleaned = query.replace(/"/g, '').trim();
-  if (!cleaned) return [];
-  const search = encodeURIComponent(`"displayName:${cleaned}" OR "mail:${cleaned}"`);
+  const terms = (Array.isArray(query) ? query : [query])
+    .map((term) => term.replace(/"/g, '').trim())
+    .filter(Boolean);
+  if (terms.length === 0) return [];
+  const clauses = terms.flatMap((term) => [`"displayName:${term}"`, `"mail:${term}"`]);
+  const search = encodeURIComponent(clauses.join(' OR '));
   const result = await graphGet(
     context,
     accessToken,

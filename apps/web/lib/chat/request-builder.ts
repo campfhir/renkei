@@ -49,6 +49,13 @@ export interface SystemPromptInput {
   hasDiscoverableTools: boolean;
   /** search_knowledge is among the tools; the prompt then says when it is worth a call. */
   hasKnowledge: boolean;
+  /**
+   * outlook_search_users is among the tools: there is a live employee
+   * directory, so the prompt says to use it — not search_knowledge or a
+   * file — for who someone is. Optional so existing callers/fixtures that
+   * predate this flag keep compiling; absent, it is simply not mentioned.
+   */
+  hasDirectory?: boolean;
   hasSandbox: boolean;
   /** The org has somewhere to keep files; false means none can be made or attached. */
   filesAllowed: boolean;
@@ -65,7 +72,22 @@ const STANDING_BRIEF = `You are Renkei, an assistant inside an organization's ow
  * searches for things it already knows or was just told. Said only when
  * the tool is there, so a chat without it carries no dead advice.
  */
-const KNOWLEDGE_BRIEF = `search_knowledge finds what the organization has indexed from its own systems — mail, tickets, pages, documents, meetings and notes. Use it when the answer depends on the organization's own people, work or records. Do not use it for general knowledge, for reasoning, or for anything this conversation already contains, and do not use it to confirm what another tool just returned. Make one well-aimed search — a specific query, k up to 10, sources when you know the kind of item — and answer from what comes back, saying what you looked at and what was not there. Search again only for a genuinely different question, not a rephrasing of the same one.`;
+const KNOWLEDGE_BRIEF = `search_knowledge finds what the organization has indexed from its own systems — mail, tickets, pages, documents, meetings and notes. Use it when the answer depends on the organization's own work or records. Do not use it for general knowledge, for reasoning, or for anything this conversation already contains, and do not use it to confirm what another tool just returned. Make one well-aimed search — a specific query, k up to 10, sources when you know the kind of item — and answer from what comes back, saying what you looked at and what was not there. Search again only for a genuinely different question, not a rephrasing of the same one.`;
+
+/**
+ * When outlook_search_users is on offer. Without this, a question about a
+ * colleague tends to get answered from whatever mentions them turn up in
+ * search_knowledge or an attached file — stale, incomplete, or just the
+ * wrong Dana — instead of the directory that is actually authoritative.
+ * Also restates that it takes several names at once, since a model that has
+ * only ever seen single-lookup tools defaults to one call per person.
+ */
+function directoryBrief(hasKnowledge: boolean): string {
+  const instead = hasKnowledge
+    ? 'search_knowledge or a document, message or file'
+    : 'a document, message or file';
+  return `outlook_search_users is the organization's live directory — the source of truth for who someone is: title, department, location, email, phone, manager, direct reports. For a colleague's profile or contact details, or to check who's who on a list of names, call it rather than reaching for ${instead}, which may be stale or incomplete. It takes several names or emails in one call (pass an array) — look up an entire list of people at once instead of one call per person. Ids/UPNs it returns feed outlook_get_user for the org-chart view around someone.`;
+}
 
 /**
  * When find_tools is on offer. Its own description already names the
@@ -150,6 +172,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   }
   if (input.hasDiscoverableTools) {
     sections.push(DISCOVERY_BRIEF);
+  }
+  if (input.hasDirectory) {
+    sections.push(directoryBrief(input.hasKnowledge));
   }
   if (input.hasKnowledge) {
     sections.push(KNOWLEDGE_BRIEF);
