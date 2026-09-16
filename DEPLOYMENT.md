@@ -181,6 +181,21 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
+- `worker-mirth` — the same shape for Mirth Connect (NextGen Connect
+  4.5.2): an internal HTTP service on its **own image** (`renkei-mirth`, the
+  `mirth` target in `docker/Dockerfile`, opt-in prompts in the build/push
+  scripts). It is the only process that dials an organization's Mirth
+  servers — as many instances as an operator registers under Organization →
+  Mirth Connect (dev, test, prod…), typically on private networks the web
+  app's SSRF guard refuses by design — or decrypts a person's stored Mirth
+  credential. It logs in as that person, keeps one session per (instance,
+  person), and proxies every REST route. The web app reaches it at
+  `MIRTH_WORKER_URL` (compose wires `http://renkei-worker-mirth:8093`)
+  presenting the shared bearer key `MIRTH_WORKER_API_KEY` — set both in
+  `.env` (`openssl rand -base64 32` makes a good key; the worker also honors
+  `MIRTH_WORKER_PORT`, default 8093). Without them the Mirth connector
+  answers "service not configured" everywhere — closed, never open.
+  Entrypoint: `pnpm --filter @renkei/worker-mirth start`.
 - `worker-sandbox` — the same shape again, for the agent scratch space: an
   internal HTTP service on its **own image** (`renkei-sandbox`, the
   `sandbox` target in `docker/Dockerfile`, opt-in prompts in the build/push

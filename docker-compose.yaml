@@ -177,6 +177,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The Mirth Connect egress worker: the only process that dials an
+  # organization's Mirth Connect servers (dev, test, prod…) or decrypts a
+  # person's stored Mirth credential. Its own image so it rolls out
+  # independently of the queue workers. The web app reaches it over HTTP on
+  # the compose network (MIRTH_WORKER_URL below) with the shared
+  # MIRTH_WORKER_API_KEY from .env — generate one with
+  # `openssl rand -base64 32`. No published ports on purpose: nothing
+  # outside the compose network may speak to it.
+  worker-mirth:
+    image: scotteremiaroden/renkei-mirth:latest
+    container_name: renkei-worker-mirth
+    command: ['pnpm', '--filter', '@renkei/worker-mirth', 'start']
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # The agent scratch-space worker: the only process that writes staged
   # file bytes to disk (see docs/sandbox-connector-design.md — this is the
   # first place Renkei deliberately holds bytes at rest outside a provider
@@ -266,6 +286,9 @@ services:
       # Where the web app reaches the OnBase egress worker; the bearer key
       # (ONBASE_WORKER_API_KEY) comes from the shared .env.
       ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
+      # Where the web app reaches the Mirth Connect egress worker; the bearer
+      # key (MIRTH_WORKER_API_KEY) comes from the shared .env.
+      MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
       # Where the web app reaches the sandbox worker; the bearer key
       # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
       # run without an agent scratch space — the sandbox_* tools simply

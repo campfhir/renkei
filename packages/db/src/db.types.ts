@@ -822,6 +822,33 @@ export interface MailBulkJobs {
   updated_at: Generated<Timestamp>;
 }
 
+export interface MirthInstanceConnections {
+  allow_destructive: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  encrypted_credentials: string;
+  instance_id: string;
+  subject: string;
+  tenant_id: string;
+  tool_access: string;
+  updated_at: Generated<Timestamp>;
+  username: string;
+}
+
+export interface MirthInstances {
+  allow_insecure_http: Generated<boolean>;
+  base_url: string;
+  ca_pem: string | null;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  environment: Generated<string>;
+  id: Generated<string>;
+  name: string;
+  settings: Generated<Json>;
+  tenant_id: string;
+  tls_verify: Generated<boolean>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface OauthAccessTokens {
   agent_id: string | null;
   application: Generated<string>;
@@ -1232,6 +1259,8 @@ export interface DB {
   log_attr_blob: LogAttrBlob;
   logs: Logs;
   mail_bulk_jobs: MailBulkJobs;
+  mirth_instance_connections: MirthInstanceConnections;
+  mirth_instances: MirthInstances;
   oauth_access_tokens: OauthAccessTokens;
   oauth_authorization_codes: OauthAuthorizationCodes;
   oauth_clients: OauthClients;

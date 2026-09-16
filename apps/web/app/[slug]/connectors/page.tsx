@@ -11,10 +11,12 @@ import ZoomConnector from './zoom-connector';
 import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
+import MirthConnector from './mirth-connector';
 import SandboxSecrets from './sandbox-secrets';
 import { AddConnectorButton, RemovableProducts } from './catalog-controls';
 import type { CatalogItem } from './add-connector-modal';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
+import { listInstancesWithConnection } from '@renkei/connector-mirth';
 import { sandboxBrowserEnabled, sbSecretsList } from '@/lib/sandbox/service-client';
 import {
   WEBEX_USER,
@@ -153,6 +155,29 @@ export default async function ConnectorsPage({
         }))
       : [];
 
+  // Mirth instances follow the same arrangement as file shares: an admin
+  // registers each server, and this person connects it with their own
+  // Mirth account right on the card. Every enabled instance is offered.
+  const mirthRows = shown.has('mirth')
+    ? await listInstancesWithConnection(db, tenant.id, session.subject)
+    : null;
+  const connectableMirthInstances =
+    mirthRows && mirthRows.ok
+      ? mirthRows.val.map((entry) => ({
+          id: entry.instance.id,
+          name: entry.instance.name,
+          environment: entry.instance.environment,
+          baseUrl: entry.instance.baseUrl,
+          connection: entry.connection
+            ? {
+                username: entry.connection.username,
+                toolAccess: entry.connection.toolAccess,
+                allowDestructive: entry.connection.allowDestructive,
+              }
+            : null,
+        }))
+      : [];
+
   // Browser secrets live on the sandbox worker, never in this app's tables:
   // the card exists only where the deployment runs the sandbox browser, and
   // the listing is names, fields and hosts — no values.
@@ -209,7 +234,8 @@ export default async function ConnectorsPage({
     microsoftKeys.length > 0 ||
     shown.has('zoom') ||
     hylandShown ||
-    shown.has('fileshares');
+    shown.has('fileshares') ||
+    shown.has('mirth');
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -425,6 +451,13 @@ export default async function ConnectorsPage({
                 tenantId={tenant.id}
                 products={removable(catalog, ['fileshares'])}
               />
+            </div>
+          )}
+
+          {shown.has('mirth') && (
+            <div className="mb-6 break-inside-avoid">
+              <MirthConnector tenantId={tenant.id} instances={connectableMirthInstances} />
+              <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['mirth'])} />
             </div>
           )}
 

@@ -68,6 +68,9 @@ export const GLYPH_ONLY = new Set([
   'sandbox',
   'batch-jobs',
   'mistral-ocr',
+  // Mirth Connect's mark belongs to NextGen Healthcare; the glyph (a channel
+  // between two endpoints) says "integration engine" without borrowing it.
+  'mirth',
 ]);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */

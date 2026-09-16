@@ -23,7 +23,14 @@
 
 /** How the catalog groups entries, for a person scanning rather than searching. */
 export type ConnectorCategory =
-  'atlassian' | 'microsoft' | 'communications' | 'documents' | 'files' | 'search' | 'renkei';
+  | 'atlassian'
+  | 'microsoft'
+  | 'communications'
+  | 'documents'
+  | 'files'
+  | 'integration'
+  | 'search'
+  | 'renkei';
 
 export const CONNECTOR_CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   atlassian: 'Atlassian',
@@ -31,6 +38,7 @@ export const CONNECTOR_CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   communications: 'Meetings and messaging',
   documents: 'Document management',
   files: 'Files',
+  integration: 'Integration engines',
   search: 'Search and knowledge',
   renkei: 'Renkei',
 };
@@ -244,6 +252,35 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'fileshare_*',
     category: 'files',
     keywords: ['smb', 'sftp', 'network drive', 'shared drive', 'nas', 'folders', 'files'],
+    grantProviders: [],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
+    capabilityKey: 'mirth',
+    // No connector_configs row: instances are many-per-tenant rows in
+    // mirth_instances (dev, test, prod…), and each person connects with
+    // their own Mirth account — the key exists so the identifier stays
+    // consistent.
+    configKey: 'mirth',
+    label: 'Mirth Connect',
+    summary:
+      'Channels, deployment, messages, events, alerts, code templates and server configuration ' +
+      'on your Mirth Connect (NextGen Connect 4.5) servers — every REST route, per instance, ' +
+      'with your own Mirth account.',
+    toolPrefix: 'mirth_*',
+    category: 'integration',
+    keywords: [
+      'mirth',
+      'nextgen connect',
+      'hl7',
+      'interface engine',
+      'integration engine',
+      'channels',
+      'interfaces',
+      'fhir',
+      'x12',
+    ],
     grantProviders: [],
     userConnectable: true,
     togglable: true,

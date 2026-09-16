@@ -49,6 +49,7 @@ const PREFIXES: [string, string][] = [
   ['onbase_', 'onbase'],
   ['knowledge_', 'knowledge'],
   ['fileshare_', 'fileshares'],
+  ['mirth_', 'mirth'],
   ['card_', 'cards'],
   ['agent_', 'agents'],
   ['log_', 'logs'],

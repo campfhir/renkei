@@ -4,7 +4,7 @@ Renkei (連携 — "linkage, cooperation") is a permission-aware knowledge and a
 
 **What this repo is today:** the first module of that platform — a multi-tenant **Jira MCP server**. It exposes 50+ Jira and Jira Service Management tools over the Model Context Protocol, with per-user OAuth so every action happens as the calling user and reads honor that user's Jira permissions.
 
-> This section describes the repo's original scope. The MCP tool surface has since grown to cover Confluence, Bitbucket, WebEx, Outlook/Graph, SharePoint, OneDrive, Zoom, OnBase, and network fileshares, plus an agent system, permission-aware knowledge search, and cross-tool cards — see [`docs/architecture.md`](./docs/architecture.md) for the current, maintained picture and [`docs/README.md`](./docs/README.md) for the full documentation index.
+> This section describes the repo's original scope. The MCP tool surface has since grown to cover Confluence, Bitbucket, WebEx, Outlook/Graph, SharePoint, OneDrive, Zoom, OnBase, Mirth Connect, and network fileshares, plus an agent system, permission-aware knowledge search, and cross-tool cards — see [`docs/architecture.md`](./docs/architecture.md) for the current, maintained picture and [`docs/README.md`](./docs/README.md) for the full documentation index.
 
 ## How it works
 

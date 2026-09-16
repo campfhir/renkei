@@ -227,6 +227,7 @@ const handler = async (
       availability.zoomAvailable ||
       availability.confluenceAvailable ||
       availability.filesharesAvailable ||
+      availability.mirthAvailable ||
       availability.onbaseAvailable;
 
     if (grants.length === 0 && !anyOtherConnector) {
@@ -528,7 +529,10 @@ const handler = async (
             '(jsm_*, jsm_ops_*), WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), ' +
             'SharePoint (sharepoint_*), OneDrive (onedrive_*), Confluence (confluence_*), ' +
             'Zoom (zoom_*), org network file shares (fileshare_*, SMB/SFTP, connected with ' +
-            "the user's own credentials per share), OnBase document management (onbase_*, " +
+            "the user's own credentials per share), Mirth Connect integration engines (mirth_*, " +
+            "one or more instances such as dev/test/prod, each connected with the user's own " +
+            'Mirth account; mirth_list_instances first, then pass its instanceId), OnBase ' +
+            'document management (onbase_*, ' +
             'no free-text search: queries scope to a document type or saved custom query ' +
             'and constrain keyword values — the tools resolve keyword/document-type NAMES ' +
             'to ids themselves), plus search_knowledge (org knowledge, access-verified ' +

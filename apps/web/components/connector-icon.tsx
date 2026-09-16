@@ -57,6 +57,9 @@ const BRAND: Record<string, string> = {
   // A neutral sky blue: no vendor mark is shipped (GLYPH_ONLY), so the
   // globe below carries the colour.
   'web-search': '#0284C7',
+  // A teal of our own: no vendor mark is shipped (GLYPH_ONLY), so the
+  // channel glyph below carries the colour.
+  mirth: '#0F766E',
 };
 
 /** Fallback: the connector's initial on a neutral tile. */
@@ -215,6 +218,25 @@ function glyphFor(logo: string, label: string) {
           <path d="M7 5h7l3 3v11H7z" fill="#fff" opacity="0.95" />
           <path d="M14 5v3h3" fill="none" stroke={color} strokeWidth="1.2" />
           <path d="M9 12h6M9 15h6" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+        </>
+      );
+    // Mirth Connect: a channel between two endpoints — an integration engine
+    // moves messages from one system to another, and that is the picture.
+    case 'mirth':
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <circle cx="6.5" cy="12" r="2.2" fill="#fff" opacity="0.95" />
+          <circle cx="17.5" cy="12" r="2.2" fill="#fff" opacity="0.95" />
+          <path d="M8.7 12h6.6" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
+          <path
+            d="M13.2 9.8l2.3 2.2-2.3 2.2"
+            stroke="#fff"
+            strokeWidth="1.4"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </>
       );
     // Web search: a globe — a search surface over the public web, not a product.
