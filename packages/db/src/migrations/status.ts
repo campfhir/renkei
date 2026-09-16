@@ -135,6 +135,7 @@ export const EXPECTED_MIGRATIONS = [
   '103-chat-summaries',
   '104-chat-turn-kind',
   '105-chat-turn-stage',
+  '106-mirth-instances',
 ];
 
 export interface MigrationStatus {
