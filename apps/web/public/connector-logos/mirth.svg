@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    Renkei's own mark for the Mirth Connect connector — original artwork,
+    not NextGen Healthcare's trademarked logo. An "M" drawn as one message
+    route between two endpoints: an integration engine moves messages
+    from one system to another, and Mirth's is the M.
+  -->
+  <rect width="64" height="64" rx="14" fill="#0F766E"/>
+  <path d="M14 46 L24 18 L32 34 L40 18 L50 46"
+        fill="none" stroke="#FFFFFF" stroke-width="5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="14" cy="46" r="5.5" fill="#FFFFFF"/>
+  <circle cx="50" cy="46" r="5.5" fill="#FFFFFF"/>
+  <circle cx="14" cy="46" r="2.2" fill="#0F766E"/>
+  <circle cx="50" cy="46" r="2.2" fill="#0F766E"/>
+  <circle cx="32" cy="34" r="3.2" fill="#5EEAD4"/>
+</svg>

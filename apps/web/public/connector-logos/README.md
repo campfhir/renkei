@@ -31,21 +31,22 @@ use; see below.
 
 Ratios below are measured from each file's `viewBox`, not estimated.
 
-| File             | Source                                           | Ratio |
-| ---------------- | ------------------------------------------------ | ----- |
-| `sharepoint.svg` | `Microsoft Office SharePoint (2025–present).svg` | 0.90  |
-| `microsoft.svg`  | _record source_                                  | 1.00  |
-| `outlook.svg`    | `Microsoft Outlook Icon (2025–present).svg`      | 1.06  |
-| `onedrive.svg`   | `Microsoft OneDrive Icon (2025 - present).svg`   | 1.50  |
-| `confluence.svg` | _record source_                                  | 1.00  |
-| `atlassian.svg`  | _record source_                                  | 1.00  |
-| `jira.svg`       | _record source_                                  | 1.00  |
-| `jira-jsm.svg`   | _record source_                                  | 1.00  |
-| `bitbucket.svg`  | _record source_                                  | 1.00  |
-| `webex.svg`      | `Cisco Webex logo - Brandlogos.net.svg`          | 2.64  |
-| `zoom.svg`       | _record source_                                  | 1.00  |
-| `directory.svg`  | **ours** — original artwork, not a vendor mark   | 1.00  |
-| `onbase.svg`     | **ours** — vector recreation of the official OnBase app icon (Hyland), supplied in-session; not a Commons asset | 1.00  |
+| File             | Source                                                                                                                           | Ratio |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `sharepoint.svg` | `Microsoft Office SharePoint (2025–present).svg`                                                                                 | 0.90  |
+| `microsoft.svg`  | _record source_                                                                                                                  | 1.00  |
+| `outlook.svg`    | `Microsoft Outlook Icon (2025–present).svg`                                                                                      | 1.06  |
+| `onedrive.svg`   | `Microsoft OneDrive Icon (2025 - present).svg`                                                                                   | 1.50  |
+| `confluence.svg` | _record source_                                                                                                                  | 1.00  |
+| `atlassian.svg`  | _record source_                                                                                                                  | 1.00  |
+| `jira.svg`       | _record source_                                                                                                                  | 1.00  |
+| `jira-jsm.svg`   | _record source_                                                                                                                  | 1.00  |
+| `bitbucket.svg`  | _record source_                                                                                                                  | 1.00  |
+| `webex.svg`      | `Cisco Webex logo - Brandlogos.net.svg`                                                                                          | 2.64  |
+| `zoom.svg`       | _record source_                                                                                                                  | 1.00  |
+| `directory.svg`  | **ours** — original artwork, not a vendor mark                                                                                   | 1.00  |
+| `onbase.svg`     | **ours** — vector recreation of the official OnBase app icon (Hyland), supplied in-session; not a Commons asset                  | 1.00  |
+| `mirth.svg`      | **ours** — original artwork (an "M" drawn as a message route between two endpoints), not NextGen Healthcare's Mirth Connect mark | 1.00  |
 
 **The `_record source_` rows need filling in.** This table is the provenance
 record for third-party trademarks, so an unattributed asset is the one thing
@@ -60,7 +61,13 @@ asset rather than a recoloured one.
 
 `bitbucket.svg` has no connector behind it. It is staged for one.
 
-`directory.svg` is the one file here we drew. It marks the "Enterprise
+`mirth.svg` is also ours: NextGen Healthcare's Mirth Connect logo is a
+trademark with no public-domain source on Commons, so the connector wears an
+original mark — an "M" drawn as one message route between two endpoints —
+in the teal the fallback glyph uses. Swap in the official asset (with its
+provenance recorded here) if the organization has the rights to use it.
+
+`directory.svg` is the one other file here we drew. It marks the "Enterprise
 directory" panel — a Renkei bundle of Graph people/group scopes, not a
 Microsoft product — so there is no vendor mark to use. Microsoft's own would
 have been the obvious choice and is the one that cannot work: the Microsoft
