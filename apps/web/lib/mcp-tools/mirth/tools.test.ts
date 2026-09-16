@@ -112,14 +112,16 @@ describe('registration shape', () => {
 
     const writer = [...register(connectionOf(), { write: true, destructive: false }).keys()];
     expect(writer).toContain('mirth_deploy_channels');
-    expect(writer).toContain('mirth_api_request');
+    expect(writer).toContain('mirth_update_alert');
     expect(writer).not.toContain('mirth_delete_channel_preview');
-    expect(writer).not.toContain('mirth_destructive_request_preview');
+    expect(writer).not.toContain('mirth_delete_alert_preview');
 
     const all = [...register().keys()];
     expect(all).toContain('mirth_delete_channel_confirm');
     expect(all).toContain('mirth_remove_messages_confirm');
-    expect(all).toContain('mirth_destructive_request_confirm');
+    expect(all).toContain('mirth_delete_alert_confirm');
+    expect(all).not.toContain('mirth_api_request');
+    expect(all).not.toContain('mirth_api_get');
   });
 });
 
@@ -489,44 +491,6 @@ describe('configuration map', () => {
   });
 });
 
-describe('generic requests', () => {
-  it('refuses a bad path before any call, and routes destructive writes to the preview', async () => {
-    const tools = register();
-    expect(
-      (await tools.get('mirth_api_get')!({ instanceId: INSTANCE_ID, path: 'channels' })).isError
-    ).toBe(true);
-    expect(
-      (await tools.get('mirth_api_get')!({ instanceId: INSTANCE_ID, path: '/x?y' })).isError
-    ).toBe(true);
-    const destructive = await tools.get('mirth_api_request')!({
-      instanceId: INSTANCE_ID,
-      method: 'PUT',
-      path: '/server/configuration',
-    });
-    expect(textOf(destructive)).toContain('mirth_destructive_request_preview');
-    expect(mirthApi).not.toHaveBeenCalled();
-  });
-
-  it('forwards an ordinary POST with an XML body by default', async () => {
-    mirthApi.mockResolvedValueOnce(answer(200, '<alert/>', 'application/xml'));
-    const result = await register().get('mirth_api_request')!({
-      instanceId: INSTANCE_ID,
-      method: 'POST',
-      path: '/alerts',
-      body: '<alertModel/>',
-    });
-    expect(textOf(result)).toContain('Mirth answered 200');
-    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
-      method: 'POST',
-      path: '/alerts',
-      query: undefined,
-      body: '<alertModel/>',
-      contentType: 'application/xml',
-      accept: undefined,
-    });
-  });
-});
-
 describe('destructive cards', () => {
   it('previews a channel deletion with its name and confirms through DELETE', async () => {
     const tools = register();
@@ -585,24 +549,6 @@ describe('destructive cards', () => {
       method: 'DELETE',
       path: '/channels/c1/messages',
       query: { status: ['ERROR'] },
-    });
-  });
-
-  it('runs a confirmed generic destructive request', async () => {
-    mirthApi.mockResolvedValueOnce(answer(204, ''));
-    const result = await register().get('mirth_destructive_request_confirm')!({
-      instanceId: INSTANCE_ID,
-      method: 'DELETE',
-      path: '/alerts/a1',
-      reason: 'retire the alert',
-    });
-    expect(textOf(result)).toContain('Mirth answered 204');
-    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
-      method: 'DELETE',
-      path: '/alerts/a1',
-      query: undefined,
-      body: undefined,
-      contentType: 'application/xml',
     });
   });
 });

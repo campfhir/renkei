@@ -37,6 +37,17 @@ export {
 } from './api';
 
 export {
+  MIRTH_OPERATIONS,
+  fillPath,
+  pathParamNames,
+  type BodySpec,
+  type OperationKind,
+  type OperationSpec,
+  type ParamSpec,
+  type ParamType,
+} from './operations';
+
+export {
   decryptCredentials,
   encryptCredentials,
   parseMirthCredentials,

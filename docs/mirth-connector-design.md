@@ -66,35 +66,47 @@ classification cannot be bypassed by choosing the "other" tool.
 
 ## "All the REST API functions"
 
-Mirth's API is ~200 routes. Hand-writing a tool per route would be a
-maintenance liability and a worse experience for a model than a handful of
-well-phrased tools plus an escape hatch, so the surface is two layers:
+Mirth's API is ~200 routes. The first cut phrased ~40 of them as curated
+tools and reached the rest through generic `mirth_api_get` /
+`mirth_api_request` tools plus a lookup over the server's OpenAPI
+document. That was replaced before it shipped, at the organization's
+request: a generic tool has no schema of its own, so a model gets no
+validation on the arguments that matter (which path parameter, which
+query type, which body), and the tool list stops being a catalog of what
+the server can do. Every route is now a **named tool with its own
+schema**, in two layers:
 
 - **Curated tools** for the everyday work, phrased in Mirth's own terms
   and unwrapping Mirth's XStream-flavoured JSON — a list arrives as
   `{"list":{"channel":[…]}}`, a map as `{"map":{"entry":[…]}}`, and a
   single element as a bare object rather than a one-item array — into
   readable lines.
-- **Generic tools** for everything else: `mirth_api_get` (any GET),
-  `mirth_api_request` (any non-destructive POST/PUT), and the destructive
-  preview/confirm pair (any DELETE or destructive write). `mirth_describe_api`
-  reads the server's **own** OpenAPI document (`/api/openapi.json`, falling
-  back to `/api/swagger.json`) and filters it by keyword, so the model can
-  find the exact path and parameters without Renkei carrying a copy of the
-  spec that would drift from the server it talks to.
+- **Generated tools** for everything else, from a declarative operation
+  table in the package (`operations.ts`, transcribed from the 4.5.2
+  servlet interfaces): each entry names the route's path parameters,
+  query parameters (typed: string, int, boolean, list, ISO date, enum)
+  and body (an XML document, plain text, form fields, or multipart XML
+  parts), and the web app turns it into a `mirth_<operation>` tool whose
+  zod schema IS that specification. The table is tested for internal
+  consistency (every `{param}` declared, unique names, GETs have no body)
+  and for agreement with `isDestructiveRequest` on what is destructive,
+  so the exposure gate and the table cannot drift apart.
 
-Every route on the server is reachable through one of those, and every
-one of them passes the same path validation, the same exposure gate, and
-the same worker — nothing is out of reach and nothing is unguarded.
+Every route on the server is one of those, and every one passes the same
+exposure gate and the same worker — nothing is out of reach and nothing
+is unguarded. Left out of the table on purpose: the `POST … _getX` body
+variants of GET routes (the same operation, already named once), login /
+logout (the worker owns the session), and `POST /extensions/_install`
+(a zip upload; file bytes never travel through tool arguments here).
 
 Mirth objects (channels, alerts, code templates…) travel as the **XML the
 Administrator exports** where a tool hands one to the server:
 `mirth_get_channel` with `format: "xml"` returns exactly what
-`mirth_import_channel` accepts, so an assistant can round-trip an edit; the
-generic write tool defaults to `application/xml` for the same reason. JSON
-is what the tools read, because it is easier to unwrap than to parse XML
-without a dependency; XML is what they write, because it is Mirth's
-canonical form and round-trips without the JSON dialect's quirks.
+`mirth_import_channel` accepts, so an assistant can round-trip an edit,
+and the generated write tools take the same documents. JSON is what the
+tools read, because it is easier to unwrap than to parse XML without a
+dependency; XML is what they write, because it is Mirth's canonical form
+and round-trips without the JSON dialect's quirks.
 
 ## The dedicated worker process
 
@@ -143,9 +155,9 @@ then deletes the sealed credential.
 - **Renkei-side ACLs** — none. Mirth's roles are the authority; if an org
   needs an assistant to see less than a person's account can, the Mirth
   admin narrows the account.
-- **A vendored copy of Mirth's OpenAPI spec** — the server's own document
-  is read instead, so the tools never claim a route the running version
-  does not have.
+- **A generic "issue any request" tool** — replaced by the generated
+  named tools (above); a route the table does not know is a table entry
+  to add, not an escape hatch to reach for.
 - **Extension-specific routes as curated tools** (server log, global map
   viewer, data pruner…) — reachable through the generic tools; the set
   installed varies per server.

@@ -15,16 +15,16 @@
  * holds; it can never mint any — which is why it is checked here, per
  * call, and deliberately not in the worker.
  *
- * Coverage: the whole REST API. The curated tools below phrase the
- * everyday operations (channels, deployment, statuses, statistics,
- * messages, events, alerts, code templates, configuration, users,
- * extensions) so a model can act without knowing Mirth's wire format; the
- * generic tools (mirth_api_get, mirth_api_request, the destructive
- * preview/confirm pair) reach every other route, with mirth_describe_api
- * reading the server's own OpenAPI document so the model can find the
- * exact path. Every route is one of those, so nothing on the server is
- * out of reach — and nothing bypasses the exposure gate, because the
- * generic tools classify a request before forwarding it.
+ * Coverage: the whole REST API, every route a named tool with its own
+ * validated arguments. The curated tools below phrase the everyday
+ * operations (channels, deployment, statuses, statistics, messages,
+ * events, alerts, code templates, configuration, users, extensions) and
+ * unwrap Mirth's wire format into readable lines; every other route is
+ * generated from the operation table in @renkei/connector-mirth by
+ * operations.ts — one `mirth_<operation>` tool each, with the route's own
+ * path, query and body fields as its schema, sharing this file's call
+ * path and exposure gate. Nothing on the server is out of reach, and
+ * nothing bypasses the gate.
  *
  * Registration is additionally shaped by the aggregate exposure (see
  * registry.ts): a caller who exposed no write anywhere gets no act tools
@@ -33,16 +33,8 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  asArray,
-  isDestructiveRequest,
-  isRecord,
-  textOf,
-  unwrapList,
-  unwrapMap,
-  validApiPath,
-} from '@renkei/connector-mirth';
-import type { ConnectedInstance, HttpMethod } from '@renkei/connector-mirth';
+import { isRecord, textOf, unwrapList, unwrapMap } from '@renkei/connector-mirth';
+import type { ConnectedInstance } from '@renkei/connector-mirth';
 import type { MCPToolContext } from '../common';
 import { mirthApi } from '@/lib/mirth/service-client';
 import type {
@@ -60,6 +52,7 @@ import {
 } from '../widgets';
 import { NO_SUCH_INSTANCE } from './mirth-auth';
 import type { MirthAuth } from './mirth-auth';
+import { registerOperationTools, type OperationRuntime } from './operations';
 
 /** The connector key the Mirth capabilities register under. */
 export const MIRTH_MCP_CONNECTOR = 'mirth';
@@ -214,20 +207,6 @@ function queryOf(
   return query;
 }
 
-/** A model-supplied query object, narrowed to what the worker forwards. */
-function queryArg(value: unknown): MirthApiRequest['query'] | undefined {
-  if (!isRecord(value)) return undefined;
-  const query: NonNullable<MirthApiRequest['query']> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
-      query[key] = item;
-    } else if (Array.isArray(item)) {
-      query[key] = item.map(String);
-    }
-  }
-  return query;
-}
-
 const instanceIdField = z.string().uuid().describe('From mirth_list_instances.');
 const channelIdField = z.string().min(1).describe('The channel id (from mirth_list_channels).');
 
@@ -324,6 +303,23 @@ export function registerMirthTools(
     const answered = await call(instanceId, what, { method: 'GET', path, query });
     if (!answered.ok) return answered;
     return { ok: true, value: parseJson(answered.response.body) };
+  };
+
+  /**
+   * What the generated, one-tool-per-route half (operations.ts) borrows:
+   * the same call path, the same exposure gate, the same instance names.
+   */
+  const runtime: OperationRuntime = {
+    call,
+    exposureRefusal,
+    async instanceName(instanceId) {
+      const connected = await auth.listConnected();
+      if (typeof connected === 'string') return instanceId;
+      return (
+        connected.find((entry) => entry.instance.id === instanceId)?.instance.name ?? instanceId
+      );
+    },
+    maxChars: DEFAULT_MAX_CHARS,
   };
 
   // -------------------------------------------------------------------
@@ -1056,131 +1052,17 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
-    'mirth_describe_api',
-    {
-      title: "Mirth · Read — Look up REST routes in the server's own API document",
-      description:
-        "Read the instance's OpenAPI document and list the routes whose path, summary or tag " +
-        'matches a keyword — the way to find the exact path for mirth_api_get, ' +
-        'mirth_api_request or the destructive preview when no curated tool fits.',
-      annotations: { readOnlyHint: true },
-      inputSchema: z.object({
-        instanceId: instanceIdField,
-        search: z
-          .string()
-          .optional()
-          .describe('Keyword matched against path, summary and tags (case-insensitive).'),
-        limit: z.number().int().positive().max(200).optional().describe('Default 60.'),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      const instanceId = str(args.instanceId);
-      // The availability refusal first, so a denied caller hears that rather
-      // than a story about a missing document.
-      const target = targetFor(instanceId);
-      if (typeof target === 'string') return errText(target);
-      let document: unknown = null;
-      let failure: string | null = null;
-      for (const path of ['/openapi.json', '/swagger.json']) {
-        const fetched = await getJson(instanceId, 'read the API document', path);
-        if (fetched.ok && isRecord(fetched.value) && isRecord(fetched.value.paths)) {
-          document = fetched.value;
-          break;
-        }
-        if (!fetched.ok) failure = fetched.message;
-      }
-      if (!isRecord(document) || !isRecord(document.paths)) {
-        // A refusal that is not "nothing at that path" (credentials, reachability) is the
-        // real story; only a plain miss becomes the missing-document message.
-        if (failure && !failure.includes('nothing at that id or path')) return errText(failure);
-        return errText(
-          'The instance did not serve an OpenAPI document at /api/openapi.json or /api/swagger.json.'
-        );
-      }
-      const needle = str(args.search).toLowerCase();
-      const limit = typeof args.limit === 'number' ? args.limit : 60;
-      const lines: string[] = [];
-      let matched = 0;
-      for (const [path, operations] of Object.entries(document.paths)) {
-        if (!isRecord(operations)) continue;
-        for (const [method, operation] of Object.entries(operations)) {
-          if (!isRecord(operation)) continue;
-          const summary = str(operation.summary) || str(operation.description);
-          const tags = asArray(operation.tags).map(String).join(',');
-          const haystack = `${path} ${summary} ${tags}`.toLowerCase();
-          if (needle && !haystack.includes(needle)) continue;
-          matched += 1;
-          if (lines.length < limit) {
-            lines.push(
-              `${method.toUpperCase()} ${path} — ${clip(summary, 160)}${tags ? ` [${tags}]` : ''}`
-            );
-          }
-        }
-      }
-      if (matched === 0)
-        return textResult(
-          needle ? `No route matches "${needle}".` : 'The API document lists no routes.'
-        );
-      const note =
-        matched > lines.length ? `\n…${matched - lines.length} more; narrow the search.` : '';
-      return textResult(
-        `${matched} route(s) (paths are relative to /api):\n${lines.join('\n')}${note}`
-      );
-    }
-  );
-
-  server.registerTool(
-    'mirth_api_get',
-    {
-      title: 'Mirth · Read — Any GET route of the REST API',
-      description:
-        'Issue a GET against any Mirth REST route (path relative to /api, e.g. ' +
-        '/server/channelDependencies, /channels/{id}/connectorNames, /system/stats) and ' +
-        'return the answer. mirth_describe_api finds the path; prefer a curated tool when one ' +
-        'covers the need.',
-      annotations: { readOnlyHint: true },
-      inputSchema: z.object({
-        instanceId: instanceIdField,
-        path: z
-          .string()
-          .min(1)
-          .describe('Route relative to /api, starting with "/". No query string here.'),
-        query: z
-          .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]))
-          .optional(),
-        accept: z
-          .enum(['application/json', 'application/xml', 'text/plain'])
-          .optional()
-          .describe('Default JSON.'),
-        maxChars: z.number().int().positive().optional(),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      const path = str(args.path);
-      if (!validApiPath(path))
-        return errText(
-          'That is not a usable API path: give a route relative to /api starting with "/", with no query string.'
-        );
-      const answered = await call(str(args.instanceId), `GET ${path}`, {
-        method: 'GET',
-        path,
-        query: queryArg(args.query),
-        accept: str(args.accept) || undefined,
-      });
-      if (!answered.ok) return errText(answered.message);
-      const maxChars = typeof args.maxChars === 'number' ? args.maxChars : DEFAULT_MAX_CHARS;
-      return textResult(
-        clip(answered.response.body || `(empty ${answered.response.status} answer)`, maxChars)
-      );
-    }
-  );
+  // Every other GET route of the API, one named tool each.
+  registerOperationTools(server, runtime, 'read');
 
   // -------------------------------------------------------------------
   // Act tools — registered only when the caller exposed write somewhere,
   // and re-gated per instance on every call (exposureRefusal).
   // -------------------------------------------------------------------
   if (!exposure.write) return;
+
+  // Every other non-destructive POST/PUT route of the API, one named tool each.
+  registerOperationTools(server, runtime, 'act');
 
   /** Run one per-channel POST for a bounded list of ids and report per id. */
   const perChannel = async (
@@ -1732,72 +1614,6 @@ export function registerMirthTools(
     }
   );
 
-  server.registerTool(
-    'mirth_api_request',
-    {
-      title: 'Mirth · Act — Any non-destructive POST or PUT route of the REST API',
-      description:
-        'Issue a POST or PUT against any Mirth REST route (path relative to /api) with an ' +
-        'optional body — XML as the Administrator exports it (recommended for Mirth objects: ' +
-        'alerts, code templates, users, resources, settings) or JSON/text. Routes that remove ' +
-        'data, purge stores or replace the whole server configuration are refused here: use ' +
-        'mirth_destructive_request_preview for those. mirth_describe_api finds the path.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        instanceId: instanceIdField,
-        method: z.enum(['POST', 'PUT']),
-        path: z
-          .string()
-          .min(1)
-          .describe('Route relative to /api, starting with "/". No query string here.'),
-        query: z
-          .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]))
-          .optional(),
-        body: z.string().optional().describe('Request body, verbatim.'),
-        contentType: z
-          .enum([
-            'application/xml',
-            'application/json',
-            'text/plain',
-            'application/x-www-form-urlencoded',
-          ])
-          .optional()
-          .describe('Default application/xml when a body is given.'),
-        accept: z.enum(['application/json', 'application/xml', 'text/plain']).optional(),
-        maxChars: z.number().int().positive().optional(),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      const instanceId = str(args.instanceId);
-      const method: HttpMethod = str(args.method) === 'PUT' ? 'PUT' : 'POST';
-      const path = str(args.path);
-      if (!validApiPath(path))
-        return errText(
-          'That is not a usable API path: give a route relative to /api starting with "/", with no query string.'
-        );
-      if (isDestructiveRequest(method, path)) {
-        return errText(
-          'That route is destructive — use mirth_destructive_request_preview so the user can confirm it on a card.'
-        );
-      }
-      const refusal = await exposureRefusal(instanceId, 'write');
-      if (refusal) return errText(refusal);
-      const answered = await call(instanceId, `${method} ${path}`, {
-        method,
-        path,
-        query: queryArg(args.query),
-        body: typeof args.body === 'string' ? args.body : undefined,
-        contentType: str(args.contentType) || 'application/xml',
-        accept: str(args.accept) || undefined,
-      });
-      if (!answered.ok) return errText(answered.message);
-      const maxChars = typeof args.maxChars === 'number' ? args.maxChars : DEFAULT_MAX_CHARS;
-      return textResult(
-        `Mirth answered ${answered.response.status}.${answered.response.body.trim() ? `\n${clip(answered.response.body, maxChars)}` : ''}`
-      );
-    }
-  );
-
   /*
     Destructive operations are preview + confirm only (the fileshare delete
     shape): deleting a channel or purging a message store has no undo, so
@@ -1807,6 +1623,9 @@ export function registerMirthTools(
     because the card can outlive a change of heart on the connectors page.
   */
   if (!exposure.destructive) return;
+
+  // Every other destructive route of the API, as a named preview/confirm pair.
+  registerOperationTools(server, runtime, 'destructive');
 
   const previewGuidance = (what: string) =>
     `${what} is awaiting the user's decision on the preview card. Do not do it another ` +
@@ -2014,114 +1833,5 @@ export function registerMirthTools(
       inputSchema: removeMessagesSchema,
     },
     removeMessagesHandler
-  );
-
-  const destructiveRequestSchema = z.object({
-    instanceId: instanceIdField,
-    method: z.enum(['POST', 'PUT', 'DELETE']),
-    path: z
-      .string()
-      .min(1)
-      .describe('Route relative to /api, starting with "/". No query string here.'),
-    query: z
-      .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]))
-      .optional(),
-    body: z
-      .string()
-      .optional()
-      .describe('Request body, verbatim (XML recommended for Mirth objects).'),
-    contentType: z.enum(['application/xml', 'application/json', 'text/plain']).optional(),
-    reason: z.string().min(1).max(500).describe('One line for the card: what this does and why.'),
-  });
-
-  const destructiveRequestHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
-    const instanceId = str(args.instanceId);
-    const method = str(args.method).toUpperCase();
-    const path = str(args.path);
-    if (method !== 'POST' && method !== 'PUT' && method !== 'DELETE')
-      return errText('method must be POST, PUT or DELETE.');
-    if (!validApiPath(path)) return errText('That is not a usable API path.');
-    const refusal = await exposureRefusal(instanceId, 'destructive');
-    if (refusal) return errText(refusal);
-    const answered = await call(instanceId, `${method} ${path}`, {
-      method,
-      path,
-      query: queryArg(args.query),
-      body: typeof args.body === 'string' ? args.body : undefined,
-      contentType: str(args.contentType) || 'application/xml',
-    });
-    if (!answered.ok) return errText(answered.message);
-    return textResult(
-      `Mirth answered ${answered.response.status}.${answered.response.body.trim() ? `\n${clip(answered.response.body, DEFAULT_MAX_CHARS)}` : ''}`
-    );
-  };
-
-  server.registerTool(
-    'mirth_destructive_request_preview',
-    {
-      title: 'Mirth · Act — Preview any destructive REST request before it happens',
-      description:
-        'Show the user an interactive card to confirm or cancel a DELETE, or a POST/PUT that ' +
-        'removes data, purges a store, replaces the server configuration, installs or uninstalls ' +
-        'an extension, runs a database task or clears statistics (e.g. DELETE /alerts/{id}, ' +
-        'DELETE /users/{id}, DELETE /codeTemplates/{id}, PUT /server/configuration). The user ' +
-        'decides on the card. Requires destructive operations enabled for the instance.',
-      annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
-      inputSchema: destructiveRequestSchema,
-    },
-    async (args: Record<string, unknown>) => {
-      const instanceId = str(args.instanceId);
-      const method = str(args.method).toUpperCase();
-      const path = str(args.path);
-      if (method !== 'POST' && method !== 'PUT' && method !== 'DELETE')
-        return errText('method must be POST, PUT or DELETE.');
-      if (!validApiPath(path)) return errText('That is not a usable API path.');
-      const refusal = await exposureRefusal(instanceId, 'destructive');
-      if (refusal) return errText(refusal);
-      const connected = await auth.listConnected();
-      const instanceName =
-        typeof connected === 'string'
-          ? instanceId
-          : (connected.find((entry) => entry.instance.id === instanceId)?.instance.name ??
-            instanceId);
-      const body = typeof args.body === 'string' ? args.body : '';
-      return {
-        content: [{ type: 'text' as const, text: previewGuidance(`${method} ${path}`) }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `${method} ${path}`,
-          subtitle: `${instanceName} · ${str(args.reason)}`,
-          confirmTool: 'mirth_destructive_request_confirm',
-          confirmLabel: 'Run it',
-          confirmArgs: args,
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'Request', value: `${method} /api${path}` },
-            ...(isRecord(args.query)
-              ? [{ label: 'Query', value: JSON.stringify(args.query) }]
-              : []),
-            ...(body ? [{ label: 'Body', value: clip(body, 800) }] : []),
-            { label: 'Reason', value: str(args.reason) },
-            { label: 'Undo', value: 'None — Mirth applies it immediately' },
-          ],
-        },
-      };
-    }
-  );
-
-  server.registerTool(
-    'mirth_destructive_request_confirm',
-    {
-      title: 'Mirth · Act — Execute a confirmed destructive request',
-      description:
-        'Run the request the user confirmed on the preview card. ' +
-        confirmGuard('mirth_destructive_request_preview'),
-      annotations: { readOnlyHint: false },
-      _meta: APP_ONLY_META,
-      inputSchema: destructiveRequestSchema,
-    },
-    destructiveRequestHandler
   );
 }

@@ -13,8 +13,10 @@ jest.mock('@renkei/db', () => ({
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
+import { MIRTH_OPERATIONS } from '@renkei/connector-mirth';
 import { registerMirthTools } from './index';
 import { deniedMirthAuth } from './mirth-auth';
+import { sampleArgsFor } from './operations';
 import type { MCPToolContext } from '../common';
 
 type Handler = (args: Record<string, unknown>) => Promise<{
@@ -62,8 +64,6 @@ const ARGS: Record<string, Record<string, unknown>> = {
   mirth_get_configuration_map: { instanceId: INSTANCE },
   mirth_get_global_scripts: { instanceId: INSTANCE },
   mirth_get_server_settings: { instanceId: INSTANCE },
-  mirth_describe_api: { instanceId: INSTANCE },
-  mirth_api_get: { instanceId: INSTANCE, path: '/server/id' },
   mirth_deploy_channels: { instanceId: INSTANCE, channelIds: ['c1'] },
   mirth_undeploy_channels: { instanceId: INSTANCE, channelIds: ['c1'] },
   mirth_control_channels: { instanceId: INSTANCE, action: 'start', channelIds: ['c1'] },
@@ -80,24 +80,23 @@ const ARGS: Record<string, Record<string, unknown>> = {
   mirth_set_configuration_map: { instanceId: INSTANCE, entries: { k: 'v' } },
   mirth_set_global_scripts: { instanceId: INSTANCE, scripts: { Deploy: '// x' } },
   mirth_set_alert_enabled: { instanceId: INSTANCE, alertId: 'a1', enabled: false },
-  mirth_api_request: { instanceId: INSTANCE, method: 'POST', path: '/server/_generateGUID' },
   mirth_delete_channel_preview: { instanceId: INSTANCE, channelId: 'c1' },
   mirth_delete_channel_confirm: { instanceId: INSTANCE, channelId: 'c1' },
   mirth_remove_messages_preview: { instanceId: INSTANCE, channelId: 'c1', all: true },
   mirth_remove_messages_confirm: { instanceId: INSTANCE, channelId: 'c1', all: true },
-  mirth_destructive_request_preview: {
-    instanceId: INSTANCE,
-    method: 'DELETE',
-    path: '/alerts/a1',
-    reason: 'test',
-  },
-  mirth_destructive_request_confirm: {
-    instanceId: INSTANCE,
-    method: 'DELETE',
-    path: '/alerts/a1',
-    reason: 'test',
-  },
 };
+
+// The generated half: every table operation, and both halves of a
+// destructive pair, with arguments that satisfy its schema.
+for (const operation of MIRTH_OPERATIONS) {
+  const args = sampleArgsFor(operation);
+  if (operation.kind === 'destructive') {
+    ARGS[`mirth_${operation.tool}_preview`] = args;
+    ARGS[`mirth_${operation.tool}_confirm`] = args;
+  } else {
+    ARGS[`mirth_${operation.tool}`] = args;
+  }
+}
 
 describe('mirth tools with a denied auth', () => {
   const registered = tools();

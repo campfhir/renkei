@@ -28,3 +28,14 @@ export {
   validApiPath,
   type HttpMethod,
 } from './api';
+
+export {
+  MIRTH_OPERATIONS,
+  fillPath,
+  pathParamNames,
+  type BodySpec,
+  type OperationKind,
+  type OperationSpec,
+  type ParamSpec,
+  type ParamType,
+} from './operations';
