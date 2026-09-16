@@ -49,6 +49,7 @@
       "@renkei/user-prefs/prefs": ["../../packages/user-prefs/src/prefs.ts"],
       "@renkei/gates": ["../../packages/gates/src/index.ts"],
       "@renkei/redaction": ["../../packages/redaction/src/index.ts"],
+      "@renkei/document-render": ["../../packages/document-render/src/index.ts"],
       "@renkei/document-text": ["../../packages/document-text/src/index.ts"],
       "@renkei/knowledge": ["../../packages/knowledge/src/index.ts"],
       "@renkei/mcp-client": ["../../packages/mcp-client/src/index.ts"],

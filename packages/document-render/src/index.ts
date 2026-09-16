@@ -12,6 +12,9 @@ import { firstHeading, parseMarkdown } from './markdown-blocks';
 import { renderPdf, undrawableCharacters } from './pdf';
 import { renderPptx } from './pptx';
 import { renderXlsx, sheetsOf } from './xlsx';
+import { MEDIA_TYPE_BY_EXTENSION } from './text-formats';
+
+export * from './text-formats';
 
 export const RENDERED_MEDIA_TYPES = {
   pdf: 'application/pdf',
@@ -25,6 +28,12 @@ export type RenderedExtension = keyof typeof RENDERED_MEDIA_TYPES;
 export function isRenderedExtension(extension: string): extension is RenderedExtension {
   return Object.prototype.hasOwnProperty.call(RENDERED_MEDIA_TYPES, extension);
 }
+
+/** Every extension text can become here: kept as written, or rendered. */
+export const WRITABLE_EXTENSIONS: readonly string[] = [
+  ...Object.keys(MEDIA_TYPE_BY_EXTENSION),
+  ...Object.keys(RENDERED_MEDIA_TYPES),
+];
 
 export interface Rendered {
   bytes: Buffer;

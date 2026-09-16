@@ -9,9 +9,17 @@
  *
  * File bytes never travel as tool arguments here either: sandbox_download_url
  * and sandbox_fetch_from_fileshare have the WORKER (or the web app, for the
- * fileshare pull) fetch the bytes itself, and sandbox_send_to_upload reads
- * them back out and forwards them into an upload slot server-side. The
- * model only ever sees filenames, sizes, and ids.
+ * fileshare pull) fetch the bytes itself, sandbox_render_document has the web
+ * app RENDER them from text the model wrote (Markdown/CSV/JSON — never
+ * base64), and sandbox_send_to_upload reads them back out and forwards them
+ * into an upload slot server-side. The model only ever sees filenames,
+ * sizes, and ids.
+ *
+ * sandbox_render_document is how an agent authors a Word document, a slide
+ * deck, a PDF or a workbook: write Markdown or tabular text, stage the
+ * rendered file here, then move it anywhere a *_request_*_upload tool
+ * reaches — a SharePoint or OneDrive library, a Jira/JSM/Confluence
+ * attachment, a network share, OnBase — with sandbox_send_to_upload.
  *
  * Staged files are short-lived on purpose (see
  * docs/sandbox-connector-design.md): a fixed TTL and a per-caller quota,
@@ -29,6 +37,13 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
+import {
+  extensionOf,
+  isRenderedExtension,
+  renderDocument,
+  RENDER_INPUT_MAX_CHARS,
+  resolveMediaType,
+} from '@renkei/document-render';
 import {
   PAGE_TEXT_DEFAULT_CHARS,
   PAGE_TEXT_MAX_CHARS,
@@ -256,6 +271,90 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
       );
       if (!staged.ok) return errText(clientFailure(staged.err).message);
       return textResult(`Staged ${fileLine(staged.val)}`);
+    }
+  );
+
+  server.registerTool(
+    'sandbox_render_document',
+    {
+      title: 'Sandbox · Act — Author a document from text, staged in your scratch space',
+      description:
+        'Turn text you write into a Word document, slide deck, PDF or workbook, staged in your ' +
+        'scratch space — the way to author a document for another connector to file (a ' +
+        'SharePoint or OneDrive library, a Jira/JSM/Confluence attachment, a network share, ' +
+        'OnBase): render it here, then request an upload endpoint with the destination’s own ' +
+        '*_request_*_upload tool and complete it with sandbox_send_to_upload — no curl, no ' +
+        'browser, no base64. ' +
+        'Pass the whole content as text, never base64; the filename’s extension decides what is ' +
+        'made. Text formats (.csv, .tsv, .md, .txt, .json, .html, .xml, .yaml) are staged ' +
+        'exactly as written. Document formats are RENDERED from your text: .docx (Word) and ' +
+        '.pdf from Markdown — headings, paragraphs, bullet and numbered lists, tables, code ' +
+        'blocks, quotes; .pptx (PowerPoint) from Markdown where every # or ## heading starts a ' +
+        'slide and what follows is its body; .xlsx (Excel) from CSV, or JSON ' +
+        '{"sheets":[{"name":…,"rows":[[…],…]}]} for several sheets, or Markdown tables (one ' +
+        'sheet each, named by the heading above). Numbers and dates in a workbook are typed as ' +
+        'such.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        filename: z
+          .string()
+          .min(1)
+          .max(255)
+          .describe(
+            'Name to stage the file as, with an extension (report.xlsx, brief.docx, deck.pptx, summary.pdf, data.csv, notes.md).'
+          ),
+        content: z
+          .string()
+          .max(RENDER_INPUT_MAX_CHARS)
+          .describe(
+            `The complete content, as text (at most ${RENDER_INPUT_MAX_CHARS} characters): Markdown for .docx/.pdf/.pptx, CSV or JSON or Markdown tables for .xlsx, the file itself for a text format.`
+          ),
+        contentType: z
+          .string()
+          .optional()
+          .describe(
+            'For text formats only: the media type, when the extension does not say (default: implied by the extension, else text/plain).'
+          ),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const target = targetOf(context);
+      if (typeof target === 'string') return errText(target);
+
+      const named = validateFilename(str(args.filename));
+      if (!named.ok) return errText('filename must be a name, not a path, and not empty.');
+
+      const content = str(args.content);
+      const extension = extensionOf(named.filename);
+
+      let bytes: Uint8Array;
+      let mediaType: string;
+      let notes: string[] = [];
+      if (extension && isRenderedExtension(extension)) {
+        const rendered = await renderDocument(extension, named.filename, content);
+        bytes = rendered.bytes;
+        mediaType = rendered.mediaType;
+        notes = rendered.notes;
+      } else {
+        const type = resolveMediaType(named.filename, args.contentType);
+        if (!type.ok) return errText(type.reason);
+        bytes = Buffer.from(content, 'utf8');
+        mediaType = type.mediaType;
+      }
+
+      const staged = await sbWriteFile(
+        target,
+        { filename: named.filename, contentType: mediaType, source: 'docgen' },
+        bytes
+      );
+      if (!staged.ok) return errText(clientFailure(staged.err).message);
+      const note = notes.length ? `\nNote: ${notes.join(' ')}` : '';
+      return textResult(
+        `Staged ${fileLine(staged.val)}${note}\n` +
+          'Next: request an upload endpoint with the destination’s own *_request_*_upload tool ' +
+          `(e.g. sharepoint_request_document_upload), then call sandbox_send_to_upload with ` +
+          'this fileId and that uploadId to move it there.'
+      );
     }
   );
 
