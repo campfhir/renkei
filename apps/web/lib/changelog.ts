@@ -43,6 +43,244 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-09-16',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Agents can render documents too',
+        detail:
+          'A code chat could already turn Markdown into a Word document or PDF, headings into a slide deck, or a table into a spreadsheet. Any agent step can now do the same on its own, staging the file in the sandbox for another connector — SharePoint, OneDrive, a Jira attachment, a network share, OnBase — to pick up and send on.',
+      },
+      {
+        kind: 'changed',
+        title: 'Remembering is its own step, not a side effect',
+        detail:
+          'A step used to attach a memory note to the same call that declared it had succeeded, failed or was skipped, so a routine outcome could quietly leave a note behind. Remembering is now a separate, free tool call a step makes only when it means to — an agent that must not repeat itself across runs now needs to say so and remember the fact explicitly.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Long text on an agent’s page no longer breaks the layout',
+        detail:
+          'A memory entry, an Improve finding, or a trigger’s last error message with nothing to break on — a long id, URL or path — could overflow its box and push the page out of shape. These now wrap like everything else.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-15',
+    heading: 'Mirth Connect joins the connectors',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Connect with your own Mirth account, per server',
+        detail:
+          'An organization registers any number of Mirth Connect instances — dev, test, prod, one per site — and each person connects their own Mirth username and password to whichever they use, from the Connectors page. The credential is checked against the live server before it is stored, so a wrong password fails immediately rather than later.',
+      },
+      {
+        kind: 'added',
+        title: 'Permissions you actually recognize',
+        detail:
+          'Instead of one read/act/destructive ladder, pick permissions by area — channels, messages, alerts, code templates, users, events, server — with Read only, Operate, Develop and Everything presets to start from. Mirth’s own server-side roles still have the final say.',
+      },
+      {
+        kind: 'added',
+        title: 'Deleting, purging or restoring asks first',
+        detail:
+          'Deleting a channel, purging messages, deleting an alert, restoring the server and similar irreversible actions always show a preview card to confirm, whatever permissions are granted.',
+      },
+      {
+        kind: 'added',
+        title: 'Most of the Mirth REST API, reachable by name',
+        detail:
+          'Channels, messages, alerts, code templates, users, the event log and server configuration — hand-written tools for the everyday ones and generated tools covering the rest of Mirth’s roughly two hundred routes. Say a channel, alert or code template by name, or “prod” for an instance, and Renkei resolves it; replies naming an id show its name too.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-15',
+    heading: 'Long chats keep going',
+    entries: [
+      {
+        kind: 'added',
+        title: 'A long chat compacts itself',
+        detail:
+          'Once a chat’s history grows past a size the model can comfortably hold, Renkei folds everything but the most recent messages into one rolling summary — identifiers, file paths, commands and their outcomes, decisions, open items — and keeps going instead of failing or degrading. It happens on its own before a turn would overflow, the model can call it itself, or you can ask directly: type /compact, or pick “Compact this conversation” from the / menu. A card shows the fold in progress, and a small marker stays once it is done.',
+      },
+      {
+        kind: 'added',
+        title: 'Send your next message while one is still running',
+        detail:
+          'Sending used to be blocked until the current reply finished. It now queues instead — shown in the composer, each item removable on its own or all at once — and the moment the running turn ends, the next queued message goes out with no click needed.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-15',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'A connected Bitbucket account could end up with no tools',
+        detail:
+          'Renkei trusts a connection’s scopes by matching the ones it requested against the ones the provider reports as granted — but Bitbucket reports granted scopes under a vocabulary that shares nothing with the names Renkei requests, so the match came back empty and a perfectly healthy connection could silently offer no Bitbucket tools at all. A connection is now trusted as granted unless at least one recognized name comes back, the same rule already used for providers that cannot narrow scopes at consent. Its label on the Connectors page also read as the raw id “atlassian-bitbucket” rather than “Bitbucket”; both are fixed together.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A stuck tool call no longer hangs the whole reply',
+        detail:
+          'A code chat’s own sandbox and file tools had no timeout of their own, so one that hung kept the whole turn waiting forever; it now times out on the same budget every other tool call gets, and the turn moves on. A reply cut off mid tool call — by an error, a timeout, or Stop — now shows the arguments that had actually streamed in rather than an empty call.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Long unbroken text no longer overflows chat, cards or logs',
+        detail:
+          'A URL, token or hash with nowhere to break could spill out of its bubble, card or panel instead of wrapping. Chat messages, cards, memory and library views, an agent’s run-live view, and the logs viewer now all wrap it in place.',
+      },
+      {
+        kind: 'changed',
+        title: 'Code projects require a working Bitbucket connection',
+        detail:
+          'A project could be created without the Bitbucket scopes the feature actually needs, and only fail once a chat tried to clone, push or open a pull request. Creating one now checks your connection first and names exactly which Connectors-page boxes to tick; inside a code project’s chat, Bitbucket can no longer be switched off.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
+    heading: 'Sandbox reliability across restarts and replicas',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'A dropped sandbox checkout no longer ends the chat',
+        detail:
+          'If the sandbox’s checkout of your repository went missing mid-turn — swept from disk, the sandbox restarted, a replica lost track of it — every code tool call failed and the chat was stuck. Tools now re-clone the checkout, or adopt a fresher one another chat already made, and run the same call again in it, saying so in the reply; past two recoveries in one turn they stop and say to report it rather than loop. A new code_clone tool lets the assistant check and recover the checkout on demand.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Browser tool sessions survive a restart or a different replica',
+        detail:
+          'The browser tool’s cookies, current page and element references lived only in the memory of whichever sandbox replica handled the call — a later call landing on a different replica, or a restart, meant starting the browser task over with no explanation. Sessions are now saved, encrypted, to the shared sandbox disk after every action and picked up by whichever replica runs next; typed secrets are still never saved this way.',
+      },
+      {
+        kind: 'fixed',
+        title: 'An unlocked secret stays unlocked across a restart',
+        detail:
+          'Unlocking a passphrase-protected browser secret only unlocked it on the sandbox replica handling that call — a later call on a different replica, or a worker restart, found it locked again well within its own unlock window. The unlocked key is now written to the shared disk, sealed to its owner, for the rest of that window; locking it anywhere locks it everywhere.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Fixed a permissions bug that could block a code chat from its own workspace',
+        detail:
+          'The sandbox creates each tenant’s workspace directory meant to be reachable but not listable; a safety measure elsewhere in the worker was silently sealing it further at creation, so a different caller’s process could fail to even reach its own subdirectory. The directory is now set to the permissions it was always meant to have.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
+    heading: 'Dark mode keeps up, and pages stop flashing blank',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Dark mode applies immediately and stays in sync',
+        detail:
+          'Switching tenants, recovering from a hydration error, or reopening a backgrounded tab could leave the page in light styling regardless of your saved preference, and picking a theme in Preferences did not reach your other open tabs. The theme is now force-applied on every mount, tabs stay in sync with each other, and Auto re-checks the system theme whenever a tab regains focus or is restored, not only when it changes live.',
+      },
+      {
+        kind: 'added',
+        title: 'Loading skeletons instead of a blank page',
+        detail:
+          'Most pages under Admin, Agents, Chat, Code, Connectors, Files, Knowledge, Logs, Notifications and usage now show a placeholder while their data loads. A button that triggers a refresh — enabling an agent, running it now, cancelling a run — also stays in its busy state until the page’s data has actually updated, instead of looking clickable again before anything changed.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
+    heading: 'The sidebar grows up',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Icons for every row in the menu',
+        detail:
+          'Home, Agents, Knowledge, Files, Chat, Projects, Code, Prompt libraries, Memory, Notifications, Preferences, Connectors, Batch jobs, My usage, Activity, Organization, About — each row in the left-hand menu now carries a small icon next to its label, not just text.',
+      },
+      {
+        kind: 'changed',
+        title: 'Chat rows are simpler, and code chats join the list',
+        detail:
+          'Rows no longer spell out a project name or owner underneath the title. A code project’s chats, previously visible only from the project’s own page, now appear in this same list alongside every other chat, marked with a small project indicator instead.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Signed-out visitors no longer see a flash of the page first',
+        detail:
+          'Activity, Tools and My usage could render before the sign-in check that would redirect a signed-out visitor away had finished, showing a flash of the real page first. The check now runs before anything renders.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
+    heading: 'Organization usage, and your own',
+    entries: [
+      {
+        kind: 'added',
+        title: 'An Organization usage page for operators',
+        detail:
+          'Tenant-wide token spend broken down by surface — chat, chat projects, code projects, agents — who is using it, and leaderboards including which agents get the most done per thousand tokens.',
+      },
+      {
+        kind: 'added',
+        title: 'My usage gets the same breakdown',
+        detail:
+          'The token-by-surface chart and a most-efficient-agents leaderboard now sit on your own usage page too, scoped to your own agents.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
+    heading: 'Creating and naming repositories from Renkei',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Create a brand-new Bitbucket repository from the project form',
+        detail:
+          'A new Code project used to need an existing repository, found by browsing or searching. “Create new” now makes an empty, private repository in the workspace and project you choose, right from the form, and uses it exactly like a browsed one from there.',
+      },
+      {
+        kind: 'added',
+        title: 'A code project takes its name from the repository',
+        detail:
+          'Naming a project used to be required and separate from picking its repository. The name now defaults to the repository’s own name and is optional to override; the project page’s title itself can be renamed in place with a double-click, or the pencil that appears on hover.',
+      },
+      {
+        kind: 'fixed',
+        title: 'New code projects could not list some Bitbucket workspaces',
+        detail:
+          'The project-creation form’s workspace browser called an older Bitbucket endpoint that a newer style of connected token gets refused for, even though the same account’s chat tools worked fine. Both now go through the same lookup, with the same fallback.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-14',
+    heading: 'Notifications: read them all, and reach back further',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Mark every notification as read at once',
+        detail:
+          'One button marks every unread notification, not just the ones currently loaded on the page.',
+      },
+      {
+        kind: 'added',
+        title: 'Load older notifications',
+        detail:
+          'The page used to show only the newest page with no way back. Scroll near the bottom and a “Show more” button pages backward, up to a hundred at a time.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Every notification opens something',
+        detail:
+          'A saved note, a created card, or a run failure with no obvious link of its own used to be an unclickable dead card. It now opens the run it came from.',
+      },
+    ],
+  },
+  {
     date: '2026-09-14',
     heading: 'Code projects: a repository to work in',
     entries: [
