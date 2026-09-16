@@ -368,16 +368,20 @@ maybe('agent run engine', () => {
     expect(seen[1].system).toBe(seen[0].system);
   });
 
-  it('writes memory only when a step asks, once per fact, visible to the rest of the run', async () => {
+  it('writes memory only when a step explicitly calls remember, once per fact, visible to the rest of the run', async () => {
     const first = reasoningStep('note the message');
     const second = reasoningStep('note it again');
     const doc = { version: 1, steps: [first, second] };
     if (!isAgentStepsDoc(doc)) throw new Error('fixture');
     const { runId, agentId } = await seedRun(doc);
     const seen: LlmRequest[] = [];
-    const llm = stubLlm((request) => {
+    const llm = stubLlm((request, call) => {
       seen.push(request);
-      return finish('success', { remember: 'Replied to message 123 about the outage.' });
+      // Both steps call remember explicitly (a separate turn from
+      // finish_step) with the identical fact, then declare success.
+      return call % 2 === 0
+        ? useTool('remember', { note: 'Replied to message 123 about the outage.' })
+        : finish('success');
     });
     await handlerWith(
       llm,
@@ -389,13 +393,16 @@ maybe('agent run engine', () => {
       .select(['kind', 'content'])
       .where('agent_id', '=', agentId)
       .execute();
-    // One entry for two identical remembers, and no run breadcrumb.
+    // One entry for two identical remember calls, and no run breadcrumb.
     expect(memory).toEqual([
       { kind: 'entry', content: 'Replied to message 123 about the outage.' },
     ]);
-    // The second step already saw what the first remembered.
+    // Before the first step's remember call resolves, the fact isn't there yet...
     expect(seen[0].system).not.toContain('Replied to message 123');
+    // ...but it is by that same attempt's next turn (finish_step)...
     expect(seen[1].system).toContain('Replied to message 123 about the outage.');
+    // ...and the second step already sees it from its very first turn.
+    expect(seen[2].system).toContain('Replied to message 123 about the outage.');
   });
 
   it('leaves no memory behind for a run that remembers nothing', async () => {
@@ -465,7 +472,11 @@ maybe('agent run engine', () => {
     // paragraph. The list is byte-identical across the attempt's turns —
     // it heads the cached prompt prefix.
     expect(seen).toHaveLength(2);
-    expect(seen[0].tools.map((tool) => tool.name)).toEqual(['finish_step', 'jira_get_issue']);
+    expect(seen[0].tools.map((tool) => tool.name)).toEqual([
+      'finish_step',
+      'remember',
+      'jira_get_issue',
+    ]);
     expect(seen[1].tools).toEqual(seen[0].tools);
     const prompt = seen[0].messages[0].content[0];
     expect(prompt.type === 'text' && prompt.text).not.toContain('resolve_time');
@@ -489,6 +500,7 @@ maybe('agent run engine', () => {
     )({ payload: { runId: timed.runId } });
     expect(seenTimed[0].tools.map((tool) => tool.name)).toEqual([
       'finish_step',
+      'remember',
       'resolve_time',
       'jira_get_issue',
     ]);
@@ -620,7 +632,11 @@ maybe('agent run engine', () => {
     // while the tool list itself stays what it was: it heads the cached
     // prompt prefix, so narrowing it would throw the cache away.
     const forced = requests[4];
-    expect(forced.tools.map((tool) => tool.name)).toEqual(['finish_step', 'jira_get_issue']);
+    expect(forced.tools.map((tool) => tool.name)).toEqual([
+      'finish_step',
+      'remember',
+      'jira_get_issue',
+    ]);
     expect(forced.tools).toEqual(requests[0].tools);
     expect(forced.toolChoice).toEqual({ name: 'finish_step' });
 

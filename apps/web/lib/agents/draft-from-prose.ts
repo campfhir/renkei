@@ -322,9 +322,18 @@ function promptOf(
       'Preferences instead.',
     '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
       'handled, do not update the same ticket again — stop instead").',
+    '- At runtime (never as a field in this JSON) a step may call a free `remember` tool to ' +
+      'note ONE fact future runs need and could not otherwise rediscover — a deliberate, ' +
+      'standalone call, never a side effect of the step succeeding or failing. When the ' +
+      'description implies the automation must not repeat or contradict itself across separate ' +
+      'runs (e.g. "don\'t reply to the same message twice", "skip tickets we already filed"), ' +
+      'say so explicitly in the acting step\'s instruction — e.g. "remember which message this ' +
+      'was so a later run does not reply to it again" — so the runtime model knows to use it. ' +
+      'Most steps have nothing worth remembering; say nothing about it for those.',
     '- Think hard about the EDGE CASES of these rules before answering: what happens when the ' +
       'trigger fires with missing or odd data, a search finds nothing (or far too many), a ' +
-      'tool call fails, the same item was already handled by an earlier run, or a condition ' +
+      'tool call fails, the same item was already handled by an earlier run (the acting step\'s ' +
+      'instruction should say to remember what it handled), or a condition ' +
       'is ambiguous between two paths. Handle the realistic ones IN the steps — empty-result ' +
       'wording in the instruction, a "failures" entry, a stop-quiet or end-marker exit — and ' +
       'note what you considered in "edgeCases" so the reasoning is checkable.',

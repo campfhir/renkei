@@ -90,6 +90,8 @@ import {
   CHOOSE_PATH_TOOL,
   FINISH_STEP_DEF,
   FINISH_STEP_TOOL,
+  REMEMBER_DEF,
+  REMEMBER_TOOL,
   RESOLVE_TIME_DEF,
   RESOLVE_TIME_TOOL,
   LOOP_DECISION_DEF,
@@ -266,8 +268,6 @@ interface AttemptOutcome {
    * `decideOutcome`.
    */
   declaredSkip?: boolean;
-  /** A note finish_step asked to carry into future runs (agent memory). */
-  remember: string | null;
   toolCalls: ToolCallRecord[];
   usage: UsageTotals;
   unbound: string[];
@@ -746,7 +746,6 @@ function finishArgsOf(input: unknown): {
   saveItems: string[] | null;
   stop: boolean;
   quiet: boolean;
-  remember: string | null;
 } | null {
   if (typeof input !== 'object' || input === null) return null;
   const args: {
@@ -757,7 +756,6 @@ function finishArgsOf(input: unknown): {
     saveItems?: unknown;
     stop?: unknown;
     quiet?: unknown;
-    remember?: unknown;
   } = input;
   // 'nothing-to-do' is the pre-rename spelling of 'skipped' — still
   // accepted so an attempt in flight across a deploy lands, never taught
@@ -780,7 +778,6 @@ function finishArgsOf(input: unknown): {
     typeof args.saveValue === 'string'
       ? clip(stripToolResidue(args.saveValue), SAVE_VALUE_CHARS)
       : null;
-  const remember = typeof args.remember === 'string' ? stripToolResidue(args.remember) : '';
   return {
     outcome,
     code: typeof args.code === 'string' ? args.code : null,
@@ -789,7 +786,6 @@ function finishArgsOf(input: unknown): {
     saveItems: saveItems && saveItems.length > 0 ? saveItems : null,
     stop: args.stop === true,
     quiet: args.quiet === true,
-    remember: remember || null,
   };
 }
 
@@ -826,6 +822,13 @@ function askPersonArgsOf(
       ? { timeoutHours: args.timeoutHours }
       : {}),
   };
+}
+
+function rememberArgsOf(input: unknown): { note: string } | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const args: { note?: unknown } = input;
+  const note = typeof args.note === 'string' ? stripToolResidue(args.note).trim() : '';
+  return note ? { note } : null;
 }
 
 export function createAgentRunHandler(deps: EngineDeps) {
@@ -1703,10 +1706,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     /**
      * The post-processing every closed attempt shares, gated or not:
-     * record the detail, remember what finish_step asked to, bind saveAs,
-     * and route succeeded/failed into advance/finish/stop/fail — or, on a
-     * retriable failure, hand back 'retry' for the caller's own loop to
-     * act on (this function has no loop of its own to `continue`).
+     * record the detail, bind saveAs, and route succeeded/failed into
+     * advance/finish/stop/fail — or, on a retriable failure, hand back
+     * 'retry' for the caller's own loop to act on (this function has no
+     * loop of its own to `continue`).
      */
     async function finishAttempt(
       rowId: string,
@@ -1760,36 +1763,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .where('id', '=', rowId)
         .execute();
       await recordUsage(run, outcome.usage, step.id, llm);
-
-      if (outcome.remember) {
-        // The step asked future runs to know something. Best-effort: a
-        // memory write must never change this attempt's outcome. A NEW
-        // note also reaches the rest of THIS run: the system prompt's
-        // memory block is re-rendered, which costs the run one cache
-        // write for the prefix (memory sits last in the block for exactly
-        // that reason) and stops a later step or loop round acting on
-        // something this run has already handled.
-        try {
-          const { inserted } = await appendAgentMemory(db, {
-            tenantId: run.tenant_id,
-            agentId: run.agent_id,
-            content: outcome.remember,
-            runId: run.id,
-          });
-          if (inserted) {
-            context.memoryText = renderAgentMemory(
-              await readAgentMemory(db, run.tenant_id, run.agent_id)
-            );
-          }
-        } catch (error) {
-          logger.warn('memory append failed for run {runId}: {error}', {
-            component: 'worker-agents/engine',
-            runId: run.id,
-            subject: run.owner_subject,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
 
       if (outcome.succeeded) {
         // A 'skipped' declaration never binds saveValue/saveItems (both are
@@ -2179,7 +2152,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
             : clip(`Approved${decidedNote}. ${resultText}`, PREVIEW_CHARS),
           saveValue: gatedStep.saveAs ? clip(resultText, SAVE_VALUE_CHARS) : null,
           saveItems: null,
-          remember: null,
           toolCalls: [
             {
               tool: proposedTool,
@@ -3578,12 +3550,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // chips — the deliberately laxer set for fixing a failure. Blocked
     // skills never enter the offer, so guidance chips can't smuggle one
     // past the guardrails.
-    // resolve_time rides alongside finish_step: in-process, deterministic,
+    // resolve_time and remember both ride alongside finish_step: in-process,
     // free of the budget, and NOT the step's "one tool" — a step whose one
     // skill is a mail search must still be able to work out what
-    // "yesterday 19:00 Los Angeles" means without spending its only call.
+    // "yesterday 19:00 Los Angeles" means, or note a fact for future runs,
+    // without spending its only call. remember is offered unconditionally
+    // (any step may turn out to have something worth keeping); resolve_time
+    // only where the step can actually use it.
     const offered: LlmToolDef[] = [
       FINISH_STEP_DEF,
+      REMEMBER_DEF,
       ...(offersTime ? [RESOLVE_TIME_DEF] : []),
       ...(canAskQuestions ? [ASK_PERSON_DEF] : []),
     ];
@@ -3624,8 +3600,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       unbound: built.unbound,
       resolvedInstruction,
       promptText: promptTextOf(built.messages),
-      // Only a finish_step call can ask to remember; error paths carry null.
-      remember: null,
     };
 
     for (let turn = 0; turn < MAX_LLM_TURNS; turn += 1) {
@@ -3777,6 +3751,68 @@ export function createAgentRunHandler(deps: EngineDeps) {
               PREVIEW_CHARS
             ),
             isError: !resolved.ok,
+            durationMs: 0,
+          });
+          continue;
+        }
+
+        // Free and local, exactly like resolve_time — but this one is a
+        // deliberate, standalone act, never a field on finish_step's
+        // outcome. Written immediately (not deferred to finishAttempt) so a
+        // fact recorded early in a multi-turn attempt is visible to the
+        // rest of THIS run right away, the same as it would be for a later
+        // step. Best-effort: a memory write must never fail the attempt.
+        if (use.name === REMEMBER_TOOL) {
+          const remembered = rememberArgsOf(use.input);
+          if (!remembered) {
+            results.push({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: 'remember needs {note}, a non-empty string.',
+              isError: true,
+            });
+            continue;
+          }
+          let resultText = 'Remembered.';
+          let isError = false;
+          try {
+            const { inserted } = await appendAgentMemory(db, {
+              tenantId: run.tenant_id,
+              agentId: run.agent_id,
+              content: remembered.note,
+              runId: run.id,
+            });
+            if (inserted) {
+              context.memoryText = renderAgentMemory(
+                await readAgentMemory(db, run.tenant_id, run.agent_id)
+              );
+            } else {
+              resultText = 'Already remembered — no change.';
+            }
+          } catch (error) {
+            isError = true;
+            resultText = 'Could not save that to memory.';
+            logger.warn('memory append failed for run {runId}: {error}', {
+              component: 'worker-agents/engine',
+              runId: run.id,
+              subject: run.owner_subject,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          results.push({
+            type: 'tool_result',
+            toolUseId: use.id,
+            content: resultText,
+            isError,
+          });
+          // Recorded for the run timeline, but not counted: tool_call_count
+          // is the budget's tally.
+          toolCalls.push({
+            free: true,
+            tool: REMEMBER_TOOL,
+            argsPreview: clip(JSON.stringify(use.input ?? {}), PREVIEW_CHARS),
+            resultPreview: clip(resultText, PREVIEW_CHARS),
+            isError,
             durationMs: 0,
           });
           continue;
@@ -3967,12 +4003,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       saveItems: string[] | null;
       stop: boolean;
       quiet: boolean;
-      remember: string | null;
     },
     primaryResults: McpToolResult[],
     base: Pick<
       AttemptOutcome,
-      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'promptText' | 'remember'
+      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'promptText'
     >
   ): AttemptOutcome {
     if (finish.outcome === 'skipped') {
@@ -3996,7 +4031,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         summary: finish.summary,
         saveValue: null,
         saveItems: null,
-        remember: finish.remember,
       };
     }
     if (finish.outcome === 'success') {
@@ -4015,7 +4049,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
           summary: finish.summary || 'The tool reported errors on every call.',
           saveValue: null,
           saveItems: null,
-          remember: finish.remember,
         };
       }
       return {
@@ -4027,7 +4060,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
         summary: finish.summary,
         saveValue: finish.saveValue,
         saveItems: finish.saveItems,
-        remember: finish.remember,
       };
     }
     return {
@@ -4038,9 +4070,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       summary: finish.summary,
       saveValue: null,
       saveItems: null,
-      // A declared failure may still be worth remembering ("ticket X is
-      // locked, skip it") — the model asked, keep it.
-      remember: finish.remember,
     };
   }
 
@@ -4254,10 +4283,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       });
     }
     // No automatic memory entry: what future runs need to know is a step's
-    // explicit `remember` (finishAttempt), never a per-run breadcrumb — an
-    // agent firing every few minutes wrote one for every run, and every
-    // later run re-read all of them on every call. Trigger deduplication
-    // is the firing ledger's job (agent_trigger_firings), not memory's.
+    // explicit call to the remember tool (runAttempt), never a per-run
+    // breadcrumb — an agent firing every few minutes wrote one for every
+    // run, and every later run re-read all of them on every call. Trigger
+    // deduplication is the firing ledger's job (agent_trigger_firings), not
+    // memory's.
     if (deps.onFinalized) {
       try {
         await deps.onFinalized({

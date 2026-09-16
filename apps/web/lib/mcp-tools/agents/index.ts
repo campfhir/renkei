@@ -1653,7 +1653,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         "One of your agents' (or one shared with you) memory in full: the rolling summary " +
         'and the newest entries the ' +
-        'engine recorded across runs. agent_get shows the bounded slice runs receive; this is ' +
+        'engine recorded across runs. Each entry came from a step explicitly calling the ' +
+        'runtime remember tool — a deliberate note, never an automatic side effect of a step ' +
+        'succeeding or failing. agent_get shows the bounded slice runs receive; this is ' +
         'the raw list. Returns entryIds for agent_memory_forget.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -2121,7 +2123,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     '"not approved"); empty or absent just skips the call and continues below the step.',
     'approval.outcome ("approved"|"denied"|"timedOut") and approval.comment (the person\'s',
     'typed note, if any) bind as variables so a branch inside onNotApproved can tell denied',
-    'and timed-out apart, or a later step can read why}. At most one tool per step.',
+    'and timed-out apart, or a later step can read why}. At most one tool per step. At runtime',
+    '(not something you author on the node) every action step attempt may also call a free',
+    '`remember` tool to record ONE fact future runs of the agent need and could not',
+    'rediscover — a deliberate, standalone call, never a side effect of declaring the step\'s',
+    'outcome. When a step should do this, say so explicitly in its instruction (e.g. "remember',
+    'which ticket this was so a later run does not reopen it"); most steps have nothing worth',
+    'remembering, and their instruction should say nothing about it.',
     '{kind:"branch"} — a fork the model decides: {id, name, condition:[segment,...] (prose and',
     'var segments only, NEVER tool segments — do the tool work in a step before the branch and',
     `save it), paths:[2-${MAX_BRANCH_PATHS} × {id, name, steps:[...]}] where the LAST path is`,

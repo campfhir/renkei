@@ -213,7 +213,7 @@ describe('the dates paragraph', () => {
       toolBudget: 3,
       offersTime: true,
     }).messages[0].content[0].text;
-    expect(withTime).toContain('finish_step and resolve_time are free');
+    expect(withTime).toContain('finish_step and remember are always free, and so is resolve_time');
     expect(withTime).toContain('Dates: never work out a timestamp');
 
     const without = buildAttemptMessages({
@@ -222,7 +222,7 @@ describe('the dates paragraph', () => {
       variables: {},
       toolBudget: 3,
     }).messages[0].content[0].text;
-    expect(without).toContain('(finish_step is free)');
+    expect(without).toContain('(finish_step and remember are always free)');
     expect(without).not.toContain('resolve_time');
   });
 });
