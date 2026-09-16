@@ -41,6 +41,12 @@ function adminSections(slug: string): AdminSection[] {
           detail: 'Register the network shares people can connect with their own credentials.',
         },
         {
+          href: `${admin}/mirth`,
+          label: 'Mirth Connect',
+          detail:
+            'Register the Mirth Connect servers (dev, test, prod…) people can connect with their own accounts.',
+        },
+        {
           href: `${admin}/sites`,
           label: 'Sites',
           detail: 'The SharePoint sites the organization indexes and watches.',
@@ -78,7 +84,8 @@ function adminSections(slug: string): AdminSection[] {
         {
           href: `${admin}/usage`,
           label: 'Organization usage',
-          detail: 'Token spend by chat, chat projects, code projects and agents; who is using it, and which agents do the most work per token.',
+          detail:
+            'Token spend by chat, chat projects, code projects and agents; who is using it, and which agents do the most work per token.',
         },
       ],
     },

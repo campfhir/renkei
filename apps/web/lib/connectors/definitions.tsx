@@ -11,8 +11,8 @@
  * 'use client' here — that directive would turn the array into a client
  * reference the page could not iterate. A definition with no form is a
  * connector Renkei provides without credentials (cards, agents, the
- * sandbox…) or one configured elsewhere (file shares are registered one at a
- * time on their own page).
+ * sandbox…) or one configured elsewhere (file shares and Mirth instances are
+ * registered one at a time on their own pages).
  *
  * User cards are deliberately NOT bound here: they are suite cards with
  * server-built props, wired by `suite` in `[slug]/connectors/page.tsx`.
@@ -79,6 +79,7 @@ const CONFIG_LABELS: Record<string, string> = {
 
 const MANAGE_ELSEWHERE: Record<string, (slug: string) => string> = {
   fileshares: (slug) => `/${slug}/admin/file-shares`,
+  mirth: (slug) => `/${slug}/admin/mirth`,
 };
 
 function build(): ConnectorDefinition[] {

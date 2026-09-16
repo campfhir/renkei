@@ -84,6 +84,7 @@ prompt_yes_no PUSH_MIGRATE "Also push the migration image?" "${BUILD_MIGRATE:-n}
 prompt_yes_no PUSH_WORKER "Also push the worker image?" "${BUILD_WORKER:-n}"
 prompt_yes_no PUSH_FILESHARES "Also push the file-share worker image?" "${BUILD_FILESHARES:-n}"
 prompt_yes_no PUSH_ONBASE "Also push the OnBase egress worker image?" "${BUILD_ONBASE:-n}"
+prompt_yes_no PUSH_MIRTH "Also push the Mirth Connect egress worker image?" "${BUILD_MIRTH:-n}"
 prompt_yes_no PUSH_SANDBOX "Also push the sandbox scratch-space worker image?" "${BUILD_SANDBOX:-n}"
 
 LOCAL_SEMVER_TAG="${IMAGE_NAME}:${VERSION}"
@@ -110,6 +111,11 @@ LOCAL_ONBASE_SEMVER_TAG="${IMAGE_NAME}-onbase:${VERSION}"
 LOCAL_ONBASE_LATEST_TAG="${IMAGE_NAME}-onbase:latest"
 REMOTE_ONBASE_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-onbase:${VERSION}"
 REMOTE_ONBASE_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-onbase:latest"
+
+LOCAL_MIRTH_SEMVER_TAG="${IMAGE_NAME}-mirth:${VERSION}"
+LOCAL_MIRTH_LATEST_TAG="${IMAGE_NAME}-mirth:latest"
+REMOTE_MIRTH_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-mirth:${VERSION}"
+REMOTE_MIRTH_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-mirth:latest"
 
 LOCAL_SANDBOX_SEMVER_TAG="${IMAGE_NAME}-sandbox:${VERSION}"
 LOCAL_SANDBOX_LATEST_TAG="${IMAGE_NAME}-sandbox:latest"
@@ -240,6 +246,25 @@ if [[ "$PUSH_ONBASE" == y ]]; then
   echo "✅  Pushed: $REMOTE_ONBASE_LATEST_TAG"
 fi
 
+if [[ "$PUSH_MIRTH" == y ]]; then
+  tag_if_needed "$LOCAL_MIRTH_SEMVER_TAG" "$REMOTE_MIRTH_SEMVER_TAG"
+  tag_if_needed "$LOCAL_MIRTH_LATEST_TAG" "$REMOTE_MIRTH_LATEST_TAG"
+
+  echo ""
+  echo "Pushing:  $REMOTE_MIRTH_SEMVER_TAG"
+  echo "──────────────────────────────────────────────────────"
+  docker push "$REMOTE_MIRTH_SEMVER_TAG"
+
+  echo ""
+  echo "Pushing:  $REMOTE_MIRTH_LATEST_TAG"
+  echo "──────────────────────────────────────────────────────"
+  docker push "$REMOTE_MIRTH_LATEST_TAG"
+
+  echo ""
+  echo "✅  Pushed: $REMOTE_MIRTH_SEMVER_TAG"
+  echo "✅  Pushed: $REMOTE_MIRTH_LATEST_TAG"
+fi
+
 
 if [[ "$PUSH_SANDBOX" == y ]]; then
   tag_if_needed "$LOCAL_SANDBOX_SEMVER_TAG" "$REMOTE_SANDBOX_SEMVER_TAG"
@@ -276,6 +301,9 @@ if [[ "$PUSH_FILESHARES" == y ]]; then
 fi
 if [[ "$PUSH_ONBASE" == y ]]; then
   echo "  docker pull $REMOTE_ONBASE_SEMVER_TAG"
+fi
+if [[ "$PUSH_MIRTH" == y ]]; then
+  echo "  docker pull $REMOTE_MIRTH_SEMVER_TAG"
 fi
 if [[ "$PUSH_SANDBOX" == y ]]; then
   echo "  docker pull $REMOTE_SANDBOX_SEMVER_TAG"

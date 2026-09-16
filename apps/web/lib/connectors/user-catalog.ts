@@ -22,6 +22,7 @@ import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { getConnectorPrefs } from '@renkei/user-prefs';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
+import { listInstancesWithConnection } from '@renkei/connector-mirth';
 import {
   CONNECTOR_CATALOG,
   userConnectableConnectors,
@@ -55,13 +56,14 @@ export interface UserCatalog {
  * entries the org has provisioned and not switched off.
  *
  * `enabledConfigKeys` are connector_configs rows with enabled = true;
- * file shares have no such row and count as provisioned when any share
- * exists. `audienceAllows` is the audience gate's answer per capability key
+ * file shares and Mirth instances have no such row and count as
+ * provisioned when any share (instance) exists. `audienceAllows` is the audience gate's answer per capability key
  * (always true until audience rules exist for the connector).
  */
 export function availableEntries(input: {
   enabledConfigKeys: ReadonlySet<string>;
   anyShares: boolean;
+  anyMirthInstances?: boolean;
   disabledConnectors: readonly string[];
   audienceAllows?: (capabilityKey: string) => boolean;
 }): ConnectorEntry[] {
@@ -71,14 +73,16 @@ export function availableEntries(input: {
     if (disabled.has(entry.capabilityKey)) return false;
     if (!allows(entry.capabilityKey)) return false;
     if (entry.capabilityKey === 'fileshares') return input.anyShares;
+    if (entry.capabilityKey === 'mirth') return input.anyMirthInstances === true;
     return input.enabledConfigKeys.has(entry.configKey);
   });
 }
 
-/** Which capability keys a set of grant providers (and share connections) means are connected. */
+/** Which capability keys a set of grant providers (and share / Mirth connections) means are connected. */
 export function connectedKeys(
   grantProviders: ReadonlySet<string>,
-  anyShareConnected: boolean
+  anyShareConnected: boolean,
+  anyMirthConnected = false
 ): Set<string> {
   const keys = new Set<string>();
   for (const entry of CONNECTOR_CATALOG) {
@@ -87,6 +91,7 @@ export function connectedKeys(
     }
   }
   if (anyShareConnected) keys.add('fileshares');
+  if (anyMirthConnected) keys.add('mirth');
   return keys;
 }
 
@@ -145,7 +150,7 @@ export async function resolveUserCatalog(
     fresh?: boolean;
   } = {}
 ): Promise<UserCatalog> {
-  const [configs, settings, shares, grants, prefs] = await Promise.all([
+  const [configs, settings, shares, mirthInstances, grants, prefs] = await Promise.all([
     db
       .selectFrom('connector_configs')
       .select('connector')
@@ -154,14 +159,17 @@ export async function resolveUserCatalog(
       .execute(),
     getOrgSettings(tenantId),
     listSharesWithConnection(db, tenantId, subject),
+    listInstancesWithConnection(db, tenantId, subject),
     grantsFor(db, tenantId, subject),
     getConnectorPrefs(tenantId, subject, { fresh: options.fresh }),
   ]);
 
   const shareRows = shares.ok ? shares.val : [];
+  const mirthRows = mirthInstances.ok ? mirthInstances.val : [];
   const available = availableEntries({
     enabledConfigKeys: new Set(configs.map((row) => row.connector)),
     anyShares: shareRows.length > 0,
+    anyMirthInstances: mirthRows.length > 0,
     // Unreadable settings read as nothing disabled: the projection, which
     // gates the tools, makes its own read and fails its own way.
     disabledConnectors: settings.ok ? settings.val.disabledConnectors : [],
@@ -169,7 +177,8 @@ export async function resolveUserCatalog(
   });
   const connected = connectedKeys(
     new Set(grants.keys()),
-    shareRows.some((row) => row.connection !== null)
+    shareRows.some((row) => row.connection !== null),
+    mirthRows.some((row) => row.connection !== null)
   );
 
   return {

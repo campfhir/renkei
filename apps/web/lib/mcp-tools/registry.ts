@@ -54,6 +54,9 @@ import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { resolveToolExposure } from '@renkei/connector-fileshares';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
+import { resolveToolExposure as resolveMirthExposure } from '@renkei/connector-mirth';
+import { registerMirthTools, MIRTH_MCP_CONNECTOR } from '@/lib/mcp-tools/mirth';
+import { userMirthAuth } from '@/lib/mcp-tools/mirth/mirth-auth';
 import { registerOnbaseTools, ONBASE_MCP_CONNECTOR } from '@/lib/mcp-tools/onbase';
 import {
   registerOnbaseAdminTools,
@@ -101,6 +104,10 @@ export interface ConnectorAvailability {
   /** Whether any connected share exposes write tools / delete to the LLM. */
   fileshareWrite: boolean;
   fileshareDelete: boolean;
+  /** Same shape as file shares: the caller's own Mirth instance connections. */
+  mirthAvailable: boolean;
+  mirthWrite: boolean;
+  mirthDestructive: boolean;
   onbaseAvailable: boolean;
   /** A SEPARATE connector/grant from onbaseAvailable — see registerRenkeiTools. */
   onbaseAdminAvailable: boolean;
@@ -140,7 +147,10 @@ async function grantRow(
  * tool. An unrecognized or absent granted list falls back to requested
  * alone, exactly like a token whose scopes are simply unknown.
  */
-export function narrowedScopes(requested: string[], granted: string[] | null | undefined): string[] {
+export function narrowedScopes(
+  requested: string[],
+  granted: string[] | null | undefined
+): string[] {
   const recognized = granted && granted.some((scope) => requested.includes(scope)) ? granted : null;
   return recognized ? requested.filter((scope) => recognized.includes(scope)) : requested;
 }
@@ -224,6 +234,16 @@ export async function resolveConnectorAvailability(
   const fileshareWrite = fileshareExposure.ok && fileshareExposure.val.write;
   const fileshareDelete = fileshareExposure.ok && fileshareExposure.val.del;
 
+  // Mirth Connect follows the file-share shape exactly: no provider_grants
+  // row, the caller's own per-instance connections stand in for the grant,
+  // and the exposure they chose per instance decides which families
+  // register (act and destructive only on opt-in). Errors read as "not
+  // provisioned".
+  const mirthExposure = await resolveMirthExposure(db, tenantId, subject);
+  const mirthAvailable = mirthExposure.ok && mirthExposure.val.read;
+  const mirthWrite = mirthExposure.ok && mirthExposure.val.write;
+  const mirthDestructive = mirthExposure.ok && mirthExposure.val.destructive;
+
   // OnBase carries one opaque IdP scope, so availability is simply "this
   // caller connected their OnBase account"; the API server enforces the
   // rest per request under their token.
@@ -262,6 +282,9 @@ export async function resolveConnectorAvailability(
     filesharesAvailable,
     fileshareWrite,
     fileshareDelete,
+    mirthAvailable,
+    mirthWrite,
+    mirthDestructive,
     onbaseAvailable,
     onbaseAdminAvailable,
     sandboxAvailable,
@@ -301,6 +324,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
+    ...(availability.mirthAvailable ? [MIRTH_MCP_CONNECTOR] : []),
     ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
     ...(availability.onbaseAdminAvailable ? [ONBASE_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.sandboxAvailable ? [SANDBOX_MCP_CONNECTOR] : []),
@@ -331,6 +355,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   CONFLUENCE_MCP_CONNECTOR,
   BITBUCKET_MCP_CONNECTOR,
   FILESHARES_MCP_CONNECTOR,
+  MIRTH_MCP_CONNECTOR,
   ONBASE_MCP_CONNECTOR,
   ONBASE_ADMIN_MCP_CONNECTOR,
   SANDBOX_MCP_CONNECTOR,
@@ -370,6 +395,7 @@ export async function registerRenkeiTools(
     confluenceAvailable,
     bitbucketAvailable,
     filesharesAvailable,
+    mirthAvailable,
     onbaseAvailable,
     onbaseAdminAvailable,
     sandboxAvailable,
@@ -573,6 +599,19 @@ export async function registerRenkeiTools(
       context,
       userFileshareAuth(context),
       { write: availability.fileshareWrite, del: availability.fileshareDelete }
+    );
+  }
+  if (mirthAvailable) {
+    // The file-share arrangement again: no OAuth scopes, the caller's
+    // per-instance exposure choice shapes which families register (act and
+    // destructive only on opt-in), every act handler re-checks the choice
+    // fresh per call, and authorization itself is the Mirth server judging
+    // the caller's own account.
+    registerMirthTools(
+      withCapabilityGate(server, projection, MIRTH_MCP_CONNECTOR),
+      context,
+      userMirthAuth(context),
+      { write: availability.mirthWrite, destructive: availability.mirthDestructive }
     );
   }
   if (onbaseAvailable) {
