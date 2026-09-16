@@ -33,15 +33,29 @@ const RETENTION_BATCH = 500;
 
 export function createChatTurnJanitor(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
-    const stale = await sql<{ id: string }>`
-      UPDATE chat_turns
+    // stale_since/stage are read from the pre-update row (the CTE) so the
+    // log below says how long it had actually been stuck and doing what,
+    // not the NOW() this same statement just wrote over it with.
+    const stale = await sql<{
+      id: string;
+      chat_id: string;
+      stage: string | null;
+      stale_since: Date;
+    }>`
+      WITH targets AS (
+        SELECT id, chat_id, stage, updated_at
+          FROM chat_turns
+         WHERE status = 'running'
+           AND updated_at < NOW() - make_interval(mins => ${STALE_MINUTES})
+      )
+      UPDATE chat_turns t
          SET status = 'interrupted',
              error = 'The reply stopped unexpectedly and did not finish.',
              finished_at = NOW(),
              updated_at = NOW()
-       WHERE status = 'running'
-         AND updated_at < NOW() - make_interval(mins => ${STALE_MINUTES})
-      RETURNING id
+        FROM targets
+       WHERE t.id = targets.id
+      RETURNING t.id, targets.chat_id, targets.stage, targets.updated_at AS stale_since
     `.execute(db);
     if (stale.rows.length === 0) return;
     await db
@@ -54,10 +68,15 @@ export function createChatTurnJanitor(db: Kysely<DB>) {
       )
       .where('status', '=', 'streaming')
       .execute();
-    logger.warn('interrupted {count} chat turn(s) whose runner went silent', {
-      component: 'worker-agents/chat-janitor',
-      count: stale.rows.length,
-    });
+    for (const row of stale.rows) {
+      logger.warn('interrupted a chat turn whose runner went silent', {
+        component: 'worker-agents/chat-janitor',
+        turnId: row.id,
+        chatId: row.chat_id,
+        stage: row.stage ?? '(between rounds)',
+        staleSinceMinutes: Math.round((Date.now() - row.stale_since.getTime()) / 60_000),
+      });
+    }
   };
 }
 

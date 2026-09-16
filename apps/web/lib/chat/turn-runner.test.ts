@@ -41,6 +41,7 @@ function fakeStore() {
   let cancelOnHeartbeat = false;
   const usage: number[] = [];
   const artifacts: { messageId: string; filename: string }[] = [];
+  const stages: (string | null)[] = [];
   const store: TurnStore = {
     async appendMessage(input) {
       seq += 1;
@@ -73,7 +74,8 @@ function fakeStore() {
         error: patch.error === undefined ? row.error : patch.error,
       });
     },
-    async heartbeat() {
+    async heartbeat(_iterations, stage) {
+      stages.push(stage);
       return cancelOnHeartbeat;
     },
     async finishTurn(result) {
@@ -98,6 +100,7 @@ function fakeStore() {
     rows,
     usage,
     artifacts,
+    stages,
     outcome: () => outcome,
     setCancelOnHeartbeat(value: boolean) {
       cancelOnHeartbeat = value;
@@ -172,6 +175,15 @@ function inputFor(turnId: string): TurnInput {
     history: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
     thinkingBudget: null,
   };
+}
+
+/** Polls until `predicate` is true, instead of racing a fixed sleep against the flush timer. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitUntil: timed out');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function watch(channel: TurnChannel): { events: ChatStreamEvent[]; state: () => ThreadState } {
@@ -704,5 +716,86 @@ describe('runChatTurn', () => {
       inputFor('turn-7')
     );
     expect(late.status).toBe('interrupted');
+  });
+
+  it('reports what it is doing on every heartbeat, so a stuck turn says where', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-stage');
+    const model: { release: (() => void) | null } = { release: null };
+    let modelCalls = 0;
+    const slowProvider: LlmProvider = {
+      async complete() {
+        modelCalls += 1;
+        if (modelCalls > 1) return ok(text('Done'));
+        await new Promise<void>((resolve) => {
+          model.release = resolve;
+        });
+        return ok(toolCall('agent_patch_steps', {}));
+      },
+    };
+    const gates = new Map<string, () => void>();
+    const mcp: McpClient = {
+      async initialize() {},
+      async listTools() {
+        return [];
+      },
+      async callTool(name) {
+        await new Promise<void>((resolve) => gates.set(name, resolve));
+        return { content: [{ type: 'text', text: `result of ${name}` }], isError: false, meta: {} };
+      },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(slowProvider),
+        tools: [],
+        mcp,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-stage')
+    );
+    // A heartbeat tick lands while the model call is still in flight.
+    await waitUntil(() => fake.stages.includes('model'));
+    model.release?.();
+    // ...and again once the reply calls a tool.
+    await waitUntil(() => fake.stages.includes('tool:agent_patch_steps'));
+    gates.get('agent_patch_steps')!();
+    await run;
+  });
+
+  it("times out a local tool that never settles, instead of hanging the turn", async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-hang');
+    const stuck: LocalTool = {
+      def: { name: 'local_stuck', description: 'never returns', inputSchema: { type: 'object' } },
+      execute: () => new Promise(() => {}),
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('local_stuck', {}), text('Recovered')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([stuck]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, toolTimeoutMs: 20 },
+      },
+      inputFor('turn-hang')
+    );
+    expect(outcome.status).toBe('completed');
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    const results = rows.find((row) => row.kind === 'tool_results');
+    expect(results?.blocks).toEqual([
+      {
+        type: 'tool_result',
+        toolUseId: 'tu_local_stuck',
+        content: 'The tool could not be reached.',
+        isError: true,
+      },
+    ]);
   });
 });

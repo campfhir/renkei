@@ -134,6 +134,7 @@ export const EXPECTED_MIGRATIONS = [
   '102-code-projects',
   '103-chat-summaries',
   '104-chat-turn-kind',
+  '105-chat-turn-stage',
 ];
 
 export interface MigrationStatus {

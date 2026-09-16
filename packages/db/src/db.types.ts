@@ -494,6 +494,8 @@ export interface ChatTurns {
   kind: Generated<string>;
   llm_model_id: string | null;
   output_tokens: Generated<number>;
+  stage: string | null;
+  stage_at: Timestamp | null;
   started_at: Generated<Timestamp>;
   status: Generated<string>;
   tenant_id: string;
