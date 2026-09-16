@@ -13,6 +13,8 @@
  * holds, never a widening.
  */
 
+import type { MirthPermission } from './permissions';
+
 /** An instance as operators register it — connection details only, no credentials. */
 export interface MirthInstanceSummary {
   id: string;
@@ -29,26 +31,12 @@ export interface MirthInstanceSummary {
   enabled: boolean;
 }
 
-/**
- * What a person lets their LLM do on a connected instance. 'read' is the
- * floor; deploying, starting and stopping channels, sending messages and
- * editing configuration ride 'read_write'; deleting channels, purging
- * message stores, removing users and alerts, restoring a whole server
- * configuration and the like are `allowDestructive` — permanent
- * operations that deserve their own consent at the model boundary.
- */
-export type ToolAccess = 'read' | 'read_write';
-
-export function isToolAccess(value: unknown): value is ToolAccess {
-  return value === 'read' || value === 'read_write';
-}
-
 /** One person's connection to one instance (credentials stored separately). */
 export interface InstanceConnection {
   /** The Mirth account the person connected with — display only, no secret. */
   username: string;
-  toolAccess: ToolAccess;
-  allowDestructive: boolean;
+  /** What the LLM tools may attempt here — see permissions.ts. */
+  permissions: MirthPermission[];
 }
 
 /** Environment labels are short, plain, and case-preserved. */

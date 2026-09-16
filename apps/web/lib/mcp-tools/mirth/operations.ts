@@ -18,10 +18,10 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { MIRTH_OPERATIONS, fillPath, textOf } from '@renkei/connector-mirth';
+import { MIRTH_OPERATIONS, fillPath, mirthPermission, textOf } from '@renkei/connector-mirth';
 import type {
   BodySpec,
-  OperationKind,
+  MirthPermission,
   OperationSpec,
   ParamSpec,
   ParamType,
@@ -43,7 +43,7 @@ export interface OperationRuntime {
     what: string,
     request: MirthApiRequest
   ): Promise<{ ok: true; response: WireApiResponse } | { ok: false; message: string }>;
-  exposureRefusal(instanceId: string, need: 'write' | 'destructive'): Promise<string | null>;
+  exposureRefusal(instanceId: string, permission: MirthPermission): Promise<string | null>;
   instanceName(instanceId: string): Promise<string>;
   maxChars: number;
 }
@@ -257,12 +257,11 @@ function titleFor(operation: OperationSpec): string {
 }
 
 function descriptionFor(operation: OperationSpec): string {
+  const permission = mirthPermission(operation.permission).label.toLowerCase();
   const note =
-    operation.kind === 'act'
-      ? ' Requires act tools enabled for the instance on the Connectors page.'
-      : operation.kind === 'destructive'
-        ? ' Permanent: the user confirms on a card. Requires destructive operations enabled for the instance on the Connectors page.'
-        : '';
+    operation.kind === 'destructive'
+      ? ` Permanent: the user confirms on a card. Needs "${permission}" enabled for the instance on the Connectors page.`
+      : ` Needs "${permission}" enabled for the instance on the Connectors page.`;
   return `${operation.description}${note}`;
 }
 
@@ -309,29 +308,23 @@ function cardFields(
 }
 
 /**
- * Register the generated tools of one kind. index.ts calls this once per
- * kind at the point where that kind's exposure has been established, so
- * the registered list mirrors the caller's exposure like the curated
- * tools do.
+ * Register the generated tools whose permission the caller holds on some
+ * connected instance. The per-instance check runs again on every call.
  */
 export function registerOperationTools(
   server: McpServer,
   runtime: OperationRuntime,
-  kind: OperationKind,
+  granted: ReadonlySet<string>,
   operations: readonly OperationSpec[] = MIRTH_OPERATIONS
 ): void {
-  for (const operation of operations.filter((candidate) => candidate.kind === kind)) {
+  for (const operation of operations.filter((candidate) => granted.has(candidate.permission))) {
     const name = `mirth_${operation.tool}`;
     const inputSchema = inputSchemaFor(operation);
-    const need: 'write' | 'destructive' | null =
-      operation.kind === 'destructive' ? 'destructive' : operation.kind === 'act' ? 'write' : null;
 
     const execute = async (args: Record<string, unknown>): Promise<ToolResult> => {
       const instanceId = typeof args.instanceId === 'string' ? args.instanceId : '';
-      if (need) {
-        const refusal = await runtime.exposureRefusal(instanceId, need);
-        if (refusal) return errText(refusal);
-      }
+      const refusal = await runtime.exposureRefusal(instanceId, operation.permission);
+      if (refusal) return errText(refusal);
       const built = requestFor(operation, args);
       if (!built.ok) return errText(built.error);
       const answered = await runtime.call(instanceId, operation.title.toLowerCase(), built.request);
@@ -366,7 +359,7 @@ export function registerOperationTools(
       },
       async (args: Record<string, unknown>) => {
         const instanceId = typeof args.instanceId === 'string' ? args.instanceId : '';
-        const refusal = await runtime.exposureRefusal(instanceId, 'destructive');
+        const refusal = await runtime.exposureRefusal(instanceId, operation.permission);
         if (refusal) return errText(refusal);
         const built = requestFor(operation, args);
         if (!built.ok) return errText(built.error);

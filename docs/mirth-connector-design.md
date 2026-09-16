@@ -38,31 +38,48 @@ A shared "renkei" Mirth account is still possible — an org can hand the
 same credentials to several people — but that is the org's choice, not a
 Renkei super-credential.
 
-## LLM exposure: read / act / destructive
+## Permissions: named, per area, per instance
 
-The connection row carries the person's choice of what the model may
-attempt with a credential they already hold — a narrowing, never a
-widening, and read by the tools, never by the worker's request path:
+The first cut recorded the person's choice as a ladder — read, act,
+destructive. It shipped and was replaced (migration 107) at the
+organization's request: the words meant little to the person ticking
+them, and one switch covered too much — "may deploy a channel" had to
+mean "may edit its definition" as well.
 
-- **read** — the floor; every connection mounts the read tools.
-- **act** (`tool_access = 'read_write'`) — deploy, undeploy, start / stop /
-  pause / resume / halt, enable, initial state, import a channel, send and
-  reprocess messages, edit the configuration map and global scripts, toggle
-  alerts, and the generic POST/PUT tool.
-- **destructive** (`allow_destructive`) — separate consent, because these
-  are permanent: deleting a channel (with its message store), removing
-  messages, and the generic destructive pair. What counts as destructive is
-  decided by one function (`isDestructiveRequest`): every `DELETE`, plus
-  the `POST`/`PUT` routes that remove data, purge stores, replace the whole
-  server configuration, install or uninstall an extension, run a database
-  task, change a password, or clear statistics. Deploying, undeploying and
-  stopping are reversible and stay ordinary writes.
+The choice is now a set of **named permissions a person recognises**,
+grouped by area (`packages/connector-mirth/src/permissions.ts`):
 
-Destructive operations are **preview + confirm only**, on the shared
-issue-preview card, so a human click sits between the model and the
-irreversible act — the fileshare-delete discipline. The generic write tool
-refuses a destructive route and points at the preview, so the
-classification cannot be bypassed by choosing the "other" tool.
+| Area           | Permissions                |
+| -------------- | -------------------------- |
+| Channels       | read, edit, deploy, delete |
+| Messages       | read, send, delete         |
+| Alerts         | read, edit, delete         |
+| Code templates | read, edit, delete         |
+| Users          | read, edit, delete         |
+| Events         | read                       |
+| Server         | read, configure, restore   |
+
+Every `mirth_*` tool names exactly one — in the curated module by hand,
+in the operation table as a field the tests check (a read-kind operation
+must carry a read permission; a permanent one a delete, restore or edit
+one). A tool registers for a caller when **some** connected instance
+grants its permission, so the tool list tells the truth; the handler
+re-checks the permission on the instance the call names, so holding
+"deploy" on dev never deploys on prod. The card offers presets (Read
+only, Operate, Develop, Everything) as starting points over a grid a
+person can adjust tick by tick. "Read messages" is its own permission
+because message content is PHI, and "delete" is separate from "edit"
+everywhere because deletion is permanent.
+
+Permanent operations (delete a channel, purge messages, delete an alert,
+restore the server…) are **also** preview + confirm on the shared
+issue-preview card, whatever the permission says — the fileshare-delete
+discipline — so a human click sits between the model and the act.
+
+These narrow what the tools may attempt with a credential the person
+already holds. They never widen anything: the Mirth server's roles still
+judge every request by the connected account, and the worker never reads
+them.
 
 ## "All the REST API functions"
 

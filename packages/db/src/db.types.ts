@@ -823,13 +823,12 @@ export interface MailBulkJobs {
 }
 
 export interface MirthInstanceConnections {
-  allow_destructive: Generated<boolean>;
   created_at: Generated<Timestamp>;
   encrypted_credentials: string;
   instance_id: string;
+  permissions: Generated<string[]>;
   subject: string;
   tenant_id: string;
-  tool_access: string;
   updated_at: Generated<Timestamp>;
   username: string;
 }

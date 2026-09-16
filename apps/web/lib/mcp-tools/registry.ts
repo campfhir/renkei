@@ -106,8 +106,8 @@ export interface ConnectorAvailability {
   fileshareDelete: boolean;
   /** Same shape as file shares: the caller's own Mirth instance connections. */
   mirthAvailable: boolean;
-  mirthWrite: boolean;
-  mirthDestructive: boolean;
+  /** The union of the permissions granted on the caller's connected instances. */
+  mirthPermissions: string[];
   onbaseAvailable: boolean;
   /** A SEPARATE connector/grant from onbaseAvailable — see registerRenkeiTools. */
   onbaseAdminAvailable: boolean;
@@ -240,9 +240,8 @@ export async function resolveConnectorAvailability(
   // register (act and destructive only on opt-in). Errors read as "not
   // provisioned".
   const mirthExposure = await resolveMirthExposure(db, tenantId, subject);
-  const mirthAvailable = mirthExposure.ok && mirthExposure.val.read;
-  const mirthWrite = mirthExposure.ok && mirthExposure.val.write;
-  const mirthDestructive = mirthExposure.ok && mirthExposure.val.destructive;
+  const mirthAvailable = mirthExposure.ok && mirthExposure.val.connected;
+  const mirthPermissions = mirthExposure.ok ? mirthExposure.val.permissions : [];
 
   // OnBase carries one opaque IdP scope, so availability is simply "this
   // caller connected their OnBase account"; the API server enforces the
@@ -283,8 +282,7 @@ export async function resolveConnectorAvailability(
     fileshareWrite,
     fileshareDelete,
     mirthAvailable,
-    mirthWrite,
-    mirthDestructive,
+    mirthPermissions,
     onbaseAvailable,
     onbaseAdminAvailable,
     sandboxAvailable,
@@ -603,15 +601,16 @@ export async function registerRenkeiTools(
   }
   if (mirthAvailable) {
     // The file-share arrangement again: no OAuth scopes, the caller's
-    // per-instance exposure choice shapes which families register (act and
-    // destructive only on opt-in), every act handler re-checks the choice
-    // fresh per call, and authorization itself is the Mirth server judging
-    // the caller's own account.
+    // per-instance permissions decide which tools register (a tool mounts
+    // when some connected instance grants its permission), every handler
+    // re-checks the permission on the instance named fresh per call, and
+    // authorization itself is the Mirth server judging the caller's own
+    // account.
     registerMirthTools(
       withCapabilityGate(server, projection, MIRTH_MCP_CONNECTOR),
       context,
       userMirthAuth(context),
-      { write: availability.mirthWrite, destructive: availability.mirthDestructive }
+      { permissions: availability.mirthPermissions }
     );
   }
   if (onbaseAvailable) {

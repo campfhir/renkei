@@ -171,8 +171,7 @@ export default async function ConnectorsPage({
           connection: entry.connection
             ? {
                 username: entry.connection.username,
-                toolAccess: entry.connection.toolAccess,
-                allowDestructive: entry.connection.allowDestructive,
+                permissions: entry.connection.permissions,
               }
             : null,
         }))

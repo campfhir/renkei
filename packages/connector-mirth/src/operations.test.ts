@@ -1,5 +1,6 @@
 import { isDestructiveRequest } from './api';
 import { MIRTH_OPERATIONS, fillPath, pathParamNames } from './operations';
+import { isMirthPermission } from './permissions';
 
 describe('the operation table', () => {
   it('names every tool once', () => {
@@ -49,6 +50,27 @@ describe('the operation table', () => {
         tool: operation.tool,
         destructive: classified,
       });
+    }
+  });
+
+  it('names a catalog permission per operation, a read permission for every read', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      expect({ tool: operation.tool, known: isMirthPermission(operation.permission) }).toEqual({
+        tool: operation.tool,
+        known: true,
+      });
+      if (operation.kind === 'read') {
+        expect({ tool: operation.tool, read: operation.permission.endsWith('.read') }).toEqual({
+          tool: operation.tool,
+          read: true,
+        });
+      }
+      if (operation.kind === 'destructive') {
+        expect({
+          tool: operation.tool,
+          permission: /\.(delete|restore|edit)$/.test(operation.permission),
+        }).toEqual({ tool: operation.tool, permission: true });
+      }
     }
   });
 

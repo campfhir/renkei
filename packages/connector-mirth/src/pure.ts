@@ -8,12 +8,22 @@
 
 export {
   isEnvironmentLabel,
-  isToolAccess,
   MAX_ENVIRONMENT_LENGTH,
   type InstanceConnection,
   type MirthInstanceSummary,
-  type ToolAccess,
 } from './types';
+
+export {
+  DEFAULT_MIRTH_PERMISSIONS,
+  MIRTH_PERMISSIONS,
+  MIRTH_PERMISSION_GROUPS,
+  MIRTH_PERMISSION_IDS,
+  MIRTH_PERMISSION_PRESETS,
+  isMirthPermission,
+  mirthPermission,
+  normalizePermissions,
+  type MirthPermission,
+} from './permissions';
 
 export {
   MIRTH_API_PREFIX,

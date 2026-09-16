@@ -17,7 +17,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { isToolAccess } from './types';
+import { normalizePermissions, type MirthPermission } from './permissions';
 import type { InstanceConnection, MirthInstanceSummary } from './types';
 
 export type StoreError = 'DB_ERROR' | 'MALFORMED_ROW';
@@ -72,15 +72,12 @@ const INSTANCE_COLUMNS = [
 
 function connectionFromRow(row: {
   username: string;
-  tool_access: string;
-  allow_destructive: boolean;
+  permissions: unknown;
 }): Result<InstanceConnection, StoreError> {
-  if (!isToolAccess(row.tool_access)) return err('MALFORMED_ROW' as const);
-  return ok({
-    username: row.username,
-    toolAccess: row.tool_access,
-    allowDestructive: row.allow_destructive === true,
-  });
+  if (!Array.isArray(row.permissions)) return err('MALFORMED_ROW' as const);
+  // Unknown ids (a permission removed from the catalog) are dropped rather
+  // than poisoning the row: less access, never more.
+  return ok({ username: row.username, permissions: normalizePermissions(row.permissions) });
 }
 
 // ---------------------------------------------------------------------------
@@ -122,8 +119,7 @@ export async function listInstancesWithConnection(
         .select([
           ...INSTANCE_COLUMNS,
           'mirth_instance_connections.username',
-          'mirth_instance_connections.tool_access',
-          'mirth_instance_connections.allow_destructive',
+          'mirth_instance_connections.permissions',
         ])
         .where('mirth_instances.tenant_id', '=', tenantId)
         .where('mirth_instances.enabled', '=', true)
@@ -136,15 +132,11 @@ export async function listInstancesWithConnection(
   const instances: InstanceWithConnection[] = [];
   for (const row of rows.val) {
     const summary = summaryFromRow(row);
-    if (row.username === null || row.tool_access === null) {
+    if (row.username === null || row.permissions === null) {
       instances.push({ instance: summary, connection: null });
       continue;
     }
-    const connection = connectionFromRow({
-      username: row.username,
-      tool_access: row.tool_access,
-      allow_destructive: row.allow_destructive === true,
-    });
+    const connection = connectionFromRow({ username: row.username, permissions: row.permissions });
     if (!connection.ok) return connection;
     instances.push({ instance: summary, connection: connection.val });
   }
@@ -177,7 +169,7 @@ export async function getConnection(
     () =>
       db
         .selectFrom('mirth_instance_connections')
-        .select(['username', 'tool_access', 'allow_destructive'])
+        .select(['username', 'permissions'])
         .where('tenant_id', '=', tenantId)
         .where('instance_id', '=', instanceId)
         .where('subject', '=', subject)
@@ -216,8 +208,7 @@ export interface ConnectionInput {
   encryptedCredentials: string;
   /** The account name, for display on the connectors card. */
   username: string;
-  toolAccess: InstanceConnection['toolAccess'];
-  allowDestructive: boolean;
+  permissions: readonly MirthPermission[];
 }
 
 /** Store or replace this subject's connection to an instance. */
@@ -238,15 +229,13 @@ export async function upsertConnection(
           subject,
           encrypted_credentials: input.encryptedCredentials,
           username: input.username,
-          tool_access: input.toolAccess,
-          allow_destructive: input.allowDestructive,
+          permissions: [...input.permissions],
         })
         .onConflict((oc) =>
           oc.constraint('mirth_instance_connections_pk').doUpdateSet({
             encrypted_credentials: input.encryptedCredentials,
             username: input.username,
-            tool_access: input.toolAccess,
-            allow_destructive: input.allowDestructive,
+            permissions: [...input.permissions],
             updated_at: new Date(),
           })
         )
@@ -257,24 +246,19 @@ export async function upsertConnection(
   return ok();
 }
 
-/** Change only the exposure choice, keeping the stored credential. */
-export async function updateConnectionExposure(
+/** Change only the permissions, keeping the stored credential. */
+export async function updateConnectionPermissions(
   db: Kysely<DB>,
   tenantId: string,
   instanceId: string,
   subject: string,
-  toolAccess: InstanceConnection['toolAccess'],
-  allowDestructive: boolean
+  permissions: readonly MirthPermission[]
 ): Promise<Result<boolean, StoreError>> {
   const updated = await wrapAsync(
     () =>
       db
         .updateTable('mirth_instance_connections')
-        .set({
-          tool_access: toolAccess,
-          allow_destructive: allowDestructive,
-          updated_at: new Date(),
-        })
+        .set({ permissions: [...permissions], updated_at: new Date() })
         .where('tenant_id', '=', tenantId)
         .where('instance_id', '=', instanceId)
         .where('subject', '=', subject)
@@ -306,19 +290,19 @@ export async function deleteConnection(
   return ok(deleted.val.numDeletedRows > BigInt(0));
 }
 
-/** Which tool families this subject's connections enable — see registry. */
+/** The permissions this subject holds across every enabled instance — see registry. */
 export interface ToolExposure {
-  /** Any connection at all: the read tools. */
-  read: boolean;
-  /** Any connection exposing read/write: the act tools. */
-  write: boolean;
-  /** Any read/write connection that also opted into destructive operations. */
-  destructive: boolean;
+  /** Any connection at all: the instance list and the lookups register. */
+  connected: boolean;
+  /** The union of the permissions granted on any connected, enabled instance. */
+  permissions: MirthPermission[];
 }
 
 /**
  * The availability question the MCP transport asks per connection setup:
- * which Mirth tool families should register for this subject?
+ * which Mirth tools should register for this subject? A tool registers
+ * when SOME connected instance grants its permission; the per-instance
+ * check happens again on every call.
  */
 export async function resolveToolExposure(
   db: Kysely<DB>,
@@ -334,10 +318,7 @@ export async function resolveToolExposure(
           'mirth_instances.id',
           'mirth_instance_connections.instance_id'
         )
-        .select([
-          'mirth_instance_connections.tool_access',
-          'mirth_instance_connections.allow_destructive',
-        ])
+        .select(['mirth_instance_connections.permissions'])
         .where('mirth_instance_connections.tenant_id', '=', tenantId)
         .where('mirth_instance_connections.subject', '=', subject)
         .where('mirth_instances.enabled', '=', true)
@@ -346,15 +327,12 @@ export async function resolveToolExposure(
   );
   if (!rows.ok) return rows;
 
-  const exposure: ToolExposure = { read: false, write: false, destructive: false };
+  const granted: unknown[] = [];
   for (const row of rows.val) {
-    if (!isToolAccess(row.tool_access)) return err('MALFORMED_ROW' as const);
-    exposure.read = true;
-    const write = row.tool_access === 'read_write';
-    exposure.write = exposure.write || write;
-    exposure.destructive = exposure.destructive || (write && row.allow_destructive === true);
+    if (!Array.isArray(row.permissions)) return err('MALFORMED_ROW' as const);
+    granted.push(...row.permissions);
   }
-  return ok(exposure);
+  return ok({ connected: rows.val.length > 0, permissions: normalizePermissions(granted) });
 }
 
 // ---------------------------------------------------------------------------

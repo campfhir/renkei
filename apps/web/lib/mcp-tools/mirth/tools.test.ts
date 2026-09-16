@@ -16,7 +16,12 @@ jest.mock('@/lib/mirth/service-client', () => ({
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { InstanceConnection, MirthInstanceSummary } from '@renkei/connector-mirth';
+import { MIRTH_PERMISSION_IDS } from '@renkei/connector-mirth';
+import type {
+  InstanceConnection,
+  MirthInstanceSummary,
+  MirthPermission,
+} from '@renkei/connector-mirth';
 import { registerMirthTools, type MirthToolExposure } from './index';
 import { NO_SUCH_INSTANCE } from './mirth-auth';
 import type { MirthAuth } from './mirth-auth';
@@ -51,8 +56,11 @@ function summary(): MirthInstanceSummary {
   };
 }
 
-function connectionOf(overrides?: Partial<InstanceConnection>): InstanceConnection {
-  return { username: 'alice', toolAccess: 'read_write', allowDestructive: true, ...overrides };
+const ALL: MirthPermission[] = [...MIRTH_PERMISSION_IDS];
+const READS: MirthPermission[] = ALL.filter((id) => id.endsWith('.read'));
+
+function connectionOf(permissions: MirthPermission[] = ALL): InstanceConnection {
+  return { username: 'alice', permissions };
 }
 
 function authOf(connection: InstanceConnection): MirthAuth {
@@ -97,7 +105,7 @@ const directory: Directory = {
 
 function register(
   connection: InstanceConnection = connectionOf(),
-  exposure: MirthToolExposure = { write: true, destructive: true }
+  exposure: MirthToolExposure = { permissions: connection.permissions }
 ): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
   const server = {
@@ -124,29 +132,37 @@ const opError = (type: string, message?: string, status = 400) => ({
 beforeEach(() => jest.clearAllMocks());
 
 describe('registration shape', () => {
-  it('mounts only the read tools without a write exposure, and no destructive tools without that', () => {
-    const readOnly = [
-      ...register(connectionOf({ toolAccess: 'read' }), {
-        write: false,
-        destructive: false,
-      }).keys(),
-    ];
+  it('mounts only the tools whose permission the caller holds somewhere', () => {
+    const readOnly = [...register(connectionOf(READS)).keys()];
     expect(readOnly).toContain('mirth_list_channels');
+    expect(readOnly).toContain('mirth_get_server_version');
     expect(readOnly).not.toContain('mirth_deploy_channels');
+    expect(readOnly).not.toContain('mirth_update_alert');
     expect(readOnly).not.toContain('mirth_delete_channel_preview');
 
-    const writer = [...register(connectionOf(), { write: true, destructive: false }).keys()];
-    expect(writer).toContain('mirth_deploy_channels');
-    expect(writer).toContain('mirth_update_alert');
-    expect(writer).not.toContain('mirth_delete_channel_preview');
-    expect(writer).not.toContain('mirth_delete_alert_preview');
+    const deployer = [
+      ...register(connectionOf([...READS, 'channels.deploy']), {
+        permissions: [...READS, 'channels.deploy'],
+      }).keys(),
+    ];
+    expect(deployer).toContain('mirth_deploy_channels');
+    expect(deployer).toContain('mirth_control_channels');
+    expect(deployer).not.toContain('mirth_import_channel');
+    expect(deployer).not.toContain('mirth_set_channels_enabled');
+    expect(deployer).not.toContain('mirth_delete_channel_preview');
 
     const all = [...register().keys()];
     expect(all).toContain('mirth_delete_channel_confirm');
     expect(all).toContain('mirth_remove_messages_confirm');
     expect(all).toContain('mirth_delete_alert_confirm');
+    expect(all).toContain('mirth_restore_server_configuration_preview');
     expect(all).not.toContain('mirth_api_request');
     expect(all).not.toContain('mirth_api_get');
+  });
+
+  it('always mounts the instance list and the lookups', () => {
+    const none = [...register(connectionOf([]), { permissions: [] }).keys()];
+    expect(none).toEqual(['mirth_list_instances', 'mirth_resolve_ids', 'mirth_resolve_names']);
   });
 });
 
@@ -155,7 +171,9 @@ describe('mirth_list_instances', () => {
     const result = await register().get('mirth_list_instances')!({});
     expect(textOf(result)).toContain('Prod [prod] — id ' + INSTANCE_ID);
     expect(textOf(result)).toContain('connected as alice');
-    expect(textOf(result)).toContain('read/write + destructive');
+    expect(textOf(result)).toContain(
+      'permissions: channels: read, edit, deploy, delete; messages: read, send, delete'
+    );
   });
 });
 
@@ -371,26 +389,46 @@ describe('refusals', () => {
   });
 });
 
-describe('exposure gates', () => {
-  it('refuses act tools on a read-only connection before any call', async () => {
-    const tools = register(connectionOf({ toolAccess: 'read' }));
+describe('permission gates', () => {
+  it('refuses a tool whose permission this instance lacks, naming it, before any call', async () => {
+    // Registered because the union says deploy is held somewhere; this
+    // instance's own connection does not grant it.
+    const tools = register(connectionOf(READS), { permissions: [...READS, 'channels.deploy'] });
     const result = await tools.get('mirth_deploy_channels')!({
       instanceId: INSTANCE_ID,
       channelIds: ['c1'],
     });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('Act tools are switched off');
+    expect(textOf(result)).toBe(
+      '"Deploy and control channels" is not enabled for this Mirth instance — it can be enabled per instance on the Connectors page in Renkei.'
+    );
     expect(mirthApi).not.toHaveBeenCalled();
   });
 
-  it('refuses destructive tools without the destructive opt-in', async () => {
-    const tools = register(connectionOf({ allowDestructive: false }));
+  it('gates the confirm half of a permanent operation too', async () => {
+    const tools = register(connectionOf(READS), { permissions: ALL });
     const result = await tools.get('mirth_delete_channel_confirm')!({
       instanceId: INSTANCE_ID,
       channelId: 'c1',
     });
-    expect(textOf(result)).toContain('Destructive operations are switched off');
+    expect(textOf(result)).toContain('"Delete channels" is not enabled');
     expect(mirthApi).not.toHaveBeenCalled();
+  });
+
+  it('gates a lookup on the read permission of its kind', async () => {
+    const tools = register(connectionOf(['channels.read']), { permissions: ['channels.read'] });
+    const users = await tools.get('mirth_resolve_ids')!({
+      instanceId: INSTANCE_ID,
+      kind: 'user',
+      names: ['alice'],
+    });
+    expect(textOf(users)).toContain('"Read users" is not enabled');
+    const channels = await tools.get('mirth_resolve_ids')!({
+      instanceId: INSTANCE_ID,
+      kind: 'channel',
+      names: ['ADT In'],
+    });
+    expect(textOf(channels)).toBe('ADT In = c1');
   });
 
   it('refuses an unknown instance by name before any call, naming what is connected', async () => {

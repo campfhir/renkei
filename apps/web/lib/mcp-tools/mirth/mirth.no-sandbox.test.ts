@@ -13,7 +13,7 @@ jest.mock('@renkei/db', () => ({
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import { MIRTH_OPERATIONS } from '@renkei/connector-mirth';
+import { MIRTH_OPERATIONS, MIRTH_PERMISSION_IDS } from '@renkei/connector-mirth';
 import { registerMirthTools } from './index';
 import { deniedMirthAuth } from './mirth-auth';
 import { sampleArgsFor } from './operations';
@@ -37,7 +37,9 @@ function tools(): Map<string, Handler> {
       registered.set(name, handler);
     },
   } as unknown as McpServer;
-  registerMirthTools(server, context(), deniedMirthAuth(), { write: true, destructive: true });
+  registerMirthTools(server, context(), deniedMirthAuth(), {
+    permissions: [...MIRTH_PERMISSION_IDS],
+  });
   return registered;
 }
 
