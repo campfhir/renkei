@@ -4,8 +4,8 @@
  * Organization Usage: how much the org is spending, how much of it is
  * actually being used, and who and what is driving it — and, with a
  * person picked, the same view scoped to that one person, along with who
- * they are (their connectors, groups and agents: what the old People page
- * showed). The tenant-wide counterpart to "My usage"
+ * they are (their groups and agents; their connectors are on the Access
+ * page). The tenant-wide counterpart to "My usage"
  * (utilization/utilization-viewer.tsx) — same shape (period picker,
  * headline tiles, one chart behind a series toggle), plus the
  * leaderboards a person's own page has no reason to show.
@@ -31,14 +31,11 @@ import type {
 } from '@/lib/usage/org-usage';
 import type { PersonProfile } from '@/lib/usage/person-profile';
 import { modelLabel } from '@/lib/agents/model-label';
-import { grantProviderLabel } from '@/lib/provider-labels';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { Leaderboard } from '@/components/leaderboard';
 import { ActivityCalendar } from '@/components/activity-calendar';
-import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
-import RevokeGrantButton from './revoke-grant-button';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -58,19 +55,6 @@ const TOKEN_SEGMENTS: {
   { key: 'codeProjectTokens', label: 'Code projects', className: 'bg-amber-500' },
   { key: 'agentTokens', label: 'Agents', className: 'bg-purple-500' },
 ];
-
-/** provider_grants.provider → the icon the connector catalog uses. */
-const PROVIDER_ICON_KEY: Record<string, string> = {
-  atlassian: 'jira',
-  'atlassian-jsm': 'jira',
-  'atlassian-confluence': 'atlassian-confluence',
-  'atlassian-bitbucket': 'atlassian-bitbucket',
-  microsoft: 'microsoft',
-  webex: 'webex',
-  zoom: 'zoom',
-  onbase: 'onbase',
-  'onbase-admin': 'onbase-admin',
-};
 
 interface Segment {
   label: string;
@@ -199,19 +183,17 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
 }
 
 /**
- * Who the selected person is: identity, groups, connectors (with the
- * operator's disconnect right there) and the agents they own.
+ * Who the selected person is: identity, groups and the agents they own.
+ * Their connectors live on the Access page, which is linked from here.
  */
 function PersonCard({
   slug,
   subject,
   person,
-  onRevoked,
 }: {
   slug: string;
   subject: string;
   person: PersonProfile | null;
-  onRevoked: () => void;
 }) {
   const name = person?.name ?? subject;
   return (
@@ -221,18 +203,26 @@ function PersonCard({
         {person?.email && person.email !== name && (
           <span className="break-all text-sm text-gray-500">{person.email}</span>
         )}
-        <span className="ml-auto text-xs text-gray-500">
-          {person?.lastActiveAt ? (
-            <>
-              last active <LocalTime at={person.lastActiveAt} />
-            </>
-          ) : (
-            'never signed in'
-          )}
+        <span className="ml-auto flex items-center gap-3 text-xs text-gray-500">
+          <span>
+            {person?.lastActiveAt ? (
+              <>
+                last active <LocalTime at={person.lastActiveAt} />
+              </>
+            ) : (
+              'never signed in'
+            )}
+          </span>
+          <Link
+            href={`/${slug}/admin/access`}
+            className="text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Connectors on Access
+          </Link>
         </span>
       </div>
 
-      <div className="mt-3 grid gap-4 md:grid-cols-3">
+      <div className="mt-3 grid gap-4 md:grid-cols-2">
         <div>
           <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
             Groups (IdP)
@@ -249,45 +239,6 @@ function PersonCard({
                   className="rounded-full border border-gray-200 px-2.5 py-0.5 font-mono text-xs dark:border-gray-800"
                 >
                   {group}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div>
-          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Connectors
-          </h3>
-          {!person || person.grants.length === 0 ? (
-            <p className="text-sm text-gray-400 dark:text-gray-600">No connectors linked</p>
-          ) : (
-            <ul className="flex flex-wrap gap-2">
-              {person.grants.map((grant) => (
-                <li
-                  key={`${grant.provider}:${grant.accountId}`}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
-                    grant.expired
-                      ? 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400'
-                      : 'border-gray-300 text-gray-700 dark:border-gray-700 dark:text-gray-300'
-                  }`}
-                  title={grant.displayName ?? grant.accountId}
-                >
-                  <ConnectorIcon
-                    capabilityKey={PROVIDER_ICON_KEY[grant.provider] ?? grant.provider}
-                    label={grantProviderLabel(grant.provider)}
-                    size={14}
-                  />
-                  {grantProviderLabel(grant.provider)}
-                  {grant.expired && <span title="Token expired; refresh due">⚠️</span>}
-                  <RevokeGrantButton
-                    slug={slug}
-                    provider={grant.provider}
-                    providerLabel={grantProviderLabel(grant.provider)}
-                    accountId={grant.accountId}
-                    displayName={name}
-                    onRevoked={onRevoked}
-                  />
                 </li>
               ))}
             </ul>
@@ -437,7 +388,7 @@ export default function OrgUsageViewer({
           Every surface&rsquo;s and model&rsquo;s token spend across the tenant — chat, chat
           projects, code projects and agents — how much of the org is actually using it, and who and
           what is driving the bill. Pick a person to see the same for them alone, along with their
-          connectors and agents. Counts only, never content.
+          groups and agents. Counts only, never content.
         </p>
       </header>
 
@@ -487,14 +438,7 @@ export default function OrgUsageViewer({
         {pending && <LoadingLine />}
       </div>
 
-      {scoped && (
-        <PersonCard
-          slug={slug}
-          subject={subject}
-          person={report.person}
-          onRevoked={() => refresh(report.periodKey, includeAgents, subject)}
-        />
-      )}
+      {scoped && <PersonCard slug={slug} subject={subject} person={report.person} />}
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat

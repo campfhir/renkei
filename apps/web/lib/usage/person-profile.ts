@@ -1,28 +1,18 @@
 /**
  * Who one person is, for the operator's per-person usage view: the
  * identity spine's name and email, when they last signed in, the groups
- * the IdP reported at that sign-in, the connectors they have linked (with
- * expiry, so an operator can disconnect one from the same card) and the
- * agents they own. This is what the old People page said about a person;
- * it now sits above that person's usage instead of on a page of its own.
+ * the IdP reported at that sign-in, and the agents they own. Their
+ * connectors are not here — those are the Access page's table, where an
+ * operator disconnects one.
  *
  * Someone can exist with no identity row at all — a grant or an agent can
- * outlive its owner's last sign-in — so the lookup unions the three
- * sources and answers null only when none of them knows the subject.
+ * outlive its owner's last sign-in — so the lookup unions the sources and
+ * answers null only when none of them knows the subject.
  */
 
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { listAgentsForOwner } from '@/lib/agents/runs-view';
-
-export interface PersonGrant {
-  provider: string;
-  accountId: string;
-  displayName: string | null;
-  /** ISO timestamp. */
-  expiresAt: string;
-  expired: boolean;
-}
 
 export interface PersonAgent {
   id: string;
@@ -39,7 +29,6 @@ export interface PersonProfile {
   /** ISO timestamp of the newest session touch, or null when they never signed in. */
   lastActiveAt: string | null;
   idpGroups: string[];
-  grants: PersonGrant[];
   agents: PersonAgent[];
 }
 
@@ -48,20 +37,22 @@ export async function getPersonProfile(
   tenantId: string,
   subject: string
 ): Promise<PersonProfile | null> {
-  const [identity, grants, agents, lastActiveRow] = await Promise.all([
+  const [identity, grantName, agents, lastActiveRow] = await Promise.all([
     db
       .selectFrom('identities')
       .select(['subject', 'display_name', 'email', 'idp_groups'])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .executeTakeFirst(),
+    // A grant's display name is the fallback name for someone who never
+    // signed in — and proof they exist at all.
     db
       .selectFrom('provider_grants')
-      .select(['provider', 'provider_account_id', 'display_name', 'expires_at'])
+      .select('display_name')
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .orderBy('provider')
-      .execute(),
+      .executeTakeFirst(),
     listAgentsForOwner(db, tenantId, subject),
     db
       .selectFrom('sessions')
@@ -71,27 +62,16 @@ export async function getPersonProfile(
       .executeTakeFirst(),
   ]);
 
-  if (!identity && grants.length === 0 && agents.length === 0) return null;
+  if (!identity && !grantName && agents.length === 0) return null;
 
-  const now = Date.now();
   return {
     subject,
-    name: identity?.display_name || identity?.email || grants[0]?.display_name || subject,
+    name: identity?.display_name || identity?.email || grantName?.display_name || subject,
     email: identity?.email ?? null,
     lastActiveAt: lastActiveRow?.last_used_at
       ? new Date(lastActiveRow.last_used_at).toISOString()
       : null,
     idpGroups: identity?.idp_groups ?? [],
-    grants: grants.map((grant) => {
-      const expiresAt = new Date(grant.expires_at);
-      return {
-        provider: grant.provider,
-        accountId: grant.provider_account_id,
-        displayName: grant.display_name,
-        expiresAt: expiresAt.toISOString(),
-        expired: expiresAt.getTime() < now,
-      };
-    }),
     agents: agents.map((agent) => ({
       id: agent.id,
       name: agent.name,

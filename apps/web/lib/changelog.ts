@@ -65,9 +65,9 @@ export const CHANGELOG: ChangelogRelease[] = [
       },
       {
         kind: 'changed',
-        title: 'People has moved into Organization usage',
+        title: 'People has become Access, and Organization usage',
         detail:
-          'What the People page showed about someone — their groups, their connectors and the disconnect button, the agents they own — now sits above that person’s usage when they are picked on Organization usage. The People page and its per-person pages are gone; Sites and the old Grants link point at Organization usage instead.',
+          'Who is connected to what is now the Access page: one table of every person and the connectors they hold, with the disconnect button on the row. What else the People page said about someone — their groups and the agents they own — sits above that person’s usage when they are picked on Organization usage. The People page and its per-person pages are gone; the old Grants link lands on Access.',
       },
     ],
   },

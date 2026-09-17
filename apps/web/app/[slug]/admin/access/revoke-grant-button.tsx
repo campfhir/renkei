@@ -4,11 +4,9 @@ import { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
 
 /**
- * Disconnect one person's connector, from their card on Organization
- * usage. Revoking cuts the person's connector off immediately (they
- * reconnect any time), so it confirms first. Refreshes the route when it
- * lands; a caller holding its own copy of the person's grants passes
- * `onRevoked` to re-read them too.
+ * The one interactive element on the Access page, split out because the
+ * page is a server component. Revoking cuts the person's connector off
+ * immediately (they reconnect any time), so it confirms first.
  */
 export default function RevokeGrantButton({
   slug,
@@ -16,14 +14,12 @@ export default function RevokeGrantButton({
   providerLabel,
   accountId,
   displayName,
-  onRevoked,
 }: {
   slug: string;
   provider: string;
   providerLabel: string;
   accountId: string;
   displayName: string;
-  onRevoked?: () => void;
 }) {
   const { refresh, pending } = useRefresh();
   const [busy, setBusy] = useState(false);
@@ -48,7 +44,6 @@ export default function RevokeGrantButton({
         return;
       }
       refresh();
-      onRevoked?.();
     } catch {
       setError('Could not reach the server');
     } finally {

@@ -487,8 +487,8 @@ test.describe('admin — organization usage', () => {
     await expect(page.getByRole('combobox')).toHaveValue(E2E_SUBJECT);
     await expect(page.getByRole('heading', { name: 'E2E Tester' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Groups (IdP)' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Disconnect Jira' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Connectors on Access' })).toBeVisible();
     await expect(page.getByRole('figure', { name: 'Active days' })).toBeVisible();
     await expect(page.getByRole('group', { name: 'Activity by day' })).toBeVisible();
     // The only spender is the selected person, so they rank first, highlighted.
@@ -513,6 +513,18 @@ test.describe('admin — organization usage', () => {
     await expect(page).toHaveURL(/period=yesterday/);
     await expect(page).not.toHaveURL(/user=/);
   });
+});
+
+test('admin — access table', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/access`);
+  await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
+  // One seeded person with one seeded grant: a row naming both, with the
+  // disconnect on it, and the name linking to their usage.
+  await expect(page.getByRole('link', { name: 'E2E Tester' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Jira', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'E2E Jira', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Disconnect Jira' })).toBeVisible();
+  await shot(page, testInfo, 'admin-access');
 });
 
 test('about — changelog', async ({ page }, testInfo) => {

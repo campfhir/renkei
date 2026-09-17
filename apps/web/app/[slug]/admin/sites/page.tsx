@@ -103,14 +103,14 @@ export default async function SitesPage({
       <h1 className="mb-1 text-xl font-bold">Sites</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The external places this organization reaches — derived from connected accounts and content
-        watches. Access is per-person: pick the person on{' '}
+        watches. Access is per-person: manage it on{' '}
         <Link
-          href={`/${slug}/admin/usage`}
+          href={`/${slug}/admin/access`}
           className="text-blue-600 hover:underline dark:text-blue-400"
         >
-          Organization usage
-        </Link>{' '}
-        to see or disconnect their connectors.
+          Access
+        </Link>
+        .
       </p>
 
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
