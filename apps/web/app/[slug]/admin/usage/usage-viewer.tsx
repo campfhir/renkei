@@ -2,19 +2,39 @@
 
 /**
  * Organization Usage: how much the org is spending, how much of it is
- * actually being used, and who and what is driving it. The tenant-wide
- * counterpart to "My usage" (utilization/utilization-viewer.tsx) — same
- * shape (period picker, headline tiles, one chart behind a series toggle),
- * plus the leaderboards a person's own page has no reason to show.
+ * actually being used, and who and what is driving it — and, with a
+ * person picked, the same view scoped to that one person, along with who
+ * they are (their groups and agents; their connectors are on the Access
+ * page). The tenant-wide counterpart to "My usage"
+ * (utilization/utilization-viewer.tsx) — same shape (period picker,
+ * headline tiles, one chart behind a series toggle), plus the
+ * leaderboards a person's own page has no reason to show.
  */
 
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { getOrgUsageReport, type OrgUsageReport } from './actions';
-import { ORG_USAGE_PERIODS, activeUserPercent, formatTokens, type OrgBucket } from './window';
-import type { EfficientAgentRow, TopAgentRow, TopUserRow, OrgToolRow } from '@/lib/usage/org-usage';
+import {
+  ORG_USAGE_PERIODS,
+  activeSummary,
+  activeUserPercent,
+  formatTokens,
+  periodCaption,
+  type OrgBucket,
+  type RankedUserRow,
+} from './window';
+import type {
+  EfficientAgentRow,
+  ModelTokenRow,
+  OrgToolRow,
+  TopAgentRow,
+} from '@/lib/usage/org-usage';
+import type { PersonProfile } from '@/lib/usage/person-profile';
+import { modelLabel } from '@/lib/agents/model-label';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { Leaderboard } from '@/components/leaderboard';
+import { ActivityCalendar } from '@/components/activity-calendar';
+import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
 
 type Series = 'tokens' | 'runs' | 'tools';
@@ -162,6 +182,115 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
+/**
+ * Who the selected person is: identity, groups and the agents they own.
+ * Their connectors live on the Access page, which is linked from here.
+ */
+function PersonCard({
+  slug,
+  subject,
+  person,
+}: {
+  slug: string;
+  subject: string;
+  person: PersonProfile | null;
+}) {
+  const name = person?.name ?? subject;
+  return (
+    <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="min-w-0 truncate text-base font-semibold">{name}</h2>
+        {person?.email && person.email !== name && (
+          <span className="break-all text-sm text-gray-500">{person.email}</span>
+        )}
+        <span className="ml-auto flex items-center gap-3 text-xs text-gray-500">
+          <span>
+            {person?.lastActiveAt ? (
+              <>
+                last active <LocalTime at={person.lastActiveAt} />
+              </>
+            ) : (
+              'never signed in'
+            )}
+          </span>
+          <Link
+            href={`/${slug}/admin/access`}
+            className="text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Connectors on Access
+          </Link>
+        </span>
+      </div>
+
+      <div className="mt-3 grid gap-4 md:grid-cols-2">
+        <div>
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Groups (IdP)
+          </h3>
+          {!person || person.idpGroups.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-gray-600">
+              No groups recorded at last sign-in
+            </p>
+          ) : (
+            <ul className="flex flex-wrap gap-1.5">
+              {person.idpGroups.map((group) => (
+                <li
+                  key={group}
+                  className="rounded-full border border-gray-200 px-2.5 py-0.5 font-mono text-xs dark:border-gray-800"
+                >
+                  {group}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Agents
+          </h3>
+          {!person || person.agents.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-gray-600">No agents owned</p>
+          ) : (
+            <ul className="space-y-1">
+              {person.agents.map((agent) => (
+                <li key={agent.id} className="flex items-center gap-2 text-sm">
+                  <Link
+                    href={`/${slug}/admin/agents/${agent.id}`}
+                    className="min-w-0 truncate text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    {agent.name}
+                  </Link>
+                  {!agent.enabled && <span className="text-xs text-gray-400">(off)</span>}
+                  <span className="ml-auto shrink-0 text-xs text-gray-500">
+                    {agent.lastRunAt ? (
+                      <>
+                        ran <LocalTime at={agent.lastRunAt} format="date" />
+                      </>
+                    ) : (
+                      'never run'
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Keep the address in step with the view so a person's usage can be linked to. */
+function syncUrl(periodKey: string, subject: string | null): void {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('period', periodKey);
+  if (subject) url.searchParams.set('user', subject);
+  else url.searchParams.delete('user');
+  window.history.replaceState(window.history.state, '', url);
+}
+
 export default function OrgUsageViewer({
   slug,
   tenantId,
@@ -176,11 +305,18 @@ export default function OrgUsageViewer({
   const [includeAgents, setIncludeAgents] = useState(initial.includeAgentsInTopUsers);
   const [pending, startTransition] = useTransition();
 
-  function refresh(periodKey: string, nextIncludeAgents: boolean) {
+  function refresh(periodKey: string, nextIncludeAgents: boolean, subject: string | null) {
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const next = await getOrgUsageReport(tenantId, periodKey, timeZone, nextIncludeAgents);
+      const next = await getOrgUsageReport(
+        tenantId,
+        periodKey,
+        timeZone,
+        nextIncludeAgents,
+        subject
+      );
       setReport(next);
+      syncUrl(next.periodKey, next.subject);
     });
   }
 
@@ -195,7 +331,9 @@ export default function OrgUsageViewer({
     );
   }
 
-  const { tokens, activity } = report;
+  const { tokens, activity, subject } = report;
+  const scoped = subject !== null;
+  const personName = report.person?.name ?? subject ?? '';
   const totalTokens = (['chat', 'chatProjects', 'codeProjects', 'agents'] as const).reduce(
     (sum, key) => sum + tokens[key].input + tokens[key].output,
     0
@@ -204,9 +342,37 @@ export default function OrgUsageViewer({
   const toolErrorRate =
     activity.toolCalls > 0 ? (activity.toolErrors / activity.toolCalls) * 100 : 0;
   const activePct = activeUserPercent(activity.activeUsers, activity.totalUsers);
-  const periodLabel =
-    ORG_USAGE_PERIODS.find((period) => period.key === report.periodKey)?.label ??
-    `${report.days} days`;
+  const period = ORG_USAGE_PERIODS.find((candidate) => candidate.key === report.periodKey) ?? {
+    key: report.periodKey,
+    label: `${report.days} days`,
+    days: report.days,
+    endOffsetDays: 0,
+  };
+  const hourly = report.days <= 1;
+  const active = activeSummary(report.cells);
+  const modelTotal = report.byModel.reduce(
+    (sum, row) => sum + row.inputTokens + row.outputTokens,
+    0
+  );
+
+  // The top few, then — below a gap — the selected person's own row when
+  // they rank outside them. Inside the top they are simply highlighted.
+  const selected = report.selectedUser;
+  const selectedInTop =
+    selected !== null && report.topUsers.some((row) => row.rank === selected.rank);
+  const userRows: RankedUserRow[] =
+    selected !== null && !selectedInTop ? [...report.topUsers, selected] : report.topUsers;
+  // An ellipsis only when ranks are actually skipped: #6 straight after #5 needs none.
+  const skipsRanks =
+    selected !== null && !selectedInTop && selected.rank > report.topUsers.length + 1;
+  // The picker knows everyone who signed in; a subject reached by link may
+  // not be among them (a grant or agent owner who never did), so it is
+  // listed too rather than snapping the picker back to "Everyone".
+  const pickerPeople = report.people.some((person) => person.subject === subject)
+    ? report.people
+    : subject
+      ? [{ subject, label: personName }, ...report.people]
+      : report.people;
 
   return (
     <div className="flex flex-col gap-5" data-wide-page>
@@ -219,9 +385,10 @@ export default function OrgUsageViewer({
           Organization
         </Link>
         <p className="w-full text-sm text-gray-500 dark:text-gray-400">
-          Every surface&rsquo;s token spend across the tenant — chat, chat projects, code projects
-          and agents — how much of the org is actually using it, and who and what is driving the
-          bill. Counts only, never content.
+          Every surface&rsquo;s and model&rsquo;s token spend across the tenant — chat, chat
+          projects, code projects and agents — how much of the org is actually using it, and who and
+          what is driving the bill. Pick a person to see the same for them alone, along with their
+          groups and agents. Counts only, never content.
         </p>
       </header>
 
@@ -231,25 +398,47 @@ export default function OrgUsageViewer({
         </p>
       )}
 
-      <nav className="flex flex-wrap items-center gap-2" aria-label="Period">
-        {ORG_USAGE_PERIODS.map((period) => (
-          <button
-            key={period.key}
-            type="button"
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <nav className="flex flex-wrap items-center gap-2" aria-label="Period">
+          {ORG_USAGE_PERIODS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              disabled={pending}
+              onClick={() => refresh(option.key, includeAgents, subject)}
+              aria-pressed={report.periodKey === option.key}
+              className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
+                report.periodKey === option.key
+                  ? 'border-blue-600 bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </nav>
+        <label className="ml-auto flex items-center gap-2 text-sm">
+          <span className="text-gray-500 dark:text-gray-400">Person</span>
+          <select
+            value={subject ?? ''}
             disabled={pending}
-            onClick={() => refresh(period.key, includeAgents)}
-            aria-pressed={report.periodKey === period.key}
-            className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
-              report.periodKey === period.key
-                ? 'border-blue-600 bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900'
-            }`}
+            onChange={(event) =>
+              refresh(report.periodKey, includeAgents, event.target.value || null)
+            }
+            className="max-w-xs rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950"
           >
-            {period.label}
-          </button>
-        ))}
+            <option value="">Everyone</option>
+            {pickerPeople.map((person) => (
+              <option key={person.subject} value={person.subject}>
+                {person.label}
+              </option>
+            ))}
+          </select>
+        </label>
         {pending && <LoadingLine />}
-      </nav>
+      </div>
+
+      {scoped && <PersonCard slug={slug} subject={subject} person={report.person} />}
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
@@ -257,11 +446,23 @@ export default function OrgUsageViewer({
           value={formatTokens(totalTokens)}
           hint={`${formatTokens(tokens.agents.input + tokens.agents.output)} in agents`}
         />
-        <Stat
-          label="Active users"
-          value={`${activity.activeUsers.toLocaleString('en-US')} / ${activity.totalUsers.toLocaleString('en-US')}`}
-          hint={`${activePct}% used at least one token`}
-        />
+        {scoped ? (
+          <Stat
+            label={hourly ? 'Active hours' : 'Active days'}
+            value={`${active.active.toLocaleString('en-US')} / ${active.total.toLocaleString('en-US')}`}
+            hint={
+              active.active > 0
+                ? `${hourly ? 'hours' : 'days'} with a token, a run or a tool call`
+                : `nothing in this period`
+            }
+          />
+        ) : (
+          <Stat
+            label="Active users"
+            value={`${activity.activeUsers.toLocaleString('en-US')} / ${activity.totalUsers.toLocaleString('en-US')}`}
+            hint={`${activePct}% used at least one token`}
+          />
+        )}
         <Stat
           label="Agent runs"
           value={activity.runs.toLocaleString('en-US')}
@@ -286,12 +487,42 @@ export default function OrgUsageViewer({
         />
       </section>
 
-      <TokenSurfaceBreakdown tokens={tokens} />
+      {scoped && (
+        <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+          <figcaption className="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+            {hourly ? `Active hours, ${period.label.toLowerCase()}` : 'Active days'}
+          </figcaption>
+          <ActivityCalendar cells={report.cells} hourly={hourly} />
+        </figure>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TokenSurfaceBreakdown tokens={tokens} />
+        <Leaderboard<ModelTokenRow>
+          heading="Tokens by model"
+          hint={
+            scoped
+              ? `Every model call made as ${personName} — chats, agents and optimizer passes alike.`
+              : 'Every model call in the organization — chats, agents and optimizer passes alike.'
+          }
+          rows={report.byModel}
+          empty="No model has been called in this period."
+          keyOf={(row) => `${row.provider ?? ''}:${row.model ?? ''}`}
+          labelOf={(row) => modelLabel(row.provider, row.model)}
+          valueOf={(row) => row.inputTokens + row.outputTokens}
+          formatValue={(row) => {
+            const total = row.inputTokens + row.outputTokens;
+            const share = modelTotal > 0 ? Math.round((total / modelTotal) * 100) : 0;
+            return `${formatTokens(total)} · ${share}% · ${row.calls.toLocaleString('en-US')} calls`;
+          }}
+          barClassName="bg-indigo-500"
+        />
+      </div>
 
       <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
         <figcaption className="mb-3 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Over the last {periodLabel}
+            {periodCaption(period)}
           </span>
           <span className="ml-auto inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-700">
             {SERIES.map((option) => (
@@ -333,7 +564,7 @@ export default function OrgUsageViewer({
                   disabled={pending}
                   onClick={() => {
                     setIncludeAgents(option.key);
-                    refresh(report.periodKey, option.key);
+                    refresh(report.periodKey, option.key, subject);
                   }}
                   aria-pressed={includeAgents === option.key}
                   className={`px-2 py-1 disabled:opacity-50 ${
@@ -347,25 +578,51 @@ export default function OrgUsageViewer({
               ))}
             </span>
           </div>
-          <Leaderboard<TopUserRow>
+          <Leaderboard<RankedUserRow>
             heading="By tokens spent"
             hint={
-              includeAgents
-                ? 'Chat, chat-project, code-project and agent tokens combined.'
-                : 'Chat, chat-project and code-project tokens — toggle above to fold in their agents.'
+              scoped && selected === null
+                ? `${personName} spent no tokens in this period. ${
+                    includeAgents
+                      ? 'Chat, chat-project, code-project and agent tokens combined.'
+                      : 'Chat, chat-project and code-project tokens — toggle above to fold in their agents.'
+                  }`
+                : includeAgents
+                  ? 'Chat, chat-project, code-project and agent tokens combined. Pick a name to scope the page to that person.'
+                  : 'Chat, chat-project and code-project tokens — toggle above to fold in their agents. Pick a name to scope the page to that person.'
             }
-            rows={report.topUsers}
+            rows={userRows}
             empty="Nobody has spent any tokens in this period."
             keyOf={(row) => row.subject}
-            labelOf={(row) => row.label}
+            labelOf={(row) =>
+              row.subject === subject ? (
+                row.label
+              ) : (
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => refresh(report.periodKey, includeAgents, row.subject)}
+                  className="truncate text-left text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+                >
+                  {row.label}
+                </button>
+              )
+            }
             valueOf={(row) => row.totalTokens}
             formatValue={(row) => formatTokens(row.totalTokens)}
+            rankOf={(row) => row.rank}
+            highlightOf={(row) => row.subject === subject}
+            gapBefore={(row) => skipsRanks && row.rank === selected!.rank}
           />
         </div>
 
         <Leaderboard<TopAgentRow>
           heading="Top agents"
-          hint="By total tokens spent over the period."
+          hint={
+            scoped
+              ? `${personName}'s agents by total tokens spent over the period.`
+              : 'By total tokens spent over the period.'
+          }
           rows={report.topAgents}
           empty="No agent has run in this period."
           keyOf={(row) => row.agentId}
@@ -405,7 +662,11 @@ export default function OrgUsageViewer({
 
       <Leaderboard<OrgToolRow>
         heading="Top tools"
-        hint="Most-called tools across the whole organization over the period."
+        hint={
+          scoped
+            ? `Most-called tools as ${personName} over the period — from a chat client and by their agents.`
+            : 'Most-called tools across the whole organization over the period.'
+        }
         rows={report.topTools}
         empty="No tool has been called in this period."
         keyOf={(row) => row.tool}
@@ -419,9 +680,20 @@ export default function OrgUsageViewer({
       />
 
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Days are calendar days in {report.timeZone}. &ldquo;Active users&rdquo; counts anyone who
-        spent at least one token — in a chat, a project, or an agent run — during the period,
-        against everyone who has ever signed in to this organization.
+        Days are calendar days in {report.timeZone}.{' '}
+        {scoped ? (
+          <>
+            An &ldquo;active&rdquo; {hourly ? 'hour' : 'day'} is one in which {personName} spent a
+            token, ran an agent, or called a tool — from a chat client or through an agent acting
+            for them.
+          </>
+        ) : (
+          <>
+            &ldquo;Active users&rdquo; counts anyone who spent at least one token — in a chat, a
+            project, or an agent run — during the period, against everyone who has ever signed in to
+            this organization.
+          </>
+        )}
       </p>
     </div>
   );

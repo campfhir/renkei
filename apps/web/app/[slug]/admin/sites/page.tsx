@@ -105,10 +105,10 @@ export default async function SitesPage({
         The external places this organization reaches — derived from connected accounts and content
         watches. Access is per-person: manage it on{' '}
         <Link
-          href={`/${slug}/admin/people`}
+          href={`/${slug}/admin/access`}
           className="text-blue-600 hover:underline dark:text-blue-400"
         >
-          People
+          Access
         </Link>
         .
       </p>

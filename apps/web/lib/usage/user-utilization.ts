@@ -97,6 +97,49 @@ export function sinceLocal(days: number, timeZone: string): RawBuilder<Date> {
 }
 
 /**
+ * A window of whole calendar days in the viewer's zone: `days` of them,
+ * the last one `endOffsetDays` before today. `{ days: 7, endOffsetDays: 0 }`
+ * is the last seven days including today; `{ days: 1, endOffsetDays: 1 }`
+ * is yesterday alone — the one shape the older `days`-only helpers could
+ * not express, since they always ran up to now.
+ */
+export interface UsageSpan {
+  days: number;
+  endOffsetDays: number;
+}
+
+/** The span's first instant: local midnight of its oldest day. */
+export function spanStart(span: UsageSpan, timeZone: string): RawBuilder<Date> {
+  const back = Math.max(0, span.endOffsetDays + span.days - 1);
+  return sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${back})) AT TIME ZONE ${timeZone})`;
+}
+
+/**
+ * The span's exclusive end: local midnight of the day after its newest
+ * day. Null when the span runs up to today — an open end, so a row
+ * written a second from now still counts and the query stays a single
+ * range scan.
+ */
+export function spanEnd(span: UsageSpan, timeZone: string): RawBuilder<Date> | null {
+  if (span.endOffsetDays <= 0) return null;
+  const back = span.endOffsetDays - 1;
+  return sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${back})) AT TIME ZONE ${timeZone})`;
+}
+
+/**
+ * `column` falls inside the span — the one predicate every window query
+ * shares, usable both as a Kysely `where(...)` expression and inside a
+ * raw template.
+ */
+export function inSpan(column: string, span: UsageSpan, timeZone: string): RawBuilder<boolean> {
+  const end = spanEnd(span, timeZone);
+  const ref = sql.ref(column);
+  return end === null
+    ? sql<boolean>`${ref} >= ${spanStart(span, timeZone)}`
+    : sql<boolean>`(${ref} >= ${spanStart(span, timeZone)} AND ${ref} < ${end})`;
+}
+
+/**
  * A timestamp's calendar day in the viewer's zone. Every query that groups
  * by this MUST group by the alias `day`, never by a repeat of the
  * expression: each `${timeZone}` is its own bound parameter, so a repeat
@@ -104,6 +147,21 @@ export function sinceLocal(days: number, timeZone: string): RawBuilder<Date> {
  */
 export function localDayOf(column: string, timeZone: string): RawBuilder<string> {
   return sql<string>`to_char(${sql.ref(column)} AT TIME ZONE ${timeZone}, 'YYYY-MM-DD')`;
+}
+
+/**
+ * A timestamp's bucket key in the viewer's zone: the calendar day
+ * (`YYYY-MM-DD`), or the hour of it (`YYYY-MM-DDTHH`) for a window too
+ * short to draw by day. Same grouping rule as `localDayOf`.
+ */
+export function localBucketOf(
+  column: string,
+  timeZone: string,
+  granularity: 'day' | 'hour'
+): RawBuilder<string> {
+  return granularity === 'hour'
+    ? sql<string>`to_char(${sql.ref(column)} AT TIME ZONE ${timeZone}, 'YYYY-MM-DD"T"HH24')`
+    : localDayOf(column, timeZone);
 }
 
 export async function getUtilizationTotals(

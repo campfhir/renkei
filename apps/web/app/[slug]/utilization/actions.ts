@@ -6,7 +6,7 @@
  * The subject is the SESSION's, never a parameter: this page answers "what
  * have I used", and there is no argument a caller can send that turns it
  * into someone else's answer. Operators who want another person's numbers
- * have the people page, which checks their role on every call.
+ * pick them on Organization usage, which checks their role on every call.
  */
 
 import { getDatabase } from '@renkei/db';
@@ -96,6 +96,8 @@ export async function getUtilizationReport(
   if (!dbResult.ok) return { ...empty, error: 'Database unavailable' };
   const db = dbResult.val;
   const subject = session.subject;
+  // This page's periods all run up to today; the org-usage queries take a span.
+  const span = { days: period.days, endOffsetDays: 0 };
 
   try {
     const [totals, daily, agents, attention, surfaceTokens, efficientAgents] = await Promise.all([
@@ -103,8 +105,8 @@ export async function getUtilizationReport(
       getUtilizationSeries(db, tenantId, subject, period.days, timeZone),
       getAgentUtilization(db, tenantId, subject, period.days, timeZone),
       getFailureSignatures(db, tenantId, subject, period.days, timeZone),
-      getSurfaceTokenTotals(db, tenantId, period.days, timeZone, subject),
-      getMostEfficientAgents(db, tenantId, period.days, timeZone, 10, 3, subject),
+      getSurfaceTokenTotals(db, tenantId, span, timeZone, subject),
+      getMostEfficientAgents(db, tenantId, span, timeZone, 10, 3, subject),
     ]);
     return {
       periodKey: period.key,

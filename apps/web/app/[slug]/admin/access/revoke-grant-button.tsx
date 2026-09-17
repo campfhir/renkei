@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
 
 /**
- * The one interactive element on the people page, split out because the
+ * The one interactive element on the Access page, split out because the
  * page is a server component. Revoking cuts the person's connector off
  * immediately (they reconnect any time), so it confirms first.
  */

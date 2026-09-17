@@ -85,7 +85,7 @@ function adminSections(slug: string): AdminSection[] {
           href: `${admin}/usage`,
           label: 'Organization usage',
           detail:
-            'Token spend by chat, chat projects, code projects and agents; who is using it, and which agents do the most work per token.',
+            'Token spend by surface and by model; who is using it, and which agents do the most work per token. Pick a person to see their usage, groups and agents.',
         },
       ],
     },
@@ -113,9 +113,10 @@ function adminSections(slug: string): AdminSection[] {
       label: 'People and records',
       areas: [
         {
-          href: `${admin}/people`,
-          label: 'People',
-          detail: 'Everyone who has signed in, their roles and their connections.',
+          href: `${admin}/access`,
+          label: 'Access',
+          detail:
+            'Who is connected to what — every person and the connectors they hold, with disconnect.',
         },
         {
           href: `${admin}/audit`,

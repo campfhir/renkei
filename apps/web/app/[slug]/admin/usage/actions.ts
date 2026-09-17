@@ -2,9 +2,11 @@
 
 /**
  * Organization Usage's report — the operator's tenant-wide counterpart to
- * "My usage". Gated on ROLE_OPERATOR on every call, the same way every
- * other admin action in this app is: a page-level check is not enough on
- * its own, because a server action is reachable on its own.
+ * "My usage", and, with a subject, the same report for one person along
+ * with who that person is (the old People page, folded in here). Gated on
+ * ROLE_OPERATOR on every call, the same way every other admin action in
+ * this app is: a page-level check is not enough on its own, because a
+ * server action is reachable on its own.
  */
 
 import { getDatabase } from '@renkei/db';
@@ -16,27 +18,54 @@ import {
   getOrgActivityTotals,
   getOrgDailySeries,
   getSurfaceTokenTotals,
+  getTokensByModel,
   getTopAgentsByTokens,
   getTopToolsOrg,
   getTopUsers,
+  listPeople,
   type EfficientAgentRow,
+  type ModelTokenRow,
   type OrgActivityTotals,
   type OrgTokenTotals,
   type OrgToolRow,
+  type PersonOption,
   type TopAgentRow,
-  type TopUserRow,
 } from '@/lib/usage/org-usage';
-import { bucketOrgSeries, resolvePeriod, type OrgBucket } from './window';
+import { getPersonProfile, type PersonProfile } from '@/lib/usage/person-profile';
+import {
+  activityCells,
+  bucketOrgSeries,
+  rankUsers,
+  resolvePeriod,
+  seriesGranularity,
+  type ActivityCell,
+  type OrgBucket,
+  type RankedUserRow,
+} from './window';
+
+/** How many people the leaderboard names before the selected person's own rank. */
+const TOP_USERS = 5;
 
 export interface OrgUsageReport {
   periodKey: string;
   days: number;
   /** The IANA zone every day in the report is bucketed in. */
   timeZone: string;
+  /** The person every figure below is scoped to, or null for the whole org. */
+  subject: string | null;
+  /** Who that person is — null org-wide, or when nothing at all is known about the subject. */
+  person: PersonProfile | null;
+  /** Everyone who has signed in, for the picker. */
+  people: PersonOption[];
   tokens: OrgTokenTotals;
   activity: OrgActivityTotals;
   series: OrgBucket[];
-  topUsers: TopUserRow[];
+  /** One square per day (or hour) of the window, for the activity calendar. */
+  cells: ActivityCell[];
+  byModel: ModelTokenRow[];
+  topUsers: RankedUserRow[];
+  /** The selected person's own row and rank, when they spent anything in the window. */
+  selectedUser: RankedUserRow | null;
   includeAgentsInTopUsers: boolean;
   topAgents: TopAgentRow[];
   efficientAgents: EfficientAgentRow[];
@@ -66,18 +95,26 @@ export async function getOrgUsageReport(
   tenantId: string,
   requestedPeriod?: string,
   requestedTimeZone?: string,
-  includeAgentsInTopUsers = false
+  includeAgentsInTopUsers = false,
+  requestedSubject: string | null = null
 ): Promise<OrgUsageReport> {
   const period = resolvePeriod(requestedPeriod);
   const timeZone = safeTimeZone(requestedTimeZone);
+  const subject = requestedSubject?.trim() ? requestedSubject.trim() : null;
   const empty: OrgUsageReport = {
     periodKey: period.key,
     days: period.days,
     timeZone,
+    subject,
+    person: null,
+    people: [],
     tokens: ZERO_TOKENS,
     activity: ZERO_ACTIVITY,
     series: [],
+    cells: [],
+    byModel: [],
     topUsers: [],
+    selectedUser: null,
     includeAgentsInTopUsers,
     topAgents: [],
     efficientAgents: [],
@@ -95,24 +132,47 @@ export async function getOrgUsageReport(
   const db = dbResult.val;
 
   try {
-    const [tokens, activity, daily, topUsers, topAgents, efficientAgents, topTools] =
-      await Promise.all([
-        getSurfaceTokenTotals(db, tenantId, period.days, timeZone),
-        getOrgActivityTotals(db, tenantId, period.days, timeZone),
-        getOrgDailySeries(db, tenantId, period.days, timeZone),
-        getTopUsers(db, tenantId, period.days, timeZone, includeAgentsInTopUsers),
-        getTopAgentsByTokens(db, tenantId, period.days, timeZone),
-        getMostEfficientAgents(db, tenantId, period.days, timeZone),
-        getTopToolsOrg(db, tenantId, period.days, timeZone),
-      ]);
+    const [
+      tokens,
+      activity,
+      daily,
+      allUsers,
+      topAgents,
+      efficientAgents,
+      topTools,
+      byModel,
+      people,
+      person,
+    ] = await Promise.all([
+      getSurfaceTokenTotals(db, tenantId, period, timeZone, subject),
+      getOrgActivityTotals(db, tenantId, period, timeZone, subject),
+      getOrgDailySeries(db, tenantId, period, timeZone, subject, seriesGranularity(period.days)),
+      // Every spender, ranked: the top few are shown, and the selected
+      // person's own rank is read off the same list.
+      getTopUsers(db, tenantId, period, timeZone, includeAgentsInTopUsers),
+      getTopAgentsByTokens(db, tenantId, period, timeZone, subject),
+      getMostEfficientAgents(db, tenantId, period, timeZone, 10, 3, subject),
+      getTopToolsOrg(db, tenantId, period, timeZone, subject),
+      getTokensByModel(db, tenantId, period, timeZone, subject),
+      listPeople(db, tenantId),
+      subject === null ? Promise.resolve(null) : getPersonProfile(db, tenantId, subject),
+    ]);
+    const now = new Date();
+    const ranked = rankUsers(allUsers, subject, TOP_USERS);
     return {
       periodKey: period.key,
       days: period.days,
       timeZone,
+      subject,
+      person,
+      people,
       tokens,
       activity,
-      series: bucketOrgSeries(daily, period.days, new Date(), timeZone),
-      topUsers,
+      series: bucketOrgSeries(daily, period, now, timeZone),
+      cells: activityCells(daily, period, now, timeZone),
+      byModel,
+      topUsers: ranked.top,
+      selectedUser: ranked.selected,
       includeAgentsInTopUsers,
       topAgents,
       efficientAgents,

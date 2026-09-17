@@ -43,6 +43,35 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    heading: 'Organization usage, per person',
+    entries: [
+      {
+        kind: 'added',
+        title: 'See one person’s usage on Organization usage',
+        detail:
+          'Pick a person to scope the whole page to them: their tokens by surface and by model, agent runs, tool calls, the trend over time, their top agents and tools — and, in place of the active-user rate, how many days of the period they were active, drawn as a small calendar of shaded squares. The top-users list keeps the top five and shows where the chosen person ranks below them.',
+      },
+      {
+        kind: 'added',
+        title: 'Today and yesterday on Organization usage',
+        detail: 'Two more periods beside 7, 30 and 90 days. Either draws the day by the hour.',
+      },
+      {
+        kind: 'added',
+        title: 'Tokens by model on Organization usage',
+        detail:
+          'Which models the spend went to over the period, with each one’s share and call count — org-wide, or for the chosen person.',
+      },
+      {
+        kind: 'changed',
+        title: 'People has become Access, and Organization usage',
+        detail:
+          'Who is connected to what is now the Access page: one table of every person and the connectors they hold, with the disconnect button on the row. What else the People page said about someone — their groups and the agents they own — sits above that person’s usage when they are picked on Organization usage. The People page and its per-person pages are gone; the old Grants link lands on Access.',
+      },
+    ],
+  },
+  {
     date: '2026-09-16',
     entries: [
       {
