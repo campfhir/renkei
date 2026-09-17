@@ -3,10 +3,12 @@
 import StructuredContent from './structured-content';
 import { detailRows } from './detail-rows';
 import { SOURCE_OPTIONS } from './source-options';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { searchMyKnowledge, type KnowledgeSearchHit, type KnowledgeSearchResult } from './actions';
 import { signInUrl } from '@/lib/sign-in-url';
 import { LoadingLine } from '@/components/skeleton';
+import { Icon, ICONS } from '@/components/icons';
+import { useDismiss } from '@/lib/use-dismiss';
 
 const K_OPTIONS = [10, 20, 30];
 
@@ -217,6 +219,56 @@ function groupByDocument(hits: KnowledgeSearchHit[]): DocumentGroup[] {
     }
   }
   return [...groups.values()];
+}
+
+/**
+ * The query-syntax help, as an (i) button rather than a permanent paragraph
+ * under the search bar — that prose is long, most searches never need it,
+ * and on a phone it used to push the actual results below the fold.
+ *
+ * Two ways in on purpose: a real mouse can just hover (`group-hover`, pure
+ * CSS, no state) the way a desktop tooltip is expected to behave; a touch
+ * screen has no hover, so tapping toggles `open` and pins the panel — the
+ * same click also lets a desktop user pin it open instead of holding still.
+ */
+function QueryHelpButton() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(open, ref, () => setOpen(false));
+
+  return (
+    <div ref={ref} className="group relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label="Search syntax help"
+        title="How to search"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-900"
+      >
+        <Icon path={ICONS.info} className="h-4 w-4" />
+      </button>
+      <div
+        // Anchored to the button's RIGHT edge, extending leftward: the button
+        // sits mid-row (input, then this, then the submit button), so a
+        // panel opening rightward from it would run off a narrow phone
+        // screen. `max-w-[calc(100vw-2rem)]` keeps a margin on either side
+        // even on the narrowest phones.
+        className={`absolute right-0 z-40 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-600 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400 ${
+          open ? 'block' : 'hidden group-hover:block'
+        }`}
+      >
+        <p>
+          Words search meaning; <code>key:value</code> narrows by detail — try{' '}
+          <code>reporter:&quot;Evan Jeing&quot;</code>, <code>ticket:ENG-787</code>,{' '}
+          <code>from:evan</code>, <code>space:Engineering</code>. Combine filters with{' '}
+          <code>&amp;&amp;</code>, <code>||</code> and parentheses —{' '}
+          <code>(space:Eng || space:Ops) &amp;&amp; reporter:Evan</code> — and put words alongside
+          them: <code>printers not working ticket:ENG-787</code>.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -467,18 +519,31 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
 
   return (
     <div>
-      <form onSubmit={(e) => void runSearch(e)} className="mb-4 space-y-3">
-        <div className="flex flex-wrap gap-2">
+      <form onSubmit={(e) => void runSearch(e)} className="mb-4 space-y-2">
+        <div className="flex gap-2">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search, or filter with reporter:… from:… space:…"
             className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
+          <QueryHelpButton />
+          <button
+            type="submit"
+            disabled={busy || !query.trim()}
+            aria-label={busy ? 'Searching…' : 'Search'}
+            title={busy ? 'Searching…' : 'Search'}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Icon path={ICONS.search} className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
           <select
             value={datePreset}
             onChange={(e) => setDatePreset(e.target.value)}
-            className="rounded-md border border-gray-300 bg-white px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
           >
             {DATE_PRESETS.map((preset) => (
               <option key={preset.id} value={preset.id}>
@@ -489,7 +554,7 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
           <select
             value={k}
             onChange={(e) => setK(Number(e.target.value))}
-            className="rounded-md border border-gray-300 bg-white px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
           >
             {K_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -497,13 +562,6 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
               </option>
             ))}
           </select>
-          <button
-            type="submit"
-            disabled={busy || !query.trim()}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {busy ? 'Searching…' : 'Search'}
-          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -539,14 +597,6 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
           )}
         </div>
       </form>
-      <p className="mb-4 -mt-1 text-xs text-gray-500 dark:text-gray-400">
-        Words search meaning; <code>key:value</code> narrows by detail — try{' '}
-        <code>reporter:&quot;Evan Jeing&quot;</code>, <code>ticket:ENG-787</code>,{' '}
-        <code>from:evan</code>, <code>space:Engineering</code>. Combine filters with{' '}
-        <code>&amp;&amp;</code>, <code>||</code> and parentheses —{' '}
-        <code>(space:Eng || space:Ops) &amp;&amp; reporter:Evan</code> — and put words alongside
-        them: <code>printers not working ticket:ENG-787</code>.
-      </p>
 
       {!hasSearched && busy && <LoadingLine label="Searching…" />}
 
@@ -558,12 +608,7 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
 
       {hasSearched && !result?.error && (
         <div className="space-y-4">
-          {summary && (
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              {summary}
-              {(result?.elided ?? 0) > 0 && `, ${result?.elided} withheld`}
-            </p>
-          )}
+          {summary && <p className="text-sm text-gray-600 dark:text-gray-400">{summary}</p>}
           {groups.length === 0 && (
             <p className="text-sm text-gray-600 dark:text-gray-400">
               {result?.browsing
@@ -582,25 +627,6 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
               relevance cutoff your organization configured. Try different words, or an exact name
               or identifier.
             </p>
-          )}
-          {result && result.elided > 0 && (
-            <>
-              {result.elided - (result.unverified ?? 0) > 0 && (
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {result.elided - (result.unverified ?? 0)} result
-                  {result.elided - (result.unverified ?? 0) === 1 ? '' : 's'} withheld — you
-                  don&apos;t have access at the source.
-                </p>
-              )}
-              {/* Said separately, and in amber: this one is a failure, not a
-                  permission decision, and it is worth retrying. */}
-              {(result.unverified ?? 0) > 0 && (
-                <p className="text-sm text-amber-700 dark:text-amber-400">
-                  {result.unverified} result{result.unverified === 1 ? '' : 's'} couldn&apos;t be
-                  checked in time — the source didn&apos;t respond. Try again in a moment.
-                </p>
-              )}
-            </>
           )}
         </div>
       )}

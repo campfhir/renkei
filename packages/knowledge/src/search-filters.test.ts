@@ -9,10 +9,19 @@
 
 /** Captures the interpolated fragments of the tagged template the search builds. */
 let lastQuery: { strings: readonly string[]; values: unknown[] } | null = null;
+/** Every statement executed, in order — `lastQuery` alone can't tell a SET from the query it preceded. */
+let queryHistory: { strings: readonly string[]; values: unknown[] }[] = [];
 let rows: Record<string, unknown>[] = [];
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: true, val: {} }),
+  // searchKnowledge runs its query inside a transaction (to scope
+  // `SET LOCAL hnsw.ef_search`), so the stub needs a `.transaction().execute()`
+  // that just runs the callback against something the `sql` mock below will
+  // accept — it never inspects the "connection" it's handed.
+  getDatabase: () => ({
+    ok: true,
+    val: { transaction: () => ({ execute: (fn: (trx: unknown) => unknown) => fn({}) }) },
+  }),
 }));
 
 jest.mock('kysely', () => {
@@ -22,6 +31,7 @@ jest.mock('kysely', () => {
       values,
       execute: async () => {
         lastQuery = { strings, values };
+        queryHistory.push(lastQuery);
         return { rows };
       },
     };
@@ -38,6 +48,9 @@ jest.mock('kysely', () => {
     });
     return { strings: new Array(values.length + 1).fill(''), values };
   };
+  // Real kysely's sql.raw: the string goes straight into the rendered SQL,
+  // not through a bind parameter — modelled as a fragment with no values.
+  sql.raw = (rawString: string) => ({ strings: [rawString], values: [] });
   return { sql };
 });
 
@@ -133,6 +146,7 @@ const baseOptions = {
 
 beforeEach(() => {
   lastQuery = null;
+  queryHistory = [];
   rows = [];
 });
 
@@ -282,6 +296,23 @@ describe('hybrid retrieval', () => {
     await searchKnowledge({ ...baseOptions, sources: [{ provider: 'jira' }] });
     const sqlText = renderedSql();
     expect(sqlText.split('provider =').length - 1).toBe(2);
+  });
+
+  it('raises hnsw.ef_search before running the query, every search is filtered', async () => {
+    // Every search here carries a WHERE clause (tenant, at minimum), and HNSW's
+    // graph traversal doesn't see that filter — it explores neighbours in raw
+    // embedding space and checks the filter afterward. Left at pgvector's
+    // default (40, already under MAX_OVERFETCH's 60), a real match can be
+    // skipped entirely in favour of a denser, irrelevant cluster the traversal
+    // happened to visit instead — exactly the "good source, combined with a
+    // noisier one, returns nothing" failure this guards against.
+    await searchKnowledge(baseOptions);
+    expect(queryHistory.length).toBeGreaterThanOrEqual(2);
+    const setStatement = renderFragment(queryHistory[0]!);
+    // Rendered as a literal (sql.raw), not a bind parameter — SET does not accept those.
+    expect(setStatement).toBe('SET LOCAL hnsw.ef_search = 200');
+    // Sent ahead of the actual candidate query, not after it.
+    expect(renderFragment(queryHistory[1]!)).toContain('embedding <=>');
   });
 
   it('embeds the query as a query, not a passage', async () => {
