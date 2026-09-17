@@ -44,6 +44,17 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    entries: [
+      {
+        kind: 'added',
+        title: 'Ask for a Jira issue’s change history',
+        detail:
+          'A new Jira read tool lists every change on an issue — status, assignee, priority, sprint, estimates, custom fields — with when it happened and who made it. Narrow it to one field or a date range, and ask for the newest changes first.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Organization usage, per person',
     entries: [
       {

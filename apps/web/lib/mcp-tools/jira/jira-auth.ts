@@ -144,6 +144,14 @@ export function granularJiraScopes(toolName: string, readOnly: boolean): string[
   if (toolName === 'jira_create_remote_link') {
     return ['read:issue:jira', 'write:remote-link:jira'];
   }
+  // The changelog endpoint documents its own granular set
+  // (docs/jira-cloud-rest-api-open-api-spec.json) — all three ride the
+  // jira-read bundle, so gating on them costs no grant anything, and a grant
+  // minted before the catalog carried them stays hidden from a tool that
+  // could only 401 (the jira_list_projects rule).
+  if (toolName === 'jira_get_issue_history') {
+    return ['read:issue-meta:jira', 'read:avatar:jira', 'read:issue.changelog:jira'];
+  }
   // Work types (issue types): GET /issuetype and /issuetype/project both
   // document this exact granular set (docs/jira-cloud-rest-api-open-api-spec.json),
   // not just read:issue:jira. Project-scoped lookups also resolve a project
