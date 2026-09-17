@@ -10,6 +10,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import {
   E2E_SLUG,
+  E2E_SUBJECT,
   AGENT_RICH_ID,
   AGENT_PLAIN_ID,
   AGENT_DEEP_ID,
@@ -454,6 +455,63 @@ test.describe('admin — organization usage', () => {
     await expect(withAgents).toHaveAttribute('aria-pressed', 'true');
     await expect(chatsOnly).toHaveAttribute('aria-pressed', 'false');
     await shot(page, testInfo, 'admin-organization-usage-top-users', { fullPage: false });
+  });
+
+  test('tokens by model', async ({ page }) => {
+    await page.goto(`/${E2E_SLUG}/admin/usage`);
+    await expect(page.getByRole('heading', { name: 'Tokens by model' })).toBeVisible();
+    // The seeded ledger names three models plus rows written before the
+    // model was recorded, which surface as one labelled row.
+    await expect(page.getByText('claude-opus-5', { exact: true })).toBeVisible();
+    await expect(page.getByText('Model not recorded')).toBeVisible();
+  });
+
+  test('today, by the hour', async ({ page }, testInfo) => {
+    await page.goto(`/${E2E_SLUG}/admin/usage?period=today`);
+    await expect(page.getByRole('button', { name: 'Today' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    await expect(page.getByText('Today, by hour')).toBeVisible();
+    await page.getByRole('button', { name: 'Yesterday' }).click();
+    await expect(page.getByText('Yesterday, by hour')).toBeVisible();
+    await shot(page, testInfo, 'admin-organization-usage-yesterday');
+  });
+
+  test('scoped to one person', async ({ page }, testInfo) => {
+    // Reached by link, the way Sites points here: the picker lands on the
+    // person and the whole page is theirs — identity card, active days in
+    // place of active users, and their own rank in Top users.
+    await page.goto(`/${E2E_SLUG}/admin/usage?user=${encodeURIComponent(E2E_SUBJECT)}&period=1m`);
+    await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
+    await expect(page.getByRole('combobox')).toHaveValue(E2E_SUBJECT);
+    await expect(page.getByRole('heading', { name: 'E2E Tester' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Groups (IdP)' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Disconnect Jira' })).toBeVisible();
+    await expect(page.getByRole('figure', { name: 'Active days' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Activity by day' })).toBeVisible();
+    // The only spender is the selected person, so they rank first, highlighted.
+    await expect(page.getByText('#1')).toBeVisible();
+    await shot(page, testInfo, 'admin-organization-usage-person');
+
+    // A quarter lays the days out as tiny month calendars.
+    await page.getByRole('button', { name: '90 days' }).click();
+    await expect(page.getByText('Over the last 90 days')).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Activity by day' })).toBeVisible();
+    await shot(page, testInfo, 'admin-organization-usage-person-quarter');
+
+    // A single day counts hours instead.
+    await page.getByRole('button', { name: 'Yesterday' }).click();
+    await expect(page.getByRole('figure', { name: 'Active hours, yesterday' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Activity', exact: true })).toBeVisible();
+    await shot(page, testInfo, 'admin-organization-usage-person-yesterday');
+
+    // Back to everyone through the picker.
+    await page.getByRole('combobox').selectOption('');
+    await expect(page.getByText('Active users', { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/period=yesterday/);
+    await expect(page).not.toHaveURL(/user=/);
   });
 });
 
