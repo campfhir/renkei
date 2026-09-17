@@ -478,6 +478,24 @@ const RRF_K = 60;
  */
 const MAX_OVERFETCH = 60;
 
+/**
+ * `hnsw.ef_search` — the size of the candidate list the HNSW index explores
+ * per query. pgvector defaults this to 40, which is already smaller than
+ * MAX_OVERFETCH (60), and every search here is FILTERED (tenant, source,
+ * owner, dates, metadata all live in the same WHERE as the vector order).
+ * HNSW's graph traversal has no idea about that WHERE clause — it explores
+ * neighbours in raw embedding space and only checks the filter afterward —
+ * so a filtered query needs a larger candidate list than an unfiltered one
+ * to end up with the same number of qualifying rows. Left at the default,
+ * a real result can simply never be visited: a query narrowed to one quiet
+ * source, or one noisy source OR-ed in beside it, can silently lose a
+ * genuinely close match to a denser, irrelevant cluster (a large mailbox,
+ * a large ticket backlog) that the traversal happened to explore instead.
+ * Set well above MAX_OVERFETCH so there is real headroom for that filter
+ * cost, not just enough to cover the LIMIT itself.
+ */
+const HNSW_EF_SEARCH = 200;
+
 /** The logical document a chunk row belongs to — its refId before the `#0001` suffix. */
 function documentKeyOf(row: CandidateRow): string {
   const hash = row.ref_id.indexOf('#');
@@ -523,41 +541,46 @@ export async function searchKnowledge(
   const queryStarted = Date.now();
   const rowsResult = await wrapAsync(
     () =>
-      sql<CandidateRow>`
-        WITH semantic AS (
-          SELECT id,
-                 (embedding <=> ${vector}::vector) AS distance,
-                 row_number() OVER (ORDER BY embedding <=> ${vector}::vector) AS rank
-          FROM knowledge_chunks
-          WHERE ${where}
-          ORDER BY distance
+      dbResult.val.transaction().execute(async (trx) => {
+        // SET LOCAL: scoped to this transaction only, so it can never leak
+        // onto a later query that reuses the same pooled connection.
+        await sql`SET LOCAL hnsw.ef_search = ${sql.raw(String(HNSW_EF_SEARCH))}`.execute(trx);
+        return sql<CandidateRow>`
+          WITH semantic AS (
+            SELECT id,
+                   (embedding <=> ${vector}::vector) AS distance,
+                   row_number() OVER (ORDER BY embedding <=> ${vector}::vector) AS rank
+            FROM knowledge_chunks
+            WHERE ${where}
+            ORDER BY distance
+            LIMIT ${overfetch}
+          ),
+          lexical AS (
+            SELECT id,
+                   row_number() OVER (ORDER BY ts_rank_cd(search_text, query) DESC) AS rank
+            FROM knowledge_chunks, websearch_to_tsquery(${LEXICAL_CONFIG}::regconfig, ${options.query}) AS query
+            WHERE ${where}
+              AND search_text @@ query
+            ORDER BY ts_rank_cd(search_text, query) DESC
+            LIMIT ${overfetch}
+          ),
+          fused AS (
+            SELECT COALESCE(semantic.id, lexical.id) AS id,
+                   COALESCE(1.0 / (${RRF_K} + semantic.rank), 0)
+                     + COALESCE(1.0 / (${RRF_K} + lexical.rank), 0) AS score,
+                   semantic.distance AS distance,
+                   (semantic.id IS NOT NULL) AS semantic_hit,
+                   (lexical.id IS NOT NULL) AS lexical_hit
+            FROM semantic FULL OUTER JOIN lexical ON semantic.id = lexical.id
+          )
+          SELECT c.provider, c.ref_id, c.content, c.metadata, c.keywords, c.source_at,
+                 COALESCE(fused.distance, c.embedding <=> ${vector}::vector) AS distance,
+                 fused.score, fused.semantic_hit, fused.lexical_hit
+          FROM fused JOIN knowledge_chunks c ON c.id = fused.id
+          ORDER BY fused.score DESC, distance ASC
           LIMIT ${overfetch}
-        ),
-        lexical AS (
-          SELECT id,
-                 row_number() OVER (ORDER BY ts_rank_cd(search_text, query) DESC) AS rank
-          FROM knowledge_chunks, websearch_to_tsquery(${LEXICAL_CONFIG}::regconfig, ${options.query}) AS query
-          WHERE ${where}
-            AND search_text @@ query
-          ORDER BY ts_rank_cd(search_text, query) DESC
-          LIMIT ${overfetch}
-        ),
-        fused AS (
-          SELECT COALESCE(semantic.id, lexical.id) AS id,
-                 COALESCE(1.0 / (${RRF_K} + semantic.rank), 0)
-                   + COALESCE(1.0 / (${RRF_K} + lexical.rank), 0) AS score,
-                 semantic.distance AS distance,
-                 (semantic.id IS NOT NULL) AS semantic_hit,
-                 (lexical.id IS NOT NULL) AS lexical_hit
-          FROM semantic FULL OUTER JOIN lexical ON semantic.id = lexical.id
-        )
-        SELECT c.provider, c.ref_id, c.content, c.metadata, c.keywords, c.source_at,
-               COALESCE(fused.distance, c.embedding <=> ${vector}::vector) AS distance,
-               fused.score, fused.semantic_hit, fused.lexical_hit
-        FROM fused JOIN knowledge_chunks c ON c.id = fused.id
-        ORDER BY fused.score DESC, distance ASC
-        LIMIT ${overfetch}
-      `.execute(dbResult.val),
+        `.execute(trx);
+      }),
     'DB_ERROR' as const
   );
   if (!rowsResult.ok) return rowsResult;
