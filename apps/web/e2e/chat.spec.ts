@@ -284,23 +284,42 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     // still cover the whole viewport and take input: rendered in place it
     // sat under the page's own content on a desktop and was clipped to the
     // drawer on a phone.
-    await row.hover();
-    await row.locator('..').getByRole('button', { name: 'Chat actions' }).click();
-    await page.getByRole('button', { name: 'Rename', exact: true }).click();
-    const renameDialog = page.getByRole('dialog', { name: 'Rename chat' });
-    await expect(renameDialog).toBeVisible();
-    const viewport = page.viewportSize();
-    const overlay = await renameDialog.boundingBox();
-    expect(overlay?.x).toBe(0);
-    expect(overlay?.width).toBe(viewport?.width);
+    const openRowDialog = async (action: string, name: string) => {
+      await row.hover();
+      await row.locator('..').getByRole('button', { name: 'Chat actions' }).click();
+      await page.getByRole('button', { name: action, exact: true }).click();
+      const dialog = page.getByRole('dialog', { name });
+      await expect(dialog).toBeVisible();
+      return dialog;
+    };
+    const coversViewport = async (dialog: ReturnType<typeof page.getByRole>) => {
+      const viewport = page.viewportSize();
+      const overlay = await dialog.boundingBox();
+      expect(overlay?.x).toBe(0);
+      expect(overlay?.y).toBe(0);
+      expect(overlay?.width).toBe(viewport?.width);
+      expect(overlay?.height).toBe(viewport?.height);
+    };
+
+    const renameDialog = await openRowDialog('Rename', 'Rename chat');
+    await shot(page, testInfo, 'chat-rename-dialog.png');
+    await coversViewport(renameDialog);
     const draft = renameDialog.getByRole('textbox');
     await expect(draft).toHaveValue(title);
+    // fill() hit-tests the field: it fails if anything paints over it.
     await draft.fill(`${title} — draft`);
     await expect(draft).toHaveValue(`${title} — draft`);
-    if (!mobile) await shot(page, testInfo, 'chat-rename-dialog.png');
     await renameDialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(renameDialog).toBeHidden();
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+
+    const deleteDialog = await openRowDialog('Delete', 'Delete chat');
+    await shot(page, testInfo, 'chat-delete-dialog.png');
+    await coversViewport(deleteDialog);
+    await expect(deleteDialog.getByText(/deletes the chat/)).toBeVisible();
+    await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(deleteDialog).toBeHidden();
+    await expect(row).toBeVisible();
     const archivedRow = page
       .getByRole('navigation', { name: 'Chats' })
       .getByRole('link', { name: `${title} (archived)` });
