@@ -12,7 +12,7 @@
  * call that made it. A cursor marks the streaming end.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
 import type { CompactionProgress } from '@/lib/chat/stream-events';
@@ -370,6 +370,38 @@ function UserMessage({
   );
 }
 
+/** A copy-to-clipboard button that shows its own brief "Copied" confirmation. */
+function useCopyToClipboard(): [boolean, (text: string) => void] {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+  const copy = useCallback((text: string) => {
+    if (!text) return;
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
+    });
+  }, []);
+  return [copied, copy];
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, copy] = useCopyToClipboard();
+  return (
+    <button
+      type="button"
+      onClick={() => copy(text)}
+      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+    >
+      <Icon path={copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
+
 function Reply({
   messages,
   results,
@@ -382,10 +414,18 @@ function Reply({
   streaming: boolean;
 }) {
   const segments = useMemo(() => segment(messages, results), [messages, results]);
+  const copyText = useMemo(
+    () =>
+      segments
+        .filter((part): part is Extract<Segment, { kind: 'text' }> => part.kind === 'text')
+        .map((part) => part.text.trim())
+        .join('\n\n'),
+    [segments]
+  );
   const last = messages[messages.length - 1];
   const lastIndex = segments.length - 1;
   return (
-    <div className="min-w-0 text-sm">
+    <div className="group min-w-0 text-sm">
       {segments.map((part, index) => {
         const tail = streaming && index === lastIndex;
         switch (part.kind) {
@@ -420,6 +460,13 @@ function Reply({
       {last.status === 'canceled' ? <p className="mt-1 text-xs text-gray-400">Stopped.</p> : null}
       {last.status === 'interrupted' ? (
         <p className="mt-1 text-xs text-gray-400">Interrupted.</p>
+      ) : null}
+      {copyText && !streaming ? (
+        // Shown on hover where there is a pointer to hover with; always on
+        // a touch screen, where there is not.
+        <div className="mt-1 flex gap-1 text-xs text-gray-500 transition-opacity lg:opacity-0 lg:group-focus-within:opacity-100 lg:group-hover:opacity-100">
+          <CopyButton text={copyText} />
+        </div>
       ) : null}
     </div>
   );
