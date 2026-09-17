@@ -4,7 +4,7 @@
  * bucket refills — never all at once, never out of order.
  */
 
-import { TokenBucket, LaneLimiter } from './index';
+import { TokenBucket, LaneLimiter, RateLimitTimeoutError } from './index';
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -55,6 +55,57 @@ describe('TokenBucket', () => {
     const bucket = new TokenBucket({ capacity: 3, refillPerSecond: 100 });
     await jest.advanceTimersByTimeAsync(10_000);
     expect(bucket.available()).toBe(3);
+  });
+
+  it('rejects a queued caller with RateLimitTimeoutError once its timeout elapses', async () => {
+    const bucket = new TokenBucket({ capacity: 1, refillPerSecond: 1 });
+    const first = bucket.take(); // consumes the only token immediately
+    const second = bucket.take(500); // queues behind it, times out first
+
+    await expect(first).resolves.toBeUndefined();
+
+    const assertion = expect(second).rejects.toBeInstanceOf(RateLimitTimeoutError);
+    await jest.advanceTimersByTimeAsync(500);
+    await assertion;
+  });
+
+  it('does not let a timed-out waiter consume a token meant for the next caller', async () => {
+    const bucket = new TokenBucket({ capacity: 1, refillPerSecond: 1 });
+    await bucket.take(); // drains the burst
+
+    const timesOut = bucket.take(100);
+    await expect(async () => {
+      const assertion = expect(timesOut).rejects.toBeInstanceOf(RateLimitTimeoutError);
+      await jest.advanceTimersByTimeAsync(100);
+      await assertion;
+    }).not.toThrow();
+
+    // A token refills a second later; a fresh caller must still get it.
+    const afterTimeout = bucket.take();
+    let resolved = false;
+    void afterTimeout.then(() => {
+      resolved = true;
+    });
+    await jest.advanceTimersByTimeAsync(1000);
+    await Promise.resolve();
+    expect(resolved).toBe(true);
+  });
+
+  it('leaves a caller with no timeout waiting past what a timed-out one would have tolerated', async () => {
+    const bucket = new TokenBucket({ capacity: 1, refillPerSecond: 1 });
+    await bucket.take();
+
+    const resolved: string[] = [];
+    void bucket
+      .take(50)
+      .catch(() => resolved.push('timed-out'));
+    void bucket.take().then(() => resolved.push('untimed'));
+
+    await jest.advanceTimersByTimeAsync(50);
+    expect(resolved).toEqual(['timed-out']);
+
+    await jest.advanceTimersByTimeAsync(950);
+    expect(resolved).toEqual(['timed-out', 'untimed']);
   });
 });
 

@@ -14,7 +14,7 @@
 
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
-import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { LaneLimiter, RateLimitTimeoutError, type RequestLane } from '@renkei/rate-limit';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -29,6 +29,18 @@ export const EMBEDDINGS_CONNECTOR = 'embeddings';
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
+ * A live search waits on this queue before it even reaches the provider.
+ * Without a ceiling, a deep queue (an undersized bucket, or a burst bigger
+ * than capacity was sized for) turns into an open-ended hang indistinguishable
+ * from the request never returning — which is worse than a clear failure,
+ * since a person or agent waiting on a live call has no way to tell "still
+ * working" from "stuck". Bulk reindex work (the background lane) is not
+ * time-bounded here: nothing is waiting on it live, so it should keep
+ * queuing rather than abandon partially-completed work.
+ */
+const INTERACTIVE_QUEUE_TIMEOUT_MS = 10_000;
+
+/**
  * Process-scoped, split by lane like every other connector client (see
  * connector-webex's client.ts): a bulk reindex link embeds up to 128 rows
  * (two 64-text requests) with nothing between links pacing the next one, so
@@ -37,18 +49,31 @@ const REQUEST_TIMEOUT_MS = 15_000;
  * than most providers' embeddings-endpoint rate limits allow. `query` maps
  * to the interactive lane, `passage` (ingest and reindex, both background
  * work) to the background one, so a bulk run cannot queue behind a person's
- * live search the way a webhook flood must not either. Capacity is sized
- * above any single test file's call count, not as a tuned production
- * ceiling — the number that actually matters is the background refill
- * rate, which is the one worth raising or lowering per provider.
+ * live search the way a webhook flood must not either.
+ *
+ * The interactive lane is the one every `search_knowledge` call — every
+ * agent's read path — waits on before it can even reach the embeddings
+ * provider, so its size has to track how many searches actually run at
+ * once org-wide, not a single test file's call count. Raised 5x (20→100
+ * burst, 10→50/sec refill) for organizations large enough that many agents
+ * search concurrently; if the configured embeddings endpoint cannot sustain
+ * that rate, it will answer with 429s (surfaced as EMBEDDING_FAILED)
+ * instead of the queue silently growing, which is the tradeoff worth
+ * making — a visible failure beats an invisible multi-minute wait. Tune
+ * down for a smaller org or a lower-tier provider.
  */
 const limiter = new LaneLimiter({
-  interactive: { capacity: 20, refillPerSecond: 10 },
+  interactive: { capacity: 100, refillPerSecond: 50 },
   background: { capacity: 20, refillPerSecond: 3 },
 });
 
 function laneOf(purpose: EmbeddingPurpose): RequestLane {
   return purpose === 'query' ? 'interactive' : 'background';
+}
+
+/** Only the live-search lane is time-bounded; see INTERACTIVE_QUEUE_TIMEOUT_MS. */
+function queueTimeoutFor(purpose: EmbeddingPurpose): number | undefined {
+  return purpose === 'query' ? INTERACTIVE_QUEUE_TIMEOUT_MS : undefined;
 }
 
 /** pgvector input literal: '[0.1,0.2,…]'. */
@@ -109,7 +134,15 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
     const prefix = purpose === 'query' ? this.queryPrefix : this.passagePrefix;
     const input = prefix ? texts.map((text) => `${prefix}${text}`) : [...texts];
 
-    await limiter.take(laneOf(purpose));
+    try {
+      await limiter.take(laneOf(purpose), queueTimeoutFor(purpose));
+    } catch (error) {
+      if (error instanceof RateLimitTimeoutError) {
+        return err('EMBEDDING_FAILED' as const, { message: error.message });
+      }
+      throw error;
+    }
+
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/embeddings`, {
