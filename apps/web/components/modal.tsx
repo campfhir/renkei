@@ -7,11 +7,22 @@
  * clicks inside the panel stay inside. No footer API on purpose — callers
  * render their own buttons, because every dialog's actions differ.
  *
- * No portal: nothing in the app portals its overlays, and z-50 sits above
- * the nav in the documented z-budget (see toast-stack.tsx).
+ * Portalled to <body>. A dialog is opened from wherever its trigger lives —
+ * a chat row inside the nav, a tool card deep in a thread — and rendered in
+ * place its `position: fixed` overlay is at the mercy of every ancestor:
+ * the desktop nav column is `sticky`, which is a stacking context of its
+ * own, so the page's positioned content painted over the dialog and took
+ * its clicks; the phone drawer is a fixed, scrolling box that iOS Safari
+ * treats as the containing block of fixed descendants, so the dialog was
+ * clipped to the drawer's width. At <body> the overlay answers only to the
+ * viewport, and z-50 sits above the nav in the documented z-budget (see
+ * toast-stack.tsx). React events still bubble through the owner tree, so
+ * callers' handlers see clicks exactly as before. Theme is `data-theme`
+ * on <html>, so the panel keeps its dark styling outside the shell.
  */
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, ICONS } from './icons';
 
 export default function Modal({
@@ -26,6 +37,12 @@ export default function Modal({
   /** 'wide' for content that needs the room — a diff side by side. */
   size?: 'md' | 'wide';
 }) {
+  // There is no document on the server; the portal target exists only once
+  // this has mounted. A dialog is opened by a click, so nobody sees the
+  // one-frame delay, and rendering nothing first keeps hydration honest.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -34,7 +51,9 @@ export default function Modal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -59,6 +78,7 @@ export default function Modal({
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
