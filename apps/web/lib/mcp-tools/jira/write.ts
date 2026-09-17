@@ -9,6 +9,7 @@ import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import { getCachedDisplayName } from '../common';
 import { markdownToAdf } from './markdown';
+import { adfToMarkdown } from './adf';
 import {
   buildFieldUpdates,
   findStoryPointsField,
@@ -861,6 +862,107 @@ export async function registerWriteTools(
           ],
           isError: true,
         };
+      }
+    }
+  );
+
+  // jira_update_comment
+  server.registerTool(
+    'jira_update_comment',
+    {
+      title: 'Jira · Act — Edit a comment on a Jira issue',
+      description:
+        'Replace the body of an existing comment in place (the same edit the Jira UI offers), ' +
+        'keeping its author, timestamps and portal/internal visibility. Get the comment id ' +
+        'from jira_list_comments. Prefer this over delete-and-repost: the history stays ' +
+        'intact and nobody is re-notified of a brand-new comment. The reply carries the ' +
+        'previous body so the edit can be undone.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        commentId: z.string().describe('Comment ID to edit (from jira_list_comments)'),
+        comment: z
+          .string()
+          .describe(
+            'The complete new comment text (markdown) — it replaces the whole body, so ' +
+              'include everything that should remain. To mention someone use ' +
+              '[~accountid:ACCOUNT_ID] with an id from jira_search_users.'
+          ),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.debug('jira_update_comment invoked', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const { issueKey, commentId, comment } = args;
+
+        if (!isString(issueKey) || !isString(commentId) || !isString(comment)) {
+          return errText('issueKey, commentId and comment are required');
+        }
+        if (comment.trim() === '') {
+          return errText('comment must not be empty — use jira_delete_comment to remove one');
+        }
+
+        const commentPath =
+          `/rest/api/3/issue/${encodeURIComponent(issueKey)}` +
+          `/comment/${encodeURIComponent(commentId)}`;
+
+        // Read the comment first. Two reasons: the reply hands back the body
+        // being overwritten so the edit is reversible, and a JSM internal
+        // note or a role-restricted comment must stay that way — the update
+        // endpoint takes visibility and the sd.public.comment property
+        // afresh, and an edit that silently made an internal note visible on
+        // the customer portal would be far worse than no edit.
+        const current = await auth.fetch(
+          granularJiraScopes('jira_update_comment', false),
+          commentPath
+        );
+        if (!current.ok) return errText(await describeJiraAuthFailure(current));
+        const fetched: unknown = await current.json();
+        const existing: Record<string, unknown> = isRecord(fetched) ? fetched : {};
+        const previousBody = existing.body ? adfToMarkdown(existing.body) : '';
+
+        const payload: Record<string, unknown> = { body: markdownToAdf(comment) };
+        if (existing.visibility && typeof existing.visibility === 'object') {
+          payload.visibility = existing.visibility;
+        }
+        if (existing.jsdPublic === false) {
+          payload.properties = [{ key: 'sd.public.comment', value: { internal: true } }];
+        }
+
+        const response = await auth.fetch(
+          granularJiraScopes('jira_update_comment', false),
+          commentPath,
+          { method: 'PUT', body: JSON.stringify(payload) }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
+
+        const kept =
+          existing.jsdPublic === false
+            ? ' It stays an internal note (not visible on the portal).'
+            : payload.visibility
+              ? ' Its visibility restriction is unchanged.'
+              : '';
+        const text =
+          `Comment ${commentId} on ${issueKey} updated.${kept}\n\n` +
+          `Previous body (pass it back to jira_update_comment to undo):\n${previousBody}\n\n` +
+          (await issueLinksMarkdown(context.siteUrl, auth, issueKey));
+        return {
+          content: [{ type: 'text' as const, text }],
+          _meta: actMeta({
+            id: issueKey,
+            ...(context.siteUrl
+              ? { url: `${context.siteUrl}/browse/${issueKey}?focusedCommentId=${commentId}` }
+              : {}),
+          }),
+        };
+      } catch (error) {
+        return errText(error instanceof Error ? error.message : String(error));
       }
     }
   );

@@ -826,3 +826,153 @@ describe('rich-text custom fields', () => {
     expect(result.content[0].text).not.toContain('[object Object]');
   });
 });
+
+describe('jira_update_comment', () => {
+  /** Serve the comment being edited, recording the PUT that follows. */
+  function serveComment(existing: Record<string, unknown>): void {
+    calls = [];
+    jiraFetchMock.mockReset();
+    jiraFetchMock.mockImplementation(
+      async (url: string, request?: { method?: string; body?: string }) => {
+        const method = request?.method ?? 'GET';
+        calls.push({ url, method, body: request?.body ? JSON.parse(request.body) : null });
+        if (method === 'GET') return { ok: true, status: 200, json: async () => existing };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ...existing, ...(calls.at(-1)?.body ?? {}) }),
+        };
+      }
+    );
+  }
+
+  const paragraph = (text: string) => ({
+    type: 'doc',
+    version: 1,
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+  });
+
+  const updateComment = async (): Promise<ToolHandler> =>
+    (await tools()).get('jira_update_comment')!;
+
+  it('reads the comment, then PUTs the new body to the same comment', async () => {
+    serveComment({ id: '9001', body: paragraph('Times in UTC: 18:56') });
+    const result = await (
+      await updateComment()
+    )({
+      issueKey: 'CAS-25094',
+      commentId: '9001',
+      comment: 'Times in Pacific: 11:56',
+    });
+    expect(result.isError).toBeUndefined();
+    // The trailing project lookup only builds the issue-links footer.
+    const commentCalls = calls.filter((c) => c.url.includes('/comment/'));
+    expect(commentCalls.map((c) => [c.method, c.url])).toEqual([
+      ['GET', `${apiBaseUrl}/rest/api/3/issue/CAS-25094/comment/9001`],
+      ['PUT', `${apiBaseUrl}/rest/api/3/issue/CAS-25094/comment/9001`],
+    ]);
+    const put = commentCalls[1].body!;
+    expect(JSON.stringify(put.body)).toContain('Times in Pacific: 11:56');
+    expect(put).not.toHaveProperty('visibility');
+    expect(put).not.toHaveProperty('properties');
+    expect(result.content[0].text).toContain('Comment 9001 on CAS-25094 updated.');
+  });
+
+  it('hands back the body it overwrote so the edit can be undone', async () => {
+    serveComment({ id: '9001', body: paragraph('the original timeline') });
+    const result = await (
+      await updateComment()
+    )({
+      issueKey: 'CAS-25094',
+      commentId: '9001',
+      comment: 'replacement',
+    });
+    expect(result.content[0].text).toContain('Previous body');
+    expect(result.content[0].text).toContain('the original timeline');
+  });
+
+  it('keeps a JSM internal note internal', async () => {
+    serveComment({ id: '9001', jsdPublic: false, body: paragraph('internal') });
+    const result = await (
+      await updateComment()
+    )({
+      issueKey: 'CAS-25094',
+      commentId: '9001',
+      comment: 'still internal',
+    });
+    expect(calls[1].body!.properties).toEqual([
+      { key: 'sd.public.comment', value: { internal: true } },
+    ]);
+    expect(result.content[0].text).toContain('stays an internal note');
+  });
+
+  it('carries a visibility restriction across unchanged', async () => {
+    const visibility = { type: 'role', value: 'Administrators' };
+    serveComment({ id: '9001', visibility, body: paragraph('restricted') });
+    await (
+      await updateComment()
+    )({ issueKey: 'CAS-25094', commentId: '9001', comment: 'edited' });
+    expect(calls[1].body!.visibility).toEqual(visibility);
+  });
+
+  it('attaches a receipt that deep-links to the comment', async () => {
+    serveComment({ id: '9001', body: paragraph('x') });
+    const result = await (
+      await updateComment()
+    )({
+      issueKey: 'CAS-25094',
+      commentId: '9001',
+      comment: 'y',
+    });
+    expect(result._meta).toEqual({
+      'renkei/act': {
+        id: 'CAS-25094',
+        url: 'https://example.atlassian.net/browse/CAS-25094?focusedCommentId=9001',
+      },
+    });
+  });
+
+  it('refuses an empty body rather than blanking the comment', async () => {
+    serveComment({ id: '9001', body: paragraph('x') });
+    const result = await (
+      await updateComment()
+    )({
+      issueKey: 'CAS-25094',
+      commentId: '9001',
+      comment: '   ',
+    });
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('requires all three arguments', async () => {
+    serveComment({ id: '9001', body: paragraph('x') });
+    const result = await (await updateComment())({ issueKey: 'CAS-25094', comment: 'y' });
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('surfaces a refusal to read the comment without writing anything', async () => {
+    calls = [];
+    jiraFetchMock.mockReset();
+    jiraFetchMock.mockImplementation(async (url: string, request?: { method?: string }) => {
+      calls.push({ url, method: request?.method ?? 'GET', body: null });
+      return {
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: async () => '',
+        json: async () => ({}),
+      };
+    });
+    const result = await (
+      await updateComment()
+    )({
+      issueKey: 'CAS-25094',
+      commentId: '1',
+      comment: 'y',
+    });
+    expect(result.isError).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
+  });
+});

@@ -299,6 +299,12 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Commented on a Jira issue',
     short: 'Commented on an issue',
   },
+  jira_update_comment: {
+    category: 'updated',
+    entity: 'comment',
+    label: 'Edited a Jira comment',
+    short: 'Edited a comment',
+  },
   jira_delete_comment: {
     category: 'deleted',
     entity: 'comment',
