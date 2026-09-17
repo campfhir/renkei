@@ -49,6 +49,13 @@ export interface SystemPromptInput {
   hasDiscoverableTools: boolean;
   /** search_knowledge is among the tools; the prompt then says when it is worth a call. */
   hasKnowledge: boolean;
+  /**
+   * outlook_search_users is among the tools: there is a live employee
+   * directory, so the prompt says to use it — not search_knowledge or a
+   * file — for who someone is. Optional so existing callers/fixtures that
+   * predate this flag keep compiling; absent, it is simply not mentioned.
+   */
+  hasDirectory?: boolean;
   hasSandbox: boolean;
   /** The org has somewhere to keep files; false means none can be made or attached. */
   filesAllowed: boolean;
@@ -64,8 +71,49 @@ const STANDING_BRIEF = `You are Renkei, an assistant inside an organization's ow
  * person and no better informed; and a model left to its own devices
  * searches for things it already knows or was just told. Said only when
  * the tool is there, so a chat without it carries no dead advice.
+ *
+ * It is deliberately not framed as the default first move. search_knowledge
+ * is core (always active) while a specific connector's own tool — a live
+ * meeting, a current ticket, today's calendar — usually is not, so it is
+ * the one thing already at hand and the easy reflex is to just use it. But
+ * it searches an INDEX built by a pipeline that runs behind the source
+ * systems, not the systems themselves: a meeting that started five minutes
+ * ago, a ticket updated this morning, a message sent moments earlier can
+ * all be real and still not have reached it yet. A live tool is both more
+ * current and, once named through find_tools, no harder to call — so when
+ * one plainly applies, it comes first and search_knowledge is what is
+ * reached for instead when nothing more specific does, or to search
+ * broadly across many sources at once.
  */
-const KNOWLEDGE_BRIEF = `search_knowledge finds what the organization has indexed from its own systems — mail, tickets, pages, documents, meetings and notes. Use it when the answer depends on the organization's own people, work or records. Do not use it for general knowledge, for reasoning, or for anything this conversation already contains, and do not use it to confirm what another tool just returned. Make one well-aimed search — a specific query, k up to 10, sources when you know the kind of item — and answer from what comes back, saying what you looked at and what was not there. Search again only for a genuinely different question, not a rephrasing of the same one.`;
+function knowledgeBrief(hasDiscoverableTools: boolean): string {
+  const staleness = hasDiscoverableTools
+    ? " It also runs behind the live systems it indexes — a meeting that just started, a ticket updated minutes ago or a message just sent may not be in it yet. When a specific connector's own tool (offered here, or one call away through find_tools) can answer directly from the live system, use that first; search_knowledge is for when nothing more specific applies, or for a broad look across many sources at once — not the automatic first move just because it's already active."
+    : ' It also runs behind the live systems it indexes, so something that changed in the last few minutes may not be in it yet — say so if what comes back looks out of date.';
+  return `search_knowledge finds what the organization has indexed from its own systems — mail, tickets, pages, documents, meetings and notes.${staleness} Use it when the answer depends on the organization's own work or records. Do not use it for general knowledge, for reasoning, or for anything this conversation already contains, and do not use it to confirm what another tool just returned. Make one well-aimed search — a specific query, k up to 10, sources when you know the kind of item — and answer from what comes back, saying what you looked at and what was not there. Search again only for a genuinely different question, not a rephrasing of the same one.`;
+}
+
+/**
+ * When outlook_search_users exists for this chat — which in practice means
+ * "almost always that Microsoft is connected", since `microsoft` is not a
+ * core connector and the tool therefore sits in `discoverable`, not among
+ * the tools offered up front (see tool-surface.ts). So this cannot just say
+ * "call outlook_search_users": most of the time that name is not yet in the
+ * active tool set, and the brief has to send the model through find_tools
+ * first rather than assume the call will simply work.
+ *
+ * Without this, a question about a colleague tends to get answered from
+ * whatever mentions them turn up in search_knowledge — sitting right there,
+ * already active — or an attached file, instead of the one call away
+ * directory that is actually authoritative. Also restates that it takes
+ * several names at once, since a model that has only ever seen
+ * single-lookup tools defaults to one call per person.
+ */
+function directoryBrief(hasKnowledge: boolean): string {
+  const instead = hasKnowledge
+    ? 'search_knowledge or a document, message or file'
+    : 'a document, message or file';
+  return `There is a live employee directory: outlook_search_users, the source of truth for who someone is — title, department, location, email, phone, manager, direct reports. For a colleague's profile or contact details, or to check who's who on a list of names, use it rather than reaching for ${instead}, which may be stale or incomplete — even though that alternative is already at hand and this is not. If outlook_search_users is not among your currently callable tools, call find_tools first (query "outlook" or "employee directory") to bring it in, then call it; do not settle for a knowledge or file search just because it avoids that extra step. It takes several names or emails in one call (pass an array) — look up an entire list of people at once instead of one call per person. Ids/UPNs it returns feed outlook_get_user for the org-chart view around someone.`;
+}
 
 /**
  * When find_tools is on offer. Its own description already names the
@@ -73,10 +121,16 @@ const KNOWLEDGE_BRIEF = `search_knowledge finds what the organization has indexe
  * only sees a handful of tools up front has no other signal that more
  * exist. Without this nudge a task needing an unoffered tool tends to get
  * answered by asking the person for information a lookup could have
- * supplied instead (an email address, a ticket key) or by saying the
- * capability isn't there.
+ * supplied instead (an email address, a ticket key), by saying the
+ * capability isn't there, or — the failure mode that is easy to miss
+ * because nothing errors — by quietly reaching for search_knowledge or
+ * whatever else is already active instead of the specific connector tool
+ * that would actually answer the question. That third case is the common
+ * one: it produces an answer, so nothing looks wrong, and the model has no
+ * built-in reason to prefer a tool it would have to go find over one
+ * that's sitting right there. Named explicitly so it isn't missed.
  */
-const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools listed here. Before asking the person for something a tool could look up (a colleague's email or user id, an issue key, a document link) or saying a capability is unavailable, call find_tools with a short description of what you need, or a connector name — matching tools become callable right away.`;
+const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools listed here — schemas the model does not see until it asks for them. Before asking the person for something a tool could look up (a colleague's email or user id, an issue key, a document link), saying a capability is unavailable, or reaching for search_knowledge or another already-active tool for something a specific connector would answer more directly and currently (a live status, a person's real profile, a record as it stands now, not as it was indexed), call find_tools with a short description of what you need, or a connector name — matching tools become callable right away, for the cost of one extra call.`;
 
 /**
  * A code project is a way of working, not just a tool family: the model
@@ -151,8 +205,11 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   if (input.hasDiscoverableTools) {
     sections.push(DISCOVERY_BRIEF);
   }
+  if (input.hasDirectory) {
+    sections.push(directoryBrief(input.hasKnowledge));
+  }
   if (input.hasKnowledge) {
-    sections.push(KNOWLEDGE_BRIEF);
+    sections.push(knowledgeBrief(input.hasDiscoverableTools));
   }
   if (input.filesAllowed) {
     sections.push(

@@ -322,6 +322,47 @@ describe('buildSystemPrompt with search_knowledge', () => {
     const without = buildSystemPrompt({ ...base, hasKnowledge: false });
     expect(without).not.toMatch(/search_knowledge/);
   });
+
+  it('says it runs behind live systems and is not the automatic first move, more insistently once other connectors are reachable', () => {
+    const alone = buildSystemPrompt({ ...base, hasKnowledge: true, hasDiscoverableTools: false });
+    expect(alone).toMatch(/runs behind the live systems it indexes/);
+    expect(alone).not.toMatch(/not the automatic first move/);
+
+    const withDiscovery = buildSystemPrompt({ ...base, hasKnowledge: true, hasDiscoverableTools: true });
+    expect(withDiscovery).toMatch(/runs behind the live systems it indexes/);
+    expect(withDiscovery).toMatch(/use that first/);
+    expect(withDiscovery).toMatch(/not the automatic first move just because it's already active/);
+  });
+});
+
+describe('buildSystemPrompt with the employee directory', () => {
+  const base = {
+    personName: null,
+    orgName: null,
+    project: null,
+    userMemoryText: null,
+    chatSummary: null,
+    chatFiles: [],
+    hasTools: true,
+    hasDiscoverableTools: false,
+    hasSandbox: false,
+    filesAllowed: true,
+    now: new Date('2026-09-04T00:00:00Z'),
+  };
+
+  it('says to prefer the directory over search_knowledge or files, to reach it via find_tools if needed, and that it takes several names at once, only when offered', () => {
+    const withDirectory = buildSystemPrompt({ ...base, hasKnowledge: false, hasDirectory: true });
+    expect(withDirectory).toMatch(/live employee directory: outlook_search_users/);
+    expect(withDirectory).toMatch(/rather than reaching for a document, message or file/);
+    expect(withDirectory).toMatch(/call find_tools first/);
+    expect(withDirectory).toMatch(/several names or emails in one call/);
+
+    const withBoth = buildSystemPrompt({ ...base, hasKnowledge: true, hasDirectory: true });
+    expect(withBoth).toMatch(/rather than reaching for search_knowledge or a document/);
+
+    const without = buildSystemPrompt({ ...base, hasKnowledge: false, hasDirectory: false });
+    expect(without).not.toMatch(/live employee directory: outlook_search_users/);
+  });
 });
 
 describe('buildSystemPrompt with find_tools', () => {
@@ -343,6 +384,7 @@ describe('buildSystemPrompt with find_tools', () => {
     const withDiscovery = buildSystemPrompt({ ...base, hasDiscoverableTools: true });
     expect(withDiscovery).toMatch(/find_tools/);
     expect(withDiscovery).toMatch(/Before asking the person/);
+    expect(withDiscovery).toMatch(/reaching for search_knowledge or another already-active tool/);
 
     const without = buildSystemPrompt({ ...base, hasDiscoverableTools: false });
     expect(without).not.toMatch(/find_tools/);

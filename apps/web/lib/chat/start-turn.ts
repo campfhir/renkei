@@ -433,6 +433,12 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasDiscoverableTools: discoveryTool !== null,
       hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
+      // outlook_search_users is a `microsoft` tool, not a core connector, so
+      // it is almost always in `discoverable` rather than offered up front —
+      // the brief has to work whichever bucket it is in.
+      hasDirectory:
+        surface.tools.some((tool) => tool.name === 'outlook_search_users') ||
+        surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
       now: new Date(),

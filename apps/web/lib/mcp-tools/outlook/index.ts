@@ -1918,20 +1918,39 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Read — Search the employee directory',
       description:
-        'Search the organization directory by name or email: title, department, location, ' +
-        'email, phone. Ids/UPNs feed outlook_get_user for manager and direct reports.',
+        'Search the organization’s live directory by name or email: title, department, ' +
+        'location, email, phone. This is the source of truth for who someone is — prefer it ' +
+        'over search_knowledge or guessing from a document, message or file when a task needs ' +
+        'a colleague’s profile or contact details, since those may be stale or incomplete. ' +
+        'Takes one query or several at once (an array) — look up an entire list of names or ' +
+        'emails in a single call instead of one call per person. Ids/UPNs feed outlook_get_user ' +
+        'for manager and direct reports.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        query: z.string().min(1).describe('Name or email fragment, e.g. "dana" or "dana@corp"'),
-        max: z.number().int().min(1).max(50).describe('How many (default 15)').optional(),
+        query: z
+          .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+          .describe(
+            'A name or email fragment, e.g. "dana" or "dana@corp"; or an array of several ' +
+              '(e.g. ["dana", "sam lee", "pat@corp.com"]) to look up multiple people at once'
+          ),
+        max: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .describe('How many total, across all queries (default 15 per query)')
+          .optional(),
       }),
     },
     async (args: Record<string, any>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      if (!str(args.query).replace(/"/g, '').trim()) return errText('query is required');
-      const max = typeof args.max === 'number' ? args.max : 15;
-      const found = await searchDirectoryUsers(context, access.accessToken, str(args.query), max);
+      const queries = (Array.isArray(args.query) ? args.query : [args.query])
+        .map((query: unknown) => str(query))
+        .filter((query: string) => query.replace(/"/g, '').trim());
+      if (queries.length === 0) return errText('query is required');
+      const max = typeof args.max === 'number' ? args.max : Math.min(100, 15 * queries.length);
+      const found = await searchDirectoryUsers(context, access.accessToken, queries, max);
       if (typeof found === 'string') return errText(found);
       const lines = found.map((user) => `${userLine(user)} — id: ${str(user.id)}`);
       if (lines.length === 0) return textResult('No directory matches.');
