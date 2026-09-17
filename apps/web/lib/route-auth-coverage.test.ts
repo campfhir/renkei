@@ -96,7 +96,7 @@ const PUBLIC: Record<string, string> = {
  */
 const REDIRECT_ONLY: Record<string, string> = {
   '[slug]/home/page.tsx': 'redirects to /{slug}',
-  '[slug]/admin/grants/page.tsx': 'redirects to /{slug}/admin/people',
+  '[slug]/admin/grants/page.tsx': 'redirects to /{slug}/admin/usage',
 };
 
 /**

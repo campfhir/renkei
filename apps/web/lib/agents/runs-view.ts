@@ -451,7 +451,7 @@ export async function getAgentForAdmin(
 
 /**
  * Every agent in the org, or every agent owned by one person — the shared
- * query behind the oversight list and the people page's drill-down. Run and
+ * query behind the oversight list and the per-person view on Organization usage. Run and
  * failure tallies come from the run log (agent_run_log) on the page itself,
  * not from here: run ROWS are pruned by retention, the log is not.
  *
@@ -503,7 +503,7 @@ export async function listAgentsForAdmin(
   return listAgentRows(db, tenantId, null);
 }
 
-/** One person's own agents — the people page's drill-down. */
+/** One person's own agents — the per-person view on Organization usage. */
 export async function listAgentsForOwner(
   db: Kysely<DB>,
   tenantId: string,
