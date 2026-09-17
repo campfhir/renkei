@@ -322,6 +322,17 @@ describe('buildSystemPrompt with search_knowledge', () => {
     const without = buildSystemPrompt({ ...base, hasKnowledge: false });
     expect(without).not.toMatch(/search_knowledge/);
   });
+
+  it('says it runs behind live systems and is not the automatic first move, more insistently once other connectors are reachable', () => {
+    const alone = buildSystemPrompt({ ...base, hasKnowledge: true, hasDiscoverableTools: false });
+    expect(alone).toMatch(/runs behind the live systems it indexes/);
+    expect(alone).not.toMatch(/not the automatic first move/);
+
+    const withDiscovery = buildSystemPrompt({ ...base, hasKnowledge: true, hasDiscoverableTools: true });
+    expect(withDiscovery).toMatch(/runs behind the live systems it indexes/);
+    expect(withDiscovery).toMatch(/use that first/);
+    expect(withDiscovery).toMatch(/not the automatic first move just because it's already active/);
+  });
 });
 
 describe('buildSystemPrompt with the employee directory', () => {
