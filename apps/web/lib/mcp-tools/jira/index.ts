@@ -25,6 +25,7 @@ import { registerComponentTools } from './components';
 import { registerFilterTools } from './filters';
 import { registerCommentTools } from './comments';
 import { registerWatchTools } from './watches';
+import { registerHistoryTools } from './history';
 
 export async function registerJiraTools(
   server: McpServer,
@@ -43,6 +44,7 @@ export async function registerJiraTools(
   await registerFilterTools(server, context, auth);
   await registerCommentTools(server, context, auth);
   await registerWatchTools(server, context, auth);
+  await registerHistoryTools(server, context, auth);
 
   // Mutating Operations
   await registerWriteTools(server, context, auth);
