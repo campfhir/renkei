@@ -278,6 +278,29 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(row.getByText('Sprint hygiene')).toBeVisible();
     await expect(row.locator('[data-kind="project"]')).toHaveCount(1);
     await expect(page.getByRole('link', { name: 'Prompt libraries' })).toBeVisible();
+
+    // The row's "⋯" menu opens dialogs from inside the menu — the sticky
+    // column on a desktop, the fixed drawer on a phone. Each dialog must
+    // still cover the whole viewport and take input: rendered in place it
+    // sat under the page's own content on a desktop and was clipped to the
+    // drawer on a phone.
+    await row.hover();
+    await row.locator('..').getByRole('button', { name: 'Chat actions' }).click();
+    await page.getByRole('button', { name: 'Rename', exact: true }).click();
+    const renameDialog = page.getByRole('dialog', { name: 'Rename chat' });
+    await expect(renameDialog).toBeVisible();
+    const viewport = page.viewportSize();
+    const overlay = await renameDialog.boundingBox();
+    expect(overlay?.x).toBe(0);
+    expect(overlay?.width).toBe(viewport?.width);
+    const draft = renameDialog.getByRole('textbox');
+    await expect(draft).toHaveValue(title);
+    await draft.fill(`${title} — draft`);
+    await expect(draft).toHaveValue(`${title} — draft`);
+    if (!mobile) await shot(page, testInfo, 'chat-rename-dialog.png');
+    await renameDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(renameDialog).toBeHidden();
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     const archivedRow = page
       .getByRole('navigation', { name: 'Chats' })
       .getByRole('link', { name: `${title} (archived)` });
