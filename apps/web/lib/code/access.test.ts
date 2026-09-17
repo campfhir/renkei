@@ -8,6 +8,32 @@ import {
 
 const ALL = ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'];
 
+/**
+ * What Bitbucket actually reports as granted on a real, healthy token: a
+ * vocabulary sharing no string with the classic names requested_scopes
+ * stores. The registry already knew to fall back to requested for this;
+ * the Code page once intersected against it and told a fully connected
+ * person their connection carried none of the three checkboxes.
+ */
+const BITBUCKET_LEGACY_GRANTED = [
+  'admin:pipeline-variable:bitbucket-legacy',
+  'admin:project:bitbucket-legacy',
+  'admin:repository:bitbucket-legacy',
+  'admin:webhook:bitbucket-legacy',
+  'admin:wiki:bitbucket-legacy',
+  'delete:repository:bitbucket-legacy',
+  'offline_access',
+  'read:account:bitbucket-legacy',
+  'read:pipeline:bitbucket-legacy',
+  'read:project:bitbucket-legacy',
+  'read:pullrequest:bitbucket-legacy',
+  'read:repository:bitbucket-legacy',
+  'write:pipeline:bitbucket-legacy',
+  'write:project:bitbucket-legacy',
+  'write:pullrequest:bitbucket-legacy',
+  'write:repository:bitbucket-legacy',
+];
+
 describe('bitbucketScopesOf', () => {
   it('narrows requested by granted when granted is known, else takes requested', () => {
     expect(
@@ -15,6 +41,15 @@ describe('bitbucketScopesOf', () => {
     ).toEqual(['repository']);
     expect(
       bitbucketScopesOf({ requested_scopes: ['repository', 'pipeline'], granted_scopes: null })
+    ).toEqual(['repository', 'pipeline']);
+  });
+
+  it('takes requested alone when granted is in the vocabulary Bitbucket really reports', () => {
+    expect(
+      bitbucketScopesOf({
+        requested_scopes: ['repository', 'pipeline'],
+        granted_scopes: BITBUCKET_LEGACY_GRANTED,
+      })
     ).toEqual(['repository', 'pipeline']);
   });
 });
@@ -37,6 +72,28 @@ describe('codeProjectAccessOf', () => {
 
   it('is ok with a grant carrying clone, push and pull request scopes', () => {
     const access = codeProjectAccessOf({ requested_scopes: ALL, granted_scopes: ALL });
+    expect(access).toEqual({ connected: true, missingScopes: [], missingOptions: [], ok: true });
+    expect(codeProjectAccessMessage(access)).toBeNull();
+  });
+
+  it('is ok with every checkbox approved and Bitbucket reporting granted scopes in its own vocabulary', () => {
+    // The screenshot case: all checkboxes on, the Connectors page saying
+    // Connected, and the Code page nonetheless naming all three as missing.
+    const access = codeProjectAccessOf({
+      requested_scopes: [
+        'repository',
+        'project',
+        'repository:write',
+        'pullrequest',
+        'pullrequest:write',
+        'project:admin',
+        'repository:admin',
+        'pipeline',
+        'pipeline:write',
+        'account',
+      ],
+      granted_scopes: BITBUCKET_LEGACY_GRANTED,
+    });
     expect(access).toEqual({ connected: true, missingScopes: [], missingOptions: [], ok: true });
     expect(codeProjectAccessMessage(access)).toBeNull();
   });

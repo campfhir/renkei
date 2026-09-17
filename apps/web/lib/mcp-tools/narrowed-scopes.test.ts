@@ -1,51 +1,16 @@
 /**
  * narrowedScopes backs both Zoom and Bitbucket's "requested ∩ granted, or
- * requested alone when granted is unknown" rule (see registry.ts). This
- * pins the case that motivated it: a real Bitbucket grant whose token
- * response reported granted scopes under a naming scheme
- * (`read:repository:bitbucket-legacy`) that shares nothing with the
- * classic names (`repository`, `account`, …) this app requests and
- * stores — which used to intersect to an empty array and silently
- * deregister every Bitbucket tool for an otherwise healthy connection.
+ * requested alone when granted is unknown" rule, for the tool registry
+ * and the code-project access check alike. This pins the case that
+ * motivated it: a real Bitbucket grant whose token response reported
+ * granted scopes under a naming scheme (`read:repository:bitbucket-legacy`)
+ * that shares nothing with the classic names (`repository`, `account`, …)
+ * this app requests and stores — which used to intersect to an empty
+ * array and silently deregister every Bitbucket tool for an otherwise
+ * healthy connection.
  */
 
-// registry.ts pulls in every tool module at import time (see
-// registry-keys.test.ts), several of which touch kysely/the database at
-// module scope — these mocks exist only so the import succeeds; nothing
-// here runs a query.
-jest.mock('kysely', () => ({
-  sql: Object.assign(() => ({ as: () => ({}) }), {
-    raw: () => ({}),
-    join: () => ({}),
-    ref: () => ({}),
-    lit: () => ({}),
-  }),
-}));
-
-jest.mock('@/lib/logger', () => ({
-  logger: {
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-    verbose: jest.fn(),
-  },
-  secure: (value: unknown) => value,
-}));
-
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false, err: 'DB_ERROR' }) }));
-
-jest.mock('@renkei/settings', () => ({
-  getOrgSettings: async () => ({ ok: true, val: { readOnly: false, disabledConnectors: [] } }),
-}));
-
-jest.mock('@renkei/knowledge', () => ({
-  resolveEmbeddingProvider: async () => null,
-  searchKnowledge: jest.fn(),
-  listRecentKnowledge: jest.fn(),
-}));
-
-import { narrowedScopes } from './registry';
+import { narrowedScopes } from './narrowed-scopes';
 
 describe('narrowedScopes', () => {
   it('falls back to requested alone when granted is in an unrecognized vocabulary', () => {

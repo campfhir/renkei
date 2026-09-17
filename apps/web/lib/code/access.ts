@@ -9,16 +9,23 @@
  * new-project page sends the person back until then, and the create
  * route refuses.
  *
- * The scopes a connection carries are read the way the tool registry
- * reads them (mcp-tools/registry.ts): Bitbucket's token always carries
- * the OAuth consumer's full scope set, so requested ∩ granted when both
- * are known, requested alone otherwise.
+ * The scopes a connection carries are read with the tool registry's own
+ * rule (mcp-tools/narrowed-scopes.ts), not a copy of it: Bitbucket's
+ * token always carries the OAuth consumer's full scope set, so requested
+ * ∩ granted when granted is recognized, requested alone otherwise —
+ * and "otherwise" includes the granted list Bitbucket actually reports,
+ * in a vocabulary (`read:repository:bitbucket-legacy`, …) that shares no
+ * string with the classic names stored in requested_scopes. A plain
+ * intersection against that list is empty, which once told a fully
+ * connected person that their connection carried none of the three
+ * checkboxes they had just approved.
  */
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
 import { ATLASSIAN_BITBUCKET_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
+import { narrowedScopes } from '@/lib/mcp-tools/narrowed-scopes';
 
 /** What a code project's clone, push and pull request stand on, in that order. */
 export const CODE_PROJECT_SCOPES: readonly string[] = [
@@ -48,9 +55,7 @@ interface GrantScopes {
 
 /** The scopes a Bitbucket grant row carries, by the registry's rule. */
 export function bitbucketScopesOf(row: GrantScopes): string[] {
-  return row.granted_scopes
-    ? row.requested_scopes.filter((scope) => row.granted_scopes!.includes(scope))
-    : row.requested_scopes;
+  return narrowedScopes(row.requested_scopes, row.granted_scopes);
 }
 
 /** The catalog labels of the checkboxes that carry these scopes, in catalog order, once each. */
