@@ -107,5 +107,8 @@ export function notificationSourceLabel(row: {
     const meta = parseBatchNotificationMeta(row.meta);
     return meta ? `Batch job · ${meta.kindLabel}` : 'Batch job';
   }
+  // Nothing here has an agent behind it — the headline already names who
+  // shared it or that a reply landed, so "An agent" would just be wrong.
+  if (row.kind === 'chat_shared' || row.kind === 'chat_reply') return 'Renkei';
   return row.agentName ?? 'An agent';
 }

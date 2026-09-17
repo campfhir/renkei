@@ -15,6 +15,7 @@ import { getIdentityDisplay, listIdentities } from '@/lib/identity';
 import { getAgent } from '@/lib/agents/store';
 import { grantAgentAccess, listAgentAccessGrants } from '@/lib/agents/access-grants';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { notifyAgentShared } from '@/lib/agents/share-notification';
 
 export async function GET(
   request: NextRequest,
@@ -100,6 +101,13 @@ export async function POST(
     targetKind: 'agent',
     targetLabel: agent.name,
     details: { granteeSubject, expiresAt: expiresAt ? expiresAt.toISOString() : null },
+  });
+  notifyAgentShared({
+    tenantId,
+    granteeSubject,
+    actorSubject: session.subject,
+    agentId,
+    agentName: agent.name,
   });
   const grants = await listAgentAccessGrants(db, tenantId, session.subject, agentId);
   return NextResponse.json({ grants: grants ?? [] });

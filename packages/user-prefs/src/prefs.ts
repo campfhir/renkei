@@ -91,6 +91,24 @@ export interface NotificationPrefs {
   batchFinished: DeliveryPrefs;
   batchFailed: DeliveryPrefs;
   /**
+   * On by default: someone shares a chat of theirs with you. Not
+   * per-agent overridable — a chat has no agent.
+   */
+  chatShared: DeliveryPrefs;
+  /** On by default: someone shares an agent of theirs with you. */
+  agentShared: DeliveryPrefs;
+  /**
+   * Off by default. A desktop pop-up when an agent's reply lands in one of
+   * your chats while this tab isn't the one in front — the in-app feed and
+   * the pop-up pile already cover a tab that IS in front (see
+   * `apps/web/public/sw.js`'s own focus check), so this is reach only, the
+   * same role `sendPush` plays for every other event. Email and WebEx make
+   * no sense for a single chat reply the way they do for a run finishing,
+   * so unlike the events above this is a plain switch rather than a
+   * three-channel triple.
+   */
+  chatReplyDesktop: boolean;
+  /**
    * connector → category → delivery. Absent = the category default for
    * `app`, off for `email`/`webex`. Category, not per-act: an act-by-act
    * grid times three channels was tried (see the preferences form's own
@@ -138,6 +156,9 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   batchStarted: { app: false, email: false, webex: false },
   batchFinished: { app: true, email: false, webex: false },
   batchFailed: { app: true, email: false, webex: false },
+  chatShared: { app: true, email: false, webex: false },
+  agentShared: { app: true, email: false, webex: false },
+  chatReplyDesktop: false,
   acts: {},
   agentOverrides: {},
   toastsEnabled: true,
@@ -342,6 +363,9 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
     batchStarted: deliveryPrefs(raw.batchStarted, DEFAULT_NOTIFICATION_PREFS.batchStarted),
     batchFinished: deliveryPrefs(raw.batchFinished, DEFAULT_NOTIFICATION_PREFS.batchFinished),
     batchFailed: deliveryPrefs(raw.batchFailed, DEFAULT_NOTIFICATION_PREFS.batchFailed),
+    chatShared: deliveryPrefs(raw.chatShared, DEFAULT_NOTIFICATION_PREFS.chatShared),
+    agentShared: deliveryPrefs(raw.agentShared, DEFAULT_NOTIFICATION_PREFS.agentShared),
+    chatReplyDesktop: boolOr(raw.chatReplyDesktop, DEFAULT_NOTIFICATION_PREFS.chatReplyDesktop),
     acts: actsMap(raw.acts),
     agentOverrides: agentOverridesMap(raw.agentOverrides),
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),

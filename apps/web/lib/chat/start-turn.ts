@@ -53,6 +53,7 @@ import { runChatTurn, DEFAULT_TURN_LIMITS } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
 import { readProjectMemory, renderProjectMemory } from './memory';
 import { readUserMemory, renderUserMemory } from './user-memory';
+import { notifyChatReplyDesktop } from './reply-notification';
 
 /**
  * The hard ceiling on one Send: past this, even chunking is refused (an
@@ -444,7 +445,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       now: new Date(),
     });
 
-    await runChatTurn(
+    const outcome = await runChatTurn(
       {
         llm: input.llm,
         tools: [...surface.tools, ...recalled, ...localTools.defs()].sort((a, b) =>
@@ -469,6 +470,18 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         ...(code?.prelude ? { prelude: [code.prelude] } : {}),
       }
     );
+    // Only a reply that actually landed is news — a canceled or interrupted
+    // turn is the person's own doing, and a failure has nothing to page
+    // them about. Only the owner can ever start a turn, so they're the
+    // only one waiting on it.
+    if (outcome.status === 'completed') {
+      notifyChatReplyDesktop({
+        tenantId: input.tenantId,
+        ownerSubject: input.session.subject,
+        chatId: input.chat.id,
+        chatTitle: input.chat.title,
+      });
+    }
   } catch (error) {
     log('chat turn failed before the model ran: {message}', {
       message: error instanceof Error ? error.message : String(error),

@@ -42,7 +42,8 @@ export interface NotificationCard {
   id: string;
   /**
    * 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited' |
-   * 'agent_disabled' | 'batch_started' | 'batch_finished' | 'batch_failed'.
+   * 'agent_disabled' | 'batch_started' | 'batch_finished' | 'batch_failed' |
+   * 'approval' | 'question' | 'chat_shared' | 'agent_shared' | 'chat_reply'.
    */
   kind: string;
   connector: string | null;
@@ -405,12 +406,15 @@ export default function NotificationsList({
                 ? parseBatchNotificationMeta(row.meta)
                 : null;
               const batchProgress = batch ? batchNotificationProgress(batch) : '';
-              // "Someone edited your agent" and "your agent was turned
-              // off — update it" both point at the agent itself — in-app,
-              // so no new tab.
+              // "Someone edited your agent", "your agent was turned off —
+              // update it" and "someone shared an agent with you" all
+              // point at the agent itself — in-app, so no new tab.
               const agentHref = batch
                 ? batchNotificationHref(slug, batch)
-                : (row.kind === 'agent_edited' || row.kind === 'agent_disabled') && row.agentId
+                : (row.kind === 'agent_edited' ||
+                      row.kind === 'agent_disabled' ||
+                      row.kind === 'agent_shared') &&
+                    row.agentId
                   ? `/${slug}/agents/${row.agentId}`
                   : null;
               const inAppLabel = batch ? 'Open batch' : 'Open agent';
@@ -462,6 +466,31 @@ export default function NotificationsList({
                           className="text-amber-600 dark:text-amber-400"
                         >
                           <Icon path={ICONS.pencil} className="h-[18px] w-[18px]" />
+                        </span>
+                      ) : row.kind === 'approval' ? (
+                        <span
+                          title="Needs your approval"
+                          className="text-amber-600 dark:text-amber-400"
+                        >
+                          <Icon path={ICONS.approval} className="h-[18px] w-[18px]" />
+                        </span>
+                      ) : row.kind === 'question' ? (
+                        <span
+                          title="Has a question for you"
+                          className="text-amber-600 dark:text-amber-400"
+                        >
+                          <Icon path={ICONS.question} className="h-[18px] w-[18px]" />
+                        </span>
+                      ) : row.kind === 'chat_shared' || row.kind === 'agent_shared' ? (
+                        <span title="Shared with you" className="text-blue-600 dark:text-blue-400">
+                          <Icon path={ICONS.share} className="h-[18px] w-[18px]" />
+                        </span>
+                      ) : row.kind === 'chat_reply' ? (
+                        <span
+                          title="Replied in a chat"
+                          className="text-blue-600 dark:text-blue-400"
+                        >
+                          <Icon path={ICONS.chat} className="h-[18px] w-[18px]" />
                         </span>
                       ) : isBatchNotificationKind(row.kind) ? (
                         // A batch is a stack of files being worked through;
