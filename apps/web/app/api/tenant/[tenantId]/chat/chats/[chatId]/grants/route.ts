@@ -9,6 +9,8 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { grantResourceAccess, listResourceGrants } from '@/lib/chat/access';
 import { parseExpiry } from '@/lib/chat/grant-input';
+import { getChatRow } from '@/lib/chat/store';
+import { notifyChatShared } from '@/lib/chat/share-notification';
 
 export async function GET(
   request: NextRequest,
@@ -44,5 +46,13 @@ export async function POST(
   if (outcome === 'NOT_FOUND') return jsonError(404, 'not-found', 'No such chat');
   if (outcome === 'SELF') return jsonError(400, 'self', 'That is you');
   if (outcome === 'INVALID_ROLE') return jsonError(400, 'invalid', 'Chats are shared read-only');
+  const chat = await getChatRow(db, tenantId, chatId);
+  notifyChatShared({
+    tenantId,
+    granteeSubject,
+    actorSubject: session.subject,
+    chatId,
+    chatTitle: chat?.title ?? null,
+  });
   return NextResponse.json({ ok: true });
 }

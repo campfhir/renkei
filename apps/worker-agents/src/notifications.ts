@@ -193,13 +193,24 @@ export interface Notifier {
 }
 
 /**
+ * The fields `write` actually touches — every caller of the exported
+ * `writeNotificationRow` has these without necessarily having a full
+ * `NotifierContext` (prefs, an MCP session): a card raised while pausing a
+ * run, for instance, has the run's identity but no reason to carry those.
+ */
+type NotificationRowContext = Pick<
+  NotifierContext,
+  'tenantId' | 'subject' | 'agentId' | 'agentName' | 'runId'
+>;
+
+/**
  * The whole reason this never throws — one place, one swallow. Resolves
  * whether the row exists, which only the tally cares about: a repeat must
  * not try to re-headline a row that was never written.
  */
 async function write(
   db: Kysely<DB>,
-  context: NotifierContext,
+  context: NotificationRowContext,
   row: {
     kind: string;
     category?: string | null;
@@ -264,6 +275,27 @@ async function write(
     );
   }
   return true;
+}
+
+/**
+ * The app row (and the push it triggers) for an event with no per-channel
+ * choice — an approval or question card is not optional in the app: the
+ * run is physically parked behind it, so this always fires the moment the
+ * card is raised. `raiseApprovalCard`/`raiseQuestionCard` in engine.ts call
+ * this directly; only their email/WebEx copy is gated on a preference.
+ */
+export async function writeNotificationRow(
+  db: Kysely<DB>,
+  context: NotificationRowContext,
+  row: {
+    kind: string;
+    headline: string;
+    refId?: string | null;
+    refUrl?: string | null;
+    stepId?: string | null;
+  }
+): Promise<void> {
+  await write(db, context, row);
 }
 
 /**

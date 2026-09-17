@@ -65,7 +65,13 @@ import {
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
 import { toolKindOf } from '@renkei/tool-outcomes';
-import { NOTIFIER_TOOLS, notifierFor, notificationDeliverer, type Notifier } from './notifications';
+import {
+  NOTIFIER_TOOLS,
+  notifierFor,
+  notificationDeliverer,
+  writeNotificationRow,
+  type Notifier,
+} from './notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
@@ -1892,14 +1898,27 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       vars['approval.link'] = link ?? '';
-      // The card itself is not optional — a waiting run needs it — but
-      // whether it ALSO pages the owner by email or WebEx is their call.
+      const heading = `Agent “${agentName}” needs your approval${gatedStep.name.trim() ? `: ${gatedStep.name.trim()}` : ''}`;
+      // The card itself is not optional — a waiting run needs it, so the
+      // app's own feed (and the push it triggers) always gets this row.
+      // Only whether it ALSO pages the owner by email or WebEx is their call.
+      await writeNotificationRow(
+        db,
+        {
+          tenantId: run.tenant_id,
+          subject: run.owner_subject,
+          agentId: run.agent_id,
+          agentName,
+          runId: run.id,
+        },
+        { kind: 'approval', headline: heading, stepId: gatedStep.id }
+      );
       const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
       await deliverOwnerNotifications({
         email: ownerPrefs.approvalNeeded.email,
         webex: ownerPrefs.approvalNeeded.webex,
-        heading: `Agent “${agentName}” needs your approval${gatedStep.name.trim() ? `: ${gatedStep.name.trim()}` : ''}`,
+        heading,
         body: [
           `Wants to call ${friendlyToolName(tool, null)} with:`,
           clip(JSON.stringify(args, null, 2), PREVIEW_CHARS),
@@ -1969,12 +1988,26 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       vars['question.link'] = link ?? '';
+      const heading = `Agent “${agentName}” has a question${askingStep.name.trim() ? `: ${askingStep.name.trim()}` : ''}`;
+      // Same reasoning as the approval card's: the app's own feed always
+      // gets this row, and only email/WebEx are the owner's choice.
+      await writeNotificationRow(
+        db,
+        {
+          tenantId: run.tenant_id,
+          subject: run.owner_subject,
+          agentId: run.agent_id,
+          agentName,
+          runId: run.id,
+        },
+        { kind: 'question', headline: heading, stepId: askingStep.id }
+      );
       const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
       await deliverOwnerNotifications({
         email: ownerPrefs.questionAsked.email,
         webex: ownerPrefs.questionAsked.webex,
-        heading: `Agent “${agentName}” has a question${askingStep.name.trim() ? `: ${askingStep.name.trim()}` : ''}`,
+        heading,
         body: [message, ...(link ? [`Answer here: ${link}`] : [])].join('\n\n'),
         ownerEmail: vars['user.email'],
       });

@@ -130,6 +130,19 @@ const BATCH_EVENTS = [
   ['batchFailed', 'A batch job fails', 'It stopped before its items, or every item failed.'],
 ] as const satisfies readonly [key: BatchEvent, label: string, hint: string | null][];
 
+/**
+ * The two sharing events, `{app, email, webex}` like a run event, but not
+ * per-agent overridable — a share isn't scoped to one agent's runs.
+ */
+const SHARE_EVENTS = [
+  ['chatShared', 'Someone shares a chat with you', null],
+  ['agentShared', 'Someone shares an agent with you', null],
+] as const satisfies readonly [
+  key: 'chatShared' | 'agentShared',
+  label: string,
+  hint: string | null,
+][];
+
 /** The two pause events, `{email, webex}` — the App card is always on. */
 const PAUSE_EVENTS = [
   [
@@ -346,7 +359,14 @@ export default function PreferencesForm({
   }
 
   function setDeliveryChannel(
-    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers' | BatchEvent,
+    key:
+      | 'runStarted'
+      | 'runFinished'
+      | 'runFailed'
+      | 'agentEditedByOthers'
+      | BatchEvent
+      | 'chatShared'
+      | 'agentShared',
     channel: keyof DeliveryPrefs,
     on: boolean
   ) {
@@ -562,6 +582,71 @@ export default function PreferencesForm({
               </thead>
               <tbody>
                 {BATCH_EVENTS.map(([key, label, hint]) => (
+                  <tr
+                    key={key}
+                    className="border-t border-gray-100 first:border-t-0 dark:border-gray-900"
+                  >
+                    <td className="px-4 py-3 align-top">
+                      <span className="font-medium">{label}</span>
+                      {hint ? (
+                        <span className="block text-xs text-gray-500 dark:text-gray-400">
+                          {hint}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — App`}
+                        checked={prefs[key].app}
+                        onChange={(event) => setDeliveryChannel(key, 'app', event.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — Outlook`}
+                        checked={channels.outlook && prefs[key].email}
+                        disabled={!channels.outlook}
+                        onChange={(event) => setDeliveryChannel(key, 'email', event.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — WebEx`}
+                        checked={channels.webex && prefs[key].webex}
+                        disabled={!channels.webex}
+                        onChange={(event) => setDeliveryChannel(key, 'webex', event.target.checked)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ChannelHints channels={channels} slug={slug} />
+        </section>
+
+        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+          <div className="p-4 pb-3">
+            <h3 className="font-semibold">Sharing</h3>
+            <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+              When someone gives you access to a chat or an agent of theirs.
+            </p>
+          </div>
+          <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-800">
+            <table className="w-full min-w-[420px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  <th className="px-4 py-2 font-medium">When…</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">App</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">Outlook</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">WebEx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SHARE_EVENTS.map(([key, label, hint]) => (
                   <tr
                     key={key}
                     className="border-t border-gray-100 first:border-t-0 dark:border-gray-900"
@@ -1091,6 +1176,22 @@ export default function PreferencesForm({
                 moment.
               </p>
             ) : null}
+            <label className="flex w-full items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 shrink-0"
+                checked={prefs.chatReplyDesktop}
+                disabled={!desktopEnabled}
+                onChange={(event) => update({ ...prefs, chatReplyDesktop: event.target.checked })}
+              />
+              <span className="min-w-0">
+                Also notify me when an agent replies in a chat while I&rsquo;m away
+                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                  Off by default, and needs the switch above on too — nothing while a Renkei tab is
+                  the one in front.
+                </span>
+              </span>
+            </label>
           </div>
         </section>
       </section>
