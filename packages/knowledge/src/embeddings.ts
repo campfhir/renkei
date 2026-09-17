@@ -37,13 +37,21 @@ const REQUEST_TIMEOUT_MS = 15_000;
  * than most providers' embeddings-endpoint rate limits allow. `query` maps
  * to the interactive lane, `passage` (ingest and reindex, both background
  * work) to the background one, so a bulk run cannot queue behind a person's
- * live search the way a webhook flood must not either. Capacity is sized
- * above any single test file's call count, not as a tuned production
- * ceiling — the number that actually matters is the background refill
- * rate, which is the one worth raising or lowering per provider.
+ * live search the way a webhook flood must not either.
+ *
+ * The interactive lane is the one every `search_knowledge` call — every
+ * agent's read path — waits on before it can even reach the embeddings
+ * provider, so its size has to track how many searches actually run at
+ * once org-wide, not a single test file's call count. Raised 5x (20→100
+ * burst, 10→50/sec refill) for organizations large enough that many agents
+ * search concurrently; if the configured embeddings endpoint cannot sustain
+ * that rate, it will answer with 429s (surfaced as EMBEDDING_FAILED)
+ * instead of the queue silently growing, which is the tradeoff worth
+ * making — a visible failure beats an invisible multi-minute wait. Tune
+ * down for a smaller org or a lower-tier provider.
  */
 const limiter = new LaneLimiter({
-  interactive: { capacity: 20, refillPerSecond: 10 },
+  interactive: { capacity: 100, refillPerSecond: 50 },
   background: { capacity: 20, refillPerSecond: 3 },
 });
 
