@@ -14,7 +14,7 @@
 
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
-import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { LaneLimiter, RateLimitTimeoutError, type RequestLane } from '@renkei/rate-limit';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -27,6 +27,18 @@ export const EMBEDDINGS_CONNECTOR = 'embeddings';
  * unbounded hang here once wedged the worker's whole event loop.
  */
 const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * A live search waits on this queue before it even reaches the provider.
+ * Without a ceiling, a deep queue (an undersized bucket, or a burst bigger
+ * than capacity was sized for) turns into an open-ended hang indistinguishable
+ * from the request never returning — which is worse than a clear failure,
+ * since a person or agent waiting on a live call has no way to tell "still
+ * working" from "stuck". Bulk reindex work (the background lane) is not
+ * time-bounded here: nothing is waiting on it live, so it should keep
+ * queuing rather than abandon partially-completed work.
+ */
+const INTERACTIVE_QUEUE_TIMEOUT_MS = 10_000;
 
 /**
  * Process-scoped, split by lane like every other connector client (see
@@ -57,6 +69,11 @@ const limiter = new LaneLimiter({
 
 function laneOf(purpose: EmbeddingPurpose): RequestLane {
   return purpose === 'query' ? 'interactive' : 'background';
+}
+
+/** Only the live-search lane is time-bounded; see INTERACTIVE_QUEUE_TIMEOUT_MS. */
+function queueTimeoutFor(purpose: EmbeddingPurpose): number | undefined {
+  return purpose === 'query' ? INTERACTIVE_QUEUE_TIMEOUT_MS : undefined;
 }
 
 /** pgvector input literal: '[0.1,0.2,…]'. */
@@ -117,7 +134,15 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
     const prefix = purpose === 'query' ? this.queryPrefix : this.passagePrefix;
     const input = prefix ? texts.map((text) => `${prefix}${text}`) : [...texts];
 
-    await limiter.take(laneOf(purpose));
+    try {
+      await limiter.take(laneOf(purpose), queueTimeoutFor(purpose));
+    } catch (error) {
+      if (error instanceof RateLimitTimeoutError) {
+        return err('EMBEDDING_FAILED' as const, { message: error.message });
+      }
+      throw error;
+    }
+
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/embeddings`, {
