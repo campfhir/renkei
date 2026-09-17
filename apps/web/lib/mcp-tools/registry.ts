@@ -84,6 +84,7 @@ import {
   collectConfluenceChanges,
 } from '@/lib/mcp-tools/summary/collect-docs';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
+import { narrowedScopes } from '@/lib/mcp-tools/narrowed-scopes';
 
 /** Which connectors this caller has connected, and on what scopes. */
 export interface ConnectorAvailability {
@@ -132,28 +133,11 @@ async function grantRow(
     .executeTakeFirst();
 }
 
-/**
- * requested ∩ granted, for a provider whose OAuth app fixes its scopes on
- * the consumer/client registration rather than letting the authorize step
- * narrow them (Zoom, Bitbucket) — so the token always carries the app's
- * full configured set, and only intersecting with what the user actually
- * requested preserves their narrowing.
- *
- * `granted` is trusted only when it shares at least one entry with
- * `requested`; otherwise it is in a vocabulary this app does not
- * recognize (observed for Bitbucket: `read:repository:bitbucket-legacy`
- * etc., sharing no strings with the classic scope names requested_scopes
- * stores) and intersecting against it would silently zero out every
- * tool. An unrecognized or absent granted list falls back to requested
- * alone, exactly like a token whose scopes are simply unknown.
- */
-export function narrowedScopes(
-  requested: string[],
-  granted: string[] | null | undefined
-): string[] {
-  const recognized = granted && granted.some((scope) => requested.includes(scope)) ? granted : null;
-  return recognized ? requested.filter((scope) => recognized.includes(scope)) : requested;
-}
+// The "requested ∩ granted, or requested alone when granted is unrecognized"
+// rule for Zoom and Bitbucket lives in narrowed-scopes.ts so that the
+// code-project access check can share it without importing every tool;
+// re-exported here for the callers that reach it through the registry.
+export { narrowedScopes };
 
 export async function resolveConnectorAvailability(
   db: Kysely<DB>,
