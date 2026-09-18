@@ -24,6 +24,8 @@ export type AuditAction =
   | 'connector.connected'
   | 'connector.disconnected'
   | 'connector.audience_updated'
+  /** An org-wide connector's credentials or settings were saved by an admin. */
+  | 'connector.configured'
   | 'agent.created'
   | 'agent.updated'
   | 'agent.enabled'

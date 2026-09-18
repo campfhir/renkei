@@ -68,6 +68,9 @@ export const GLYPH_ONLY = new Set([
   'sandbox',
   'batch-jobs',
   'mistral-ocr',
+  // Voice is the chat speaking and listening through an org-provisioned
+  // speech service; drawing that vendor's mark would name the wrong thing.
+  'voice',
 ]);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */

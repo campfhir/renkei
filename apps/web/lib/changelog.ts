@@ -44,6 +44,30 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Voice',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Replies read aloud',
+        detail:
+          'When your organization has set up a speech service, a speaker button in the chat reads each reply as it arrives — turn it on for every chat, or press Listen under any one reply. Pick the voice, the pace and the language under Preferences or from the speaker menu itself.',
+      },
+      {
+        kind: 'added',
+        title: 'Voice conversations',
+        detail:
+          'Start a voice conversation from the speaker menu and talk instead of typing: each thing you say is sent as a message, the reply is read back to you, and speaking over it stops it so you can steer. Works in any chat, including chats inside projects and code projects, and the chat keeps the whole conversation in writing.',
+      },
+      {
+        kind: 'added',
+        title: 'Voice under Connector setup',
+        detail:
+          'Administrators configure the speech service — a region or custom endpoint, a key, a default voice and language — under Connector setup, and can test it from there. Until it is configured and enabled, nothing about voice is shown to anyone.',
+      },
+    ],
+  },
+  {
+    date: null,
     entries: [
       {
         kind: 'fixed',

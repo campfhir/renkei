@@ -21,6 +21,7 @@ import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
 import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
+import ListenButton from './listen-button';
 import Markdown from './markdown';
 
 /**
@@ -86,6 +87,14 @@ export interface PromptActions {
   onEdit: (message: ChatMessageView) => void;
 }
 
+/** Reading a reply aloud, when the org has a voice service. */
+export interface ReplySpeech {
+  /** The turn whose reply is playing right now, if any. */
+  playingKey: string | null;
+  onListen: (key: string, markdown: string) => void;
+  onStop: () => void;
+}
+
 export default function MessageList({
   tenantId,
   messages,
@@ -95,6 +104,7 @@ export default function MessageList({
   compaction,
   empty,
   promptActions,
+  speech = null,
 }: {
   tenantId: string;
   messages: ChatMessageView[];
@@ -104,6 +114,7 @@ export default function MessageList({
   compaction: CompactionProgress | null;
   empty: ReactNode;
   promptActions: PromptActions | null;
+  speech?: ReplySpeech | null;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -168,6 +179,8 @@ export default function MessageList({
                 results={results}
                 pendingToolCalls={pendingToolCalls}
                 streaming={running && group.key === lastTurnKey}
+                speech={speech}
+                speechKey={group.key}
               />
             ) : null}
           </div>
@@ -374,9 +387,12 @@ function UserMessage({
 function useCopyToClipboard(): [boolean, (text: string) => void] {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    []
+  );
   const copy = useCallback((text: string) => {
     if (!text) return;
     void navigator.clipboard?.writeText(text).then(() => {
@@ -407,11 +423,15 @@ function Reply({
   results,
   pendingToolCalls,
   streaming,
+  speech,
+  speechKey,
 }: {
   messages: ChatMessageView[];
   results: Map<string, ToolResult>;
   pendingToolCalls: string[];
   streaming: boolean;
+  speech: ReplySpeech | null;
+  speechKey: string;
 }) {
   const segments = useMemo(() => segment(messages, results), [messages, results]);
   const copyText = useMemo(
@@ -464,8 +484,19 @@ function Reply({
       {copyText && !streaming ? (
         // Shown on hover where there is a pointer to hover with; always on
         // a touch screen, where there is not.
-        <div className="mt-1 flex gap-1 text-xs text-gray-500 transition-opacity lg:opacity-0 lg:group-focus-within:opacity-100 lg:group-hover:opacity-100">
+        <div
+          className={`mt-1 flex gap-1 text-xs text-gray-500 transition-opacity lg:group-focus-within:opacity-100 lg:group-hover:opacity-100 ${
+            speech?.playingKey === speechKey ? '' : 'lg:opacity-0'
+          }`}
+        >
           <CopyButton text={copyText} />
+          {speech ? (
+            <ListenButton
+              playing={speech.playingKey === speechKey}
+              onListen={() => speech.onListen(speechKey, copyText)}
+              onStop={speech.onStop}
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

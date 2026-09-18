@@ -52,6 +52,7 @@ export default function Composer({
   onCompact,
   onStop,
   modelControl,
+  voiceControl,
   editing,
   onCancelEdit,
 }: {
@@ -71,6 +72,8 @@ export default function Composer({
   onCompact: () => Promise<boolean>;
   onStop: () => Promise<void>;
   modelControl: ReactNode;
+  /** The speaker menu, when the org has a voice service; nothing otherwise. */
+  voiceControl?: ReactNode;
   /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
   editing: { text: string } | null;
   onCancelEdit: () => void;
@@ -353,6 +356,7 @@ export default function Composer({
           >
             <Icon path={ICONS.sparkle} className="h-5 w-5" />
           </button>
+          {voiceControl}
           <div className="min-w-0 flex-1">{modelControl}</div>
           {running ? (
             <button

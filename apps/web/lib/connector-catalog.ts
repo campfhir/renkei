@@ -417,6 +417,28 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    capabilityKey: 'voice',
+    configKey: 'voice',
+    label: 'Voice',
+    summary:
+      "Read replies aloud and hold a spoken conversation in the chat, through the org's speech " +
+      'service (Azure AI Speech today). One org-wide region and key; registers no tools of its own.',
+    toolPrefix: '(chat voice)',
+    category: 'renkei',
+    keywords: [
+      'speech',
+      'text to speech',
+      'tts',
+      'microphone',
+      'voice mode',
+      'read aloud',
+      'azure',
+    ],
+    grantProviders: [],
+    userConnectable: false,
+    togglable: false,
+  },
+  {
     capabilityKey: 'mistral-ocr',
     configKey: 'mistral-ocr',
     label: 'Mistral OCR',

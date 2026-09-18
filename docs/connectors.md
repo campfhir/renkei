@@ -2,17 +2,18 @@
 
 Every provider integration lives in its own `packages/connector-*` package and follows the data-contract shape `RENKEI.md`'s "Connectors" section describes: what's stored in the knowledge index, what's live-query-only, and (where indexing happens) a `verifyAccess(userId, refs[]) → allowed subset` implementation that the retrieval gate calls before disclosing anything (see [`knowledge-and-security.md`](./knowledge-and-security.md)). None of the packages below talk to a database directly for their provider calls — connector packages wrap the provider API and export a verifier; the MCP tool handlers in `apps/web/lib/mcp-tools/` are the layer that actually calls them per request.
 
-| Connector               | Provider(s)                                                  | Auth model                                            | Indexed?                                                       |
-| ----------------------- | ------------------------------------------------------------ | ----------------------------------------------------- | -------------------------------------------------------------- |
-| `connector-atlassian`   | Jira, Confluence, JSM                                        | Per-user OAuth (Atlassian Cloud 3LO)                  | Live-verified via re-query                                     |
-| `connector-microsoft`   | Outlook mail/calendar/tasks, SharePoint, OneDrive            | Per-user delegated OAuth (Graph)                      | Personal items: ownership-scoped; documents: live-verified     |
-| `connector-fileshares`  | Org-registered SMB/SFTP shares                               | Per-share, per-user credentials                       | Not indexed — no `verifyAccess`, retrieval-only                |
-| `connector-onbase`      | Hyland OnBase (on-prem)                                      | Auth Code + PKCE against the tenant's own IdP         | Not indexed (deferred) — retrieval-only                        |
-| `connector-mirth`       | Mirth Connect / NextGen Connect 4.5.2 (on-prem, N instances) | Per-instance, per-user Mirth username + password      | Not indexed — no `verifyAccess`, retrieval-only                |
-| `connector-sandbox`     | Renkei's own agent scratch space (no external provider)      | The caller's own signed-in Renkei session             | Not indexed — transient staging data                           |
-| `connector-mistral-ocr` | Mistral Document AI (OCR 4) on Microsoft Foundry             | One org-wide API key per tenant (`connector_configs`) | Not indexed — a document pipeline stage, not a source of truth |
-| `connector-webex`       | WebEx messaging                                              | Bot token for sending; per-user OAuth for ingestion   | Live-verified (room membership)                                |
-| `connector-zoom`        | Zoom meetings/recordings/transcripts                         | Per-user OAuth + webhook download tokens              | Ownership-scoped (host-only, v1)                               |
+| Connector               | Provider(s)                                                      | Auth model                                                              | Indexed?                                                                 |
+| ----------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `connector-atlassian`   | Jira, Confluence, JSM                                            | Per-user OAuth (Atlassian Cloud 3LO)                                    | Live-verified via re-query                                               |
+| `connector-microsoft`   | Outlook mail/calendar/tasks, SharePoint, OneDrive                | Per-user delegated OAuth (Graph)                                        | Personal items: ownership-scoped; documents: live-verified               |
+| `connector-fileshares`  | Org-registered SMB/SFTP shares                                   | Per-share, per-user credentials                                         | Not indexed — no `verifyAccess`, retrieval-only                          |
+| `connector-onbase`      | Hyland OnBase (on-prem)                                          | Auth Code + PKCE against the tenant's own IdP                           | Not indexed (deferred) — retrieval-only                                  |
+| `connector-mirth`       | Mirth Connect / NextGen Connect 4.5.2 (on-prem, N instances)     | Per-instance, per-user Mirth username + password                        | Not indexed — no `verifyAccess`, retrieval-only                          |
+| `connector-sandbox`     | Renkei's own agent scratch space (no external provider)          | The caller's own signed-in Renkei session                               | Not indexed — transient staging data                                     |
+| `connector-mistral-ocr` | Mistral Document AI (OCR 4) on Microsoft Foundry                 | One org-wide API key per tenant (`connector_configs`)                   | Not indexed — a document pipeline stage, not a source of truth           |
+| `connector-webex`       | WebEx messaging                                                  | Bot token for sending; per-user OAuth for ingestion                     | Live-verified (room membership)                                          |
+| `connector-zoom`        | Zoom meetings/recordings/transcripts                             | Per-user OAuth + webhook download tokens                                | Ownership-scoped (host-only, v1)                                         |
+| `voice`                 | Speech for the chat (Azure AI Speech; vendor-agnostic interface) | One org-wide region/endpoint + API key per tenant (`connector_configs`) | Not indexed — text-to-speech and speech-to-text only, registers no tools |
 
 ## connector-atlassian
 
@@ -112,6 +113,12 @@ Stores meeting transcripts (VTT flattened to text via `vttToText`) and AI Compan
 `createZoomAccessVerifier` (`verifier.ts`) implements v1's host-only ACL: ref id is `${hostEmail}/${meetingUuid}`, verification is a pure string comparison (`ownerScoped: true`, no network call) since the host of a meeting is immutable once recorded. Participant-based ACL (letting invitees, not just the host, retrieve a transcript) is explicitly future work, not yet implemented.
 
 Other exports: `ZoomClient`, `verifyZoomSignature`/`parseZoomWebhookPayload`, `zoomRefId`/`hostOfZoomRefId`.
+
+## voice
+
+Not a provider of org content but a service the chat calls: text-to-speech for reading replies aloud and speech-to-text for the immersive voice conversation (see [`chat.md`](./chat.md), "Voice"). `packages/voice` holds the vendor-agnostic contract (`VoiceProvider`: `listVoices`, `synthesize`, `transcribe`) and the first vendor behind it, Azure AI Speech over its REST surfaces (`azure-speech.ts`: regional hosts, or a custom domain/private endpoint; SSML with the pace inside it; MP3 out; 16 kHz mono WAV in). `createVoiceProvider` in `config.ts` is the one switch on vendor; another vendor is a file beside it plus one case there.
+
+Auth is one org-wide key per tenant, stored the way every other service-credential connector here stores one: `connector_configs`' `settings` (`provider`, `region`, `endpoint`, `defaultVoice`, `defaultLocale`) plus `encrypted_secrets` (`apiKey`). An org admin sets it on the Connector setup page; `apps/web/app/api/admin/[slug]/connectors/voice/route.ts` is its GET/PUT (region or endpoint required, key required only until one is stored) and `…/voice/test` lists the vendor's voices to prove the configuration. `apps/web/lib/voice/config.ts` resolves the config through `readConnectorConfigCached` — null when absent, disabled or incomplete, which is exactly "voice is not available" for every page and route — and caches the voice list an hour per org. The connector registers no MCP tools (`togglable: false`, like Mistral OCR): the org's `enabled` flag on the row is its only switch, and the catalog entry exists so the admin console can reach the form and the connectors page can say what the org runs.
 
 ## connector-config
 

@@ -7,6 +7,7 @@ import { resolveChatAccess } from '@/lib/chat/access';
 import { loadChatView } from '@/lib/chat/chat-view';
 import { listChatModels } from '@/lib/chat/models';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
+import { loadVoiceAvailability } from '@/lib/voice/availability';
 import ChatThread from '../_components/chat-thread';
 
 /**
@@ -30,10 +31,13 @@ export default async function ChatPage({
 
   const access = await resolveChatAccess(db, tenant.id, session.subject, chatId);
   if (!access) notFound();
-  const [view, models, uploadsEnabled] = await Promise.all([
+  const [view, models, uploadsEnabled, voice] = await Promise.all([
     loadChatView(db, tenant.id, access, session.subject),
     listChatModels(db, tenant.id),
     tenantBlobStoreConfigured(tenant.id),
+    // Null when the org has no voice service: the thread then shows
+    // nothing about voice at all.
+    loadVoiceAvailability(tenant.id, session.subject),
   ]);
   return (
     <ChatThread
@@ -45,6 +49,7 @@ export default async function ChatPage({
       initialMessages={view.messages}
       models={models}
       uploadsEnabled={uploadsEnabled}
+      voice={voice}
     />
   );
 }

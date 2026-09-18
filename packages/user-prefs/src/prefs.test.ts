@@ -19,6 +19,8 @@ import {
   DEFAULT_CONNECTOR_PREFS,
   parseThemePrefs,
   DEFAULT_THEME_PREFS,
+  parseVoicePrefs,
+  DEFAULT_VOICE_PREFS,
   type NotificationPrefs,
   type DeliveryPrefs,
 } from './prefs';
@@ -333,5 +335,31 @@ describe('parseThemePrefs', () => {
   it('falls back to auto for an unrecognised mode', () => {
     expect(parseThemePrefs({ mode: 'darkest' })).toEqual(DEFAULT_THEME_PREFS);
     expect(parseThemePrefs({ mode: 42 })).toEqual(DEFAULT_THEME_PREFS);
+  });
+});
+
+describe('parseVoicePrefs', () => {
+  it('defaults an absent or malformed row to silence at natural pace', () => {
+    expect(parseVoicePrefs(undefined)).toEqual(DEFAULT_VOICE_PREFS);
+    expect(parseVoicePrefs(null)).toEqual(DEFAULT_VOICE_PREFS);
+    expect(parseVoicePrefs('loud')).toEqual(DEFAULT_VOICE_PREFS);
+    expect(parseVoicePrefs({})).toEqual(DEFAULT_VOICE_PREFS);
+    expect(DEFAULT_VOICE_PREFS.autoPlay).toBe(false);
+  });
+
+  it('keeps a plausible voice id, pace, auto-play and locale', () => {
+    expect(
+      parseVoicePrefs({ voice: 'en-GB-SoniaNeural', rate: 1.25, autoPlay: true, locale: 'en_gb' })
+    ).toEqual({ voice: 'en-GB-SoniaNeural', rate: 1.25, autoPlay: true, locale: 'en-GB' });
+  });
+
+  it('clamps the pace and drops what it cannot use', () => {
+    expect(parseVoicePrefs({ rate: 9 }).rate).toBe(2);
+    expect(parseVoicePrefs({ rate: 0 }).rate).toBe(0.5);
+    expect(parseVoicePrefs({ rate: 'fast' }).rate).toBe(1);
+    expect(parseVoicePrefs({ voice: '<script>' }).voice).toBeNull();
+    expect(parseVoicePrefs({ voice: 42 }).voice).toBeNull();
+    expect(parseVoicePrefs({ locale: 'english' }).locale).toBeNull();
+    expect(parseVoicePrefs({ autoPlay: 'yes' }).autoPlay).toBe(false);
   });
 });
