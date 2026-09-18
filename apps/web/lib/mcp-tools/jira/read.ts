@@ -83,6 +83,17 @@ function renderExtraFields(
   });
 }
 
+function formatExtra(extra: { field: string; text: string }): string {
+  return `${extra.field}: ${extra.text}`;
+}
+
+function indent(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => (line === '' ? '' : `    ${line}`))
+    .join('\n');
+}
+
 export async function registerReadTools(
   server: McpServer,
   context: MCPToolContext,
@@ -265,12 +276,22 @@ export async function registerReadTools(
               return null;
             }
             const fields = issue.fields;
-            // Caller-requested extras render as compact JSON — the caller
-            // named the field, so the raw shape is what they asked for.
+            // Caller-requested extras render as text the way jira_get_issue
+            // renders them: an ADF description becomes markdown, an option
+            // its value, a user their name. They used to be compact JSON cut
+            // at 500 chars, so a description arrived as the head of an ADF
+            // tree — "{"type":"doc","version":1,"content":[{"type":"paragr…"
+            // — with the words buried in node wrappers and the tail gone.
+            // Rendered whole, uncapped: the caller named the field because
+            // they want its contents, and the markdown is a fraction of the
+            // JSON's size once the node wrappers are gone.
             const extras = extraFields
               .filter((field) => fields[field] !== undefined && fields[field] !== null)
-              .map((field) => `${field}: ${JSON.stringify(fields[field]).slice(0, 500)}`)
-              .join('; ');
+              .map((field) => ({
+                field,
+                text: renderFieldValue(fields[field]) || JSON.stringify(fields[field]),
+              }))
+              .filter((extra) => extra.text !== '');
             return {
               key: issue.key,
               summary: fields.summary,
@@ -292,12 +313,20 @@ export async function registerReadTools(
           `Showing ${issues.length} issue${issues.length === 1 ? '' : 's'}` +
             (more ? ' — more match. Call jira_count_issues with the same JQL for the total.' : '') +
             ':',
-          ...issues.map(
-            (i: Record<string, unknown>) =>
+          ...issues.map((i) => {
+            const head =
               `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}` +
-              (i.reporter ? `, reported by ${i.reporter}` : '') +
-              (i.extras ? ` — ${i.extras}` : '')
-          ),
+              (i.reporter ? `, reported by ${i.reporter}` : '');
+            // A one-line value rides the bullet; a multi-line one (a
+            // description, a list of components that wrapped) goes beneath
+            // it, indented, so its lines are not read as further issues.
+            const inline = i.extras.filter((extra) => !extra.text.includes('\n'));
+            const block = i.extras.filter((extra) => extra.text.includes('\n'));
+            return [
+              head + (inline.length > 0 ? ` — ${inline.map(formatExtra).join('; ')}` : ''),
+              ...block.map((extra) => `  ${extra.field}:\n${indent(extra.text)}`),
+            ].join('\n');
+          }),
         ];
 
         if (issues.length === 0) {

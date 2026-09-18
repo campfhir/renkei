@@ -273,6 +273,94 @@ describe('jira_search_issues truncation', () => {
   });
 });
 
+describe('jira_search_issues extra fields', () => {
+  it('renders a requested description as markdown, not the ADF tree', async () => {
+    respondWith({
+      issues: [{ key: 'CAS-7', fields: { ...issue.fields, summary: 'Seven' } }],
+    });
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_search_issues')!({
+      jql: 'project = CAS',
+      fields: ['description'],
+    });
+    const text = result.content[0].text ?? '';
+
+    // Before: `description: {"type":"doc","version":1,"content":[{"type":"paragraph"…`
+    expect(text).toContain('Migrate the billing schema.');
+    expect(text).not.toContain('"type":"doc"');
+    expect(text).not.toContain('"paragraph"');
+    expect(text).toContain('description: Migrate the billing schema.');
+  });
+
+  it('keeps a long description whole rather than cutting it at 500 chars', async () => {
+    const sentence = 'Every word of this description is a fact the reader needs. ';
+    const long = sentence.repeat(40); // ~2 400 chars of prose, well past the old cut
+    respondWith({
+      issues: [
+        {
+          key: 'CAS-8',
+          fields: {
+            summary: 'Eight',
+            status: { name: 'Open' },
+            description: {
+              type: 'doc',
+              version: 1,
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: long }] }],
+            },
+          },
+        },
+      ],
+    });
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_search_issues')!({
+      jql: 'project = CAS',
+      fields: ['description'],
+    });
+
+    expect(result.content[0].text).toContain(long.trim());
+    expect(result.content[0].text).not.toContain('truncated');
+  });
+
+  it('puts a multi-line value under its issue, indented, and keeps one-liners inline', async () => {
+    respondWith({
+      issues: [
+        {
+          key: 'CAS-9',
+          fields: {
+            summary: 'Nine',
+            status: { name: 'Open' },
+            components: [{ name: 'Patient Access' }, { name: 'Willow (Pharmacy)' }],
+            description: {
+              type: 'doc',
+              version: 1,
+              content: [
+                { type: 'paragraph', content: [{ type: 'text', text: 'First paragraph.' }] },
+                { type: 'paragraph', content: [{ type: 'text', text: 'Second paragraph.' }] },
+              ],
+            },
+          },
+        },
+        { key: 'CAS-10', fields: { summary: 'Ten', status: { name: 'Open' } } },
+      ],
+    });
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_search_issues')!({
+      jql: 'project = CAS',
+      fields: ['components', 'description'],
+    });
+    const text = result.content[0].text ?? '';
+
+    // Components (one line) ride the bullet; the description hangs beneath it.
+    expect(text).toMatch(/• CAS-9: Nine .* — components: Patient Access, Willow \(Pharmacy\)\n/);
+    expect(text).toContain('  description:\n    First paragraph.\n\n    Second paragraph.');
+    // The next issue still starts on its own bullet after the block.
+    expect(text.indexOf('• CAS-10')).toBeGreaterThan(text.indexOf('Second paragraph.'));
+  });
+});
+
 describe('jira_list_sprints', () => {
   /** Frozen so "how many days left" is a fact, not today's weather. */
   const now = new Date('2026-08-21T00:00:00.000Z');
