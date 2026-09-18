@@ -15,6 +15,7 @@ import {
   setConnectorConfig,
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 
 const EMBEDDINGS_CONNECTOR = 'embeddings';
 
@@ -148,5 +149,8 @@ export async function PUT(
   }
 
   invalidateConnectorConfigCache(tenantId, EMBEDDINGS_CONNECTOR);
+  // The knowledge tools register org-wide on this config, so every caller's
+  // cached tool catalog may now be wrong — same as web-search/route.ts.
+  invalidateToolCatalogCache(tenantId);
   return NextResponse.json({ connector: EMBEDDINGS_CONNECTOR, configured: true, enabled });
 }

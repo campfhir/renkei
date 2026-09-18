@@ -157,8 +157,10 @@ async function jsmGrantScopesFor(
 
 // Long-lived: every path that can change what this returns already calls
 // invalidateToolCatalogCache explicitly — the per-connector grant routes,
-// the OAuth callback, and the org-admin connector-availability/org-settings
-// routes (disabledConnectors, readOnly). This cache is per-process, so the
+// the OAuth callback, the org-admin connector-availability/org-settings
+// routes (disabledConnectors, readOnly), and the org-wide connector configs
+// whose mere presence registers tools for everyone (embeddings for the
+// knowledge tools, web-search for web_search). This cache is per-process, so the
 // TTL is only the self-heal fallback for a sibling apps/web instance that
 // invalidated its own copy but not this one (multi-instance deployment,
 // a rolling deploy) — it can afford to be long.

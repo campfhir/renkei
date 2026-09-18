@@ -17,6 +17,7 @@ import {
   setConnectorConfig,
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
+import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import {
   WEB_SEARCH_CONNECTOR,
   MAX_DOMAIN_LIST,
@@ -202,5 +203,13 @@ export async function PUT(
   }
 
   invalidateConnectorConfigCache(tenantRef.id, WEB_SEARCH_CONNECTOR);
+  // Web search is org-wide: this one save decides whether `web_search`
+  // registers for EVERY caller, and each of them may hold a cached tool
+  // catalog built before it existed (up to four hours old). Without this,
+  // the chat's tools picker, the Preferences page and every chat turn kept
+  // reading the stale list, and nobody saw the connector they had just
+  // been given — the same org-wide drop connector-availability/route.ts
+  // makes when a connector is switched off.
+  invalidateToolCatalogCache(tenantRef.id);
   return NextResponse.json({ connector: WEB_SEARCH_CONNECTOR, configured: true, enabled });
 }

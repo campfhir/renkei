@@ -43,6 +43,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Web search reaches chats once an admin switches it on',
+        detail:
+          'After an admin set up the web-search connector, it was missing from the Tools picker and from Default tools in Preferences for hours, and a chat could not search the web even when asked to. It now appears for everyone as soon as it is saved — including people who have not linked any connector of their own.',
+      },
+    ],
+  },
+  {
     date: '2026-09-18',
     heading: 'A chat asks before it acts',
     entries: [
