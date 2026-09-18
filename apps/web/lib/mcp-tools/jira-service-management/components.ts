@@ -88,6 +88,86 @@ export async function resolveServiceDesk(
   return { ok: true, desk: { id: str(desk.id), projectKey: str(desk.projectKey) } };
 }
 
+/** A request type as the desk lists it. */
+export interface ResolvedRequestType {
+  id: string;
+  name: string;
+}
+
+/**
+ * A request type id or NAME, resolved to the numeric id every request-type
+ * endpoint insists on — the same posture `resolveServiceDesk` takes with a
+ * project key, for the same reason.
+ *
+ * `jsm_list_request_types` shows "Application Error (ID: 42)", and a model
+ * reading that naturally passes the name it just read. The API answers with
+ * "Failed to convert 'requestTypeId'" — a 400 that reads like the payload
+ * was malformed rather than like a lookup was skipped. Resolving beats
+ * rejecting: a numeric id passes straight through with no call at all, and
+ * a name costs one listing of the desk's types, matched case-insensitively.
+ */
+export async function resolveRequestType(
+  auth: JsmAuth,
+  deskId: string,
+  value: string
+): Promise<{ ok: true; requestType: ResolvedRequestType } | { ok: false; message: string }> {
+  const given = String(value).trim();
+  if (!given) return { ok: false, message: 'requestTypeId is required' };
+  if (/^\d+$/.test(given)) return { ok: true, requestType: { id: given, name: '' } };
+
+  const types = await listRequestTypes(auth, deskId);
+  if (!types.ok) return types;
+
+  const lower = given.toLowerCase();
+  const match = types.requestTypes.find((entry) => entry.name.toLowerCase() === lower);
+  if (match) return { ok: true, requestType: match };
+
+  const known =
+    types.requestTypes.length === 0
+      ? 'the desk lists no request types at all'
+      : `it has ${types.requestTypes.map((entry) => `${entry.name} (${entry.id})`).join(', ')}`;
+  return {
+    ok: false,
+    message:
+      `Request type "${given}" is not one service desk ${deskId} offers — ${known}. ` +
+      `jsm_list_request_types shows each with its requestTypeId.`,
+  };
+}
+
+/**
+ * Every request type on a desk, id and name — all pages, because a desk
+ * with more types than one page holds is exactly where a name lookup that
+ * stops early would say "not found" about a type that exists.
+ */
+async function listRequestTypes(
+  auth: JsmAuth,
+  deskId: string
+): Promise<{ ok: true; requestTypes: ResolvedRequestType[] } | { ok: false; message: string }> {
+  const requestTypes: ResolvedRequestType[] = [];
+  const limit = 100;
+  let start = 0;
+  for (;;) {
+    const response = await auth.fetch(
+      serviceDeskScopes('jsm_list_request_types', true),
+      `/rest/servicedeskapi/servicedesk/${encodeURIComponent(deskId)}/requesttype` +
+        `?start=${start}&limit=${limit}`
+    );
+    if (!response.ok) return { ok: false, message: await describeJsmAuthFailure(response) };
+
+    const payload: unknown = await response.json().catch(() => null);
+    const page = isRecord(payload) && Array.isArray(payload.values) ? payload.values : [];
+    for (const entry of page) {
+      if (isRecord(entry) && str(entry.id)) {
+        requestTypes.push({ id: str(entry.id), name: str(entry.name) });
+      }
+    }
+    const lastPage = !isRecord(payload) || payload.isLastPage !== false || page.length === 0;
+    if (lastPage) break;
+    start += page.length;
+  }
+  return { ok: true, requestTypes };
+}
+
 /** What a request type's form says about one of its fields. */
 export interface RequestTypeComponents {
   /** False when the form has no such field — then nothing can set one. */
