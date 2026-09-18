@@ -16,16 +16,6 @@ const base = (tenantId: string) => `/api/tenant/${tenantId}/chat`;
 export const chatClient = {
   sidebar: (tenantId: string) => getJson<ChatSidebarData>(`${base(tenantId)}/chats`),
 
-  createChat: (
-    tenantId: string,
-    input: {
-      projectId?: string | null;
-      llmModelId?: string | null;
-      thinkingEnabled?: boolean;
-      toolConfig?: { connectors: string[] } | null;
-    }
-  ) => sendJsonFull<{ chatId: string }>(`${base(tenantId)}/chats`, 'POST', input),
-
   getChat: (tenantId: string, chatId: string) =>
     getJson<{ chat: ChatView; messages: ChatMessageView[] }>(`${base(tenantId)}/chats/${chatId}`),
 

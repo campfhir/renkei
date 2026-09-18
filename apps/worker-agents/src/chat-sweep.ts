@@ -1,5 +1,5 @@
 /**
- * Chat hygiene, three sweeps in one module.
+ * Chat hygiene, four sweeps in one module.
  *
  * The janitor: a turn's runner heartbeats its row every few hundred
  * milliseconds while it works, so a `running` turn whose heartbeat is
@@ -7,6 +7,12 @@
  * — with its still-streaming reply — so the chat accepts a new turn (the
  * partial unique index only counts `running`) and the person sees what
  * happened instead of a spinner that never stops.
+ *
+ * Abandoned starts: "+ New" creates its chat before anything is said in
+ * it, so one still empty a day later was opened and walked away from. It
+ * goes only if there is nothing in it at all — no message, no attachment
+ * — which is why this never touches a blob; an empty chat someone
+ * uploaded into waits for the org's retention like any other.
  *
  * Retention: the org's chatRetentionDays (0 = keep). Bytes go before rows
  * — an attachment whose object could not be deleted keeps its row so a
@@ -30,6 +36,8 @@ export const CHAT_RETENTION_INTERVAL_MS = 15 * 60_000;
 /** Well past the runner's heartbeat cadence; a healthy turn never trips this. */
 const STALE_MINUTES = 15;
 const RETENTION_BATCH = 500;
+/** Long enough for anyone to come back to a chat they opened and left. */
+const ABANDONED_CHAT_HOURS = 24;
 
 export function createChatTurnJanitor(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
@@ -85,6 +93,7 @@ export function createChatRetentionSweep(
   store: (tenantId: string) => Promise<BlobStore | null> = blobStore
 ) {
   return async function sweep(): Promise<void> {
+    await deleteAbandonedChats(db);
     const tenants = await db.selectFrom('tenants').select('id').execute();
     for (const tenant of tenants) {
       const settings = await getOrgSettings(tenant.id);
@@ -120,6 +129,23 @@ export function createChatRetentionSweep(
     }
     await pruneOrphanGrants(db);
   };
+}
+
+/** Empty chats past the grace period, every org alike; their grants go with the orphan prune. */
+async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
+  const deleted = await sql<{ id: string }>`
+    DELETE FROM chats c
+     WHERE c.last_message_at IS NULL
+       AND c.created_at < NOW() - make_interval(hours => ${ABANDONED_CHAT_HOURS})
+       AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.chat_id = c.id)
+       AND NOT EXISTS (SELECT 1 FROM chat_attachments a WHERE a.chat_id = c.id)
+    RETURNING c.id
+  `.execute(db);
+  if (deleted.rows.length === 0) return;
+  logger.info('removed {count} abandoned empty chat(s)', {
+    component: 'worker-agents/chat-retention',
+    count: deleted.rows.length,
+  });
 }
 
 /** Chats whose attachment bytes are gone (or never existed); the rest wait. */

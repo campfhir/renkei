@@ -3,16 +3,17 @@ import { getDatabase } from '@renkei/db';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { listChatModels } from '@/lib/chat/models';
-import { tenantBlobStoreConfigured } from '@renkei/blob-store';
+import { isUuid } from '@/lib/uuid';
 import { resolveResourceAccess } from '@/lib/chat/access';
-import { getProjectRow } from '@/lib/chat/projects';
-import ChatThread from '../_components/chat-thread';
+import { createChat } from '@/lib/chat/store';
 
 /**
- * A new chat: the composer with no thread yet. The first Send creates the
- * chat (optionally inside the project named by `?project=`) and moves the
- * browser to its address.
+ * "+ New": an empty chat is created here and now (optionally inside the
+ * project named by `?project=`) and the browser goes straight to its
+ * address. The first Send is then an ordinary turn on a chat that already
+ * exists — the thread never has to change address or reload under the
+ * person mid-reply. An empty chat stays out of the menu until its first
+ * message, and one nobody ever wrote in is swept after a day.
  */
 export default async function NewChatPage({
   params,
@@ -22,41 +23,38 @@ export default async function NewChatPage({
   searchParams: Promise<{ project?: string }>;
 }) {
   const { slug } = await params;
-  const { project: projectId } = await searchParams;
+  const { project: requestedProjectId } = await searchParams;
   const tenant = await tenantForSlug(slug);
   if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
-  if (!session) redirect(signInUrl(tenant.id, `/${slug}/chat/new`));
+  if (!session) {
+    const query = requestedProjectId ? `?project=${encodeURIComponent(requestedProjectId)}` : '';
+    redirect(signInUrl(tenant.id, `/${slug}/chat/new${query}`));
+  }
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const db = dbResult.val;
 
-  let project: { id: string; name: string; kind: 'chat' | 'code' } | null = null;
-  if (projectId) {
+  // A project the person cannot see is silently left out, as before: the
+  // chat starts on its own rather than failing.
+  let projectId: string | null = null;
+  if (requestedProjectId && isUuid(requestedProjectId)) {
     const access = await resolveResourceAccess(
       db,
       tenant.id,
       session.subject,
       'chat_project',
-      projectId
+      requestedProjectId
     );
-    const row = access ? await getProjectRow(db, tenant.id, projectId) : null;
-    if (row) project = { id: row.id, name: row.name, kind: row.kind };
+    if (access) projectId = requestedProjectId;
   }
-  const [models, uploadsEnabled] = await Promise.all([
-    listChatModels(db, tenant.id),
-    tenantBlobStoreConfigured(tenant.id),
-  ]);
-  return (
-    <ChatThread
-      slug={slug}
-      tenantId={tenant.id}
-      subject={session.subject}
-      initialChat={null}
-      initialMessages={[]}
-      models={models}
-      uploadsEnabled={uploadsEnabled}
-      newChatProject={project}
-    />
-  );
+  const chatId = await createChat(db, {
+    tenantId: tenant.id,
+    ownerSubject: session.subject,
+    projectId,
+    llmModelId: null,
+    toolConfig: null,
+    thinkingEnabled: false,
+  });
+  redirect(`/${slug}/chat/${chatId}`);
 }
