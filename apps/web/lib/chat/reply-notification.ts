@@ -9,6 +9,9 @@
  * plain switch (`chatReplyDesktop`) rather than a three-channel triple,
  * and the whole notification — the feed row too — is gated on it: off by
  * default means nothing happens here at all until a person opts in.
+ *
+ * A click on the banner opens the chat itself (the push's `appPath`), not
+ * the notifications page: the reply is read there and nowhere else.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -66,7 +69,15 @@ export function notifyChatReplyDesktop(input: {
         input.tenantId,
         input.ownerSubject,
         keyResult.val,
-        { title: headline, body: 'Renkei', tag: `chat-reply:${input.chatId}`, refUrl },
+        {
+          title: headline,
+          body: 'Renkei',
+          tag: `chat-reply:${input.chatId}`,
+          refUrl,
+          notificationId: id,
+          // The reply is read in the chat, so the banner opens the chat.
+          appPath: refUrl,
+        },
         { log: (message, meta) => logger.warn(message, meta) }
       );
     }

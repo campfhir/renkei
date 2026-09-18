@@ -42,6 +42,11 @@ function fakeStore() {
   const usage: number[] = [];
   const artifacts: { messageId: string; filename: string }[] = [];
   const stages: (string | null)[] = [];
+  // The permission column: the ask the runner wrote, and the answer a
+  // "route" (the test) writes into it for the poll to find.
+  const asks: { toolUseId: string; name: string; messageId: string }[] = [];
+  let pending: { toolUseId: string; decision: 'once' | 'always' | 'deny' | null } | null = null;
+  let cleared = 0;
   const store: TurnStore = {
     async appendMessage(input) {
       seq += 1;
@@ -84,6 +89,17 @@ function fakeStore() {
     async recordUsage(u) {
       usage.push(u.outputTokens);
     },
+    async requestToolPermission(ask) {
+      asks.push({ toolUseId: ask.toolUseId, name: ask.name, messageId: ask.messageId });
+      pending = { toolUseId: ask.toolUseId, decision: null };
+    },
+    async readToolPermission(toolUseId) {
+      return pending && pending.toolUseId === toolUseId ? pending.decision : null;
+    },
+    async clearToolPermission() {
+      cleared += 1;
+      pending = null;
+    },
     async storeArtifacts(messageId, files) {
       artifacts.push(...files.map((file) => ({ messageId, filename: file.filename })));
       return files.map((file, index) => ({
@@ -101,6 +117,13 @@ function fakeStore() {
     usage,
     artifacts,
     stages,
+    asks,
+    pending: () => pending,
+    cleared: () => cleared,
+    /** What the decision route does to the row, minus the channel. */
+    decideOnRow(decision: 'once' | 'always' | 'deny') {
+      if (pending) pending = { ...pending, decision };
+    },
     outcome: () => outcome,
     setCancelOnHeartbeat(value: boolean) {
       cancelOnHeartbeat = value;
@@ -766,7 +789,7 @@ describe('runChatTurn', () => {
     await run;
   });
 
-  it("times out a local tool that never settles, instead of hanging the turn", async () => {
+  it('times out a local tool that never settles, instead of hanging the turn', async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-hang');
     const stuck: LocalTool = {
@@ -797,5 +820,216 @@ describe('runChatTurn', () => {
         isError: true,
       },
     ]);
+  });
+});
+
+describe('runChatTurn permissions', () => {
+  const act = (id: string, name = 'jira_create_issue'): LlmResponse => ({
+    content: [{ type: 'tool_use', id, name, input: { summary: 'x' } }],
+    stopReason: 'tool_use',
+    usage: { inputTokens: 20, outputTokens: 8 },
+  });
+  const deps = (
+    fake: ReturnType<typeof fakeStore>,
+    channel: TurnChannel,
+    replies: LlmResponse[],
+    calls: string[],
+    extra: Partial<Parameters<typeof runChatTurn>[0]> = {}
+  ): Parameters<typeof runChatTurn>[0] => ({
+    llm: llmOf(provider(replies)),
+    tools: [],
+    mcp: fakeMcp(calls),
+    localTools: createLocalToolSet([]),
+    localContext,
+    readOnlyTools: new Set(['jira_search_issues']),
+    permissions: { alwaysAllowed: new Set() },
+    channel,
+    store: fake.store,
+    limits: { flushMs: 5, permissionPollMs: 10, permissionWaitMs: 5_000 },
+    ...extra,
+  });
+
+  it('asks before a call that acts, and runs it once allowed through the channel', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p1');
+    const watched = watch(channel);
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), text('Filed')], calls),
+      inputFor('turn-p1')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    expect(fake.asks[0]).toEqual({ toolUseId: 'tu_1', name: 'jira_create_issue', messageId: 'm1' });
+    expect(watched.state().pendingPermission).toMatchObject({
+      toolUseId: 'tu_1',
+      name: 'jira_create_issue',
+      messageId: 'm1',
+    });
+    // Nothing has run, and the stream says the call is waiting, not running.
+    expect(calls).toEqual([]);
+    expect(watched.state().pendingToolCalls).toEqual([]);
+    channel.resolveToolPermission('tu_1', 'once');
+    const outcome = await run;
+    expect(outcome.status).toBe('completed');
+    expect(calls).toEqual(['jira_create_issue:{"summary":"x"}']);
+    expect(fake.cleared()).toBe(1);
+    expect(watched.state().pendingPermission).toBeNull();
+    const decided = watched.events.find((event) => event.type === 'tool_permission_decided');
+    expect(decided).toMatchObject({ toolUseId: 'tu_1', decision: 'once' });
+  });
+
+  it('never asks for a read, or for a tool on the always-allowed list', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p2');
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      deps(
+        fake,
+        channel,
+        [act('tu_r', 'jira_search_issues'), act('tu_w', 'webex_send_message'), text('Done')],
+        calls,
+        { permissions: { alwaysAllowed: new Set(['webex_send_message']) } }
+      ),
+      inputFor('turn-p2')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(fake.asks).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('refuses a blocked tool without asking, even when the model calls it from memory', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p2b');
+    const watched = watch(channel);
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      deps(fake, channel, [act('tu_1', 'jira_delete_issue'), text('Understood')], calls, {
+        permissions: { alwaysAllowed: new Set(), denied: new Set(['jira_delete_issue']) },
+      }),
+      inputFor('turn-p2b')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(fake.asks).toEqual([]);
+    expect(calls).toEqual([]);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows[1].blocks[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseId: 'tu_1',
+      isError: true,
+      content: expect.stringContaining('blocked'),
+    });
+    expect(watched.events.some((event) => event.type === 'tool_permission_request')).toBe(false);
+  });
+
+  it('runs nothing unasked when no permission policy is given', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p3');
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      deps(fake, channel, [act('tu_1'), text('Done')], calls, { permissions: undefined }),
+      inputFor('turn-p3')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(fake.asks).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('remembers "always" for the rest of the turn', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p4');
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), act('tu_2'), text('Done')], calls),
+      inputFor('turn-p4')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    channel.resolveToolPermission('tu_1', 'always');
+    const outcome = await run;
+    expect(outcome.status).toBe('completed');
+    expect(fake.asks).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('feeds the model a refusal instead of running a denied call', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p5');
+    const watched = watch(channel);
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), text('Understood')], calls),
+      inputFor('turn-p5')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    // Answered on the row alone — another replica's route — and found by the poll.
+    fake.decideOnRow('deny');
+    const outcome = await run;
+    expect(outcome.status).toBe('completed');
+    expect(calls).toEqual([]);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows[1].blocks[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseId: 'tu_1',
+      isError: true,
+      content: expect.stringContaining('declined'),
+    });
+    expect(watched.events.some((event) => event.type === 'tool_call_start')).toBe(false);
+  });
+
+  it('gives up waiting when the permission budget runs out, without failing the turn', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p6');
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      deps(fake, channel, [act('tu_1'), text('Noted')], calls, {
+        limits: { flushMs: 5, permissionPollMs: 10, permissionWaitMs: 30 },
+      }),
+      inputFor('turn-p6')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(calls).toEqual([]);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows[1].blocks[0]).toMatchObject({
+      type: 'tool_result',
+      isError: true,
+      content: expect.stringContaining('in time'),
+    });
+    expect(fake.pending()).toBeNull();
+  });
+
+  it('does not count the wait against the wall clock', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p7');
+    const calls: string[] = [];
+    let clock = 0;
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), text('Done')], calls, {
+        now: () => clock,
+        limits: { flushMs: 5, permissionPollMs: 10, permissionWaitMs: 5_000, wallClockMs: 100 },
+      }),
+      inputFor('turn-p7')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    // An hour passes while the person is away, then they allow it.
+    clock = 3_600_000;
+    channel.resolveToolPermission('tu_1', 'once');
+    const outcome = await run;
+    expect(outcome.status).toBe('completed');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('ends as canceled when Stop arrives while waiting', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p8');
+    const calls: string[] = [];
+    const run = runChatTurn(
+      deps(fake, channel, [act('tu_1'), text('Done')], calls),
+      inputFor('turn-p8')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    channel.requestCancel();
+    const outcome = await run;
+    expect(outcome.status).toBe('canceled');
+    expect(calls).toEqual([]);
+    expect(fake.pending()).toBeNull();
   });
 });

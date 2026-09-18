@@ -205,7 +205,13 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
           batch.tenant_id,
           batch.subject,
           keyResult.val,
-          { title: headline, body: kindLabel, tag: `batch:${batch.id}`, refUrl: null },
+          {
+            title: headline,
+            body: kindLabel,
+            tag: `batch:${batch.id}`,
+            refUrl: null,
+            notificationId: id,
+          },
           { log: (message, meta) => logger.warn(message, meta) }
         );
       }

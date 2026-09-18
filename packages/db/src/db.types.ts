@@ -500,6 +500,7 @@ export interface ChatTurns {
   status: Generated<string>;
   tenant_id: string;
   thinking_budget: number | null;
+  tool_permission: Json | null;
   updated_at: Generated<Timestamp>;
 }
 

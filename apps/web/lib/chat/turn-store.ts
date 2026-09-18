@@ -11,7 +11,14 @@ import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { createAttachment, toAttachmentView } from './attachments';
 import { insertMessage, updateMessageContent } from './messages';
-import { finishTurn, heartbeatTurn } from './turns';
+import {
+  clearToolPermission,
+  finishTurn,
+  heartbeatTurn,
+  readToolPermission,
+  requestToolPermission,
+} from './turns';
+import { notifyChatToolPermission } from './permission-notification';
 import { touchChat } from './store';
 import type { TurnStore } from './turn-runner';
 import type { AttachmentView } from './views';
@@ -26,6 +33,8 @@ export function createTurnStore(
     chatId: string;
     turnId: string;
     subject: string;
+    /** For the permission notification's wording; null before the first reply names the chat. */
+    chatTitle: string | null;
     /** The model this turn runs on, stamped on every ledger row it writes. */
     model: LlmCallModel | null;
   }
@@ -70,6 +79,31 @@ export function createTurnStore(
           : {}),
         model: scope.model,
       });
+    },
+    async requestToolPermission(ask) {
+      await requestToolPermission(db, scope.turnId, {
+        toolUseId: ask.toolUseId,
+        messageId: ask.messageId,
+        name: ask.name,
+        requestedAt: ask.requestedAt,
+      });
+      // Fire-and-forget: the row above is what the wait reads; this is
+      // reach for a person who is not looking at the chat.
+      notifyChatToolPermission({
+        tenantId: scope.tenantId,
+        ownerSubject: scope.subject,
+        chatId: scope.chatId,
+        chatTitle: scope.chatTitle,
+        toolUseId: ask.toolUseId,
+        toolName: ask.name,
+      });
+    },
+    async readToolPermission(toolUseId) {
+      const record = await readToolPermission(db, scope.turnId, toolUseId);
+      return record?.decision ?? null;
+    },
+    async clearToolPermission() {
+      await clearToolPermission(db, scope.turnId);
     },
     async storeArtifacts(messageId, files) {
       const kept: AttachmentView[] = [];

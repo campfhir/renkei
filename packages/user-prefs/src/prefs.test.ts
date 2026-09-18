@@ -73,6 +73,13 @@ describe('defaults', () => {
     });
   });
 
+  it('opens a system notification in its source application until told otherwise', () => {
+    expect(DEFAULT_NOTIFICATION_PREFS.openInSourceApp).toBe(true);
+    expect(parseNotificationPrefs({ openInSourceApp: false }).openInSourceApp).toBe(false);
+    // Anything that is not a boolean was never a choice — the default holds.
+    expect(parseNotificationPrefs({ openInSourceApp: 'no' }).openInSourceApp).toBe(true);
+  });
+
   it('starts email and WebEx off for approvals and questions', () => {
     expect(DEFAULT_NOTIFICATION_PREFS.approvalNeeded).toEqual({ email: false, webex: false });
     expect(DEFAULT_NOTIFICATION_PREFS.questionAsked).toEqual({ email: false, webex: false });

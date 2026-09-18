@@ -141,12 +141,20 @@ export async function resolveChatToolSurface(
     roles: string[];
     config: ChatToolConfig;
     ttlSeconds: number;
+    /**
+     * Tool names the person blocked (permission-prefs.ts): neither offered
+     * up front nor discoverable, so the model never sees a verb it may not
+     * use. The runner still refuses a call to one made from memory.
+     */
+    excluded?: ReadonlySet<string>;
   }
 ): Promise<ChatToolSurface> {
   const catalog = await listAvailableTools(input.tenantId, input.subject, { roles: input.roles });
+  const excluded = input.excluded ?? new Set<string>();
   const candidates = catalog.filter(
     (descriptor) =>
       !descriptor.appOnly &&
+      !excluded.has(descriptor.name) &&
       !descriptor.name.endsWith(EXCLUDED_SUFFIX) &&
       (CHAT_ALWAYS_TOOLS.includes(descriptor.name) ||
         (descriptor.connector !== null && input.config.connectors.includes(descriptor.connector)))

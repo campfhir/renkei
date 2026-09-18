@@ -26,6 +26,8 @@ import type {
   MessageKind,
   MessageRole,
   MessageStatus,
+  PendingToolPermission,
+  ToolPermissionDecision,
   TurnStatus,
   TurnView,
 } from './views';
@@ -59,6 +61,22 @@ export type ChatStreamEvent =
     }
   /** The runner is executing this tool call (between block_stop and the results message). */
   | { type: 'tool_call_start'; messageId: string; toolUseId: string; name: string }
+  /**
+   * The runner will not run this call until the owner says so: the turn
+   * is parked, the thread shows the ask inline, and a notification goes
+   * out for a person who is not looking (turn-runner.ts, permission-notification.ts).
+   */
+  | { type: 'tool_permission_request'; turnId: string; permission: PendingToolPermission }
+  /**
+   * The ask was answered — by the owner, or by the clock ('timeout') —
+   * and the runner moved on: ran the call, or fed the model a refusal.
+   */
+  | {
+      type: 'tool_permission_decided';
+      turnId: string;
+      toolUseId: string;
+      decision: ToolPermissionDecision | 'timeout';
+    }
   /** A tool handed back a file; it is stored and listed under Artifacts. */
   | { type: 'artifact'; messageId: string; attachment: AttachmentView }
   /**
@@ -99,6 +117,8 @@ export interface ThreadState {
   artifacts: AttachmentView[];
   /** A compaction pass in progress right now, live or reconnected mid-way. */
   compaction: CompactionProgress | null;
+  /** The tool call the running turn is waiting on the owner for, if any. */
+  pendingPermission: PendingToolPermission | null;
 }
 
 function withArtifacts(current: AttachmentView[], added: AttachmentView[]): AttachmentView[] {
@@ -231,6 +251,12 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         : { ...state, pendingToolCalls: [...state.pendingToolCalls, event.toolUseId] };
     case 'artifact':
       return { ...state, artifacts: withArtifacts(state.artifacts, [event.attachment]) };
+    case 'tool_permission_request':
+      return { ...state, pendingPermission: event.permission };
+    case 'tool_permission_decided':
+      return state.pendingPermission?.toolUseId === event.toolUseId
+        ? { ...state, pendingPermission: null }
+        : state;
     case 'compaction_progress':
       return {
         ...state,
@@ -250,6 +276,11 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         pendingToolCalls: [],
         turn: event.turn,
         artifacts: withArtifacts(state.artifacts, event.artifacts ?? []),
+        // The snapshot is the database's word on whether an ask is still
+        // open: a row with none means the answer landed (or the turn moved
+        // on), whatever a stale live event said.
+        pendingPermission:
+          event.turn.status === 'running' ? (event.turn.pendingPermission ?? null) : null,
         compaction:
           event.turn.kind === 'compaction'
             ? {
@@ -274,12 +305,14 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         turn: null,
         artifacts: state.artifacts.filter((artifact) => !removed.has(artifact.id)),
         compaction: null,
+        pendingPermission: null,
       };
     }
     case 'turn_end':
       return {
         ...state,
         pendingToolCalls: [],
+        pendingPermission: null,
         compaction:
           state.compaction && state.compaction.turnId === event.turnId
             ? { ...state.compaction, status: event.status === 'completed' ? 'done' : 'failed' }
@@ -319,5 +352,13 @@ export function initialThreadState(
   activeTurn: TurnView | null,
   artifacts: AttachmentView[] = []
 ): ThreadState {
-  return { messages, pendingToolCalls: [], turn: activeTurn, artifacts, compaction: null };
+  return {
+    messages,
+    pendingToolCalls: [],
+    turn: activeTurn,
+    artifacts,
+    compaction: null,
+    pendingPermission:
+      activeTurn?.status === 'running' ? (activeTurn.pendingPermission ?? null) : null,
+  };
 }

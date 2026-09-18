@@ -278,3 +278,61 @@ describe('applyStreamEvent', () => {
     expect(truncated.compaction).toBeNull();
   });
 });
+
+describe('tool permission events', () => {
+  const permission = {
+    toolUseId: 'tu_1',
+    messageId: 'a',
+    name: 'jira_create_issue',
+    requestedAt: '2026-09-04T00:00:00.000Z',
+  };
+
+  it('holds the ask from request to decision', () => {
+    const asked = reduce([
+      start('a', 2),
+      { type: 'tool_permission_request', turnId: 'turn', permission },
+    ]);
+    expect(asked.pendingPermission).toEqual(permission);
+    const other = applyStreamEvent(asked, {
+      type: 'tool_permission_decided',
+      turnId: 'turn',
+      toolUseId: 'tu_other',
+      decision: 'once',
+    });
+    expect(other.pendingPermission).toEqual(permission);
+    const decided = applyStreamEvent(asked, {
+      type: 'tool_permission_decided',
+      turnId: 'turn',
+      toolUseId: 'tu_1',
+      decision: 'deny',
+    });
+    expect(decided.pendingPermission).toBeNull();
+  });
+
+  it('takes the ask from a snapshot of a running turn, and drops it when the turn ends', () => {
+    const turn = {
+      id: 'turn',
+      status: 'running' as const,
+      kind: 'reply' as const,
+      error: null,
+      startedAt: '2026-09-04T00:00:00.000Z',
+      finishedAt: null,
+      pendingPermission: permission,
+    };
+    const fromSnapshot = reduce([{ type: 'snapshot', turn, messages: [] }]);
+    expect(fromSnapshot.pendingPermission).toEqual(permission);
+    expect(initialThreadState([], turn).pendingPermission).toEqual(permission);
+    const later = reduce(
+      [{ type: 'snapshot', turn: { ...turn, pendingPermission: null }, messages: [] }],
+      fromSnapshot
+    );
+    expect(later.pendingPermission).toBeNull();
+    const ended = applyStreamEvent(fromSnapshot, {
+      type: 'turn_end',
+      turnId: 'turn',
+      status: 'canceled',
+      error: null,
+    });
+    expect(ended.pendingPermission).toBeNull();
+  });
+});

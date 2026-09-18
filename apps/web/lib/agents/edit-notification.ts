@@ -74,7 +74,7 @@ export function notifyAgentEdited(input: {
             input.tenantId,
             input.ownerSubject,
             keyResult.val,
-            { title: headline, body: input.agentName, tag: id, refUrl: null },
+            { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
             { log: (message, meta) => logger.warn(message, meta) }
           );
         }

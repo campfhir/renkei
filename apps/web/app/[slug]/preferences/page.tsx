@@ -10,9 +10,12 @@ import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { getChannelAvailability } from '@/lib/notification-channels';
 import { listChatConnectors } from '@/lib/chat/tool-surface';
 import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
+import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
+import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
+import ToolPermissionsForm from './tool-permissions-form';
 import ThemeForm from './theme-form';
 import VoiceForm from './voice-form';
 
@@ -34,28 +37,39 @@ export default async function PreferencesPage({
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
 
   const dbResult = getDatabase();
-  const [notifications, theme, channels, myAgents, chatConnectors, chatDefault, voice] =
-    await Promise.all([
-      getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
-      getThemePrefs(tenant.id, session.subject, { fresh: true }),
-      getChannelAvailability(tenant.id, session.subject),
-      // Just id + name: the overrides picker names an agent, it doesn't need
-      // its steps — listAgents()'s full parse would be work spent for nothing
-      // this page shows.
-      dbResult.ok
-        ? dbResult.val
-            .selectFrom('agents')
-            .select(['id', 'name'])
-            .where('tenant_id', '=', tenant.id)
-            .where('owner_subject', '=', session.subject)
-            .orderBy('name')
-            .execute()
-        : [],
-      listChatConnectors(tenant.id, session.subject),
-      getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
-      // Null when the org has no voice service; the section is then left out.
-      loadVoiceAvailability(tenant.id, session.subject),
-    ]);
+  const [
+    notifications,
+    theme,
+    channels,
+    myAgents,
+    chatConnectors,
+    chatDefault,
+    voice,
+    toolPermissions,
+    actToolGroups,
+  ] = await Promise.all([
+    getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
+    getThemePrefs(tenant.id, session.subject, { fresh: true }),
+    getChannelAvailability(tenant.id, session.subject),
+    // Just id + name: the overrides picker names an agent, it doesn't need
+    // its steps — listAgents()'s full parse would be work spent for nothing
+    // this page shows.
+    dbResult.ok
+      ? dbResult.val
+          .selectFrom('agents')
+          .select(['id', 'name'])
+          .where('tenant_id', '=', tenant.id)
+          .where('owner_subject', '=', session.subject)
+          .orderBy('name')
+          .execute()
+      : [],
+    listChatConnectors(tenant.id, session.subject),
+    getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
+    // Null when the org has no voice service; the section is then left out.
+    loadVoiceAvailability(tenant.id, session.subject),
+    getChatToolPermissionPrefs(tenant.id, session.subject, { fresh: true }),
+    listChatActToolGroups(tenant.id, session.subject, session.roles),
+  ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
     key: option.key,
@@ -130,6 +144,13 @@ export default async function PreferencesPage({
           tenantId={tenant.id}
           connectors={chatToolOptions}
           initialDefault={chatDefault?.connectors ?? null}
+        />
+      </div>
+      <div className="mb-6">
+        <ToolPermissionsForm
+          tenantId={tenant.id}
+          groups={actToolGroups}
+          initial={toolPermissions}
         />
       </div>
       <PreferencesForm

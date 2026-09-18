@@ -24,7 +24,13 @@ import {
   initialThreadState,
   type ChatStreamEvent,
 } from '@/lib/chat/stream-events';
-import type { AttachmentView, ChatMessageView, ChatView, ModelOption } from '@/lib/chat/views';
+import type {
+  AttachmentView,
+  ChatMessageView,
+  ChatView,
+  ModelOption,
+  ToolPermissionDecision,
+} from '@/lib/chat/views';
 import type { VoicePrefs } from '@renkei/user-prefs/prefs';
 import type { VoiceAvailability } from '@/lib/voice/availability';
 import { voiceClient } from '@/lib/voice/client';
@@ -417,6 +423,34 @@ export default function ChatThread({
     [chat.id, tenantId, router]
   );
 
+  /**
+   * Answer the tool call the turn is waiting on. Returns the error to show,
+   * or null: the stream's tool_permission_decided event clears the card.
+   */
+  const decidePermission = useCallback(
+    async (toolUseId: string, decision: ToolPermissionDecision): Promise<string | null> => {
+      if (!activeTurnId) return 'The reply is no longer running.';
+      const result = await chatClient.decideToolPermission(
+        tenantId,
+        chat.id,
+        activeTurnId,
+        toolUseId,
+        decision
+      );
+      if (result.error) {
+        // Answered elsewhere already (another tab, a timeout): the next
+        // stream event or snapshot removes the card on its own.
+        if (result.status === 409) {
+          dispatch({ type: 'tool_permission_decided', turnId: activeTurnId, toolUseId, decision });
+          return null;
+        }
+        return result.error;
+      }
+      return null;
+    },
+    [activeTurnId, chat.id, tenantId]
+  );
+
   const stop = useCallback(async () => {
     // Stopping the reply stops the reading of it too.
     speechQueue?.stop();
@@ -581,6 +615,11 @@ export default function ChatThread({
         promptActions={
           isOwner && !running && !sending
             ? { onResend: setConfirmResend, onEdit: setEditing }
+            : null
+        }
+        permission={
+          state.pendingPermission && running
+            ? { pending: state.pendingPermission, canDecide: isOwner, onDecide: decidePermission }
             : null
         }
         speech={

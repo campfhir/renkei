@@ -1192,6 +1192,31 @@ export default function PreferencesForm({
                 </span>
               </span>
             </label>
+            {/*
+              Where a click on the banner lands. Part of the synced
+              preferences rather than this browser's flag: it is a choice
+              about the notification, not about the device, and the server
+              reads it when it sends the push and again when the click
+              comes back. Not gated on the switch above — it also decides
+              what a click does on a banner some OTHER device shows.
+            */}
+            <label className="flex w-full items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 shrink-0"
+                checked={prefs.openInSourceApp}
+                onChange={(event) => update({ ...prefs, openInSourceApp: event.target.checked })}
+              />
+              <span className="min-w-0">
+                Open the notification&rsquo;s own application when I click a system notification
+                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                  A notification about a Jira issue opens the issue in Jira, a WebEx message opens
+                  WebEx. Off, the click brings you to your notifications in Renkei instead, with the
+                  link one tap away. Either way the notification is marked read, and anything that
+                  lives in Renkei — a chat waiting on you — opens in Renkei.
+                </span>
+              </span>
+            </label>
           </div>
         </section>
       </section>

@@ -109,6 +109,17 @@ export interface NotificationPrefs {
    */
   chatReplyDesktop: boolean;
   /**
+   * On by default. Where a click on a system notification (the OS banner
+   * `sendPush` raises) lands when the notification is about something
+   * that lives in another application — a Jira issue, a WebEx space: with
+   * this on, that application; off, Renkei's own notifications page, from
+   * which the link is still one tap away. Either way the click marks the
+   * notification read. A notification about something inside Renkei (a
+   * chat reply, a permission a chat is waiting on) opens that thing in
+   * Renkei regardless.
+   */
+  openInSourceApp: boolean;
+  /**
    * connector → category → delivery. Absent = the category default for
    * `app`, off for `email`/`webex`. Category, not per-act: an act-by-act
    * grid times three channels was tried (see the preferences form's own
@@ -159,6 +170,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   chatShared: { app: true, email: false, webex: false },
   agentShared: { app: true, email: false, webex: false },
   chatReplyDesktop: false,
+  openInSourceApp: true,
   acts: {},
   agentOverrides: {},
   toastsEnabled: true,
@@ -366,6 +378,7 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
     chatShared: deliveryPrefs(raw.chatShared, DEFAULT_NOTIFICATION_PREFS.chatShared),
     agentShared: deliveryPrefs(raw.agentShared, DEFAULT_NOTIFICATION_PREFS.agentShared),
     chatReplyDesktop: boolOr(raw.chatReplyDesktop, DEFAULT_NOTIFICATION_PREFS.chatReplyDesktop),
+    openInSourceApp: boolOr(raw.openInSourceApp, DEFAULT_NOTIFICATION_PREFS.openInSourceApp),
     acts: actsMap(raw.acts),
     agentOverrides: agentOverridesMap(raw.agentOverrides),
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),

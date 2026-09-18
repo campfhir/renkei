@@ -6,7 +6,13 @@
 
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { ChatSidebarData } from './sidebar';
-import type { AttachmentView, ChatMessageView, ChatView, ModelOption } from './views';
+import type {
+  AttachmentView,
+  ChatMessageView,
+  ChatView,
+  ModelOption,
+  ToolPermissionDecision,
+} from './views';
 import type { ConnectorOption } from './tool-surface';
 import type { GrantView, GrantRole, ResourceKind } from './access';
 import type { StartedTurn } from './start-turn';
@@ -94,6 +100,31 @@ export const chatClient = {
 
   cancelTurn: (tenantId: string, chatId: string, turnId: string) =>
     sendJsonFull(`${base(tenantId)}/chats/${chatId}/turns/${turnId}/cancel`, 'POST'),
+
+  /** Answer the tool call a turn is waiting on: allow once, always, or deny. */
+  decideToolPermission: (
+    tenantId: string,
+    chatId: string,
+    turnId: string,
+    toolUseId: string,
+    decision: ToolPermissionDecision
+  ) =>
+    sendJsonFull<{ ok: boolean; decision: ToolPermissionDecision; code?: string }>(
+      `${base(tenantId)}/chats/${chatId}/turns/${turnId}/permission`,
+      'POST',
+      { toolUseId, decision }
+    ),
+
+  /** What this person decided ahead of time about the chat's act tools (permission-prefs.ts). */
+  toolPermissions: (tenantId: string) =>
+    getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base(tenantId)}/tool-permissions`),
+
+  setToolPermissions: (tenantId: string, prefs: { alwaysAllow: string[]; alwaysDeny: string[] }) =>
+    sendJsonFull<{ alwaysAllow: string[]; alwaysDeny: string[] }>(
+      `${base(tenantId)}/tool-permissions`,
+      'PUT',
+      prefs
+    ),
 
   /** Force a compaction pass now — /compact, or "compact this chat" picked from the prompt picker. */
   compact: (tenantId: string, chatId: string) =>
