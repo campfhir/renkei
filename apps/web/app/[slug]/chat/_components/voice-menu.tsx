@@ -22,6 +22,7 @@ import { LoadingLine } from '@/components/skeleton';
 import { useDismiss } from '@/lib/use-dismiss';
 import { voiceClient } from '@/lib/voice/client';
 import type { SpeechQueueState } from '@/lib/voice/speech-queue';
+import type { LevelSource } from '@/lib/voice/levels';
 import { VoiceWaveIcon, WAVE_ACCENTS } from './voice-wave';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
@@ -41,7 +42,7 @@ export default function VoiceMenu({
   prefs,
   defaults,
   queueState,
-  outputLevel,
+  levels,
   onChange,
   onStopReading,
   onStartVoiceMode,
@@ -52,8 +53,8 @@ export default function VoiceMenu({
   prefs: VoicePrefs;
   defaults: { voice: string; locale: string };
   queueState: SpeechQueueState;
-  /** The speaker's loudness while reading, 0–1; null when it cannot be measured. */
-  outputLevel: number | null;
+  /** Where the speaker's loudness is read from while reading; null when it cannot be measured. */
+  levels: LevelSource | null;
   onChange: (next: VoicePrefs) => void;
   onStopReading: () => void;
   onStartVoiceMode: () => void;
@@ -117,13 +118,10 @@ export default function VoiceMenu({
           reading ? 'Reading the reply aloud' : prefs.autoPlay ? 'Replies are read aloud' : 'Voice'
         }
         disabled={disabled}
-        className="relative rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
+        className="relative flex items-center justify-center rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
       >
         {reading ? (
-          <VoiceWaveIcon
-            level={queueState === 'speaking' ? outputLevel : null}
-            accent={prefs.accent}
-          />
+          <VoiceWaveIcon levels={queueState === 'speaking' ? levels : null} accent={prefs.accent} />
         ) : (
           <Icon path={ICONS.speaker} className="h-5 w-5" />
         )}

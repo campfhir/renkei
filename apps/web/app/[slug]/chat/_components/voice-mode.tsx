@@ -20,6 +20,7 @@ import { UtteranceRecorder } from '@/lib/voice/recorder';
 import { voiceClient } from '@/lib/voice/client';
 import type { SpeechQueue, SpeechQueueState } from '@/lib/voice/speech-queue';
 import { speakableText } from '@/lib/voice/speech-text';
+import { LevelEmitter } from '@/lib/voice/levels';
 import VoiceWave, { type WaveAccent, type WaveTone } from './voice-wave';
 
 type Phase = 'starting' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'error';
@@ -59,8 +60,9 @@ export default function VoiceMode({
   const [phase, setPhase] = useState<Phase>('starting');
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
-  const [level, setLevel] = useState(0);
-  const [outputLevel, setOutputLevel] = useState(0);
+  // The microphone's loudness reaches the wave by subscription, never
+  // through state: a render per reading would redraw the whole overlay.
+  const micLevels = useRef(new LevelEmitter());
   const [transcript, setTranscript] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useRef<UtteranceRecorder | null>(null);
@@ -92,8 +94,7 @@ export default function VoiceMode({
           if (!sent) setError('The message could not be sent.');
         })();
       },
-      // Twenty readings a second; only a visible change is worth a render.
-      onLevel: (next) => setLevel((prev) => (Math.abs(prev - next) > 0.03 ? next : prev)),
+      onLevel: (next) => micLevels.current.emit(next),
       onError: (message) => {
         setError(message);
         setPhase('error');
@@ -113,14 +114,6 @@ export default function VoiceMode({
   useEffect(() => {
     recorder.current?.holdWhileSpeaking(queueState === 'speaking');
   }, [queueState]);
-  // The speaker's loudness, for the wave while the assistant talks.
-  useEffect(
-    () =>
-      queue.subscribeLevel((next) =>
-        setOutputLevel((prev) => (Math.abs(prev - next) > 0.02 ? next : prev))
-      ),
-    [queue]
-  );
   useEffect(() => {
     recorder.current?.setMuted(muted);
   }, [muted]);
@@ -169,7 +162,8 @@ export default function VoiceMode({
         : phase === 'listening' && !muted
           ? 'listening'
           : 'idle';
-  const waveLevel = tone === 'speaking' ? outputLevel : tone === 'listening' ? level : 0;
+  // Whose sound the wave follows: the speaker's, the microphone's, or none.
+  const waveLevels = tone === 'speaking' ? queue : tone === 'listening' ? micLevels.current : null;
   const spokenReply = replyText ? speakableText(replyText) : '';
   const busy = running || queueState !== 'idle';
 
@@ -200,7 +194,7 @@ export default function VoiceMode({
             turn — writing or speaking — and the person's while they are
             the one being heard, so the two are never confused. */}
         <VoiceWave
-          level={waveLevel}
+          levels={waveLevels}
           tone={tone}
           accent={tone === 'listening' || tone === 'idle' ? userAccent : accent}
           width={360}
