@@ -8,7 +8,8 @@
  * referrer, code blocks copy, tables scroll instead of widening the page).
  * Each body cell also carries its column header as `data-label`, so on
  * narrow screens the stylesheet can stack a row into a "Header: value" card
- * instead of squeezing every column into a few characters' width.
+ * instead of squeezing every column into a few characters' width. Copying
+ * a selection that spans a table writes it back out as a Markdown table.
  * Token colors live in globals.css under `.chat-markdown` for both schemes.
  */
 
@@ -16,6 +17,7 @@ import { useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { copySelectionWithMarkdownTables } from './copy-tables-as-markdown';
 
 /** The slice of a hast node this file walks; hast's own types aren't a direct dependency. */
 type HastNode = {
@@ -104,7 +106,12 @@ function textOf(node: ReactNode): string {
 
 export default function Markdown({ text }: { text: string }) {
   return (
-    <div className="chat-markdown">
+    <div
+      className="chat-markdown"
+      onCopy={(event) => {
+        copySelectionWithMarkdownTables(event.nativeEvent);
+      }}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[
