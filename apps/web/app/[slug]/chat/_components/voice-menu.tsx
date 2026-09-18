@@ -43,7 +43,9 @@ export default function VoiceMenu({
   defaults,
   queueState,
   levels,
+  echoCancellation,
   onChange,
+  onEchoCancellation,
   onStopReading,
   onStartVoiceMode,
   onPrime,
@@ -56,6 +58,9 @@ export default function VoiceMenu({
   /** Where the speaker's loudness is read from while reading; null when it cannot be measured. */
   levels: LevelSource | null;
   onChange: (next: VoicePrefs) => void;
+  /** This device's echo-cancellation choice, and how to change it. */
+  echoCancellation: boolean;
+  onEchoCancellation: (on: boolean) => void;
   onStopReading: () => void;
   onStartVoiceMode: () => void;
   /** Called from the click that turns sound on, to unlock playback. */
@@ -285,6 +290,27 @@ export default function VoiceMenu({
               </div>
             </div>
           ))}
+          <div className="my-1 border-t border-gray-200 dark:border-gray-800" />
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={echoCancellation}
+            onClick={() => onEchoCancellation(!echoCancellation)}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-blue-600 dark:text-blue-400">
+              {echoCancellation ? (
+                <Icon path={ICONS.check} className="h-4 w-4" strokeWidth={2.4} />
+              ) : null}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block">Cancel echo on this device</span>
+              <span className="block text-[11px] text-gray-500">
+                Lets you talk over a reply. Turn off if the assistant sounds one-sided or muffled
+                while the microphone is open; then Stop cuts a reply short.
+              </span>
+            </span>
+          </button>
           <div className="my-1 border-t border-gray-200 dark:border-gray-800" />
           <button
             type="button"

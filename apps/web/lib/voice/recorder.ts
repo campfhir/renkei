@@ -21,6 +21,12 @@
 import { concat, encodeWav, resample, rms, TARGET_SAMPLE_RATE } from './wav';
 
 export interface RecorderOptions {
+  /**
+   * Ask the browser to cancel the speakers' echo from the microphone.
+   * Default true; off where the platform's voice-call path degrades
+   * playback while the microphone is open (lib/voice/device-settings.ts).
+   */
+  echoCancellation?: boolean;
   onSpeechStart: () => void;
   onUtterance: (wav: ArrayBuffer, durationMs: number) => void;
   /** Loudness, 0–1, for a level meter; called often. */
@@ -92,7 +98,7 @@ export class UtteranceRecorder {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          echoCancellation: true,
+          echoCancellation: this.options.echoCancellation ?? true,
           noiseSuppression: true,
           autoGainControl: true,
         },
@@ -124,11 +130,20 @@ export class UtteranceRecorder {
       this.source.connect(node);
       this.node = node;
     } catch {
-      // Older engines: the deprecated processor still does the job.
+      // Older engines: the deprecated processor still does the job. It
+      // only runs while connected to the destination, so it is — through
+      // a muted gain, with its output written as silence, so nothing of
+      // the microphone (or of a stale buffer) ever reaches the speakers.
       const processor = context.createScriptProcessor(4096, 1, 1);
-      processor.onaudioprocess = (event) => onFrames(event.inputBuffer.getChannelData(0));
+      processor.onaudioprocess = (event) => {
+        event.outputBuffer.getChannelData(0).fill(0);
+        onFrames(event.inputBuffer.getChannelData(0));
+      };
+      const silence = context.createGain();
+      silence.gain.value = 0;
       this.source.connect(processor);
-      processor.connect(context.destination);
+      processor.connect(silence);
+      silence.connect(context.destination);
       this.node = processor;
     }
     if (context.state === 'suspended') await context.resume().catch(() => undefined);

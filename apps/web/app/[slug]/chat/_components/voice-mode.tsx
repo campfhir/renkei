@@ -34,6 +34,7 @@ export default function VoiceMode({
   replyText,
   accent,
   userAccent,
+  echoCancellation,
   onSend,
   onInterrupt,
   onClose,
@@ -46,6 +47,12 @@ export default function VoiceMode({
   accent: WaveAccent;
   /** The person's own wave colour while they are the one being heard. */
   userAccent: WaveAccent;
+  /**
+   * This device's echo-cancellation choice. Off, the microphone is closed
+   * to speech while the assistant talks — its own voice would otherwise
+   * interrupt it — and Stop is how a reply is cut short.
+   */
+  echoCancellation: boolean;
   queueState: SpeechQueueState;
   /** A turn is in flight (a reply is being written). */
   running: boolean;
@@ -72,6 +79,7 @@ export default function VoiceMode({
 
   useEffect(() => {
     const instance = new UtteranceRecorder({
+      echoCancellation,
       onSpeechStart: () => {
         const { running: busy, queueState: state, onInterrupt: interrupt } = latest.current;
         // Talking over the assistant: silence it and drop the reply.
@@ -108,15 +116,17 @@ export default function VoiceMode({
       instance.stop();
       recorder.current = null;
     };
-  }, [tenantId, locale]);
+  }, [tenantId, locale, echoCancellation]);
 
-  // The speaker's own voice must not read as the person talking.
+  // The speaker's own voice must not read as the person talking: with
+  // echo cancellation, a higher bar while it speaks; without, no
+  // listening at all until it has finished.
   useEffect(() => {
     recorder.current?.holdWhileSpeaking(queueState === 'speaking');
   }, [queueState]);
   useEffect(() => {
-    recorder.current?.setMuted(muted);
-  }, [muted]);
+    recorder.current?.setMuted(muted || (!echoCancellation && queueState === 'speaking'));
+  }, [muted, echoCancellation, queueState]);
 
   useEffect(() => {
     if (phase === 'error' || phase === 'starting') return;
@@ -153,7 +163,9 @@ export default function VoiceMode({
               ? 'Heard you…'
               : phase === 'thinking'
                 ? 'Thinking…'
-                : 'Speaking — talk to interrupt';
+                : echoCancellation
+                  ? 'Speaking — talk to interrupt'
+                  : 'Speaking — press Stop to interrupt';
   const tone: WaveTone =
     phase === 'speaking'
       ? 'speaking'

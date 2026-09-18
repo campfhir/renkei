@@ -754,6 +754,20 @@ Two deployment details do matter:
 
 The microphone tap is an audio worklet served as a static file (`apps/web/public/voice-capture-worklet.js`); a reverse proxy that serves `/public` assets must serve it with a JavaScript content type, which Next.js does by default.
 
+### Setting up Azure AI Speech
+
+1. **Create the resource.** In the Azure portal, _Create a resource_ → search for **Speech** (under Azure AI services) → _Create_. Pick the subscription and resource group, a **region** close to your users (every region with neural voices works; `eastus`, `westeurope`, `australiaeast` are typical), a name, and a pricing tier: **F0** is free (roughly half a million characters of neural speech and five hours of recognition a month, one request at a time) and is enough to try it; **S0** is pay-as-you-go for real use. An existing multi-service _Azure AI services_ resource works too — its key and region are accepted the same way.
+2. **Copy the key and region.** On the resource, open _Resource Management → Keys and Endpoint_. Note **KEY 1** (either key works; keep KEY 2 for rotation) and the **Location/Region** value (`eastus`, not `East US`).
+3. **Enter them in Renkei.** As an operator, open _Admin → Connector setup → Voice_. Set _Region_ to the region value and paste the key into _API key_. Leave _Custom endpoint_ blank unless you use a private endpoint (below). Choose a _Default voice_ and _Default language_ — `en-US-AvaMultilingualNeural` and `en-US` are sensible defaults; any voice from Azure's Voice Gallery is valid by its short name (for example `en-GB-SoniaNeural`, `de-DE-KatjaNeural`). Tick _Enabled_ and _Save_.
+4. **Test it.** Press _Test connection_. It lists the resource's voices and reports how many came back, and warns if the default voice is not among them. From here the speaker button appears in every chat, and people pick their own voice, pace, language and wave colours under _Preferences_.
+5. **Rotating the key.** Regenerate KEY 2 in Azure, paste it into the form (the stored key is never shown; a blank field keeps it), save, then regenerate KEY 1. Every save records a `connector.configured` audit event.
+
+**Private endpoint or custom domain.** A Speech resource reached through a private endpoint (or one with a custom subdomain enabled) is not served from the regional hosts. Set _Custom endpoint_ to the resource's base URL, `https://<name>.cognitiveservices.azure.com`, and Renkei uses Azure's custom-domain paths (`/tts/…` and `/stt/…`) under it instead; the region can then be left blank. The `web` container must be able to resolve and reach that name.
+
+**The assistant plays from one speaker, muffled, or with artefacts — but only in a voice conversation.** That is the platform, not the service: when a page opens the microphone with echo cancellation, macOS routes sound through its voice-processing path and a Bluetooth headset drops to its hands-free profile, and either can leave playback one-sided or degraded until the microphone closes. Read-aloud, which opens no microphone, is unaffected. The person turns off _Cancel echo on this device_ in the chat's speaker menu; playback is then left alone, the microphone is closed to speech while the assistant talks, and Stop is how a reply is interrupted. The choice is kept per browser.
+
+**What leaves for Azure.** Reply text for synthesis, and the person's recorded utterance for transcription — both over TLS from the server, never from the browser. Azure's data handling for Speech is covered by its standard terms; nothing is stored by Renkei beyond the chat's own text.
+
 ## Chat attachments (object storage)
 
 Files people upload into the chat (`/[slug]/chat`) are the one thing the
