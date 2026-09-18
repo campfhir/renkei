@@ -43,7 +43,8 @@ export interface NotificationCard {
   /**
    * 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited' |
    * 'agent_disabled' | 'batch_started' | 'batch_finished' | 'batch_failed' |
-   * 'approval' | 'question' | 'chat_shared' | 'agent_shared' | 'chat_reply'.
+   * 'approval' | 'question' | 'chat_shared' | 'agent_shared' | 'chat_reply' |
+   * 'chat_permission'.
    */
   kind: string;
   connector: string | null;
@@ -92,6 +93,16 @@ function toCard(row: NotificationApiRow): NotificationCard {
     unread: row.readAt === null,
     createdAt: row.createdAt,
   };
+}
+
+/**
+ * A `refUrl` on this origin (a chat, a permission ask) opens in this tab,
+ * like every other in-app link; the provider's own link opens in a new one.
+ */
+function refLinkAttrs(refUrl: string): { target?: string; rel?: string } {
+  return refUrl.startsWith('/') && !refUrl.startsWith('//')
+    ? {}
+    : { target: '_blank', rel: 'noopener noreferrer' };
 }
 
 /** A day heading a person recognises without doing arithmetic. */
@@ -394,7 +405,10 @@ export default function NotificationsList({
             {day.rows.map((row) => {
               const isSelected = selected.has(row.id);
               const unread = isUnread(row);
-              const openLabel = `Open ${row.entity ?? 'link'}`;
+              const openLabel =
+                row.kind === 'chat_reply' || row.kind === 'chat_permission'
+                  ? 'Open chat'
+                  : `Open ${row.entity ?? 'link'}`;
               const runHref =
                 row.runId && row.agentId
                   ? `/${slug}/agents/${row.agentId}/runs/${row.runId}`
@@ -485,6 +499,13 @@ export default function NotificationsList({
                         <span title="Shared with you" className="text-blue-600 dark:text-blue-400">
                           <Icon path={ICONS.share} className="h-[18px] w-[18px]" />
                         </span>
+                      ) : row.kind === 'chat_permission' ? (
+                        <span
+                          title="A chat is waiting for your permission"
+                          className="text-amber-600 dark:text-amber-400"
+                        >
+                          <Icon path={ICONS.approval} className="h-[18px] w-[18px]" />
+                        </span>
                       ) : row.kind === 'chat_reply' ? (
                         <span
                           title="Replied in a chat"
@@ -529,8 +550,7 @@ export default function NotificationsList({
                         {row.refUrl ? (
                           <a
                             href={row.refUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            {...refLinkAttrs(row.refUrl)}
                             onClick={(event) => {
                               if (
                                 selectionMode ||
@@ -600,8 +620,7 @@ export default function NotificationsList({
                             <a
                               role="menuitem"
                               href={row.refUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              {...refLinkAttrs(row.refUrl)}
                               onClick={() => setMenuFor(null)}
                               className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
                             >

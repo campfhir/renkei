@@ -13,8 +13,10 @@ import type { Agent } from 'node:https';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
+import { getNotificationPrefs } from '@renkei/user-prefs';
 import { getVapidKeys } from './vapid';
 import { listSubscriptions, deleteSubscriptionByEndpoint } from './subscriptions';
+import { isExternalNotificationUrl } from './targets';
 
 export interface PushPayload {
   title: string;
@@ -23,12 +25,25 @@ export interface PushPayload {
    *  desktop-notifications.tsx and public/sw.js. */
   tag: string;
   /**
-   * The connector's own link (a Jira issue, a WebEx space…), kept on the
-   * payload for parity with the in-app row but deliberately NOT what a
-   * click opens — see `appUrl`.
+   * The connector's own link (a Jira issue, a WebEx space…) — what a click
+   * opens when the person has "open in the source application" on (their
+   * default) and the link really is outside Renkei; see `pushClickTarget`.
    */
   refUrl: string | null;
   icon?: string;
+  /**
+   * The `agent_notifications` row this push announces. With it, a click
+   * goes through the row's open route, which marks it read and then sends
+   * the browser on to wherever the click was going anyway. Without it a
+   * click still lands, but nothing is marked read.
+   */
+  notificationId?: string;
+  /**
+   * Where in Renkei a click lands, when not the notifications page: a
+   * same-origin path (a chat, say — its reply or its permission ask is
+   * answered there and nowhere else). Ignored for an external target.
+   */
+  appPath?: string;
 }
 
 /** VAPID requires a contact identifying the sender; a URL is as valid a
@@ -49,20 +64,54 @@ export interface SendPushOptions {
 }
 
 /**
- * Where a click on the OS banner lands: Renkei's own notifications page,
- * never the connector's own link (see `sw.js`'s `notificationclick` — the
- * page a person is looking AT should never depend on which connector an
- * agent happened to touch). Null when the tenant id doesn't resolve to a
- * slug, which the caller falls back on the same as no link at all.
+ * What the service worker (public/sw.js) gets, and acts on when the banner
+ * is clicked. `openUrl` is the one URL it navigates to; `external` says
+ * whether that lands outside Renkei (open a new window, leave the person's
+ * Renkei tab where it is) or inside it (bring the existing tab forward and
+ * take it there). `appUrl` and `refUrl` are kept for a worker built against
+ * the older shape, which reads only `appUrl`.
  */
-async function inAppNotificationsPath(db: Kysely<DB>, tenantId: string): Promise<string | null> {
-  const tenant = await db
-    .selectFrom('tenants')
-    .select('slug')
-    .where('id', '=', tenantId)
-    .executeTakeFirst()
-    .catch(() => undefined);
-  return tenant ? `/${tenant.slug}/notifications` : null;
+export interface PushWirePayload {
+  title: string;
+  body: string;
+  tag: string;
+  icon: string;
+  refUrl: string | null;
+  appUrl: string;
+  openUrl: string;
+  external: boolean;
+}
+
+/**
+ * Where a click on the OS banner lands. Three cases:
+ *   - the row has an id: its open route, which marks it read and redirects
+ *     to whichever of the two below applies at click time;
+ *   - the link is the provider's and the person wants the provider: there;
+ *   - otherwise Renkei — the chat or page the push names, else the
+ *     notifications list.
+ * The route decides the final target again on the click (the preference
+ * may have changed meanwhile); `external` here is the worker's hint for
+ * how to open it, nothing more.
+ */
+export function pushClickTarget(input: {
+  tenantId: string;
+  slug: string;
+  refUrl: string | null;
+  notificationId?: string;
+  appPath?: string;
+  openInSourceApp: boolean;
+}): Pick<PushWirePayload, 'appUrl' | 'openUrl' | 'external'> {
+  const appUrl =
+    input.appPath && input.appPath.startsWith('/') && !input.appPath.startsWith('//')
+      ? input.appPath
+      : `/${input.slug}/notifications`;
+  const external = input.openInSourceApp && isExternalNotificationUrl(input.refUrl);
+  const openUrl = input.notificationId
+    ? `/api/tenant/${input.tenantId}/notifications/${input.notificationId}/open`
+    : external && input.refUrl
+      ? input.refUrl
+      : appUrl;
+  return { appUrl, openUrl, external };
 }
 
 export async function sendPush(
@@ -78,16 +127,37 @@ export async function sendPush(
     const subscriptions = await listSubscriptions(db, tenantId, subject);
     if (subscriptions.length === 0) return;
 
-    const { publicKey, privateKey } = await getVapidKeys(db, encryptionKey);
-    const appUrl = await inAppNotificationsPath(db, tenantId);
-    const body = JSON.stringify({
+    const [{ publicKey, privateKey }, tenant, prefs] = await Promise.all([
+      getVapidKeys(db, encryptionKey),
+      db
+        .selectFrom('tenants')
+        .select('slug')
+        .where('id', '=', tenantId)
+        .executeTakeFirst()
+        .catch(() => undefined),
+      getNotificationPrefs(tenantId, subject),
+    ]);
+    // No slug means no tenant to land in; the click falls back to the
+    // app's root, the same as a payload with no link at all.
+    const target = tenant
+      ? pushClickTarget({
+          tenantId,
+          slug: tenant.slug,
+          refUrl: payload.refUrl,
+          ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
+          ...(payload.appPath ? { appPath: payload.appPath } : {}),
+          openInSourceApp: prefs.openInSourceApp,
+        })
+      : { appUrl: '/', openUrl: '/', external: false };
+    const wire: PushWirePayload = {
       title: payload.title,
       body: payload.body,
       tag: payload.tag,
-      refUrl: payload.refUrl,
-      appUrl,
       icon: payload.icon ?? '/icon.svg',
-    });
+      refUrl: payload.refUrl,
+      ...target,
+    };
+    const body = JSON.stringify(wire);
     const vapidDetails = { subject: vapidSubject(), publicKey, privateKey };
 
     await Promise.all(

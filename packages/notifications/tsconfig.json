@@ -14,7 +14,9 @@
     "paths": {
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
       "@renkei/db": ["../../packages/db/src/index.ts"],
-      "@renkei/settings": ["../../packages/settings/src/index.ts"]
+      "@renkei/settings": ["../../packages/settings/src/index.ts"],
+      "@renkei/tool-outcomes": ["../../packages/tool-outcomes/src/index.ts"],
+      "@renkei/user-prefs": ["../../packages/user-prefs/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

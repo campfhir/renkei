@@ -10,6 +10,8 @@ export default {
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
+    '^@renkei/tool-outcomes$': '<rootDir>/../../packages/tool-outcomes/src/index.ts',
+    '^@renkei/user-prefs$': '<rootDir>/../../packages/user-prefs/src/index.ts',
   },
   transform: {
     '^.+\\.(t|j)sx?$': [

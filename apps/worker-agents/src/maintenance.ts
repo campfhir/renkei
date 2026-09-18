@@ -214,7 +214,7 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
             agent.tenant_id,
             agent.owner_subject,
             encryptionKeyResult.val,
-            { title: headline, body: agent.name, tag: id, refUrl: null },
+            { title: headline, body: agent.name, tag: id, refUrl: null, notificationId: id },
             { log: (message, meta) => logger.warn(message, meta) }
           );
         }

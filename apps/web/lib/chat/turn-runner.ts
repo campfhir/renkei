@@ -11,10 +11,24 @@
  *   stream the reply into the current assistant row, mirroring every
  *   event to the channel and flushing the row on a timer;
  *   if the reply ended with tool calls, run them — reads side by side,
- *   anything that acts alone and in order — store the results as a
- *   user-role `tool_results` row, open a fresh assistant row, and go
- *   again;
+ *   anything that acts alone and in order, and only once the owner has
+ *   allowed it (below) — store the results as a user-role `tool_results`
+ *   row, open a fresh assistant row, and go again;
  *   otherwise finish.
+ *
+ * Permission. A call that changes something — anything the catalog does
+ * not vouch for as read-only — is not run until the person says so. The
+ * runner writes the ask to the turn row (store.requestToolPermission,
+ * which also raises the notification), announces it on the stream, and
+ * waits: for the channel (the decision route, same process), for the row
+ * (any replica, polled), for Stop, or for the clock. "Always" is the
+ * person's standing answer for that tool name, kept in their preferences
+ * by the route and honoured here for the rest of the turn; "deny" and a
+ * timeout feed the model a refusal in place of a result, so it can say
+ * so rather than pretend. The wait does not count against the turn's
+ * wall clock — a person away from their desk is not the model being
+ * slow — but has a budget of its own, permissionWaitMs, shared by every
+ * ask in the turn.
  *
  * Cancel is checked between chunks (the channel aborts the in-flight
  * request) and between tool calls (the heartbeat reads the row, so a
@@ -37,7 +51,7 @@ import type { McpClient, McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext, LocalToolSet } from './local-tools';
 import type { ChatStreamEvent } from './stream-events';
 import type { TurnChannel } from './turn-events';
-import type { AttachmentView } from './views';
+import type { AttachmentView, PendingToolPermission, ToolPermissionDecision } from './views';
 import { toChatBlock } from './views';
 import type { MessageStatus, TurnStatus } from './views';
 
@@ -73,6 +87,17 @@ export interface TurnStore {
    * returns what was kept (an unconfigured store keeps nothing).
    */
   storeArtifacts(messageId: string, files: ArtifactFile[]): Promise<AttachmentView[]>;
+  /**
+   * Parks the turn behind this call: the ask goes on the turn row (where
+   * a reload, a reconnect or another replica finds it) and out as a
+   * notification for a person who is not looking. `input` is for the
+   * notification's wording only; the row keeps the ids.
+   */
+  requestToolPermission(ask: PendingToolPermission & { input: unknown }): Promise<void>;
+  /** The answer on the row for this ask, or null while it is still open. */
+  readToolPermission(toolUseId: string): Promise<ToolPermissionDecision | null>;
+  /** Nothing pending any more — answered, timed out, or the turn is over. */
+  clearToolPermission(): Promise<void>;
 }
 
 /** A file a tool produced, as it came back in `_meta.renkeiDocuments`. */
@@ -105,6 +130,16 @@ export interface TurnLimits {
   toolResultMaxChars: number;
   attachmentMaxBlocks: number;
   attachmentMaxBase64Chars: number;
+  /**
+   * How long, in total across the turn, the runner waits for the person
+   * to allow or deny the calls that need asking. Not part of wallClockMs
+   * (the wait is theirs, not the model's); an ask still open when this
+   * runs out is answered 'timeout' and the model told the call was not
+   * made.
+   */
+  permissionWaitMs: number;
+  /** How often the row is re-read for an answer from another replica. */
+  permissionPollMs: number;
 }
 
 export const DEFAULT_TURN_LIMITS: TurnLimits = {
@@ -116,7 +151,26 @@ export const DEFAULT_TURN_LIMITS: TurnLimits = {
   toolResultMaxChars: 60_000,
   attachmentMaxBlocks: 2,
   attachmentMaxBase64Chars: 6_000_000,
+  permissionWaitMs: 60 * 60_000,
+  permissionPollMs: 2_000,
 };
+
+/**
+ * The turn's permission policy. Absent, nothing asks — the runner then
+ * runs every call as it always did, which is what a test against fakes
+ * and a caller with its own gate want. Present, every call the runner
+ * cannot vouch for as read-only (readOnlyTools) asks unless its name is
+ * in `alwaysAllowed`, which grows with every 'always' the person answers.
+ */
+export interface TurnPermissions {
+  alwaysAllowed: ReadonlySet<string>;
+}
+
+/** What the model is told in place of a result for a call that was not made. */
+export const PERMISSION_DENIED_RESULT =
+  'The person declined this tool call, so it was not made. Do not retry it or work around it; tell them what you were going to do and ask how they would like to proceed.';
+export const PERMISSION_TIMEOUT_RESULT =
+  'Nobody allowed this tool call in time, so it was not made. Tell the person what you were going to do; they can ask again when they are ready.';
 
 export interface TurnRunnerDeps {
   llm: ResolvedLlm;
@@ -137,6 +191,8 @@ export interface TurnRunnerDeps {
    * tool in the active set, so the reply that follows has its schema.
    */
   discoverableTools?: LlmToolDef[];
+  /** See TurnPermissions; omitted means no call ever asks. */
+  permissions?: TurnPermissions;
   channel: TurnChannel;
   store: TurnStore;
   now?: () => number;
@@ -385,8 +441,14 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const limits: TurnLimits = { ...DEFAULT_TURN_LIMITS, ...deps.limits };
   const now = deps.now ?? (() => Date.now());
   const log = deps.log ?? (() => {});
-  const deadline = now() + limits.wallClockMs;
+  // `let`: every permission wait pushes it out by exactly the time waited.
+  let deadline = now() + limits.wallClockMs;
   const { channel, store, llm } = deps;
+  const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
+  const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
+  const needsPermission = (name: string) =>
+    deps.permissions !== undefined && !readOnlyTools.has(name) && !alwaysAllowed.has(name);
+  let permissionWaited = 0;
 
   const messages: LlmMessage[] = [...input.history];
   let assistant = input.assistantMessage;
@@ -540,6 +602,82 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     blocks = [];
     dirty = false;
     announceAssistant();
+  };
+
+  /**
+   * Park the turn behind one call and wait for the answer. Resolves with
+   * the person's decision, 'timeout' when the turn's wait budget runs out
+   * first, or 'canceled' when Stop arrives meanwhile (the caller then
+   * ends the turn the way any cancel between calls does). The wall clock
+   * is paused for exactly the time waited.
+   */
+  const askPermission = async (
+    use: Extract<LlmContentBlock, { type: 'tool_use' }>
+  ): Promise<ToolPermissionDecision | 'timeout' | 'canceled'> => {
+    const ask: PendingToolPermission = {
+      toolUseId: use.id,
+      messageId: assistant.id,
+      name: use.name,
+      requestedAt: new Date().toISOString(),
+    };
+    stage = `permission:${use.name}`;
+    await store.requestToolPermission({ ...ask, input: use.input });
+    emit({ type: 'tool_permission_request', turnId: input.turnId, permission: ask });
+    const startedAt = now();
+    const budget = Math.max(0, limits.permissionWaitMs - permissionWaited);
+    const answer = await new Promise<ToolPermissionDecision | 'timeout' | 'canceled'>((resolve) => {
+      let settled = false;
+      let cleanup = () => {};
+      const finish = (decision: ToolPermissionDecision | 'timeout' | 'canceled') => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(decision);
+      };
+      const unsubscribe = channel.onToolPermission((answered) => {
+        if (answered.toolUseId === use.id) finish(answered.decision);
+      });
+      const timer = setTimeout(() => finish('timeout'), budget);
+      const poll = setInterval(() => {
+        void store
+          .readToolPermission(use.id)
+          .then((decision) => {
+            if (decision) finish(decision);
+          })
+          .catch(() => {
+            // A failed read is retried on the next tick; the channel
+            // and the clock still end the wait.
+          });
+      }, limits.permissionPollMs);
+      cleanup = () => {
+        unsubscribe();
+        clearTimeout(timer);
+        clearInterval(poll);
+      };
+      // Registered last: a cancel already requested fires this at once.
+      channel.onCancel(() => finish('canceled'));
+    });
+    const waited = now() - startedAt;
+    permissionWaited += waited;
+    deadline += waited;
+    stage = null;
+    try {
+      await store.clearToolPermission();
+    } catch (error) {
+      log('chat tool permission not cleared: {message}', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (answer !== 'canceled') {
+      emit({
+        type: 'tool_permission_decided',
+        turnId: input.turnId,
+        toolUseId: use.id,
+        decision: answer,
+      });
+    }
+    if (answer === 'always') alwaysAllowed.add(use.name);
+    return answer;
   };
 
   announceAssistant();
@@ -776,8 +914,22 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const results: LlmContentBlock[] = [];
       const attachments: LlmContentBlock[] = [];
       const produced: ArtifactFile[] = [];
-      const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
+      // Calls the person did not allow: answered with a refusal, never run.
+      const refused = new Map<string, 'deny' | 'timeout'>();
       const runTool = async (use: (typeof toolUses)[number]): Promise<McpToolResult> => {
+        const refusal = refused.get(use.id);
+        if (refusal) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: refusal === 'deny' ? PERMISSION_DENIED_RESULT : PERMISSION_TIMEOUT_RESULT,
+              },
+            ],
+            isError: true,
+            meta: {},
+          };
+        }
         try {
           if (deps.localTools.has(use.name)) {
             // Unlike an MCP call, a local tool has no AbortSignal of its own —
@@ -820,7 +972,22 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       );
       for (const group of groups) {
         if (cancelRequested || channel.cancelRequested) break;
+        // A call that acts is alone in its group (toolGroups), so at most
+        // one ask per group — asked before the group's calls are
+        // announced as running, since a refused one never runs.
+        let canceledWhileAsking = false;
         for (const use of group) {
+          if (!needsPermission(use.name)) continue;
+          const answer = await askPermission(use);
+          if (answer === 'canceled') {
+            canceledWhileAsking = true;
+            break;
+          }
+          if (answer === 'deny' || answer === 'timeout') refused.set(use.id, answer);
+        }
+        if (canceledWhileAsking || cancelRequested || channel.cancelRequested) break;
+        for (const use of group) {
+          if (refused.has(use.id)) continue;
           emit({
             type: 'tool_call_start',
             messageId: assistant.id,

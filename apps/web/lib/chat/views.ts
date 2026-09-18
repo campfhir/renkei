@@ -52,6 +52,24 @@ export interface AttachmentView {
   extractStatus: string;
 }
 
+/** What a person answers a permission ask with. */
+export type ToolPermissionDecision = 'once' | 'always' | 'deny';
+
+/**
+ * The tool call a running turn is parked behind: the runner asked, the
+ * owner has not answered yet. Carried on the turn (so a reload or a
+ * reconnect through the snapshot path finds it) and on its own stream
+ * event (so an open thread shows it the moment it is raised). The call's
+ * name and input are in the assistant row's tool_use block by id; only
+ * what is needed to find that block and to ask rides here.
+ */
+export interface PendingToolPermission {
+  toolUseId: string;
+  messageId: string;
+  name: string;
+  requestedAt: string;
+}
+
 export interface TurnView {
   id: string;
   status: TurnStatus;
@@ -59,6 +77,8 @@ export interface TurnView {
   error: string | null;
   startedAt: string;
   finishedAt: string | null;
+  /** The ask in flight, if the turn is waiting on one; absent or null otherwise. */
+  pendingPermission?: PendingToolPermission | null;
 }
 
 export interface ChatToolConfigView {

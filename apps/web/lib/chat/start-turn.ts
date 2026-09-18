@@ -44,6 +44,7 @@ import { createOutboundRedactor } from './outbound-redaction';
 import { buildHistory, buildSystemPrompt } from './request-builder';
 import { effectiveToolConfig, projectToolConfig } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
+import { getChatToolPermissionPrefs } from './permission-prefs';
 import { resolveChatToolSurface } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
 import { findToolsTool, recallDiscoveredTools } from './tool-discovery';
@@ -305,6 +306,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     chatId: input.chat.id,
     turnId: input.turnId,
     subject: input.session.subject,
+    chatTitle: input.chat.title,
     model: {
       provider: input.llm.providerName,
       model: input.llm.model,
@@ -343,19 +345,25 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     // as long as the turn may.
     const limits = project?.kind === 'code' ? CODE_TURN_LIMITS : undefined;
     const wallClockMs = limits?.wallClockMs ?? DEFAULT_TURN_LIMITS.wallClockMs;
+    // The token must outlive the longest the turn can run: its wall clock
+    // plus every minute it may spend parked behind a permission ask.
+    const permissionWaitMs = limits?.permissionWaitMs ?? DEFAULT_TURN_LIMITS.permissionWaitMs;
     const surface = await resolveChatToolSurface(db, {
       tenantId: input.tenantId,
       subject: input.session.subject,
       roles: input.session.roles,
       config: toolConfig,
-      ttlSeconds: Math.ceil(wallClockMs / 1000) + 15 * 60,
+      ttlSeconds: Math.ceil((wallClockMs + permissionWaitMs) / 1000) + 15 * 60,
     });
     release = surface.release;
 
     const readOnly = input.settings?.readOnly ?? false;
-    const [initialRows, person] = await Promise.all([
+    const [initialRows, person, permissionPrefs] = await Promise.all([
       listMessages(db, input.tenantId, input.chat.id),
       getIdentityDisplay(input.tenantId, input.session.subject),
+      // fresh: "always allow" clicked in another chat a moment ago must
+      // hold for this turn too.
+      getChatToolPermissionPrefs(input.tenantId, input.session.subject, { fresh: true }),
     ]);
     // Compaction runs before history is built, not as a background sweep:
     // the guarantee is that THIS turn's request stays bounded. A failed or
@@ -456,6 +464,9 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         localContext,
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
         discoverableTools: surface.discoverable.map((entry) => entry.def),
+        // Every call that acts asks first, unless this person has said
+        // "always" for that tool (permission-prefs.ts).
+        permissions: { alwaysAllowed: new Set(permissionPrefs.alwaysAllow) },
         channel,
         store,
         log,

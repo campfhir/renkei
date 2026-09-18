@@ -13,7 +13,46 @@ import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isUuid } from '@/lib/uuid';
-import type { TurnKind, TurnStatus, TurnView } from './views';
+import type {
+  PendingToolPermission,
+  ToolPermissionDecision,
+  TurnKind,
+  TurnStatus,
+  TurnView,
+} from './views';
+
+/**
+ * The `tool_permission` document (migration 109): the ask, and once
+ * answered, the answer alongside it. The runner writes the ask, the
+ * decision route adds the answer, the runner reads it back and clears
+ * the column. `decision` absent = still waiting.
+ */
+export interface ToolPermissionRecord extends PendingToolPermission {
+  decision: ToolPermissionDecision | null;
+  decidedAt: string | null;
+}
+
+export function isToolPermissionDecision(value: unknown): value is ToolPermissionDecision {
+  return value === 'once' || value === 'always' || value === 'deny';
+}
+
+/** Whatever jsonb hands back, or null when it is not an ask at all. */
+export function parseToolPermission(raw: unknown): ToolPermissionRecord | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const record: Record<string, unknown> = { ...raw };
+  if (typeof record.toolUseId !== 'string' || !record.toolUseId) return null;
+  if (typeof record.messageId !== 'string' || !record.messageId) return null;
+  if (typeof record.name !== 'string' || !record.name) return null;
+  return {
+    toolUseId: record.toolUseId,
+    messageId: record.messageId,
+    name: record.name,
+    requestedAt:
+      typeof record.requestedAt === 'string' ? record.requestedAt : new Date(0).toISOString(),
+    decision: isToolPermissionDecision(record.decision) ? record.decision : null,
+    decidedAt: typeof record.decidedAt === 'string' ? record.decidedAt : null,
+  };
+}
 
 export interface TurnRow {
   id: string;
@@ -31,6 +70,8 @@ export interface TurnRow {
   stage: string | null;
   /** When the current `stage` began — distinct from `updatedAt`, which refreshes every flush tick regardless. */
   stageAt: Date | null;
+  /** The tool call the turn is parked behind, answered or not; null when none. */
+  toolPermission: ToolPermissionRecord | null;
   startedAt: Date;
   updatedAt: Date;
   finishedAt: Date | null;
@@ -50,6 +91,7 @@ const TURN_COLUMNS = [
   'error',
   'stage',
   'stage_at',
+  'tool_permission',
   'started_at',
   'updated_at',
   'finished_at',
@@ -87,6 +129,7 @@ function rowOf(raw: {
   error: string | null;
   stage: string | null;
   stage_at: Date | null;
+  tool_permission: unknown;
   started_at: Date;
   updated_at: Date;
   finished_at: Date | null;
@@ -105,6 +148,7 @@ function rowOf(raw: {
     error: raw.error,
     stage: raw.stage,
     stageAt: raw.stage_at,
+    toolPermission: parseToolPermission(raw.tool_permission),
     startedAt: raw.started_at,
     updatedAt: raw.updated_at,
     finishedAt: raw.finished_at,
@@ -112,6 +156,10 @@ function rowOf(raw: {
 }
 
 export function toTurnView(turn: TurnRow): TurnView {
+  const pending =
+    turn.status === 'running' && turn.toolPermission && turn.toolPermission.decision === null
+      ? turn.toolPermission
+      : null;
   return {
     id: turn.id,
     status: turn.status,
@@ -119,6 +167,14 @@ export function toTurnView(turn: TurnRow): TurnView {
     error: turn.error,
     startedAt: turn.startedAt.toISOString(),
     finishedAt: turn.finishedAt ? turn.finishedAt.toISOString() : null,
+    pendingPermission: pending
+      ? {
+          toolUseId: pending.toolUseId,
+          messageId: pending.messageId,
+          name: pending.name,
+          requestedAt: pending.requestedAt,
+        }
+      : null,
   };
 }
 
@@ -237,6 +293,8 @@ export async function finishTurn(
       iterations: outcome.iterations,
       input_tokens: outcome.inputTokens,
       output_tokens: outcome.outputTokens,
+      // A turn that ends mid-ask (a crash, a cancel) leaves no ask behind.
+      tool_permission: null,
       updated_at: sql<Date>`NOW()`,
       finished_at: sql<Date>`NOW()`,
     })
@@ -262,4 +320,75 @@ export async function requestTurnCancel(
     .where('status', '=', 'running')
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;
+}
+
+/** The runner parks the turn behind this call; the row is what a reload or another replica reads. */
+export async function requestToolPermission(
+  db: Kysely<DB>,
+  turnId: string,
+  ask: PendingToolPermission
+): Promise<void> {
+  const record: ToolPermissionRecord = { ...ask, decision: null, decidedAt: null };
+  await db
+    .updateTable('chat_turns')
+    .set({ tool_permission: JSON.stringify(record), updated_at: sql<Date>`NOW()` })
+    .where('id', '=', turnId)
+    .where('status', '=', 'running')
+    .execute();
+}
+
+/**
+ * The owner's answer, written into the pending ask — and only into THAT
+ * ask: a decision for a call the turn is no longer waiting on (answered
+ * already, or a stale page) updates nothing and says so.
+ */
+export async function decideToolPermission(
+  db: Kysely<DB>,
+  tenantId: string,
+  chatId: string,
+  turnId: string,
+  toolUseId: string,
+  decision: ToolPermissionDecision
+): Promise<boolean> {
+  if (!isUuid(chatId) || !isUuid(turnId)) return false;
+  const result = await db
+    .updateTable('chat_turns')
+    .set({
+      tool_permission: sql`tool_permission || ${JSON.stringify({
+        decision,
+        decidedAt: new Date().toISOString(),
+      })}::jsonb`,
+    })
+    .where('tenant_id', '=', tenantId)
+    .where('chat_id', '=', chatId)
+    .where('id', '=', turnId)
+    .where('status', '=', 'running')
+    .where(sql`tool_permission->>'toolUseId'`, '=', toolUseId)
+    .where(sql`tool_permission->>'decision'`, 'is', null)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows) > 0;
+}
+
+/** What the row says about one ask right now — the runner's poll while it waits. */
+export async function readToolPermission(
+  db: Kysely<DB>,
+  turnId: string,
+  toolUseId: string
+): Promise<ToolPermissionRecord | null> {
+  const row = await db
+    .selectFrom('chat_turns')
+    .select('tool_permission')
+    .where('id', '=', turnId)
+    .executeTakeFirst();
+  const record = parseToolPermission(row?.tool_permission);
+  return record && record.toolUseId === toolUseId ? record : null;
+}
+
+/** The ask is over (answered, timed out, or the turn is ending): nothing pending. */
+export async function clearToolPermission(db: Kysely<DB>, turnId: string): Promise<void> {
+  await db
+    .updateTable('chat_turns')
+    .set({ tool_permission: null })
+    .where('id', '=', turnId)
+    .execute();
 }

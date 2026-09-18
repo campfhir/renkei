@@ -151,8 +151,11 @@ export default function ToastStack() {
                   {entry.refUrl ? (
                     <a
                       href={entry.refUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      // A link on this origin (a chat waiting on you) stays in
+                      // this tab; the provider's own link opens a new one.
+                      {...(entry.refUrl.startsWith('/') && !entry.refUrl.startsWith('//')
+                        ? {}
+                        : { target: '_blank', rel: 'noopener noreferrer' })}
                       className="hover:underline after:absolute after:inset-0 after:rounded-lg"
                     >
                       {entry.headline}

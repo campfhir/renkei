@@ -270,6 +270,7 @@ async function write(
         body: context.agentName || 'An agent',
         tag: context.runId && row.tool ? `${context.runId}:${row.tool}` : id,
         refUrl: row.refUrl ?? null,
+        notificationId: id,
       },
       { log: (message, meta) => logger.warn(message, meta) }
     );

@@ -16,7 +16,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
 import type { CompactionProgress } from '@/lib/chat/stream-events';
-import type { ChatBlock, ChatMessageView, TurnView } from '@/lib/chat/views';
+import type {
+  ChatBlock,
+  ChatMessageView,
+  PendingToolPermission,
+  ToolPermissionDecision,
+  TurnView,
+} from '@/lib/chat/views';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
 import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
 import DiffView, { Counts } from '../../code/_components/diff-view';
@@ -63,22 +69,41 @@ function toolLabel(name: string): string {
 }
 
 /**
- * One tool call's line: "Calling X", "Called X", "Failed: X" — or, for a
- * step that reads as a sentence (the clone), that sentence.
+ * One tool call's line: "Calling X", "Called X", "Failed: X", "Waiting to
+ * call X" — or, for a step that reads as a sentence (the clone), that
+ * sentence.
  */
-function callLine(name: string, state: 'pending' | 'done' | 'failed'): ReactNode {
+function callLine(name: string, state: 'pending' | 'done' | 'failed' | 'waiting'): ReactNode {
   const own = codeToolLabel(name);
   const sentence =
-    own && (state === 'pending' ? own.pending : state === 'done' ? own.done : own.failed);
+    own &&
+    state !== 'waiting' &&
+    (state === 'pending' ? own.pending : state === 'done' ? own.done : own.failed);
   if (sentence) return <span className="font-medium">{sentence}</span>;
   return (
     <>
-      {state === 'pending' ? 'Calling ' : state === 'failed' ? 'Failed: ' : 'Called '}
+      {state === 'pending'
+        ? 'Calling '
+        : state === 'failed'
+          ? 'Failed: '
+          : state === 'waiting'
+            ? 'Waiting for permission to call '
+            : 'Called '}
       <span className="font-medium" title={name}>
         {toolLabel(name)}
       </span>
     </>
   );
+}
+
+/**
+ * The ask a running turn is parked behind, and what this reader may do
+ * about it: the owner answers; anyone else watches.
+ */
+export interface PermissionPrompt {
+  pending: PendingToolPermission;
+  canDecide: boolean;
+  onDecide: (toolUseId: string, decision: ToolPermissionDecision) => Promise<string | null>;
 }
 
 /** What the owner may do to a prompt of theirs while nothing is running. */
@@ -105,6 +130,7 @@ export default function MessageList({
   empty,
   promptActions,
   speech = null,
+  permission = null,
 }: {
   tenantId: string;
   messages: ChatMessageView[];
@@ -115,6 +141,8 @@ export default function MessageList({
   empty: ReactNode;
   promptActions: PromptActions | null;
   speech?: ReplySpeech | null;
+  /** The tool call the running turn is waiting on, shown inline in that reply. */
+  permission?: PermissionPrompt | null;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -125,7 +153,7 @@ export default function MessageList({
     const element = scroller.current;
     if (!element || !pinned) return;
     element.scrollTop = element.scrollHeight;
-  }, [messages, compaction, pinned]);
+  }, [messages, compaction, permission, pinned]);
 
   // The box itself shrinks when a phone's keyboard opens (chat-frame.tsx);
   // a reader at the bottom should still be at the bottom afterwards.
@@ -181,6 +209,7 @@ export default function MessageList({
                 streaming={running && group.key === lastTurnKey}
                 speech={speech}
                 speechKey={group.key}
+                permission={running && group.key === lastTurnKey ? permission : null}
               />
             ) : null}
           </div>
@@ -425,6 +454,7 @@ function Reply({
   streaming,
   speech,
   speechKey,
+  permission,
 }: {
   messages: ChatMessageView[];
   results: Map<string, ToolResult>;
@@ -432,8 +462,19 @@ function Reply({
   streaming: boolean;
   speech: ReplySpeech | null;
   speechKey: string;
+  permission: PermissionPrompt | null;
 }) {
   const segments = useMemo(() => segment(messages, results), [messages, results]);
+  // The call the ask is about, for the card to show its input.
+  const askedCall = useMemo(() => {
+    if (!permission) return null;
+    for (const message of messages) {
+      for (const block of message.blocks) {
+        if (block.type === 'tool_use' && block.id === permission.pending.toolUseId) return block;
+      }
+    }
+    return null;
+  }, [messages, permission]);
   const copyText = useMemo(
     () =>
       segments
@@ -469,11 +510,13 @@ function Reply({
                 steps={part.steps}
                 pendingToolCalls={pendingToolCalls}
                 live={tail}
+                waitingOn={permission?.pending.toolUseId ?? null}
               />
             );
         }
       })}
       {segments.length === 0 && streaming ? <Cursor /> : null}
+      {permission ? <PermissionCard prompt={permission} call={askedCall} /> : null}
       {last.status === 'failed' && last.error ? (
         <p className="mt-1 text-xs text-red-600 dark:text-red-400">{last.error}</p>
       ) : null}
@@ -515,23 +558,30 @@ function WorkFold({
   steps,
   pendingToolCalls,
   live,
+  waitingOn,
 }: {
   steps: WorkStep[];
   pendingToolCalls: string[];
   live: boolean;
+  /** The tool_use id the turn is waiting on permission for, if any. */
+  waitingOn: string | null;
 }) {
   const shown = steps.filter((step) => step.kind !== 'thinking' || step.text.trim() !== '');
   const calls = shown.filter((step) => step.kind === 'call');
   const thought = shown.some((step) => step.kind !== 'call');
   const failed = calls.some((step) => step.result?.isError);
+  const isWaiting = (step: Extract<WorkStep, { kind: 'call' }>) =>
+    !step.result && waitingOn === step.block.id;
   const isPending = (step: Extract<WorkStep, { kind: 'call' }>) =>
-    !step.result && (live || pendingToolCalls.includes(step.block.id));
+    !step.result && !isWaiting(step) && (live || pendingToolCalls.includes(step.block.id));
   const current = steps[steps.length - 1];
 
   let label: ReactNode;
   if (live && current) {
     label =
-      current.kind === 'call' && isPending(current) ? (
+      current.kind === 'call' && isWaiting(current) ? (
+        callLine(current.block.name, 'waiting')
+      ) : current.kind === 'call' && isPending(current) ? (
         <>
           {callLine(current.block.name, 'pending')}
           <span className="chat-dots" aria-hidden="true" />
@@ -592,6 +642,7 @@ function WorkFold({
               );
             case 'call': {
               const pending = isPending(step);
+              const waiting = isWaiting(step);
               const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
               // A code tool that changed a file carries the file's diff,
               // fenced; it is shown as a diff, and its counts on the line.
@@ -607,7 +658,13 @@ function WorkFold({
                       <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
                       {callLine(
                         step.block.name,
-                        pending ? 'pending' : step.result?.isError ? 'failed' : 'done'
+                        waiting
+                          ? 'waiting'
+                          : pending
+                            ? 'pending'
+                            : step.result?.isError
+                              ? 'failed'
+                              : 'done'
                       )}
                       {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
                       {counts ? <Counts added={counts.added} deleted={counts.deleted} /> : null}
@@ -655,6 +712,114 @@ function WorkFold({
         })}
       </ol>
     </details>
+  );
+}
+
+/**
+ * The ask, inline where the reply stopped: what the assistant wants to
+ * call, with what, and the three answers. Allow once is the plain yes;
+ * Always allow is the same yes plus "stop asking me about this tool" —
+ * kept on the preferences page, where it can be taken back; Deny hands
+ * the model a refusal so it can say what it was going to do instead. A
+ * viewer of a shared chat sees the ask but not the buttons: only the
+ * owner can let the chat act.
+ */
+function PermissionCard({
+  prompt,
+  call,
+}: {
+  prompt: PermissionPrompt;
+  call: Extract<ChatBlock, { type: 'tool_use' }> | null;
+}) {
+  const [busy, setBusy] = useState<ToolPermissionDecision | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const name = prompt.pending.name;
+  const args = call ? JSON.stringify(call.input, null, 2) : null;
+  const decide = async (decision: ToolPermissionDecision) => {
+    setBusy(decision);
+    setError(null);
+    const failure = await prompt.onDecide(prompt.pending.toolUseId, decision);
+    if (failure) {
+      setError(failure);
+      setBusy(null);
+    }
+    // On success the stream's tool_permission_decided event takes the
+    // card away; nothing to reset here.
+  };
+  const buttonClass =
+    'rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 disabled:cursor-default';
+  return (
+    <div
+      role="group"
+      aria-label="Permission needed"
+      className="my-2 max-w-xl rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40"
+    >
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400">
+          <Icon path={ICONS.approval} className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-gray-900 dark:text-gray-100">
+            {prompt.canDecide ? 'Allow this?' : 'Waiting for the owner'} The assistant wants to{' '}
+            <span title={name}>{toolLabel(name).toLowerCase()}</span>.
+          </p>
+          <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+            This changes something outside the conversation, so it waits for a yes. Tool:{' '}
+            <code className="font-mono">{name}</code>
+          </p>
+          {args ? (
+            <details className="chat-fold mt-1">
+              <summary>
+                What it will send
+                <Icon
+                  path={ICONS.chevron}
+                  className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
+                />
+              </summary>
+              <pre className="chat-pre">{args}</pre>
+            </details>
+          ) : null}
+          {prompt.canDecide ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void decide('once')}
+                className={`${buttonClass} bg-blue-600 text-white hover:bg-blue-700`}
+              >
+                {busy === 'once' ? 'Allowing…' : 'Allow once'}
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void decide('always')}
+                title="Runs this tool without asking from now on. Change your mind under Preferences."
+                className={`${buttonClass} border border-gray-300 bg-white text-gray-800 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800`}
+              >
+                {busy === 'always' ? 'Allowing…' : 'Always allow'}
+              </button>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void decide('deny')}
+                className={`${buttonClass} text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40`}
+              >
+                {busy === 'deny' ? 'Denying…' : 'Deny'}
+              </button>
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Only the chat&rsquo;s owner can allow or deny it.
+            </p>
+          )}
+          {error ? (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 

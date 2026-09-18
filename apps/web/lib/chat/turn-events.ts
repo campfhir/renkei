@@ -13,6 +13,7 @@
  */
 
 import type { ChatStreamEvent } from './stream-events';
+import type { ToolPermissionDecision } from './views';
 
 export interface SequencedEvent {
   seq: number;
@@ -34,6 +35,18 @@ export interface TurnChannel {
   subscribe(fromSeq: number, listener: (event: SequencedEvent) => void): (() => void) | null;
   requestCancel(): void;
   onCancel(listener: () => void): void;
+  /**
+   * The fast path for a permission answer, the way requestCancel is for
+   * Stop: the decision route calls this when the turn runs in this
+   * process, and the runner's wait ends at once instead of on its next
+   * poll of the row. The row is still written first — a decision only
+   * ever reaches the runner through the channel OR the database, never
+   * only the channel, so a replica switch mid-wait loses nothing.
+   */
+  resolveToolPermission(toolUseId: string, decision: ToolPermissionDecision): void;
+  onToolPermission(
+    listener: (answer: { toolUseId: string; decision: ToolPermissionDecision }) => void
+  ): () => void;
   close(): void;
 }
 
@@ -56,6 +69,9 @@ export function openTurnChannel(turnId: string): TurnChannel {
   const ring: SequencedEvent[] = [];
   const listeners = new Set<(event: SequencedEvent) => void>();
   const cancelListeners = new Set<() => void>();
+  const permissionListeners = new Set<
+    (answer: { toolUseId: string; decision: ToolPermissionDecision }) => void
+  >();
   let seq = 0;
   let closed = false;
   let cancelRequested = false;
@@ -118,11 +134,28 @@ export function openTurnChannel(turnId: string): TurnChannel {
       }
       cancelListeners.add(listener);
     },
+    resolveToolPermission(toolUseId, decision) {
+      if (closed) return;
+      for (const listener of permissionListeners) {
+        try {
+          listener({ toolUseId, decision });
+        } catch {
+          // Same reasoning as emit.
+        }
+      }
+    },
+    onToolPermission(listener) {
+      permissionListeners.add(listener);
+      return () => {
+        permissionListeners.delete(listener);
+      };
+    },
     close() {
       if (closed) return;
       closed = true;
       listeners.clear();
       cancelListeners.clear();
+      permissionListeners.clear();
       const timer = setTimeout(() => {
         const current = registry().channels.get(turnId);
         if (current === channel) registry().channels.delete(turnId);

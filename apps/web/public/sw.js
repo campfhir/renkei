@@ -17,7 +17,7 @@ self.addEventListener('activate', (event) => {
 });
 
 // The payload is whatever @renkei/notifications' sendPush encoded — see
-// packages/notifications/src/send.ts for the shape.
+// packages/notifications/src/send.ts (PushWirePayload) for the shape.
 self.addEventListener('push', (event) => {
   let data = {};
   try {
@@ -44,33 +44,60 @@ self.addEventListener('push', (event) => {
         body: data.body,
         tag: data.tag,
         icon: data.icon || '/icon.svg',
-        data: { appUrl: data.appUrl },
+        // `openUrl` is where the click goes: the row's open route (which
+        // marks it read and sends the browser on), or a plain page for a
+        // push with no row behind it. `appUrl` alone is the older shape.
+        data: {
+          openUrl: data.openUrl || data.appUrl,
+          external: data.external === true,
+          appUrl: data.appUrl,
+        },
       });
     })()
   );
 });
 
 // A banner shown via `registration.showNotification()` has no page-side
-// `onclick` to attach to, so the click has to be handled here instead:
-// bring an existing tab forward, or open one, on Renkei's own notifications
-// page — never the connector's own link (a Jira issue, a WebEx space…).
-// That link is still one tap away from the notifications list itself; the
-// OS banner's job is to bring you back to Renkei, not out to whichever
-// connector an agent happened to touch.
+// `onclick` to attach to, so the click has to be handled here instead.
+//
+// Where it goes is decided server-side (the row's open route: mark the
+// notification read, then the source application — a Jira issue, a WebEx
+// space — when the person wants that, else the thing's place in Renkei).
+// What this decides is only HOW: something outside Renkei opens in a new
+// window and leaves the person's Renkei tab where it was; something inside
+// Renkei brings that tab forward and takes it there, or opens one.
 self.addEventListener('notificationclick', (event) => {
-  const appUrl = (event.notification.data && event.notification.data.appUrl) || '/';
+  const data = event.notification.data || {};
+  const openUrl = data.openUrl || data.appUrl || '/';
+  const fallback = data.appUrl || '/';
   event.notification.close();
 
   event.waitUntil(
     (async () => {
+      if (data.external) {
+        try {
+          await self.clients.openWindow(openUrl);
+          return;
+        } catch {
+          // A URL this browser refuses to open from a worker (a custom
+          // scheme with nothing registered for it) — land in Renkei
+          // instead, where the link is still one tap away.
+        }
+      }
       const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       const existing = windows.find((client) => 'focus' in client);
+      const target = data.external ? fallback : openUrl;
       if (existing) {
         await existing.focus();
-        await existing.navigate(appUrl);
-      } else {
-        await self.clients.openWindow(appUrl);
+        try {
+          await existing.navigate(target);
+          return;
+        } catch {
+          // A window this worker does not control (matched as uncontrolled)
+          // cannot be navigated from here; open the target beside it.
+        }
       }
+      await self.clients.openWindow(target);
     })()
   );
 });

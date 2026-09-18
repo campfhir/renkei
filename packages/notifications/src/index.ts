@@ -9,4 +9,12 @@ export {
 
 export { getVapidKeys, invalidateVapidKeyCache, type VapidKeyPair } from './vapid';
 
-export { sendPush, type PushPayload, type PushLogger } from './send';
+export {
+  sendPush,
+  pushClickTarget,
+  type PushPayload,
+  type PushWirePayload,
+  type PushLogger,
+} from './send';
+
+export { isExternalNotificationUrl, isWebUrl } from './targets';

@@ -68,7 +68,14 @@ export function notifyChatShared(input: {
             input.tenantId,
             input.granteeSubject,
             keyResult.val,
-            { title: headline, body: title, tag: id, refUrl },
+            {
+              title: headline,
+              body: title,
+              tag: id,
+              refUrl,
+              notificationId: id,
+              ...(refUrl ? { appPath: refUrl } : {}),
+            },
             { log: (message, meta) => logger.warn(message, meta) }
           );
         }

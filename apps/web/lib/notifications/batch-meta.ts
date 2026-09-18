@@ -109,6 +109,8 @@ export function notificationSourceLabel(row: {
   }
   // Nothing here has an agent behind it — the headline already names who
   // shared it or that a reply landed, so "An agent" would just be wrong.
-  if (row.kind === 'chat_shared' || row.kind === 'chat_reply') return 'Renkei';
+  if (row.kind === 'chat_shared' || row.kind === 'chat_reply' || row.kind === 'chat_permission') {
+    return 'Renkei';
+  }
   return row.agentName ?? 'An agent';
 }
