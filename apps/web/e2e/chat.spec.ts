@@ -324,6 +324,23 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
       .getByRole('navigation', { name: 'Chats' })
       .getByRole('link', { name: `${title} (archived)` });
     await expect(archivedRow).toBeHidden();
+    // The search box finds a chat by what was said in it, not only by its
+    // title: the phrase below sits in the reply's table and nowhere in the
+    // title, and the row found that way shows the matching line.
+    const search = page.getByRole('searchbox', { name: 'Find a chat' });
+    await search.fill('rotate the zoom webhook');
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('chat-search-snippet')).toContainText(
+      'Rotate the Zoom webhook secret'
+    );
+    await search.fill('a phrase no chat has ever held');
+    await expect(row).toBeHidden();
+    await expect(
+      page.getByRole('navigation', { name: 'Chats' }).getByText('No chats match.')
+    ).toBeVisible();
+    await search.fill('');
+    await expect(row).toBeVisible();
+    await expect(row.getByTestId('chat-search-snippet')).toHaveCount(0);
     // The funnel in the search box picks the states shown: active, archived, or both.
     await page.getByRole('button', { name: 'Filter chats' }).click();
     const archivedOption = page.getByRole('menuitemcheckbox', { name: /Archived/ });

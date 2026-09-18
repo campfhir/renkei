@@ -10,9 +10,13 @@
  * carries that). Row actions live behind a "⋯" menu — the notifications
  * list's idiom — and every mutation goes through a route and then
  * router.refresh(), so the layout's server data is the truth.
+ *
+ * The search box narrows by title and project name as you type, and —
+ * debounced, through the search route — by what was said in the chat:
+ * a row found that way shows the matching line under its title.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -20,6 +24,7 @@ import Modal from '@/components/modal';
 import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
+import { CHAT_SEARCH_MIN_CHARS, normalizeQuery } from '@/lib/chat/search-text';
 import type { ChatListItem } from '@/lib/chat/views';
 import ShareModal from './share-modal';
 
@@ -48,6 +53,7 @@ export function ChatList({
 }) {
   const currentPath = usePathname();
   const [filter, setFilter] = useState('');
+  const { hits, searching } = useContentSearch(tenantId, filter);
   // Which states the list shows; active only, until the funnel says otherwise.
   const [states, setStates] = useState<{ active: boolean; archived: boolean }>({
     active: true,
@@ -62,8 +68,9 @@ export function ChatList({
   );
   const shown = useCallback(
     (chat: ChatListItem) =>
-      (chat.archived ? states.archived : states.active) && matches(chat, filter),
-    [states, filter]
+      (chat.archived ? states.archived : states.active) &&
+      (matches(chat, filter) || hits.has(chat.id)),
+    [states, filter, hits]
   );
   const mine = useMemo(
     () => data.chats.filter((chat) => chat.via === 'owner' && shown(chat)),
@@ -100,7 +107,9 @@ export function ChatList({
         {groups.length === 0 && shared.length === 0 ? (
           <p className="px-2 text-xs text-gray-500">
             {filter
-              ? 'No chats match.'
+              ? searching
+                ? 'Searching…'
+                : 'No chats match.'
               : data.chats.length === 0
                 ? 'Your chats will appear here.'
                 : !states.active && !states.archived
@@ -120,6 +129,7 @@ export function ChatList({
                 tenantId={tenantId}
                 chat={chat}
                 projects={data.projects}
+                snippet={hits.get(chat.id) ?? null}
                 active={currentPath === `/${slug}/chat/${chat.id}`}
               />
             ))}
@@ -135,6 +145,7 @@ export function ChatList({
                 tenantId={tenantId}
                 chat={chat}
                 projects={data.projects}
+                snippet={hits.get(chat.id) ?? null}
                 active={currentPath === `/${slug}/chat/${chat.id}`}
               />
             ))}
@@ -223,6 +234,45 @@ function matches(chat: ChatListItem, filter: string): boolean {
   );
 }
 
+/**
+ * The content half of the search: once the box holds enough to be worth
+ * a scan, ask the search route (debounced) which listed chats say it, and
+ * keep the snippet per chat. A reply for a query no longer in the box is
+ * dropped, so fast typing cannot leave stale rows behind. `searching` is
+ * true from the first keystroke until the answer for the current text is
+ * in, so the empty state can hold off saying "no match" too soon.
+ */
+function useContentSearch(
+  tenantId: string,
+  filter: string
+): { hits: Map<string, string>; searching: boolean } {
+  const query = normalizeQuery(filter);
+  const active = query.length >= CHAT_SEARCH_MIN_CHARS;
+  const [state, setState] = useState<{ query: string; hits: Map<string, string> }>({
+    query: '',
+    hits: new Map(),
+  });
+  const latest = useRef(query);
+  latest.current = query;
+  useEffect(() => {
+    if (!active) return;
+    const handle = setTimeout(async () => {
+      const result = await chatClient.searchChats(tenantId, query);
+      if (latest.current !== query) return;
+      setState({
+        query,
+        hits: new Map((result.data?.hits ?? []).map((hit) => [hit.chatId, hit.snippet])),
+      });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [tenantId, query, active]);
+  if (!active) return { hits: EMPTY_HITS, searching: false };
+  const current = state.query === query;
+  return { hits: current ? state.hits : EMPTY_HITS, searching: !current };
+}
+
+const EMPTY_HITS: Map<string, string> = new Map();
+
 /** The mark at the head of a row: which kind of chat this is. */
 function kindOf(chat: ChatListItem): { kind: 'chat' | 'project' | 'code'; path: string } {
   if (chat.projectKind === 'code') return { kind: 'code', path: ICONS.code };
@@ -243,12 +293,15 @@ function ChatRow({
   tenantId,
   chat,
   projects,
+  snippet,
   active,
 }: {
   slug: string;
   tenantId: string;
   chat: ChatListItem;
   projects: ProjectListItem[];
+  /** The line of the chat that matched the search, when one did. */
+  snippet: string | null;
   active: boolean;
 }) {
   const router = useRouter();
@@ -305,6 +358,15 @@ function ChatRow({
           {chat.projectName ? (
             <span className="block truncate text-[11px] font-normal leading-tight text-gray-500">
               {chat.projectName}
+            </span>
+          ) : null}
+          {snippet ? (
+            <span
+              data-testid="chat-search-snippet"
+              title={snippet}
+              className="block truncate text-[11px] font-normal leading-tight text-gray-500 italic"
+            >
+              {snippet}
             </span>
           ) : null}
         </span>
