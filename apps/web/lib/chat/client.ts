@@ -10,11 +10,18 @@ import type { AttachmentView, ChatMessageView, ChatView, ModelOption } from './v
 import type { ConnectorOption } from './tool-surface';
 import type { GrantView, GrantRole, ResourceKind } from './access';
 import type { StartedTurn } from './start-turn';
+import type { ChatSearchHit } from './search-text';
 
 const base = (tenantId: string) => `/api/tenant/${tenantId}/chat`;
 
 export const chatClient = {
   sidebar: (tenantId: string) => getJson<ChatSidebarData>(`${base(tenantId)}/chats`),
+
+  /** The listed chats whose messages contain `query`, with a snippet each. */
+  searchChats: (tenantId: string, query: string) =>
+    getJson<{ query: string; hits: ChatSearchHit[] }>(
+      `${base(tenantId)}/chats/search?${new URLSearchParams({ q: query }).toString()}`
+    ),
 
   createChat: (
     tenantId: string,
