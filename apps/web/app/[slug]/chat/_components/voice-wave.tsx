@@ -166,7 +166,8 @@ export default function VoiceWave({
 /**
  * The small wave in a button: five bars that dance to the level when one
  * is given, and on their own when none is — a reply being read, a
- * microphone listening.
+ * microphone listening. Anchored on the centre line, so each bar grows
+ * up and down like a waveform rather than rising from a floor.
  */
 export function VoiceWaveIcon({
   level,
@@ -181,7 +182,7 @@ export function VoiceWaveIcon({
   const heights = [0.45, 0.8, 1, 0.7, 0.5];
   return (
     <span
-      className={`voice-bars inline-flex h-5 w-5 items-end justify-center gap-[2px] ${className ?? ''}`}
+      className={`voice-bars inline-flex h-5 w-5 items-center justify-center gap-[2px] ${className ?? ''}`}
       aria-hidden="true"
     >
       {heights.map((base, index) => (

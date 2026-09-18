@@ -1244,7 +1244,7 @@ input[type='number']::-webkit-inner-spin-button {
   width: 3px;
   border-radius: 2px;
   transition: height 90ms ease-out;
-  transform-origin: bottom;
+  transform-origin: center;
 }
 .voice-bar-dance {
   animation: voice-bar-dance 0.9s ease-in-out infinite;
