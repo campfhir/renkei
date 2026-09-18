@@ -32,6 +32,7 @@ export default function VoiceMode({
   running,
   replyText,
   accent,
+  userAccent,
   onSend,
   onInterrupt,
   onClose,
@@ -40,8 +41,10 @@ export default function VoiceMode({
   /** The language to listen for. */
   locale: string;
   queue: SpeechQueue;
-  /** The wave's colour, this person's preference. */
+  /** The assistant's wave colour, this person's preference. */
   accent: WaveAccent;
+  /** The person's own wave colour while they are the one being heard. */
+  userAccent: WaveAccent;
   queueState: SpeechQueueState;
   /** A turn is in flight (a reply is being written). */
   running: boolean;
@@ -193,7 +196,16 @@ export default function VoiceMode({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6">
-        <VoiceWave level={waveLevel} tone={tone} accent={accent} width={360} height={180} />
+        {/* The wave wears the assistant's colour when it is the assistant's
+            turn — writing or speaking — and the person's while they are
+            the one being heard, so the two are never confused. */}
+        <VoiceWave
+          level={waveLevel}
+          tone={tone}
+          accent={tone === 'listening' || tone === 'idle' ? userAccent : accent}
+          width={360}
+          height={180}
+        />
         <p className="text-base font-medium" aria-live="polite">
           {label}
         </p>

@@ -39,6 +39,7 @@ export interface DictationSetup {
   tenantId: string;
   /** The language to recognise. */
   locale: string;
+  /** The person's own wave colour — the bars while they dictate. */
   accent: WaveAccent;
 }
 

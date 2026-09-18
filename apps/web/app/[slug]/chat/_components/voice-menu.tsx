@@ -253,33 +253,40 @@ export default function VoiceMenu({
               ))}
             </div>
           </div>
-          <div className="px-2 py-1">
-            <span className="block text-[11px] font-medium text-gray-500">Wave colour</span>
-            <div className="mt-1 flex gap-1.5" role="radiogroup" aria-label="Wave colour">
-              {WAVE_ACCENTS.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={prefs.accent === entry.id}
-                  aria-label={entry.label}
-                  title={entry.label}
-                  onClick={() => onChange({ ...prefs, accent: entry.id })}
-                  className={`h-6 w-6 rounded-full border-2 ${
-                    prefs.accent === entry.id
-                      ? 'border-gray-900 dark:border-white'
-                      : 'border-transparent hover:border-gray-400'
-                  }`}
-                  style={{
-                    background:
-                      entry.colors.length > 3
-                        ? `conic-gradient(${entry.colors.join(', ')}, ${entry.colors[0]})`
-                        : entry.colors[1],
-                  }}
-                />
-              ))}
+          {(
+            [
+              { key: 'accent', label: 'Assistant wave' },
+              { key: 'userAccent', label: 'Your wave' },
+            ] as const
+          ).map((row) => (
+            <div key={row.key} className="px-2 py-1">
+              <span className="block text-[11px] font-medium text-gray-500">{row.label}</span>
+              <div className="mt-1 flex gap-1.5" role="radiogroup" aria-label={row.label}>
+                {WAVE_ACCENTS.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={prefs[row.key] === entry.id}
+                    aria-label={entry.label}
+                    title={entry.label}
+                    onClick={() => onChange({ ...prefs, [row.key]: entry.id })}
+                    className={`h-6 w-6 rounded-full border-2 ${
+                      prefs[row.key] === entry.id
+                        ? 'border-gray-900 dark:border-white'
+                        : 'border-transparent hover:border-gray-400'
+                    }`}
+                    style={{
+                      background:
+                        entry.colors.length > 3
+                          ? `conic-gradient(${entry.colors.join(', ')}, ${entry.colors[0]})`
+                          : entry.colors[1],
+                    }}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          ))}
           <div className="my-1 border-t border-gray-200 dark:border-gray-800" />
           <button
             type="button"

@@ -355,6 +355,7 @@ describe('parseVoicePrefs', () => {
         autoPlay: true,
         locale: 'en_gb',
         accent: 'violet',
+        userAccent: 'amber',
       })
     ).toEqual({
       voice: 'en-GB-SoniaNeural',
@@ -362,6 +363,7 @@ describe('parseVoicePrefs', () => {
       autoPlay: true,
       locale: 'en-GB',
       accent: 'violet',
+      userAccent: 'amber',
     });
   });
 
@@ -374,5 +376,6 @@ describe('parseVoicePrefs', () => {
     expect(parseVoicePrefs({ locale: 'english' }).locale).toBeNull();
     expect(parseVoicePrefs({ autoPlay: 'yes' }).autoPlay).toBe(false);
     expect(parseVoicePrefs({ accent: 'plaid' }).accent).toBe('rainbow');
+    expect(parseVoicePrefs({ userAccent: 'plaid' }).userAccent).toBe('emerald');
   });
 });

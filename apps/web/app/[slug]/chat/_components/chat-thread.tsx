@@ -128,7 +128,14 @@ export default function ChatThread({
     null none of this renders and none of it runs.
   */
   const [voicePrefs, setVoicePrefs] = useState<VoicePrefs>(
-    voice?.prefs ?? { voice: null, rate: 1, autoPlay: false, locale: null, accent: 'rainbow' }
+    voice?.prefs ?? {
+      voice: null,
+      rate: 1,
+      autoPlay: false,
+      locale: null,
+      accent: 'rainbow',
+      userAccent: 'emerald',
+    }
   );
   const [outputLevel, setOutputLevel] = useState(0);
   const [voiceMode, setVoiceMode] = useState(false);
@@ -628,7 +635,7 @@ export default function ChatThread({
               ? {
                   tenantId,
                   locale: voicePrefs.locale ?? voice.defaultLocale,
-                  accent: voicePrefs.accent,
+                  accent: voicePrefs.userAccent,
                 }
               : null
           }
@@ -658,6 +665,7 @@ export default function ChatThread({
           queueState={speech.owner === LIVE_REPLY_OWNER ? speech.state : 'idle'}
           running={running}
           accent={voicePrefs.accent}
+          userAccent={voicePrefs.userAccent}
           replyText={lastTurn ? replyProse(state.messages, lastTurn.id) : ''}
           onSend={(text) => queueOrSend({ text, attachments: [] })}
           onInterrupt={() => void stop()}

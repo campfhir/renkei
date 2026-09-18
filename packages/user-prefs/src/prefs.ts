@@ -465,8 +465,10 @@ export interface VoicePrefs {
   autoPlay: boolean;
   /** The language voice mode listens for; null means the org's default. */
   locale: string | null;
-  /** The colour of the wave that shows the voice: a rainbow, or one hue. */
+  /** The colour of the assistant's wave — a reply being read: a rainbow, or one hue. */
   accent: VoiceAccent;
+  /** The colour of the person's own wave — listening, dictating — distinct from the assistant's. */
+  userAccent: VoiceAccent;
 }
 
 export const VOICE_ACCENTS = ['rainbow', 'blue', 'violet', 'emerald', 'amber', 'rose'] as const;
@@ -478,6 +480,7 @@ export const DEFAULT_VOICE_PREFS: VoicePrefs = {
   autoPlay: false,
   locale: null,
   accent: 'rainbow',
+  userAccent: 'emerald',
 };
 
 export const MIN_VOICE_RATE = 0.5;
@@ -520,5 +523,6 @@ export function parseVoicePrefs(stored: unknown): VoicePrefs {
     autoPlay: boolOr(raw.autoPlay, DEFAULT_VOICE_PREFS.autoPlay),
     locale: localeOr(raw.locale, DEFAULT_VOICE_PREFS.locale),
     accent: isVoiceAccent(raw.accent) ? raw.accent : DEFAULT_VOICE_PREFS.accent,
+    userAccent: isVoiceAccent(raw.userAccent) ? raw.userAccent : DEFAULT_VOICE_PREFS.userAccent,
   };
 }

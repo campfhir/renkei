@@ -192,6 +192,7 @@ async function seedVoice(client: Client): Promise<void> {
         autoPlay: false,
         locale: 'en-GB',
         accent: 'rainbow',
+        userAccent: 'emerald',
       }),
     ]
   );
@@ -334,6 +335,7 @@ async function mockVendor(page: Page): Promise<void> {
           autoPlay: false,
           locale: 'en-GB',
           accent: 'rainbow',
+          userAccent: 'emerald',
         },
         voices: VOICES,
         voicesError: null,

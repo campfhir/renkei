@@ -200,40 +200,53 @@ export default function VoiceForm({
         />
       </label>
 
-      <fieldset className="mt-3">
-        <legend className="block text-sm font-medium">Wave colour</legend>
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          The wave that shows the voice in a conversation, and the bars beside the composer.
-        </p>
-        <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Wave colour">
-          {WAVE_ACCENTS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              role="radio"
-              aria-checked={prefs.accent === entry.id}
-              onClick={() => change({ ...prefs, accent: entry.id })}
-              className={`flex items-center gap-2 rounded-full border px-2 py-1 text-sm ${
-                prefs.accent === entry.id
-                  ? 'border-gray-900 dark:border-white'
-                  : 'border-gray-300 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800'
-              }`}
-            >
-              <span
-                aria-hidden="true"
-                className="h-4 w-4 rounded-full"
-                style={{
-                  background:
-                    entry.colors.length > 3
-                      ? `conic-gradient(${entry.colors.join(', ')}, ${entry.colors[0]})`
-                      : entry.colors[1],
-                }}
-              />
-              {entry.label}
-            </button>
-          ))}
-        </div>
-      </fieldset>
+      {(
+        [
+          {
+            key: 'accent',
+            label: 'Assistant wave',
+            hint: 'The wave while a reply is read, and the bars beside the composer.',
+          },
+          {
+            key: 'userAccent',
+            label: 'Your wave',
+            hint: 'The wave while you are heard in a conversation, and the bars while you dictate.',
+          },
+        ] as const
+      ).map((row) => (
+        <fieldset key={row.key} className="mt-3">
+          <legend className="block text-sm font-medium">{row.label}</legend>
+          <p className="text-xs text-gray-500 dark:text-gray-400">{row.hint}</p>
+          <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label={row.label}>
+            {WAVE_ACCENTS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="radio"
+                aria-checked={prefs[row.key] === entry.id}
+                onClick={() => change({ ...prefs, [row.key]: entry.id })}
+                className={`flex items-center gap-2 rounded-full border px-2 py-1 text-sm ${
+                  prefs[row.key] === entry.id
+                    ? 'border-gray-900 dark:border-white'
+                    : 'border-gray-300 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-4 w-4 rounded-full"
+                  style={{
+                    background:
+                      entry.colors.length > 3
+                        ? `conic-gradient(${entry.colors.join(', ')}, ${entry.colors[0]})`
+                        : entry.colors[1],
+                  }}
+                />
+                {entry.label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+      ))}
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button

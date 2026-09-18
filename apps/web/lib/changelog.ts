@@ -68,7 +68,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'A wave that moves with the voice',
         detail:
-          'In a voice conversation the voice is drawn as a wave in a soft glow that swells with your microphone while you talk and with the speaker while the assistant does; it drifts gently when there is nothing to hear. Pick its colour — a rainbow, or one hue — from the speaker menu or under Preferences.',
+          'In a voice conversation the voice is drawn as a wave in a soft glow that swells with your microphone while you talk and with the speaker while the assistant does; it drifts gently when there is nothing to hear. The assistant and you each have your own colour — a rainbow and emerald to start; pick either, or one hue, from the speaker menu or under Preferences.',
       },
       {
         kind: 'added',
