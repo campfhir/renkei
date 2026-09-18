@@ -371,7 +371,14 @@ export default function ChatThread({
     running,
     onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
   });
-  const overflow: OverflowItem[] = [];
+  const overflow: OverflowItem[] = [
+    {
+      label: 'New chat',
+      icon: ICONS.plus,
+      onSelect: () =>
+        router.push(`/${slug}/chat/new${chat.projectId ? `?project=${chat.projectId}` : ''}`),
+    },
+  ];
   if (codeProjectId) {
     overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
     if (isOwner)
