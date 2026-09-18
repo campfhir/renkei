@@ -46,6 +46,17 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'fixed',
+        title: 'No more flash of the app before the sign-in page',
+        detail:
+          'Opening any page while signed out — or with a session that had expired — could briefly show the menu and a loading skeleton before jumping to sign in. The check now happens before anything is sent, and you come back to the exact page you asked for, filters included.',
+      },
+    ],
+  },
+  {
+    date: null,
+    entries: [
+      {
         kind: 'added',
         title: 'Ask for a Jira issue’s change history',
         detail:

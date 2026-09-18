@@ -9,6 +9,11 @@
  * lives per route — which means the only thing standing between us and a
  * forgotten check is this test.
  *
+ * The tenant layout (app/[slug]/layout.tsx) ALSO redirects a signed-out
+ * visitor, but that is for the first byte, not for security: it stops the
+ * shell streaming before a page's guard fires. It never sees a client-side
+ * navigation, so it excuses no page from the rule below.
+ *
  * The rule: every `page.tsx` and every `route.ts` must either reference a
  * SESSION guard, or be named below with the mechanism that protects it
  * instead. A new file that does neither fails this test. Adding an entry is
