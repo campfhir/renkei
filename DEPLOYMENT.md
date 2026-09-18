@@ -764,6 +764,8 @@ The microphone tap is an audio worklet served as a static file (`apps/web/public
 
 **Private endpoint or custom domain.** A Speech resource reached through a private endpoint (or one with a custom subdomain enabled) is not served from the regional hosts. Set _Custom endpoint_ to the resource's base URL, `https://<name>.cognitiveservices.azure.com`, and Renkei uses Azure's custom-domain paths (`/tts/…` and `/stt/…`) under it instead; the region can then be left blank. The `web` container must be able to resolve and reach that name.
 
+**The assistant plays from one speaker, muffled, or with artefacts — but only in a voice conversation.** That is the platform, not the service: when a page opens the microphone with echo cancellation, macOS routes sound through its voice-processing path and a Bluetooth headset drops to its hands-free profile, and either can leave playback one-sided or degraded until the microphone closes. Read-aloud, which opens no microphone, is unaffected. The person turns off _Cancel echo on this device_ in the chat's speaker menu; playback is then left alone, the microphone is closed to speech while the assistant talks, and Stop is how a reply is interrupted. The choice is kept per browser.
+
 **What leaves for Azure.** Reply text for synthesis, and the person's recorded utterance for transcription — both over TLS from the server, never from the browser. Azure's data handling for Speech is covered by its standard terms; nothing is stored by Renkei beyond the chat's own text.
 
 ## Chat attachments (object storage)

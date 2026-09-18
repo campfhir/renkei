@@ -42,6 +42,8 @@ export interface DictationSetup {
   locale: string;
   /** The person's own wave colour — the bars while they dictate. */
   accent: WaveAccent;
+  /** This device's echo-cancellation choice (lib/voice/device-settings.ts). */
+  echoCancellation: boolean;
 }
 
 export interface ComposerSubmit {
@@ -128,8 +130,9 @@ export default function Composer({
   const startDictation = useCallback(async () => {
     if (!dictation || recorder.current) return;
     setDictationError(null);
-    const { tenantId: tenant, locale } = dictation;
+    const { tenantId: tenant, locale, echoCancellation } = dictation;
     const instance = new UtteranceRecorder({
+      echoCancellation,
       onSpeechStart: () => setHearing(true),
       onUtterance: (wav) => {
         void (async () => {

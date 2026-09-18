@@ -37,6 +37,7 @@ import { voiceClient } from '@/lib/voice/client';
 import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
 import { takeSpeakable } from '@/lib/voice/sentences';
 import { LIVE_REPLY_OWNER, replyProse, useReplySpeech } from '@/lib/voice/use-reply-speech';
+import { getEchoCancellation, setEchoCancellation } from '@/lib/voice/device-settings';
 import Modal from '@/components/modal';
 import ArtifactsMenu from './artifacts-menu';
 import ChatTitle from './chat-title';
@@ -144,6 +145,19 @@ export default function ChatThread({
     }
   );
   const [voiceMode, setVoiceMode] = useState(false);
+  // This device's echo-cancellation choice: read once mounted (there is
+  // no storage on the server), written the moment it is changed.
+  const [echoCancellation, setEchoCancellationState] = useState(true);
+  useEffect(() => {
+    setEchoCancellationState(getEchoCancellation(tenantId));
+  }, [tenantId]);
+  const changeEchoCancellation = useCallback(
+    (on: boolean) => {
+      setEchoCancellationState(on);
+      setEchoCancellation(tenantId, on);
+    },
+    [tenantId]
+  );
   const [speechQueue, setSpeechQueue] = useState<SpeechQueue | null>(null);
   const [speech, setSpeech] = useState<{ state: SpeechQueueState; owner: string | null }>({
     state: 'idle',
@@ -677,6 +691,7 @@ export default function ChatThread({
                   tenantId,
                   locale: voicePrefs.locale ?? voice.defaultLocale,
                   accent: voicePrefs.userAccent,
+                  echoCancellation,
                 }
               : null
           }
@@ -688,6 +703,8 @@ export default function ChatThread({
                 defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
                 queueState={speech.state}
                 levels={speechQueue}
+                echoCancellation={echoCancellation}
+                onEchoCancellation={changeEchoCancellation}
                 onChange={changeVoicePrefs}
                 onStopReading={stopReading}
                 onStartVoiceMode={() => setVoiceMode(true)}
@@ -707,6 +724,7 @@ export default function ChatThread({
           running={running}
           accent={voicePrefs.accent}
           userAccent={voicePrefs.userAccent}
+          echoCancellation={echoCancellation}
           replyText={lastTurn ? replyProse(state.messages, lastTurn.id) : ''}
           onSend={(text) => queueOrSend({ text, attachments: [] })}
           onInterrupt={() => void stop()}
