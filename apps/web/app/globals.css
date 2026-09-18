@@ -831,6 +831,56 @@ input[type='number']::-webkit-inner-spin-button {
 .chat-markdown th {
   background: var(--color-gray-100);
 }
+/*
+ * Narrow screens: a table can't fit its columns side by side without
+ * squeezing each to a few characters, so every row becomes a card of
+ * "Header: value" lines. The header row is dropped; each cell prints its
+ * column's header from the data-label the Markdown renderer attached.
+ */
+@media (width < 40rem) {
+  .chat-table {
+    overflow-x: visible;
+  }
+  .chat-markdown table,
+  .chat-markdown tbody,
+  .chat-markdown tr,
+  .chat-markdown td {
+    display: block;
+  }
+  .chat-markdown table {
+    width: 100%;
+    font-size: 0.95em;
+  }
+  .chat-markdown thead {
+    display: none;
+  }
+  .chat-markdown tbody tr {
+    border: 1px solid var(--color-gray-200);
+    border-radius: 0.5rem;
+    padding: 0.35em 0.7em;
+  }
+  .chat-markdown tbody tr + tr {
+    margin-top: 0.6em;
+  }
+  .chat-markdown td {
+    display: grid;
+    grid-template-columns: minmax(5.5em, 32%) minmax(0, 1fr);
+    column-gap: 0.7em;
+    border: 0;
+    padding: 0.3em 0;
+  }
+  .chat-markdown td + td {
+    border-top: 1px solid var(--color-gray-200);
+  }
+  .chat-markdown td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--color-gray-600);
+  }
+  .chat-markdown td:not([data-label])::before {
+    content: '';
+  }
+}
 .chat-markdown hr {
   border-color: var(--color-gray-200);
 }
@@ -903,6 +953,15 @@ input[type='number']::-webkit-inner-spin-button {
   :root:not([data-theme='light']) .chat-markdown td {
     border-color: var(--color-gray-700);
   }
+  :root:not([data-theme='light']) .chat-markdown td::before {
+    color: var(--color-gray-400);
+  }
+  @media (width < 40rem) {
+    :root:not([data-theme='light']) .chat-markdown tbody tr,
+    :root:not([data-theme='light']) .chat-markdown td + td {
+      border-color: var(--color-gray-800);
+    }
+  }
   :root:not([data-theme='light']) .chat-markdown hr {
     border-color: var(--color-gray-800);
   }
@@ -958,6 +1017,15 @@ input[type='number']::-webkit-inner-spin-button {
 :root[data-theme='dark'] .chat-markdown th,
 :root[data-theme='dark'] .chat-markdown td {
   border-color: var(--color-gray-700);
+}
+:root[data-theme='dark'] .chat-markdown td::before {
+  color: var(--color-gray-400);
+}
+@media (width < 40rem) {
+  :root[data-theme='dark'] .chat-markdown tbody tr,
+  :root[data-theme='dark'] .chat-markdown td + td {
+    border-color: var(--color-gray-800);
+  }
 }
 :root[data-theme='dark'] .chat-markdown hr {
   border-color: var(--color-gray-800);

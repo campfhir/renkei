@@ -6,6 +6,10 @@
  * skipped rather than injected, and the only overrides are ones that make
  * the output safe and usable (links open elsewhere and never carry a
  * referrer, code blocks copy, tables scroll instead of widening the page).
+ * Each body cell also carries its column header as `data-label`, so on
+ * narrow screens the stylesheet can stack a row into a "Header: value" card
+ * instead of squeezing every column into a few characters' width. Copying
+ * a selection that spans a table writes it back out as a Markdown table.
  * Token colors live in globals.css under `.chat-markdown` for both schemes.
  */
 
@@ -13,6 +17,57 @@ import { useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { copySelectionWithMarkdownTables } from './copy-tables-as-markdown';
+
+/** The slice of a hast node this file walks; hast's own types aren't a direct dependency. */
+type HastNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
+/** All text under a node, for a header cell's label. */
+function hastText(node: HastNode): string {
+  if (node.type === 'text') return node.value ?? '';
+  return (node.children ?? []).map(hastText).join('');
+}
+
+/** The rows of a table, whether or not they sit inside thead/tbody. */
+function tableRows(table: HastNode): HastNode[] {
+  return (table.children ?? []).flatMap((child) =>
+    child.tagName === 'tr' ? [child] : (child.children ?? []).filter((row) => row.tagName === 'tr')
+  );
+}
+
+/**
+ * Rehype plugin: gives every <td> a `data-label` holding its column's header
+ * text, so the stylesheet can print it before the value when the table is
+ * shown as cards. Cells past the header row's width are left unlabelled.
+ */
+function rehypeTableLabels() {
+  return (tree: HastNode) => {
+    const walk = (node: HastNode) => {
+      if (node.tagName === 'table') {
+        const rows = tableRows(node);
+        const headers = (rows[0]?.children ?? [])
+          .filter((cell) => cell.tagName === 'th')
+          .map((cell) => hastText(cell).trim());
+        for (const row of rows) {
+          const cells = (row.children ?? []).filter((cell) => cell.tagName === 'td');
+          cells.forEach((cell, index) => {
+            const label = headers[index];
+            if (label) cell.properties = { ...cell.properties, dataLabel: label };
+          });
+        }
+        return;
+      }
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree);
+  };
+}
 
 function CodeBlock({ children }: { children?: ReactNode }) {
   const [copied, setCopied] = useState(false);
@@ -51,10 +106,18 @@ function textOf(node: ReactNode): string {
 
 export default function Markdown({ text }: { text: string }) {
   return (
-    <div className="chat-markdown">
+    <div
+      className="chat-markdown"
+      onCopy={(event) => {
+        copySelectionWithMarkdownTables(event.nativeEvent);
+      }}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+        rehypePlugins={[
+          [rehypeHighlight, { detect: false, ignoreMissing: true }],
+          rehypeTableLabels,
+        ]}
         skipHtml
         components={{
           a: ({ href, children }) => (
@@ -64,7 +127,7 @@ export default function Markdown({ text }: { text: string }) {
           ),
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           table: ({ children }) => (
-            <div className="overflow-x-auto">
+            <div className="chat-table overflow-x-auto">
               <table>{children}</table>
             </div>
           ),
