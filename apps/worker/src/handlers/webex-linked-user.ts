@@ -159,6 +159,8 @@ export async function resolveLinkedWebexUserAccess(
 export interface WebexUserGrantAccess {
   accessToken: string;
   subject: string;
+  /** The WebEx address the grant recorded — how the org bot addresses this person. */
+  personEmail: string | null;
 }
 
 /**
@@ -207,7 +209,11 @@ export async function resolveWebexUserAccessByAccount(
     grant = { ...grant, accessToken: refreshed.val.accessToken };
   }
 
-  return { accessToken: grant.accessToken, subject: row.subject };
+  return {
+    accessToken: grant.accessToken,
+    subject: row.subject,
+    personEmail: typeof grant.metadata.personEmail === 'string' ? grant.metadata.personEmail : null,
+  };
 }
 
 /**

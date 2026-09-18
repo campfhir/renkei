@@ -46,6 +46,7 @@ function handlerWith(options: {
     resolveAccess: async () => ({
       accessToken: 'token',
       subject: 'watcher@example.com',
+      personEmail: null,
       accountId: WATCHER_ACCOUNT,
     }),
     makeClient: () => ({

@@ -127,9 +127,8 @@ export function WebexUserForm({ slug, origin }: { slug: string; origin: string |
         >
           Integration
         </a>{' '}
-        (not the bot) through which each person grants Renkei read access to their own WebEx — rooms
-        they are in, messages they can see. Its redirect URI must be <CallbackUrl origin={origin} />
-        .
+        (not the bot) through which each person grants Renkei access to their own WebEx — rooms they
+        are in, messages they can see. Its redirect URI must be <CallbackUrl origin={origin} />.
       </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>

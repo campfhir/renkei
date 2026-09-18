@@ -44,6 +44,18 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'WebEx notes that show as unread',
+    entries: [
+      {
+        kind: 'added',
+        title: 'A WebEx bot that leaves you notes',
+        detail:
+          'Your organization can add a WebEx bot under Connector setup. With one, every note Renkei leaves you — a digest, a reminder, an agent saying what it did — arrives as a direct message from the bot, so WebEx shows it unread and notifies you. A note posted to your own "Note to Self" space is yours, which is why WebEx has always shown those as already read; without a bot, notes still go there.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Voice',
     entries: [
       {

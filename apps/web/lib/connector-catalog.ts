@@ -200,6 +200,22 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    capabilityKey: 'webex-bot',
+    configKey: 'webex-bot',
+    label: 'WebEx bot',
+    summary:
+      'Optional. A bot that leaves people their WebEx notes (digests, reminders, an agent’s ' +
+      'receipts) as a direct message, so they arrive unread; without one, notes go to each ' +
+      'person’s own "Note to Self" space, which WebEx shows as already read. Reads nothing and ' +
+      'registers no tools of its own.',
+    toolPrefix: '(notes to people)',
+    category: 'communications',
+    keywords: ['bot', 'notifications', 'notes', 'unread', 'badge', 'cisco'],
+    grantProviders: [],
+    userConnectable: false,
+    togglable: false,
+  },
+  {
     capabilityKey: 'zoom',
     configKey: 'zoom',
     label: 'Zoom',

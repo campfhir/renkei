@@ -15,8 +15,11 @@ jest.mock('@renkei/user-prefs', () => ({
   getNotificationPrefs: jest.fn(),
 }));
 jest.mock('@renkei/connector-webex', () => ({
+  ...jest.requireActual('@renkei/connector-webex'),
   WebexClient: jest.fn().mockImplementation(() => ({ sendNoteToSelf: jest.fn() })),
 }));
+// No org bot here: the note goes to the solo space with the user's token.
+jest.mock('@/lib/webex-bot', () => ({ webexBotClient: jest.fn(async () => null) }));
 jest.mock('@/lib/mcp-tools/graph/client', () => ({
   resolveGraphAccess: jest.fn(),
   graphPost: jest.fn(),
@@ -76,7 +79,10 @@ function prefs(
 ): NotificationPrefs {
   return {
     ...DEFAULT_NOTIFICATION_PREFS,
-    agentEditedByOthers: { ...DEFAULT_NOTIFICATION_PREFS.agentEditedByOthers, ...agentEditedByOthers },
+    agentEditedByOthers: {
+      ...DEFAULT_NOTIFICATION_PREFS.agentEditedByOthers,
+      ...agentEditedByOthers,
+    },
     agentOverrides,
   };
 }
@@ -115,9 +121,7 @@ beforeEach(() => {
 
 describe('notifyAgentEdited', () => {
   it('sends nothing on any channel when every effective preference is off', async () => {
-    mockGetNotificationPrefs.mockResolvedValue(
-      prefs({ app: false, email: false, webex: false })
-    );
+    mockGetNotificationPrefs.mockResolvedValue(prefs({ app: false, email: false, webex: false }));
 
     edit();
     await flush();
@@ -128,9 +132,7 @@ describe('notifyAgentEdited', () => {
   });
 
   it('writes the App row when only App is wanted', async () => {
-    mockGetNotificationPrefs.mockResolvedValue(
-      prefs({ app: true, email: false, webex: false })
-    );
+    mockGetNotificationPrefs.mockResolvedValue(prefs({ app: true, email: false, webex: false }));
 
     edit();
     await flush();
@@ -143,9 +145,7 @@ describe('notifyAgentEdited', () => {
   });
 
   it('sends only Outlook mail when only email is wanted', async () => {
-    mockGetNotificationPrefs.mockResolvedValue(
-      prefs({ app: false, email: true, webex: false })
-    );
+    mockGetNotificationPrefs.mockResolvedValue(prefs({ app: false, email: true, webex: false }));
 
     edit();
     await flush();
@@ -157,10 +157,10 @@ describe('notifyAgentEdited', () => {
   });
 
   it('sends only a WebEx note when only webex is wanted', async () => {
-    mockGetNotificationPrefs.mockResolvedValue(
-      prefs({ app: false, email: false, webex: true })
-    );
-    const sendNoteToSelf = jest.fn().mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
+    mockGetNotificationPrefs.mockResolvedValue(prefs({ app: false, email: false, webex: true }));
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
     edit();
@@ -190,9 +190,7 @@ describe('notifyAgentEdited', () => {
   });
 
   it('never throws when a channel errors', async () => {
-    mockGetNotificationPrefs.mockResolvedValue(
-      prefs({ app: false, email: true, webex: true })
-    );
+    mockGetNotificationPrefs.mockResolvedValue(prefs({ app: false, email: true, webex: true }));
     mockGraphPost.mockRejectedValue(new Error('graph is down'));
     const sendNoteToSelf = jest.fn().mockRejectedValue(new Error('webex is down'));
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));

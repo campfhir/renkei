@@ -14,7 +14,9 @@
  * Read-and-capture only: list rooms, read messages, turn one into an
  * actionable item, stage a message's attachments in the caller's sandbox
  * scratch space. Nothing here posts to WebEx as the user except
- * webex_send_message, on explicit request.
+ * webex_send_message, on explicit request — and webex_note_to_self, which
+ * prefers to post as the org's bot (lib/webex-bot.ts) so the note arrives
+ * unread, and only speaks as the user when there is no bot.
  */
 
 import { z } from 'zod';
@@ -38,6 +40,7 @@ import {
   newPreviewId,
 } from '../widgets';
 import { resolveWebexAccess, type WebexAuth } from './webex-auth';
+import { webexBotClient } from '@/lib/webex-bot';
 
 /**
  * The capability key the WebEx user tools register under. 'webex' — the same
@@ -1110,11 +1113,12 @@ export async function registerWebexUserTools(
     {
       title: 'WebEx · Act — Send yourself a note',
       description:
-        'Post a message to the connected user’s private note-to-self space — reminders, ' +
-        'digests, focus lists addressed to the user themself. WebEx cannot deliver a 1:1 ' +
-        'message to your own address, so this is THE way to WebEx yourself: it finds a space ' +
-        'containing only the user (creating one titled "Note to Self" if none exists) and ' +
-        'posts there. Markdown supported.',
+        'Leave the connected user a WebEx note — reminders, digests, focus lists addressed to ' +
+        'the user themself. WebEx cannot deliver a 1:1 message to your own address, so this is ' +
+        'THE way to WebEx yourself. When the org has a WebEx bot, the note arrives as a direct ' +
+        'message from it, unread and with a notification; otherwise it goes into a space ' +
+        'containing only the user (created as "Note to Self" if none exists), which WebEx ' +
+        'shows as already read. Markdown supported.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         markdown: z.string().min(1).describe('Note body, WebEx markdown'),
@@ -1124,6 +1128,48 @@ export async function registerWebexUserTools(
       const markdown = str(args.markdown);
       if (!markdown) return errText('markdown is required');
       const scopes = webexScopeFor('webex_note_to_self');
+
+      // The bot first, when the org has one: a note the user posts to
+      // themself is read the instant it lands (it is theirs), and the API
+      // cannot mark it unread; a direct message FROM the bot arrives unread
+      // with WebEx's own notification. The bot needs the user's address,
+      // which their grant recorded; a bot that cannot deliver (revoked
+      // token, an org policy on bots) falls through to the solo space
+      // below rather than losing the note.
+      const bot = await webexBotClient(context.tenantId);
+      if (bot) {
+        const access = await resolveWebexAccess(context);
+        const personEmail = typeof access === 'string' ? null : access.personEmail;
+        const viaBot = personEmail
+          ? await bot.postMessage({ toPersonEmail: personEmail, markdown })
+          : null;
+        if (viaBot?.ok && viaBot.val.roomId) {
+          await recordSentWebexMessage(context.tenantId, viaBot.val.id, context.accountId);
+          logger.info('webex_note_to_self sent', {
+            component: 'mcp/tool',
+            tenantId: context.tenantId,
+            roomId: viaBot.val.roomId,
+            via: 'bot',
+          });
+          const dmUrl = webexSpaceUrl(viaBot.val.roomId, viaBot.val.id);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text:
+                  `Sent as a direct message from the org's WebEx bot, so it shows as unread ` +
+                  `(room ${viaBot.val.roomId}, message id ${viaBot.val.id}).`,
+              },
+            ],
+            ...(dmUrl ? { _meta: actMeta({ url: dmUrl }) } : {}),
+          };
+        }
+        logger.warn('webex_note_to_self: the bot could not deliver; posting to the solo space', {
+          component: 'mcp/tool',
+          tenantId: context.tenantId,
+          reason: personEmail ? 'bot send failed' : 'no personEmail on the grant',
+        });
+      }
 
       // Only group rooms can hold a single person — a direct room always has
       // two. Title matches are probed first, so the space this tool creates
@@ -1193,6 +1239,7 @@ export async function registerWebexUserTools(
         tenantId: context.tenantId,
         roomId,
         created,
+        via: 'self',
       });
       const noteRoomUrl = webexSpaceUrl(roomId, str(sent.id));
       return {

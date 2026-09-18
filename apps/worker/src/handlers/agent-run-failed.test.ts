@@ -12,11 +12,16 @@ jest.mock('@renkei/user-prefs', () => ({
 }));
 jest.mock('@renkei/connector-microsoft', () => ({ graphRequest: jest.fn() }));
 jest.mock('@renkei/connector-webex', () => ({
+  ...jest.requireActual('@renkei/connector-webex'),
   WebexClient: jest.fn().mockImplementation(() => ({ sendNoteToSelf: jest.fn() })),
 }));
 jest.mock('./microsoft-access', () => ({ resolveMicrosoftAccess: jest.fn() }));
 jest.mock('./webex-linked-user', () => ({ resolveWebexUserAccessBySubject: jest.fn() }));
-jest.mock('./feed-url', () => ({ registrationUrl: jest.fn(async () => 'https://renkei.example.com') }));
+// No org bot here: the note goes to the solo space with the owner's token.
+jest.mock('./webex-bot', () => ({ webexBotClient: jest.fn(async () => null) }));
+jest.mock('./feed-url', () => ({
+  registrationUrl: jest.fn(async () => 'https://renkei.example.com'),
+}));
 jest.mock('../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
@@ -90,7 +95,7 @@ beforeEach(() => {
     provider_grants: { provider_account_id: 'ms-account-1' },
   });
   mockResolveMicrosoftAccess.mockResolvedValue({ accessToken: 'ms-token' });
-  mockResolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token' });
+  mockResolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
   mockGraphRequest.mockResolvedValue({ ok: true });
 });
 
@@ -119,7 +124,9 @@ describe('agent-run-failed handler', () => {
 
   it('sends only WebEx when only runFailed.webex is on', async () => {
     mockGetNotificationPrefs.mockResolvedValue(prefs({ email: false, webex: true }));
-    const sendNoteToSelf = jest.fn().mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
     await createAgentRunFailedHandler()(event());
@@ -133,7 +140,9 @@ describe('agent-run-failed handler', () => {
 
   it('sends both when both preferences are on', async () => {
     mockGetNotificationPrefs.mockResolvedValue(prefs({ email: true, webex: true }));
-    const sendNoteToSelf = jest.fn().mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
     await createAgentRunFailedHandler()(event());
@@ -151,7 +160,7 @@ describe('agent-run-failed handler', () => {
     await expect(createAgentRunFailedHandler()(event())).resolves.toBeUndefined();
   });
 
-  it('lets the failing agent\'s own override reach WebEx even when the general preference is off', async () => {
+  it("lets the failing agent's own override reach WebEx even when the general preference is off", async () => {
     mockGetNotificationPrefs.mockResolvedValue({
       ...DEFAULT_NOTIFICATION_PREFS,
       runFailed: { app: true, email: false, webex: false },
@@ -159,7 +168,9 @@ describe('agent-run-failed handler', () => {
         'agent-1': { runFailed: { app: true, email: false, webex: true } },
       },
     });
-    const sendNoteToSelf = jest.fn().mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
     await createAgentRunFailedHandler()(event());

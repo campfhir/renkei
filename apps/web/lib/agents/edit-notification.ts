@@ -19,12 +19,12 @@
 
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
-import { WebexClient } from '@renkei/connector-webex';
 import { effectiveDelivery, getNotificationPrefs } from '@renkei/user-prefs';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { resolveGraphAccess, graphPost } from '@/lib/mcp-tools/graph/client';
 import { resolveWebexUserAccess } from '@/lib/webex-user-access';
+import { sendWebexNote } from '@/lib/webex-note';
 import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
 
@@ -120,8 +120,7 @@ export function notifyAgentEdited(input: {
     if (wanted.webex) {
       const access = await resolveWebexUserAccess(input.tenantId, input.ownerSubject);
       if (access) {
-        const client = new WebexClient(access.accessToken);
-        const sent = await client.sendNoteToSelf(`**${headline}**`);
+        const sent = await sendWebexNote(input.tenantId, access, `**${headline}**`);
         if (!sent.ok) {
           logger.warn('agent-edited WebEx note not sent for agent {agentId}', {
             component: 'agents/edit-notification',

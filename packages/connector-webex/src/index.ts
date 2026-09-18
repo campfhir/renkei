@@ -16,8 +16,10 @@
  *    live with the requesting user's own token (createWebexUserAccessVerifier).
  *
  * Ingestion is user-scoped — each watcher's own all-spaces webhook and
- * token (there is no bot). The connectors page toggle discloses exactly
- * what is indexed; changing what enters knowledge means changing that copy.
+ * token; no bot reads anything. The one bot (WEBEX_BOT_CONNECTOR, optional)
+ * only ever posts notes TO a person, so they arrive unread — see
+ * sendNoteToPerson. The connectors page toggle discloses exactly what is
+ * indexed; changing what enters knowledge means changing that copy.
  */
 
 /** The connector key used in connector_configs, capability descriptors, and event rows. */
@@ -32,6 +34,10 @@ export {
 export {
   WebexClient,
   webexNextPagePath,
+  sendNoteToPerson,
+  WEBEX_BOT_CONNECTOR,
+  type NoteDelivery,
+  type NoteToPerson,
   type WebexMessage,
   type WebexPerson,
   type WebexRoom,

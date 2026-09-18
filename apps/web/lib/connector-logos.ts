@@ -25,6 +25,8 @@ export const LOGO_FILE: Record<string, string> = {
   // OnBase Administration is a separate connector/capability key from
   // 'onbase', but the same Hyland product and the same mark.
   'onbase-admin': 'onbase',
+  // The WebEx bot is a second registration of the same product.
+  'webex-bot': 'webex',
 };
 
 /**

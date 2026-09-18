@@ -320,7 +320,7 @@ function registerAllHandlers(handled: Handled[]): void {
   // for the old bot replies — what matters is that interactive webex events
   // finish fast while the embedding queue is saturated or wedged.
   const webexHandler = createWebexUserMessageHandler({
-    resolveAccess: async () => ({ accessToken: 'user-token', subject: 'watcher-1' }),
+    resolveAccess: async () => ({ accessToken: 'user-token', subject: 'watcher-1', personEmail: null }),
     makeClient: () => webexClientStub(),
   });
   registerHandler('webex', 'user-message.created', async (event) => {

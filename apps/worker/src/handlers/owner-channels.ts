@@ -11,16 +11,19 @@
  * news regardless. Notification is reach, never the record.
  *
  * Email goes from the owner's Outlook to the owner's recorded address (the
- * identities row); WebEx is a note-to-self, since WebEx cannot deliver a
- * 1:1 message to your own address — see WebexClient.sendNoteToSelf.
+ * identities row); WebEx is a direct message from the org's bot when there
+ * is one (it arrives unread — see handlers/webex-bot.ts), else a note in
+ * the owner's own solo space, since WebEx cannot deliver a 1:1 message to
+ * your own address — see sendNoteToPerson.
  */
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { graphRequest } from '@renkei/connector-microsoft';
-import { WebexClient } from '@renkei/connector-webex';
+import { WebexClient, sendNoteToPerson } from '@renkei/connector-webex';
 import { resolveMicrosoftAccess } from './microsoft-access';
 import { resolveWebexUserAccessBySubject } from './webex-linked-user';
+import { webexBotClient } from './webex-bot';
 import { logger } from '../logger';
 
 export interface OwnerChannelMessage {
@@ -87,13 +90,17 @@ export async function deliverToOwnerChannels(
     }
   }
 
-  // Channel 2: a WebEx note-to-self from the owner's own WebEx grant.
+  // Channel 2: a WebEx note — from the org's bot, else the owner's own grant.
   if (message.webex) {
     try {
       const access = await resolveWebexUserAccessBySubject(tenantId, ownerSubject);
       if (access) {
-        const client = new WebexClient(access.accessToken);
-        const sent = await client.sendNoteToSelf(`**${message.heading}**\n\n${message.body}`);
+        const sent = await sendNoteToPerson({
+          bot: await webexBotClient(tenantId),
+          user: new WebexClient(access.accessToken),
+          personEmail: access.personEmail,
+          markdown: `**${message.heading}**\n\n${message.body}`,
+        });
         if (!sent.ok) logger.warn('owner WebEx note not sent', message.log);
       }
     } catch (error) {

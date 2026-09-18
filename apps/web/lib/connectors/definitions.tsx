@@ -28,6 +28,7 @@ import {
   AtlassianBitbucketForm,
 } from '@/app/[slug]/admin/connectors/forms/atlassian-forms';
 import { WebexUserForm } from '@/app/[slug]/admin/connectors/forms/webex-user-form';
+import { WebexBotForm } from '@/app/[slug]/admin/connectors/forms/webex-bot-form';
 import { MicrosoftForm } from '@/app/[slug]/admin/connectors/forms/microsoft-form';
 import { ZoomForm } from '@/app/[slug]/admin/connectors/forms/zoom-form';
 import { OnBaseForm } from '@/app/[slug]/admin/connectors/forms/onbase-form';
@@ -64,6 +65,7 @@ const FORMS: Record<string, ComponentType<AdminFormProps>> = {
   'atlassian-confluence': AtlassianConfluenceForm,
   'atlassian-bitbucket': AtlassianBitbucketForm,
   'webex-user': WebexUserForm,
+  'webex-bot': WebexBotForm,
   microsoft: MicrosoftForm,
   zoom: ZoomForm,
   onbase: OnBaseForm,
