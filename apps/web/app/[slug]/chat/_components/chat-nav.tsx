@@ -101,7 +101,13 @@ export function ChatList({
           aria-label="Find a chat"
           className="min-w-0 flex-1 bg-transparent px-2 py-1 text-sm outline-none"
         />
-        <StateFilter states={states} onChange={setStates} counts={counts} />
+        <StateFilter
+          states={states}
+          onChange={setStates}
+          counts={counts}
+          filter={filter}
+          onClearSearch={() => setFilter('')}
+        />
       </div>
       <nav aria-label="Chats">
         {groups.length === 0 && shared.length === 0 ? (
@@ -165,10 +171,14 @@ function StateFilter({
   states,
   onChange,
   counts,
+  filter,
+  onClearSearch,
 }: {
   states: { active: boolean; archived: boolean };
   onChange: (states: { active: boolean; archived: boolean }) => void;
   counts: { active: number; archived: number };
+  filter: string;
+  onClearSearch: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -219,6 +229,22 @@ function StateFilter({
           </p>
           {option('active', 'Active')}
           {option('archived', 'Archived')}
+          {filter ? (
+            <>
+              <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+              <button
+                type="button"
+                onClick={() => {
+                  onClearSearch();
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+              >
+                <Icon path={ICONS.close} className="h-4 w-4" strokeWidth={2.4} />
+                Clear search
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
