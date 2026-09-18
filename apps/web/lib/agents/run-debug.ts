@@ -15,6 +15,7 @@ import {
   isAgentStepsDoc,
   walkSteps,
 } from '@renkei/agents';
+import { TOOL_RESULT_CHARS } from '@renkei/agents/step-prompts';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import { activityHeadline, runActivity } from '@/lib/agents/run-actions';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
@@ -303,7 +304,21 @@ function attemptLines(
     lines.push(`  Tool call: ${tool}${flags ? ` (${flags})` : ''}`);
     if (str(entry.argsPreview)) lines.push(`    args: ${str(entry.argsPreview)}`);
     if (str(entry.resultPreview)) {
-      lines.push(`    result: ${str(entry.resultPreview).replace(/\n/g, '\n    ')}`);
+      // The stored preview is a 2 000-char display clip; the model read the
+      // result whole up to TOOL_RESULT_CHARS. Say which where the preview
+      // ends, or a reader takes the short log for what the model saw and
+      // hunts a truncation that never reached the model.
+      const preview = str(entry.resultPreview);
+      const total = typeof entry.resultChars === 'number' ? entry.resultChars : null;
+      const shown =
+        total !== null && total > preview.length
+          ? ` (preview of ${total.toLocaleString('en-US')} chars; ${
+              total > TOOL_RESULT_CHARS
+                ? `the model read the first ${TOOL_RESULT_CHARS.toLocaleString('en-US')}`
+                : 'the model read all of it'
+            })`
+          : '';
+      lines.push(`    result${shown}: ${preview.replace(/\n/g, '\n    ')}`);
     }
   }
   return lines;

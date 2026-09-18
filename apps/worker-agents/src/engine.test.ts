@@ -1603,6 +1603,69 @@ maybe('agent run engine', () => {
     expect(detail.saveValue).toBe('n'.repeat(12_000) + '… [truncated]');
   });
 
+  it('hands the model a long tool result whole, and names the loss when the cap bites', async () => {
+    // Regression: the tool_result the model read was clipped at an unnamed
+    // 8 000 chars with a bare "[truncated]" marker, so a component list of
+    // a few dozen rows reached the model cut off mid-item while the run
+    // record's 2 000-char preview made it look like a display artefact.
+    const rows = Array.from({ length: 400 }, (_, i) => `component-${i}: Tapestry - Area ${i}`);
+    const long = rows.join('\n'); // ~13 000 chars: past the old cap, under the new one
+    const huge = 'x'.repeat(60_000 + 5_000);
+    const seenByModel: string[] = [];
+    const llm = stubLlm((request, call) => {
+      for (const message of request.messages) {
+        for (const block of message.content) {
+          if (block.type === 'tool_result' && typeof block.content === 'string') {
+            seenByModel.push(block.content);
+          }
+        }
+      }
+      if (call === 0) return useTool('jira_get_issue', { issueKey: 'long' });
+      if (call === 1) return useTool('jira_get_issue', { issueKey: 'huge' });
+      return finish('success');
+    });
+    const { runId } = await seedRun(singleStep());
+    let served = 0;
+    await handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => {
+        served += 1;
+        return {
+          content: [{ type: 'text', text: served === 1 ? long : huge }],
+          isError: false,
+          meta: {},
+        };
+      })
+    )({ payload: { runId } });
+
+    // The long-but-bounded result arrived intact: last row present, no marker.
+    const sawLong = seenByModel.find((text) => text.startsWith('component-0:'));
+    expect(sawLong).toBe(long);
+    expect(sawLong).toContain('component-399: Tapestry - Area 399');
+    expect(sawLong).not.toContain('[truncated');
+    // The over-cap result was cut at the cap, and the marker says by how much.
+    const sawHuge = seenByModel.find((text) => text.startsWith('xxxx'));
+    expect(sawHuge).toBeDefined();
+    expect(sawHuge).toContain('x'.repeat(60_000));
+    expect(sawHuge).not.toContain('x'.repeat(60_001));
+    expect(sawHuge).toContain('[truncated: 5000 more characters were cut to fit');
+
+    // The row keeps a display preview plus the full length, so a reader can
+    // tell a short preview from a short result.
+    const row = await db
+      .selectFrom('agent_run_steps')
+      .select('detail')
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    const detail: { toolCalls?: Array<{ resultPreview?: string; resultChars?: number }> } =
+      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+        ? row.detail
+        : {};
+    expect(detail.toolCalls?.[0]?.resultChars).toBe(long.length);
+    expect(detail.toolCalls?.[0]?.resultPreview?.length).toBeLessThan(long.length);
+    expect(detail.toolCalls?.[1]?.resultChars).toBe(huge.length);
+  });
+
   it('names the failed step in the warning it logs', async () => {
     // Regression: current_step_id was written to the row and never to the
     // in-memory run, so the name lookup read the value the run STARTED with
