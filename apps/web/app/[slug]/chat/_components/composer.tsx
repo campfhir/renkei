@@ -23,6 +23,7 @@ import Modal from '@/components/modal';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
 import { UtteranceRecorder } from '@/lib/voice/recorder';
+import { LevelEmitter } from '@/lib/voice/levels';
 import { voiceClient } from '@/lib/voice/client';
 import AttachmentChip from './attachment-chip';
 import PromptPicker from './prompt-picker';
@@ -112,15 +113,17 @@ export default function Composer({
   // is transcribed and appended to whatever is in the box.
   const [dictating, setDictating] = useState(false);
   const [hearing, setHearing] = useState(false);
-  const [micLevel, setMicLevel] = useState(0);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const recorder = useRef<UtteranceRecorder | null>(null);
+  // The microphone's loudness goes to the bars by subscription, never
+  // through state: a render per reading would redraw the whole composer.
+  const micLevels = useRef(new LevelEmitter());
   const stopDictation = useCallback(() => {
     recorder.current?.stop();
     recorder.current = null;
     setDictating(false);
     setHearing(false);
-    setMicLevel(0);
+    micLevels.current.emit(0);
   }, []);
   const startDictation = useCallback(async () => {
     if (!dictation || recorder.current) return;
@@ -144,7 +147,7 @@ export default function Composer({
           textareaRef.current?.focus();
         })();
       },
-      onLevel: (next) => setMicLevel((prev) => (Math.abs(prev - next) > 0.03 ? next : prev)),
+      onLevel: (next) => micLevels.current.emit(next),
       onError: (message) => {
         setDictationError(message);
         stopDictation();
@@ -443,14 +446,17 @@ export default function Composer({
               aria-label={dictating ? 'Stop dictating' : 'Dictate'}
               title={dictating ? 'Stop dictating' : 'Dictate: speak into the box'}
               disabled={disabled}
-              className={`flex items-center gap-1 rounded-md p-1.5 disabled:opacity-40 ${
+              className={`flex items-center justify-center rounded-md p-1.5 disabled:opacity-40 ${
                 dictating
                   ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/40'
                   : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
               }`}
             >
               {dictating ? (
-                <VoiceWaveIcon level={hearing ? micLevel : null} accent={dictation.accent} />
+                <VoiceWaveIcon
+                  levels={hearing ? micLevels.current : null}
+                  accent={dictation.accent}
+                />
               ) : (
                 <Icon path={ICONS.microphone} className="h-5 w-5" />
               )}

@@ -16,6 +16,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { VoiceAccent } from '@renkei/user-prefs/prefs';
+import type { LevelSource } from '@/lib/voice/levels';
 
 export type WaveAccent = VoiceAccent;
 
@@ -39,15 +40,15 @@ export function accentColors(accent: WaveAccent): string[] {
 export type WaveTone = 'listening' | 'speaking' | 'thinking' | 'idle';
 
 export default function VoiceWave({
-  level,
+  levels,
   tone,
   accent,
   width = 320,
   height = 160,
   className,
 }: {
-  /** The sound right now, 0–1: microphone while listening, speaker while speaking. */
-  level: number;
+  /** Where the sound is read from: the microphone while listening, the speaker while speaking; null for none. */
+  levels: LevelSource | null;
   tone: WaveTone;
   accent: WaveAccent;
   width?: number;
@@ -57,8 +58,23 @@ export default function VoiceWave({
   const canvas = useRef<HTMLCanvasElement>(null);
   const glow = useRef<HTMLDivElement>(null);
   // The latest inputs, read by the animation loop without restarting it.
-  const inputs = useRef({ level, tone, accent });
-  inputs.current = { level, tone, accent };
+  // The level arrives by subscription, never through a render.
+  const inputs = useRef({ level: 0, tone, accent });
+  inputs.current.tone = tone;
+  inputs.current.accent = accent;
+  useEffect(() => {
+    if (!levels) {
+      inputs.current.level = 0;
+      return;
+    }
+    const unsubscribe = levels.subscribeLevel((level) => {
+      inputs.current.level = level;
+    });
+    return () => {
+      unsubscribe();
+      inputs.current.level = 0;
+    };
+  }, [levels]);
 
   useEffect(() => {
     const element = canvas.current;
@@ -148,8 +164,10 @@ export default function VoiceWave({
   }, [width, height]);
 
   return (
+    // Fixed size and contained: however the glow swells or the wave
+    // moves, nothing outside this box is laid out again.
     <div
-      className={`relative flex items-center justify-center ${className ?? ''}`}
+      className={`voice-wave relative flex items-center justify-center ${className ?? ''}`}
       style={{ width, height }}
       aria-hidden="true"
     >
@@ -164,41 +182,66 @@ export default function VoiceWave({
 }
 
 /**
- * The small wave in a button: five bars that dance to the level when one
- * is given, and on their own when none is — a reply being read, a
+ * The small wave in a button: five bars that dance to the level when a
+ * source is given, and on their own when none is — a reply being read, a
  * microphone listening. Anchored on the centre line, so each bar grows
  * up and down like a waveform rather than rising from a floor.
+ *
+ * Nothing here reaches the layout: the box is a fixed 20×20 and
+ * contained, and the bars move by transform alone, set straight on the
+ * elements from the level subscription — no render, no reflow, no
+ * baseline for a button to follow. Only the animation moves.
  */
 export function VoiceWaveIcon({
-  level,
+  levels,
   accent,
   className,
 }: {
-  level?: number | null;
+  /** The sound to follow; null lets the bars dance on their own. */
+  levels?: LevelSource | null;
   accent: WaveAccent;
   className?: string;
 }) {
   const colors = accentColors(accent);
-  const heights = [0.45, 0.8, 1, 0.7, 0.5];
+  const bars = useRef<(HTMLSpanElement | null)[]>([]);
+  useEffect(() => {
+    if (!levels) return;
+    let smoothed = 0;
+    const unsubscribe = levels.subscribeLevel((level) => {
+      const wanted = Math.min(1, Math.max(0, level));
+      smoothed += (wanted - smoothed) * (wanted > smoothed ? 0.5 : 0.15);
+      BAR_HEIGHTS.forEach((base, index) => {
+        const bar = bars.current[index];
+        if (!bar) return;
+        // Never past the bar's own resting height: the box is the ceiling.
+        const scale = Math.min(1, base * (0.25 + smoothed * 1.1)) / base;
+        bar.style.transform = `scaleY(${Math.max(0.15, scale).toFixed(3)})`;
+      });
+    });
+    return () => {
+      unsubscribe();
+      for (const bar of bars.current) if (bar) bar.style.transform = '';
+    };
+  }, [levels]);
   return (
-    <span
-      className={`voice-bars inline-flex h-5 w-5 items-center justify-center gap-[2px] ${className ?? ''}`}
-      aria-hidden="true"
-    >
-      {heights.map((base, index) => (
+    <span className={`voice-bars ${className ?? ''}`} aria-hidden="true">
+      {BAR_HEIGHTS.map((base, index) => (
         <span
           key={index}
-          className={level == null ? 'voice-bar voice-bar-dance' : 'voice-bar'}
+          ref={(element) => {
+            bars.current[index] = element;
+          }}
+          className={levels ? 'voice-bar' : 'voice-bar voice-bar-dance'}
           style={{
             background: colors[index % colors.length],
             animationDelay: `${index * 0.12}s`,
-            height:
-              level == null
-                ? `${base * 100}%`
-                : `${Math.max(15, base * 100 * (0.3 + Math.min(1, level) * 1.4))}%`,
+            height: `${base * 100}%`,
           }}
         />
       ))}
     </span>
   );
 }
+
+/** Each bar's resting height, as a share of the box. */
+const BAR_HEIGHTS = [0.45, 0.8, 1, 0.7, 0.5];

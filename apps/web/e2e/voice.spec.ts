@@ -437,8 +437,21 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   // becomes a wave, the button becomes Stop.
   const reply = page.getByText('Two issues slipped out of the sprint:');
   await reply.hover();
+  // The composer row must not move while the bars dance: their box is
+  // fixed and contained, so the message box and the buttons around it
+  // sit exactly where they did before a sound was made.
+  const box = page.getByLabel('Message');
+  const speaker = page.getByRole('button', { name: 'Voice', exact: true });
+  const [boxBefore, speakerBefore] = await Promise.all([box.boundingBox(), speaker.boundingBox()]);
   await page.getByRole('button', { name: 'Listen' }).click();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await expect(speaker.locator('.voice-bars')).toBeVisible();
+  // Several readings while the audio plays: none may have moved a thing.
+  for (let sample = 0; sample < 5; sample += 1) {
+    await page.waitForTimeout(150);
+    expect(await box.boundingBox()).toEqual(boxBefore);
+    expect(await speaker.boundingBox()).toEqual(speakerBefore);
+  }
   await expect(page.getByRole('button', { name: 'Voice', exact: true })).toHaveAttribute(
     'title',
     'Reading the reply aloud'
