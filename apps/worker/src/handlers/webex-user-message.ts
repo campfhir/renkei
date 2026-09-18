@@ -1,6 +1,6 @@
 /**
  * The webex/user-message.created handler — deliveries from a user's own
- * all-spaces webhook (opt-in on the connectors page; there is no bot).
+ * all-spaces webhook (opt-in on the connectors page; no bot reads anything).
  *
  * The delivery names the WATCHER (accountId) and the message; this handler
  * fetches the message with the watcher's own token, then publishes it as a

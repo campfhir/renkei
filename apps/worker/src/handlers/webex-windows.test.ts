@@ -201,7 +201,7 @@ describe('ingest.webex-window handler', () => {
     };
   }
 
-  const resolveAccess = jest.fn(async () => ({ accessToken: 'tok', subject: 'auth0|w' }));
+  const resolveAccess = jest.fn(async () => ({ accessToken: 'tok', subject: 'auth0|w', personEmail: null }));
   const deleteLegacy = jest.fn(async () => undefined);
 
   beforeEach(() => {

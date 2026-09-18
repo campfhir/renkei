@@ -118,7 +118,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1' }),
+      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
     });
 
     expect(created).toHaveLength(1);
@@ -134,7 +134,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1' }),
+      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
     });
 
     expect(created).toHaveLength(0);
@@ -149,7 +149,7 @@ describe('sweepWebexWebhooks', () => {
     await sweepWebexWebhooks({
       makeClient: () => client,
       resolveAccess: async (_tenantId, accountId) =>
-        accountId === 'acct-dead' ? null : { accessToken: 'user-token', subject: 'subj-1' },
+        accountId === 'acct-dead' ? null : { accessToken: 'user-token', subject: 'subj-1', personEmail: null },
     });
 
     // The dead grant registered nothing; the live one still got repaired.
@@ -195,7 +195,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1' }),
+      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
       now: () => now,
     });
 
@@ -220,7 +220,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1' }),
+      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
     });
 
     expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);

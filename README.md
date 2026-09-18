@@ -27,18 +27,20 @@ pnpm dev
 
 MCP clients need a public HTTPS origin for OAuth callbacks during development — see [NGROK_SETUP.md](./NGROK_SETUP.md).
 
-**WebEx connector:** store the bot token and webhook secret via
-`PUT /api/admin/{slug}/connectors/webex`, then let Renkei register its own
-webhooks: `POST /api/admin/{slug}/connectors/webex/webhooks` creates the
-two required registrations (`messages/created` for ingestion,
-`attachmentActions/created` for the "Push to Renkei" card button) pointing
-at `/api/webhooks/webex/{tenantId}`. `GET` on the same path reports their
-health. The worker also re-checks periodically (every 60 minutes by
+**WebEx connector:** an org admin registers the Integration (client id
+and secret from developer.webex.com) on the WebEx page under Connector
+setup; each person then grants Renkei their own access from Connectors,
+and may opt in to the all-spaces webhook there, which Renkei registers with
+that person's token at `/api/webhooks/webex/{tenantId}/user/{accountId}`.
+The worker re-checks those webhooks periodically (every 60 minutes by
 default — tunable per org via the "WebEx webhook health interval" setting,
-floor 15 minutes) and re-creates webhooks that were deleted, disabled by
-WebEx after repeated failures, or left signing with a stale secret — so a
-rotting connector repairs itself and the repair is visible in the worker
-log.
+floor 15 minutes) and re-creates any that were deleted, disabled by WebEx
+after repeated failures, or left signing with a stale secret — so a rotting
+registration repairs itself and the repair is visible in the worker log.
+The "WebEx bot" page beside it takes an optional bot token: with one, the notes
+Renkei leaves people (digests, reminders, an agent's receipts) arrive as a
+direct message from the bot and show as unread; without one they go to
+each person's own "Note to Self" space, which WebEx shows as already read.
 
 ## Scripts
 

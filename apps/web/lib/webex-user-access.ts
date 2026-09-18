@@ -2,7 +2,7 @@
  * The caller's own WebEx OAuth access, by subject — the web-side twin of
  * the worker's resolver (apps/worker/src/handlers/webex-linked-user.ts).
  * Used by the all-spaces opt-in route, which registers webhooks with the
- * USER's token: there is no bot anymore, so every WebEx capability stands
+ * USER's token: no bot reads anything, so every WebEx capability stands
  * on a personal grant.
  */
 

@@ -376,13 +376,19 @@ export class WebexClient {
     return ok(Array.isArray(items) && items.length > 0);
   }
 
-  /** Post a message (optionally with card attachments) as the bot. */
-  async postMessage(message: OutgoingMessage): Promise<Result<{ id: string }, 'WEBEX_API_ERROR'>> {
+  /**
+   * Post a message (optionally with card attachments) as the token's owner.
+   * The room comes back too: a `toPersonEmail` send lands in a 1:1 room the
+   * caller never named, and only this response says which.
+   */
+  async postMessage(
+    message: OutgoingMessage
+  ): Promise<Result<{ id: string; roomId: string | null }, 'WEBEX_API_ERROR'>> {
     const result = await this.request('POST', '/messages', message);
     if (!result.ok) return result;
     const id = optionalString(result.val.id);
     if (!id) return err('WEBEX_API_ERROR' as const, { message: 'message response missing id' });
-    return ok({ id });
+    return ok({ id, roomId: optionalString(result.val.roomId) });
   }
 
   /**
@@ -571,4 +577,66 @@ export class WebexClient {
     if (!sent.ok) return sent;
     return ok({ id: sent.val.id, roomId });
   }
+}
+
+/**
+ * The connector_configs row holding the org's WebEx bot — a bot created at
+ * developer.webex.com whose long-lived token Renkei posts notes to people
+ * with. Optional, and separate from 'webex-user' (the Integration people
+ * grant their own access through): every read still runs as the person;
+ * the bot only ever speaks TO them.
+ */
+export const WEBEX_BOT_CONNECTOR = 'webex-bot';
+
+export interface NoteDelivery {
+  id: string;
+  roomId: string;
+  /**
+   * 'bot': a direct message from the org's bot — a different author, so
+   * WebEx shows it unread and raises its own notification. 'self': posted
+   * into the person's solo "Note to Self" space with their own token,
+   * which WebEx treats as already read the moment it lands.
+   */
+  via: 'bot' | 'self';
+}
+
+export interface NoteToPerson {
+  /** The org's bot, when one is configured — null falls straight through to the solo space. */
+  bot: Pick<WebexClient, 'postMessage'> | null;
+  /** The person's own client, for the solo-space fallback. */
+  user: Pick<WebexClient, 'sendNoteToSelf'>;
+  /** The person's WebEx address, the bot's only way to reach them; null when unknown. */
+  personEmail: string | null;
+  markdown: string;
+}
+
+/**
+ * Leave a person a note: as a direct message from the org's bot when there
+ * is one and their address is known, else in their own note-to-self space.
+ *
+ * The bot exists for one reason — a note a person posts to themself is
+ * authored by them, so WebEx treats it as read the instant it lands and
+ * shows no badge; the public API has no way to mark it unread again. A
+ * message FROM the bot is somebody else's, so it arrives unread with a
+ * native notification. When the bot cannot deliver (a token WebEx revoked,
+ * an org policy that blocks bots from messaging this person) the solo
+ * space still gets the note: reach degrades, the note is never lost.
+ */
+export async function sendNoteToPerson(
+  note: NoteToPerson
+): Promise<Result<NoteDelivery, 'WEBEX_API_ERROR'>> {
+  if (note.bot && note.personEmail) {
+    const sent = await note.bot.postMessage({
+      toPersonEmail: note.personEmail,
+      markdown: note.markdown,
+    });
+    // A 1:1 send always lands in a room; an answer without one is a
+    // malformed success, treated like a failure so the fallback still runs.
+    if (sent.ok && sent.val.roomId) {
+      return ok({ id: sent.val.id, roomId: sent.val.roomId, via: 'bot' as const });
+    }
+  }
+  const sent = await note.user.sendNoteToSelf(note.markdown);
+  if (!sent.ok) return sent;
+  return ok({ ...sent.val, via: 'self' as const });
 }

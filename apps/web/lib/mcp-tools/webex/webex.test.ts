@@ -18,6 +18,10 @@ jest.mock('./webex-auth', () => ({
     personEmail: 'alice@example.com',
   })),
 }));
+// No org bot unless a test says so — the solo-space path is the default.
+jest.mock('@/lib/webex-bot', () => ({
+  webexBotClient: jest.fn(async () => mockBot),
+}));
 jest.mock('@renkei/db', () => ({
   getDatabase: () => ({
     ok: true,
@@ -46,6 +50,7 @@ jest.mock('@/lib/sandbox/service-client', () => ({
 const insertedRows: unknown[] = [];
 const mockCall = jest.fn();
 const mockWrite = jest.fn();
+let mockBot: { postMessage: jest.Mock } | null = null;
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import {
@@ -98,6 +103,7 @@ const textOf = (result: { content: { text: string }[] }): string => result.conte
 beforeEach(() => {
   jest.clearAllMocks();
   insertedRows.length = 0;
+  mockBot = null;
   mockCall.mockResolvedValue(jsonResponse({ items: [] }));
   mockWrite.mockImplementation(
     async (
@@ -677,6 +683,48 @@ describe('webex_note_to_self', () => {
     await tools.get('webex_note_to_self')!({ markdown: 'x' });
 
     expect(mockCall.mock.calls[1][0]).toContain('roomId=room-note');
+  });
+
+  it('sends a direct message from the org bot when there is one, never touching the user token', async () => {
+    mockBot = {
+      postMessage: jest.fn(async () => ({ ok: true, val: { id: 'msg-dm', roomId: 'room-dm' } })),
+    };
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_note_to_self')!({ markdown: 'remember this' });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('bot');
+    expect(textOf(result)).toContain('unread');
+    expect(textOf(result)).toContain('msg-dm');
+    expect(mockBot.postMessage).toHaveBeenCalledWith({
+      toPersonEmail: 'alice@example.com',
+      markdown: 'remember this',
+    });
+    expect(mockCall).not.toHaveBeenCalled();
+    // The ledger knows the bot's message too: it returns through the
+    // user's own webhook like any other post Renkei made.
+    expect(insertedRows).toEqual([
+      { tenant_id: 'tenant-1', message_id: 'msg-dm', account_id: undefined },
+    ]);
+  });
+
+  it('falls back to the solo space when the bot cannot deliver', async () => {
+    mockBot = { postMessage: jest.fn(async () => ({ ok: false, err: 'WEBEX_API_ERROR' })) };
+    mockCall
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 'room-solo', title: 'Scratch', type: 'group' }] })
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'mem-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', roomId: 'room-solo' }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_note_to_self')!({ markdown: 'x' });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('room-solo');
+    expect(mockBot.postMessage).toHaveBeenCalledTimes(1);
+    expect(mockCall.mock.calls.map(([path]) => path as string)[2]).toBe('/messages');
   });
 
   it('creates "Note to Self" when every space has other members', async () => {
