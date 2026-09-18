@@ -163,12 +163,15 @@ export default function ToolPermissionsForm({
                   ))}
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[420px] border-collapse text-sm">
+                  {/* No minimum width, unlike the notification tables: the
+                      tool column wraps, so the three answers stay on
+                      screen on a phone instead of past the fold's edge. */}
+                  <table className="w-full border-collapse text-sm">
                     <thead>
                       <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400">
                         <th className="px-3 py-2 font-medium">Tool</th>
                         {RULES.map(({ rule, label, hint }) => (
-                          <th key={rule} className="w-16 px-2 py-2 text-center font-medium">
+                          <th key={rule} className="w-14 px-1 py-2 text-center font-medium">
                             <span title={hint}>{label}</span>
                           </th>
                         ))}
@@ -186,12 +189,12 @@ export default function ToolPermissionsForm({
                           >
                             <td className="px-3 py-2 align-top">
                               <span className="font-medium">{tool.label}</span>
-                              <code className="ml-2 font-mono text-xs text-gray-500 dark:text-gray-400">
+                              <code className="ml-2 font-mono text-xs break-all text-gray-500 dark:text-gray-400">
                                 {tool.name}
                               </code>
                             </td>
                             {RULES.map(({ rule, label }) => (
-                              <td key={rule} className="px-2 py-2 text-center align-top">
+                              <td key={rule} className="px-1 py-2 text-center align-top">
                                 <input
                                   type="radio"
                                   name={`tool-rule:${tool.name}`}
