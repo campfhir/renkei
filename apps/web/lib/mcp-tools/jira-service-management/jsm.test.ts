@@ -210,6 +210,157 @@ describe('jsm_create_request desk-id resolution', () => {
 });
 
 /**
+ * The request type, by NAME. jsm_list_request_types shows "Application
+ * Error (ID: 42)" and a model passes the name it just read; every
+ * request-type endpoint answers a name with "Failed to convert
+ * 'requestTypeId'" — the form lookup first, before the create is even
+ * attempted. Same rule as the desk key: resolve, never forward.
+ */
+describe('jsm_create_request request-type resolution', () => {
+  const desk = { match: '/servicedesk/ENG', body: { id: '244', projectKey: 'ENG' } };
+  const types = {
+    match: '/servicedesk/244/requesttype?',
+    body: {
+      values: [
+        { id: '41', name: 'Access request' },
+        { id: '42', name: 'Application Error' },
+      ],
+      isLastPage: true,
+    },
+  };
+  const created = { match: '/rest/servicedeskapi/request', body: { issueKey: 'ENG-300' } };
+
+  it('resolves a request type name to its id before posting', async () => {
+    routes = [desk, types, created];
+    const tools = await toolsOf();
+
+    const result = await tools.get('jsm_create_request')!({
+      serviceDeskId: 'ENG',
+      requestTypeId: 'application error',
+      summary: 'epicsftp_prd access may have stopped after password change',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('ENG-300');
+    const post = requests.find((r) => r.method === 'POST');
+    const body = JSON.parse(post?.body ?? '{}') as Record<string, unknown>;
+    expect(body.serviceDeskId).toBe('244');
+    expect(body.requestTypeId).toBe('42');
+  });
+
+  it('looks the form up by the resolved id, never by the name', async () => {
+    routes = [
+      desk,
+      types,
+      {
+        match: '/requesttype/42/field',
+        body: {
+          requestTypeFields: [
+            {
+              fieldId: 'priority',
+              name: 'Priority',
+              validValues: [{ value: '3', label: 'Medium' }],
+            },
+          ],
+        },
+      },
+      created,
+    ];
+    const tools = await toolsOf();
+
+    const result = await tools.get('jsm_create_request')!({
+      serviceDeskId: 'ENG',
+      requestTypeId: 'Application Error',
+      summary: 'epicsftp_prd access may have stopped after password change',
+      priority: 'Medium',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(requests.some((r) => r.path.includes('/requesttype/Application'))).toBe(false);
+    expect(requests.some((r) => r.path.includes('/requesttype/42/field'))).toBe(true);
+    const post = requests.find((r) => r.method === 'POST');
+    const body = JSON.parse(post?.body ?? '{}') as {
+      requestTypeId?: string;
+      requestFieldValues?: { priority?: { id: string } };
+    };
+    expect(body.requestTypeId).toBe('42');
+    expect(body.requestFieldValues?.priority).toEqual({ id: '3' });
+  });
+
+  it('walks every page of request types before deciding a name is unknown', async () => {
+    routes = [
+      desk,
+      {
+        match: '/requesttype?start=0',
+        body: { values: [{ id: '41', name: 'Access request' }], isLastPage: false },
+      },
+      {
+        match: '/requesttype?start=1',
+        body: { values: [{ id: '42', name: 'Application Error' }], isLastPage: true },
+      },
+      created,
+    ];
+    const tools = await toolsOf();
+
+    const result = await tools.get('jsm_create_request')!({
+      serviceDeskId: 'ENG',
+      requestTypeId: 'Application Error',
+      summary: 'epicsftp_prd access may have stopped after password change',
+    });
+
+    expect(result.isError).not.toBe(true);
+    const post = requests.find((r) => r.method === 'POST');
+    expect((JSON.parse(post?.body ?? '{}') as { requestTypeId?: string }).requestTypeId).toBe('42');
+  });
+
+  it('names the request types the desk does offer when the name matches none', async () => {
+    routes = [desk, types, created];
+    const tools = await toolsOf();
+
+    const result = await tools.get('jsm_create_request')!({
+      serviceDeskId: 'ENG',
+      requestTypeId: 'Application Errr',
+      summary: 'epicsftp_prd access may have stopped after password change',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('"Application Errr"');
+    expect(result.content[0]?.text).toContain('Application Error (42)');
+    expect(result.content[0]?.text).toContain('Access request (41)');
+    // The bare name must never reach the create endpoint.
+    expect(requests.some((r) => r.method === 'POST')).toBe(false);
+  });
+});
+
+describe('jsm_create_request_preview request-type labels', () => {
+  it('labels the card with the desk and the type, given a key and a name', async () => {
+    routes = [
+      {
+        match: '/servicedesk/ENG',
+        body: { id: '244', projectKey: 'ENG', projectName: 'Engineering' },
+      },
+      {
+        match: '/servicedesk/244/requesttype?',
+        body: { values: [{ id: '42', name: 'Application Error' }], isLastPage: true },
+      },
+    ];
+    const tools = await toolsOf();
+
+    const result = (await tools.get('jsm_create_request_preview')!({
+      serviceDeskId: 'ENG',
+      requestTypeId: 'application error',
+      summary: 'epicsftp_prd access may have stopped after password change',
+    })) as {
+      structuredContent?: { subtitle?: string; fields?: { label: string; value: string }[] };
+    };
+
+    expect(result.structuredContent?.subtitle).toBe('Engineering · Application Error');
+    // Nothing was created at preview time.
+    expect(requests.some((r) => r.method === 'POST')).toBe(false);
+  });
+});
+
+/**
  * Components on a request, end to end through the handler.
  *
  * The rule every case here defends: an unusable component costs the
@@ -550,6 +701,39 @@ describe('jsm_list_components', () => {
     // The path that needs no Jira project scope must not touch the
     // platform API — that is the entire reason it is preferred.
     expect(requests.some((r) => r.path.includes('/rest/api/3/project'))).toBe(false);
+  });
+
+  it('accepts the request type by name and answers from its form', async () => {
+    // Most specific first: the stub matches by substring, in order.
+    routes = [
+      {
+        match: '/servicedesk/7/requesttype?',
+        body: { values: [{ id: '165', name: 'Report a problem' }], isLastPage: true },
+      },
+      {
+        match: '/requesttype/165/field',
+        body: {
+          requestTypeFields: [
+            {
+              fieldId: 'components',
+              name: 'Components',
+              validValues: [{ value: '10042', label: 'Billing' }],
+            },
+          ],
+        },
+      },
+      { match: '/servicedesk/7', body: { id: '7', projectKey: 'CAS' } },
+    ];
+    const tools = await toolsOf();
+
+    const result = await tools.get('jsm_list_components')!({
+      serviceDeskId: '7',
+      requestTypeId: 'report a problem',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Billing (id 10042)');
+    expect(requests.some((r) => r.path.includes('/requesttype/report'))).toBe(false);
   });
 
   it('says a request type cannot carry components rather than listing some anyway', async () => {

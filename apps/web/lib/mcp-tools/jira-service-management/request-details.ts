@@ -10,6 +10,7 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
+import { resolveRequestType } from './components';
 import { createUploadSlot } from '../upload-slots';
 // The same spelling jira_list_fields gives a Jira option field: the two are
 // one question asked of two systems, and a caller reading both should not
@@ -47,8 +48,10 @@ export async function registerRequestDetailsTools(
       description: 'Get the form fields for a request type.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        serviceDeskId: z.string().describe('Service desk ID'),
-        requestTypeId: z.string().describe('Request type ID'),
+        serviceDeskId: z.string().describe('Service desk id, or the project key'),
+        requestTypeId: z
+          .string()
+          .describe('Request type id, or its name as jsm_list_request_types shows it'),
       }),
     },
     async (args: Record<string, any>) => {
@@ -71,9 +74,17 @@ export async function registerRequestDetailsTools(
           };
         }
 
+        // The path takes the desk's key or id, but the request type only
+        // ever by id — a name given here answers "Failed to convert
+        // 'requestTypeId'", so it is resolved first, the way
+        // jsm_create_request resolves it.
+        const type = await resolveRequestType(auth, String(serviceDeskId), String(requestTypeId));
+        if (!type.ok) return errText(type.message);
+
         const response = await auth.fetch(
           serviceDeskScopes('jsm_get_request_type_fields', true),
-          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype/${requestTypeId}/field`
+          `/rest/servicedeskapi/servicedesk/${encodeURIComponent(String(serviceDeskId))}` +
+            `/requesttype/${encodeURIComponent(type.requestType.id)}/field`
         );
         if (!response.ok) return errText(await describeJsmAuthFailure(response));
 

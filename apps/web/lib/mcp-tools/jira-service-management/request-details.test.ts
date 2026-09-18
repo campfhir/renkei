@@ -27,13 +27,23 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 }>;
 
 let body: unknown = {};
+/** Path-keyed answers, consulted before the one-size `body` above. */
+let routes: { match: string; body: unknown }[] = [];
+let paths: string[] = [];
 
 const stubAuth: JsmAuth = {
   kind: 'pat',
-  async fetch() {
-    return new Response(JSON.stringify(body), { status: 200 });
+  async fetch(_scopes: readonly string[], path: string) {
+    paths.push(path);
+    const route = routes.find((candidate) => path.includes(candidate.match));
+    return new Response(JSON.stringify(route ? route.body : body), { status: 200 });
   },
 } as unknown as JsmAuth;
+
+beforeEach(() => {
+  routes = [];
+  paths = [];
+});
 
 async function toolsOf(): Promise<Map<string, Handler>> {
   const registered = new Map<string, Handler>();
@@ -51,6 +61,37 @@ async function toolsOf(): Promise<Map<string, Handler>> {
 }
 
 describe('jsm_get_request_type_fields', () => {
+  it('accepts the request type by name and reads the form by its id', async () => {
+    // A name in the path answers "Failed to convert 'requestTypeId'" — so
+    // the name is resolved against the desk's request types first.
+    routes = [
+      {
+        match: '/servicedesk/ENG/requesttype?',
+        body: { values: [{ id: '42', name: 'Application Error' }], isLastPage: true },
+      },
+      {
+        match: '/requesttype/42/field',
+        body: {
+          requestTypeFields: [
+            { fieldId: 'summary', name: 'Summary', required: true, jiraSchema: { type: 'string' } },
+          ],
+        },
+      },
+    ];
+    const tools = await toolsOf();
+
+    const text = (
+      await tools.get('jsm_get_request_type_fields')!({
+        serviceDeskId: 'ENG',
+        requestTypeId: 'Application Error',
+      })
+    ).content[0]?.text;
+
+    expect(text).toContain('Summary (summary) - string [REQUIRED]');
+    expect(paths.some((path) => path.includes('/requesttype/Application'))).toBe(false);
+    expect(paths.some((path) => path.includes('/requesttype/42/field'))).toBe(true);
+  });
+
   it('carries the type and the values a field accepts', async () => {
     // Both arrive in this very response. Without them the caller has the
     // field id and no idea what to put in it, and jsm_create_request

@@ -32,6 +32,7 @@ import {
   loadRequestTypeComponents,
   loadRequestTypeForm,
   matchComponents,
+  resolveRequestType,
   resolveServiceDesk,
 } from './components';
 import { resolveUserId } from '../jira/resolve-user';
@@ -460,7 +461,10 @@ export async function registerJsmTools(
         serviceDeskId: z.string().describe('Service desk id, or the project key'),
         requestTypeId: z
           .string()
-          .describe('Limit to what this request type accepts (from jsm_list_request_types)')
+          .describe(
+            'Limit to what this request type accepts — its id or its name, as ' +
+              'jsm_list_request_types shows them'
+          )
           .optional(),
       }),
     },
@@ -476,8 +480,10 @@ export async function registerJsmTools(
         const desk = await resolveServiceDesk(auth, str(args.serviceDeskId));
         if (!desk.ok) return errText(desk.message);
 
-        const requestTypeId = str(args.requestTypeId);
-        if (requestTypeId) {
+        if (str(args.requestTypeId)) {
+          const type = await resolveRequestType(auth, desk.desk.id, str(args.requestTypeId));
+          if (!type.ok) return errText(type.message);
+          const requestTypeId = type.requestType.id;
           const found = await loadRequestTypeComponents(auth, desk.desk.id, requestTypeId);
           if (!found.ok) return errText(found.message);
           if (!found.components.present) {
@@ -522,8 +528,13 @@ export async function registerJsmTools(
   // jsm_create_request — schema and handler shared with the card-invoked
   // jsm_create_request_confirm below, so the confirm path IS the create path.
   const createRequestSchema = z.object({
-    serviceDeskId: z.string().describe('Service desk ID'),
-    requestTypeId: z.string().describe('Request type ID'),
+    serviceDeskId: z.string().describe('Service desk id, or the project key'),
+    requestTypeId: z
+      .string()
+      .describe(
+        'Request type id, or its name as jsm_list_request_types shows it (e.g. ' +
+          '"Application Error"). Names are matched case-insensitively.'
+      ),
     summary: z.string().describe('Request summary/title'),
     description: z.string().describe('Request description (optional)').optional(),
     reporter: z
@@ -601,6 +612,14 @@ export async function registerJsmTools(
         if (!desk.ok) return errText(desk.message);
         deskId = desk.desk.id;
       }
+      // Same again for the request type: jsm_list_request_types shows
+      // "Application Error (ID: 42)" and a model passes the name it read.
+      // Every request-type endpoint — the form lookup below first — answers
+      // a name with "Failed to convert 'requestTypeId'", so the name must
+      // become the id BEFORE anything is fetched with it.
+      const type = await resolveRequestType(auth, deskId, String(requestTypeId));
+      if (!type.ok) return errText(type.message);
+      const typeId = type.requestType.id;
 
       /*
         Components and priority, resolved against the REQUEST TYPE's own
@@ -622,7 +641,7 @@ export async function registerJsmTools(
       let priorityViaEdit = false;
       const notes: string[] = [];
       if (wanted.length > 0 || priorityWanted) {
-        const form = await loadRequestTypeForm(auth, deskId, String(requestTypeId));
+        const form = await loadRequestTypeForm(auth, deskId, typeId);
         if (!form.ok) {
           if (wanted.length > 0) notes.push(`Components were not set — ${form.message}`);
           // The form being unreadable does not decide whether priority can
@@ -675,7 +694,7 @@ export async function registerJsmTools(
       const postCreate = async (withReporter: boolean): Promise<Response> => {
         const body: any = {
           serviceDeskId: deskId,
-          requestTypeId: String(requestTypeId),
+          requestTypeId: typeId,
           // raiseOnBehalfOf is how the servicedeskapi sets the reporter: the
           // request is raised FOR that customer (email or accountId).
           ...(withReporter && reporter ? { raiseOnBehalfOf: reporter } : {}),
@@ -970,24 +989,34 @@ export async function registerJsmTools(
       let deskName = '';
       let typeName = '';
       try {
-        const [deskResponse, typeResponse] = await Promise.all([
-          auth.fetch(
-            serviceDeskScopes('jsm_list_service_desks', true),
-            `/rest/servicedeskapi/servicedesk/${encodeURIComponent(serviceDeskId)}`
-          ),
-          auth.fetch(
-            serviceDeskScopes('jsm_list_request_types', true),
-            `/rest/servicedeskapi/servicedesk/${encodeURIComponent(serviceDeskId)}` +
-              `/requesttype/${encodeURIComponent(requestTypeId)}`
-          ),
-        ]);
+        const deskResponse = await auth.fetch(
+          serviceDeskScopes('jsm_list_service_desks', true),
+          `/rest/servicedeskapi/servicedesk/${encodeURIComponent(serviceDeskId)}`
+        );
+        // The desk lookup takes a key or an id; either way its answer
+        // carries the numeric id the request-type lookup needs.
+        let deskId = serviceDeskId;
         if (deskResponse.ok) {
           const desk = (await deskResponse.json().catch(() => null)) as any;
           deskName = str(desk?.projectName);
+          deskId = str(desk?.id) || deskId;
         }
-        if (typeResponse.ok) {
-          const requestType = (await typeResponse.json().catch(() => null)) as any;
-          typeName = str(requestType?.name);
+        // A request type given by NAME is already its own label; only an
+        // id needs the lookup. The confirm twin resolves the name again on
+        // its own, so the card can carry it as given.
+        const type = await resolveRequestType(auth, deskId, requestTypeId);
+        if (type.ok && type.requestType.name) {
+          typeName = type.requestType.name;
+        } else if (type.ok) {
+          const typeResponse = await auth.fetch(
+            serviceDeskScopes('jsm_list_request_types', true),
+            `/rest/servicedeskapi/servicedesk/${encodeURIComponent(deskId)}` +
+              `/requesttype/${encodeURIComponent(type.requestType.id)}`
+          );
+          if (typeResponse.ok) {
+            const requestType = (await typeResponse.json().catch(() => null)) as any;
+            typeName = str(requestType?.name);
+          }
         }
       } catch {
         // preview renders with ids
