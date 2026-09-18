@@ -136,8 +136,14 @@ export default function ChatThread({
     state: 'idle',
     owner: null,
   });
+  // Keyed on whether voice exists, never on the prop object: every
+  // turn_end refreshes the page's server data, which hands this a new
+  // `voice` object, and a queue rebuilt on that would fall silent in the
+  // middle of the reply it was reading.
+  const voiceAvailable = voice !== null;
+  const voiceDefaultLocale = voice?.defaultLocale ?? null;
   useEffect(() => {
-    if (!voice) return;
+    if (!voiceAvailable) return;
     const created = new SpeechQueue(tenantId, (message) => setError(message));
     const unsubscribe = created.subscribe((state) => setSpeech({ state, owner: created.owner }));
     setSpeechQueue(created);
@@ -146,15 +152,15 @@ export default function ChatThread({
       created.dispose();
       setSpeechQueue(null);
     };
-  }, [tenantId, voice]);
+  }, [tenantId, voiceAvailable]);
   useEffect(() => {
-    if (!speechQueue || !voice) return;
+    if (!speechQueue || !voiceDefaultLocale) return;
     speechQueue.configure({
       voice: voicePrefs.voice,
       rate: voicePrefs.rate,
-      locale: voicePrefs.locale ?? voice.defaultLocale,
+      locale: voicePrefs.locale ?? voiceDefaultLocale,
     });
-  }, [speechQueue, voice, voicePrefs]);
+  }, [speechQueue, voiceDefaultLocale, voicePrefs]);
   useReplySpeech({
     queue: speechQueue,
     enabled: voice !== null && (voicePrefs.autoPlay || voiceMode),
