@@ -35,6 +35,7 @@ import { OnBaseAdminForm } from '@/app/[slug]/admin/connectors/forms/onbase-admi
 import { MistralOcrForm } from '@/app/[slug]/admin/connectors/forms/mistral-ocr-form';
 import { EmbeddingsForm } from '@/app/[slug]/admin/connectors/forms/embeddings-form';
 import { WebSearchForm } from '@/app/[slug]/admin/connectors/forms/web-search-form';
+import { VoiceForm } from '@/app/[slug]/admin/connectors/forms/voice-form';
 
 /** Every admin form takes the same props, so the detail page can render any. */
 export interface AdminFormProps {
@@ -70,6 +71,7 @@ const FORMS: Record<string, ComponentType<AdminFormProps>> = {
   'mistral-ocr': MistralOcrForm,
   embeddings: EmbeddingsForm,
   'web-search': WebSearchForm,
+  voice: VoiceForm,
 };
 
 /** Labels for a config row that provisions several products. */

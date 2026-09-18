@@ -44,6 +44,42 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Voice',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Replies read aloud',
+        detail:
+          'When your organization has set up a speech service, a speaker button in the chat reads each reply as it arrives — turn it on for every chat, or press Listen under any one reply. Pick the voice, the pace and the language under Preferences or from the speaker menu itself.',
+      },
+      {
+        kind: 'added',
+        title: 'Voice conversations',
+        detail:
+          'Start a voice conversation from the speaker menu and talk instead of typing: each thing you say is sent as a message, the reply is read back to you, and speaking over it stops it so you can steer. Works in any chat, including chats inside projects and code projects, and the chat keeps the whole conversation in writing.',
+      },
+      {
+        kind: 'added',
+        title: 'Dictate into the box',
+        detail:
+          'A microphone beside the message box turns what you say into text there — pause, and your words appear to read over, fix and send like anything typed. The lighter way to talk to the chat when you do not want the full-screen conversation.',
+      },
+      {
+        kind: 'added',
+        title: 'A wave that moves with the voice',
+        detail:
+          'In a voice conversation the voice is drawn as a wave in a soft glow that swells with your microphone while you talk and with the speaker while the assistant does; it drifts gently when there is nothing to hear. The assistant and you each have your own colour — a rainbow and emerald to start; pick either, or one hue, from the speaker menu or under Preferences.',
+      },
+      {
+        kind: 'added',
+        title: 'Voice under Connector setup',
+        detail:
+          'Administrators configure the speech service — a region or custom endpoint, a key, a default voice and language — under Connector setup, and can test it from there. Until it is configured and enabled, nothing about voice is shown to anyone.',
+      },
+    ],
+  },
+  {
+    date: null,
     entries: [
       {
         kind: 'fixed',

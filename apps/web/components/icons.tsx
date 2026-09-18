@@ -124,6 +124,18 @@ export const ICONS = {
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01',
   /** An arrow leaving a door — Sign out. */
   signOut: 'M10 4H5v16h5M14 8l4 4-4 4M8 12h10',
+  /** A speaker with waves — replies read aloud, and the voice menu. */
+  speaker: 'M4 9.5v5h3.5L12 18.5v-13L7.5 9.5zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10',
+  /** The same speaker, struck through — reading stopped. */
+  speakerOff: 'M4 9.5v5h3.5L12 18.5v-13L7.5 9.5zM16 10l4 4M20 10l-4 4',
+  /** A microphone — voice mode, listening. */
+  microphone:
+    'M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM6 11a6 6 0 0 0 12 0M12 17v4M9 21h6',
+  /** The microphone, struck through — muted. */
+  microphoneOff:
+    'M15 9.5V6a3 3 0 0 0-5.5-1.6M9 9v3a3 3 0 0 0 5.1 2.1M6 11a6 6 0 0 0 9.4 5M18 11a6 6 0 0 1-.6 2.6M12 17v4M9 21h6M4 4l16 16',
+  /** A sound wave — the voice speaking. */
+  waveform: 'M5 10.5v3M8.5 7.5v9M12 5v14M15.5 8v8M19 10v4',
 };
 
 export function Icon({

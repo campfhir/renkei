@@ -352,6 +352,11 @@ export async function seed(client: Client): Promise<void> {
   await client.query('DELETE FROM agents WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM tool_calls WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  // Chats pin a model, and a model row does not cascade from its tenant:
+  // a chat spec's fixtures from an earlier run would otherwise block the
+  // tenant's re-creation here.
+  await client.query('DELETE FROM chats WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM llm_model_configs WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM sessions WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM identities WHERE tenant_id = $1', [E2E_TENANT_ID]);

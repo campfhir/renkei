@@ -53,7 +53,8 @@
       "@renkei/document-text": ["../../packages/document-text/src/index.ts"],
       "@renkei/knowledge": ["../../packages/knowledge/src/index.ts"],
       "@renkei/mcp-client": ["../../packages/mcp-client/src/index.ts"],
-      "@renkei/blob-store": ["../../packages/blob-store/src/index.ts"]
+      "@renkei/blob-store": ["../../packages/blob-store/src/index.ts"],
+      "@renkei/voice": ["../../packages/voice/src/index.ts"]
     }
   },
   "include": [

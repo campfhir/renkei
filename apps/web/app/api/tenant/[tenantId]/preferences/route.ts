@@ -3,23 +3,26 @@
  * the session and never from the request, so there is no shape of body that
  * edits somebody else's settings.
  *
- * `notifications` and `theme` are independent documents, each a whole-
- * document replace when its key is present in the body — which is what each
- * of the two forms on the preferences page sends. Unknown connector and
- * category keys are DROPPED rather than rejected: during a rolling deploy
- * an older page can post a grid that no longer matches the catalog, and
- * refusing the save would strand somebody on a page that cannot be used
- * until the deploy finishes.
+ * `notifications`, `theme` and `voice` are independent documents, each a
+ * whole-document replace when its key is present in the body — which is
+ * what each form on the preferences page (and the chat's voice menu)
+ * sends. Unknown connector and category keys are DROPPED rather than
+ * rejected: during a rolling deploy an older page can post a grid that no
+ * longer matches the catalog, and refusing the save would strand somebody
+ * on a page that cannot be used until the deploy finishes.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getNotificationPrefs,
   getThemePrefs,
+  getVoicePrefs,
   parseNotificationPrefs,
   parseThemePrefs,
+  parseVoicePrefs,
   setNotificationPrefs,
   setThemePrefs,
+  setVoicePrefs,
 } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
 
@@ -31,11 +34,12 @@ export async function GET(
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const [notifications, theme] = await Promise.all([
+  const [notifications, theme, voice] = await Promise.all([
     getNotificationPrefs(tenantId, session.subject, { fresh: true }),
     getThemePrefs(tenantId, session.subject, { fresh: true }),
+    getVoicePrefs(tenantId, session.subject, { fresh: true }),
   ]);
-  return NextResponse.json({ notifications, theme });
+  return NextResponse.json({ notifications, theme, voice });
 }
 
 export async function PUT(
@@ -50,7 +54,7 @@ export async function PUT(
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return NextResponse.json({ error: 'Expected an object' }, { status: 400 });
   }
-  const payload: { notifications?: unknown; theme?: unknown } = body;
+  const payload: { notifications?: unknown; theme?: unknown; voice?: unknown } = body;
 
   // Each of the two is only written when the caller actually sent that key —
   // the notification form PUTs just `{notifications}` and the appearance
@@ -74,5 +78,12 @@ export async function PUT(
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 
-  return NextResponse.json({ notifications, theme });
+  let voice = await getVoicePrefs(tenantId, session.subject, { fresh: true });
+  if ('voice' in payload) {
+    voice = parseVoicePrefs(payload.voice);
+    const written = await setVoicePrefs(tenantId, session.subject, voice);
+    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  }
+
+  return NextResponse.json({ notifications, theme, voice });
 }

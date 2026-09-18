@@ -49,6 +49,7 @@ export default {
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
     '^@renkei/mcp-client$': '<rootDir>/../../packages/mcp-client/src/index.ts',
     '^@renkei/blob-store$': '<rootDir>/../../packages/blob-store/src/index.ts',
+    '^@renkei/voice$': '<rootDir>/../../packages/voice/src/index.ts',
   },
   // kysely's published build is ESM-only, and quickjs-emscripten's CJS
   // build keeps a dynamic import() for its wasm variant (pptxgenjs's, for

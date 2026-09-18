@@ -442,3 +442,87 @@ export function parseThemePrefs(stored: unknown): ThemePrefs {
   const mode = raw.mode === 'light' || raw.mode === 'dark' ? raw.mode : 'auto';
   return { mode };
 }
+
+/**
+ * How the chat sounds to this person — a fourth scope, for the same reason
+ * as the others: the chat page reads it on every load and the preferences
+ * page writes it, and neither has any use for the notification grid.
+ *
+ * Only ever consulted when the org has a voice service configured; an
+ * unconfigured org stores nothing and shows nothing. The voice id is the
+ * vendor's (`en-US-JennyNeural`) and is checked against the org's live
+ * voice list where it is used, never here — a voice the vendor retired
+ * simply falls back to the org default.
+ */
+export const VOICE_KEY = 'voice';
+
+export interface VoicePrefs {
+  /** A vendor voice id; null means the org's default voice. */
+  voice: string | null;
+  /** 1 is the voice's natural pace; kept within 0.5–2. */
+  rate: number;
+  /** Read every reply aloud as it arrives, without pressing anything. */
+  autoPlay: boolean;
+  /** The language voice mode listens for; null means the org's default. */
+  locale: string | null;
+  /** The colour of the assistant's wave — a reply being read: a rainbow, or one hue. */
+  accent: VoiceAccent;
+  /** The colour of the person's own wave — listening, dictating — distinct from the assistant's. */
+  userAccent: VoiceAccent;
+}
+
+export const VOICE_ACCENTS = ['rainbow', 'blue', 'violet', 'emerald', 'amber', 'rose'] as const;
+export type VoiceAccent = (typeof VOICE_ACCENTS)[number];
+
+export const DEFAULT_VOICE_PREFS: VoicePrefs = {
+  voice: null,
+  rate: 1,
+  autoPlay: false,
+  locale: null,
+  accent: 'rainbow',
+  userAccent: 'emerald',
+};
+
+export const MIN_VOICE_RATE = 0.5;
+export const MAX_VOICE_RATE = 2;
+
+/** A vendor voice id as stored: letters, digits, dashes and underscores only. */
+function voiceIdOr(value: unknown, fallback: string | null): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed && /^[A-Za-z0-9_-]{1,120}$/.test(trimmed) ? trimmed : fallback;
+}
+
+/** A BCP-47 tag such as `en-US`, canonicalised; anything else is the fallback. */
+function localeOr(value: unknown, fallback: string | null): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') return fallback;
+  const match = /^([A-Za-z]{2,3})[-_]([A-Za-z]{2}|\d{3})$/.exec(value.trim());
+  return match ? `${match[1].toLowerCase()}-${match[2].toUpperCase()}` : fallback;
+}
+
+function isVoiceAccent(value: unknown): value is VoiceAccent {
+  return typeof value === 'string' && VOICE_ACCENTS.some((known) => known === value);
+}
+
+function rateOr(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(MAX_VOICE_RATE, Math.max(MIN_VOICE_RATE, Math.round(value * 100) / 100));
+}
+
+/** Survives whatever jsonb hands back; anything unrecognisable is the default. */
+export function parseVoicePrefs(stored: unknown): VoicePrefs {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
+    return DEFAULT_VOICE_PREFS;
+  }
+  const raw: Record<string, unknown> = { ...stored };
+  return {
+    voice: voiceIdOr(raw.voice, DEFAULT_VOICE_PREFS.voice),
+    rate: rateOr(raw.rate, DEFAULT_VOICE_PREFS.rate),
+    autoPlay: boolOr(raw.autoPlay, DEFAULT_VOICE_PREFS.autoPlay),
+    locale: localeOr(raw.locale, DEFAULT_VOICE_PREFS.locale),
+    accent: isVoiceAccent(raw.accent) ? raw.accent : DEFAULT_VOICE_PREFS.accent,
+    userAccent: isVoiceAccent(raw.userAccent) ? raw.userAccent : DEFAULT_VOICE_PREFS.userAccent,
+  };
+}

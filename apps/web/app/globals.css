@@ -1180,3 +1180,87 @@ input[type='number']::-webkit-inner-spin-button {
     animation: none;
   }
 }
+
+/* Voice mode: the orb that shows who is talking. */
+.voice-orb {
+  transition:
+    transform 120ms ease-out,
+    box-shadow 200ms ease-out;
+}
+.voice-orb-listening {
+  animation: voice-breathe 2.4s ease-in-out infinite;
+}
+.voice-orb-thinking {
+  animation: voice-spin 1.6s linear infinite;
+}
+.voice-orb-speaking {
+  animation: voice-pulse 0.9s ease-in-out infinite;
+}
+@keyframes voice-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+@keyframes voice-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes voice-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+/* The speaker glyph in the composer while a reply is being read. */
+.voice-speaking-glyph {
+  animation: chat-blink 1.2s steps(2, start) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb-listening,
+  .voice-orb-thinking,
+  .voice-orb-speaking,
+  .voice-speaking-glyph {
+    animation: none;
+  }
+}
+
+/* The voice wave's glow and the small dancing bars. */
+.voice-glow {
+  transition:
+    transform 120ms ease-out,
+    opacity 160ms ease-out;
+  will-change: transform, opacity;
+}
+.voice-bar {
+  display: inline-block;
+  width: 3px;
+  border-radius: 2px;
+  transition: height 90ms ease-out;
+  transform-origin: center;
+}
+.voice-bar-dance {
+  animation: voice-bar-dance 0.9s ease-in-out infinite;
+}
+@keyframes voice-bar-dance {
+  0%,
+  100% {
+    transform: scaleY(0.4);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-bar-dance {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}

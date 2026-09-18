@@ -10,9 +10,11 @@ import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { getChannelAvailability } from '@/lib/notification-channels';
 import { listChatConnectors } from '@/lib/chat/tool-surface';
 import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
+import { loadVoiceAvailability } from '@/lib/voice/availability';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
 import ThemeForm from './theme-form';
+import VoiceForm from './voice-form';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -32,25 +34,28 @@ export default async function PreferencesPage({
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
 
   const dbResult = getDatabase();
-  const [notifications, theme, channels, myAgents, chatConnectors, chatDefault] = await Promise.all([
-    getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
-    getThemePrefs(tenant.id, session.subject, { fresh: true }),
-    getChannelAvailability(tenant.id, session.subject),
-    // Just id + name: the overrides picker names an agent, it doesn't need
-    // its steps — listAgents()'s full parse would be work spent for nothing
-    // this page shows.
-    dbResult.ok
-      ? dbResult.val
-          .selectFrom('agents')
-          .select(['id', 'name'])
-          .where('tenant_id', '=', tenant.id)
-          .where('owner_subject', '=', session.subject)
-          .orderBy('name')
-          .execute()
-      : [],
-    listChatConnectors(tenant.id, session.subject),
-    getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
-  ]);
+  const [notifications, theme, channels, myAgents, chatConnectors, chatDefault, voice] =
+    await Promise.all([
+      getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
+      getThemePrefs(tenant.id, session.subject, { fresh: true }),
+      getChannelAvailability(tenant.id, session.subject),
+      // Just id + name: the overrides picker names an agent, it doesn't need
+      // its steps — listAgents()'s full parse would be work spent for nothing
+      // this page shows.
+      dbResult.ok
+        ? dbResult.val
+            .selectFrom('agents')
+            .select(['id', 'name'])
+            .where('tenant_id', '=', tenant.id)
+            .where('owner_subject', '=', session.subject)
+            .orderBy('name')
+            .execute()
+        : [],
+      listChatConnectors(tenant.id, session.subject),
+      getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
+      // Null when the org has no voice service; the section is then left out.
+      loadVoiceAvailability(tenant.id, session.subject),
+    ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
     key: option.key,
@@ -111,6 +116,15 @@ export default async function PreferencesPage({
       <div className="mb-6">
         <ThemeForm tenantId={tenant.id} initial={theme.mode} />
       </div>
+      {voice ? (
+        <div className="mb-6">
+          <VoiceForm
+            tenantId={tenant.id}
+            initial={voice.prefs}
+            defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
+          />
+        </div>
+      ) : null}
       <div className="mb-6">
         <DefaultToolsForm
           tenantId={tenant.id}

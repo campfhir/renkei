@@ -25,6 +25,12 @@ import {
   type ChatStreamEvent,
 } from '@/lib/chat/stream-events';
 import type { AttachmentView, ChatMessageView, ChatView, ModelOption } from '@/lib/chat/views';
+import type { VoicePrefs } from '@renkei/user-prefs/prefs';
+import type { VoiceAvailability } from '@/lib/voice/availability';
+import { voiceClient } from '@/lib/voice/client';
+import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
+import { takeSpeakable } from '@/lib/voice/sentences';
+import { LIVE_REPLY_OWNER, replyProse, useReplySpeech } from '@/lib/voice/use-reply-speech';
 import Modal from '@/components/modal';
 import ArtifactsMenu from './artifacts-menu';
 import ChatTitle from './chat-title';
@@ -37,6 +43,8 @@ import ShareModal from './share-modal';
 import { CodeChatButtons, useCodeChatTools } from '../../code/_components/code-chat-tools';
 import { Counts } from '../../code/_components/diff-view';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
+import VoiceMenu from './voice-menu';
+import VoiceMode from './voice-mode';
 import { useMediaQuery } from '@/lib/use-media-query';
 
 interface ThreadProps {
@@ -48,6 +56,8 @@ interface ThreadProps {
   models: ModelOption[];
   /** The org has file storage; without it the composer offers no uploads. */
   uploadsEnabled: boolean;
+  /** The org has a voice service, and how this person has it set; null shows nothing about voice. */
+  voice: VoiceAvailability | null;
 }
 
 /** A code project's page lives under Code; a chat project's under Chat. */
@@ -85,6 +95,7 @@ export default function ChatThread({
   initialMessages,
   models,
   uploadsEnabled,
+  voice,
 }: ThreadProps) {
   const router = useRouter();
   const [chat, setChat] = useState<ChatView>(initialChat);
@@ -109,6 +120,86 @@ export default function ChatThread({
   );
   const isOwner = chat.role === 'owner';
   const running = activeTurnId !== null;
+
+  /*
+    Voice, when the org has it: one speech queue for the thread (a reply
+    being read live, or a Listen button's), this person's preferences,
+    and whether the immersive voice conversation is open. With `voice`
+    null none of this renders and none of it runs.
+  */
+  const [voicePrefs, setVoicePrefs] = useState<VoicePrefs>(
+    voice?.prefs ?? {
+      voice: null,
+      rate: 1,
+      autoPlay: false,
+      locale: null,
+      accent: 'rainbow',
+      userAccent: 'emerald',
+    }
+  );
+  const [outputLevel, setOutputLevel] = useState(0);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [speechQueue, setSpeechQueue] = useState<SpeechQueue | null>(null);
+  const [speech, setSpeech] = useState<{ state: SpeechQueueState; owner: string | null }>({
+    state: 'idle',
+    owner: null,
+  });
+  // Keyed on whether voice exists, never on the prop object: every
+  // turn_end refreshes the page's server data, which hands this a new
+  // `voice` object, and a queue rebuilt on that would fall silent in the
+  // middle of the reply it was reading.
+  const voiceAvailable = voice !== null;
+  const voiceDefaultLocale = voice?.defaultLocale ?? null;
+  useEffect(() => {
+    if (!voiceAvailable) return;
+    const created = new SpeechQueue(tenantId, (message) => setError(message));
+    const unsubscribe = created.subscribe((state) => setSpeech({ state, owner: created.owner }));
+    const unsubscribeLevel = created.subscribeLevel((next) =>
+      setOutputLevel((prev) => (Math.abs(prev - next) > 0.03 ? next : prev))
+    );
+    setSpeechQueue(created);
+    return () => {
+      unsubscribe();
+      unsubscribeLevel();
+      created.dispose();
+      setSpeechQueue(null);
+    };
+  }, [tenantId, voiceAvailable]);
+  useEffect(() => {
+    if (!speechQueue || !voiceDefaultLocale) return;
+    speechQueue.configure({
+      voice: voicePrefs.voice,
+      rate: voicePrefs.rate,
+      locale: voicePrefs.locale ?? voiceDefaultLocale,
+    });
+  }, [speechQueue, voiceDefaultLocale, voicePrefs]);
+  useReplySpeech({
+    queue: speechQueue,
+    enabled: voice !== null && (voicePrefs.autoPlay || voiceMode),
+    messages: state.messages,
+    activeTurnId,
+  });
+  const changeVoicePrefs = useCallback(
+    (next: VoicePrefs) => {
+      setVoicePrefs(next);
+      void voiceClient.savePrefs(tenantId, next);
+    },
+    [tenantId]
+  );
+  /** Read one earlier reply aloud, in pieces so the first is heard at once. */
+  const listen = useCallback(
+    (key: string, markdown: string) => {
+      if (!speechQueue) return;
+      speechQueue.prime();
+      speechQueue.begin(key);
+      for (const chunk of takeSpeakable(markdown, { final: true }).chunks) {
+        speechQueue.enqueue(chunk);
+      }
+      speechQueue.finish();
+    },
+    [speechQueue]
+  );
+  const stopReading = useCallback(() => speechQueue?.stop(), [speechQueue]);
   // Below `sm` the title bar keeps only Tools as a button of its own and
   // folds the rest into an overflow menu, so the chat's name stays readable.
   const compact = !useMediaQuery('(min-width: 640px)', true);
@@ -327,9 +418,11 @@ export default function ChatThread({
   );
 
   const stop = useCallback(async () => {
+    // Stopping the reply stops the reading of it too.
+    speechQueue?.stop();
     if (!activeTurnId) return;
     await chatClient.cancelTurn(tenantId, chat.id, activeTurnId);
-  }, [chat.id, activeTurnId, tenantId]);
+  }, [chat.id, activeTurnId, tenantId, speechQueue]);
 
   const changeModel = useCallback(
     async (id: string) => {
@@ -490,6 +583,15 @@ export default function ChatThread({
             ? { onResend: setConfirmResend, onEdit: setEditing }
             : null
         }
+        speech={
+          voice && speechQueue
+            ? {
+                playingKey: speech.state === 'idle' ? null : speech.owner,
+                onListen: listen,
+                onStop: stopReading,
+              }
+            : null
+        }
         empty={state.messages.length === 0 ? <EmptyState hasModel={currentModel !== null} /> : null}
       />
 
@@ -535,6 +637,46 @@ export default function ChatThread({
               hasHistory={state.messages.length > 0}
             />
           }
+          dictation={
+            voice
+              ? {
+                  tenantId,
+                  locale: voicePrefs.locale ?? voice.defaultLocale,
+                  accent: voicePrefs.userAccent,
+                }
+              : null
+          }
+          voiceControl={
+            voice && speechQueue ? (
+              <VoiceMenu
+                tenantId={tenantId}
+                prefs={voicePrefs}
+                defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
+                queueState={speech.state}
+                outputLevel={outputLevel}
+                onChange={changeVoicePrefs}
+                onStopReading={stopReading}
+                onStartVoiceMode={() => setVoiceMode(true)}
+                onPrime={() => speechQueue.prime()}
+                disabled={models.length === 0}
+              />
+            ) : null
+          }
+        />
+      ) : null}
+      {voiceMode && voice && speechQueue ? (
+        <VoiceMode
+          tenantId={tenantId}
+          locale={voicePrefs.locale ?? voice.defaultLocale}
+          queue={speechQueue}
+          queueState={speech.owner === LIVE_REPLY_OWNER ? speech.state : 'idle'}
+          running={running}
+          accent={voicePrefs.accent}
+          userAccent={voicePrefs.userAccent}
+          replyText={lastTurn ? replyProse(state.messages, lastTurn.id) : ''}
+          onSend={(text) => queueOrSend({ text, attachments: [] })}
+          onInterrupt={() => void stop()}
+          onClose={() => setVoiceMode(false)}
         />
       ) : null}
       {confirmResend ? (

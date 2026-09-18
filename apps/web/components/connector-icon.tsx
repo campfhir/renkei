@@ -57,6 +57,9 @@ const BRAND: Record<string, string> = {
   // A neutral sky blue: no vendor mark is shipped (GLYPH_ONLY), so the
   // globe below carries the colour.
   'web-search': '#0284C7',
+  // A warm violet for voice: no vendor mark (GLYPH_ONLY), so the
+  // sound-wave glyph below carries the colour.
+  voice: '#7C3AED',
   // The red-orange of the shipped Mirth Connect mark, so the fallback
   // channel glyph reads as the same product.
   mirth: '#D2492F',
@@ -251,6 +254,20 @@ function glyphFor(logo: string, label: string) {
             strokeWidth="1.3"
             fill="none"
             opacity="0.85"
+          />
+        </>
+      );
+    // Voice: a sound wave — the chat speaking and listening.
+    case 'voice':
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <path
+            d="M5 10.5v3M8.5 7.5v9M12 5v14M15.5 8v8M19 10v4"
+            stroke="#fff"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            fill="none"
           />
         </>
       );

@@ -22,8 +22,26 @@ import { Icon, ICONS } from '@/components/icons';
 import Modal from '@/components/modal';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
+import { UtteranceRecorder } from '@/lib/voice/recorder';
+import { voiceClient } from '@/lib/voice/client';
 import AttachmentChip from './attachment-chip';
 import PromptPicker from './prompt-picker';
+import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
+
+/**
+ * Dictation, when the org has a voice service: a microphone beside the
+ * box that turns what the person says into text IN the box — to read
+ * over, fix and send like anything typed. The lighter way to talk to the
+ * chat; the immersive conversation is a click away for anyone who wants
+ * the big buttons and the voice read back.
+ */
+export interface DictationSetup {
+  tenantId: string;
+  /** The language to recognise. */
+  locale: string;
+  /** The person's own wave colour — the bars while they dictate. */
+  accent: WaveAccent;
+}
 
 export interface ComposerSubmit {
   text: string;
@@ -52,6 +70,8 @@ export default function Composer({
   onCompact,
   onStop,
   modelControl,
+  voiceControl,
+  dictation,
   editing,
   onCancelEdit,
 }: {
@@ -71,6 +91,10 @@ export default function Composer({
   onCompact: () => Promise<boolean>;
   onStop: () => Promise<void>;
   modelControl: ReactNode;
+  /** The speaker menu, when the org has a voice service; nothing otherwise. */
+  voiceControl?: ReactNode;
+  /** The microphone beside the box, when the org has a voice service. */
+  dictation?: DictationSetup | null;
   /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
   editing: { text: string } | null;
   onCancelEdit: () => void;
@@ -83,6 +107,55 @@ export default function Composer({
   const [prompts, setPrompts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Dictation: one recorder while the microphone is on; each utterance
+  // is transcribed and appended to whatever is in the box.
+  const [dictating, setDictating] = useState(false);
+  const [hearing, setHearing] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+  const [dictationError, setDictationError] = useState<string | null>(null);
+  const recorder = useRef<UtteranceRecorder | null>(null);
+  const stopDictation = useCallback(() => {
+    recorder.current?.stop();
+    recorder.current = null;
+    setDictating(false);
+    setHearing(false);
+    setMicLevel(0);
+  }, []);
+  const startDictation = useCallback(async () => {
+    if (!dictation || recorder.current) return;
+    setDictationError(null);
+    const { tenantId: tenant, locale } = dictation;
+    const instance = new UtteranceRecorder({
+      onSpeechStart: () => setHearing(true),
+      onUtterance: (wav) => {
+        void (async () => {
+          setHearing(false);
+          const result = await voiceClient.transcribe(tenant, wav, locale);
+          if (result.error) {
+            setDictationError(result.error);
+            return;
+          }
+          const spoken = result.data?.text.trim() ?? '';
+          if (!spoken) return;
+          setText((current) =>
+            current.trim() ? `${current.replace(/\s+$/, '')} ${spoken}` : spoken
+          );
+          textareaRef.current?.focus();
+        })();
+      },
+      onLevel: (next) => setMicLevel((prev) => (Math.abs(prev - next) > 0.03 ? next : prev)),
+      onError: (message) => {
+        setDictationError(message);
+        stopDictation();
+      },
+    });
+    recorder.current = instance;
+    setDictating(true);
+    const ok = await instance.start();
+    if (!ok) stopDictation();
+  }, [dictation, stopDictation]);
+  useEffect(() => () => recorder.current?.stop(), []);
 
   // Editing starts with the old text in the box and the cursor at its end.
   useEffect(() => {
@@ -314,7 +387,15 @@ export default function Composer({
               void upload(files);
             }
           }}
-          placeholder={running ? 'Replying… Enter queues the next message' : 'Message Renkei'}
+          placeholder={
+            dictating
+              ? hearing
+                ? 'Listening…'
+                : 'Speak, then pause — your words land here to edit and send'
+              : running
+                ? 'Replying… Enter queues the next message'
+                : 'Message Renkei'
+          }
           rows={1}
           disabled={disabled}
           aria-label="Message"
@@ -353,6 +434,28 @@ export default function Composer({
           >
             <Icon path={ICONS.sparkle} className="h-5 w-5" />
           </button>
+          {voiceControl}
+          {dictation ? (
+            <button
+              type="button"
+              onClick={() => (dictating ? stopDictation() : void startDictation())}
+              aria-pressed={dictating}
+              aria-label={dictating ? 'Stop dictating' : 'Dictate'}
+              title={dictating ? 'Stop dictating' : 'Dictate: speak into the box'}
+              disabled={disabled}
+              className={`flex items-center gap-1 rounded-md p-1.5 disabled:opacity-40 ${
+                dictating
+                  ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/40'
+                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+              }`}
+            >
+              {dictating ? (
+                <VoiceWaveIcon level={hearing ? micLevel : null} accent={dictation.accent} />
+              ) : (
+                <Icon path={ICONS.microphone} className="h-5 w-5" />
+              )}
+            </button>
+          ) : null}
           <div className="min-w-0 flex-1">{modelControl}</div>
           {running ? (
             <button
@@ -389,6 +492,7 @@ export default function Composer({
         </div>
       </div>
       {uploadError ? <p className="mt-1 text-xs text-red-600">{uploadError}</p> : null}
+      {dictationError ? <p className="mt-1 text-xs text-red-600">{dictationError}</p> : null}
       <p className="mt-1 hidden text-[11px] text-gray-400 sm:block">
         Enter to send, Shift+Enter for a new line, / for a prompt.
       </p>

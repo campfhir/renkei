@@ -743,6 +743,17 @@ For issues:
 3. Test connectivity: `curl -v https://yourdomain.com/api/health`
 4. Check database: `psql $DATABASE_URL -c "\dt"`
 
+## Chat voice (speech service)
+
+The chat's read-aloud and voice conversation need no environment variables: an org administrator configures the speech service under **Connector setup → Voice** (Azure AI Speech today — a region or a custom domain/private endpoint, an API key, a default voice and language), and the key is stored encrypted in `connector_configs` like every other org-wide credential. Until it is configured and enabled, nothing about voice is shown to anyone.
+
+Two deployment details do matter:
+
+- **The microphone needs a secure context.** Browsers only expose `getUserMedia` on `https://` origins (or `localhost`), so voice conversations work behind the TLS setup above and not over plain `http://` on a LAN address. Reading replies aloud has no such requirement.
+- **Outbound access to the speech service.** The web app calls `https://{region}.tts.speech.microsoft.com` and `https://{region}.stt.speech.microsoft.com` (or the configured custom endpoint) from the server, never from the browser; allow those hosts from wherever `web` runs. The browser only ever talks to the app's own `/api/tenant/…/voice/*` routes, which are session-guarded and rate-limited per person.
+
+The microphone tap is an audio worklet served as a static file (`apps/web/public/voice-capture-worklet.js`); a reverse proxy that serves `/public` assets must serve it with a JavaScript content type, which Next.js does by default.
+
 ## Chat attachments (object storage)
 
 Files people upload into the chat (`/[slug]/chat`) are the one thing the

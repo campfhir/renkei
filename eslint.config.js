@@ -33,6 +33,10 @@ export default [
       // served as-is from public/, outside every tsconfig project — same
       // category as the standalone scripts above.
       'apps/web/public/sw.js',
+      // Audio worklet: runs on the audio thread in its own global scope
+      // (`AudioWorkletProcessor`, `registerProcessor`), loaded by URL from
+      // public/ — same category as the service worker above.
+      'apps/web/public/voice-capture-worklet.js',
       // Standalone vendoring script: runs via tsx, no tsconfig project covers it.
       'scripts/trim-graph-openapi.ts',
       // The local ESLint rules themselves — plain ESM consumed by this config,
