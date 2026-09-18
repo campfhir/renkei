@@ -228,7 +228,13 @@ const handler = async (
       availability.confluenceAvailable ||
       availability.filesharesAvailable ||
       availability.mirthAvailable ||
-      availability.onbaseAvailable;
+      availability.onbaseAvailable ||
+      // Org-provisioned like knowledge: a caller who has linked nothing of
+      // their own still has `web_search` once an admin switched it on, and
+      // the tool catalog lists it for them. Leaving it out here served that
+      // caller the connect-Jira stub instead, and a chat — which offers only
+      // what the catalog AND this endpoint both return — silently lost it.
+      availability.webSearchAvailable;
 
     if (grants.length === 0 && !anyOtherConnector) {
       // Nothing connected at all — serve only the jira_connect pointer.

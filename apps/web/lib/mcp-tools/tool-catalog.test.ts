@@ -43,6 +43,8 @@ interface GrantRow {
 
 let grants: Record<string, GrantRow | undefined> = {};
 let embeddingProvider: string | null = null;
+/** Whether an admin has switched on the org-wide web-search connector. */
+let webSearchProvisioned = false;
 let readOnly = false;
 let disabledConnectors: string[] = [];
 /** The caller's file_share_connections rows the exposure aggregate reads. */
@@ -104,6 +106,15 @@ jest.mock('@renkei/knowledge', () => ({
   listRecentKnowledge: jest.fn(),
 }));
 
+// Only the availability probe is stubbed: registration itself is the real
+// module, so the test sees the tool the way a caller would. The real probe
+// reads connector_configs through the encryption key, which this suite has
+// no business supplying.
+jest.mock('@/lib/mcp-tools/web-search', () => ({
+  ...jest.requireActual('@/lib/mcp-tools/web-search'),
+  webSearchConfigured: async () => webSearchProvisioned,
+}));
+
 import { listAvailableTools, invalidateToolCatalogCache } from './tool-catalog';
 
 // Granular scopes, not the classic `read:jira-work` pair: the Jira tools gate
@@ -122,6 +133,7 @@ const ATLASSIAN_GRANT: GrantRow = {
 beforeEach(() => {
   grants = { atlassian: ATLASSIAN_GRANT };
   embeddingProvider = null;
+  webSearchProvisioned = false;
   readOnly = false;
   disabledConnectors = [];
   fileshareConnections = [];
@@ -334,6 +346,42 @@ describe('listAvailableTools', () => {
     expect(disabled).not.toContain('outlook_mail_summary');
     // The orchestrator itself is Jira-gated and stays.
     expect(disabled).toContain('daily_summary');
+  });
+
+  it('lists web_search once the org provisions it — even for a caller with nothing linked', async () => {
+    // Org-wide, like knowledge: no grant of the caller's own is involved, so
+    // someone who has connected nothing still gets it, and the chat's
+    // picker (which reads this list) can offer it.
+    grants = {};
+    expect(namesOf(await listAvailableTools('tenant-1', 'subject-1'))).not.toContain('web_search');
+
+    webSearchProvisioned = true;
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1', { fresh: true }));
+    expect(tools).toContain('web_search');
+  });
+
+  it('keeps a cached list until the tenant is invalidated — what an org-wide config save must do', async () => {
+    // The web-search and embeddings admin routes call
+    // invalidateToolCatalogCache(tenantId) after a save for exactly this
+    // reason: nothing else would make a caller's cached list notice a
+    // connector that appeared for everyone at once.
+    const before = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(before).not.toContain('web_search');
+
+    webSearchProvisioned = true;
+    const stale = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(stale).not.toContain('web_search');
+
+    invalidateToolCatalogCache('tenant-1');
+    const fresh = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(fresh).toContain('web_search');
+  });
+
+  it('drops web_search when the org admin switches the connector off', async () => {
+    webSearchProvisioned = true;
+    disabledConnectors = ['web-search'];
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).not.toContain('web_search');
   });
 
   it('carries an outcome set on every tool, catch-all included', async () => {
