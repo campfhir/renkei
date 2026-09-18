@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
-import { notFound } from 'next/navigation';
+import { headers } from 'next/headers';
+import { notFound, redirect } from 'next/navigation';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getNotificationPrefs, getThemePrefs, DEFAULT_THEME_PREFS } from '@renkei/user-prefs';
+import { PATHNAME_HEADER, safeReturnPath } from '@/lib/return-path';
+import { getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { getDatabase } from '@renkei/db';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { NotificationCenter } from '@/components/notification-center';
@@ -22,9 +24,22 @@ import AppNav from './nav';
  *
  * Resolves the slug once and passes ids down through the nav; pages resolve it
  * again for their own data — cheap, and it keeps each page correct when
- * rendered in isolation. No auth redirect happens here: the admin sign-in
- * flow lives under this layout and must be reachable signed-out, so each page
- * guards itself and the nav simply renders for whoever is present.
+ * rendered in isolation.
+ *
+ * This is also where a signed-out visitor is turned away, and the reason it
+ * has to be here rather than only in the pages: every page sits behind its
+ * own loading.tsx, which is a Suspense boundary, so by the time a page's
+ * guard runs the shell around it — nav, skeleton — has already streamed to
+ * the browser. The redirect then arrives as a client-side hop, and what the
+ * person sees is a flash of the app before the sign-in page. The layout
+ * sits above that boundary: a redirect thrown here is a plain 307 and
+ * nothing renders first. Every `/[slug]/*` page requires a session, so
+ * there is no allowlist to keep.
+ *
+ * The pages keep their own guards regardless. A layout does not re-render
+ * on a client-side navigation, so a session that expires between two
+ * pages is caught by the page, not here — lib/route-auth-coverage.test.ts
+ * holds every page to that.
  */
 export default async function TenantLayout({
   children,
@@ -38,25 +53,28 @@ export default async function TenantLayout({
   if (!tenant) notFound();
 
   const session = await getSessionFromCookies(tenant.id);
-  const isOperator = session?.roles.includes(ROLE_OPERATOR) ?? false;
+  if (!session) {
+    // Back to the page they asked for, query and all — the proxy put it on
+    // the request. Without it (the proxy's own error path), the home page.
+    const requested = safeReturnPath((await headers()).get(PATHNAME_HEADER));
+    redirect(signInUrl(tenant.id, requested ?? `/${tenant.slug}`));
+  }
+  const isOperator = session.roles.includes(ROLE_OPERATOR);
 
   // The nav shows a person, not an OIDC subject: the identity spine has the
   // display name and email recorded at sign-in. The subject is the fallback
   // for a session recorded before the spine existed.
-  const identity = session ? await getIdentityDisplay(tenant.id, session.subject) : null;
-  const userName = identity?.displayName ?? identity?.email ?? session?.subject ?? null;
+  const identity = await getIdentityDisplay(tenant.id, session.subject);
+  const userName = identity?.displayName ?? identity?.email ?? session.subject;
 
-  const prefs = session
-    ? await getNotificationPrefs(tenant.id, session.subject, { fresh: true })
-    : null;
-  const theme = session
-    ? await getThemePrefs(tenant.id, session.subject, { fresh: true })
-    : DEFAULT_THEME_PREFS;
+  const prefs = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
+  const theme = await getThemePrefs(tenant.id, session.subject, { fresh: true });
 
   // The menu carries the person's chats on every page.
   const dbResult = getDatabase();
-  const chats =
-    session && dbResult.ok ? await loadChatSidebar(dbResult.val, tenant.id, session.subject) : null;
+  const chats = dbResult.ok
+    ? await loadChatSidebar(dbResult.val, tenant.id, session.subject)
+    : null;
 
   const version = getVersionInfo();
 
@@ -65,62 +83,42 @@ export default async function TenantLayout({
     the same poll: the nav wants the unread count, the toast stack wants
     what has arrived since this tab opened. One poller, two readers.
 
-    Only for a signed-in visitor. This layout deliberately does not redirect
-    when there is no session (the admin sign-in flow lives under it), so
-    everything here has to tolerate its absence.
+    ThemeScript has to be the very first thing this layout renders — see
+    its own comment. ThemeSync follows it: it is what guarantees
+    `data-theme` exists when the script never ran (a client-side mount of
+    this layout).
   */
-  const shell = (
-    <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
-      {/* The nav frames the page: it owns the <main> so the menu column can
-          stand beside it on a wide screen. */}
-      <AppNav
-        slug={tenant.slug}
-        tenantId={tenant.id}
-        userName={userName}
-        userEmail={identity?.email ?? null}
-        isOperator={isOperator}
-        signInHref={signInUrl(tenant.id, `/${tenant.slug}`)}
-        chats={chats}
-        version={version}
-      >
-        {children}
-      </AppNav>
-      {session ? (
-        <NotificationCorner
-          tenantId={tenant.id}
-          corner={prefs?.toastCorner ?? 'bottom-right'}
-          toastsEnabled={prefs?.toastsEnabled ?? false}
-        />
-      ) : null}
-      {/* Renders nothing — it only turns arrivals into OS banners while the
-          tab is in the background, and only for somebody whose browser has
-          granted permission. The opt-in it checks lives in this browser's
-          localStorage, not here — see desktop-notifications.tsx. */}
-      {session ? <DesktopNotifications tenantId={tenant.id} /> : null}
-    </div>
-  );
-
-  // ThemeScript has to be the very first thing this layout renders — see
-  // its own comment — so both return paths lead with it rather than nesting
-  // it inside `shell`. ThemeSync follows on both paths too: it is what
-  // guarantees `data-theme` exists when the script never ran (a client-side
-  // mount of this layout), and a signed-out visitor's 'auto' still has to
-  // follow the system. With no session there is no saved preference to
-  // hand it, so it follows whatever this browser cached.
-  if (!session) {
-    return (
-      <>
-        <ThemeScript tenantId={tenant.id} />
-        <ThemeSync tenantId={tenant.id} mode={null} />
-        {shell}
-      </>
-    );
-  }
   return (
     <>
       <ThemeScript tenantId={tenant.id} />
       <ThemeSync tenantId={tenant.id} mode={theme.mode} />
-      <NotificationCenter tenantId={tenant.id}>{shell}</NotificationCenter>
+      <NotificationCenter tenantId={tenant.id}>
+        <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
+          {/* The nav frames the page: it owns the <main> so the menu column can
+              stand beside it on a wide screen. */}
+          <AppNav
+            slug={tenant.slug}
+            tenantId={tenant.id}
+            userName={userName}
+            userEmail={identity?.email ?? null}
+            isOperator={isOperator}
+            chats={chats}
+            version={version}
+          >
+            {children}
+          </AppNav>
+          <NotificationCorner
+            tenantId={tenant.id}
+            corner={prefs?.toastCorner ?? 'bottom-right'}
+            toastsEnabled={prefs?.toastsEnabled ?? false}
+          />
+          {/* Renders nothing — it only turns arrivals into OS banners while the
+              tab is in the background, and only for somebody whose browser has
+              granted permission. The opt-in it checks lives in this browser's
+              localStorage, not here — see desktop-notifications.tsx. */}
+          <DesktopNotifications tenantId={tenant.id} />
+        </div>
+      </NotificationCenter>
     </>
   );
 }

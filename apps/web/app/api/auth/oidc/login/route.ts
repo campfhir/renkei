@@ -4,6 +4,7 @@ import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { sessionCookieName } from '@/lib/session';
+import { safeReturnPath } from '@/lib/return-path';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { safeFetch } from '@/lib/safe-fetch';
 import { randomUUID } from 'crypto';
@@ -17,8 +18,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const tenantId = searchParams.get('tenantId');
   // Empty means "no preference": the callback then derives the tenant's home
-  // page from its slug rather than this route hardcoding a landing.
-  const redirect = searchParams.get('redirect') || '';
+  // page from its slug rather than this route hardcoding a landing. Only a
+  // path on this origin is kept — anyone can author this query string, and
+  // the callback would otherwise send a fresh session wherever it said.
+  const redirect = safeReturnPath(searchParams.get('redirect')) ?? '';
 
   if (!tenantId) {
     return NextResponse.json({ error: 'Missing tenantId' }, { status: 400 });
