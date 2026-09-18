@@ -45,7 +45,6 @@ export default async function ChatPage({
       initialMessages={view.messages}
       models={models}
       uploadsEnabled={uploadsEnabled}
-      newChatProject={null}
     />
   );
 }

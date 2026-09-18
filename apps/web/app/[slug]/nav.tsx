@@ -250,6 +250,8 @@ export default function AppNav({
                   {item.plus ? (
                     <Link
                       href={item.plus.href}
+                      // Opening "+ New" creates a chat; only a click may do that.
+                      prefetch={false}
                       aria-label={item.plus.label}
                       title={item.plus.label}
                       className="flex items-center gap-0.5 rounded-md border border-gray-300 px-1.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"

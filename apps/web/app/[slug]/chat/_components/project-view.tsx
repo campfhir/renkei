@@ -317,6 +317,8 @@ export default function ProjectView({
         ) : null}
         <Link
           href={`/${slug}/chat/new?project=${project.id}`}
+          // Opening it creates a chat in the project; only a click may do that.
+          prefetch={false}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           New chat

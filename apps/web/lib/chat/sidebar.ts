@@ -107,13 +107,16 @@ export async function loadChatSidebar(
   );
   const projectOf = (chat: ChatRow) =>
     chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null;
+  // "+ New" creates its chat up front; one nothing was said in yet is not
+  // listed (nor is anyone else's), so abandoned starts never pile up here.
+  const started = (chat: ChatRow) => chat.lastMessageAt !== null;
   const allChats: ChatListItem[] = [
-    ...owned.map((chat) => item(chat, 'owner', null, projectOf(chat))),
-    ...granted.map((chat) =>
-      item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectOf(chat))
-    ),
+    ...owned.filter(started).map((chat) => item(chat, 'owner', null, projectOf(chat))),
+    ...granted
+      .filter(started)
+      .map((chat) => item(chat, 'grant', names.get(chat.ownerSubject) ?? null, projectOf(chat))),
     ...inProjects
-      .filter((chat) => !grantedIds.has(chat.id))
+      .filter((chat) => started(chat) && !grantedIds.has(chat.id))
       .map((chat) => item(chat, 'project', names.get(chat.ownerSubject) ?? null, projectOf(chat))),
   ];
   const listItem = (project: (typeof projects)[number]): ProjectListItem => ({
