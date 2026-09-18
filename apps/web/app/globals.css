@@ -855,7 +855,7 @@ input[type='number']::-webkit-inner-spin-button {
     display: none;
   }
   .chat-markdown tbody tr {
-    border: 1px solid var(--color-gray-300);
+    border: 1px solid var(--color-gray-200);
     border-radius: 0.5rem;
     padding: 0.35em 0.7em;
   }
@@ -956,6 +956,12 @@ input[type='number']::-webkit-inner-spin-button {
   :root:not([data-theme='light']) .chat-markdown td::before {
     color: var(--color-gray-400);
   }
+  @media (width < 40rem) {
+    :root:not([data-theme='light']) .chat-markdown tbody tr,
+    :root:not([data-theme='light']) .chat-markdown td + td {
+      border-color: var(--color-gray-800);
+    }
+  }
   :root:not([data-theme='light']) .chat-markdown hr {
     border-color: var(--color-gray-800);
   }
@@ -1014,6 +1020,12 @@ input[type='number']::-webkit-inner-spin-button {
 }
 :root[data-theme='dark'] .chat-markdown td::before {
   color: var(--color-gray-400);
+}
+@media (width < 40rem) {
+  :root[data-theme='dark'] .chat-markdown tbody tr,
+  :root[data-theme='dark'] .chat-markdown td + td {
+    border-color: var(--color-gray-800);
+  }
 }
 :root[data-theme='dark'] .chat-markdown hr {
   border-color: var(--color-gray-800);
