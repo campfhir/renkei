@@ -43,7 +43,31 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
+    date: '2026-09-18',
+    heading: 'A chat asks before it acts',
+    entries: [
+      {
+        kind: 'added',
+        title: 'A chat pauses before it changes something',
+        detail:
+          'When a chat is about to create a Jira issue, send a WebEx message, write a memory note, save a file or push a commit, it stops and asks. The ask appears in the thread where the reply paused — Allow once, Always allow or Deny — and a notification reaches you if you are not looking. Deny, or leave it an hour, and the assistant says what it was going to do instead of doing it. Stop still cancels the turn, and the ask is still there after a reload.',
+      },
+      {
+        kind: 'added',
+        title: 'Decide per tool what a chat may do',
+        detail:
+          'Preferences now lists every tool that acts on your behalf, folded by connector, with three answers for each: Ask, Allow or Block. Set a whole connector at once, or one tool before it has ever been called. A blocked tool is withheld from the model entirely, and an “Always allow” you gave from a chat shows up here where it can be taken back.',
+      },
+      {
+        kind: 'changed',
+        title: 'A system notification opens what it is about',
+        detail:
+          'Clicking a notification now marks it read and takes you to the thing itself — the issue in Jira, the space in WebEx — or to its place in Renkei when the new “open in the source application” preference is off. A browser push opens the source beside your Renkei tab rather than over it; a push about a chat opens the chat.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-18',
     heading: 'WebEx notes that show as unread',
     entries: [
       {
@@ -55,7 +79,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-18',
     heading: 'Voice',
     entries: [
       {
@@ -91,7 +115,43 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-18',
+    heading: 'Chats, found and read more easily',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Search chats by what was said',
+        detail:
+          'The sidebar’s search box used to match only titles and project names. It now also finds chats by a phrase in your messages or the replies, and shows a snippet around the match under the chat’s title. Tool calls, tool results and thinking are never searched.',
+      },
+      {
+        kind: 'changed',
+        title: 'Tables read as cards on a phone',
+        detail:
+          'A table in a reply with more than a couple of columns was squeezed until keys and dates wrapped one character per line. On a narrow screen each row is now a card of “Header: value” lines; wider screens keep the table.',
+      },
+      {
+        kind: 'added',
+        title: 'Copy a table out of a reply as a table',
+        detail:
+          'Selecting part of a reply that includes a table and copying it now puts a Markdown table on the clipboard — column names included, even for a partial selection or the phone’s card layout — ready to paste into Jira, Confluence or another chat.',
+      },
+      {
+        kind: 'changed',
+        title: 'A new chat exists before you type',
+        detail:
+          '“+ New” now opens a chat straight away, so the first Send is an ordinary message: no reload of the thread mid-reply, and nothing typed or queued is lost. An empty chat stays out of the sidebar until its first message, and one left empty is cleaned up a day later.',
+      },
+      {
+        kind: 'added',
+        title: 'New chat from the “⋯” menu, and Clear search',
+        detail:
+          'A chat’s overflow menu now offers New chat, landing in the same project when the chat has one. The sidebar’s filter menu gains Clear search whenever the search box has text.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-18',
     entries: [
       {
         kind: 'fixed',
@@ -99,10 +159,46 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           'Opening any page while signed out — or with a session that had expired — could briefly show the menu and a loading skeleton before jumping to sign in. The check now happens before anything is sent, and you come back to the exact page you asked for, filters included.',
       },
+      {
+        kind: 'fixed',
+        title: 'Service desk request types by name',
+        detail:
+          'Creating a service desk request, listing its components or asking for a request type’s fields with the type’s name — “Application Error” rather than its number — failed with a conversion error. A name now works everywhere a request type is asked for, and an unknown name is answered with the types the desk offers.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Agents see whole tool results',
+        detail:
+          'An agent step was handed each tool result cut off at about 8,000 characters with a bare “[truncated]” marker, so a long component list or a page of search results reached the model mid-item and looked complete. The cap is now the same generous one a chat uses, and when it does bite the marker says how much was cut and tells the model to narrow or page. The debug paste records how much of each result the model read.',
+      },
     ],
   },
   {
-    date: null,
+    date: '2026-09-17',
+    heading: 'Jira comments and search results',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Jira comments arrive whole',
+        detail:
+          'Listing an issue’s comments clipped each one at 300 characters, so an incident timeline or a pasted log could be seen only up to its first paragraph. Comments now come through in full, with their exact timestamp and a mark when they were edited, and a long thread is paged rather than cut.',
+      },
+      {
+        kind: 'added',
+        title: 'Edit a Jira comment in place',
+        detail:
+          'Fixing a typo in a comment meant deleting it and posting again. A new Jira tool edits a comment where it is, keeps a service desk internal note internal, carries any visibility restriction across, and returns the previous text so the edit can be undone.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Extra fields on a Jira search read as text',
+        detail:
+          'Asking a Jira search for an extra field such as the description returned the head of Jira’s raw document tree, cut at 500 characters. Extra fields now render as Markdown, whole, the way an issue’s own page already did.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-17',
     entries: [
       {
         kind: 'added',
@@ -113,7 +209,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-17',
     heading: 'Organization usage, per person',
     entries: [
       {
@@ -138,6 +234,71 @@ export const CHANGELOG: ChangelogRelease[] = [
         title: 'People has become Access, and Organization usage',
         detail:
           'Who is connected to what is now the Access page: one table of every person and the connectors they hold, with the disconnect button on the row. What else the People page said about someone — their groups and the agents they own — sits above that person’s usage when they are picked on Organization usage. The People page and its per-person pages are gone; the old Grants link lands on Access.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-17',
+    heading: 'Knowledge search',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Searching several sources no longer loses the good matches',
+        detail:
+          'A search across every source, or across a quiet one and a noisy one, could return poor hits or nothing while the same query against the quiet source alone found strong matches. The index is now searched more widely before the source and date filters apply, so the close match is found wherever it sits. Applies to the search page and to agents and chats searching knowledge alike.',
+      },
+      {
+        kind: 'changed',
+        title: 'The search page fits a phone',
+        detail:
+          'The controls sit in three rows — the query, then period and limit, then sources — instead of one row that wrapped unpredictably. The query-syntax help is behind an (i) button, shown on hover or a tap. The “N withheld” counts under the results are gone.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Rename, move, share and delete dialogs from the chat list work again',
+        detail:
+          'On a desktop the dialog opened from a chat row’s “⋯” menu looked see-through and could not be clicked; on an iPhone it was clipped to the width of the drawer. The dialogs now open over the whole page.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-16',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Copy a reply',
+        detail:
+          'A Copy button under each assistant reply puts just its prose on the clipboard — no thinking, no tool calls — the way code blocks could already be copied.',
+      },
+      {
+        kind: 'added',
+        title: 'Told when a chat or agent is shared with you',
+        detail:
+          'Two new notifications, on by default in the app: someone sharing a chat with you, and someone sharing an agent. Under Notifications you can also turn on a desktop push when a reply lands in one of your chats while no Renkei tab is in front.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Approval and question cards now reach the notification feed',
+        detail:
+          'An agent asking for approval or asking a question only ever sent email or WebEx, though the preferences page promised “Always” in the App column. Both now appear in the in-app feed and can push, as the page said.',
+      },
+      {
+        kind: 'changed',
+        title: 'Knowledge search is faster and never hangs',
+        detail:
+          'Semantic search now hits an index instead of scanning every chunk, many more searches can run at once, and a search stuck behind a queue gives up after ten seconds with a clear failure rather than waiting indefinitely.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The Code page recognizes a full Bitbucket connection',
+        detail:
+          'With every Bitbucket permission approved, the Code page could still say the connection lacked repository, branch and pull request access and refuse to create a code project, while the Connectors page showed it connected. Bitbucket reports its scopes in its own vocabulary; the Code page now reads them the way the rest of the app does.',
+      },
+      {
+        kind: 'changed',
+        title: 'Colleagues looked up in the live directory, several at once',
+        detail:
+          'The directory tool takes a list of names or addresses in one call, so finding a few people no longer costs a call each. A chat also prefers the directory over indexed documents or messages for someone’s profile or contact details, and prefers a live tool over knowledge search for anything very recent.',
       },
     ],
   },
