@@ -1,8 +1,8 @@
 /**
- * The tools this person lets every chat call without asking — the list
- * "Always allow" writes to (permission-prefs.ts), read and pruned from the
- * preferences page. PUT replaces the list wholesale; taking a name off it
- * means the next call to that tool asks again.
+ * What this person decided ahead of time about the chat's act tools: the
+ * always-allowed list ("Always allow" on the card writes to it too) and
+ * the blocked list (permission-prefs.ts), edited on the Preferences page.
+ * PUT replaces both lists wholesale; a name on neither asks again.
  */
 
 import type { NextRequest } from 'next/server';
@@ -35,10 +35,17 @@ export async function PUT(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const body = await readJsonBody(request);
-  if (!Array.isArray(body.alwaysAllow)) {
-    return jsonError(400, 'invalid-permissions', 'Expected alwaysAllow: string[]');
+  if (!Array.isArray(body.alwaysAllow) || !Array.isArray(body.alwaysDeny)) {
+    return jsonError(
+      400,
+      'invalid-permissions',
+      'Expected alwaysAllow: string[] and alwaysDeny: string[]'
+    );
   }
-  const prefs = parseChatToolPermissionPrefs({ alwaysAllow: body.alwaysAllow });
+  const prefs = parseChatToolPermissionPrefs({
+    alwaysAllow: body.alwaysAllow,
+    alwaysDeny: body.alwaysDeny,
+  });
   const written = await setChatToolPermissionPrefs(tenantId, ready.context.session.subject, prefs);
   if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
   return NextResponse.json(prefs);

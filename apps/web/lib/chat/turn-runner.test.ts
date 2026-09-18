@@ -897,6 +897,30 @@ describe('runChatTurn permissions', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('refuses a blocked tool without asking, even when the model calls it from memory', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p2b');
+    const watched = watch(channel);
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      deps(fake, channel, [act('tu_1', 'jira_delete_issue'), text('Understood')], calls, {
+        permissions: { alwaysAllowed: new Set(), denied: new Set(['jira_delete_issue']) },
+      }),
+      inputFor('turn-p2b')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(fake.asks).toEqual([]);
+    expect(calls).toEqual([]);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows[1].blocks[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseId: 'tu_1',
+      isError: true,
+      content: expect.stringContaining('blocked'),
+    });
+    expect(watched.events.some((event) => event.type === 'tool_permission_request')).toBe(false);
+  });
+
   it('runs nothing unasked when no permission policy is given', async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-p3');

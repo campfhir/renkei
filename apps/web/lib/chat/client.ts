@@ -115,14 +115,16 @@ export const chatClient = {
       { toolUseId, decision }
     ),
 
-  /** The tools this person lets every chat call without asking (permission-prefs.ts). */
+  /** What this person decided ahead of time about the chat's act tools (permission-prefs.ts). */
   toolPermissions: (tenantId: string) =>
-    getJson<{ alwaysAllow: string[] }>(`${base(tenantId)}/tool-permissions`),
+    getJson<{ alwaysAllow: string[]; alwaysDeny: string[] }>(`${base(tenantId)}/tool-permissions`),
 
-  setToolPermissions: (tenantId: string, alwaysAllow: string[]) =>
-    sendJsonFull<{ alwaysAllow: string[] }>(`${base(tenantId)}/tool-permissions`, 'PUT', {
-      alwaysAllow,
-    }),
+  setToolPermissions: (tenantId: string, prefs: { alwaysAllow: string[]; alwaysDeny: string[] }) =>
+    sendJsonFull<{ alwaysAllow: string[]; alwaysDeny: string[] }>(
+      `${base(tenantId)}/tool-permissions`,
+      'PUT',
+      prefs
+    ),
 
   /** Force a compaction pass now — /compact, or "compact this chat" picked from the prompt picker. */
   compact: (tenantId: string, chatId: string) =>

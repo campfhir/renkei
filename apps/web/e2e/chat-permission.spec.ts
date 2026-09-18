@@ -228,7 +228,7 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
         },
         { timeout: 10_000 }
       )
-      .toEqual({ alwaysAllow: ['jira_create_issue'] });
+      .toEqual({ alwaysAllow: ['jira_create_issue'], alwaysDeny: [] });
     // ...and the notification the ask raised is read.
     await expect
       .poll(async () => {
@@ -248,18 +248,35 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
     expect(again.status()).toBe(409);
     expect((await permissionRow(client, ids.turnId)).decision).toBe('always');
 
-    // Preferences lists the tool with a way to ask again, and the
-    // system-notification click preference sits with the other switches.
+    // Preferences shows the decision in Jira's fold — Allow for the tool
+    // just allowed — with Ask and Block beside it, and the system-
+    // notification click preference sits with the other switches.
     await page.goto(`/${E2E_SLUG}/preferences`);
-    const section = page.getByRole('region', { name: 'Tools chats may use without asking' });
-    await expect(section.getByText('jira_create_issue')).toBeVisible();
+    const section = page.getByRole('region', { name: 'What a chat may do' });
+    await expect(section).toBeVisible();
     await expect(
       page.getByRole('checkbox', { name: /Open the notification.s own application/ })
     ).toBeChecked();
+    const jira = section.locator('details', { hasText: 'Jira' }).first();
+    await expect(jira.locator('summary')).toContainText('1 allowed');
+    await jira.locator('summary').click();
+    const allow = jira.getByRole('radio', {
+      name: 'Create a Jira issue (jira_create_issue) — Allow',
+    });
+    await expect(allow).toBeChecked();
+    // Block a tool that has never been called, so the chat never sees it.
+    await jira
+      .getByRole('radio', { name: 'Comment on a Jira issue (jira_add_comment) — Block' })
+      .check();
+    await expect(jira.locator('summary')).toContainText('1 allowed, 1 blocked');
     await section.scrollIntoViewIfNeeded();
     await shot(page, testInfo, 'preferences-tool-permissions.png');
-    await section.getByRole('button', { name: /Ask again before/ }).click();
-    await expect(section.getByText('Nothing yet')).toBeVisible();
+    // Back to asking for the allowed one; the block stays.
+    await jira
+      .getByRole('radio', { name: 'Create a Jira issue (jira_create_issue) — Ask' })
+      .check();
+    await section.getByRole('button', { name: 'Save' }).click();
+    await expect(section.getByText('Saved.')).toBeVisible();
     await expect
       .poll(async () => {
         const { rows } = await client.query(
@@ -268,7 +285,7 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
         );
         return rows[0]?.value ?? null;
       })
-      .toEqual({ alwaysAllow: [] });
+      .toEqual({ alwaysAllow: [], alwaysDeny: ['jira_add_comment'] });
   } finally {
     await client.end();
   }

@@ -164,6 +164,12 @@ export const DEFAULT_TURN_LIMITS: TurnLimits = {
  */
 export interface TurnPermissions {
   alwaysAllowed: ReadonlySet<string>;
+  /**
+   * Tools the person blocked outright (permission-prefs.ts). The surface
+   * never offers these, so a call can only come from the model's memory
+   * of an earlier turn — refused without asking, and said so.
+   */
+  denied?: ReadonlySet<string>;
 }
 
 /** What the model is told in place of a result for a call that was not made. */
@@ -171,6 +177,8 @@ export const PERMISSION_DENIED_RESULT =
   'The person declined this tool call, so it was not made. Do not retry it or work around it; tell them what you were going to do and ask how they would like to proceed.';
 export const PERMISSION_TIMEOUT_RESULT =
   'Nobody allowed this tool call in time, so it was not made. Tell the person what you were going to do; they can ask again when they are ready.';
+export const PERMISSION_BLOCKED_RESULT =
+  'The person has blocked this tool in their preferences, so it cannot be used in this chat. Do not retry it or work around it; tell them what you were going to do and let them decide.';
 
 export interface TurnRunnerDeps {
   llm: ResolvedLlm;
@@ -446,8 +454,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const { channel, store, llm } = deps;
   const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
   const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
+  const denied = deps.permissions?.denied ?? new Set<string>();
   const needsPermission = (name: string) =>
-    deps.permissions !== undefined && !readOnlyTools.has(name) && !alwaysAllowed.has(name);
+    deps.permissions !== undefined &&
+    !denied.has(name) &&
+    !readOnlyTools.has(name) &&
+    !alwaysAllowed.has(name);
   let permissionWaited = 0;
 
   const messages: LlmMessage[] = [...input.history];
@@ -915,7 +927,10 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const attachments: LlmContentBlock[] = [];
       const produced: ArtifactFile[] = [];
       // Calls the person did not allow: answered with a refusal, never run.
-      const refused = new Map<string, 'deny' | 'timeout'>();
+      const refused = new Map<string, 'deny' | 'timeout' | 'blocked'>();
+      for (const use of toolUses) {
+        if (denied.has(use.name)) refused.set(use.id, 'blocked');
+      }
       const runTool = async (use: (typeof toolUses)[number]): Promise<McpToolResult> => {
         const refusal = refused.get(use.id);
         if (refusal) {
@@ -923,7 +938,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             content: [
               {
                 type: 'text',
-                text: refusal === 'deny' ? PERMISSION_DENIED_RESULT : PERMISSION_TIMEOUT_RESULT,
+                text:
+                  refusal === 'deny'
+                    ? PERMISSION_DENIED_RESULT
+                    : refusal === 'blocked'
+                      ? PERMISSION_BLOCKED_RESULT
+                      : PERMISSION_TIMEOUT_RESULT,
               },
             ],
             isError: true,

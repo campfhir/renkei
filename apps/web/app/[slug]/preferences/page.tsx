@@ -11,6 +11,7 @@ import { getChannelAvailability } from '@/lib/notification-channels';
 import { listChatConnectors } from '@/lib/chat/tool-surface';
 import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
 import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
+import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
@@ -45,6 +46,7 @@ export default async function PreferencesPage({
     chatDefault,
     voice,
     toolPermissions,
+    actToolGroups,
   ] = await Promise.all([
     getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
     getThemePrefs(tenant.id, session.subject, { fresh: true }),
@@ -66,6 +68,7 @@ export default async function PreferencesPage({
     // Null when the org has no voice service; the section is then left out.
     loadVoiceAvailability(tenant.id, session.subject),
     getChatToolPermissionPrefs(tenant.id, session.subject, { fresh: true }),
+    listChatActToolGroups(tenant.id, session.subject, session.roles),
   ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
@@ -144,7 +147,11 @@ export default async function PreferencesPage({
         />
       </div>
       <div className="mb-6">
-        <ToolPermissionsForm tenantId={tenant.id} initial={toolPermissions.alwaysAllow} />
+        <ToolPermissionsForm
+          tenantId={tenant.id}
+          groups={actToolGroups}
+          initial={toolPermissions}
+        />
       </div>
       <PreferencesForm
         tenantId={tenant.id}
