@@ -349,8 +349,20 @@ describe('parseVoicePrefs', () => {
 
   it('keeps a plausible voice id, pace, auto-play and locale', () => {
     expect(
-      parseVoicePrefs({ voice: 'en-GB-SoniaNeural', rate: 1.25, autoPlay: true, locale: 'en_gb' })
-    ).toEqual({ voice: 'en-GB-SoniaNeural', rate: 1.25, autoPlay: true, locale: 'en-GB' });
+      parseVoicePrefs({
+        voice: 'en-GB-SoniaNeural',
+        rate: 1.25,
+        autoPlay: true,
+        locale: 'en_gb',
+        accent: 'violet',
+      })
+    ).toEqual({
+      voice: 'en-GB-SoniaNeural',
+      rate: 1.25,
+      autoPlay: true,
+      locale: 'en-GB',
+      accent: 'violet',
+    });
   });
 
   it('clamps the pace and drops what it cannot use', () => {
@@ -361,5 +373,6 @@ describe('parseVoicePrefs', () => {
     expect(parseVoicePrefs({ voice: 42 }).voice).toBeNull();
     expect(parseVoicePrefs({ locale: 'english' }).locale).toBeNull();
     expect(parseVoicePrefs({ autoPlay: 'yes' }).autoPlay).toBe(false);
+    expect(parseVoicePrefs({ accent: 'plaid' }).accent).toBe('rainbow');
   });
 });

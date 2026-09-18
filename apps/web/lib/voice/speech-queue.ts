@@ -40,6 +40,13 @@ export class SpeechQueue {
   private inFlight = 0;
   /** Which stream of text is playing — a Listen button, or the live reply. */
   public owner: string | null = null;
+  // The speaker's loudness, for the wave: an analyser tapped into the
+  // element's output, read once a frame while something plays.
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private samples: Float32Array<ArrayBuffer> | null = null;
+  private levelListeners = new Set<(level: number) => void>();
+  private levelFrame = 0;
 
   constructor(
     private readonly tenantId: string,
@@ -74,9 +81,61 @@ export class SpeechQueue {
     return this.audio;
   }
 
+  /**
+   * Route the element through an analyser so its loudness can be read.
+   * Done from a click (prime) because an AudioContext made elsewhere
+   * starts suspended; once routed, the context is what plays the sound.
+   */
+  private ensureAnalyser(): void {
+    if (this.analyser || typeof AudioContext === 'undefined') return;
+    try {
+      const audio = this.ensureAudio();
+      const context = new AudioContext();
+      const source = context.createMediaElementSource(audio);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.6;
+      source.connect(analyser);
+      analyser.connect(context.destination);
+      this.audioContext = context;
+      this.analyser = analyser;
+      this.samples = new Float32Array(analyser.fftSize);
+    } catch {
+      // No analyser: the wave idles instead of following the sound.
+    }
+  }
+
+  /** The speaker's loudness, 0–1, as often as the screen repaints while playing. */
+  subscribeLevel(listener: (level: number) => void): () => void {
+    this.levelListeners.add(listener);
+    return () => this.levelListeners.delete(listener);
+  }
+
+  private startLevelLoop(): void {
+    if (this.levelFrame || !this.analyser || this.levelListeners.size === 0) return;
+    const tick = () => {
+      if (!this.playing || !this.analyser || !this.samples) {
+        this.levelFrame = 0;
+        for (const listener of this.levelListeners) listener(0);
+        return;
+      }
+      this.analyser.getFloatTimeDomainData(this.samples);
+      let sum = 0;
+      for (let index = 0; index < this.samples.length; index += 1) {
+        sum += this.samples[index] * this.samples[index];
+      }
+      const level = Math.min(1, Math.sqrt(sum / this.samples.length) * 4);
+      for (const listener of this.levelListeners) listener(level);
+      this.levelFrame = requestAnimationFrame(tick);
+    };
+    this.levelFrame = requestAnimationFrame(tick);
+  }
+
   /** From a click: takes the browser's permission to play sound later. */
   prime(): void {
     const audio = this.ensureAudio();
+    this.ensureAnalyser();
+    void this.audioContext?.resume().catch(() => undefined);
     if (audio.src) return;
     // A tiny silent WAV: one sample. Playing it unlocks the element.
     audio.src =
@@ -183,7 +242,9 @@ export class SpeechQueue {
       audio.addEventListener('error', finish);
     });
     try {
+      void this.audioContext?.resume().catch(() => undefined);
       await audio.play();
+      this.startLevelLoop();
       await done;
     } catch {
       // A stop() mid-play rejects play() too; only a real refusal is news.
@@ -200,6 +261,12 @@ export class SpeechQueue {
   dispose(): void {
     this.stop();
     this.listeners.clear();
+    this.levelListeners.clear();
+    if (this.levelFrame) cancelAnimationFrame(this.levelFrame);
+    this.levelFrame = 0;
+    void this.audioContext?.close().catch(() => undefined);
+    this.audioContext = null;
+    this.analyser = null;
     this.audio = null;
   }
 }

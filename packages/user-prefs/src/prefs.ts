@@ -465,13 +465,19 @@ export interface VoicePrefs {
   autoPlay: boolean;
   /** The language voice mode listens for; null means the org's default. */
   locale: string | null;
+  /** The colour of the wave that shows the voice: a rainbow, or one hue. */
+  accent: VoiceAccent;
 }
+
+export const VOICE_ACCENTS = ['rainbow', 'blue', 'violet', 'emerald', 'amber', 'rose'] as const;
+export type VoiceAccent = (typeof VOICE_ACCENTS)[number];
 
 export const DEFAULT_VOICE_PREFS: VoicePrefs = {
   voice: null,
   rate: 1,
   autoPlay: false,
   locale: null,
+  accent: 'rainbow',
 };
 
 export const MIN_VOICE_RATE = 0.5;
@@ -493,6 +499,10 @@ function localeOr(value: unknown, fallback: string | null): string | null {
   return match ? `${match[1].toLowerCase()}-${match[2].toUpperCase()}` : fallback;
 }
 
+function isVoiceAccent(value: unknown): value is VoiceAccent {
+  return typeof value === 'string' && VOICE_ACCENTS.some((known) => known === value);
+}
+
 function rateOr(value: unknown, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(MAX_VOICE_RATE, Math.max(MIN_VOICE_RATE, Math.round(value * 100) / 100));
@@ -509,5 +519,6 @@ export function parseVoicePrefs(stored: unknown): VoicePrefs {
     rate: rateOr(raw.rate, DEFAULT_VOICE_PREFS.rate),
     autoPlay: boolOr(raw.autoPlay, DEFAULT_VOICE_PREFS.autoPlay),
     locale: localeOr(raw.locale, DEFAULT_VOICE_PREFS.locale),
+    accent: isVoiceAccent(raw.accent) ? raw.accent : DEFAULT_VOICE_PREFS.accent,
   };
 }

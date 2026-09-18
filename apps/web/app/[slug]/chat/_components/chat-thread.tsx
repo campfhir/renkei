@@ -128,8 +128,9 @@ export default function ChatThread({
     null none of this renders and none of it runs.
   */
   const [voicePrefs, setVoicePrefs] = useState<VoicePrefs>(
-    voice?.prefs ?? { voice: null, rate: 1, autoPlay: false, locale: null }
+    voice?.prefs ?? { voice: null, rate: 1, autoPlay: false, locale: null, accent: 'rainbow' }
   );
+  const [outputLevel, setOutputLevel] = useState(0);
   const [voiceMode, setVoiceMode] = useState(false);
   const [speechQueue, setSpeechQueue] = useState<SpeechQueue | null>(null);
   const [speech, setSpeech] = useState<{ state: SpeechQueueState; owner: string | null }>({
@@ -146,9 +147,13 @@ export default function ChatThread({
     if (!voiceAvailable) return;
     const created = new SpeechQueue(tenantId, (message) => setError(message));
     const unsubscribe = created.subscribe((state) => setSpeech({ state, owner: created.owner }));
+    const unsubscribeLevel = created.subscribeLevel((next) =>
+      setOutputLevel((prev) => (Math.abs(prev - next) > 0.03 ? next : prev))
+    );
     setSpeechQueue(created);
     return () => {
       unsubscribe();
+      unsubscribeLevel();
       created.dispose();
       setSpeechQueue(null);
     };
@@ -618,6 +623,15 @@ export default function ChatThread({
               hasHistory={state.messages.length > 0}
             />
           }
+          dictation={
+            voice
+              ? {
+                  tenantId,
+                  locale: voicePrefs.locale ?? voice.defaultLocale,
+                  accent: voicePrefs.accent,
+                }
+              : null
+          }
           voiceControl={
             voice && speechQueue ? (
               <VoiceMenu
@@ -625,6 +639,7 @@ export default function ChatThread({
                 prefs={voicePrefs}
                 defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
                 queueState={speech.state}
+                outputLevel={outputLevel}
                 onChange={changeVoicePrefs}
                 onStopReading={stopReading}
                 onStartVoiceMode={() => setVoiceMode(true)}
@@ -642,6 +657,7 @@ export default function ChatThread({
           queue={speechQueue}
           queueState={speech.owner === LIVE_REPLY_OWNER ? speech.state : 'idle'}
           running={running}
+          accent={voicePrefs.accent}
           replyText={lastTurn ? replyProse(state.messages, lastTurn.id) : ''}
           onSend={(text) => queueOrSend({ text, attachments: [] })}
           onInterrupt={() => void stop()}

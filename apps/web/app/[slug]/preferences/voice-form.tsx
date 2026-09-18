@@ -16,6 +16,7 @@ import { LoadingLine } from '@/components/skeleton';
 import { voiceClient } from '@/lib/voice/client';
 import { SpeechQueue } from '@/lib/voice/speech-queue';
 import { localeLabel } from '../chat/_components/voice-menu';
+import { WAVE_ACCENTS } from '../chat/_components/voice-wave';
 
 const SAMPLE = 'Hello — this is how replies will sound in your chats.';
 
@@ -198,6 +199,41 @@ export default function VoiceForm({
           className="mt-1 w-full max-w-md"
         />
       </label>
+
+      <fieldset className="mt-3">
+        <legend className="block text-sm font-medium">Wave colour</legend>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          The wave that shows the voice in a conversation, and the bars beside the composer.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Wave colour">
+          {WAVE_ACCENTS.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="radio"
+              aria-checked={prefs.accent === entry.id}
+              onClick={() => change({ ...prefs, accent: entry.id })}
+              className={`flex items-center gap-2 rounded-full border px-2 py-1 text-sm ${
+                prefs.accent === entry.id
+                  ? 'border-gray-900 dark:border-white'
+                  : 'border-gray-300 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800'
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 rounded-full"
+                style={{
+                  background:
+                    entry.colors.length > 3
+                      ? `conic-gradient(${entry.colors.join(', ')}, ${entry.colors[0]})`
+                      : entry.colors[1],
+                }}
+              />
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button

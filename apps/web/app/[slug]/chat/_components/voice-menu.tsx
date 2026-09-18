@@ -22,6 +22,7 @@ import { LoadingLine } from '@/components/skeleton';
 import { useDismiss } from '@/lib/use-dismiss';
 import { voiceClient } from '@/lib/voice/client';
 import type { SpeechQueueState } from '@/lib/voice/speech-queue';
+import { VoiceWaveIcon, WAVE_ACCENTS } from './voice-wave';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
@@ -40,6 +41,7 @@ export default function VoiceMenu({
   prefs,
   defaults,
   queueState,
+  outputLevel,
   onChange,
   onStopReading,
   onStartVoiceMode,
@@ -50,6 +52,8 @@ export default function VoiceMenu({
   prefs: VoicePrefs;
   defaults: { voice: string; locale: string };
   queueState: SpeechQueueState;
+  /** The speaker's loudness while reading, 0–1; null when it cannot be measured. */
+  outputLevel: number | null;
   onChange: (next: VoicePrefs) => void;
   onStopReading: () => void;
   onStartVoiceMode: () => void;
@@ -115,10 +119,14 @@ export default function VoiceMenu({
         disabled={disabled}
         className="relative rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
       >
-        <Icon
-          path={reading ? ICONS.waveform : ICONS.speaker}
-          className={`h-5 w-5 ${reading ? 'voice-speaking-glyph text-blue-600 dark:text-blue-400' : ''}`}
-        />
+        {reading ? (
+          <VoiceWaveIcon
+            level={queueState === 'speaking' ? outputLevel : null}
+            accent={prefs.accent}
+          />
+        ) : (
+          <Icon path={ICONS.speaker} className="h-5 w-5" />
+        )}
         {prefs.autoPlay && !reading ? (
           <span
             aria-hidden="true"
@@ -242,6 +250,33 @@ export default function VoiceMenu({
                 >
                   {speed}×
                 </button>
+              ))}
+            </div>
+          </div>
+          <div className="px-2 py-1">
+            <span className="block text-[11px] font-medium text-gray-500">Wave colour</span>
+            <div className="mt-1 flex gap-1.5" role="radiogroup" aria-label="Wave colour">
+              {WAVE_ACCENTS.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={prefs.accent === entry.id}
+                  aria-label={entry.label}
+                  title={entry.label}
+                  onClick={() => onChange({ ...prefs, accent: entry.id })}
+                  className={`h-6 w-6 rounded-full border-2 ${
+                    prefs.accent === entry.id
+                      ? 'border-gray-900 dark:border-white'
+                      : 'border-transparent hover:border-gray-400'
+                  }`}
+                  style={{
+                    background:
+                      entry.colors.length > 3
+                        ? `conic-gradient(${entry.colors.join(', ')}, ${entry.colors[0]})`
+                        : entry.colors[1],
+                  }}
+                />
               ))}
             </div>
           </div>

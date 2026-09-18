@@ -20,6 +20,7 @@ import { UtteranceRecorder } from '@/lib/voice/recorder';
 import { voiceClient } from '@/lib/voice/client';
 import type { SpeechQueue, SpeechQueueState } from '@/lib/voice/speech-queue';
 import { speakableText } from '@/lib/voice/speech-text';
+import VoiceWave, { type WaveAccent, type WaveTone } from './voice-wave';
 
 type Phase = 'starting' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'error';
 
@@ -30,6 +31,7 @@ export default function VoiceMode({
   queueState,
   running,
   replyText,
+  accent,
   onSend,
   onInterrupt,
   onClose,
@@ -38,6 +40,8 @@ export default function VoiceMode({
   /** The language to listen for. */
   locale: string;
   queue: SpeechQueue;
+  /** The wave's colour, this person's preference. */
+  accent: WaveAccent;
   queueState: SpeechQueueState;
   /** A turn is in flight (a reply is being written). */
   running: boolean;
@@ -53,6 +57,7 @@ export default function VoiceMode({
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState(0);
+  const [outputLevel, setOutputLevel] = useState(0);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useRef<UtteranceRecorder | null>(null);
@@ -105,6 +110,14 @@ export default function VoiceMode({
   useEffect(() => {
     recorder.current?.holdWhileSpeaking(queueState === 'speaking');
   }, [queueState]);
+  // The speaker's loudness, for the wave while the assistant talks.
+  useEffect(
+    () =>
+      queue.subscribeLevel((next) =>
+        setOutputLevel((prev) => (Math.abs(prev - next) > 0.02 ? next : prev))
+      ),
+    [queue]
+  );
   useEffect(() => {
     recorder.current?.setMuted(muted);
   }, [muted]);
@@ -145,14 +158,15 @@ export default function VoiceMode({
               : phase === 'thinking'
                 ? 'Thinking…'
                 : 'Speaking — talk to interrupt';
-  const orbClass =
+  const tone: WaveTone =
     phase === 'speaking'
-      ? 'voice-orb-speaking bg-blue-600'
+      ? 'speaking'
       : phase === 'thinking' || phase === 'transcribing'
-        ? 'voice-orb-thinking border-4 border-dashed border-blue-500 bg-transparent'
+        ? 'thinking'
         : phase === 'listening' && !muted
-          ? 'voice-orb-listening bg-emerald-500'
-          : 'bg-gray-400';
+          ? 'listening'
+          : 'idle';
+  const waveLevel = tone === 'speaking' ? outputLevel : tone === 'listening' ? level : 0;
   const spokenReply = replyText ? speakableText(replyText) : '';
   const busy = running || queueState !== 'idle';
 
@@ -179,16 +193,7 @@ export default function VoiceMode({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6">
-        <div
-          className="relative flex h-40 w-40 items-center justify-center"
-          style={
-            phase === 'listening' && !muted
-              ? { transform: `scale(${1 + Math.min(0.35, level * 0.5)})` }
-              : undefined
-          }
-        >
-          <div className={`voice-orb h-28 w-28 rounded-full ${orbClass}`} aria-hidden="true" />
-        </div>
+        <VoiceWave level={waveLevel} tone={tone} accent={accent} width={360} height={180} />
         <p className="text-base font-medium" aria-live="polite">
           {label}
         </p>

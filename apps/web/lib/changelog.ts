@@ -60,6 +60,18 @@ export const CHANGELOG: ChangelogRelease[] = [
       },
       {
         kind: 'added',
+        title: 'Dictate into the box',
+        detail:
+          'A microphone beside the message box turns what you say into text there — pause, and your words appear to read over, fix and send like anything typed. The lighter way to talk to the chat when you do not want the full-screen conversation.',
+      },
+      {
+        kind: 'added',
+        title: 'A wave that moves with the voice',
+        detail:
+          'In a voice conversation the voice is drawn as a wave in a soft glow that swells with your microphone while you talk and with the speaker while the assistant does; it drifts gently when there is nothing to hear. Pick its colour — a rainbow, or one hue — from the speaker menu or under Preferences.',
+      },
+      {
+        kind: 'added',
         title: 'Voice under Connector setup',
         detail:
           'Administrators configure the speech service — a region or custom endpoint, a key, a default voice and language — under Connector setup, and can test it from there. Until it is configured and enabled, nothing about voice is shown to anyone.',

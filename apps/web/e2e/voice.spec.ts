@@ -62,14 +62,31 @@ function fakeMicrophone(): Buffer {
   return wav(samples, rate);
 }
 
-/** What "synthesis" returns: a few seconds of silence the browser plays. */
-const SPOKEN_PIECE = wav(new Float32Array(16_000 * 4), 16_000);
+/**
+ * What "synthesis" returns: four seconds the browser really plays — a
+ * low tone swelling and fading like speech, so the wave and its glow have
+ * an output level to follow in the shots.
+ */
+function spokenPiece(): Buffer {
+  const rate = 16_000;
+  const samples = new Float32Array(rate * 4);
+  for (let index = 0; index < samples.length; index += 1) {
+    const t = index / rate;
+    const syllables = 0.55 + 0.45 * Math.sin(2 * Math.PI * 3.1 * t);
+    samples[index] = 0.35 * syllables * Math.sin(2 * Math.PI * 180 * t);
+  }
+  return wav(samples, rate);
+}
+const SPOKEN_PIECE = spokenPiece();
 
 mkdirSync(RESULTS, { recursive: true });
 writeFileSync(FAKE_MIC, fakeMicrophone());
 
 test.use({
   permissions: ['microphone'],
+  // The mobile project's device descriptor asks for WebKit, which is not
+  // installed here; the pinned Chromium runs every project.
+  browserName: 'chromium',
   launchOptions: {
     executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
     args: [
@@ -169,7 +186,13 @@ async function seedVoice(client: Client): Promise<void> {
     [
       E2E_TENANT_ID,
       E2E_SUBJECT,
-      JSON.stringify({ voice: 'en-GB-SoniaNeural', rate: 1.25, autoPlay: false, locale: 'en-GB' }),
+      JSON.stringify({
+        voice: 'en-GB-SoniaNeural',
+        rate: 1.25,
+        autoPlay: false,
+        locale: 'en-GB',
+        accent: 'rainbow',
+      }),
     ]
   );
 
@@ -305,7 +328,13 @@ async function mockVendor(page: Page): Promise<void> {
         configured: true,
         provider: 'azure-speech',
         defaults: { voice: 'en-US-AvaMultilingualNeural', locale: 'en-US' },
-        prefs: { voice: 'en-GB-SoniaNeural', rate: 1.25, autoPlay: false, locale: 'en-GB' },
+        prefs: {
+          voice: 'en-GB-SoniaNeural',
+          rate: 1.25,
+          autoPlay: false,
+          locale: 'en-GB',
+          accent: 'rainbow',
+        },
         voices: VOICES,
         voicesError: null,
       },
@@ -414,6 +443,17 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   );
   await shot(page, testInfo, 'voice-06-reply-read-aloud', false);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
+
+  // Dictation: the microphone beside the box; the fake microphone speaks
+  // at three seconds and the words land in the box, to edit and send.
+  await page.getByRole('button', { name: 'Dictate' }).click();
+  await expect(page.getByRole('button', { name: 'Stop dictating' })).toBeVisible();
+  await expect(page.getByLabel('Message')).toHaveAttribute('placeholder', /Speak, then pause/);
+  await shot(page, testInfo, 'voice-06b-dictating', false);
+  await expect(page.getByLabel('Message')).toHaveValue(UTTERANCE, { timeout: 30_000 });
+  await shot(page, testInfo, 'voice-06c-dictated', false);
+  await page.getByRole('button', { name: 'Stop dictating' }).click();
+  await page.getByLabel('Message').fill('');
 
   // The voice conversation, through its states.
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
