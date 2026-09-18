@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
@@ -22,7 +22,9 @@ interface AdminSection {
  * place the console's areas are listed — the app menu does not carry
  * them. A signed-in user without the operator role is told so rather
  * than being offered a sign-in that would change nothing; a signed-out
- * visitor is sent into the tenant's OIDC flow and comes back here.
+ * visitor is sent into the tenant's OIDC flow and comes back here (the
+ * layout does this on a fresh load; this page does it for a session that
+ * expired between two client-side navigations).
  */
 function adminSections(slug: string): AdminSection[] {
   const admin = `/${slug}/admin`;
@@ -176,31 +178,17 @@ export default async function AdminPage({
   }
 
   const session = await getSessionFromCookies(tenantRef.id);
-  if (session) {
-    return (
-      <div className="mx-auto max-w-lg">
-        <h2 className="mb-2 text-lg font-semibold">Operator access required</h2>
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          You are signed in, but your account does not carry the operator role for {slug}. Roles
-          come from your identity provider&apos;s claim mapping — an existing operator can check it
-          under Settings.
-        </p>
-      </div>
-    );
+  if (!session) {
+    redirect(signInUrl(tenantRef.id, `/${slug}/admin`));
   }
-
   return (
     <div className="mx-auto max-w-lg">
-      <h2 className="mb-2 text-lg font-semibold">Sign in required</h2>
-      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
-        You need to be signed in to access the admin console for {slug}.
+      <h2 className="mb-2 text-lg font-semibold">Operator access required</h2>
+      <p className="text-sm text-gray-600 dark:text-gray-400">
+        You are signed in, but your account does not carry the operator role for {slug}. Roles come
+        from your identity provider&apos;s claim mapping — an existing operator can check it under
+        Settings.
       </p>
-      <a
-        href={signInUrl(tenantRef.id, `/${slug}/admin`)}
-        className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-      >
-        Sign in with your organization
-      </a>
     </div>
   );
 }

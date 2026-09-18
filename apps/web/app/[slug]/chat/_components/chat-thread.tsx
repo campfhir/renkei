@@ -8,9 +8,9 @@
  * moment a turn_end arrives because a server-closed EventSource would
  * otherwise reconnect forever.
  *
- * A new chat (`initialChat === null`) has no address until the first
- * Send creates it; the page then moves to `/chat/{id}` and this component
- * remounts with the real thread (the page keys it by chat id).
+ * A chat exists before this mounts — "+ New" creates an empty one and
+ * lands on its address — so the first Send is a turn like any other: no
+ * address change, no reload, nothing lost mid-reply.
  */
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
@@ -43,10 +43,9 @@ interface ThreadProps {
   slug: string;
   tenantId: string;
   subject: string;
-  initialChat: ChatView | null;
+  initialChat: ChatView;
   initialMessages: ChatMessageView[];
   models: ModelOption[];
-  newChatProject: { id: string; name: string; kind: 'chat' | 'code' } | null;
   /** The org has file storage; without it the composer offers no uploads. */
   uploadsEnabled: boolean;
 }
@@ -85,17 +84,16 @@ export default function ChatThread({
   initialChat,
   initialMessages,
   models,
-  newChatProject,
   uploadsEnabled,
 }: ThreadProps) {
   const router = useRouter();
-  const [chat, setChat] = useState<ChatView | null>(initialChat);
+  const [chat, setChat] = useState<ChatView>(initialChat);
   const [state, dispatch] = useReducer(
     applyStreamEvent,
-    initialThreadState(initialMessages, initialChat?.activeTurn ?? null, initialChat?.artifacts)
+    initialThreadState(initialMessages, initialChat.activeTurn, initialChat.artifacts)
   );
   const [activeTurnId, setActiveTurnId] = useState<string | null>(
-    initialChat?.activeTurn?.status === 'running' ? initialChat.activeTurn.id : null
+    initialChat.activeTurn?.status === 'running' ? initialChat.activeTurn.id : null
   );
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,13 +101,13 @@ export default function ChatThread({
   const [editing, setEditing] = useState<ChatMessageView | null>(null);
   const [confirmResend, setConfirmResend] = useState<ChatMessageView | null>(null);
   const [modelId, setModelId] = useState<string | null>(
-    initialChat?.llmModelId ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null
+    initialChat.llmModelId ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null
   );
-  const [thinking, setThinking] = useState(initialChat?.thinkingEnabled ?? false);
+  const [thinking, setThinking] = useState(initialChat.thinkingEnabled);
   const [connectors, setConnectors] = useState<string[] | null>(
-    initialChat?.toolConfig?.connectors ?? null
+    initialChat.toolConfig?.connectors ?? null
   );
-  const isOwner = chat === null || chat.role === 'owner';
+  const isOwner = chat.role === 'owner';
   const running = activeTurnId !== null;
   // Below `sm` the title bar keeps only Tools as a button of its own and
   // folds the rest into an overflow menu, so the chat's name stays readable.
@@ -118,7 +116,7 @@ export default function ChatThread({
 
   // One EventSource per running turn.
   useEffect(() => {
-    if (!chat || !activeTurnId) return;
+    if (!activeTurnId) return;
     const source = new EventSource(chatClient.streamUrl(tenantId, chat.id, activeTurnId));
     source.addEventListener('turn', (event: MessageEvent<string>) => {
       const parsed = parseEvent(event.data);
@@ -136,27 +134,6 @@ export default function ChatThread({
     };
     return () => source.close();
   }, [tenantId, chat, activeTurnId, router]);
-
-  const ensureChat = useCallback(async (): Promise<ChatView | null> => {
-    if (chat) return chat;
-    const created = await chatClient.createChat(tenantId, {
-      projectId: newChatProject?.id ?? null,
-      llmModelId: modelId,
-      thinkingEnabled: thinking,
-      toolConfig: connectors ? { connectors } : null,
-    });
-    if (created.error || !created.data) {
-      setError(created.error ?? 'The chat could not be created.');
-      return null;
-    }
-    const loaded = await chatClient.getChat(tenantId, created.data.chatId);
-    if (loaded.error || !loaded.data) {
-      setError(loaded.error ?? 'The chat could not be loaded.');
-      return null;
-    }
-    setChat(loaded.data.chat);
-    return loaded.data.chat;
-  }, [chat, tenantId, newChatProject, modelId, thinking, connectors]);
 
   /** The optimistic prompt row and the turn to follow: the stream only carries the reply. */
   const begin = useCallback(
@@ -204,9 +181,7 @@ export default function ChatThread({
    */
   const forceCompact = useCallback(async (): Promise<boolean> => {
     setError(null);
-    const target = await ensureChat();
-    if (!target) return false;
-    const started = await chatClient.compact(tenantId, target.id);
+    const started = await chatClient.compact(tenantId, chat.id);
     if (started.error || !started.data) {
       setError(started.error ?? 'Compaction could not be started.');
       return false;
@@ -219,7 +194,7 @@ export default function ChatThread({
     });
     setActiveTurnId(started.data.turnId);
     return true;
-  }, [ensureChat, tenantId]);
+  }, [chat.id, tenantId]);
 
   const submit = useCallback(
     async (input: ComposerSubmit): Promise<boolean> => {
@@ -229,12 +204,7 @@ export default function ChatThread({
       if (input.text.trim().toLowerCase() === '/compact') return forceCompact();
       setError(null);
       setSending(true);
-      const target = await ensureChat();
-      if (!target) {
-        setSending(false);
-        return false;
-      }
-      const started = await chatClient.sendTurn(tenantId, target.id, {
+      const started = await chatClient.sendTurn(tenantId, chat.id, {
         text: input.text,
         attachmentIds: input.attachments.map((attachment) => attachment.id),
         llmModelId: modelId,
@@ -246,10 +216,9 @@ export default function ChatThread({
       }
       lastPrompt.current = input;
       begin(started.data, input, (state.messages[state.messages.length - 1]?.seq ?? 0) + 1);
-      if (!chat) router.replace(`/${slug}/chat/${target.id}`);
       return true;
     },
-    [forceCompact, ensureChat, tenantId, modelId, state.messages, chat, router, slug, begin]
+    [forceCompact, tenantId, modelId, state.messages, chat.id, begin]
   );
 
   /**
@@ -308,7 +277,6 @@ export default function ChatThread({
    */
   const resend = useCallback(
     async (message: ChatMessageView, input: ComposerSubmit | null): Promise<boolean> => {
-      if (!chat) return false;
       setError(null);
       setSending(true);
       const resent = await chatClient.resend(tenantId, chat.id, message.id, {
@@ -335,7 +303,7 @@ export default function ChatThread({
       begin(resent.data, prompt, resent.data.fromSeq);
       return true;
     },
-    [chat, tenantId, modelId, begin]
+    [chat.id, tenantId, modelId, begin]
   );
 
   const onComposerSubmit = useCallback(
@@ -345,68 +313,57 @@ export default function ChatThread({
 
   const rename = useCallback(
     async (next: string): Promise<string | null> => {
-      if (!chat) return null;
       const result = await chatClient.updateChat(tenantId, chat.id, { title: next });
       if (result.error) {
         setError(result.error);
         return null;
       }
-      setChat({ ...chat, title: next });
+      setChat((current) => ({ ...current, title: next }));
       // The menu's list carries the name too.
       router.refresh();
       return next;
     },
-    [chat, tenantId, router]
+    [chat.id, tenantId, router]
   );
 
   const stop = useCallback(async () => {
-    if (!chat || !activeTurnId) return;
+    if (!activeTurnId) return;
     await chatClient.cancelTurn(tenantId, chat.id, activeTurnId);
-  }, [chat, activeTurnId, tenantId]);
+  }, [chat.id, activeTurnId, tenantId]);
 
   const changeModel = useCallback(
     async (id: string) => {
       setModelId(id);
-      if (chat) await chatClient.updateChat(tenantId, chat.id, { llmModelId: id });
+      await chatClient.updateChat(tenantId, chat.id, { llmModelId: id });
     },
-    [chat, tenantId]
+    [chat.id, tenantId]
   );
   const changeThinking = useCallback(
     async (on: boolean) => {
       setThinking(on);
-      if (chat) await chatClient.updateChat(tenantId, chat.id, { thinkingEnabled: on });
+      await chatClient.updateChat(tenantId, chat.id, { thinkingEnabled: on });
     },
-    [chat, tenantId]
+    [chat.id, tenantId]
   );
   const changeConnectors = useCallback(
     async (next: string[] | null) => {
       setConnectors(next);
-      if (chat) {
-        await chatClient.updateChat(tenantId, chat.id, {
-          toolConfig: next ? { connectors: next } : null,
-        });
-      }
+      await chatClient.updateChat(tenantId, chat.id, {
+        toolConfig: next ? { connectors: next } : null,
+      });
     },
-    [chat, tenantId]
+    [chat.id, tenantId]
   );
 
   const currentModel = models.find((model) => model.id === modelId) ?? null;
-  const title = chat?.title ?? (newChatProject ? `New chat in ${newChatProject.name}` : 'New chat');
+  // Untitled until its first reply names it; a project's says which.
+  const title = chat.title ?? (chat.projectName ? `New chat in ${chat.projectName}` : 'New chat');
   // A chat in a project has a way back to it.
   const backHref =
-    chat?.projectId && chat.projectName
-      ? projectHref(slug, chat.projectId, chat.projectKind)
-      : newChatProject
-        ? projectHref(slug, newChatProject.id, newChatProject.kind)
-        : null;
+    chat.projectId && chat.projectName ? projectHref(slug, chat.projectId, chat.projectKind) : null;
   // A chat in a code project: its checkout's changes and environment are
   // a button away in the title bar.
-  const codeProjectId =
-    chat?.projectKind === 'code' && chat.projectId
-      ? chat.projectId
-      : !chat && newChatProject?.kind === 'code'
-        ? newChatProject.id
-        : null;
+  const codeProjectId = chat.projectKind === 'code' && chat.projectId ? chat.projectId : null;
   const codeTools = useCodeChatTools({
     tenantId,
     projectId: codeProjectId,
@@ -429,8 +386,7 @@ export default function ChatThread({
         ) : undefined,
     });
   }
-  if (isOwner && chat)
-    overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
+  if (isOwner) overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
   const lastTurn = state.turn;
   const canRetry =
     isOwner &&
@@ -454,22 +410,16 @@ export default function ChatThread({
         <ChatTitle
           title={title}
           project={
-            chat?.projectId && chat.projectName
+            chat.projectId && chat.projectName
               ? {
                   id: chat.projectId,
                   name: chat.projectName,
                   href: projectHref(slug, chat.projectId, chat.projectKind),
                 }
-              : newChatProject
-                ? {
-                    id: newChatProject.id,
-                    name: newChatProject.name,
-                    href: projectHref(slug, newChatProject.id, newChatProject.kind),
-                  }
-                : null
+              : null
           }
-          canRename={isOwner && chat !== null}
-          onRename={chat ? rename : null}
+          canRename={isOwner}
+          onRename={rename}
         />
         <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
         {compact ? (
@@ -497,18 +447,16 @@ export default function ChatThread({
                   slug={slug}
                   locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
                 />
-                {chat ? (
-                  <button
-                    type="button"
-                    onClick={() => setShare(true)}
-                    aria-label="Share chat"
-                    title="Share"
-                    className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-                  >
-                    <Icon path={ICONS.share} className="h-4 w-4" />
-                    <span>Share</span>
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setShare(true)}
+                  aria-label="Share chat"
+                  title="Share"
+                  className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+                >
+                  <Icon path={ICONS.share} className="h-4 w-4" />
+                  <span>Share</span>
+                </button>
               </>
             ) : null}
           </>
@@ -516,7 +464,7 @@ export default function ChatThread({
       </header>
       {codeTools.modals}
 
-      {chat && !isOwner ? (
+      {!isOwner ? (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
           Shared by {chat.ownerName ?? 'its owner'} — you can read this chat and watch it live. Only
           the owner can continue it.
@@ -531,15 +479,11 @@ export default function ChatThread({
         turn={state.turn}
         compaction={state.compaction}
         promptActions={
-          isOwner && chat && !running && !sending
+          isOwner && !running && !sending
             ? { onResend: setConfirmResend, onEdit: setEditing }
             : null
         }
-        empty={
-          chat === null && state.messages.length === 0 ? (
-            <EmptyState hasModel={currentModel !== null} />
-          ) : null
-        }
+        empty={state.messages.length === 0 ? <EmptyState hasModel={currentModel !== null} /> : null}
       />
 
       {canRetry ? (
@@ -562,8 +506,7 @@ export default function ChatThread({
       {isOwner ? (
         <Composer
           tenantId={tenantId}
-          chatId={chat?.id ?? null}
-          ensureChatId={async () => (await ensureChat())?.id ?? null}
+          chatId={chat.id}
           disabled={sending || models.length === 0}
           running={running}
           queue={queueView}
@@ -606,7 +549,7 @@ export default function ChatThread({
           />
         </Modal>
       ) : null}
-      {share && chat ? (
+      {share ? (
         <ShareModal
           tenantId={tenantId}
           kind="chat"

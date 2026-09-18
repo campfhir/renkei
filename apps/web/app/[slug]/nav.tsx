@@ -14,11 +14,10 @@ interface NavProps {
   slug: string;
   tenantId: string;
   /** Display name from the identity spine, falling back to email/subject. */
-  userName: string | null;
+  userName: string;
   userEmail: string | null;
   isOperator: boolean;
-  signInHref: string;
-  /** The person's chats, for the Chat section's list; null when signed out. */
+  /** The person's chats, for the Chat section's list; null when the database is down. */
   chats: ChatSidebarData | null;
   /** Version + commit hash for display in sidebar. */
   version: string;
@@ -74,7 +73,6 @@ export default function AppNav({
   userName,
   userEmail,
   isOperator,
-  signInHref,
   chats,
   version,
   children,
@@ -83,9 +81,7 @@ export default function AppNav({
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
-  // Reads the layout's poller. Outside a NotificationCenter — the
-  // signed-out shell — the context default is 0, so the badge simply
-  // never appears rather than the nav failing to render.
+  // Reads the layout's poller for the badge on the avatar.
   const { unread } = useNotifications();
   const [signingOut, setSigningOut] = useState(false);
   const pathname = usePathname();
@@ -220,7 +216,7 @@ export default function AppNav({
     }
   }
 
-  const initials = userName ? initialsOf(userName) : '?';
+  const initials = initialsOf(userName);
 
   const menu = (
     <>
@@ -254,6 +250,8 @@ export default function AppNav({
                   {item.plus ? (
                     <Link
                       href={item.plus.href}
+                      // Opening "+ New" creates a chat; only a click may do that.
+                      prefetch={false}
                       aria-label={item.plus.label}
                       title={item.plus.label}
                       className="flex items-center gap-0.5 rounded-md border border-gray-300 px-1.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
@@ -302,100 +300,91 @@ export default function AppNav({
         </Link>
 
         <div className="ml-auto flex items-center gap-2">
-          {userName ? (
-            <div ref={menuRef} className="relative">
-              <button
-                type="button"
-                title={userName}
-                aria-label="Account menu"
-                aria-expanded={menuOpen}
-                aria-haspopup="menu"
-                onClick={() => setMenuOpen((o) => !o)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white ring-blue-300 hover:ring-2 dark:ring-blue-800"
-              >
-                {initials}
-              </button>
-              {/*
+          <div ref={menuRef} className="relative">
+            <button
+              type="button"
+              title={userName}
+              aria-label="Account menu"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              onClick={() => setMenuOpen((o) => !o)}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white ring-blue-300 hover:ring-2 dark:ring-blue-800"
+            >
+              {initials}
+            </button>
+            {/*
                 Blue, not red. Red means an error everywhere else in this app
                 — the issue counts on every builder node — and an unread
                 notification is not one. Capped at 9+ so the dot stays a dot.
               */}
-              {unread > 0 ? (
-                <span
-                  aria-label={`${unread} unread notification${unread === 1 ? '' : 's'}`}
-                  className="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-semibold text-white ring-2 ring-white dark:ring-gray-950"
-                >
-                  {unread > 9 ? '9+' : unread}
-                </span>
-              ) : null}
+            {unread > 0 ? (
+              <span
+                aria-label={`${unread} unread notification${unread === 1 ? '' : 's'}`}
+                className="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-semibold text-white ring-2 ring-white dark:ring-gray-950"
+              >
+                {unread > 9 ? '9+' : unread}
+              </span>
+            ) : null}
 
-              {menuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-10 z-40 w-60 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
-                >
-                  <div className="border-b border-gray-200 px-4 py-2 dark:border-gray-800">
-                    <p className="truncate text-sm font-medium" title={userName}>
-                      {userName}
+            {menuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-10 z-40 w-60 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
+              >
+                <div className="border-b border-gray-200 px-4 py-2 dark:border-gray-800">
+                  <p className="truncate text-sm font-medium" title={userName}>
+                    {userName}
+                  </p>
+                  {userEmail && userEmail !== userName && (
+                    <p className="truncate text-xs text-gray-500" title={userEmail}>
+                      {userEmail}
                     </p>
-                    {userEmail && userEmail !== userName && (
-                      <p className="truncate text-xs text-gray-500" title={userEmail}>
-                        {userEmail}
-                      </p>
-                    )}
-                  </div>
-                  {accountGroups.map((group, index) => (
-                    <div
-                      key={index}
-                      className={
-                        index > 0 ? 'border-t border-gray-200 dark:border-gray-800' : undefined
-                      }
-                    >
-                      {group.map((item) => (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          role="menuitem"
-                          className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
-                        >
-                          <Icon
-                            path={item.icon}
-                            className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400"
-                          />
-                          <span className="flex-1 truncate">{item.label}</span>
-                          {item.label === 'Notifications' && unread > 0 ? (
-                            <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                              {unread > 9 ? '9+' : unread}
-                            </span>
-                          ) : null}
-                        </Link>
-                      ))}
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void signOut()}
-                    disabled={signingOut}
-                    className="flex w-full items-center gap-2.5 border-t border-gray-200 px-4 py-2 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-800 dark:hover:bg-gray-900"
-                  >
-                    <Icon
-                      path={ICONS.signOut}
-                      className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400"
-                    />
-                    <span>{signingOut ? 'Signing out…' : 'Sign out'}</span>
-                  </button>
+                  )}
                 </div>
-              )}
-            </div>
-          ) : (
-            <a
-              href={signInHref}
-              className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              Sign in
-            </a>
-          )}
+                {accountGroups.map((group, index) => (
+                  <div
+                    key={index}
+                    className={
+                      index > 0 ? 'border-t border-gray-200 dark:border-gray-800' : undefined
+                    }
+                  >
+                    {group.map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        role="menuitem"
+                        className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
+                      >
+                        <Icon
+                          path={item.icon}
+                          className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400"
+                        />
+                        <span className="flex-1 truncate">{item.label}</span>
+                        {item.label === 'Notifications' && unread > 0 ? (
+                          <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                            {unread > 9 ? '9+' : unread}
+                          </span>
+                        ) : null}
+                      </Link>
+                    ))}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void signOut()}
+                  disabled={signingOut}
+                  className="flex w-full items-center gap-2.5 border-t border-gray-200 px-4 py-2 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-800 dark:hover:bg-gray-900"
+                >
+                  <Icon
+                    path={ICONS.signOut}
+                    className="h-4 w-4 shrink-0 text-gray-500 dark:text-gray-400"
+                  />
+                  <span>{signingOut ? 'Signing out…' : 'Sign out'}</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 

@@ -42,7 +42,6 @@ const MAX_ROWS = 10;
 export default function Composer({
   tenantId,
   chatId,
-  ensureChatId,
   disabled,
   running,
   queue,
@@ -57,9 +56,7 @@ export default function Composer({
   onCancelEdit,
 }: {
   tenantId: string;
-  chatId: string | null;
-  /** Creates the chat on first use, so uploads have somewhere to live. */
-  ensureChatId: () => Promise<string | null>;
+  chatId: string;
   disabled: boolean;
   running: boolean;
   /** Sends waiting for the current turn to finish, oldest first — auto-sent one at a time, no click needed. */
@@ -118,11 +115,9 @@ export default function Composer({
       const list = [...files];
       if (list.length === 0) return;
       setUploadError(null);
-      const id = chatId ?? (await ensureChatId());
-      if (!id) return;
       setUploading((count) => count + list.length);
       for (const file of list) {
-        const result = await chatClient.uploadAttachment(tenantId, { chatId: id }, file);
+        const result = await chatClient.uploadAttachment(tenantId, { chatId }, file);
         setUploading((count) => count - 1);
         const attachment = result.data;
         if (result.error || !attachment) {
@@ -132,7 +127,7 @@ export default function Composer({
         setAttachments((current) => [...current, attachment]);
       }
     },
-    [chatId, ensureChatId, tenantId]
+    [chatId, tenantId]
   );
 
   const remove = useCallback(

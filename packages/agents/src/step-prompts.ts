@@ -216,6 +216,20 @@ export const SAVE_ITEM_CHARS = 2_000;
 /** Max saveItems entries one finish_step may return. */
 export const SAVE_ITEMS_MAX = 25;
 
+/**
+ * The cap on a tool result as the MODEL reads it, per call. The attempt
+ * row keeps only a 2 000-char preview of each result for the timeline and
+ * the debug paste; this bound is the one that decides what the model saw.
+ * It used to be an unnamed 8 000 chars, with the same bare "[truncated]"
+ * marker the stored previews carry — so a long component list or a page
+ * of search results reached the model cut off mid-item, and nothing in the
+ * record distinguished "the log preview is short" from "the model saw
+ * less than the tool returned". The figure matches the chat runner's
+ * tool-result bound. Shared so the debug view can say, against it,
+ * whether the model read all of a result or only its head.
+ */
+export const TOOL_RESULT_CHARS = 60_000;
+
 export const FINISH_STEP_DEF: PromptToolDef = {
   name: FINISH_STEP_TOOL,
   description:

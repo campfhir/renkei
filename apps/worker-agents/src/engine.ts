@@ -112,6 +112,7 @@ import {
   SAVE_ITEM_CHARS,
   SAVE_ITEMS_MAX,
   SAVE_VALUE_CHARS,
+  TOOL_RESULT_CHARS,
   type PromptMessage,
 } from './prompt';
 import { logger } from './logger';
@@ -122,6 +123,12 @@ import { logger } from './logger';
  */
 const CONDITION_TURNS = 4;
 const MAX_LLM_TURNS = 10;
+/**
+ * The per-field cap on what an attempt ROW keeps: previews of tool
+ * arguments and results, the resolved instruction, the model's summary.
+ * A display bound only — the timeline and the debug paste read these, the
+ * model never does. What the model reads is bounded by TOOL_RESULT_CHARS.
+ */
 const PREVIEW_CHARS = 2_000;
 const DETAIL_CHARS = 60_000;
 const TOKEN_SLACK_SECONDS = 15 * 60;
@@ -222,6 +229,13 @@ interface ToolCallRecord {
   tool: string;
   argsPreview: string;
   resultPreview: string;
+  /**
+   * The full length of the result text the tool returned, so a reader of
+   * the 2 000-char preview can tell a short result from a long one that
+   * the preview cut — and, against TOOL_RESULT_CHARS, whether the model
+   * itself saw all of it. Absent on records written before it existed.
+   */
+  resultChars?: number;
   isError: boolean;
   durationMs: number;
   /**
@@ -406,6 +420,18 @@ class RunCanceled extends Error {}
 
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
+
+/**
+ * The clip a tool result gets on its way to the model. Unlike `clip`, the
+ * marker states the loss: a model told "12 340 more characters were cut"
+ * knows the list it is reading is partial and can page or filter, where a
+ * bare "[truncated]" reads as a footnote and the partial list as complete.
+ */
+function clipForModel(text: string): string {
+  if (text.length <= TOOL_RESULT_CHARS) return text;
+  const dropped = text.length - TOOL_RESULT_CHARS;
+  return `${text.slice(0, TOOL_RESULT_CHARS)}\n… [truncated: ${dropped} more characters were cut to fit; the result is incomplete — narrow the query or page the results to see the rest]`;
 }
 
 /**
@@ -2190,6 +2216,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
               tool: proposedTool,
               argsPreview: clip(JSON.stringify(proposedArgs), PREVIEW_CHARS),
               resultPreview: clip(resultText, PREVIEW_CHARS),
+              resultChars: resultText.length,
               isError: toolResult.isError,
               durationMs: 0,
             },
@@ -3977,10 +4004,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // Only a call that WORKED is worth telling anyone about: a failed
         // act did not happen, and the run record is where a failure belongs.
         if (!result.isError) void context.notifier.act(use.name, kind, result.meta, step.id);
+        const resultText = textOf(result);
         toolCalls.push({
           tool: use.name,
           argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
-          resultPreview: clip(textOf(result), PREVIEW_CHARS),
+          resultPreview: clip(resultText, PREVIEW_CHARS),
+          resultChars: resultText.length,
           isError: result.isError,
           durationMs,
           ...(kind ? { kind } : {}),
@@ -3989,7 +4018,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         results.push({
           type: 'tool_result',
           toolUseId: use.id,
-          content: clip(textOf(result), PREVIEW_CHARS * 4),
+          content: clipForModel(resultText),
           ...(result.isError ? { isError: true } : {}),
         });
         for (const block of attachmentBlocksOfMeta(result.meta)) {
