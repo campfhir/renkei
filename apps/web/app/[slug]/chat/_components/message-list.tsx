@@ -504,7 +504,7 @@ function Reply({
               !step.result && !waiting && (tail || pendingToolCalls.includes(step.block.id));
             return (
               <SubagentCard
-                key={index}
+                key={step.block.id}
                 step={step}
                 state={
                   waiting
@@ -529,7 +529,7 @@ function Reply({
               !step.result && !waiting && (tail || pendingToolCalls.includes(step.block.id));
             return (
               <MilestoneCard
-                key={index}
+                key={step.block.id}
                 step={step}
                 state={
                   waiting

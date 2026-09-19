@@ -165,7 +165,13 @@ export function toChatBlock(block: LlmContentBlock): ChatBlock {
     case 'redacted_thinking':
       return { type: 'redacted_thinking' };
     case 'tool_use':
-      return { type: 'tool_use', id: block.id, name: block.name, input: block.input };
+      return {
+        type: 'tool_use',
+        id: block.id,
+        name: block.name,
+        input: block.input,
+        ...(block.partialJson !== undefined ? { partialJson: block.partialJson } : {}),
+      };
     case 'tool_result':
       return {
         type: 'tool_result',

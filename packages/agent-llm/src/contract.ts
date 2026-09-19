@@ -37,7 +37,17 @@ export type LlmContentBlock =
   | { type: 'thinking'; thinking: string; signature?: string }
   /** Thinking the provider withheld and returns only as an opaque blob. */
   | { type: 'redacted_thinking'; data: string }
-  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  /**
+   * `partialJson` is never sent by a provider — it is a consumer's own
+   * record of the raw `input_json_delta` text a block was still
+   * streaming when its request ended without ever reaching this block's
+   * `block_stop` (a timeout, an error, a cancel). `input` stays the `{}`
+   * placeholder in that case; a consumer that persists blocks mid-stream
+   * (the chat's turn-runner) carries this along so a record of an
+   * unfinished call keeps the true partial arguments instead of a blank
+   * object that looks like the model called the tool with nothing.
+   */
+  | { type: 'tool_use'; id: string; name: string; input: unknown; partialJson?: string }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   /**
    * A file the model should SEE, not read about — a PDF page-rendered by

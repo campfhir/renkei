@@ -915,7 +915,22 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             }
             break;
           }
-          case 'input_json_delta':
+          case 'input_json_delta': {
+            // Kept on the block itself, not just mirrored to the channel:
+            // if the request ends (timeout, error, cancel) before this
+            // block's own block_stop, `blocks` below is what gets
+            // persisted, and it would otherwise still be the `{}`
+            // placeholder block_start opened with — see LlmContentBlock's
+            // `partialJson` doc. A normal finish replaces the whole block
+            // from the assembled reply (below), which never carries this,
+            // so it never lingers on a call that actually completed.
+            const block = blocks[event.index];
+            if (block?.type === 'tool_use') {
+              blocks[event.index] = {
+                ...block,
+                partialJson: (block.partialJson ?? '') + event.partialJson,
+              };
+            }
             emit({
               type: 'input_json_delta',
               messageId: assistant.id,
@@ -923,6 +938,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
               partialJson: event.partialJson,
             });
             break;
+          }
           case 'block_stop':
             // The parsed input arrives with the assembled response below;
             // the view learns it there.
