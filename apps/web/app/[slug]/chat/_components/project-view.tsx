@@ -23,6 +23,7 @@ import { DialogFooter } from './chat-nav';
 import AttachmentChip from './attachment-chip';
 import ShareModal from './share-modal';
 import ToolsPopover from './tools-popover';
+import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import Markdown from './markdown';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
@@ -290,7 +291,7 @@ export default function ProjectView({
               : `Shared by ${project.ownerName ?? 'its owner'} · you can ${canEdit ? 'edit' : 'view'}`}
           </p>
         </div>
-        {canEdit && variant !== 'code' ? (
+        {canEdit ? (
           <ToolsPopover
             tenantId={tenantId}
             selected={project.toolConfig?.connectors ?? null}
@@ -301,6 +302,8 @@ export default function ProjectView({
               router.refresh();
             }}
             context="project"
+            kind={variant === 'code' ? 'code' : 'chat'}
+            locked={variant === 'code' ? CODE_PROJECT_CONNECTORS : undefined}
             slug={slug}
           />
         ) : null}

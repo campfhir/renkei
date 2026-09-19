@@ -342,12 +342,14 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
     // Only consulted when neither the chat nor the project has its own
     // toolset, so a cache miss here never costs a chat that already has
-    // one — and never for a code project's chat, which starts from the
-    // code default rather than the person's (tool-config.ts).
+    // one. A code project's chat reads the person's code-project default,
+    // never their chat default (tool-prefs.ts keeps the two apart).
     const userDefault =
-      input.chat.toolConfig || project?.toolConfig || defaultsKind === 'code'
+      input.chat.toolConfig || project?.toolConfig
         ? null
-        : await getDefaultChatTools(input.tenantId, input.session.subject);
+        : await getDefaultChatTools(input.tenantId, input.session.subject, {
+            kind: defaultsKind,
+          });
     // A code project's chats always carry the Bitbucket connector on top
     // of whatever was chosen (tool-config.ts): the code_* tools push, the
     // connector's tools open the pull request.

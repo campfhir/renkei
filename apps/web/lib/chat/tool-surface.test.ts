@@ -144,12 +144,14 @@ describe('tool config', () => {
     });
   });
 
-  it('gives a code project’s chat the code default, and never the personal one', () => {
+  it('gives a code project’s chat the code default when no default of its own kind is saved', () => {
     const personal = { connectors: ['webex'] };
     expect(effectiveToolConfig(null, null, personal)).toEqual(personal);
-    expect(effectiveToolConfig(null, null, personal, 'code')).toEqual({
+    // The caller passes the code-kind default; none saved falls to the built-in.
+    expect(effectiveToolConfig(null, null, null, 'code')).toEqual({
       connectors: [...CODE_PROJECT_DEFAULT_CONNECTORS],
     });
+    expect(effectiveToolConfig(null, null, personal, 'code')).toEqual(personal);
     expect(CODE_PROJECT_DEFAULT_CONNECTORS).toEqual([...CODE_PROJECT_DEFAULT_CONNECTORS].sort());
     expect(CODE_PROJECT_DEFAULT_CONNECTORS).toContain('atlassian-bitbucket');
     expect(CODE_PROJECT_DEFAULT_CONNECTORS).toContain('jira');
@@ -157,6 +159,9 @@ describe('tool config', () => {
     // The chat's and the project's own choice still win.
     expect(effectiveToolConfig(null, { connectors: ['b'] }, personal, 'code')).toEqual({
       connectors: ['b'],
+    });
+    expect(effectiveToolConfig(null, null, null)).toEqual({
+      connectors: ['agents', 'cards', 'knowledge', 'sandbox'],
     });
   });
 });

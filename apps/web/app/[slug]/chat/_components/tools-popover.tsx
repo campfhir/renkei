@@ -2,9 +2,10 @@
 
 /**
  * Which connectors this chat may use. The default for the chat's kind is
- * on when nothing has been chosen — the core set, or the person's saved
- * default, in an ordinary chat; the code default in a code project's
- * chat — and toggling anything pins an explicit list on the chat.
+ * on when nothing has been chosen — the person's saved chat default, else
+ * the core set, in an ordinary chat; their saved code-project default,
+ * else the code default, in a code project's chat or on a code project —
+ * and toggling anything pins an explicit list on the chat.
  * The list comes from the person's own catalog, so a connector they have
  * not linked never appears here — except one the chat's project requires
  * (`locked`, e.g. Bitbucket in a code project), which is shown checked
@@ -30,8 +31,10 @@ export default function ToolsPopover({
   selected,
   onChange,
   context = 'chat',
+  kind = 'chat',
   slug,
   locked,
+  saveDefault,
 }: {
   tenantId: string;
   /** null = the core set. */
@@ -44,12 +47,18 @@ export default function ToolsPopover({
    * moment a box here is toggled), not a stand-in for that personal
    * default, and letting this popover write the user-level preference from
    * inside a project's settings reads as "set this project's default" when
-   * it is actually changing something else entirely. 'code' is a code
-   * project's chat: it starts from the code default rather than the
-   * personal one (tool-config.ts), so the personal-default actions would
-   * change nothing here and are not offered; a note says where it starts.
+   * it is actually changing something else entirely.
    */
-  context?: 'chat' | 'project' | 'code';
+  context?: 'chat' | 'project';
+  /**
+   * Which defaults apply when nothing is chosen, and which personal default
+   * the save actions write: 'chat' (the person's chat default, else the
+   * core set) or 'code' (their code-project default, else the code default
+   * — tool-config.ts, tool-prefs.ts).
+   */
+  kind?: 'chat' | 'code';
+  /** Offer the personal-default actions whatever the context (the new code project form). */
+  saveDefault?: boolean;
   /** Only used in project context, to link out to where the personal default lives. */
   slug?: string;
   /**
@@ -65,6 +74,7 @@ export default function ToolsPopover({
   const [core, setCore] = useState<string[]>([]);
   const [codeDefault, setCodeDefault] = useState<string[]>([]);
   const [userDefault, setUserDefault] = useState<string[] | null>(null);
+  const [userCodeDefault, setUserCodeDefault] = useState<string[] | null>(null);
   const [savingDefault, setSavingDefault] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(open, ref, () => setOpen(false));
@@ -77,6 +87,7 @@ export default function ToolsPopover({
         setCore(result.data.core);
         setCodeDefault(result.data.codeDefault ?? []);
         setUserDefault(result.data.userDefault?.connectors ?? null);
+        setUserCodeDefault(result.data.userCodeDefault?.connectors ?? null);
       } else {
         setOptions([]);
       }
@@ -84,8 +95,11 @@ export default function ToolsPopover({
   }, [open, options, tenantId]);
 
   const lockedKeys = locked ?? [];
-  const fallback = context === 'code' ? codeDefault : (userDefault ?? core);
+  const personal = kind === 'code' ? userCodeDefault : userDefault;
+  const setPersonal = kind === 'code' ? setUserCodeDefault : setUserDefault;
+  const fallback = personal ?? (kind === 'code' ? codeDefault : core);
   const effective = new Set([...(selected ?? fallback), ...lockedKeys]);
+  const offersDefault = saveDefault ?? context === 'chat';
   const count = selected ? selected.length : null;
   // A required connector the person has not linked: nothing in the catalog
   // for it, so no row below would mention it — and it is the one the chat
@@ -112,9 +126,11 @@ export default function ToolsPopover({
         <div className="absolute right-0 z-40 mt-1 w-64 rounded-md border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
           <p className="mb-1 px-1 text-xs text-gray-500">
             {context === 'project'
-              ? 'Connectors chats in this project start with, unless a chat picks its own.'
-              : context === 'code'
-                ? 'Connectors the assistant may use in this chat. A code project’s chat starts from the code default: the repository, the tracker, the wiki, knowledge and the sandbox.'
+              ? kind === 'code'
+                ? 'Connectors chats in this project start with, unless a chat picks its own — from your default for code projects, or the code default.'
+                : 'Connectors chats in this project start with, unless a chat picks its own.'
+              : kind === 'code'
+                ? 'Connectors the assistant may use in this chat. A code project’s chat starts from the project’s toolset, else your default for code projects, else the code default.'
                 : 'Connectors the assistant may use in this chat.'}
           </p>
           {options === null ? (
@@ -198,7 +214,7 @@ export default function ToolsPopover({
               Reset to defaults
             </button>
           ) : null}
-          {context === 'chat' && options !== null && options.length > 0 ? (
+          {offersDefault && options !== null && options.length > 0 ? (
             <div className="mt-2 flex items-center justify-between border-t border-gray-200 pt-2 text-xs dark:border-gray-700">
               <button
                 type="button"
@@ -206,24 +222,24 @@ export default function ToolsPopover({
                 onClick={() => {
                   setSavingDefault(true);
                   void chatClient
-                    .setDefaultTools(tenantId, [...effective].sort())
+                    .setDefaultTools(tenantId, [...effective].sort(), kind)
                     .then((result) => {
-                      if (result.data) setUserDefault(result.data.userDefault?.connectors ?? null);
+                      if (result.data) setPersonal(result.data.userDefault?.connectors ?? null);
                       setSavingDefault(false);
                     });
                 }}
                 className="text-blue-600 hover:underline disabled:opacity-50"
               >
-                Save as my default
+                {kind === 'code' ? 'Save as my default for code projects' : 'Save as my default'}
               </button>
-              {userDefault ? (
+              {personal ? (
                 <button
                   type="button"
                   disabled={savingDefault}
                   onClick={() => {
                     setSavingDefault(true);
-                    void chatClient.setDefaultTools(tenantId, null).then(() => {
-                      setUserDefault(null);
+                    void chatClient.setDefaultTools(tenantId, null, kind).then(() => {
+                      setPersonal(null);
                       setSavingDefault(false);
                     });
                   }}
@@ -234,7 +250,7 @@ export default function ToolsPopover({
               ) : null}
             </div>
           ) : null}
-          {context === 'project' && options !== null && options.length > 0 ? (
+          {context === 'project' && !offersDefault && options !== null && options.length > 0 ? (
             <p className="mt-2 border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
               This is saved on the project as soon as you toggle it. Your personal default for new
               chats outside this project lives in{' '}

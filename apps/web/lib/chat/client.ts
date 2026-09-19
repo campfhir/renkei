@@ -150,17 +150,24 @@ export const chatClient = {
     getJson<{
       connectors: ConnectorOption[];
       core: string[];
-      /** Where a code project's chat starts instead of `core` or the personal default. */
+      /** Where a code project starts when the person has no code default of their own. */
       codeDefault?: string[];
+      /** The person's saved default for new code projects, if any. */
+      userCodeDefault?: { connectors: string[] } | null;
       userDefault: { connectors: string[] } | null;
     }>(`${base(tenantId)}/tools`),
 
   /** Save (or, with null, clear) this person's default chat toolset. */
-  setDefaultTools: (tenantId: string, connectors: string[] | null) =>
+  /** Save or clear one of the person's defaults: for new chats, or for new code projects. */
+  setDefaultTools: (
+    tenantId: string,
+    connectors: string[] | null,
+    kind: 'chat' | 'code' = 'chat'
+  ) =>
     sendJsonFull<{ userDefault: { connectors: string[] } | null }>(
       `${base(tenantId)}/tools`,
       'PUT',
-      { userDefault: connectors ? { connectors } : null }
+      { userDefault: connectors ? { connectors } : null, kind }
     ),
 
   uploadAttachment: async (

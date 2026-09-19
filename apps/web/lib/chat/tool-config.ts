@@ -3,10 +3,13 @@
  * toolset. Stored as jsonb on the chat and the project; the chat's own
  * setting wins, the project's applies to chats without one, and what
  * applies when neither says depends on where the chat is: an ordinary
- * chat starts from the person's own saved default (tool-prefs.ts), else
- * the core set; a code project's chat starts from the code default — the
- * connectors a developer's work reaches for — never the personal one,
- * which was saved with ordinary chats in mind.
+ * chat starts from the person's own saved chat default (tool-prefs.ts),
+ * else the core set; a code project's chat starts from the person's own
+ * saved code-project default, else the code default — the connectors a
+ * developer's work reaches for. The two personal defaults are separate
+ * preferences: one saved with mail and tickets in mind never leaks into
+ * the other. A new code project is given its owner's code default at
+ * creation, so most code chats find a toolset on their project.
  *
  * Pure: the tool catalog and the MCP list are joined in tool-surface.ts.
  * The person's saved default is resolved by the caller (it needs the
@@ -39,8 +42,8 @@ export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket'
  * work is described in, the organization's knowledge, and the sandbox's
  * browser and fetch for anything at a URL. Not the platform's own agents
  * and cards, which an ordinary chat starts with and a developer's chat
- * has no call for — and not the person's saved default, which was made
- * for ordinary chats. Sorted, like a parsed config.
+ * has no call for. What a person's own code-project default starts from
+ * (tool-prefs.ts) and falls back to. Sorted, like a parsed config.
  */
 export const CODE_PROJECT_DEFAULT_CONNECTORS: readonly string[] = [
   'atlassian-bitbucket',
@@ -109,8 +112,8 @@ export function defaultToolConfig(kind: ToolDefaultsKind = 'chat'): ChatToolConf
 
 /**
  * The toolset a chat runs with: its own, else its project's, else the
- * default for its kind — and only an ordinary chat's default is the
- * person's saved one; a code project's chat ignores it (see the header).
+ * person's saved default OF THIS KIND (the caller reads the right one —
+ * tool-prefs.ts keeps two), else the built-in default for the kind.
  */
 export function effectiveToolConfig(
   chat: ChatToolConfig | null,
@@ -118,7 +121,7 @@ export function effectiveToolConfig(
   userDefault: ChatToolConfig | null = null,
   kind: ToolDefaultsKind = 'chat'
 ): ChatToolConfig {
-  return chat ?? project ?? (kind === 'code' ? null : userDefault) ?? defaultToolConfig(kind);
+  return chat ?? project ?? userDefault ?? defaultToolConfig(kind);
 }
 
 /**
