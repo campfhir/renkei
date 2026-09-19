@@ -32,7 +32,9 @@ import type {
 import type { PersonProfile } from '@/lib/usage/person-profile';
 import { modelLabel } from '@/lib/agents/model-label';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
+import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { Leaderboard } from '@/components/leaderboard';
+import { boardRows, formatDuration, type RankedVoiceUserRow } from '@/lib/usage/voice-window';
 import { ActivityCalendar } from '@/components/activity-calendar';
 import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
@@ -334,6 +336,22 @@ export default function OrgUsageViewer({
   const { tokens, activity, subject } = report;
   const scoped = subject !== null;
   const personName = report.person?.name ?? subject ?? '';
+  const listeners = boardRows(report.topListeners, report.selectedListener);
+  const speakers = boardRows(report.topSpeakers, report.selectedSpeaker);
+  /** A name on a voice board scopes the page to that person, as the token board's does. */
+  const voiceLabel = (row: RankedVoiceUserRow) =>
+    row.subject === subject ? (
+      row.label
+    ) : (
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => refresh(report.periodKey, includeAgents, row.subject)}
+        className="truncate text-left text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+      >
+        {row.label}
+      </button>
+    );
   const totalTokens = (['chat', 'chatProjects', 'codeProjects', 'agents'] as const).reduce(
     (sum, key) => sum + tokens[key].input + tokens[key].output,
     0
@@ -516,6 +534,53 @@ export default function OrgUsageViewer({
             return `${formatTokens(total)} · ${share}% · ${row.calls.toLocaleString('en-US')} calls`;
           }}
           barClassName="bg-indigo-500"
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <VoiceUsageCard
+          totals={report.voice}
+          hint={
+            scoped
+              ? `Replies read aloud to ${personName}, and what they said to the chat by voice.`
+              : 'Replies read aloud across the organization, and what people said to the chat by voice.'
+          }
+        />
+        <Leaderboard<RankedVoiceUserRow>
+          heading="Top listeners"
+          hint={
+            scoped && report.selectedListener === null
+              ? `${personName} had no reply read aloud in this period. By characters of replies read aloud.`
+              : 'By characters of replies read aloud. Pick a name to scope the page to that person.'
+          }
+          rows={listeners.rows}
+          empty="Nobody has had a reply read aloud in this period."
+          keyOf={(row) => row.subject}
+          labelOf={voiceLabel}
+          valueOf={(row) => row.speechCharacters}
+          formatValue={(row) => `${formatTokens(row.speechCharacters)} chars`}
+          rankOf={(row) => row.rank}
+          highlightOf={(row) => row.subject === subject}
+          gapBefore={(row) => row.rank === listeners.gapAtRank}
+          barClassName="bg-rose-500"
+        />
+        <Leaderboard<RankedVoiceUserRow>
+          heading="Top speakers"
+          hint={
+            scoped && report.selectedSpeaker === null
+              ? `${personName} said nothing to the chat by voice in this period. By time spoken.`
+              : 'By time spoken to the chat — dictation and voice conversations. Pick a name to scope the page to that person.'
+          }
+          rows={speakers.rows}
+          empty="Nobody has spoken to the chat in this period."
+          keyOf={(row) => row.subject}
+          labelOf={voiceLabel}
+          valueOf={(row) => row.transcriptionMs}
+          formatValue={(row) => formatDuration(row.transcriptionMs)}
+          rankOf={(row) => row.rank}
+          highlightOf={(row) => row.subject === subject}
+          gapBefore={(row) => row.rank === speakers.gapAtRank}
+          barClassName="bg-emerald-500"
         />
       </div>
 

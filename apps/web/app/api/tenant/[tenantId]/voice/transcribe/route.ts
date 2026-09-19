@@ -11,10 +11,12 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { getDatabase } from '@renkei/db';
 import { normalizeLocale } from '@renkei/voice';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { resolveVoiceProvider } from '@/lib/voice/config';
+import { recordVoiceUsage, wavDurationMs } from '@/lib/voice/usage';
 
 /** 16 kHz × 16-bit × mono × 60 s, plus the header, rounded up. */
 export const TRANSCRIBE_MAX_BYTES = 2 * 1024 * 1024;
@@ -80,6 +82,18 @@ export async function POST(
     const status =
       result.error.kind === 'rate_limit' ? 429 : result.error.kind === 'timeout' ? 504 : 502;
     return NextResponse.json({ error: result.error.message, kind: result.error.kind }, { status });
+  }
+  // The ledger row (migration 110): seconds of sound, never the words.
+  const dbResult = getDatabase();
+  if (dbResult.ok) {
+    void recordVoiceUsage(dbResult.val, {
+      tenantId,
+      subject: session.subject,
+      kind: 'transcription',
+      audioMs: wavDurationMs(audio.byteLength),
+      provider: resolved.provider.kind,
+      locale,
+    });
   }
   return NextResponse.json({ text: result.val.text });
 }

@@ -139,6 +139,7 @@ export const EXPECTED_MIGRATIONS = [
   '107-mirth-permissions',
   '108-knowledge-embedding-ann',
   '109-chat-tool-permissions',
+  '110-voice-usage',
 ];
 
 export interface MigrationStatus {

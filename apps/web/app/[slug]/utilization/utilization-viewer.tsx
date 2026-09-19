@@ -23,6 +23,7 @@ import {
   type UtilizationBucket,
 } from './window';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
+import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { Leaderboard } from '@/components/leaderboard';
 import type { EfficientAgentRow } from '@/lib/usage/org-usage';
 import { LoadingLine } from '@/components/skeleton';
@@ -263,6 +264,15 @@ export default function UtilizationViewer({
       </section>
 
       <TokenSurfaceBreakdown tokens={report.surfaceTokens} />
+
+      {report.voiceAvailable ||
+      report.voice.speech.calls > 0 ||
+      report.voice.transcription.calls > 0 ? (
+        <VoiceUsageCard
+          totals={report.voice}
+          hint="Replies read aloud to you, and what you said to the chat by voice, over the period."
+        />
+      ) : null}
 
       <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
         <figcaption className="mb-3 flex flex-wrap items-center gap-2">

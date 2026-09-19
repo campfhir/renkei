@@ -239,8 +239,8 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
 }
 
 /**
- * Prune the usage ledgers — the run log (083) and the token ledger (085)
- * — past each org's agentUsageRetentionDays. The run sweep's shape: one
+ * Prune the usage ledgers — the run log (083), the token ledger (085)
+ * and the voice ledger (110) — past each org's agentUsageRetentionDays. The run sweep's shape: one
  * bounded, idempotent DELETE per table per tenant per pass. Longer than
  * run retention by default (a year vs 30 days) because these are what
  * make a year of usage readable after the runs are gone.
@@ -251,6 +251,8 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
       SELECT tenant_id FROM agent_run_log
       UNION
       SELECT tenant_id FROM llm_calls
+      UNION
+      SELECT tenant_id FROM voice_usage
     `.execute(db);
 
     for (const { tenant_id: tenantId } of tenants.rows) {
@@ -276,12 +278,22 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
           LIMIT ${RETENTION_BATCH}
         ) RETURNING id
       `.execute(db);
-      if (runs.rows.length > 0 || calls.rows.length > 0) {
+      const voice = await sql<{ id: string }>`
+        DELETE FROM voice_usage WHERE id IN (
+          SELECT id FROM voice_usage
+          WHERE tenant_id = ${tenantId}
+            AND created_at < NOW() - make_interval(days => ${days})
+          ORDER BY created_at
+          LIMIT ${RETENTION_BATCH}
+        ) RETURNING id
+      `.execute(db);
+      if (runs.rows.length > 0 || calls.rows.length > 0 || voice.rows.length > 0) {
         logger.info(
-          'retention pruned {runs} run log row(s) and {calls} token ledger row(s) for tenant {tenantId}',
+          'retention pruned {runs} run log row(s), {calls} token ledger row(s) and {voice} voice ledger row(s) for tenant {tenantId}',
           {
             component: 'worker-agents/usage-retention',
             tenantId,
+            voice: voice.rows.length,
             runs: runs.rows.length,
             calls: calls.rows.length,
           }

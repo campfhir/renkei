@@ -33,6 +33,13 @@ import {
 } from '@/lib/usage/org-usage';
 import { getPersonProfile, type PersonProfile } from '@/lib/usage/person-profile';
 import {
+  getVoiceTotals,
+  getVoiceUsers,
+  ZERO_VOICE_TOTALS,
+  type VoiceTotals,
+} from '@/lib/usage/voice-usage';
+import { rankVoiceUsers, type RankedVoiceUserRow } from '@/lib/usage/voice-window';
+import {
   activityCells,
   bucketOrgSeries,
   rankUsers,
@@ -70,6 +77,14 @@ export interface OrgUsageReport {
   topAgents: TopAgentRow[];
   efficientAgents: EfficientAgentRow[];
   topTools: OrgToolRow[];
+  /** Voice over the window, scoped like the tokens. */
+  voice: VoiceTotals;
+  /** Who is read to the most (text to speech, by the character), and the selected person's rank. */
+  topListeners: RankedVoiceUserRow[];
+  selectedListener: RankedVoiceUserRow | null;
+  /** Who talks to the chat the most (speech to text, by the second), and the selected person's rank. */
+  topSpeakers: RankedVoiceUserRow[];
+  selectedSpeaker: RankedVoiceUserRow | null;
   error?: string;
   signedOut?: boolean;
   forbidden?: boolean;
@@ -119,6 +134,11 @@ export async function getOrgUsageReport(
     topAgents: [],
     efficientAgents: [],
     topTools: [],
+    voice: ZERO_VOICE_TOTALS,
+    topListeners: [],
+    selectedListener: null,
+    topSpeakers: [],
+    selectedSpeaker: null,
   };
 
   const session = await getSessionFromCookies(tenantId);
@@ -143,6 +163,8 @@ export async function getOrgUsageReport(
       byModel,
       people,
       person,
+      voice,
+      voiceUsers,
     ] = await Promise.all([
       getSurfaceTokenTotals(db, tenantId, period, timeZone, subject),
       getOrgActivityTotals(db, tenantId, period, timeZone, subject),
@@ -156,9 +178,13 @@ export async function getOrgUsageReport(
       getTokensByModel(db, tenantId, period, timeZone, subject),
       listPeople(db, tenantId),
       subject === null ? Promise.resolve(null) : getPersonProfile(db, tenantId, subject),
+      getVoiceTotals(db, tenantId, period, timeZone, subject),
+      getVoiceUsers(db, tenantId, period, timeZone),
     ]);
     const now = new Date();
     const ranked = rankUsers(allUsers, subject, TOP_USERS);
+    const listeners = rankVoiceUsers(voiceUsers, 'speech', subject, TOP_USERS);
+    const speakers = rankVoiceUsers(voiceUsers, 'transcription', subject, TOP_USERS);
     return {
       periodKey: period.key,
       days: period.days,
@@ -177,6 +203,11 @@ export async function getOrgUsageReport(
       topAgents,
       efficientAgents,
       topTools,
+      voice,
+      topListeners: listeners.top,
+      selectedListener: listeners.selected,
+      topSpeakers: speakers.top,
+      selectedSpeaker: speakers.selected,
     };
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };

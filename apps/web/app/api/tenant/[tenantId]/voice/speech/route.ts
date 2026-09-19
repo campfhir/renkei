@@ -12,10 +12,12 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { getDatabase } from '@renkei/db';
 import { clampRate, normalizeLocale } from '@renkei/voice';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { resolveVoiceProvider } from '@/lib/voice/config';
+import { recordVoiceUsage } from '@/lib/voice/usage';
 
 /** A vendor ceiling is far higher; this keeps one request to one breath of audio. */
 export const SPEECH_MAX_CHARS = 3_000;
@@ -78,6 +80,19 @@ export async function POST(
     const status =
       result.error.kind === 'rate_limit' ? 429 : result.error.kind === 'timeout' ? 504 : 502;
     return NextResponse.json({ error: result.error.message, kind: result.error.kind }, { status });
+  }
+  // The ledger row (migration 110): characters, never the text.
+  const dbResult = getDatabase();
+  if (dbResult.ok) {
+    void recordVoiceUsage(dbResult.val, {
+      tenantId,
+      subject: session.subject,
+      kind: 'speech',
+      characters: text.length,
+      provider: resolved.provider.kind,
+      voice: voice ?? resolved.config.defaultVoice,
+      locale,
+    });
   }
   return new Response(result.val.body, {
     status: 200,

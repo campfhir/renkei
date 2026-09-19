@@ -46,6 +46,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'added',
+        title: 'Voice on the usage pages',
+        detail:
+          'My usage now shows how much has been read aloud to you and how long you have spoken to the chat over the period. Organization usage shows the same for the whole organization or one person, with two new leaderboards: who is read to the most, and who talks to the chat the most.',
+      },
+      {
         kind: 'fixed',
         title: 'A reply is read as one voice, not sentence by sentence',
         detail:
