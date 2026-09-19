@@ -60,6 +60,7 @@ interface CommitPayload extends DiffPayload {
     sha: string;
     shortSha: string;
     subject: string;
+    body: string;
     author: string;
     date: string;
     parents: string[];
@@ -780,6 +781,11 @@ function CommitRow({
                 <p className="mb-2 text-xs text-gray-500">
                   {known.commit.author ? `${known.commit.author} · ` : ''}
                   <span className="font-mono">{known.commit.sha}</span>
+                </p>
+              ) : null}
+              {known?.commit?.body ? (
+                <p className="mb-2 whitespace-pre-wrap text-xs text-gray-700 dark:text-gray-300">
+                  {known.commit.body}
                 </p>
               ) : null}
               <DiffView diff={diff.payload.diff} openAll />

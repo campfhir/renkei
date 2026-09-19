@@ -824,10 +824,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const header = await runGit(input, [
       'show',
       '--no-patch',
-      '--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P',
+      '--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P%x00%b',
       sha,
     ]);
-    const [fullSha, shortSha, subject, author, date, parents] = header.stdout.trim().split('\0');
+    const [fullSha, shortSha, subject, author, date, parents, messageBody] = header.stdout
+      .trim()
+      .split('\0');
     const numstat = await runGit(input, ['show', '--format=', '--numstat', sha, '--']);
     const files: { path: string; added: number; deleted: number; status: string }[] = [];
     for (const line of numstat.stdout.split('\n')) {
@@ -856,6 +858,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         sha: fullSha ?? sha,
         shortSha: shortSha ?? sha.slice(0, 7),
         subject: scrubEnv(subject ?? '', env),
+        body: scrubEnv((messageBody ?? '').trim(), env),
         author: scrubEnv(author ?? '', env),
         date: date ?? '',
         parents: (parents ?? '').split(' ').filter(Boolean),
