@@ -552,6 +552,7 @@ export default function ChatThread({
   const codeProjectId = chat.projectKind === 'code' && chat.projectId ? chat.projectId : null;
   const codeTools = useCodeChatTools({
     tenantId,
+    chatId: chat.id,
     projectId: codeProjectId,
     canEdit: isOwner,
     running,
@@ -559,10 +560,17 @@ export default function ChatThread({
     onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
   });
   const openCommit = codeTools.openChanges;
+  const openSubagent = codeTools.openSubagent;
   const codeActions = useMemo(
-    () => (codeProjectId ? { onShowCommit: (sha: string) => openCommit(sha) } : null),
-    [codeProjectId, openCommit]
+    () =>
+      codeProjectId
+        ? { onShowCommit: (sha: string) => openCommit(sha), onShowSubagent: openSubagent }
+        : null,
+    [codeProjectId, openCommit, openSubagent]
   );
+  // The branch under the title: the page's word until the first look at
+  // the checkout, then whatever the last look said.
+  const branch = codeProjectId ? (codeTools.branch ?? chat.projectBranch) : null;
   const overflow: OverflowItem[] = [
     {
       label: 'New chat',
@@ -645,6 +653,7 @@ export default function ChatThread({
                   id: chat.projectId,
                   name: chat.projectName,
                   href: projectHref(slug, chat.projectId, chat.projectKind),
+                  branch,
                 }
               : null
           }
@@ -719,6 +728,7 @@ export default function ChatThread({
             : null
         }
         code={codeActions}
+        subagents={state.subagents}
         speech={
           voice && speechQueue
             ? {

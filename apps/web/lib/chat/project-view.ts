@@ -103,6 +103,8 @@ export async function loadProjectView(
       projectId: chat.projectId,
       projectName: project.name,
       projectKind: project.kind,
+      // The project page names the branch in its own repository section.
+      projectBranch: null,
       updatedAt: chat.updatedAt.toISOString(),
       lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
       archived: chat.archivedAt !== null,

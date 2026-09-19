@@ -8,6 +8,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { ChatAccess } from './access';
 import { listMessages, toMessageView } from './messages';
+import { workspaceBranches } from '@/lib/code/branches';
 import { getProjectRow } from './projects';
 import { getActiveTurn, toTurnView } from './turns';
 import type { AttachmentView, ChatMessageView, ChatView } from './views';
@@ -47,6 +48,10 @@ export async function loadChatView(
       .orderBy('created_at', 'asc')
       .execute(),
   ]);
+  const branches =
+    project?.kind === 'code' && project.workspaceId
+      ? await workspaceBranches(db, tenantId, [project.workspaceId])
+      : new Map<string, string>();
   const byMessage = new Map<string, AttachmentView[]>();
   const artifacts: AttachmentView[] = [];
   for (const row of attachments) {
@@ -71,6 +76,7 @@ export async function loadChatView(
       projectId: chat.projectId,
       projectName: project?.name ?? null,
       projectKind: project?.kind ?? null,
+      projectBranch: project?.workspaceId ? (branches.get(project.workspaceId) ?? null) : null,
       llmModelId: chat.llmModelId,
       toolConfig: chat.toolConfig,
       thinkingEnabled: chat.thinkingEnabled,

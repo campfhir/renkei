@@ -13,6 +13,7 @@ import type {
   ModelOption,
   ToolPermissionDecision,
 } from './views';
+import type { SubagentRunView } from './subagent-runs';
 import type { ConnectorOption } from './tool-surface';
 import type { GrantView, GrantRole, ResourceKind } from './access';
 import type { StartedTurn } from './start-turn';
@@ -27,6 +28,12 @@ export const chatClient = {
   searchChats: (tenantId: string, query: string) =>
     getJson<{ query: string; hits: ChatSearchHit[] }>(
       `${base(tenantId)}/chats/search?${new URLSearchParams({ q: query }).toString()}`
+    ),
+
+  /** A sub-agent's run — its task, progress, report and full transcript — by the delegating call. */
+  getSubagentRun: (tenantId: string, chatId: string, toolUseId: string) =>
+    getJson<{ run: SubagentRunView }>(
+      `${base(tenantId)}/chats/${chatId}/subagents/${encodeURIComponent(toolUseId)}`
     ),
 
   getChat: (tenantId: string, chatId: string) =>

@@ -8,6 +8,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { workspaceBranches } from '@/lib/code/branches';
 import { listAccessibleProjectIds, listGrantedResources } from './access';
 import { listProjectsById } from './projects';
 import { listChatsById, listOwnedChats, listProjectChats, type ChatRow } from './store';
@@ -43,7 +44,7 @@ function item(
   chat: ChatRow,
   via: ChatListItem['via'],
   ownerName: string | null,
-  project: { name: string; kind: 'chat' | 'code' } | null
+  project: { name: string; kind: 'chat' | 'code'; branch: string | null } | null
 ): ChatListItem {
   return {
     id: chat.id,
@@ -51,6 +52,7 @@ function item(
     projectId: chat.projectId,
     projectName: project?.name ?? null,
     projectKind: project?.kind ?? null,
+    projectBranch: project?.branch ?? null,
     updatedAt: chat.updatedAt.toISOString(),
     lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
     archived: chat.archivedAt !== null,
@@ -102,8 +104,22 @@ export async function loadChatSidebar(
     ...inProjects.map((chat) => chat.ownerSubject),
     ...projects.map((project) => project.ownerSubject),
   ]);
+  // A code project's checkout branch, for the rows of its chats: one read
+  // of the worker's own table, never a worker call from the menu.
+  const branches = await workspaceBranches(
+    db,
+    tenantId,
+    projects.filter((project) => project.kind === 'code').map((project) => project.workspaceId)
+  );
   const projectsById = new Map(
-    projects.map((project) => [project.id, { name: project.name, kind: project.kind }])
+    projects.map((project) => [
+      project.id,
+      {
+        name: project.name,
+        kind: project.kind,
+        branch: project.workspaceId ? (branches.get(project.workspaceId) ?? null) : null,
+      },
+    ])
   );
   const projectOf = (chat: ChatRow) =>
     chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null;

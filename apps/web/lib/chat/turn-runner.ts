@@ -1037,7 +1037,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             // never settles can't hold the turn (and its heartbeat) open
             // forever; the orphaned call keeps running, but the loop moves on.
             return await raceTimeout(
-              deps.localTools.run(use.name, use.input, deps.localContext),
+              deps.localTools.run(use.name, use.input, { ...deps.localContext, toolUseId: use.id }),
               limits.toolTimeoutMs,
               `local tool ${use.name} timed out`
             );

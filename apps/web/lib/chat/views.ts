@@ -97,6 +97,8 @@ export interface ChatView {
   projectName: string | null;
   /** Which section the project lives under; null outside a project. */
   projectKind: 'chat' | 'code' | null;
+  /** A code project's checkout branch as the worker last saw it; null when none is usable. */
+  projectBranch: string | null;
   llmModelId: string | null;
   toolConfig: ChatToolConfigView | null;
   thinkingEnabled: boolean;
@@ -127,6 +129,8 @@ export interface ChatListItem {
   /** Which kind of project that is — a chat in a code project is listed
    *  with a different mark than one in a chat project. Null outside one. */
   projectKind: 'chat' | 'code' | null;
+  /** A code project's checkout branch, named under the title beside the project. */
+  projectBranch: string | null;
   updatedAt: string;
   lastMessageAt: string | null;
   archived: boolean;

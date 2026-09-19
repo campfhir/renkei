@@ -550,3 +550,101 @@ describe('buildSystemPrompt in auto mode', () => {
     expect(off).not.toContain('task_complete');
   });
 });
+
+describe('buildHistory with elideEarlierToolResults', () => {
+  const long = 'x'.repeat(2_000);
+  const rows = [
+    row({ seq: 1, role: 'user', blocks: [{ type: 'text', text: 'hi' }] }),
+    row({
+      seq: 2,
+      role: 'assistant',
+      blocks: [
+        { type: 'tool_use', id: 'r1', name: 'code_read_file', input: {} },
+        { type: 'tool_use', id: 'd1', name: 'code_delegate', input: {} },
+      ],
+    }),
+    row({
+      seq: 3,
+      role: 'user',
+      kind: 'tool_results',
+      blocks: [
+        { type: 'tool_result', toolUseId: 'r1', content: long },
+        { type: 'tool_result', toolUseId: 'd1', content: long },
+      ],
+    }),
+    row({ seq: 4, role: 'assistant', blocks: [{ type: 'text', text: 'ok' }] }),
+    row({ seq: 5, role: 'user', turnId: 'now', blocks: [{ type: 'text', text: 'more' }] }),
+    row({
+      seq: 6,
+      role: 'assistant',
+      turnId: 'now',
+      blocks: [{ type: 'tool_use', id: 'r2', name: 'code_read_file', input: {} }],
+    }),
+    row({
+      seq: 7,
+      role: 'user',
+      turnId: 'now',
+      kind: 'tool_results',
+      blocks: [{ type: 'tool_result', toolUseId: 'r2', content: long }],
+    }),
+    row({ seq: 8, role: 'assistant', turnId: 'now', status: 'streaming', blocks: [] }),
+  ];
+
+  it('trims earlier turns’ results to their head, keeps a sub-agent’s report and this turn’s results whole', () => {
+    const history = buildHistory(rows, target, 'm8', { elideEarlierToolResults: true });
+    const blocks = history.flatMap((message) => message.content);
+    const read = blocks.find((block) => block.type === 'tool_result' && block.toolUseId === 'r1');
+    const delegated = blocks.find(
+      (block) => block.type === 'tool_result' && block.toolUseId === 'd1'
+    );
+    expect(read && read.type === 'tool_result' ? read.content.length : 0).toBeLessThan(800);
+    expect(read && read.type === 'tool_result' ? read.content : '').toContain(
+      'trimmed from context'
+    );
+    expect(delegated && delegated.type === 'tool_result' ? delegated.content : '').toBe(long);
+    const now = blocks.find((block) => block.type === 'tool_result' && block.toolUseId === 'r2');
+    expect(now && now.type === 'tool_result' ? now.content : '').toBe(long);
+  });
+
+  it('changes nothing without the option', () => {
+    const history = buildHistory(rows, target, 'm8');
+    const read = history
+      .flatMap((message) => message.content)
+      .find((block) => block.type === 'tool_result' && block.toolUseId === 'r1');
+    expect(read && read.type === 'tool_result' ? read.content : '').toBe(long);
+  });
+});
+
+describe('buildSystemPrompt’s code brief', () => {
+  it('tells the orchestrator to delegate and that earlier results are trimmed', () => {
+    const prompt = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: false,
+      now: new Date('2026-09-04T10:00:00Z'),
+      project: {
+        name: 'Billing',
+        instructions: null,
+        memoryText: null,
+        files: [],
+        code: {
+          repoFullName: 'acme/billing',
+          branch: 'main',
+          ready: true,
+          notReady: null,
+          envNames: [],
+        },
+      },
+    });
+    expect(prompt).toContain('So delegate');
+    expect(prompt).toContain('code_delegate');
+    expect(prompt).toContain('trimmed from your context');
+  });
+});

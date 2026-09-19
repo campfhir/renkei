@@ -141,6 +141,7 @@ export const EXPECTED_MIGRATIONS = [
   '109-chat-tool-permissions',
   '110-voice-usage',
   '111-chat-auto-mode',
+  '112-chat-subagent-runs',
 ];
 
 export interface MigrationStatus {

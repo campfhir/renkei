@@ -4,7 +4,8 @@
  * The chat's name in the title bar, and — for its owner — the way to
  * change it: a pencil (or a click on the name) turns it into a field;
  * Enter or leaving the field saves, Escape puts the old name back. Under
- * it, the project the chat sits in, when it does.
+ * it, the project the chat sits in, when it does — and, for a code
+ * project, the branch its checkout is on right now.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -18,7 +19,7 @@ export default function ChatTitle({
   onRename,
 }: {
   title: string;
-  project: { id: string; name: string; href: string } | null;
+  project: { id: string; name: string; href: string; branch?: string | null } | null;
   canRename: boolean;
   /** Saves the new name; resolves to the name as stored, or null on failure. */
   onRename: ((title: string) => Promise<string | null>) | null;
@@ -100,6 +101,17 @@ export default function ChatTitle({
         >
           <Icon path={ICONS.folder} className="h-3 w-3 shrink-0" />
           <span className="truncate">{project.name}</span>
+          {project.branch ? (
+            <span
+              className="flex min-w-0 shrink items-center gap-0.5 font-mono"
+              title={`The checkout is on ${project.branch}`}
+              data-testid="chat-branch"
+            >
+              <span aria-hidden="true">·</span>
+              <Icon path={ICONS.gitBranch} className="h-3 w-3 shrink-0" />
+              <span className="truncate">{project.branch}</span>
+            </span>
+          ) : null}
         </Link>
       ) : null}
     </div>

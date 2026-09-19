@@ -35,6 +35,7 @@ import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { ChatMessageView } from '@/lib/chat/views';
 import { commitsInTranscript, type ChatCommit } from '@/lib/code/chat-commits';
 import LocalTime from '@/components/local-time';
+import SubagentModal from '../../chat/_components/subagent-modal';
 import DiffView, { Counts } from './diff-view';
 import { LoadingLine, Spinner } from '@/components/skeleton';
 
@@ -87,7 +88,11 @@ export interface CodeChatToolsHandle {
   stat: { added: number; deleted: number; files: number } | null;
   /** The commits this chat has made, oldest first, off its transcript. */
   commits: ChatCommit[];
+  /** The branch the checkout is on, as of the last look at it; null before the first. */
+  branch: string | null;
   openEnvironment: () => void;
+  /** Open a sub-agent's run — its progress, report and transcript — by its delegating call. */
+  openSubagent: (toolUseId: string) => void;
   openFiles: () => void;
   /** Open the panel — on one commit's diff when a hash is given. */
   openChanges: (commitSha?: string) => void;
@@ -104,6 +109,7 @@ export interface CodeChatToolsHandle {
  */
 export function useCodeChatTools({
   tenantId,
+  chatId,
   projectId,
   canEdit,
   running,
@@ -111,6 +117,7 @@ export function useCodeChatTools({
   onAsk,
 }: {
   tenantId: string;
+  chatId: string;
   projectId: string | null;
   /** The person may change the environment and ask the chat to act. */
   canEdit: boolean;
@@ -130,6 +137,8 @@ export function useCodeChatTools({
   });
   const [envOpen, setEnvOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [subagent, setSubagent] = useState<string | null>(null);
+  const [branch, setBranch] = useState<string | null>(null);
   const commits = useMemo(
     () => (projectId ? commitsInTranscript(messages) : []),
     [projectId, messages]
@@ -137,11 +146,12 @@ export function useCodeChatTools({
 
   const refreshStat = useCallback(async () => {
     if (!projectId) return;
-    const result = await getJson<DiffPayload>(`${base}/diff?context=0`);
+    const result = await getJson<DiffPayload>(`${base}/diff?context=0&stat=1`);
     if (!result.data || !result.data.available) {
       setStat(null);
       return;
     }
+    setBranch(result.data.branch || null);
     setStat(
       result.data.files.reduce(
         (sum, file) => ({
@@ -191,6 +201,14 @@ export function useCodeChatTools({
           }}
         />
       ) : null}
+      {subagent ? (
+        <SubagentModal
+          tenantId={tenantId}
+          chatId={chatId}
+          toolUseId={subagent}
+          onClose={() => setSubagent(null)}
+        />
+      ) : null}
     </>
   ) : null;
 
@@ -200,10 +218,14 @@ export function useCodeChatTools({
     []
   );
 
+  const openSubagent = useCallback((toolUseId: string) => setSubagent(toolUseId), []);
+
   return {
     stat,
     commits,
+    branch,
     openEnvironment: () => setEnvOpen(true),
+    openSubagent,
     openFiles: () => setFilesOpen(true),
     openChanges,
     modals,

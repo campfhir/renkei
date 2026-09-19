@@ -153,7 +153,11 @@ const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools liste
  * secret) does well; the one that guesses at files or asks for a token
  * does not.
  */
-const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. Whether to work on a new branch is your call from what the person asks: a change meant for review goes on a branch of its own, a quick fix or an experiment they want on the current branch stays there. For a change with independent parts, or an investigation that would flood this conversation, hand a self-contained task to a sub-agent with code_delegate (its own instructions, the same tools, no pushing) and read its report critically — you own the result. Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. Say what you changed and what you ran.`;
+const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. Whether to work on a new branch is your call from what the person asks: a change meant for review goes on a branch of its own, a quick fix or an experiment they want on the current branch stays there.
+
+You are the orchestrator of this conversation, and its context is for coordinating, not for the raw output of every file read and test run: that fills the conversation with detail that is useless a turn later and crowds out what matters. So delegate. Anything that takes more than a handful of tool calls — investigating how something works, finding every place a change touches, implementing one self-contained piece, running and fixing a test suite — goes to a sub-agent with code_delegate: give it a complete, self-contained task with what to report (readOnly for a pure investigation), one sub-agent per piece, and work from its report. The sub-agent's own calls and results never enter this conversation; only its report does, and it is kept for you. Read reports critically — you own the result — and keep for yourself what is quick: a look at one file, a check of what a report claims, and the commit, the push and the pull request, which only you make. Results of tool calls from earlier turns are trimmed from your context; if you need one again, call the tool again rather than recall it.
+
+Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. Say what you changed and what you ran.`;
 
 /**
  * A voice conversation has no transcript to glance at while the reply is
@@ -280,10 +284,41 @@ function nonEmpty(blocks: LlmContentBlock[]): LlmContentBlock[] {
  * Stored rows → wire messages, in order, repaired for the provider.
  * `exclude` is the assistant row currently being written.
  */
+/**
+ * How much of an earlier turn's tool results a history keeps
+ * (`HistoryOptions.elideEarlierToolResults`): the head of each, then a
+ * note saying what was cut. Enough to know what the call was about and
+ * that it succeeded; not the whole file.
+ */
+export const ELIDED_RESULT_KEEP_CHARS = 600;
+
+/** Tools whose results are kept whole across turns: a sub-agent's report IS the context. */
+const NEVER_ELIDED = new Set(['code_delegate']);
+
+export interface HistoryOptions {
+  /**
+   * Trim the tool results of turns before this one to their head. A code
+   * chat's context is for coordinating, and a file read three turns ago
+   * is not coordination; the model is told to call again rather than
+   * recall (CODE_BRIEF). The current turn's results stay whole.
+   */
+  elideEarlierToolResults?: boolean;
+}
+
+function elided(block: Extract<LlmContentBlock, { type: 'tool_result' }>) {
+  if (block.content.length <= ELIDED_RESULT_KEEP_CHARS) return block;
+  const cut = block.content.length - ELIDED_RESULT_KEEP_CHARS;
+  return {
+    ...block,
+    content: `${block.content.slice(0, ELIDED_RESULT_KEEP_CHARS)}\n…[${cut} more characters from an earlier turn trimmed from context; call the tool again if you need them]`,
+  };
+}
+
 export function buildHistory(
   messages: StoredMessage[],
   target: HistoryTarget,
-  exclude: string | null
+  exclude: string | null,
+  options: HistoryOptions = {}
 ): LlmMessage[] {
   const ordered = messages
     .filter((message) => message.id !== exclude)
@@ -319,6 +354,18 @@ export function buildHistory(
         )
       );
       blocks = blocks.filter((block) => block.type !== 'tool_result' || calls.has(block.toolUseId));
+      if (options.elideEarlierToolResults && message.turnId !== target.turnId) {
+        const names = new Map(
+          (previous?.role === 'assistant' ? previous.content : []).flatMap((block) =>
+            block.type === 'tool_use' ? [[block.id, block.name] as const] : []
+          )
+        );
+        blocks = blocks.map((block) =>
+          block.type === 'tool_result' && !NEVER_ELIDED.has(names.get(block.toolUseId) ?? '')
+            ? elided(block)
+            : block
+        );
+      }
     }
     if (blocks.length === 0) continue;
     // Consecutive same-role rows (a paste chunked into several prompt rows

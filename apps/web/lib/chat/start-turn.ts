@@ -61,6 +61,7 @@ import {
 import { readProjectMemory, renderProjectMemory } from './memory';
 import { readUserMemory, renderUserMemory } from './user-memory';
 import { notifyChatReplyDesktop } from './reply-notification';
+import { createSubagentRecorder } from './subagent-runs';
 
 /**
  * The hard ceiling on one Send: past this, even chunking is refused (an
@@ -418,6 +419,20 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       recordUsage: (usage: LlmUsage) => store.recordUsage(usage),
       emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>
         channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
+      // A code chat's sub-agents keep their runs (subagent-runs.ts) and
+      // report progress on the turn's stream; nothing of theirs enters
+      // this turn's history but the report.
+      ...(project?.kind === 'code'
+        ? {
+            subagents: createSubagentRecorder(
+              db,
+              { tenantId: input.tenantId, chatId: input.chat.id, turnId: input.turnId },
+              (subagent) =>
+                channel.emit({ type: 'subagent_progress', turnId: input.turnId, subagent }),
+              log
+            ),
+          }
+        : {}),
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     // A code project's checkout, when it is there to work in: the code_*
@@ -452,7 +467,11 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         llmModelId: input.llm.modelConfigId,
         providerName: input.llm.providerName,
       },
-      input.assistantMessage.id
+      input.assistantMessage.id,
+      // A code chat's context is for coordinating: earlier turns' tool
+      // results are trimmed to their head (request-builder.ts), and the
+      // brief says to call again rather than recall.
+      { elideEarlierToolResults: project?.kind === 'code' }
     );
     // What earlier turns found through find_tools stays offered: the model
     // calls a tool it remembers whether or not its schema is in the request,

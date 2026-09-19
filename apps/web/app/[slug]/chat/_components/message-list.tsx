@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
-import type { CompactionProgress } from '@/lib/chat/stream-events';
+import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
 import type {
   ChatBlock,
   ChatMessageView,
@@ -134,6 +134,8 @@ export interface PromptActions {
 export interface CodeActions {
   /** Open the Changes panel on this commit's diff. */
   onShowCommit: (sha: string) => void;
+  /** Open a sub-agent's run — progress, report, transcript — by its delegating call. */
+  onShowSubagent: (toolUseId: string) => void;
 }
 
 /** Reading a reply aloud, when the org has a voice service. */
@@ -160,6 +162,7 @@ export default function MessageList({
   speech = null,
   permission = null,
   code = null,
+  subagents = {},
 }: {
   tenantId: string;
   messages: ChatMessageView[];
@@ -174,6 +177,8 @@ export default function MessageList({
   permission?: PermissionPrompt | null;
   /** In a code project's chat: what a milestone card can open. */
   code?: CodeActions | null;
+  /** Sub-agents' live state by delegating call, from the stream (stream-events.ts). */
+  subagents?: Record<string, SubagentProgress>;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -242,6 +247,7 @@ export default function MessageList({
                 speechKey={group.key}
                 permission={running && group.key === lastTurnKey ? permission : null}
                 code={code}
+                subagents={subagents}
               />
             ) : null}
           </div>
@@ -299,10 +305,12 @@ type Segment =
   | { kind: 'work'; steps: WorkStep[] }
   /** A commit, a push, a word to Bitbucket — a card of its own, never folded. */
   | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
+  /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
+  | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
   /** Auto mode's runner-written "carry on", between two of the model's replies. */
   | { kind: 'nudge'; text: string };
 
-type WorkStep =
+export type WorkStep =
   | { kind: 'thinking'; text: string }
   | { kind: 'redacted' }
   | { kind: 'call'; block: Extract<ChatBlock, { type: 'tool_use' }>; result: ToolResult | null };
@@ -339,7 +347,9 @@ function segment(messages: ChatMessageView[], results: Map<string, ToolResult>):
           break;
         case 'tool_use': {
           const step = { kind: 'call' as const, block, result: results.get(block.id) ?? null };
-          if (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL) {
+          if (block.name === 'code_delegate') {
+            out.push({ kind: 'subagent', step });
+          } else if (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL) {
             out.push({ kind: 'milestone', step });
           } else {
             work().steps.push(step);
@@ -506,6 +516,7 @@ function Reply({
   speechKey,
   permission,
   code,
+  subagents,
 }: {
   messages: ChatMessageView[];
   results: Map<string, ToolResult>;
@@ -515,6 +526,7 @@ function Reply({
   speechKey: string;
   permission: PermissionPrompt | null;
   code: CodeActions | null;
+  subagents: Record<string, SubagentProgress>;
 }) {
   const segments = useMemo(() => segment(messages, results), [messages, results]);
   // The call the ask is about, for the card to show its input.
@@ -557,6 +569,31 @@ function Reply({
             );
           case 'nudge':
             return <NudgeNote key={index} text={part.text} />;
+          case 'subagent': {
+            const step = part.step;
+            const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
+            const pending =
+              !step.result && !waiting && (tail || pendingToolCalls.includes(step.block.id));
+            return (
+              <SubagentCard
+                key={index}
+                step={step}
+                state={
+                  waiting
+                    ? 'waiting'
+                    : pending
+                      ? 'pending'
+                      : step.result?.isError
+                        ? 'failed'
+                        : step.result
+                          ? 'done'
+                          : 'failed'
+                }
+                progress={subagents[step.block.id] ?? null}
+                code={code}
+              />
+            );
+          }
           case 'milestone': {
             const step = part.step;
             const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
@@ -703,97 +740,237 @@ function WorkFold({
         {label}
         <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
       </summary>
-      <ol className="space-y-2">
-        {shown.map((step, index) => {
-          switch (step.kind) {
-            case 'thinking':
-              return (
-                <li
-                  key={index}
-                  className="whitespace-pre-wrap break-words text-gray-600 dark:text-gray-400"
-                >
-                  {step.text}
-                  {live && index === shown.length - 1 ? <Cursor /> : null}
-                </li>
-              );
-            case 'redacted':
-              return (
-                <li key={index} className="text-xs text-gray-400">
-                  (some reasoning was withheld by the model provider)
-                </li>
-              );
-            case 'call': {
-              const pending = isPending(step);
-              const waiting = isWaiting(step);
-              const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
-              // A code tool that changed a file carries the file's diff,
-              // fenced; it is shown as a diff, and its counts on the line.
-              const split =
-                step.result && !step.result.isError && step.block.name.startsWith('code_')
-                  ? splitDiffResult(step.result.content)
-                  : null;
-              const counts = split?.diff ? diffTotals(parseUnifiedDiff(split.diff)) : null;
-              return (
-                <li key={index}>
-                  <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
-                    <summary>
-                      <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
-                      {callLine(
-                        step.block.name,
-                        waiting
-                          ? 'waiting'
-                          : pending
-                            ? 'pending'
-                            : step.result?.isError
-                              ? 'failed'
-                              : 'done'
-                      )}
-                      {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
-                      {counts ? <Counts added={counts.added} deleted={counts.deleted} /> : null}
-                      <Icon
-                        path={ICONS.chevron}
-                        className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
-                      />
-                    </summary>
-                    <div className="space-y-2">
-                      <div>
-                        <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
-                          Input
-                        </p>
-                        <pre className="chat-pre">{args}</pre>
-                      </div>
-                      {step.result && split?.diff ? (
-                        <>
-                          <div>
-                            <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
-                              Result
-                            </p>
-                            <pre className="chat-pre">{split.text}</pre>
-                          </div>
-                          <div>
-                            <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
-                              Diff
-                            </p>
-                            <DiffView diff={split.diff} openAll />
-                          </div>
-                        </>
-                      ) : step.result ? (
+      <StepList steps={shown} live={live} isPending={isPending} isWaiting={isWaiting} />
+    </details>
+  );
+}
+
+/**
+ * The steps of a run in order — thinking as prose, each tool call folded
+ * with its result (a diff rendered as one) — as the work fold lists
+ * them, and as a sub-agent's transcript lists its own (subagent-modal.tsx).
+ */
+export function StepList({
+  steps,
+  live = false,
+  isPending = () => false,
+  isWaiting = () => false,
+}: {
+  steps: WorkStep[];
+  live?: boolean;
+  isPending?: (step: Extract<WorkStep, { kind: 'call' }>) => boolean;
+  isWaiting?: (step: Extract<WorkStep, { kind: 'call' }>) => boolean;
+}) {
+  const shown = steps;
+  return (
+    <ol className="space-y-2">
+      {shown.map((step, index) => {
+        switch (step.kind) {
+          case 'thinking':
+            return (
+              <li
+                key={index}
+                className="whitespace-pre-wrap break-words text-gray-600 dark:text-gray-400"
+              >
+                {step.text}
+                {live && index === shown.length - 1 ? <Cursor /> : null}
+              </li>
+            );
+          case 'redacted':
+            return (
+              <li key={index} className="text-xs text-gray-400">
+                (some reasoning was withheld by the model provider)
+              </li>
+            );
+          case 'call': {
+            const pending = isPending(step);
+            const waiting = isWaiting(step);
+            const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
+            // A code tool that changed a file carries the file's diff,
+            // fenced; it is shown as a diff, and its counts on the line.
+            const split =
+              step.result && !step.result.isError && step.block.name.startsWith('code_')
+                ? splitDiffResult(step.result.content)
+                : null;
+            const counts = split?.diff ? diffTotals(parseUnifiedDiff(split.diff)) : null;
+            return (
+              <li key={index}>
+                <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
+                  <summary>
+                    <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
+                    {callLine(
+                      step.block.name,
+                      waiting
+                        ? 'waiting'
+                        : pending
+                          ? 'pending'
+                          : step.result?.isError
+                            ? 'failed'
+                            : 'done'
+                    )}
+                    {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
+                    {counts ? <Counts added={counts.added} deleted={counts.deleted} /> : null}
+                    <Icon
+                      path={ICONS.chevron}
+                      className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
+                    />
+                  </summary>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+                        Input
+                      </p>
+                      <pre className="chat-pre">{args}</pre>
+                    </div>
+                    {step.result && split?.diff ? (
+                      <>
                         <div>
                           <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
-                            {step.result.isError ? 'Error' : 'Result'}
+                            Result
                           </p>
-                          <pre className="chat-pre">{step.result.content}</pre>
+                          <pre className="chat-pre">{split.text}</pre>
                         </div>
-                      ) : null}
-                    </div>
-                  </details>
-                </li>
-              );
-            }
+                        <div>
+                          <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+                            Diff
+                          </p>
+                          <DiffView diff={split.diff} openAll />
+                        </div>
+                      </>
+                    ) : step.result ? (
+                      <div>
+                        <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+                          {step.result.isError ? 'Error' : 'Result'}
+                        </p>
+                        <pre className="chat-pre">{step.result.content}</pre>
+                      </div>
+                    ) : null}
+                  </div>
+                </details>
+              </li>
+            );
           }
-        })}
-      </ol>
-    </details>
+        }
+      })}
+    </ol>
+  );
+}
+
+/**
+ * A sub-agent's card: the task it was given, how far it is while it
+ * works (from the stream: model calls, tool calls, what it last reached
+ * for), and its report once it is back — the one thing the chat's own
+ * context ever holds of it. The transcript behind the report opens from
+ * here (subagent-modal.tsx); it is kept, not thrown away, but never
+ * fed back to the model.
+ */
+function SubagentCard({
+  step,
+  state,
+  progress,
+  code,
+}: {
+  step: Extract<WorkStep, { kind: 'call' }>;
+  state: MilestoneState;
+  progress: SubagentProgress | null;
+  code: CodeActions | null;
+}) {
+  const input =
+    typeof step.block.input === 'object' && step.block.input !== null ? step.block.input : {};
+  const record: { task?: unknown; readOnly?: unknown; instructions?: unknown } = input;
+  const task = typeof record.task === 'string' ? record.task.trim() : '';
+  const taskLine = task.split('\n').find((line) => line.trim()) ?? '';
+  const readOnly = record.readOnly === true;
+  const resultText = step.result?.content ?? '';
+  const reportLine = step.result ? (resultText.split('\n').find((line) => line.trim()) ?? '') : '';
+  const running = state === 'pending' || state === 'waiting';
+  const sentence =
+    state === 'waiting'
+      ? 'Waiting for permission to start a sub-agent'
+      : state === 'pending'
+        ? readOnly
+          ? 'Sub-agent investigating'
+          : 'Sub-agent working'
+        : state === 'failed'
+          ? 'The sub-agent failed'
+          : 'Sub-agent reported';
+  const live = progress && progress.status === 'running' ? progress : null;
+  const tone =
+    state === 'failed'
+      ? 'border-red-200 bg-red-50/60 dark:border-red-900/60 dark:bg-red-950/30'
+      : 'border-indigo-200 bg-indigo-50/60 dark:border-indigo-900/60 dark:bg-indigo-950/30';
+  return (
+    <div className={`my-2 max-w-xl rounded-lg border px-3 py-2 text-sm ${tone}`} data-subagent>
+      <div className="flex items-start gap-2">
+        <span
+          className={`mt-0.5 shrink-0 ${state === 'failed' ? 'text-red-500' : running ? 'text-indigo-500' : 'text-indigo-600 dark:text-indigo-400'}`}
+        >
+          <Icon path={ICONS.group} className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-gray-900 dark:text-gray-100">
+            <span title={step.block.name}>{sentence}</span>
+            {state === 'pending' ? <span className="chat-dots" aria-hidden="true" /> : null}
+            {readOnly ? (
+              <span className="ml-1.5 text-xs font-normal text-gray-500">read-only</span>
+            ) : null}
+          </p>
+          {taskLine ? (
+            <p className="mt-0.5 break-words text-xs text-gray-700 dark:text-gray-300" title={task}>
+              {taskLine}
+            </p>
+          ) : null}
+          {live ? (
+            <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+              {live.steps} of {live.maxSteps} model call{live.maxSteps === 1 ? '' : 's'} ·{' '}
+              {live.toolCalls} tool call{live.toolCalls === 1 ? '' : 's'}
+              {live.lastTool ? ` · ${milestoneSentence(live.lastTool, 'pending')}` : ''}
+            </p>
+          ) : null}
+          {!running && reportLine ? (
+            <p
+              className={`mt-1 break-words text-xs ${state === 'failed' ? 'text-red-700 dark:text-red-300' : 'text-gray-600 dark:text-gray-400'}`}
+            >
+              {reportLine}
+            </p>
+          ) : null}
+          {code ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => code.onShowSubagent(step.block.id)}
+                className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+              >
+                <Icon path={ICONS.history} className="h-3.5 w-3.5" />
+                {running ? 'Follow the sub-agent' : 'View transcript'}
+              </button>
+            </div>
+          ) : null}
+          <details className="chat-fold mt-1">
+            <summary>
+              {step.result ? 'Task and report' : 'Task'}
+              <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
+            </summary>
+            <div className="space-y-2">
+              <div>
+                <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Task</p>
+                <pre className="chat-pre">
+                  {step.block.partialJson ?? JSON.stringify(step.block.input, null, 2)}
+                </pre>
+              </div>
+              {step.result ? (
+                <div>
+                  <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+                    {step.result.isError ? 'Error' : 'Report'}
+                  </p>
+                  <pre className="chat-pre">{step.result.content}</pre>
+                </div>
+              ) : null}
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
   );
 }
 

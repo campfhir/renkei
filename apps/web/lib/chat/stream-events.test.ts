@@ -336,3 +336,53 @@ describe('tool permission events', () => {
     expect(ended.pendingPermission).toBeNull();
   });
 });
+
+describe('subagent_progress', () => {
+  it('keeps each sub-agent’s latest state by its delegating call, through a snapshot, until a truncate', () => {
+    const { applyStreamEvent: apply, initialThreadState: initial } =
+      jest.requireActual<typeof import('./stream-events')>('./stream-events');
+    let state = initial([], null);
+    state = apply(state, {
+      type: 'subagent_progress',
+      turnId: 't1',
+      subagent: {
+        toolUseId: 'd1',
+        status: 'running',
+        steps: 1,
+        maxSteps: 40,
+        toolCalls: 2,
+        lastTool: 'code_read_file',
+      },
+    });
+    state = apply(state, {
+      type: 'subagent_progress',
+      turnId: 't1',
+      subagent: {
+        toolUseId: 'd1',
+        status: 'completed',
+        steps: 5,
+        maxSteps: 40,
+        toolCalls: 9,
+        lastTool: null,
+      },
+    });
+    expect(state.subagents.d1).toEqual(
+      expect.objectContaining({ status: 'completed', steps: 5, toolCalls: 9 })
+    );
+    state = apply(state, {
+      type: 'snapshot',
+      turn: {
+        id: 't1',
+        status: 'completed',
+        kind: 'reply',
+        error: null,
+        startedAt: new Date(0).toISOString(),
+        finishedAt: null,
+      },
+      messages: [],
+    });
+    expect(state.subagents.d1?.status).toBe('completed');
+    state = apply(state, { type: 'truncate', fromSeq: 1, removedArtifactIds: [] });
+    expect(state.subagents).toEqual({});
+  });
+});

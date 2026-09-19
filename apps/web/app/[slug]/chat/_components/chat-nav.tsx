@@ -384,6 +384,12 @@ function ChatRow({
           {chat.projectName ? (
             <span className="block truncate text-[11px] font-normal leading-tight text-gray-500">
               {chat.projectName}
+              {chat.projectBranch ? (
+                <span className="font-mono" title={`The checkout is on ${chat.projectBranch}`}>
+                  {' · '}
+                  {chat.projectBranch}
+                </span>
+              ) : null}
             </span>
           ) : null}
           {snippet ? (
