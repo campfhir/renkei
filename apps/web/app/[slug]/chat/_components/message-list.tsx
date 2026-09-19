@@ -688,7 +688,11 @@ function WorkFold({
   const shown = steps.filter((step) => step.kind !== 'thinking' || step.text.trim() !== '');
   const calls = shown.filter((step) => step.kind === 'call');
   const thought = shown.some((step) => step.kind !== 'call');
-  const failed = calls.some((step) => step.result?.isError);
+  // Only the most recently resolved call decides the fold's error styling —
+  // an early failure that a later call in the same run superseded shouldn't
+  // keep painting the whole group red.
+  const lastResolvedCall = [...calls].reverse().find((step) => step.result);
+  const failed = lastResolvedCall?.result?.isError ?? false;
   const isWaiting = (step: Extract<WorkStep, { kind: 'call' }>) =>
     !step.result && waitingOn === step.block.id;
   const isPending = (step: Extract<WorkStep, { kind: 'call' }>) =>
