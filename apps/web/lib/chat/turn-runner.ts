@@ -201,6 +201,19 @@ export const PERMISSION_TIMEOUT_RESULT =
   'Nobody allowed this tool call in time, so it was not made. Tell the person what you were going to do; they can ask again when they are ready.';
 export const PERMISSION_BLOCKED_RESULT =
   'The person has blocked this tool in their preferences, so it cannot be used in this chat. Do not retry it or work around it; tell them what you were going to do and let them decide.';
+/**
+ * What the model is told in place of a result for a tool call whose
+ * arguments were cut off mid-stream (the reply hit its output-token
+ * ceiling while still emitting this call's JSON) — see `truncatedToolIds`
+ * in runChatTurn. The call is never made: the arguments the accumulator
+ * would parse from a cut-off buffer collapse to `{}` (stream-accumulator.ts),
+ * which for a write tool with required fields either fails validation in
+ * a way that hides the real cause, or — worse — silently "succeeds" with
+ * missing data. Telling the model plainly, so it shrinks the call instead
+ * of quietly resending the same oversized one.
+ */
+export const TOOL_CALL_TRUNCATED_RESULT =
+  "This call's arguments were cut off before they finished — the reply ran out of room mid-call, so it was not made. Retry with a smaller or more focused call (e.g. fewer steps at once, or a narrower patch tool instead of one call for everything).";
 
 /**
  * Auto mode's other half (auto-mode.ts): a turn that hands work to a
@@ -493,6 +506,31 @@ function clip(text: string, max: number): string {
  * which the log viewer does not decrypt on read, so this keeps it inline.
  */
 const LOG_BODY_MAX_CHARS = 1300;
+
+/**
+ * Whether a tool_use block's raw streamed JSON never finished — non-empty
+ * text that does not parse. The accumulator (stream-accumulator.ts)
+ * already resolves this the lenient way, to `{}`, for a call that
+ * genuinely completed with no arguments and for one whose stream was cut
+ * alike; this is the one place that tells the two apart, from the raw
+ * text `mirror` kept as input_json_delta events arrived (see its
+ * `partialJson` doc below).
+ */
+function isTruncatedToolInput(raw: string | undefined): boolean {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return false;
+  try {
+    JSON.parse(trimmed);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** A mirrored block's raw streamed args, if it is a tool_use block at all. */
+function mirroredPartialJson(block: LlmContentBlock | undefined): string | undefined {
+  return block?.type === 'tool_use' ? block.partialJson : undefined;
+}
 
 function argsOf(input: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -998,9 +1036,25 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       totals.inputTokens += reply.usage.inputTokens;
       totals.outputTokens += reply.usage.outputTokens;
       await store.recordUsage(reply.usage);
+      // The mirror's own blocks, one last time before they are replaced
+      // below — its `partialJson` is the raw text `mirror` saw stream in
+      // for each tool_use block, which is how a call cut off mid-argument
+      // (ran out of output room) is told apart from one that legitimately
+      // took no arguments: both parse to the assembled reply's `{}`, but
+      // only the cut-off one fails to parse here. See `truncatedToolIds`.
+      const streamedBlocks = blocks;
       // The assembled response is canonical: tool input parsed, nothing
       // the mirror might have missed.
       blocks = reply.content;
+      const truncatedToolIds = new Set(
+        reply.content
+          .filter(
+            (block, index): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
+              block.type === 'tool_use' &&
+              isTruncatedToolInput(mirroredPartialJson(streamedBlocks[index]))
+          )
+          .map((block) => block.id)
+      );
       reply.content.forEach((block, index) => {
         if (block.type === 'tool_use') {
           emit({ type: 'block_stop', messageId: assistant.id, index, block: toChatBlock(block) });
@@ -1050,7 +1104,19 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         await startNextAssistant();
         continue;
       }
-      if (reply.stopReason !== 'tool_use' || toolUses.length === 0) {
+      // Whether to run a tool round turns on toolUses itself, not
+      // stopReason: the two agree for every normal reply (both providers
+      // map "tool call(s) present, stream finished cleanly" to
+      // stopReason 'tool_use' — openai.ts/anthropic.ts stopReasonOf), but
+      // they diverge exactly when a call's own arguments were cut off by
+      // running out of output room mid-stream — stopReason comes back
+      // 'max_tokens' even though the truncated block is still sitting in
+      // toolUses. Skipping the tool round there, as `stopReason !==
+      // 'tool_use'` used to, silently ended the turn without ever
+      // running or refusing that call — no error, no retry, nothing for
+      // the person to see. It still gets refused below (truncatedToolIds
+      // / refused), just no longer skipped outright.
+      if (toolUses.length === 0) {
         // Auto mode: the model stopped, but the task is not marked done —
         // tell it to carry on and go again, within this same turn. Only
         // once a sub-agent has actually been spawned: see spawnedSubagent
@@ -1095,10 +1161,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const results: LlmContentBlock[] = [];
       const attachments: LlmContentBlock[] = [];
       const produced: ArtifactFile[] = [];
-      // Calls the person did not allow: answered with a refusal, never run.
-      const refused = new Map<string, 'deny' | 'timeout' | 'blocked'>();
+      // Calls the person did not allow, or whose own arguments never
+      // finished streaming: answered with a refusal, never run.
+      const refused = new Map<string, 'deny' | 'timeout' | 'blocked' | 'truncated'>();
       for (const use of toolUses) {
         if (denied.has(use.name)) refused.set(use.id, 'blocked');
+        else if (truncatedToolIds.has(use.id)) refused.set(use.id, 'truncated');
       }
       const runTool = async (use: (typeof toolUses)[number]): Promise<McpToolResult> => {
         const refusal = refused.get(use.id);
@@ -1121,7 +1189,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
                     ? PERMISSION_DENIED_RESULT
                     : refusal === 'blocked'
                       ? PERMISSION_BLOCKED_RESULT
-                      : PERMISSION_TIMEOUT_RESULT,
+                      : refusal === 'truncated'
+                        ? TOOL_CALL_TRUNCATED_RESULT
+                        : PERMISSION_TIMEOUT_RESULT,
               },
             ],
             isError: true,
@@ -1225,7 +1295,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         // announced as running, since a refused one never runs.
         let canceledWhileAsking = false;
         for (const use of group) {
-          if (!needsPermission(use.name)) continue;
+          if (refused.has(use.id) || !needsPermission(use.name)) continue;
           const answer = await askPermission(use);
           if (answer === 'canceled') {
             canceledWhileAsking = true;
