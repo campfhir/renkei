@@ -1246,6 +1246,62 @@ describe('runChatTurn on a request that fails mid-argument-stream', () => {
   });
 });
 
+describe('runChatTurn logs every tool call attempt', () => {
+  it('logs the attempt and outcome at debug, whether the call ran or was refused', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-log-1');
+    const calls: string[] = [];
+    const logged: { message: string; fields: Record<string, unknown>; level?: string }[] = [];
+    const echo: LocalTool = {
+      def: { name: 'local_echo', description: 'echo', inputSchema: { type: 'object' } },
+      async execute(input) {
+        return textResult(`echo ${String(input.value)}`);
+      },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(
+          provider([
+            toolCall('jira_create_issue', { summary: 'x' }),
+            toolCall('local_echo', { value: 1 }),
+            text('Done'),
+          ])
+        ),
+        tools: [{ name: 'jira_create_issue', description: '', inputSchema: {} }],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([echo]),
+        localContext,
+        // jira_create_issue is not in readOnlyTools, so it needs asking —
+        // deny it to exercise the refused path in the same test.
+        permissions: { alwaysAllowed: new Set(), denied: new Set() },
+        readOnlyTools: new Set(['local_echo']),
+        channel,
+        store: fake.store,
+        log: (message, fields, level) => logged.push({ message, fields, level }),
+        limits: { flushMs: 5, permissionWaitMs: 10_000, permissionPollMs: 5 },
+      },
+      inputFor('turn-log-1')
+    );
+    // Deny the ask as soon as it appears.
+    await waitUntil(() => fake.asks.length === 1);
+    fake.decideOnRow('deny');
+    await run;
+    const byMessage = (needle: string) => logged.filter((row) => row.message.includes(needle));
+    const refused = byMessage('chat tool call refused');
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({ level: 'debug', fields: { tool: 'jira_create_issue' } });
+    const attempts = byMessage('chat tool call:');
+    expect(attempts.map((row) => row.fields.tool)).toEqual(['local_echo']);
+    expect(attempts[0]).toMatchObject({ level: 'debug', fields: { local: true } });
+    const outcomes = byMessage('chat tool call outcome');
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      level: 'debug',
+      fields: { tool: 'local_echo', isError: false },
+    });
+  });
+});
+
 describe('runChatTurn in auto mode', () => {
   const doneTool: LocalTool = {
     def: { name: 'task_complete', description: 'done', inputSchema: { type: 'object' } },
