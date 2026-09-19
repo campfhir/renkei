@@ -260,6 +260,12 @@ async function write(
   // reach, same distinction the file's own header draws.
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (keyResult.ok) {
+    // A question or approval card is already rendered inline on the run's
+    // own page — the person parked there doesn't need a banner repeating
+    // it. `quiet` tells the service worker to skip the OS banner ONLY when
+    // that exact page is the one in front; an act (a ticket filed, a mail
+    // sent) is news regardless of what's on screen, so it stays unquiet.
+    const quiet = row.kind === 'question' || row.kind === 'approval';
     void sendPush(
       db,
       context.tenantId,
@@ -271,6 +277,8 @@ async function write(
         tag: context.runId && row.tool ? `${context.runId}:${row.tool}` : id,
         refUrl: row.refUrl ?? null,
         notificationId: id,
+        ...(quiet && row.refUrl ? { appPath: row.refUrl } : {}),
+        ...(quiet ? { quiet: true } : {}),
       },
       { log: (message, meta) => logger.warn(message, meta) }
     );

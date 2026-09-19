@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 
 /**
  * The one place that asks "has anything happened?", shared by the nav
@@ -36,6 +37,36 @@ const POLL_MS = 20_000;
 /** A hidden tab still updates, four times slower — the badge should be
  *  roughly right when somebody comes back, and 80s is cheap. */
 const HIDDEN_FACTOR = 4;
+
+/**
+ * Kinds already rendered inline wherever they happen — a question or
+ * permission ask on the run/chat page that's parked behind it, a reply in
+ * the chat itself. Arriving as a toast too, while that exact page is the
+ * one open, would only repeat what's already on screen; everything else
+ * (a ticket filed, a run finishing, a share) is still worth a toast no
+ * matter what page this tab is on.
+ */
+const CONVERSATIONAL_KINDS = new Set(['question', 'approval', 'chat_reply', 'chat_permission']);
+
+/**
+ * Whether `entry` is already visible on `pathname` — see
+ * `CONVERSATIONAL_KINDS`. A chat's ask/reply carries its own page as
+ * `refUrl`; an agent run's carries no `refUrl` (the row predates that
+ * field for these kinds on older data) but always carries `agentId` and
+ * `runId`, matched the same way the notifications page's own `runHref`
+ * is, against both the plain and admin run pages.
+ */
+function alreadyVisibleAt(entry: AppNotification, pathname: string): boolean {
+  if (!CONVERSATIONAL_KINDS.has(entry.kind)) return false;
+  if (entry.kind === 'question' || entry.kind === 'approval') {
+    return (
+      entry.agentId !== null &&
+      entry.runId !== null &&
+      pathname.endsWith(`/agents/${entry.agentId}/runs/${entry.runId}`)
+    );
+  }
+  return entry.refUrl !== null && pathname === entry.refUrl;
+}
 
 export interface AppNotification {
   id: string;
@@ -89,6 +120,13 @@ export function NotificationCenter({
   // effect must not restart every time it moves.
   const since = useRef<string | null>(null);
   const seeded = useRef(false);
+  // Read inside `load`, not as a dependency — a route change must not
+  // restart the polling interval, only change what the NEXT tick filters.
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
 
   const load = useCallback(async () => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
@@ -107,12 +145,17 @@ export function NotificationCenter({
       const fresh = Array.isArray(parsed.notifications) ? parsed.notifications : [];
       // First pass only establishes where "now" is. Anything already there
       // belongs to the badge and the page, not to the corner of the screen.
+      // The badge above still counts everything — only the toast pile skips
+      // what's already on screen.
       if (seeded.current && fresh.length > 0) {
-        setArrivals((current) => {
-          const known = new Set(current.map((entry) => entry.id));
-          const added = fresh.filter((entry) => !known.has(entry.id));
-          return added.length > 0 ? [...added, ...current] : current;
-        });
+        const toastable = fresh.filter((entry) => !alreadyVisibleAt(entry, pathnameRef.current));
+        if (toastable.length > 0) {
+          setArrivals((current) => {
+            const known = new Set(current.map((entry) => entry.id));
+            const added = toastable.filter((entry) => !known.has(entry.id));
+            return added.length > 0 ? [...added, ...current] : current;
+          });
+        }
       }
       seeded.current = true;
       if (typeof parsed.serverTime === 'string') since.current = parsed.serverTime;

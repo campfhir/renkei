@@ -29,16 +29,27 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     (async () => {
-      // The same rule the old page-side code enforced with
-      // document.hasFocus(): a tab already looking at Renkei has the
-      // in-page toast covering this, so a second banner would just repeat
-      // it. `WindowClient.focused`/`.visibilityState` are this worker's
-      // only way to ask, since a push can arrive with nothing open at all.
-      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      const inFront = windows.some(
-        (client) => client.focused && client.visibilityState === 'visible'
-      );
-      if (inFront) return;
+      // `quiet` (see @renkei/notifications' PushWirePayload) marks a push
+      // that only repeats something already rendered inline on its own
+      // page — a question or permission ask. For those, skip the banner
+      // when that EXACT page is the one open and focused: the person is
+      // already looking at it. Everything else (a ticket filed, a run
+      // finishing) is news regardless of what tab is in front, so it
+      // always shows. `WindowClient.focused`/`.visibilityState`/`.url` are
+      // this worker's only way to ask, since a push can arrive with
+      // nothing open at all.
+      if (data.quiet && data.appUrl) {
+        const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const alreadyOpen = windows.some((client) => {
+          if (!(client.focused && client.visibilityState === 'visible')) return false;
+          try {
+            return new URL(client.url).pathname === data.appUrl;
+          } catch {
+            return false;
+          }
+        });
+        if (alreadyOpen) return;
+      }
 
       await self.registration.showNotification(data.title || 'Renkei', {
         body: data.body,

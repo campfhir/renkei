@@ -44,6 +44,15 @@ export interface PushPayload {
    * answered there and nowhere else). Ignored for an external target.
    */
   appPath?: string;
+  /**
+   * This push repeats something already shown inline on `appPath` — a
+   * question or permission ask, say. The service worker skips the OS
+   * banner when that exact page is the one open and focused, rather than
+   * whenever any Renkei tab happens to be; every other push (a ticket
+   * filed, a run finishing) is news no matter what is on screen, so it
+   * defaults to false.
+   */
+  quiet?: boolean;
 }
 
 /** VAPID requires a contact identifying the sender; a URL is as valid a
@@ -80,6 +89,7 @@ export interface PushWirePayload {
   appUrl: string;
   openUrl: string;
   external: boolean;
+  quiet: boolean;
 }
 
 /**
@@ -155,6 +165,7 @@ export async function sendPush(
       tag: payload.tag,
       icon: payload.icon ?? '/icon.svg',
       refUrl: payload.refUrl,
+      quiet: payload.quiet === true,
       ...target,
     };
     const body = JSON.stringify(wire);
