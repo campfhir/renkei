@@ -236,6 +236,35 @@ describe('buildHistory', () => {
     expect(history).toEqual([{ role: 'user', content: [{ type: 'text', text: 'recent' }] }]);
   });
 
+  it('excludes messages folded by an earlier compaction pass as well as the latest one — a later pass folds the previous summary\'s TEXT, never the messages again, so a message stays excluded under whichever summary id first folded it', () => {
+    const history = buildHistory(
+      [
+        // Pass 1 folded these into summary s1.
+        row({ seq: 1, role: 'user', summaryId: 's1', blocks: [{ type: 'text', text: 'ancient' }] }),
+        row({
+          seq: 2,
+          role: 'assistant',
+          summaryId: 's1',
+          blocks: [{ type: 'text', text: 'ancient reply' }],
+        }),
+        // Pass 2 folded these into summary s2, which merged in s1's text —
+        // s1's own rows are never re-attributed to s2.
+        row({ seq: 3, role: 'user', summaryId: 's2', blocks: [{ type: 'text', text: 'old' }] }),
+        row({
+          seq: 4,
+          role: 'assistant',
+          summaryId: 's2',
+          blocks: [{ type: 'text', text: 'old reply' }],
+        }),
+        // Never folded: the verbatim tail.
+        row({ seq: 5, role: 'user', blocks: [{ type: 'text', text: 'recent' }] }),
+      ],
+      target,
+      null
+    );
+    expect(history).toEqual([{ role: 'user', content: [{ type: 'text', text: 'recent' }] }]);
+  });
+
   it('merges consecutive same-role rows into one wire message (a paste split across several prompt rows)', () => {
     const history = buildHistory(
       [
