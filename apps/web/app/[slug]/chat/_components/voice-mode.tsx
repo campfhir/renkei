@@ -32,12 +32,26 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import type { ToolPermissionDecision } from '@/lib/chat/views';
+import { spokenActivity, spokenAsk } from '@/lib/voice/activity';
 import { UtteranceRecorder } from '@/lib/voice/recorder';
+import { spokenDecision } from '@/lib/voice/spoken-decision';
+import { LIVE_REPLY_OWNER } from '@/lib/voice/use-reply-speech';
 import { voiceClient } from '@/lib/voice/client';
 import type { SpeechQueue, SpeechQueueState } from '@/lib/voice/speech-queue';
 import { speakableText } from '@/lib/voice/speech-text';
 import { LevelEmitter } from '@/lib/voice/levels';
 import VoiceWave, { type WaveAccent, type WaveTone } from './voice-wave';
+import type { PermissionPrompt } from './message-list';
+
+/** A tool call in flight, for the activity line and its announcement. */
+export interface VoiceActivity {
+  id: string;
+  name: string;
+}
+
+/** Quiet this long while a reply is worked out earns a "still working on it". */
+const STILL_WORKING_AFTER_MS = 20_000;
 
 type Phase =
   'starting' | 'listening' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'error';
@@ -54,6 +68,9 @@ export default function VoiceMode({
   echoCancellation,
   microphone,
   pushToTalk,
+  activity,
+  thinking,
+  permission,
   onSend,
   onInterrupt,
   onClose,
@@ -81,6 +98,12 @@ export default function VoiceMode({
   running: boolean;
   /** The latest reply's Markdown, for the transcript panel. */
   replyText: string;
+  /** Tool calls running right now, oldest first; announced as they start. */
+  activity: VoiceActivity[];
+  /** The model is thinking, with nothing said yet. */
+  thinking: boolean;
+  /** The ask the running turn is parked behind, if any: shown, spoken, and answerable by voice. */
+  permission: PermissionPrompt | null;
   /** Send an utterance as a message; false when it could not be sent. */
   onSend: (text: string) => Promise<boolean>;
   /** Stop the reply: silence the voice and cancel the turn. */
@@ -101,8 +124,49 @@ export default function VoiceMode({
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useRef<UtteranceRecorder | null>(null);
   // The latest values, for callbacks the recorder holds across renders.
-  const latest = useRef({ running, queueState, onInterrupt, onSend });
-  latest.current = { running, queueState, onInterrupt, onSend };
+  const latest = useRef({ running, queueState, onInterrupt, onSend, permission });
+  latest.current = { running, queueState, onInterrupt, onSend, permission };
+  // What the assistant is doing, as last announced; and when the voice
+  // last had something to say, for the dead-air check.
+  const [activityLine, setActivityLine] = useState<string | null>(null);
+  const announced = useRef(new Set<string>());
+  const lastVoiceAt = useRef(Date.now());
+  const [deciding, setDeciding] = useState<ToolPermissionDecision | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+
+  /**
+   * Say something in the reply's own stream, so it lands in order with
+   * the text around it. Only while that stream is open: after a Stop the
+   * person asked for silence, and a narration would break it.
+   */
+  const narrate = useCallback(
+    (text: string) => {
+      if (queue.owner !== LIVE_REPLY_OWNER) return;
+      queue.enqueue(text);
+      lastVoiceAt.current = Date.now();
+    },
+    [queue]
+  );
+
+  /** Answer the ask; said back so the person knows it was heard. */
+  const decide = useCallback(
+    async (decision: ToolPermissionDecision) => {
+      const ask = latest.current.permission;
+      if (!ask || !ask.canDecide) return;
+      setDeciding(decision);
+      setDecisionError(null);
+      const failure = await ask.onDecide(ask.pending.toolUseId, decision);
+      setDeciding(null);
+      if (failure) {
+        setDecisionError(failure);
+        return;
+      }
+      narrate(
+        decision === 'deny' ? 'Denied.' : decision === 'always' ? 'Always allowed.' : 'Allowed.'
+      );
+    },
+    [narrate]
+  );
 
   useEffect(() => {
     const instance = new UtteranceRecorder({
@@ -115,7 +179,15 @@ export default function VoiceMode({
           setRecording(true);
           return;
         }
-        const { running: busy, queueState: state, onInterrupt: interrupt } = latest.current;
+        const {
+          running: busy,
+          queueState: state,
+          onInterrupt: interrupt,
+          permission: ask,
+        } = latest.current;
+        // An answer to the ask is not an interruption: the turn is parked
+        // waiting for it, and cancelling it would throw the reply away.
+        if (ask) return;
         // Talking over the assistant: silence it and drop the reply.
         if (busy || state !== 'idle') interrupt();
       },
@@ -132,6 +204,13 @@ export default function VoiceMode({
           if (!text) return;
           setError(null);
           setTranscript(text);
+          // While an ask is open, what is said is the answer to it.
+          if (latest.current.permission) {
+            const decision = spokenDecision(text);
+            if (decision) await decide(decision);
+            else narrate('Say allow, always allow, or deny.');
+            return;
+          }
           const sent = await latest.current.onSend(text);
           if (!sent) setError('The message could not be sent.');
         })();
@@ -166,7 +245,55 @@ export default function VoiceMode({
       setRecording(false);
       setOpening(false);
     };
+    // decide and narrate are stable for the queue's lifetime.
   }, [tenantId, locale, echoCancellation, microphone, pushToTalk]);
+
+  // Each tool call is announced as it starts — the newest only, when
+  // several start at once, so a burst of lookups is one sentence — and
+  // the line under the wave says what is being done right now.
+  useEffect(() => {
+    const fresh = activity.filter((call) => !announced.current.has(call.id));
+    for (const call of fresh) announced.current.add(call.id);
+    const current = activity[activity.length - 1];
+    if (fresh.length > 0) {
+      const line = spokenActivity(fresh[fresh.length - 1].name);
+      setActivityLine(line);
+      narrate(`${line}.`);
+    } else if (current) {
+      setActivityLine(spokenActivity(current.name));
+    } else {
+      setActivityLine(null);
+    }
+  }, [activity, narrate]);
+  useEffect(() => {
+    if (!running) announced.current.clear();
+  }, [running]);
+
+  // A long quiet while the reply is worked out gets a word, so a slow
+  // answer is not mistaken for a dropped one.
+  useEffect(() => {
+    if (queueState === 'speaking') lastVoiceAt.current = Date.now();
+  }, [queueState]);
+  useEffect(() => {
+    if (!running || permission) return;
+    const timer = setInterval(() => {
+      if (latest.current.queueState !== 'idle') return;
+      if (Date.now() - lastVoiceAt.current < STILL_WORKING_AFTER_MS) return;
+      narrate('Still working on it.');
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [running, permission, narrate]);
+
+  // The ask, spoken the moment it is raised.
+  const askId = permission?.pending.toolUseId ?? null;
+  useEffect(() => {
+    if (!askId || !permission) return;
+    setDecisionError(null);
+    narrate(
+      `Permission needed. The assistant wants to ${spokenAsk(permission.pending.name)}. Say allow, always allow, or deny.`
+    );
+    // Spoken once per ask, not on every re-render carrying it.
+  }, [askId, narrate]);
 
   // Without echo cancellation the microphone has no use while the
   // assistant works — it is closed to speech anyway — so its track is
@@ -228,8 +355,13 @@ export default function VoiceMode({
       instance.endTake();
       return;
     }
-    const { running: turn, queueState: state, onInterrupt: interrupt } = latest.current;
-    if (turn || state !== 'idle') interrupt();
+    const {
+      running: turn,
+      queueState: state,
+      onInterrupt: interrupt,
+      permission: ask,
+    } = latest.current;
+    if (!ask && (turn || state !== 'idle')) interrupt();
     setError(null);
     setOpening(true);
     void instance.start().then((ok) => {
@@ -262,25 +394,27 @@ export default function VoiceMode({
       ? 'Opening the microphone…'
       : phase === 'error'
         ? 'Voice mode could not start'
-        : muted
-          ? 'Muted — unmute to talk'
-          : opening
-            ? 'Opening the microphone…'
-            : phase === 'recording'
-              ? 'Recording — press Done when you have finished'
-              : phase === 'listening'
-                ? pushToTalk
-                  ? 'Press Talk to speak'
-                  : 'Listening'
-                : phase === 'transcribing'
-                  ? 'Heard you…'
-                  : phase === 'thinking'
-                    ? 'Thinking…'
-                    : pushToTalk
-                      ? 'Speaking — press Talk to interrupt'
-                      : echoCancellation
-                        ? 'Speaking — talk to interrupt'
-                        : 'Speaking — press Stop to talk';
+        : permission
+          ? 'Permission needed — say allow, always allow, or deny'
+          : muted
+            ? 'Muted — unmute to talk'
+            : opening
+              ? 'Opening the microphone…'
+              : phase === 'recording'
+                ? 'Recording — press Done when you have finished'
+                : phase === 'listening'
+                  ? pushToTalk
+                    ? 'Press Talk to speak'
+                    : 'Listening'
+                  : phase === 'transcribing'
+                    ? 'Heard you…'
+                    : phase === 'thinking'
+                      ? 'Thinking…'
+                      : pushToTalk
+                        ? 'Speaking — press Talk to interrupt'
+                        : echoCancellation
+                          ? 'Speaking — talk to interrupt'
+                          : 'Speaking — press Stop to talk';
   const tone: WaveTone =
     phase === 'speaking'
       ? 'speaking'
@@ -329,6 +463,62 @@ export default function VoiceMode({
         <p className="text-base font-medium" aria-live="polite">
           {label}
         </p>
+        {running && !permission && (activityLine || phase === 'thinking') ? (
+          <p className="-mt-4 text-sm text-gray-500" aria-live="polite">
+            {activityLine ? `${activityLine}…` : thinking ? 'Thinking it through…' : 'Working…'}
+          </p>
+        ) : null}
+        {permission ? (
+          <div
+            role="group"
+            aria-label="Permission needed"
+            className="w-full max-w-md rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40"
+          >
+            <p className="font-medium text-gray-900 dark:text-gray-100">
+              The assistant wants to {spokenAsk(permission.pending.name)}.
+            </p>
+            <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+              This changes something outside the conversation. Say your answer, or press one.
+            </p>
+            {permission.canDecide ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={deciding !== null}
+                  onClick={() => void decide('once')}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {deciding === 'once' ? 'Allowing…' : 'Allow once'}
+                </button>
+                <button
+                  type="button"
+                  disabled={deciding !== null}
+                  onClick={() => void decide('always')}
+                  className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-800 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  {deciding === 'always' ? 'Allowing…' : 'Always allow'}
+                </button>
+                <button
+                  type="button"
+                  disabled={deciding !== null}
+                  onClick={() => void decide('deny')}
+                  className="rounded-md px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:text-red-300 dark:hover:bg-red-950/40"
+                >
+                  {deciding === 'deny' ? 'Denying…' : 'Deny'}
+                </button>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-gray-500">
+                Only the chat's owner can allow or deny it.
+              </p>
+            )}
+            {decisionError ? (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">
+                {decisionError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {error ? (
           <p className="max-w-md text-center text-sm text-red-600 dark:text-red-400" role="alert">
             {error}

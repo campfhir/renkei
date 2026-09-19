@@ -47,6 +47,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'A voice conversation says what it is doing',
+        detail:
+          'While a reply is worked out, voice mode no longer goes quiet: each lookup or action is announced as it starts — “Searching Jira issues”, “Finding Outlook meeting times” — the same line shows under the wave, and a long silence gets a “still working on it”.',
+      },
+      {
+        kind: 'added',
+        title: 'Allow or deny by voice',
+        detail:
+          'When a chat in a voice conversation needs permission to act, the ask is spoken and shown with its three buttons. Say “allow”, “always allow” or “deny” — or press one — and the reply carries on. Speaking while the ask is open no longer cancels the reply.',
+      },
+      {
+        kind: 'added',
         title: 'Voice on the usage pages',
         detail:
           'My usage now shows how much has been read aloud to you and how long you have spoken to the chat over the period. Organization usage shows the same for the whole organization or one person, with two new leaderboards: who is read to the most, and who talks to the chat the most.',

@@ -279,7 +279,113 @@ function replyStream(): string {
   return events.map((event, index) => frame(index + 1, event)).join('');
 }
 
-export async function mockVendor(page: Page): Promise<void> {
+/**
+ * The reply as a turn that works first and then asks: a search call the
+ * page sees start (announced in voice mode), then an act call the runner
+ * parks behind a permission ask, and — once the owner answers — the
+ * reply itself. Revealed in stages, one per connection: EventSource
+ * reconnects after the body ends and sends Last-Event-ID, which is
+ * honoured, so nothing is replayed.
+ */
+const SEARCH_TOOL_USE_ID = 'toolu_e2e_search';
+const CREATE_TOOL_USE_ID = 'toolu_e2e_create';
+
+function askingStream(): { events: Record<string, unknown>[]; stages: number[] } {
+  const createdAt = new Date().toISOString();
+  const message = NEW_ASSISTANT_MESSAGE_ID;
+  const events: Record<string, unknown>[] = [
+    {
+      type: 'message_start',
+      messageId: message,
+      turnId: NEW_TURN_ID,
+      seq: 101,
+      role: 'assistant',
+      kind: 'assistant',
+      llmModelId: MODEL_ID,
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
+      createdAt,
+    },
+    {
+      type: 'block_start',
+      messageId: message,
+      index: 0,
+      block: { type: 'tool_use', id: SEARCH_TOOL_USE_ID, name: 'jira_search_issues', input: {} },
+    },
+    {
+      type: 'block_stop',
+      messageId: message,
+      index: 0,
+      block: {
+        type: 'tool_use',
+        id: SEARCH_TOOL_USE_ID,
+        name: 'jira_search_issues',
+        input: { jql: 'sprint in closedSprints() AND status != Done' },
+      },
+    },
+    {
+      type: 'tool_call_start',
+      messageId: message,
+      toolUseId: SEARCH_TOOL_USE_ID,
+      name: 'jira_search_issues',
+    },
+    // ---- stage 1 ends: searching
+    {
+      type: 'block_start',
+      messageId: message,
+      index: 1,
+      block: { type: 'tool_use', id: CREATE_TOOL_USE_ID, name: 'jira_create_issue', input: {} },
+    },
+    {
+      type: 'block_stop',
+      messageId: message,
+      index: 1,
+      block: {
+        type: 'tool_use',
+        id: CREATE_TOOL_USE_ID,
+        name: 'jira_create_issue',
+        input: { project: 'OPS', summary: 'Follow up the two slipped issues' },
+      },
+    },
+    {
+      type: 'tool_permission_request',
+      turnId: NEW_TURN_ID,
+      permission: {
+        toolUseId: CREATE_TOOL_USE_ID,
+        messageId: message,
+        name: 'jira_create_issue',
+        requestedAt: createdAt,
+      },
+    },
+    // ---- stage 2 ends: asking
+    {
+      type: 'tool_permission_decided',
+      turnId: NEW_TURN_ID,
+      toolUseId: CREATE_TOOL_USE_ID,
+      decision: 'once',
+    },
+    { type: 'block_start', messageId: message, index: 2, block: { type: 'text', text: '' } },
+    { type: 'text_delta', messageId: message, index: 2, text: SPOKEN_REPLY },
+    {
+      type: 'block_stop',
+      messageId: message,
+      index: 2,
+      block: { type: 'text', text: SPOKEN_REPLY },
+    },
+    {
+      type: 'message_end',
+      messageId: message,
+      status: 'complete',
+      stopReason: 'end_turn',
+      usage: null,
+      error: null,
+    },
+    { type: 'turn_end', turnId: NEW_TURN_ID, status: 'completed', error: null },
+  ];
+  return { events, stages: [4, 7, events.length] };
+}
+
+export async function mockVendor(page: Page, options: { asks?: boolean } = {}): Promise<void> {
   await page.route(/\/api\/tenant\/[^/]+\/voice$/, (route) =>
     route.fulfill({
       json: {
@@ -320,13 +426,42 @@ export async function mockVendor(page: Page): Promise<void> {
     })
   );
   await page.route(/\/turns\/[^/]+\/cancel$/, (route) => route.fulfill({ json: { ok: true } }));
+  if (!options.asks) {
+    await page.route(/\/turns\/[^/]+\/stream$/, async (route) => {
+      // A model takes a moment: long enough for "Thinking…" to be seen.
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+        body: replyStream(),
+      });
+    });
+    return;
+  }
+  const asking = askingStream();
+  let decided = false;
+  await page.route(/\/turns\/[^/]+\/permission$/, (route) => {
+    decided = true;
+    return route.fulfill({ json: { ok: true, decision: 'once' } });
+  });
   await page.route(/\/turns\/[^/]+\/stream$/, async (route) => {
-    // A model takes a moment: long enough for "Thinking…" to be seen.
-    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    const after = Number(route.request().headers()['last-event-id'] ?? '0');
+    // What the browser has seen decides the stage — the page may open
+    // more than one source for a turn, so a connection count would not.
+    // A model takes a moment, and so does a search: each stage is held
+    // long enough to be seen (the reconnect itself adds the browser's retry).
+    const stage = decided ? 2 : after >= asking.stages[0] ? 1 : 0;
+    if (stage < 2) await new Promise((resolve) => setTimeout(resolve, 2_500));
+    const upTo = asking.stages[stage];
+    const body = asking.events
+      .map((event, index) => ({ event, id: index + 1 }))
+      .filter(({ id }) => id > after && id <= upTo)
+      .map(({ event, id }) => frame(id, event))
+      .join('');
     await route.fulfill({
       status: 200,
       headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
-      body: replyStream(),
+      body,
     });
   });
 }

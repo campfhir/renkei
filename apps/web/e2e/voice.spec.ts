@@ -168,3 +168,34 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   await expect(page.getByText(/Two issues slipped out of the last sprint/)).toBeVisible();
   await shot(page, testInfo, 'voice-10-after-conversation', false);
 });
+
+test('chat: a voice conversation says what it is doing, and asks before it acts', async ({
+  page,
+}, testInfo) => {
+  await mockVendor(page, { asks: true });
+  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
+  await page.getByRole('button', { name: 'Voice', exact: true }).click();
+  await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'Voice conversation' });
+  await expect(dialog.getByText('Listening', { exact: true })).toBeVisible({ timeout: 15_000 });
+
+  // The utterance is sent; the first thing the turn does is search, and
+  // the line under the wave says so while it runs.
+  await expect(dialog.getByText(UTTERANCE)).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByText('Searching Jira issues…')).toBeVisible({ timeout: 15_000 });
+  await shot(page, testInfo, 'voice-11-mode-working', false);
+
+  // Then it wants to act, and the ask is shown and spoken: the label
+  // tells the person what to say, the panel has the three buttons.
+  await expect(
+    dialog.getByText('Permission needed — say allow, always allow, or deny')
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(dialog.getByText('The assistant wants to create Jira issue.')).toBeVisible();
+  await shot(page, testInfo, 'voice-12-mode-permission', false);
+
+  // Allowed from the panel: the turn carries on and the reply is read.
+  await dialog.getByRole('button', { name: 'Allow once' }).click();
+  await expect(dialog.getByText('Speaking — talk to interrupt')).toBeVisible({ timeout: 30_000 });
+  await shot(page, testInfo, 'voice-13-mode-after-allow', false);
+});
