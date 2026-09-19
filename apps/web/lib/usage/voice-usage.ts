@@ -2,8 +2,9 @@
  * Reading the voice ledger (migration 110) the way the usage pages read
  * the token ledger: totals over a span in the viewer's zone, org-wide or
  * for one person, and everyone's totals for the two leaderboards — who
- * is read to the most (`speech`, by the character), who talks to the
- * chat the most (`transcription`, by the second).
+ * listens the most (`speech`, by the second of audio delivered, with the
+ * characters the vendor billed beside it), who talks to the chat the
+ * most (`transcription`, by the second heard).
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -12,14 +13,14 @@ import { inSpan, type UsageSpan } from './user-utilization';
 import type { VoiceUserRow } from './voice-window';
 
 export interface VoiceTotals {
-  /** Replies read aloud: text to speech. */
-  speech: { calls: number; characters: number };
+  /** Replies read aloud: text to speech — the characters billed, the audio delivered. */
+  speech: { calls: number; characters: number; audioMs: number };
   /** The person's own voice recognised: speech to text. */
   transcription: { calls: number; audioMs: number };
 }
 
 export const ZERO_VOICE_TOTALS: VoiceTotals = {
-  speech: { calls: 0, characters: 0 },
+  speech: { calls: 0, characters: 0, audioMs: 0 },
   transcription: { calls: 0, audioMs: 0 },
 };
 
@@ -53,7 +54,11 @@ export async function getVoiceTotals(
   const speech = result.rows.find((row) => row.kind === 'speech');
   const transcription = result.rows.find((row) => row.kind === 'transcription');
   return {
-    speech: { calls: Number(speech?.calls ?? 0), characters: Number(speech?.characters ?? 0) },
+    speech: {
+      calls: Number(speech?.calls ?? 0),
+      characters: Number(speech?.characters ?? 0),
+      audioMs: Number(speech?.audio_ms ?? 0),
+    },
     transcription: {
       calls: Number(transcription?.calls ?? 0),
       audioMs: Number(transcription?.audio_ms ?? 0),
@@ -91,12 +96,14 @@ export async function getVoiceUsers(
       subject: row.subject,
       label: identity?.display_name || identity?.email || row.subject,
       speechCharacters: 0,
+      speechMs: 0,
       speechCalls: 0,
       transcriptionMs: 0,
       transcriptionCalls: 0,
     };
     if (row.kind === 'speech') {
       entry.speechCharacters += Number(row.characters);
+      entry.speechMs += Number(row.audio_ms);
       entry.speechCalls += Number(row.calls);
     } else if (row.kind === 'transcription') {
       entry.transcriptionMs += Number(row.audio_ms);

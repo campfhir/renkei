@@ -21,11 +21,20 @@ export interface RecordVoiceUsageInput {
   kind: VoiceUsageKind;
   /** Characters sent to be spoken (`speech`); 0 for a transcription. */
   characters?: number;
-  /** Milliseconds of audio sent to be recognised (`transcription`); 0 for speech. */
+  /**
+   * Milliseconds of audio: sent to be recognised (`transcription`), or
+   * delivered to the person's speaker (`speech`) — the time they listened.
+   */
   audioMs?: number;
   provider: string;
   voice?: string | null;
   locale?: string | null;
+}
+
+/** Bytes of a constant-bitrate encoding (MP3 at `kbps`) as milliseconds of sound. */
+export function encodedDurationMs(byteLength: number, kbps: number): number {
+  if (!(kbps > 0)) return 0;
+  return Math.max(0, Math.round((byteLength * 8) / kbps));
 }
 
 /** The bytes of a 16 kHz, 16-bit, mono PCM WAV as milliseconds of sound. */

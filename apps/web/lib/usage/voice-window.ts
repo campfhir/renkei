@@ -7,8 +7,10 @@
 export interface VoiceUserRow {
   subject: string;
   label: string;
-  /** Characters of replies read to them. */
+  /** Characters of replies read to them — what the vendor bills. */
   speechCharacters: number;
+  /** Milliseconds of those replies delivered to their speaker — how long they listened. */
+  speechMs: number;
   speechCalls: number;
   /** Milliseconds of their own voice recognised. */
   transcriptionMs: number;
@@ -23,8 +25,9 @@ export interface RankedVoiceUserRow extends VoiceUserRow {
 /** Which way the sound went: `speech` is listening (replies read), `transcription` is speaking. */
 export type VoiceMeasure = 'speech' | 'transcription';
 
+/** Both boards rank by time: listened, or spoken. */
 export function voiceMeasureOf(row: VoiceUserRow, by: VoiceMeasure): number {
-  return by === 'speech' ? row.speechCharacters : row.transcriptionMs;
+  return by === 'speech' ? row.speechMs : row.transcriptionMs;
 }
 
 /**

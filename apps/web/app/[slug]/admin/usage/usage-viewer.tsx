@@ -550,15 +550,15 @@ export default function OrgUsageViewer({
           heading="Top listeners"
           hint={
             scoped && report.selectedListener === null
-              ? `${personName} had no reply read aloud in this period. By characters of replies read aloud.`
-              : 'By characters of replies read aloud. Pick a name to scope the page to that person.'
+              ? `${personName} had no reply read aloud in this period. By time listened to replies read aloud.`
+              : 'By time listened to replies read aloud. Pick a name to scope the page to that person.'
           }
           rows={listeners.rows}
           empty="Nobody has had a reply read aloud in this period."
           keyOf={(row) => row.subject}
           labelOf={voiceLabel}
-          valueOf={(row) => row.speechCharacters}
-          formatValue={(row) => `${formatTokens(row.speechCharacters)} chars`}
+          valueOf={(row) => row.speechMs}
+          formatValue={(row) => formatDuration(row.speechMs)}
           rankOf={(row) => row.rank}
           highlightOf={(row) => row.subject === subject}
           gapBefore={(row) => row.rank === listeners.gapAtRank}

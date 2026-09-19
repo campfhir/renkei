@@ -1,8 +1,8 @@
 /**
- * Voice, in two numbers: how much was read aloud (text to speech, by the
- * character — what the vendor bills) and how much was said to the chat
- * (speech to text, by the second). Shared by My usage and Organization
- * usage, which differ only in whose numbers these are.
+ * Voice, in two numbers: how long was listened to (replies read aloud —
+ * text to speech, with the characters the vendor bills beside it) and
+ * how long was spoken to the chat (speech to text). Shared by My usage
+ * and Organization usage, which differ only in whose numbers these are.
  */
 
 import { formatTokens } from '@/lib/format-tokens';
@@ -26,10 +26,10 @@ export function VoiceUsageCard({
         <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900">
           <p className="text-xs tracking-wide text-gray-500 uppercase">Read aloud</p>
           <p className="text-2xl font-semibold tabular-nums">
-            {formatTokens(totals.speech.characters)}
+            {formatDuration(totals.speech.audioMs)}
           </p>
           <p className="text-xs text-gray-500">
-            characters · {totals.speech.calls.toLocaleString('en-US')} pieces
+            of audio · {formatTokens(totals.speech.characters)} characters
           </p>
         </div>
         <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900">

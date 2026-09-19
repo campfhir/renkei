@@ -10,7 +10,8 @@ import { boardRows, formatDuration, rankVoiceUsers, type VoiceUserRow } from './
 const row = (subject: string, speech: number, transcription: number): VoiceUserRow => ({
   subject,
   label: subject,
-  speechCharacters: speech,
+  speechCharacters: speech * 15,
+  speechMs: speech,
   speechCalls: speech > 0 ? 1 : 0,
   transcriptionMs: transcription,
   transcriptionCalls: transcription > 0 ? 1 : 0,

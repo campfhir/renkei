@@ -17,7 +17,7 @@ import { clampRate, normalizeLocale } from '@renkei/voice';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { resolveVoiceProvider } from '@/lib/voice/config';
-import { recordVoiceUsage } from '@/lib/voice/usage';
+import { encodedDurationMs, recordVoiceUsage } from '@/lib/voice/usage';
 
 /** A vendor ceiling is far higher; this keeps one request to one breath of audio. */
 export const SPEECH_MAX_CHARS = 3_000;
@@ -81,20 +81,47 @@ export async function POST(
       result.error.kind === 'rate_limit' ? 429 : result.error.kind === 'timeout' ? 504 : 502;
     return NextResponse.json({ error: result.error.message, kind: result.error.kind }, { status });
   }
-  // The ledger row (migration 110): characters, never the text.
+  // The ledger row (migration 110), written once the audio has gone by:
+  // the characters the vendor billed and, from the bytes that reached the
+  // person at the encoding's constant bitrate, how long they listened —
+  // never the text. A stream the person cut short (Stop) counts what
+  // they heard.
   const dbResult = getDatabase();
-  if (dbResult.ok) {
+  const bitrateKbps = result.val.bitrateKbps ?? 0;
+  let bytes = 0;
+  let recorded = false;
+  const record = () => {
+    if (recorded || !dbResult.ok) return;
+    recorded = true;
     void recordVoiceUsage(dbResult.val, {
       tenantId,
       subject: session.subject,
       kind: 'speech',
       characters: text.length,
+      audioMs: encodedDurationMs(bytes, bitrateKbps),
       provider: resolved.provider.kind,
       voice: voice ?? resolved.config.defaultVoice,
       locale,
     });
-  }
-  return new Response(result.val.body, {
+  };
+  const reader = result.val.body.getReader();
+  const metered = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        record();
+        controller.close();
+        return;
+      }
+      bytes += value.byteLength;
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      record();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(metered, {
     status: 200,
     headers: {
       'content-type': result.val.contentType,

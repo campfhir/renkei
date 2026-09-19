@@ -1180,7 +1180,8 @@ export async function seed(client: Client): Promise<void> {
     `INSERT INTO voice_usage (tenant_id, subject, kind, characters, audio_ms, provider, voice, locale, created_at)
      SELECT $1, person.subject, piece.kind,
             CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen ELSE 0 END,
-            CASE WHEN piece.kind = 'transcription' THEN piece.amount * person.talk ELSE 0 END,
+            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen * 65
+                 ELSE piece.amount * person.talk END,
             'azure-speech', CASE WHEN piece.kind = 'speech' THEN 'en-GB-SoniaNeural' END, 'en-GB',
             NOW() - make_interval(days => spread.days_ago, mins => n)
      FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)
