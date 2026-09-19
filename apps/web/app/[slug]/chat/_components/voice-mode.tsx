@@ -41,6 +41,7 @@ export default function VoiceMode({
   accent,
   userAccent,
   echoCancellation,
+  microphone,
   pushToTalk,
   onSend,
   onInterrupt,
@@ -60,6 +61,8 @@ export default function VoiceMode({
    * interrupt it — and Stop is how a reply is cut short.
    */
   echoCancellation: boolean;
+  /** This device's chosen microphone, or null for the default. */
+  microphone: string | null;
   /** Walkie-talkie: Talk starts a recording and Done ends it; nothing starts on its own. */
   pushToTalk: boolean;
   queueState: SpeechQueueState;
@@ -91,6 +94,7 @@ export default function VoiceMode({
   useEffect(() => {
     const instance = new UtteranceRecorder({
       echoCancellation,
+      deviceId: microphone,
       mode: pushToTalk ? 'manual' : 'auto',
       onSpeechStart: () => {
         if (pushToTalk) setRecording(true);
@@ -131,7 +135,7 @@ export default function VoiceMode({
       recorder.current = null;
       setRecording(false);
     };
-  }, [tenantId, locale, echoCancellation, pushToTalk]);
+  }, [tenantId, locale, echoCancellation, microphone, pushToTalk]);
 
   // The speaker stays open for the whole conversation, so a reply's first
   // word is not lost to a headset waking up (lib/voice/speech-queue.ts).

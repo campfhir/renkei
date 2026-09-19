@@ -1,65 +1,87 @@
 /**
- * Plays pieces of a reply in order, as they are handed over. Each piece
- * is synthesised through the speech route; the next piece's audio is
- * fetched while the current one plays, so the gaps between sentences are
- * the vendor's latency hidden behind playback, not added to it.
+ * Plays pieces of a reply in order, as they are handed over, as one
+ * continuous voice. Each piece is synthesised through the speech route
+ * and decoded the moment it arrives; pieces are then placed back to back
+ * on the audio clock — the next scheduled before the current has ended,
+ * with a short fade at each cut and the vendor's padding trimmed to a
+ * natural sentence break (gapless.ts) — so the sound never stops between
+ * sentences. Only a piece the vendor has not yet delivered leaves a gap.
  *
- * One `<audio>` element, reused. Browsers only let a page start sound
- * after a click or a key press; `prime()` is called from the click that
- * turns voice on (the toggle, the Listen button, entering voice mode) so
- * later plays that follow a network reply are allowed.
+ * Playback is Web Audio throughout: decoded buffers through one gain and
+ * one analyser (the level behind the wave) to the output. One `<audio>`
+ * element plays a loop of silence alongside for as long as a stream is
+ * open, or a holder (voice mode) asks: it is the element that owns the
+ * device's media session — the indicator in the status bar, the
+ * Bluetooth link a headset drops the moment nothing plays, the audio
+ * route on a phone — and with it looping the session never closes and
+ * reopens in the vendor's latency on the next sentence. Browsers only let
+ * a page start sound after a click; `prime()` is called from the click
+ * that turns voice on (the toggle, the Listen button, entering voice
+ * mode) and plays that element once, so later plays that follow a
+ * network reply are allowed.
  *
- * `stop()` is immediate and total — the current sound stops, queued pieces
- * are dropped, in-flight fetches are abandoned — because the person
- * pressing it, or talking over it, wants silence now.
- *
- * Between pieces the element has nothing to play, and in that gap — the
- * vendor's latency on the next sentence — a Bluetooth speaker or a
- * headset hears the stream stop, powers its amplifier down, and swallows
- * the first syllable of the next piece waking up. So while a stream is
- * open, and for as long as voice mode asks (`hold`), a whisper of noise
- * far below hearing is played through the same output: the channel never
- * closes, and the next piece starts where the last one left off.
+ * `pause()` holds the clock — everything scheduled stays scheduled — and
+ * `resume()` lets it run on from the same sample. `stop()` is immediate
+ * and total: the current sound stops, queued pieces are dropped, in-flight
+ * fetches are abandoned, because the person pressing it, or talking over
+ * it, wants silence now.
  */
 
+import { playbackSession } from './audio-session';
 import { voiceClient, type SpeechRequest } from './client';
+import { FADE_S, nextStart, soundBounds, type SoundBounds } from './gapless';
 import { speakableText } from './speech-text';
+import { encodeWav } from './wav';
 
-export type SpeechQueueState = 'idle' | 'loading' | 'speaking';
+export type SpeechQueueState = 'idle' | 'loading' | 'speaking' | 'paused';
 
 type Settings = Omit<SpeechRequest, 'text'>;
 
+interface DecodedPiece {
+  buffer: AudioBuffer;
+  bounds: SoundBounds;
+}
+
 interface QueuedPiece {
   text: string;
-  audio: Promise<Blob | null>;
+  audio: Promise<DecodedPiece | null>;
   controller: AbortController;
 }
 
+interface Playing {
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+}
+
+/** How far ahead of the clock a piece is placed when it starts now. */
+const SCHEDULE_LEAD_S = 0.03;
+
 export class SpeechQueue {
   private queue: QueuedPiece[] = [];
-  private audio: HTMLAudioElement | null = null;
-  private currentUrl: string | null = null;
-  private playing = false;
-  private finished = false;
+  private playing = new Set<Playing>();
+  private pumping = false;
+  private finished = true;
+  private paused = false;
   private generation = 0;
   private listeners = new Set<(state: SpeechQueueState) => void>();
   private lastState: SpeechQueueState = 'idle';
   private settings: Settings = { voice: null, rate: 1, locale: null };
-  private inFlight = 0;
   /** Which stream of text is playing — a Listen button, or the live reply. */
   public owner: string | null = null;
-  // The speaker's loudness, for the wave: an analyser tapped into the
-  // element's output, read once a frame while something plays.
-  private audioContext: AudioContext | null = null;
+  private context: AudioContext | null = null;
+  private master: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
   private samples: Float32Array<ArrayBuffer> | null = null;
+  /** The clock time the last scheduled piece ends. */
+  private lastEnd = 0;
   private levelListeners = new Set<(level: number) => void>();
   private levelFrame = 0;
-  // The keep-alive: a looped noise buffer through a near-zero gain, on
-  // while a stream is open or a holder asks. Nodes are made per hold —
-  // a buffer source plays once — and dropped when the hold ends.
-  private keepAlive: { source: AudioBufferSourceNode; gain: GainNode } | null = null;
+  // The session holder: a loop of silence, playing while a stream is
+  // open or voice mode asks.
+  private session: HTMLAudioElement | null = null;
+  private sessionUrl: string | null = null;
   private holders = 0;
+  private sinkId: string | null = null;
 
   constructor(
     private readonly tenantId: string,
@@ -83,41 +105,146 @@ export class SpeechQueue {
   private setState(state: SpeechQueueState): void {
     if (state === this.lastState) return;
     this.lastState = state;
-    this.updateKeepAlive();
+    this.updateSession();
     for (const listener of this.listeners) listener(state);
   }
 
-  private ensureAudio(): HTMLAudioElement {
-    if (!this.audio) {
-      this.audio = new Audio();
-      this.audio.preload = 'auto';
-    }
-    return this.audio;
+  /**
+   * The state as the facts make it: paused holds; sound scheduled is
+   * speaking; pieces on the way are loading; nothing left and the stream
+   * closed is idle. Nothing left but the stream still open (a reply
+   * still being written) keeps whatever it was, so the wave does not
+   * flicker to idle between one sentence and the next.
+   */
+  private refreshState(): void {
+    if (this.paused) return this.setState('paused');
+    if (this.playing.size > 0) return this.setState('speaking');
+    if (this.queue.length > 0) return this.setState('loading');
+    if (this.finished) return this.setState('idle');
   }
 
-  /**
-   * Route the element through an analyser so its loudness can be read.
-   * Done from a click (prime) because an AudioContext made elsewhere
-   * starts suspended; once routed, the context is what plays the sound.
-   */
-  private ensureAnalyser(): void {
-    if (this.analyser || typeof AudioContext === 'undefined') return;
+  /* ---------------------------------------------------------------- output */
+
+  /** The context, made on demand; it runs from prime(), which a click calls. */
+  private ensureContext(): AudioContext | null {
+    if (this.context) return this.context;
+    if (typeof AudioContext === 'undefined') return null;
     try {
-      const audio = this.ensureAudio();
       const context = new AudioContext();
-      const source = context.createMediaElementSource(audio);
+      const master = context.createGain();
       const analyser = context.createAnalyser();
       analyser.fftSize = 1024;
       analyser.smoothingTimeConstant = 0.6;
-      source.connect(analyser);
+      master.connect(analyser);
       analyser.connect(context.destination);
-      this.audioContext = context;
+      this.context = context;
+      this.master = master;
       this.analyser = analyser;
       this.samples = new Float32Array(analyser.fftSize);
+      if (this.sinkId !== null) this.applySink(context);
+      return context;
     } catch {
-      // No analyser: the wave idles instead of following the sound.
+      return null;
     }
   }
+
+  private ensureSession(): HTMLAudioElement {
+    if (this.session) return this.session;
+    const element = new Audio();
+    element.loop = true;
+    element.preload = 'auto';
+    // A quarter second of silence, looped; made here rather than shipped
+    // so there is nothing to fetch.
+    this.sessionUrl = URL.createObjectURL(
+      new Blob([encodeWav(new Float32Array(4_000))], { type: 'audio/wav' })
+    );
+    element.src = this.sessionUrl;
+    if (this.sinkId !== null) void this.applySinkToElement(element);
+    this.session = element;
+    return element;
+  }
+
+  /** The silence loop plays while wanted; a play refused outside a gesture is retried by the next prime. */
+  private updateSession(): void {
+    const wanted = this.holders > 0 || (this.lastState !== 'idle' && this.lastState !== 'paused');
+    const element = this.ensureSession();
+    if (wanted) {
+      if (element.paused) void element.play().catch(() => undefined);
+    } else if (!element.paused) {
+      element.pause();
+    }
+  }
+
+  /**
+   * Keep the session open while nothing plays. Returns the release.
+   * Voice mode holds for as long as it is open, so the first sentence of
+   * a reply lands on a headset that is already awake; the queue holds on
+   * its own from `begin()` to idle.
+   */
+  hold(): () => void {
+    this.holders += 1;
+    this.updateSession();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.holders -= 1;
+      this.updateSession();
+    };
+  }
+
+  /**
+   * Play through this output device (an `audiooutput` id from
+   * enumerateDevices), or the default with null. Where the browser cannot
+   * choose (Safari), the request is kept for a context that can and the
+   * default is used.
+   */
+  setOutputDevice(deviceId: string | null): void {
+    this.sinkId = deviceId;
+    if (this.context) this.applySink(this.context);
+    if (this.session) void this.applySinkToElement(this.session);
+  }
+
+  private applySink(context: AudioContext): void {
+    const sink: unknown = Reflect.get(context, 'setSinkId');
+    if (typeof sink !== 'function') return;
+    const result: unknown = Reflect.apply(sink, context, [this.sinkId ?? '']);
+    if (result instanceof Promise) {
+      result.catch(() => {
+        // The device is gone, or refused: the default plays instead.
+      });
+    }
+  }
+
+  private async applySinkToElement(element: HTMLAudioElement): Promise<void> {
+    const sink: unknown = Reflect.get(element, 'setSinkId');
+    if (typeof sink !== 'function') return;
+    try {
+      await Reflect.apply(sink, element, [this.sinkId ?? '']);
+    } catch {
+      // As above.
+    }
+  }
+
+  /** Whether this browser can route playback to a chosen output device. */
+  static canChooseOutput(): boolean {
+    return typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
+  }
+
+  /** From a click: takes the browser's permission to play sound later. */
+  prime(): void {
+    playbackSession();
+    const context = this.ensureContext();
+    void context?.resume().catch(() => undefined);
+    // Played once from the gesture, then left as the state wants it.
+    const element = this.ensureSession();
+    void element.play().catch(() => {
+      // Denied outside a gesture; nothing to do but try again later.
+    });
+    this.updateSession();
+  }
+
+  /* ---------------------------------------------------------------- levels */
 
   /** The speaker's loudness, 0–1, as often as the screen repaints while playing. */
   subscribeLevel(listener: (level: number) => void): () => void {
@@ -128,7 +255,7 @@ export class SpeechQueue {
   private startLevelLoop(): void {
     if (this.levelFrame || !this.analyser || this.levelListeners.size === 0) return;
     const tick = () => {
-      if (!this.playing || !this.analyser || !this.samples) {
+      if (this.playing.size === 0 || this.paused || !this.analyser || !this.samples) {
         this.levelFrame = 0;
         for (const listener of this.levelListeners) listener(0);
         return;
@@ -145,83 +272,11 @@ export class SpeechQueue {
     this.levelFrame = requestAnimationFrame(tick);
   }
 
-  /**
-   * Keep the output open while nothing plays. Returns the release.
-   * Voice mode holds for as long as it is open, so the first sentence
-   * of a reply lands on a speaker that is already awake; the queue holds
-   * on its own from `begin()` to idle.
-   */
-  hold(): () => void {
-    this.holders += 1;
-    this.updateKeepAlive();
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.holders -= 1;
-      this.updateKeepAlive();
-    };
-  }
-
-  private updateKeepAlive(): void {
-    const wanted = this.holders > 0 || this.lastState !== 'idle';
-    if (wanted === (this.keepAlive !== null)) return;
-    const context = this.audioContext;
-    if (!wanted) {
-      if (this.keepAlive) {
-        try {
-          this.keepAlive.source.stop();
-        } catch {
-          // Never started, or already stopped: nothing to release.
-        }
-        this.keepAlive.source.disconnect();
-        this.keepAlive.gain.disconnect();
-        this.keepAlive = null;
-      }
-      return;
-    }
-    if (!context) return;
-    try {
-      // A second of white noise, looped, at −60 dBFS: below anything a
-      // room lets a person hear, above what a device treats as silence.
-      // Noise rather than a constant so no DC reaches an amplifier.
-      const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let index = 0; index < data.length; index += 1) data[index] = Math.random() * 2 - 1;
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      const gain = context.createGain();
-      gain.gain.value = 0.001;
-      source.connect(gain);
-      gain.connect(context.destination);
-      source.start();
-      this.keepAlive = { source, gain };
-      void context.resume().catch(() => undefined);
-    } catch {
-      // No keep-alive: the gaps are as they were.
-    }
-  }
-
-  /** From a click: takes the browser's permission to play sound later. */
-  prime(): void {
-    const audio = this.ensureAudio();
-    this.ensureAnalyser();
-    void this.audioContext?.resume().catch(() => undefined);
-    // A hold taken before the context existed starts now that it does.
-    this.updateKeepAlive();
-    if (audio.src) return;
-    // A tiny silent WAV: one sample. Playing it unlocks the element.
-    audio.src =
-      'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==';
-    void audio.play().catch(() => {
-      // Denied outside a gesture; nothing to do but try again later.
-    });
-  }
+  /* ---------------------------------------------------------------- stream */
 
   /** Whether anything is queued, loading or sounding. */
   get busy(): boolean {
-    return this.playing || this.queue.length > 0;
+    return this.playing.size > 0 || this.queue.length > 0;
   }
 
   /** Begin a fresh stream of pieces under `owner`, silencing whatever was playing. */
@@ -237,29 +292,56 @@ export class SpeechQueue {
     if (!text) return;
     const controller = new AbortController();
     const generation = this.generation;
-    this.inFlight += 1;
-    if (!this.playing) this.setState('loading');
     const audio = voiceClient
       .synthesize(this.tenantId, { text, ...this.settings }, controller.signal)
-      .then((result) => {
+      .then(async (result) => {
         if (generation !== this.generation) return null;
         if (result.error) this.onError(result.error);
-        return result.data;
+        if (!result.data) return null;
+        return this.decode(result.data);
       })
-      .finally(() => {
-        this.inFlight -= 1;
-      });
+      .catch(() => null);
     this.queue.push({ text, audio, controller });
+    this.refreshState();
     void this.pump();
+  }
+
+  /** The piece as samples, cut to its sound. Decoding needs no gesture. */
+  private async decode(blob: Blob): Promise<DecodedPiece | null> {
+    const context = this.ensureContext();
+    if (!context) {
+      this.onError('This browser cannot play speech.');
+      return null;
+    }
+    try {
+      const buffer = await context.decodeAudioData(await blob.arrayBuffer());
+      return { buffer, bounds: soundBounds(buffer.getChannelData(0), buffer.sampleRate) };
+    } catch {
+      this.onError('The audio could not be decoded.');
+      return null;
+    }
   }
 
   /** No more pieces are coming for this stream; idle follows the last one. */
   finish(): void {
     this.finished = true;
-    if (!this.playing && this.queue.length === 0) {
-      this.owner = null;
-      this.setState('idle');
-    }
+    this.refreshState();
+  }
+
+  /** Hold the clock where it is; resume() carries on from the same sample. */
+  pause(): void {
+    if (this.paused || (this.lastState !== 'speaking' && this.lastState !== 'loading')) return;
+    this.paused = true;
+    void this.context?.suspend().catch(() => undefined);
+    this.refreshState();
+  }
+
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    void this.context?.resume().catch(() => undefined);
+    this.refreshState();
+    this.startLevelLoop();
   }
 
   /** Silence, now. */
@@ -268,81 +350,103 @@ export class SpeechQueue {
     for (const piece of this.queue) piece.controller.abort();
     this.queue = [];
     this.finished = true;
-    this.playing = false;
-    if (this.audio) {
-      this.audio.pause();
-      this.audio.removeAttribute('src');
-      this.audio.load();
+    for (const entry of this.playing) {
+      try {
+        entry.source.stop();
+      } catch {
+        // Not started yet, or already over.
+      }
+      entry.source.disconnect();
+      entry.gain.disconnect();
     }
-    if (this.currentUrl) {
-      URL.revokeObjectURL(this.currentUrl);
-      this.currentUrl = null;
+    this.playing.clear();
+    this.lastEnd = 0;
+    if (this.paused) {
+      this.paused = false;
+      void this.context?.resume().catch(() => undefined);
     }
     this.owner = null;
     this.setState('idle');
   }
 
+  /**
+   * Places each piece on the clock as soon as it is decoded, in order.
+   * Runs ahead of playback: the next piece is scheduled while the current
+   * one sounds, which is what makes the join seamless.
+   */
   private async pump(): Promise<void> {
-    if (this.playing) return;
-    const next = this.queue.shift();
-    if (!next) {
-      if (this.finished) {
-        this.owner = null;
-        this.setState('idle');
-      }
-      return;
-    }
-    this.playing = true;
-    const generation = this.generation;
-    const blob = await next.audio;
-    if (generation !== this.generation) return;
-    if (!blob) {
-      this.playing = false;
-      void this.pump();
-      return;
-    }
-    const audio = this.ensureAudio();
-    if (this.currentUrl) URL.revokeObjectURL(this.currentUrl);
-    this.currentUrl = URL.createObjectURL(blob);
-    audio.src = this.currentUrl;
-    this.setState('speaking');
-    const done = new Promise<void>((resolve) => {
-      const finish = () => {
-        audio.removeEventListener('ended', finish);
-        audio.removeEventListener('error', finish);
-        resolve();
-      };
-      audio.addEventListener('ended', finish);
-      audio.addEventListener('error', finish);
-    });
+    if (this.pumping) return;
+    this.pumping = true;
     try {
-      void this.audioContext?.resume().catch(() => undefined);
-      await audio.play();
-      this.startLevelLoop();
-      await done;
-    } catch {
-      // A stop() mid-play rejects play() too; only a real refusal is news.
-      if (generation !== this.generation) return;
-      this.onError('The browser would not play the audio. Click the speaker to allow sound.');
+      while (this.queue.length > 0) {
+        const generation = this.generation;
+        const next = this.queue[0];
+        const piece = await next.audio;
+        if (generation !== this.generation) return;
+        this.queue.shift();
+        if (piece) this.schedule(piece);
+        this.refreshState();
+      }
+    } finally {
+      this.pumping = false;
     }
-    if (generation !== this.generation) return;
-    this.playing = false;
-    if (this.queue.length > 0) this.setState('loading');
-    void this.pump();
   }
 
-  /** Release the element; for unmount. */
+  private schedule(piece: DecodedPiece): void {
+    const context = this.ensureContext();
+    if (!context || !this.master) return;
+    void context.resume().catch(() => undefined);
+    const { buffer, bounds } = piece;
+    const start = nextStart(this.lastEnd, context.currentTime, SCHEDULE_LEAD_S);
+    const end = start + bounds.duration;
+    const gain = context.createGain();
+    const fade = Math.min(FADE_S, bounds.duration / 2);
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(1, start + fade);
+    gain.gain.setValueAtTime(1, end - fade);
+    gain.gain.linearRampToValueAtTime(0, end);
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(this.master);
+    const entry: Playing = { source, gain };
+    const generation = this.generation;
+    source.onended = () => {
+      if (generation !== this.generation) return;
+      source.disconnect();
+      gain.disconnect();
+      this.playing.delete(entry);
+      this.refreshState();
+    };
+    source.start(start, bounds.offset, bounds.duration);
+    this.playing.add(entry);
+    this.lastEnd = end;
+    this.refreshState();
+    this.startLevelLoop();
+  }
+
+  /** Release everything; for unmount. */
   dispose(): void {
     this.stop();
     this.holders = 0;
-    this.updateKeepAlive();
+    this.updateSession();
     this.listeners.clear();
     this.levelListeners.clear();
     if (this.levelFrame) cancelAnimationFrame(this.levelFrame);
     this.levelFrame = 0;
-    void this.audioContext?.close().catch(() => undefined);
-    this.audioContext = null;
+    void this.context?.close().catch(() => undefined);
+    this.context = null;
+    this.master = null;
     this.analyser = null;
-    this.audio = null;
+    if (this.session) {
+      this.session.pause();
+      this.session.removeAttribute('src');
+      this.session.load();
+      this.session = null;
+    }
+    if (this.sessionUrl) {
+      URL.revokeObjectURL(this.sessionUrl);
+      this.sessionUrl = null;
+    }
   }
 }

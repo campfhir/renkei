@@ -37,7 +37,14 @@ import { voiceClient } from '@/lib/voice/client';
 import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
 import { takeSpeakable } from '@/lib/voice/sentences';
 import { LIVE_REPLY_OWNER, replyProse, useReplySpeech } from '@/lib/voice/use-reply-speech';
-import { getEchoCancellation, setEchoCancellation } from '@/lib/voice/device-settings';
+import {
+  getAudioOutput,
+  getEchoCancellation,
+  getMicrophone,
+  setAudioOutput,
+  setEchoCancellation,
+  setMicrophone,
+} from '@/lib/voice/device-settings';
 import Modal from '@/components/modal';
 import ArtifactsMenu from './artifacts-menu';
 import ChatTitle from './chat-title';
@@ -159,6 +166,28 @@ export default function ChatThread({
     },
     [tenantId]
   );
+  // Likewise this device's microphone and speaker, where the browser
+  // lets a page choose; null is the system default.
+  const [microphone, setMicrophoneState] = useState<string | null>(null);
+  const [audioOutput, setAudioOutputState] = useState<string | null>(null);
+  useEffect(() => {
+    setMicrophoneState(getMicrophone(tenantId));
+    setAudioOutputState(getAudioOutput(tenantId));
+  }, [tenantId]);
+  const changeMicrophone = useCallback(
+    (deviceId: string | null) => {
+      setMicrophoneState(deviceId);
+      setMicrophone(tenantId, deviceId);
+    },
+    [tenantId]
+  );
+  const changeAudioOutput = useCallback(
+    (deviceId: string | null) => {
+      setAudioOutputState(deviceId);
+      setAudioOutput(tenantId, deviceId);
+    },
+    [tenantId]
+  );
   const [speechQueue, setSpeechQueue] = useState<SpeechQueue | null>(null);
   const [speech, setSpeech] = useState<{ state: SpeechQueueState; owner: string | null }>({
     state: 'idle',
@@ -181,6 +210,9 @@ export default function ChatThread({
       setSpeechQueue(null);
     };
   }, [tenantId, voiceAvailable]);
+  useEffect(() => {
+    speechQueue?.setOutputDevice(audioOutput);
+  }, [speechQueue, audioOutput]);
   useEffect(() => {
     if (!speechQueue || !voiceDefaultLocale) return;
     speechQueue.configure({
@@ -216,6 +248,8 @@ export default function ChatThread({
     [speechQueue]
   );
   const stopReading = useCallback(() => speechQueue?.stop(), [speechQueue]);
+  const pauseReading = useCallback(() => speechQueue?.pause(), [speechQueue]);
+  const resumeReading = useCallback(() => speechQueue?.resume(), [speechQueue]);
   // Below `sm` the title bar keeps only Tools as a button of its own and
   // folds the rest into an overflow menu, so the chat's name stays readable.
   const compact = !useMediaQuery('(min-width: 640px)', true);
@@ -636,7 +670,10 @@ export default function ChatThread({
           voice && speechQueue
             ? {
                 playingKey: speech.state === 'idle' ? null : speech.owner,
+                paused: speech.state === 'paused',
                 onListen: listen,
+                onPause: pauseReading,
+                onResume: resumeReading,
                 onStop: stopReading,
               }
             : null
@@ -693,6 +730,7 @@ export default function ChatThread({
                   locale: voicePrefs.locale ?? voice.defaultLocale,
                   accent: voicePrefs.userAccent,
                   echoCancellation,
+                  microphone,
                 }
               : null
           }
@@ -706,6 +744,10 @@ export default function ChatThread({
                 levels={speechQueue}
                 echoCancellation={echoCancellation}
                 onEchoCancellation={changeEchoCancellation}
+                microphone={microphone}
+                onMicrophone={changeMicrophone}
+                audioOutput={audioOutput}
+                onAudioOutput={changeAudioOutput}
                 onChange={changeVoicePrefs}
                 onStopReading={stopReading}
                 onStartVoiceMode={() => setVoiceMode(true)}
@@ -726,6 +768,7 @@ export default function ChatThread({
           accent={voicePrefs.accent}
           userAccent={voicePrefs.userAccent}
           echoCancellation={echoCancellation}
+          microphone={microphone}
           pushToTalk={voicePrefs.pushToTalk}
           replyText={lastTurn ? replyProse(state.messages, lastTurn.id) : ''}
           onSend={(text) => queueOrSend({ text, attachments: [] })}

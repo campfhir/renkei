@@ -44,6 +44,8 @@ export interface DictationSetup {
   accent: WaveAccent;
   /** This device's echo-cancellation choice (lib/voice/device-settings.ts). */
   echoCancellation: boolean;
+  /** This device's chosen microphone, or null for the default. */
+  microphone: string | null;
 }
 
 export interface ComposerSubmit {
@@ -130,9 +132,10 @@ export default function Composer({
   const startDictation = useCallback(async () => {
     if (!dictation || recorder.current) return;
     setDictationError(null);
-    const { tenantId: tenant, locale, echoCancellation } = dictation;
+    const { tenantId: tenant, locale, echoCancellation, microphone } = dictation;
     const instance = new UtteranceRecorder({
       echoCancellation,
+      deviceId: microphone,
       onSpeechStart: () => setHearing(true),
       onUtterance: (wav) => {
         void (async () => {
