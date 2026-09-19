@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
 import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
+import { segment, type Segment, type ToolResult, type WorkStep } from '@/lib/chat/segment';
 import type {
   ChatBlock,
   ChatMessageView,
@@ -296,80 +297,7 @@ function groupTurns(messages: ChatMessageView[]): TurnGroup[] {
   return groups;
 }
 
-type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
-
-/** A reply, read across its rows: prose, and the work between the prose. */
-type Segment =
-  | { kind: 'text'; text: string }
-  | { kind: 'note'; text: string }
-  | { kind: 'work'; steps: WorkStep[] }
-  /** A commit, a push, a word to Bitbucket — a card of its own, never folded. */
-  | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
-  /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
-  | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
-  /** Auto mode's runner-written "carry on", between two of the model's replies. */
-  | { kind: 'nudge'; text: string };
-
-export type WorkStep =
-  | { kind: 'thinking'; text: string }
-  | { kind: 'redacted' }
-  | { kind: 'call'; block: Extract<ChatBlock, { type: 'tool_use' }>; result: ToolResult | null };
-
-function segment(messages: ChatMessageView[], results: Map<string, ToolResult>): Segment[] {
-  const out: Segment[] = [];
-  const work = (): Extract<Segment, { kind: 'work' }> => {
-    const last = out[out.length - 1];
-    if (last && last.kind === 'work') return last;
-    const created: Extract<Segment, { kind: 'work' }> = { kind: 'work', steps: [] };
-    out.push(created);
-    return created;
-  };
-  for (const message of messages) {
-    if (message.role !== 'assistant') {
-      if (message.kind === 'nudge') {
-        const text = message.blocks
-          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-          .join('\n');
-        out.push({ kind: 'nudge', text });
-      }
-      continue;
-    }
-    for (const block of message.blocks) {
-      switch (block.type) {
-        case 'text':
-          if (block.text.trim()) out.push({ kind: 'text', text: block.text });
-          break;
-        case 'thinking':
-          work().steps.push({ kind: 'thinking', text: block.thinking });
-          break;
-        case 'redacted_thinking':
-          work().steps.push({ kind: 'redacted' });
-          break;
-        case 'tool_use': {
-          const step = { kind: 'call' as const, block, result: results.get(block.id) ?? null };
-          if (block.name === 'code_delegate') {
-            out.push({ kind: 'subagent', step });
-          } else if (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL) {
-            out.push({ kind: 'milestone', step });
-          } else {
-            work().steps.push(step);
-          }
-          break;
-        }
-        case 'tool_result':
-          break;
-        case 'document':
-        case 'image':
-          out.push({
-            kind: 'note',
-            text: `${block.type === 'document' ? (block.title ?? 'Document') : 'Image'} attached`,
-          });
-          break;
-      }
-    }
-  }
-  return out;
-}
+export type { ToolResult, Segment, WorkStep };
 
 /**
  * One inline card for whatever compaction is doing right now — a
