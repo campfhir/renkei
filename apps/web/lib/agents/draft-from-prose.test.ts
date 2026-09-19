@@ -206,6 +206,63 @@ describe('draftAgentFromProse retry loop', () => {
     expect(actionOf(result.steps[0]).tool).toBeNull();
   });
 
+  it('parses a valid date chip into a resolved DateSegment', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [
+          {
+            name: 'Search',
+            instruction:
+              'Search for tickets updated since {{date:amount=-1;unit=day;timezone=America/Los_Angeles}} with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const step = actionOf(result.steps[0]);
+    expect(step.instruction).toEqual(
+      expect.arrayContaining([
+        {
+          t: 'date',
+          amount: -1,
+          unit: 'day',
+          timezone: 'America/Los_Angeles',
+        },
+      ])
+    );
+    // No soft problems → no corrective round trip spent.
+    expect(requests).toHaveLength(1);
+  });
+
+  it('retries a date chip with a bad timezone, naming the problem in the feedback', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [
+          {
+            name: 'Search',
+            instruction:
+              'Search for tickets since {{date:amount=-1;unit=day;timezone=Not/AZone}} with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+          },
+        ],
+      }),
+      GOOD_REPLY,
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    // The bad chip degraded to text on the first, usable-but-imperfect draft.
+    expect(requests).toHaveLength(2);
+    const feedback = JSON.stringify(requests[1].messages);
+    expect(feedback).toContain('{{date:');
+    expect(feedback).toContain('timezone');
+  });
+
   it('parses model-authored failure handling, tries, and retry guidance', async () => {
     replies = [
       JSON.stringify({
