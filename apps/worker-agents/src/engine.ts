@@ -1884,7 +1884,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         Math.max(1, waitCapHours)
       );
       const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
-      const link = await approvalLink(run);
+      const path = await runPagePath(run);
+      const link = approvalLink(path);
       const agentName = await agentNameOf(run.tenant_id, run.agent_id);
       try {
         await db
@@ -1928,6 +1929,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // The card itself is not optional — a waiting run needs it, so the
       // app's own feed (and the push it triggers) always gets this row.
       // Only whether it ALSO pages the owner by email or WebEx is their call.
+      // refUrl is the run's own (relative) page — the card lives there, so a
+      // push for it can be skipped when that page is already open in front.
       await writeNotificationRow(
         db,
         {
@@ -1937,7 +1940,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           agentName,
           runId: run.id,
         },
-        { kind: 'approval', headline: heading, stepId: gatedStep.id }
+        { kind: 'approval', headline: heading, stepId: gatedStep.id, refUrl: path }
       );
       const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
@@ -1979,7 +1982,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         Math.max(1, waitCapHours)
       );
       const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
-      const link = await approvalLink(run);
+      const path = await runPagePath(run);
+      const link = approvalLink(path);
       const agentName = await agentNameOf(run.tenant_id, run.agent_id);
       try {
         await db
@@ -2016,7 +2020,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       vars['question.link'] = link ?? '';
       const heading = `Agent “${agentName}” has a question${askingStep.name.trim() ? `: ${askingStep.name.trim()}` : ''}`;
       // Same reasoning as the approval card's: the app's own feed always
-      // gets this row, and only email/WebEx are the owner's choice.
+      // gets this row, and only email/WebEx are the owner's choice. refUrl
+      // is the run's own (relative) page — see the approval card's note.
       await writeNotificationRow(
         db,
         {
@@ -2026,7 +2031,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           agentName,
           runId: run.id,
         },
-        { kind: 'question', headline: heading, stepId: askingStep.id }
+        { kind: 'question', headline: heading, stepId: askingStep.id, refUrl: path }
       );
       const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
@@ -2932,16 +2937,25 @@ export function createAgentRunHandler(deps: EngineDeps) {
     return { message };
   }
 
-  /** The owner-facing run link approval cards and notifications carry. */
-  async function approvalLink(run: RunRow): Promise<string | null> {
-    const base = getPublicBaseUrl();
-    if (!base) return null;
+  /**
+   * The run's own page, relative — what a same-origin click (a toast, a
+   * push's `appPath`) should land on. No base URL needed, so this works
+   * even when `getPublicBaseUrl()` is unconfigured.
+   */
+  async function runPagePath(run: RunRow): Promise<string | null> {
     const tenant = await db
       .selectFrom('tenants')
       .select('slug')
       .where('id', '=', run.tenant_id)
       .executeTakeFirst();
-    return tenant ? `${base}/${tenant.slug}/agents/${run.agent_id}/runs/${run.id}` : null;
+    return tenant ? `/${tenant.slug}/agents/${run.agent_id}/runs/${run.id}` : null;
+  }
+
+  /** The owner-facing run link approval cards and notifications carry —
+   *  `path` already resolved by the caller, so this never re-queries. */
+  function approvalLink(path: string | null): string | null {
+    const base = getPublicBaseUrl();
+    return path && base ? `${base}${path}` : null;
   }
 
   /**

@@ -1,14 +1,15 @@
 /**
  * The "an agent replied while you were away" ping — off by default, and
  * only ever a push: the pop-up pile and the in-app feed already cover a
- * tab that IS in front (the service worker's own focus check in
- * public/sw.js skips showing the OS banner whenever a Renkei tab is
- * focused and visible), so this is reach for the moment nothing is
- * watching. Email and WebEx make no sense for a single chat reply the way
- * they do for a run finishing, so unlike the run/share events this is a
- * plain switch (`chatReplyDesktop`) rather than a three-channel triple,
- * and the whole notification — the feed row too — is gated on it: off by
- * default means nothing happens here at all until a person opts in.
+ * tab that IS in front. `quiet: true` tells the service worker's own
+ * focus check (public/sw.js) to skip the OS banner specifically when THIS
+ * chat is the page open and focused — a Renkei tab in front on some other
+ * page still gets the banner, since it isn't already showing the reply.
+ * Email and WebEx make no sense for a single chat reply the way they do
+ * for a run finishing, so unlike the run/share events this is a plain
+ * switch (`chatReplyDesktop`) rather than a three-channel triple, and the
+ * whole notification — the feed row too — is gated on it: off by default
+ * means nothing happens here at all until a person opts in.
  *
  * A click on the banner opens the chat itself (the push's `appPath`), not
  * the notifications page: the reply is read there and nowhere else.
@@ -77,6 +78,9 @@ export function notifyChatReplyDesktop(input: {
           notificationId: id,
           // The reply is read in the chat, so the banner opens the chat.
           appPath: refUrl,
+          // Already visible in the chat itself — skip the banner only when
+          // that exact chat is the page open and focused.
+          quiet: true,
         },
         { log: (message, meta) => logger.warn(message, meta) }
       );
