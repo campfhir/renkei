@@ -21,6 +21,22 @@ const ROOMS_PAGE_SIZE = 100;
  * message processing has nothing to say why it never came back.
  */
 const REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * A message carrying a file attachment: a 20MB upload on a slow uplink
+ * legitimately takes minutes of transfer, so a multipart POST gets a longer
+ * deadline than an ordinary JSON call (matches apps/web's fetch-guard.ts
+ * UPLOAD_TIMEOUT_MS — this package cannot import that, so the number is
+ * duplicated rather than adding a cross-package dependency for one constant).
+ */
+const UPLOAD_TIMEOUT_MS = 120_000;
+/**
+ * WebEx rejects a message's markdown/text outright past this many UTF-8
+ * bytes ("The maximum message length is 7439 bytes.", per WebEx's Messaging
+ * API spec) — a caller composing a message that might run long checks
+ * against this and falls back to attaching the overflow as a file instead
+ * of failing the send.
+ */
+export const MESSAGE_TEXT_LIMIT_BYTES = 7439;
 /** The space `sendNoteToSelf` finds or creates — see its own doc comment. */
 const NOTE_TO_SELF_TITLE = 'Note to Self';
 /** At most this many group rooms probed for membership before giving up and creating one. */
@@ -108,6 +124,13 @@ export interface WebexAttachmentAction {
   inputs: Record<string, unknown>;
 }
 
+/** A single file to carry on a message — WebEx allows at most one per message. */
+export interface OutgoingFile {
+  filename: string;
+  contentType?: string;
+  bytes: Uint8Array;
+}
+
 export interface OutgoingMessage {
   /** Post into a space. One of roomId / toPersonEmail is required. */
   roomId?: string;
@@ -119,6 +142,14 @@ export interface OutgoingMessage {
   text?: string;
   /** Adaptive Card attachments, pre-shaped by the caller (see cards.ts). */
   attachments?: unknown[];
+  /**
+   * A file to attach, sent as multipart/form-data instead of JSON — WebEx's
+   * JSON `files` field only accepts a public URL, not bytes. Set this
+   * instead of (or alongside a short) markdown/text when the caller has
+   * actual file content to carry, e.g. the overflow when markdown/text runs
+   * past MESSAGE_TEXT_LIMIT_BYTES.
+   */
+  file?: OutgoingFile;
 }
 
 /** A webhook registration as WebEx reports it. */
@@ -260,6 +291,55 @@ export class WebexClient {
     return this.request('GET', path);
   }
 
+  /**
+   * POST multipart/form-data — the one shape `request` cannot make, since it
+   * always JSON-encodes. Used only for a message carrying a `file`: string
+   * fields ride alongside the bytes in one form, exactly as WebEx's own
+   * Message Attachments guide describes (`-F roomId=... -F files=@doc.pdf`).
+   */
+  private async postForm(
+    path: string,
+    fields: Record<string, string | undefined>,
+    file: OutgoingFile
+  ): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
+    await limiter.take(this.lane);
+    const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) {
+      if (value) form.append(key, value);
+    }
+    form.append(
+      'files',
+      new Blob([new Uint8Array(file.bytes)], { type: file.contentType || 'application/octet-stream' }),
+      file.filename
+    );
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.botToken}`, Accept: 'application/json' },
+        body: form,
+        signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('WEBEX_API_ERROR' as const, {
+        message: timedOut
+          ? `WebEx API timed out after ${UPLOAD_TIMEOUT_MS}ms for ${path}`
+          : 'WebEx API unreachable',
+      });
+    }
+    if (!response.ok) {
+      return err('WEBEX_API_ERROR' as const, {
+        message: `WebEx API ${response.status} for ${path}`,
+      });
+    }
+    const parsed: unknown = await response.json().catch(() => null);
+    if (!isRecord(parsed)) {
+      return err('WEBEX_API_ERROR' as const, { message: `WebEx API returned no JSON for ${path}` });
+    }
+    return ok(parsed);
+  }
+
   /** Fetch a message's content — webhooks carry only its id. */
   async getMessage(messageId: string): Promise<Result<WebexMessage, 'WEBEX_API_ERROR'>> {
     const result = await this.get(`/messages/${encodeURIComponent(messageId)}`);
@@ -384,7 +464,19 @@ export class WebexClient {
   async postMessage(
     message: OutgoingMessage
   ): Promise<Result<{ id: string; roomId: string | null }, 'WEBEX_API_ERROR'>> {
-    const result = await this.request('POST', '/messages', message);
+    const result = message.file
+      ? await this.postForm(
+          '/messages',
+          {
+            roomId: message.roomId,
+            toPersonEmail: message.toPersonEmail,
+            parentId: message.parentId,
+            markdown: message.markdown,
+            text: message.text,
+          },
+          message.file
+        )
+      : await this.request('POST', '/messages', message);
     if (!result.ok) return result;
     const id = optionalString(result.val.id);
     if (!id) return err('WEBEX_API_ERROR' as const, { message: 'message response missing id' });

@@ -36,8 +36,10 @@ export const WEBEX_USER_SCOPE_OPTIONS: ScopeOption[] = [
     id: 'spark:messages_write',
     scopes: ['spark:messages_write'],
     label: 'Send messages',
-    hint: 'webex_send_message — speaks as the user, only on explicit request; org read-only mode disables it',
-    userHint: 'Post messages as you. Only ever on your explicit instruction.',
+    hint:
+      'webex_send_message, webex_request_attachment_upload (attach a new file) — speaks as the ' +
+      'user, only on explicit request; org read-only mode disables it',
+    userHint: 'Post messages, and attach files, as you. Only ever on your explicit instruction.',
     group: 'messaging',
     defaultChecked: true,
   },

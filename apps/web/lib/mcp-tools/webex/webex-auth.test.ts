@@ -108,6 +108,27 @@ describe('oauthWebexAuth — the request itself', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer token-1');
   });
 
+  it('sets Content-Type: application/json for a JSON string body', async () => {
+    const auth = oauthWebexAuth(context());
+
+    await auth.fetch([], '/messages', { method: 'POST', body: JSON.stringify({ markdown: 'hi' }) });
+
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+  });
+
+  it('leaves Content-Type unset for a FormData body, so fetch sets its own boundary', async () => {
+    const auth = oauthWebexAuth(context());
+    const form = new FormData();
+    form.append('roomId', 'room-1');
+
+    await auth.fetch([], '/messages', { method: 'POST', body: form });
+
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe(form);
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined();
+  });
+
   it('reports an unresolved grant as a Response, not a thrown error', async () => {
     // No subject on the context is resolveWebexAccess's own "not signed in"
     // failure — proving it comes back through fetch()'s ordinary Response
