@@ -48,6 +48,15 @@ import type { PermissionPrompt } from './message-list';
 export interface VoiceActivity {
   id: string;
   name: string;
+  /** What the model wrote just before the call — its own account of it, read aloud already. */
+  said: string | null;
+}
+
+/** The last sentence of what the model said, for the line under the wave. */
+function lastSentence(text: string): string {
+  const sentences = text.match(/[^.!?]+[.!?]*/g);
+  const last = sentences?.[sentences.length - 1]?.trim();
+  return (last && last.length > 0 ? last : text).replace(/[.!?]+$/, '');
 }
 
 /** Quiet this long while a reply is worked out earns a "still working on it". */
@@ -248,19 +257,23 @@ export default function VoiceMode({
     // decide and narrate are stable for the queue's lifetime.
   }, [tenantId, locale, echoCancellation, microphone, pushToTalk]);
 
-  // Each tool call is announced as it starts — the newest only, when
-  // several start at once, so a burst of lookups is one sentence — and
-  // the line under the wave says what is being done right now.
+  // The line under the wave says what is being done right now: the
+  // model's own sentence about the call when it wrote one (a voice turn
+  // is asked to), else the page's. A call the model did not introduce
+  // is announced as it starts — the newest only, when several start at
+  // once, so a burst of lookups is one sentence.
   useEffect(() => {
     const fresh = activity.filter((call) => !announced.current.has(call.id));
     for (const call of fresh) announced.current.add(call.id);
     const current = activity[activity.length - 1];
+    const lineOf = (call: VoiceActivity) =>
+      call.said ? lastSentence(call.said) : spokenActivity(call.name);
     if (fresh.length > 0) {
-      const line = spokenActivity(fresh[fresh.length - 1].name);
-      setActivityLine(line);
-      narrate(`${line}.`);
+      const newest = fresh[fresh.length - 1];
+      setActivityLine(lineOf(newest));
+      if (!newest.said) narrate(`${spokenActivity(newest.name)}.`);
     } else if (current) {
-      setActivityLine(spokenActivity(current.name));
+      setActivityLine(lineOf(current));
     } else {
       setActivityLine(null);
     }

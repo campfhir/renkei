@@ -349,6 +349,7 @@ export default function ChatThread({
         text: input.text,
         attachmentIds: input.attachments.map((attachment) => attachment.id),
         llmModelId: modelId,
+        ...(input.voice ? { voice: true } : {}),
       });
       setSending(false);
       if (started.error || !started.data) {
@@ -572,13 +573,22 @@ export default function ChatThread({
   // snapshot arrives, and the calls are in flight before then.
   const voiceActivity = useMemo((): VoiceActivity[] => {
     if (state.pendingToolCalls.length === 0) return [];
-    const names = new Map<string, string>();
+    // Each call with what the model said just before it, if anything: a
+    // voice turn is asked to introduce its calls, and the page announces
+    // only the ones it did not.
+    const calls = new Map<string, { name: string; said: string | null }>();
     for (const message of state.messages) {
+      let said: string | null = null;
       for (const block of message.blocks) {
-        if (block.type === 'tool_use') names.set(block.id, block.name);
+        if (block.type === 'text' && block.text.trim()) said = block.text.trim();
+        if (block.type === 'tool_use') calls.set(block.id, { name: block.name, said });
       }
     }
-    return state.pendingToolCalls.map((id) => ({ id, name: names.get(id) ?? 'tool' }));
+    return state.pendingToolCalls.map((id) => ({
+      id,
+      name: calls.get(id)?.name ?? 'tool',
+      said: calls.get(id)?.said ?? null,
+    }));
   }, [state.messages, state.pendingToolCalls]);
   const voiceThinking = useMemo(() => {
     if (!running) return false;
@@ -800,7 +810,7 @@ export default function ChatThread({
               ? { pending: state.pendingPermission, canDecide: isOwner, onDecide: decidePermission }
               : null
           }
-          onSend={(text) => queueOrSend({ text, attachments: [] })}
+          onSend={(text) => queueOrSend({ text, attachments: [], voice: true })}
           onInterrupt={() => void stop()}
           onClose={() => setVoiceMode(false)}
         />

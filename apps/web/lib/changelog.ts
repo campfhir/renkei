@@ -49,7 +49,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'A voice conversation says what it is doing',
         detail:
-          'While a reply is worked out, voice mode no longer goes quiet: each lookup or action is announced as it starts — “Searching Jira issues”, “Finding Outlook meeting times” — the same line shows under the wave, and a long silence gets a “still working on it”.',
+          'While a reply is worked out, voice mode no longer goes quiet. The assistant says what it is about to do before it does it — “Looking for a slot with Priya and Marcus on Thursday” — the same line shows under the wave, a lookup it did not introduce is announced anyway, and a long silence gets a “still working on it”. Replies in a voice conversation are written to be heard: short sentences, no tables or lists unless asked.',
       },
       {
         kind: 'added',

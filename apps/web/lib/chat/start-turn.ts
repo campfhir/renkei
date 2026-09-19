@@ -142,6 +142,8 @@ export interface StartTurnInput {
   /** Attachment ids to link to the prompt row (Phase 5). */
   attachmentIds?: string[];
   llmModelId?: string | null;
+  /** The message came from a voice conversation; the reply is written to be heard. */
+  voice?: boolean;
   defer?: (task: () => Promise<void>) => void;
 }
 
@@ -274,6 +276,7 @@ export async function startChatTurn(
         llm,
         thinkingBudget,
         settings,
+        voice: input.voice === true,
       })
     );
   } catch (error) {
@@ -297,6 +300,8 @@ export interface ExecuteTurnInput {
   thinkingBudget: number | null;
   settings: OrgSettings | null;
   localTools?: LocalTool[];
+  /** See StartTurnInput.voice. */
+  voice?: boolean;
 }
 
 export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): Promise<void> {
@@ -452,6 +457,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
       hasDiscoverableTools: discoveryTool !== null,
       hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
+      voice: input.voice === true,
       // outlook_search_users is a `microsoft` tool, not a core connector, so
       // it is almost always in `discoverable` rather than offered up front —
       // the brief has to work whichever bucket it is in.

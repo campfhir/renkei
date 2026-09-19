@@ -51,6 +51,8 @@ export interface DictationSetup {
 export interface ComposerSubmit {
   text: string;
   attachments: AttachmentView[];
+  /** Said, not typed: from a voice conversation, so the reply is written to be heard. */
+  voice?: boolean;
 }
 
 /** One queued send, shown in order with what it will do and how to drop it. */

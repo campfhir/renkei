@@ -47,6 +47,7 @@ export async function POST(
     extraBlocks,
     attachmentIds,
     llmModelId,
+    voice: body.voice === true,
   });
   if (!started.ok) {
     switch (started.err.type) {
