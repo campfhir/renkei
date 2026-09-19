@@ -10,14 +10,19 @@
  *    a push, a pull request, a Jira comment go through unasked. The
  *    person chose this for the chat, and Stop is always there.
  *  - The turn does not end when the model stops talking. A reply that
- *    ends without `task_complete` having been called is answered by the
- *    runner itself with a nudge row (kind 'nudge', role user) telling
- *    the model to carry on, and the loop goes again — inside the same
- *    turn, so the chat's one-running-turn rule, its wall clock and Stop
- *    all still hold. `task_complete` is the model's word that the task
- *    is done (or that it truly needs the person), and ends the turn as
- *    a plain reply would. AUTO_MAX_CONTINUES bounds a model that never
- *    says so.
+ *    made at least one tool call this turn and then ends without
+ *    `task_complete` having been called is answered by the runner
+ *    itself with a nudge row (kind 'nudge', role user) telling the
+ *    model to carry on, and the loop goes again — inside the same turn,
+ *    so the chat's one-running-turn rule, its wall clock and Stop all
+ *    still hold. `task_complete` is the model's word that the task is
+ *    done (or that it truly needs the person), and ends the turn as a
+ *    plain reply would. AUTO_MAX_CONTINUES bounds a model that never
+ *    says so. A reply that never touched a tool is not nudged — it
+ *    never started work (a quick question, a yes/no about something
+ *    already done), so there is nothing to carry on with, and forcing
+ *    a task_complete ceremony onto it would only produce a spurious one
+ *    (turn-runner.ts's `actedThisTurn`).
  *
  * Only a code project's chat honours the switch (start-turn.ts): its
  * turns already run under working-session limits (lib/code/turn.ts),

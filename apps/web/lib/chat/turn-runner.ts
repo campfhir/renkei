@@ -485,9 +485,14 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     !alwaysAllowed.has(name);
   let permissionWaited = 0;
   // Auto mode: whether the model has marked the task finished this turn,
-  // and how many times it has been told to carry on.
+  // how many times it has been told to carry on, and whether it has made
+  // any tool call yet — a reply that never touched a tool is answering
+  // the person directly (a question, a quick "does X do Y"), not leaving
+  // a task mid-flight, so it should not be nudged into inventing a
+  // task_complete call for work that was never started.
   let taskDone = false;
   let continues = 0;
+  let actedThisTurn = false;
 
   const messages: LlmMessage[] = [...input.history];
   let assistant = input.assistantMessage;
@@ -962,11 +967,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
           block.type === 'tool_use'
       );
+      if (toolUses.length > 0) actedThisTurn = true;
       if (reply.stopReason !== 'tool_use' || toolUses.length === 0) {
         // Auto mode: the model stopped, but the task is not marked done —
-        // tell it to carry on and go again, within this same turn.
+        // tell it to carry on and go again, within this same turn. Only
+        // when it actually did something this turn first: a reply that
+        // never called a tool was never working the task, so there is
+        // nothing to carry on with — see actedThisTurn above.
         const auto = deps.autoContinue;
-        if (auto && !taskDone && continues < auto.maxContinues) {
+        if (auto && !taskDone && actedThisTurn && continues < auto.maxContinues) {
           continues += 1;
           log('chat auto mode: nudging the model on ({count} of {max})', {
             count: continues,
