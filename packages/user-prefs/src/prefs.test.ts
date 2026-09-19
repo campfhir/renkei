@@ -352,6 +352,7 @@ describe('parseVoicePrefs', () => {
     expect(parseVoicePrefs('loud')).toEqual(DEFAULT_VOICE_PREFS);
     expect(parseVoicePrefs({})).toEqual(DEFAULT_VOICE_PREFS);
     expect(DEFAULT_VOICE_PREFS.autoPlay).toBe(false);
+    expect(DEFAULT_VOICE_PREFS.pushToTalk).toBe(false);
   });
 
   it('keeps a plausible voice id, pace, auto-play and locale', () => {
@@ -361,6 +362,7 @@ describe('parseVoicePrefs', () => {
         rate: 1.25,
         autoPlay: true,
         locale: 'en_gb',
+        pushToTalk: true,
         accent: 'violet',
         userAccent: 'amber',
       })
@@ -369,6 +371,7 @@ describe('parseVoicePrefs', () => {
       rate: 1.25,
       autoPlay: true,
       locale: 'en-GB',
+      pushToTalk: true,
       accent: 'violet',
       userAccent: 'amber',
     });
@@ -382,6 +385,8 @@ describe('parseVoicePrefs', () => {
     expect(parseVoicePrefs({ voice: 42 }).voice).toBeNull();
     expect(parseVoicePrefs({ locale: 'english' }).locale).toBeNull();
     expect(parseVoicePrefs({ autoPlay: 'yes' }).autoPlay).toBe(false);
+    expect(parseVoicePrefs({ pushToTalk: true }).pushToTalk).toBe(true);
+    expect(parseVoicePrefs({ pushToTalk: 'yes' }).pushToTalk).toBe(false);
     expect(parseVoicePrefs({ accent: 'plaid' }).accent).toBe('rainbow');
     expect(parseVoicePrefs({ userAccent: 'plaid' }).userAccent).toBe('emerald');
   });

@@ -478,6 +478,13 @@ export interface VoicePrefs {
   autoPlay: boolean;
   /** The language voice mode listens for; null means the org's default. */
   locale: string | null;
+  /**
+   * Voice mode as a walkie-talkie: a press starts a recording and a press
+   * ends it, instead of the microphone deciding from a pause. Off by
+   * default; for people whose pauses mid-thought were being sent as
+   * messages, and for noisy rooms.
+   */
+  pushToTalk: boolean;
   /** The colour of the assistant's wave — a reply being read: a rainbow, or one hue. */
   accent: VoiceAccent;
   /** The colour of the person's own wave — listening, dictating — distinct from the assistant's. */
@@ -492,6 +499,7 @@ export const DEFAULT_VOICE_PREFS: VoicePrefs = {
   rate: 1,
   autoPlay: false,
   locale: null,
+  pushToTalk: false,
   accent: 'rainbow',
   userAccent: 'emerald',
 };
@@ -535,6 +543,7 @@ export function parseVoicePrefs(stored: unknown): VoicePrefs {
     rate: rateOr(raw.rate, DEFAULT_VOICE_PREFS.rate),
     autoPlay: boolOr(raw.autoPlay, DEFAULT_VOICE_PREFS.autoPlay),
     locale: localeOr(raw.locale, DEFAULT_VOICE_PREFS.locale),
+    pushToTalk: boolOr(raw.pushToTalk, DEFAULT_VOICE_PREFS.pushToTalk),
     accent: isVoiceAccent(raw.accent) ? raw.accent : DEFAULT_VOICE_PREFS.accent,
     userAccent: isVoiceAccent(raw.userAccent) ? raw.userAccent : DEFAULT_VOICE_PREFS.userAccent,
   };
