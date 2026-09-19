@@ -996,6 +996,8 @@ export interface WireCommit {
   sha: string;
   shortSha: string;
   subject: string;
+  /** The commit message past its subject line and the blank line after it, if any. */
+  body: string;
   author: string;
   /** ISO 8601, as git wrote it. */
   date: string;
@@ -1047,6 +1049,7 @@ export async function sbWorkspaceGitShow(
         sha: str(commit.sha),
         shortSha: str(commit.shortSha),
         subject: str(commit.subject),
+        body: str(commit.body),
         author: str(commit.author),
         date: str(commit.date),
         parents: Array.isArray(commit.parents)
