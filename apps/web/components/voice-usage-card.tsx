@@ -20,7 +20,7 @@ export function VoiceUsageCard({
 }) {
   return (
     <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
-      <h2 className="text-sm font-medium text-gray-700 dark:text-gray-300">{heading}</h2>
+      <h2 className="text-sm font-semibold">{heading}</h2>
       <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{hint}</p>
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-900">
