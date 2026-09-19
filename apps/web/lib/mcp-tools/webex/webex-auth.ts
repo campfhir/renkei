@@ -163,7 +163,13 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
           method,
           headers: {
             Authorization: `Bearer ${access.accessToken}`,
-            ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+            // A FormData body (a multipart send carrying a file) must NOT
+            // get this header — fetch/undici sets its own with the
+            // boundary, and overriding it here would send a Content-Type
+            // with no boundary and a body WebEx cannot parse.
+            ...(body !== undefined && !(body instanceof FormData)
+              ? { 'Content-Type': 'application/json' }
+              : {}),
             ...init?.headers,
           },
         });

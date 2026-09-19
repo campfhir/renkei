@@ -35,6 +35,9 @@ jest.mock('@/lib/mcp-tools/confluence/client', () => ({
   confluenceUpload: jest.fn(),
   resolveConfluenceAccess: jest.fn(),
 }));
+jest.mock('@/lib/mcp-tools/webex/webex-auth', () => ({
+  resolveWebexAccess: jest.fn(),
+}));
 jest.mock('@/lib/file-shares/service-client', () => {
   const actual = jest.requireActual<typeof import('@/lib/file-shares/service-client')>(
     '@/lib/file-shares/service-client'
@@ -71,6 +74,9 @@ const { confluenceUpload, resolveConfluenceAccess } = jest.requireMock<{
   confluenceUpload: jest.Mock;
   resolveConfluenceAccess: jest.Mock;
 }>('@/lib/mcp-tools/confluence/client');
+const { resolveWebexAccess } = jest.requireMock<{ resolveWebexAccess: jest.Mock }>(
+  '@/lib/mcp-tools/webex/webex-auth'
+);
 
 function slotOf(kind: string, destination: unknown): UploadSlotRow {
   return {
@@ -108,6 +114,7 @@ beforeEach(() => {
   resolveGraphAccess.mockReset();
   confluenceUpload.mockReset();
   resolveConfluenceAccess.mockReset();
+  resolveWebexAccess.mockReset();
   getGrant.mockResolvedValue({
     ok: true,
     val: { accessToken: 'atl-token', accountId: 'acct-1', metadata: {} },
@@ -274,6 +281,94 @@ it('refuses an unknown kind', async () => {
   const outcome = await executeUpload(db, slotOf('mystery', {}), Buffer.from('bytes'));
   expect(outcome.ok).toBe(false);
   expect(outcome.detail).toContain('mystery');
+});
+
+describe('webex-attachment', () => {
+  const realFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it('multiparts the bytes to a room under the resolved grant', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    const fetchMock = jest.fn(async () => new Response('{}', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('webex-attachment', { roomId: 'room-1', markdown: 'see attached' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.detail).toContain('report.pdf');
+    const [url, init] = (fetchMock as jest.Mock).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://webexapis.com/v1/messages');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer webex-token');
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(form.get('roomId')).toBe('room-1');
+    expect(form.get('markdown')).toBe('see attached');
+    const file = form.get('files') as File;
+    expect(file.name).toBe('report.pdf');
+  });
+
+  it('multiparts to a 1:1 recipient with parentId, when the slot carries one', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
+    const fetchMock = jest.fn(async () => new Response('{}', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await executeUpload(
+      db,
+      slotOf('webex-attachment', { toPersonEmail: 'bob@example.com', parentId: 'msg-root' }),
+      Buffer.from('bytes')
+    );
+
+    const [, init] = (fetchMock as jest.Mock).mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+    expect(form.get('toPersonEmail')).toBe('bob@example.com');
+    expect(form.get('parentId')).toBe('msg-root');
+    expect(form.get('roomId')).toBeNull();
+  });
+
+  it('fails cleanly when the slot carries no room or recipient', async () => {
+    const outcome = await executeUpload(db, slotOf('webex-attachment', {}), Buffer.from('bytes'));
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain('no room or recipient');
+    expect(resolveWebexAccess).not.toHaveBeenCalled();
+  });
+
+  it('fails cleanly when there is no usable WebEx grant', async () => {
+    resolveWebexAccess.mockResolvedValue('WebEx is not connected.');
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('webex-attachment', { roomId: 'room-1' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toBe('WebEx is not connected.');
+  });
+
+  it('fails cleanly when WebEx refuses the send', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
+    global.fetch = jest.fn(
+      async () => new Response('{"message":"bad request"}', { status: 400 })
+    ) as unknown as typeof fetch;
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('webex-attachment', { roomId: 'room-1' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain('400');
+    expect(outcome.detail).toContain('bad request');
+  });
 });
 
 describe('fileshare-file', () => {

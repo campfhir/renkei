@@ -28,12 +28,15 @@ import {
   rec,
 } from '@/lib/mcp-tools/graph/client';
 import { confluenceUpload, resolveConfluenceAccess } from '@/lib/mcp-tools/confluence/client';
+import { resolveWebexAccess } from '@/lib/mcp-tools/webex/webex-auth';
+import { timeoutSignal, UPLOAD_TIMEOUT_MS, isTimeoutError } from '@/lib/mcp-tools/fetch-guard';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
 /** Graph's simple-PUT ceiling for drive items; past it → upload session. */
 const DRIVE_SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024;
 /** Graph's inline fileAttachment ceiling for messages; past it → session. */
 const MESSAGE_ATTACHMENT_INLINE_MAX = 3 * 1024 * 1024;
+const WEBEX_API_BASE = 'https://webexapis.com/v1';
 
 export interface UploadSlotRow {
   id: string;
@@ -299,6 +302,63 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
 }
 
 /**
+ * WebEx multipart send: the one file WebEx allows per message, alongside
+ * whatever roomId/toPersonEmail/markdown/parentId webex_request_attachment_
+ * upload recorded as the destination. resolveWebexAccess only reads
+ * tenantId + subject off its context, same as resolveConfluenceAccess above
+ * — graphContextOf's {tenantId, subject} stands in for the full
+ * MCPToolContext the MCP tool layer normally supplies.
+ */
+async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+  const destination = destinationOf(slot);
+  const roomId = str(destination.roomId);
+  const toPersonEmail = str(destination.toPersonEmail);
+  if (!roomId && !toPersonEmail) {
+    return { ok: false, detail: 'The upload slot carries no room or recipient.' };
+  }
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const access = await resolveWebexAccess(graphContextOf(slot) as MCPToolContext);
+  if (typeof access === 'string') return { ok: false, detail: access };
+
+  const form = new FormData();
+  form.append(roomId ? 'roomId' : 'toPersonEmail', roomId || toPersonEmail);
+  if (str(destination.parentId)) form.append('parentId', str(destination.parentId));
+  if (str(destination.markdown)) form.append('markdown', str(destination.markdown));
+  form.append(
+    'files',
+    new Blob([new Uint8Array(bytes)], { type: slot.content_type || 'application/octet-stream' }),
+    slot.filename
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(`${WEBEX_API_BASE}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${access.accessToken}` },
+      body: form,
+      signal: timeoutSignal(undefined, UPLOAD_TIMEOUT_MS),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      detail: isTimeoutError(error)
+        ? `WebEx did not respond within ${UPLOAD_TIMEOUT_MS}ms.`
+        : error instanceof Error
+          ? error.message
+          : String(error),
+    };
+  }
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    return {
+      ok: false,
+      detail: `WebEx API answered ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}.`,
+    };
+  }
+  return { ok: true, detail: `Attached "${slot.filename}" to the WebEx message.` };
+}
+
+/**
  * File-share write: the fileshare worker resolves the CALLER'S own stored
  * credential at byte-arrival time — a connection removed between slot mint
  * and POST means the write fails, since a slot must never outlive the
@@ -484,6 +544,8 @@ export async function executeUpload(
       return fileshareFile(db, slot, bytes);
     case 'onbase-document':
       return onbaseDocument(db, slot, bytes);
+    case 'webex-attachment':
+      return webexAttachment(slot, bytes);
     default:
       return { ok: false, detail: `Unknown upload kind "${slot.kind}".` };
   }

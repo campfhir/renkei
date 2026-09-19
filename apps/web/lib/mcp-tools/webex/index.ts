@@ -17,13 +17,22 @@
  * webex_send_message, on explicit request — and webex_note_to_self, which
  * prefers to post as the org's bot (lib/webex-bot.ts) so the note arrives
  * unread, and only speaks as the user when there is no bot.
+ *
+ * Every send path shares the same length-limit workaround: markdown/text
+ * over WebEx's MESSAGE_TEXT_LIMIT_BYTES is sent as a message.md attachment
+ * instead of failing outright (see postMessage/overLongMarkdown below). To
+ * attach a NEW file the model has no bytes for yet — not overflow text —
+ * webex_request_attachment_upload mints an out-of-band upload slot, the
+ * same pattern jira_request_attachment_upload uses; a file already staged
+ * in the sandbox (from webex_download_attachments, or another connector's
+ * own download tool) forwards there with sandbox_send_to_upload instead.
  */
 
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
-import { webexNextPagePath } from '@renkei/connector-webex';
+import { webexNextPagePath, MESSAGE_TEXT_LIMIT_BYTES } from '@renkei/connector-webex';
 import { DEFAULT_MAX_FILE_BYTES, validateFilename } from '@renkei/connector-sandbox';
 import { logger } from '@/lib/logger';
 import { actMeta } from '@renkei/tool-outcomes';
@@ -32,6 +41,7 @@ import { recordSentWebexMessage } from './sent-ledger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
 import { fileLine } from '../sandbox/shared';
+import { createUploadSlot } from '../upload-slots';
 import {
   APP_ONLY_META,
   CHAT_MESSAGE_URI,
@@ -149,19 +159,93 @@ async function listAllRooms(
   return { ok: true, rooms, truncated: path !== null };
 }
 
-/** For callers that need the raw Response — a POST, or a non-JSON body like a transcript download. */
+/**
+ * For callers that need the raw Response — a POST, or a non-JSON body like a
+ * transcript download. `body` (a FormData, for a multipart send carrying a
+ * file) and `json` are mutually exclusive; WebexAuth.fetch itself decides
+ * the Content-Type from which one shows up.
+ */
 async function webexCall(
   auth: WebexAuth,
   scopes: string[],
   path: string,
-  init?: { method?: string; json?: unknown }
+  init?: { method?: string; json?: unknown; body?: FormData }
 ): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
   const response = await auth.fetch(scopes, path, {
     method: init?.method ?? 'GET',
     ...(init?.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
+    ...(init?.body !== undefined ? { body: init.body } : {}),
   });
   if (!response.ok) return { ok: false, error: await describeWebexFailure(response) };
   return { ok: true, response };
+}
+
+/**
+ * WebEx rejects markdown/text outright past MESSAGE_TEXT_LIMIT_BYTES (UTF-8
+ * bytes, not characters — a caller composing a digest or a pasted log has no
+ * way to know the cap without measuring the same way).
+ */
+function overLongMarkdown(markdown: string): boolean {
+  return Buffer.byteLength(markdown, 'utf8') > MESSAGE_TEXT_LIMIT_BYTES;
+}
+
+/** What a send says in place of the body when it had to go to an attachment instead. */
+const OVERFLOW_NOTICE =
+  `Message exceeds WebEx's ${MESSAGE_TEXT_LIMIT_BYTES}-byte limit — the full text is attached ` +
+  'as message.md instead of being sent inline.';
+
+/** The overflow itself, as the one file WebEx allows per message. */
+function overflowFile(markdown: string): { filename: string; contentType: string; bytes: Uint8Array } {
+  return { filename: 'message.md', contentType: 'text/markdown', bytes: new TextEncoder().encode(markdown) };
+}
+
+/** A multipart body for POST /messages: the same fields JSON would carry, plus one file. */
+function messageForm(
+  fields: Record<string, string | undefined>,
+  file: { filename: string; contentType?: string; bytes: Uint8Array }
+): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value) form.append(key, value);
+  }
+  form.append(
+    'files',
+    new Blob([new Uint8Array(file.bytes)], { type: file.contentType || 'application/octet-stream' }),
+    file.filename
+  );
+  return form;
+}
+
+/**
+ * POST /messages, composing the body: plain JSON when markdown fits WebEx's
+ * limit, otherwise a multipart send that swaps the body for OVERFLOW_NOTICE
+ * and carries the full markdown as message.md — the length-limit workaround
+ * every send-message path shares, so a long digest or pasted log fails
+ * nowhere it didn't have to.
+ */
+async function postMessage(
+  auth: WebexAuth,
+  scopes: string[],
+  target: { roomId: string } | { toPersonEmail: string },
+  markdown: string,
+  parentId?: string
+): Promise<
+  | { ok: true; response: Response; overflowed: boolean }
+  | { ok: false; error: string }
+> {
+  const fields = { ...target, ...(parentId ? { parentId } : {}) };
+  if (!overLongMarkdown(markdown)) {
+    const result = await webexCall(auth, scopes, '/messages', {
+      method: 'POST',
+      json: { ...fields, markdown },
+    });
+    return result.ok ? { ...result, overflowed: false } : result;
+  }
+  const result = await webexCall(auth, scopes, '/messages', {
+    method: 'POST',
+    body: messageForm({ ...fields, markdown: OVERFLOW_NOTICE }, overflowFile(markdown)),
+  });
+  return result.ok ? { ...result, overflowed: true } : result;
 }
 
 function items(body: Record<string, unknown>): Record<string, unknown>[] {
@@ -520,10 +604,15 @@ async function selfDmError(context: MCPToolContext, toPersonEmail: string): Prom
 /** Which WebEx scope each tool stands on; used at both registration and call time. */
 export function webexScopeFor(toolName: string): string[] {
   switch (toolName) {
-    // The preview/confirm pair stands on the same scope as the send it gates.
+    // The preview/confirm pair stands on the same scope as the send it
+    // gates; webex_request_attachment_upload only mints an upload slot (no
+    // WebEx call happens at registration or request time) but stands on the
+    // same permission as the send it completes, so a grant without it never
+    // sees the tool at all.
     case 'webex_send_message':
     case 'webex_send_message_preview':
     case 'webex_send_message_confirm':
+    case 'webex_request_attachment_upload':
       return ['spark:messages_write'];
     // Reads rooms and their memberships to find a space holding only the
     // user, may create one, then posts — four scopes, all load-bearing.
@@ -1040,7 +1129,9 @@ export async function registerWebexUserTools(
         'tickets assembled with the Jira tools. Markdown supported, including mentions; pass ' +
         'parentId to reply inside an existing thread. This speaks AS the user, so only send ' +
         'what they asked to send. To message the user themself, use webex_note_to_self — ' +
-        'WebEx rejects a 1:1 to your own address.',
+        `WebEx rejects a 1:1 to your own address. Markdown over WebEx's ${MESSAGE_TEXT_LIMIT_BYTES}-` +
+        'byte limit is sent as an attachment automatically, rather than failing. To attach a ' +
+        'NEW file instead (an image, a PDF, a document), use webex_request_attachment_upload.',
       // The one acting tool: readOnlyHint false, so org read-only mode disables it.
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -1063,14 +1154,13 @@ export async function registerWebexUserTools(
         if (refusal) return errText(refusal);
       }
 
-      const result = await webexCall(auth, webexScopeFor('webex_send_message'), '/messages', {
-        method: 'POST',
-        json: {
-          ...(roomId ? { roomId } : { toPersonEmail }),
-          markdown: str(args.markdown),
-          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
-        },
-      });
+      const result = await postMessage(
+        auth,
+        webexScopeFor('webex_send_message'),
+        roomId ? { roomId } : { toPersonEmail },
+        str(args.markdown),
+        str(args.parentId) || undefined
+      );
       if (!result.ok) return errText(result.error);
       const body: unknown = await result.response.json().catch(() => null);
       const sent =
@@ -1097,7 +1187,8 @@ export async function registerWebexUserTools(
             type: 'text' as const,
             text:
               `Sent (message id ${str(sent.id) || 'unknown'}` +
-              `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).`,
+              `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).` +
+              (result.overflowed ? ` ${OVERFLOW_NOTICE}` : ''),
           },
         ],
         // The receipt gives the owner's "Posted a WebEx message"
@@ -1118,7 +1209,8 @@ export async function registerWebexUserTools(
         'THE way to WebEx yourself. When the org has a WebEx bot, the note arrives as a direct ' +
         'message from it, unread and with a notification; otherwise it goes into a space ' +
         'containing only the user (created as "Note to Self" if none exists), which WebEx ' +
-        'shows as already read. Markdown supported.',
+        `shows as already read. Markdown supported; over WebEx's ${MESSAGE_TEXT_LIMIT_BYTES}-byte ` +
+        'limit, it is sent as an attachment automatically rather than failing.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         markdown: z.string().min(1).describe('Note body, WebEx markdown'),
@@ -1137,11 +1229,16 @@ export async function registerWebexUserTools(
       // token, an org policy on bots) falls through to the solo space
       // below rather than losing the note.
       const bot = await webexBotClient(context.tenantId);
+      const overflowed = overLongMarkdown(markdown);
       if (bot) {
         const access = await resolveWebexAccess(context);
         const personEmail = typeof access === 'string' ? null : access.personEmail;
         const viaBot = personEmail
-          ? await bot.postMessage({ toPersonEmail: personEmail, markdown })
+          ? await bot.postMessage({
+              toPersonEmail: personEmail,
+              markdown: overflowed ? OVERFLOW_NOTICE : markdown,
+              ...(overflowed ? { file: overflowFile(markdown) } : {}),
+            })
           : null;
         if (viaBot?.ok && viaBot.val.roomId) {
           await recordSentWebexMessage(context.tenantId, viaBot.val.id, context.accountId);
@@ -1158,7 +1255,8 @@ export async function registerWebexUserTools(
                 type: 'text' as const,
                 text:
                   `Sent as a direct message from the org's WebEx bot, so it shows as unread ` +
-                  `(room ${viaBot.val.roomId}, message id ${viaBot.val.id}).`,
+                  `(room ${viaBot.val.roomId}, message id ${viaBot.val.id}).` +
+                  (overflowed ? ` ${OVERFLOW_NOTICE}` : ''),
               },
             ],
             ...(dmUrl ? { _meta: actMeta({ url: dmUrl }) } : {}),
@@ -1222,10 +1320,7 @@ export async function registerWebexUserTools(
         created = true;
       }
 
-      const sendResult = await webexCall(auth, scopes, '/messages', {
-        method: 'POST',
-        json: { roomId, markdown },
-      });
+      const sendResult = await postMessage(auth, scopes, { roomId }, markdown);
       if (!sendResult.ok) return errText(sendResult.error);
       const sentBody: unknown = await sendResult.response.json().catch(() => null);
       const sent =
@@ -1246,17 +1341,92 @@ export async function registerWebexUserTools(
         content: [
           {
             type: 'text' as const,
-            text: `Sent to ${
-              created
-                ? `a newly created "${NOTE_TO_SELF_TITLE}" space`
-                : `"${roomTitle || NOTE_TO_SELF_TITLE}"`
-            } (room ${roomId}, message id ${str(sent.id) || 'unknown'}).`,
+            text:
+              `Sent to ${
+                created
+                  ? `a newly created "${NOTE_TO_SELF_TITLE}" space`
+                  : `"${roomTitle || NOTE_TO_SELF_TITLE}"`
+              } (room ${roomId}, message id ${str(sent.id) || 'unknown'}).` +
+              (sendResult.overflowed ? ` ${OVERFLOW_NOTICE}` : ''),
           },
         ],
         // The receipt gives the owner's "Left you a WebEx note"
         // notification a link straight to the note-to-self space.
         ...(noteRoomUrl ? { _meta: actMeta({ url: noteRoomUrl }) } : {}),
       };
+    }
+  );
+
+  server.registerTool(
+    'webex_request_attachment_upload',
+    {
+      title: 'WebEx · Act — Request an upload endpoint to attach a NEW file to a message',
+      description:
+        'Attach a NEW file (an image, a PDF, a document — anything the model has no bytes for ' +
+        'yet) to a WebEx message, to a room or a person, without base64. Returns a short-lived ' +
+        'single-use endpoint; send the raw bytes there (curl with the Authorization header, or ' +
+        'the returned browser link), then check_file_upload confirms delivery. A file already ' +
+        'staged in your sandbox scratch space (e.g. from webex_download_attachments, or ' +
+        'sharepoint_download_document + sandbox_download_url) forwards here with ' +
+        'sandbox_send_to_upload instead of a manual upload. WebEx allows exactly one file per ' +
+        'message. Never generate file content as a tool argument.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        roomId: z.string().describe('Destination room id (from webex_list_rooms)').optional(),
+        toPersonEmail: z
+          .string()
+          .describe('Recipient email for a 1:1 message instead of a room')
+          .optional(),
+        markdown: z
+          .string()
+          .describe(`${MARKDOWN_HINT} Optional — WebEx allows a file with no message text.`)
+          .optional(),
+        parentId: z.string().describe(PARENT_ID_HINT).optional(),
+        filename: z.string().min(1).describe('File name to attach'),
+        contentType: z.string().describe('MIME type (optional)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const roomId = str(args.roomId);
+      const toPersonEmail = str(args.toPersonEmail);
+      if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
+      if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+      if (toPersonEmail) {
+        const refusal = await selfDmError(context, toPersonEmail);
+        if (refusal) return errText(refusal);
+      }
+      const filename = str(args.filename);
+      if (!filename) return errText('filename is required');
+      const markdown = str(args.markdown);
+      // Combining an over-limit markdown with a NEW file would need two
+      // files on one message (the overflow's own message.md plus this
+      // one) — WebEx allows only one, so this is refused rather than
+      // silently dropping either.
+      if (markdown && overLongMarkdown(markdown)) {
+        return errText(
+          `markdown alone is over WebEx's ${MESSAGE_TEXT_LIMIT_BYTES}-byte limit — shorten it, ` +
+            'or send it on its own with webex_send_message, which attaches the overflow ' +
+            'automatically.'
+        );
+      }
+
+      const slot = await createUploadSlot(
+        context,
+        'webex-attachment',
+        {
+          ...(roomId ? { roomId } : { toPersonEmail }),
+          ...(markdown ? { markdown } : {}),
+          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
+        },
+        { filename, contentType: str(args.contentType) || undefined }
+      );
+      if (!slot.ok) return errText(slot.error);
+      logger.info('webex_request_attachment_upload minted {uploadId}', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        uploadId: slot.uploadId,
+      });
+      return textResult(slot.instructions);
     }
   );
 
@@ -1357,14 +1527,13 @@ export async function registerWebexUserTools(
         if (refusal) return errText(refusal);
       }
 
-      const result = await webexCall(auth, webexScopeFor('webex_send_message'), '/messages', {
-        method: 'POST',
-        json: {
-          ...(roomId ? { roomId } : { toPersonEmail }),
-          markdown: str(args.markdown),
-          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
-        },
-      });
+      const result = await postMessage(
+        auth,
+        webexScopeFor('webex_send_message'),
+        roomId ? { roomId } : { toPersonEmail },
+        str(args.markdown),
+        str(args.parentId) || undefined
+      );
       if (!result.ok) return errText(result.error);
       const body: unknown = await result.response.json().catch(() => null);
       const sent =
@@ -1380,7 +1549,8 @@ export async function registerWebexUserTools(
       });
       return textResult(
         `Sent (message id ${str(sent.id) || 'unknown'}` +
-          `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).`
+          `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).` +
+          (result.overflowed ? ` ${OVERFLOW_NOTICE}` : '')
       );
     }
   );

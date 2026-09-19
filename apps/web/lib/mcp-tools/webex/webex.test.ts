@@ -46,10 +46,15 @@ jest.mock('@/lib/sandbox/service-client', () => ({
     message: error.kind === 'unconfigured' ? 'not configured' : (error.message ?? error.type),
   }),
 }));
+// webex_request_attachment_upload only mints a slot — the DB write itself is
+// upload-slots.ts's own job, tested there; this suite just checks the tool
+// hands it the right destination.
+jest.mock('../upload-slots', () => ({ createUploadSlot: (...args: unknown[]) => mockCreateSlot(...args) }));
 
 const insertedRows: unknown[] = [];
 const mockCall = jest.fn();
 const mockWrite = jest.fn();
+const mockCreateSlot = jest.fn();
 let mockBot: { postMessage: jest.Mock } | null = null;
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -105,6 +110,11 @@ beforeEach(() => {
   insertedRows.length = 0;
   mockBot = null;
   mockCall.mockResolvedValue(jsonResponse({ items: [] }));
+  mockCreateSlot.mockResolvedValue({
+    ok: true,
+    uploadId: 'upload-1',
+    instructions: 'Upload endpoint ready for "notes.txt" (id upload-1)...',
+  });
   mockWrite.mockImplementation(
     async (
       _target: unknown,
@@ -642,6 +652,37 @@ describe('webex_send_message', () => {
 
     expect(result._meta).toBeUndefined();
   });
+
+  it('sends markdown over the 7439-byte limit as a message.md attachment, not JSON', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ id: 'msg-9', roomId: 'room-1' }));
+    const tools = await toolsOf();
+    const markdown = 'x'.repeat(8000);
+
+    const result = await tools.get('webex_send_message')!({ roomId: 'room-1', markdown });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('attached as message.md');
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(form.get('roomId')).toBe('room-1');
+    // The overflow notice stands in for the body; the real text rides the file.
+    expect(String(form.get('markdown'))).toContain('attached as message.md');
+    const file = form.get('files') as File;
+    expect(file.name).toBe('message.md');
+    expect(await file.text()).toBe(markdown);
+  });
+
+  it('sends markdown under the limit as ordinary JSON, unchanged', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ id: 'msg-9', roomId: 'room-1' }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_send_message')!({ roomId: 'room-1', markdown: 'hi' });
+
+    expect(textOf(result)).not.toContain('attached as message.md');
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    expect(typeof init.body).toBe('string');
+  });
 });
 
 describe('webex_note_to_self', () => {
@@ -749,6 +790,160 @@ describe('webex_note_to_self', () => {
       roomId: 'room-new',
       markdown: 'todo',
     });
+  });
+
+  it('attaches an over-limit note as message.md via the bot, instead of failing', async () => {
+    mockBot = {
+      postMessage: jest.fn(async () => ({ ok: true, val: { id: 'msg-dm', roomId: 'room-dm' } })),
+    };
+    const tools = await toolsOf();
+    const markdown = 'y'.repeat(8000);
+
+    const result = await tools.get('webex_note_to_self')!({ markdown });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('attached as message.md');
+    expect(mockBot.postMessage).toHaveBeenCalledTimes(1);
+    const sent = mockBot.postMessage.mock.calls[0][0] as {
+      toPersonEmail: string;
+      markdown: string;
+      file?: { filename: string; bytes: Uint8Array };
+    };
+    expect(sent.toPersonEmail).toBe('alice@example.com');
+    expect(sent.markdown).toContain('attached as message.md');
+    expect(sent.file?.filename).toBe('message.md');
+    expect(Buffer.from(sent.file!.bytes).toString('utf8')).toBe(markdown);
+  });
+
+  it('attaches an over-limit note as message.md in the solo space, when there is no bot', async () => {
+    mockCall
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 'room-solo', title: 'Scratch', type: 'group' }] })
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'mem-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', roomId: 'room-solo' }));
+    const tools = await toolsOf();
+    const markdown = 'z'.repeat(8000);
+
+    const result = await tools.get('webex_note_to_self')!({ markdown });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('attached as message.md');
+    const [, sendInit] = mockCall.mock.calls[2] as [string, RequestInit];
+    expect(sendInit.body).toBeInstanceOf(FormData);
+    const file = (sendInit.body as FormData).get('files') as File;
+    expect(await file.text()).toBe(markdown);
+  });
+});
+
+describe('webex_request_attachment_upload', () => {
+  it('mints a slot for a room destination', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      roomId: 'room-1',
+      filename: 'notes.txt',
+      contentType: 'text/plain',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('upload-1');
+    expect(mockCreateSlot).toHaveBeenCalledWith(
+      expect.anything(),
+      'webex-attachment',
+      { roomId: 'room-1' },
+      { filename: 'notes.txt', contentType: 'text/plain' }
+    );
+  });
+
+  it('mints a slot for a toPersonEmail destination, carrying markdown and parentId', async () => {
+    const tools = await toolsOf();
+
+    await tools.get('webex_request_attachment_upload')!({
+      toPersonEmail: 'bob@example.com',
+      filename: 'report.pdf',
+      markdown: 'see attached',
+      parentId: 'msg-root',
+    });
+
+    expect(mockCreateSlot).toHaveBeenCalledWith(
+      expect.anything(),
+      'webex-attachment',
+      { toPersonEmail: 'bob@example.com', markdown: 'see attached', parentId: 'msg-root' },
+      { filename: 'report.pdf', contentType: undefined }
+    );
+  });
+
+  it('refuses when neither roomId nor toPersonEmail is given', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({ filename: 'x.txt' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Provide roomId or toPersonEmail');
+    expect(mockCreateSlot).not.toHaveBeenCalled();
+  });
+
+  it('refuses when both roomId and toPersonEmail are given', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      roomId: 'room-1',
+      toPersonEmail: 'bob@example.com',
+      filename: 'x.txt',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('not both');
+  });
+
+  it('refuses to DM the user’s own address, pointing at webex_note_to_self', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      toPersonEmail: 'alice@example.com',
+      filename: 'x.txt',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('webex_note_to_self');
+    expect(mockCreateSlot).not.toHaveBeenCalled();
+  });
+
+  it('requires filename', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({ roomId: 'room-1' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('filename is required');
+  });
+
+  it('refuses an over-limit markdown rather than dropping the new file or the overflow', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      roomId: 'room-1',
+      filename: 'x.txt',
+      markdown: 'x'.repeat(8000),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('webex_send_message');
+    expect(mockCreateSlot).not.toHaveBeenCalled();
+  });
+
+  it('surfaces createUploadSlot’s own failure', async () => {
+    mockCreateSlot.mockResolvedValue({ ok: false, error: 'Database unavailable.' });
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      roomId: 'room-1',
+      filename: 'x.txt',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe('Database unavailable.');
   });
 });
 
@@ -1068,6 +1263,10 @@ describe('webexScopeFor', () => {
       'spark:rooms_write',
       'spark:memberships_read',
     ]);
+  });
+
+  it('gates the upload-slot tool on the same scope as the send it completes', () => {
+    expect(webexScopeFor('webex_request_attachment_upload')).toEqual(['spark:messages_write']);
   });
 });
 

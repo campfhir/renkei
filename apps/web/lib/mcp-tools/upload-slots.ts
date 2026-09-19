@@ -34,7 +34,8 @@ export type UploadSlotKind =
   | 'sharepoint-document'
   | 'outlook-draft-attachment'
   | 'fileshare-file'
-  | 'onbase-document';
+  | 'onbase-document'
+  | 'webex-attachment';
 
 export function hashUploadToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');

@@ -74,6 +74,10 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'webex_capture_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_send_message', args: { roomId: 'room-1', markdown: 'hi' } },
   { tool: 'webex_note_to_self', args: { markdown: 'hi' } },
+  // Never reaches auth.fetch (it only mints a DB upload slot), so it fails
+  // on the mocked getDatabase() instead — still a clean errText(), never a
+  // thrown exception or an "undefined".
+  { tool: 'webex_request_attachment_upload', args: { roomId: 'room-1', filename: 'notes.txt' } },
   // The preview never has to reach auth (its room-title lookup is
   // best-effort and a lookup failure still previews), so a denied credential
   // cannot make it fail — empty args exercise its validation path instead,

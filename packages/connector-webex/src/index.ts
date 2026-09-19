@@ -36,6 +36,7 @@ export {
   webexNextPagePath,
   sendNoteToPerson,
   WEBEX_BOT_CONNECTOR,
+  MESSAGE_TEXT_LIMIT_BYTES,
   type NoteDelivery,
   type NoteToPerson,
   type WebexMessage,
@@ -43,6 +44,7 @@ export {
   type WebexRoom,
   type WebexAttachmentAction,
   type OutgoingMessage,
+  type OutgoingFile,
   type WebexWebhook,
   type WebhookRegistration,
 } from './client';

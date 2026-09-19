@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * `sendNoteToSelf`'s room-finding: an existing solo room wins over
  * creating a new one, a 1:1-only account gets a fresh "Note to Self"
@@ -280,6 +281,31 @@ describe('WebexClient.postMessage', () => {
         toPersonEmail: 'alice@example.com',
         markdown: 'Hi',
       });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it('posts multipart/form-data when the message carries a file, never JSON', async () => {
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(jsonResponse({ id: 'msg-2', roomId: 'room-1' }));
+    try {
+      const result = await new WebexClient('bot-token').postMessage({
+        roomId: 'room-1',
+        markdown: 'see attached',
+        file: { filename: 'notes.txt', contentType: 'text/plain', bytes: new TextEncoder().encode('hi') },
+      });
+
+      expect(result).toEqual({ ok: true, val: { id: 'msg-2', roomId: 'room-1' } });
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(init.body).toBeInstanceOf(FormData);
+      expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined();
+      const form = init.body as FormData;
+      expect(form.get('roomId')).toBe('room-1');
+      expect(form.get('markdown')).toBe('see attached');
+      const file = form.get('files') as File;
+      expect(file.name).toBe('notes.txt');
     } finally {
       fetchMock.mockRestore();
     }
