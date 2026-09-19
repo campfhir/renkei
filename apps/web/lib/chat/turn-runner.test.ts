@@ -1246,6 +1246,86 @@ describe('runChatTurn on a request that fails mid-argument-stream', () => {
   });
 });
 
+describe('runChatTurn on a tool call cut off by the output-token ceiling', () => {
+  it('refuses the call with a clear reason instead of silently ending the turn on it', async () => {
+    // Unlike the mid-stream drop above, the request itself completes: the
+    // model simply ran out of room while still emitting this call's JSON.
+    // The accumulator (stream-accumulator.ts) resolves that the lenient
+    // way, same as a genuinely empty-input call — `{}` — so the only
+    // telltale is the raw partialJson the mirror saw stream by, which
+    // never parses. Left unhandled, `toolUses.length > 0` but
+    // `stopReason !== 'tool_use'` used to skip the tool round outright:
+    // the call was never run AND never refused, so the turn just ended
+    // as if nothing had been asked.
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-truncated-1');
+    let calls = 0;
+    const cutOffMidCall: LlmProvider = {
+      async complete() {
+        throw new Error('not used — this test drives stream() directly');
+      },
+      async stream(_request, options) {
+        calls += 1;
+        if (calls === 1) {
+          options.onEvent({ type: 'message_start' });
+          options.onEvent({
+            type: 'block_start',
+            index: 0,
+            block: { type: 'tool_use', id: 'tu_big', name: 'agent_create', input: {} },
+          });
+          options.onEvent({
+            type: 'input_json_delta',
+            index: 0,
+            partialJson: '{"name": "Big Agent", "steps": [{"id": "s1"',
+          });
+          // No block_stop for this block — the provider hit its output
+          // ceiling mid-argument and went straight to message_end.
+          const usage = { inputTokens: 10, outputTokens: 500 };
+          options.onEvent({ type: 'message_end', stopReason: 'max_tokens', usage });
+          return ok({
+            content: [{ type: 'tool_use', id: 'tu_big', name: 'agent_create', input: {} }],
+            stopReason: 'max_tokens' as const,
+            usage,
+          });
+        }
+        // Retried, told why, and this time it fits: a normal reply.
+        const usage = { inputTokens: 10, outputTokens: 5 };
+        options.onEvent({ type: 'message_start' });
+        options.onEvent({ type: 'block_start', index: 0, block: { type: 'text', text: '' } });
+        options.onEvent({ type: 'text_delta', index: 0, text: 'Retrying smaller.' });
+        options.onEvent({ type: 'block_stop', index: 0 });
+        options.onEvent({ type: 'message_end', stopReason: 'end_turn', usage });
+        return ok({
+          content: [{ type: 'text', text: 'Retrying smaller.' }],
+          stopReason: 'end_turn' as const,
+          usage,
+        });
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(cutOffMidCall),
+        tools: [{ name: 'agent_create', description: '', inputSchema: {} }],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-truncated-1')
+    );
+    expect(outcome.status).toBe('completed');
+    const results = [...fake.rows.values()].find((row) => row.kind === 'tool_results');
+    expect(results?.blocks[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseId: 'tu_big',
+      isError: true,
+      content: expect.stringContaining('cut off'),
+    });
+  });
+});
+
 describe('runChatTurn logs every tool call attempt', () => {
   it('logs the attempt and outcome at debug, whether the call ran or was refused', async () => {
     const fake = fakeStore();
