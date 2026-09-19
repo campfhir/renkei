@@ -187,17 +187,21 @@ export const PERMISSION_BLOCKED_RESULT =
   'The person has blocked this tool in their preferences, so it cannot be used in this chat. Do not retry it or work around it; tell them what you were going to do and let them decide.';
 
 /**
- * Auto mode's other half (auto-mode.ts): the turn does not end when the
- * model stops talking. A reply that ends without a successful call to
- * `doneTool` is answered by the runner itself with `nudge` as a user-role
- * row of kind 'nudge', and the loop goes again — in the same turn, so
- * Stop, the wall clock and the iteration cap still bound it. After
- * `maxContinues` nudges the turn completes as it is.
+ * Auto mode's other half (auto-mode.ts): a turn that hands work to a
+ * sub-agent (`subagentTool`) does not end when the model stops talking
+ * without a successful call to `doneTool` — that is answered by the
+ * runner itself with `nudge` as a user-role row of kind 'nudge', and the
+ * loop goes again — in the same turn, so Stop, the wall clock and the
+ * iteration cap still bound it. After `maxContinues` nudges the turn
+ * completes as it is. A turn that never called `subagentTool` is never
+ * nudged: nothing was handed off to come back and check on.
  */
 export interface AutoContinue {
   doneTool: string;
   nudge: string;
   maxContinues: number;
+  /** The tool that delegates work to a sub-agent — see the type doc. */
+  subagentTool: string;
 }
 
 export interface TurnRunnerDeps {
@@ -485,14 +489,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     !alwaysAllowed.has(name);
   let permissionWaited = 0;
   // Auto mode: whether the model has marked the task finished this turn,
-  // how many times it has been told to carry on, and whether it has made
-  // any tool call yet — a reply that never touched a tool is answering
-  // the person directly (a question, a quick "does X do Y"), not leaving
-  // a task mid-flight, so it should not be nudged into inventing a
-  // task_complete call for work that was never started.
+  // how many times it has been told to carry on, and whether it has
+  // handed any work to a sub-agent yet. Only a sub-agent leaves work that
+  // can legitimately be mid-flight when the model stops talking; a reply
+  // that only answered directly (a question, an edit it made itself) is
+  // finished the moment it ends, so it is never nudged into inventing a
+  // task_complete call for nothing.
   let taskDone = false;
   let continues = 0;
-  let actedThisTurn = false;
+  let spawnedSubagent = false;
 
   const messages: LlmMessage[] = [...input.history];
   let assistant = input.assistantMessage;
@@ -967,15 +972,17 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
           block.type === 'tool_use'
       );
-      if (toolUses.length > 0) actedThisTurn = true;
+      const subagentTool = deps.autoContinue?.subagentTool;
+      if (subagentTool && toolUses.some((use) => use.name === subagentTool)) {
+        spawnedSubagent = true;
+      }
       if (reply.stopReason !== 'tool_use' || toolUses.length === 0) {
         // Auto mode: the model stopped, but the task is not marked done —
         // tell it to carry on and go again, within this same turn. Only
-        // when it actually did something this turn first: a reply that
-        // never called a tool was never working the task, so there is
-        // nothing to carry on with — see actedThisTurn above.
+        // once a sub-agent has actually been spawned: see spawnedSubagent
+        // above for why anything else needs no completion ceremony.
         const auto = deps.autoContinue;
-        if (auto && !taskDone && actedThisTurn && continues < auto.maxContinues) {
+        if (auto && !taskDone && spawnedSubagent && continues < auto.maxContinues) {
           continues += 1;
           log('chat auto mode: nudging the model on ({count} of {max})', {
             count: continues,

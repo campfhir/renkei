@@ -29,6 +29,7 @@ import {
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxConfig } from '@renkei/sandbox-client';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
+import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -555,6 +556,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
                 doneTool: TASK_COMPLETE_TOOL,
                 nudge: AUTO_NUDGE_TEXT,
                 maxContinues: AUTO_MAX_CONTINUES,
+                subagentTool: CODE_DELEGATE_TOOL,
               },
             }
           : {}),
