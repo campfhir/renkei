@@ -24,15 +24,29 @@ import { getSessionFromRequest } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { isUuid } from '@/lib/uuid';
 import { notificationTarget } from '@/lib/notifications/targets';
+import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; notificationId: string }> }
 ): Promise<Response> {
   const { tenantId, notificationId } = await params;
+
+  // A banner click is a top-level navigation from whatever device the push
+  // landed on, not a same-process fetch — `request.url` is this Next server's
+  // OWN idea of the request (behind a reverse proxy that's routinely
+  // `http://localhost:<port>`, not the public address). Every other route
+  // that builds an absolute redirect resolves it through `getOrigin` instead;
+  // building one from `request.url` here sent every relative target — the
+  // sign-in bounce, and any notification whose row resolves in-app rather
+  // than to the provider's own link — to that unreachable internal address.
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  const origin = originResult.val;
+
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
-    return NextResponse.redirect(new URL(signInUrl(tenantId, request.nextUrl.pathname), request.url));
+    return NextResponse.redirect(new URL(signInUrl(tenantId, request.nextUrl.pathname), origin));
   }
   if (!isUuid(notificationId)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -73,7 +87,7 @@ export async function GET(
   );
 
   if (!target.external || isWebUrl(target.url)) {
-    return NextResponse.redirect(new URL(target.url, request.url), 302);
+    return NextResponse.redirect(new URL(target.url, origin), 302);
   }
   // A custom scheme (webexteams://…) is not something every browser follows
   // a redirect into; a page that navigates itself is, and it leaves a way
