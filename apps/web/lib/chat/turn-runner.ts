@@ -1037,7 +1037,22 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             // never settles can't hold the turn (and its heartbeat) open
             // forever; the orphaned call keeps running, but the loop moves on.
             return await raceTimeout(
-              deps.localTools.run(use.name, use.input, { ...deps.localContext, toolUseId: use.id }),
+              deps.localTools.run(use.name, use.input, {
+                ...deps.localContext,
+                toolUseId: use.id,
+                // A sub-agent (code_delegate) spends its own model calls
+                // through this sink rather than the loop above, so its
+                // usage never reaches `totals` on its own — fold it in
+                // here, once, so the turn's outcome (and chat_turns) count
+                // what delegation actually cost.
+                recordUsage: deps.localContext.recordUsage
+                  ? async (usage: LlmUsage) => {
+                      totals.inputTokens += usage.inputTokens;
+                      totals.outputTokens += usage.outputTokens;
+                      await deps.localContext.recordUsage!(usage);
+                    }
+                  : undefined,
+              }),
               limits.toolTimeoutMs,
               `local tool ${use.name} timed out`
             );

@@ -54,6 +54,7 @@ export default async function CodeProjectPage({
       variant="code"
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
       readme={view.code.readme}
+      usage={view.code.usage}
       aside={<RepoTree key="tree" tenantId={tenant.id} projectId={projectId} />}
       before={
         <CodeSections
