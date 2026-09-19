@@ -9,7 +9,12 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { listChatConnectors } from '@/lib/chat/tool-surface';
-import { CHAT_CORE_CONNECTORS, parseToolConfig, toolConfigJson } from '@/lib/chat/tool-config';
+import {
+  CHAT_CORE_CONNECTORS,
+  CODE_PROJECT_DEFAULT_CONNECTORS,
+  parseToolConfig,
+  toolConfigJson,
+} from '@/lib/chat/tool-config';
 import { getDefaultChatTools, setDefaultChatTools } from '@/lib/chat/tool-prefs';
 
 export async function GET(
@@ -27,6 +32,8 @@ export async function GET(
   return NextResponse.json({
     connectors,
     core: CHAT_CORE_CONNECTORS,
+    // Where a code project's chat starts instead — never the personal default.
+    codeDefault: CODE_PROJECT_DEFAULT_CONNECTORS,
     userDefault: userDefault ? toolConfigJson(userDefault) : null,
   });
 }

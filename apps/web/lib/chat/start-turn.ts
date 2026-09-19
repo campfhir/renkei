@@ -42,7 +42,7 @@ import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
 import { buildHistory, buildSystemPrompt } from './request-builder';
-import { effectiveToolConfig, projectToolConfig } from './tool-config';
+import { CODE_PROJECT_EAGER_TOOLS, effectiveToolConfig, projectToolConfig } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { getChatToolPermissionPrefs } from './permission-prefs';
 import { resolveChatToolSurface } from './tool-surface';
@@ -339,17 +339,25 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const project = input.chat.projectId
       ? await getProjectRow(db, input.tenantId, input.chat.projectId)
       : null;
+    const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
     // Only consulted when neither the chat nor the project has its own
-    // toolset, so a cache miss here never costs a chat that already has one.
+    // toolset, so a cache miss here never costs a chat that already has
+    // one — and never for a code project's chat, which starts from the
+    // code default rather than the person's (tool-config.ts).
     const userDefault =
-      input.chat.toolConfig || project?.toolConfig
+      input.chat.toolConfig || project?.toolConfig || defaultsKind === 'code'
         ? null
         : await getDefaultChatTools(input.tenantId, input.session.subject);
     // A code project's chats always carry the Bitbucket connector on top
     // of whatever was chosen (tool-config.ts): the code_* tools push, the
     // connector's tools open the pull request.
     const toolConfig = projectToolConfig(
-      effectiveToolConfig(input.chat.toolConfig, project?.toolConfig ?? null, userDefault),
+      effectiveToolConfig(
+        input.chat.toolConfig,
+        project?.toolConfig ?? null,
+        userDefault,
+        defaultsKind
+      ),
       project?.kind
     );
     // A code project's turn is a working session with far higher limits
@@ -375,6 +383,9 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       config: toolConfig,
       ttlSeconds: Math.ceil((wallClockMs + permissionWaitMs) / 1000) + 15 * 60,
       excluded: denied,
+      // A code chat is told to open the pull request by name: those tools
+      // are offered up front rather than behind find_tools.
+      ...(defaultsKind === 'code' ? { eager: { tools: CODE_PROJECT_EAGER_TOOLS } } : {}),
     });
     release = surface.release;
 

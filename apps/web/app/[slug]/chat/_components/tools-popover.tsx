@@ -1,8 +1,10 @@
 'use client';
 
 /**
- * Which connectors this chat may use. The core set is on when nothing
- * has been chosen; toggling anything pins an explicit list on the chat.
+ * Which connectors this chat may use. The default for the chat's kind is
+ * on when nothing has been chosen — the core set, or the person's saved
+ * default, in an ordinary chat; the code default in a code project's
+ * chat — and toggling anything pins an explicit list on the chat.
  * The list comes from the person's own catalog, so a connector they have
  * not linked never appears here — except one the chat's project requires
  * (`locked`, e.g. Bitbucket in a code project), which is shown checked
@@ -42,9 +44,12 @@ export default function ToolsPopover({
    * moment a box here is toggled), not a stand-in for that personal
    * default, and letting this popover write the user-level preference from
    * inside a project's settings reads as "set this project's default" when
-   * it is actually changing something else entirely.
+   * it is actually changing something else entirely. 'code' is a code
+   * project's chat: it starts from the code default rather than the
+   * personal one (tool-config.ts), so the personal-default actions would
+   * change nothing here and are not offered; a note says where it starts.
    */
-  context?: 'chat' | 'project';
+  context?: 'chat' | 'project' | 'code';
   /** Only used in project context, to link out to where the personal default lives. */
   slug?: string;
   /**
@@ -58,6 +63,7 @@ export default function ToolsPopover({
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<ConnectorOption[] | null>(null);
   const [core, setCore] = useState<string[]>([]);
+  const [codeDefault, setCodeDefault] = useState<string[]>([]);
   const [userDefault, setUserDefault] = useState<string[] | null>(null);
   const [savingDefault, setSavingDefault] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -69,6 +75,7 @@ export default function ToolsPopover({
       if (result.data) {
         setOptions(result.data.connectors);
         setCore(result.data.core);
+        setCodeDefault(result.data.codeDefault ?? []);
         setUserDefault(result.data.userDefault?.connectors ?? null);
       } else {
         setOptions([]);
@@ -77,7 +84,8 @@ export default function ToolsPopover({
   }, [open, options, tenantId]);
 
   const lockedKeys = locked ?? [];
-  const effective = new Set([...(selected ?? userDefault ?? core), ...lockedKeys]);
+  const fallback = context === 'code' ? codeDefault : (userDefault ?? core);
+  const effective = new Set([...(selected ?? fallback), ...lockedKeys]);
   const count = selected ? selected.length : null;
   // A required connector the person has not linked: nothing in the catalog
   // for it, so no row below would mention it — and it is the one the chat
@@ -105,7 +113,9 @@ export default function ToolsPopover({
           <p className="mb-1 px-1 text-xs text-gray-500">
             {context === 'project'
               ? 'Connectors chats in this project start with, unless a chat picks its own.'
-              : 'Connectors the assistant may use in this chat.'}
+              : context === 'code'
+                ? 'Connectors the assistant may use in this chat. A code project’s chat starts from the code default: the repository, the tracker, the wiki, knowledge and the sandbox.'
+                : 'Connectors the assistant may use in this chat.'}
           </p>
           {options === null ? (
             <LoadingLine size="xs" className="px-1" label="Loading connectors…" />

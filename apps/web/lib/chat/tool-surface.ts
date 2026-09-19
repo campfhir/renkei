@@ -13,14 +13,16 @@
  * nothing in particular costs no token row.
  *
  * The result is split in two rather than handed over whole. `tools` (the
- * CORE connectors plus the always-on set) is small and offered up front on
- * every turn. Everything else the person turned on — a chat can have a
- * dozen connectors enabled at once — becomes `discoverable`: schemas the
- * model never sees until it asks for them (tool-discovery.ts's find_tools),
- * because handing every enabled connector's full tool list to the model on
- * every turn both bloats the prompt and, on providers with a hard cap on
- * the tools array (OpenAI's chat-completions dialect: 128), can overflow it
- * outright once enough connectors are on.
+ * CORE connectors plus the always-on set — and, in a code project's chat,
+ * the pull-request and pipeline tools named in CODE_PROJECT_EAGER_TOOLS)
+ * is small and offered up front on every turn. Everything else the person
+ * turned on — a chat can have a dozen connectors enabled at once — becomes
+ * `discoverable`: schemas the model never sees until it asks for them
+ * (tool-discovery.ts's find_tools), because handing every enabled
+ * connector's full tool list to the model on every turn both bloats the
+ * prompt and, on providers with a hard cap on the tools array (OpenAI's
+ * chat-completions dialect: 128), can overflow it outright once enough
+ * connectors are on.
  */
 
 import type { Kysely } from 'kysely';
@@ -49,13 +51,20 @@ export interface PartitionedChatTools {
   discoverable: DiscoverableTool[];
 }
 
+/** What is offered up front beyond the core connectors: tools by name (a code chat's PR set). */
+export interface EagerExtras {
+  tools?: readonly string[];
+}
+
 export function partitionChatTools(
   catalog: ToolDescriptor[],
   mcpTools: McpToolInfo[],
-  config: ChatToolConfig
+  config: ChatToolConfig,
+  eagerExtras: EagerExtras = {}
 ): PartitionedChatTools {
   const wanted = new Set(config.connectors);
   const core = new Set(CHAT_CORE_CONNECTORS);
+  const eagerByName = new Set(eagerExtras.tools ?? []);
   const byName = new Map(mcpTools.map((tool) => [tool.name, tool]));
   const eager: LlmToolDef[] = [];
   const discoverable: DiscoverableTool[] = [];
@@ -71,7 +80,11 @@ export function partitionChatTools(
       description: live.description || descriptor.description || descriptor.title || live.name,
       inputSchema: live.inputSchema,
     };
-    if (always || (descriptor.connector !== null && core.has(descriptor.connector))) {
+    if (
+      always ||
+      eagerByName.has(descriptor.name) ||
+      (descriptor.connector !== null && core.has(descriptor.connector))
+    ) {
       eager.push(def);
     } else if (descriptor.connector !== null) {
       // Reached only when !always, which the filter above already requires
@@ -147,6 +160,8 @@ export async function resolveChatToolSurface(
      * use. The runner still refuses a call to one made from memory.
      */
     excluded?: ReadonlySet<string>;
+    /** Offered up front beyond the core connectors — see partitionChatTools. */
+    eager?: EagerExtras;
   }
 ): Promise<ChatToolSurface> {
   const catalog = await listAvailableTools(input.tenantId, input.subject, { roles: input.roles });
@@ -188,7 +203,12 @@ export async function resolveChatToolSurface(
   try {
     await mcp.initialize();
     const live = await mcp.listTools();
-    const { eager, discoverable } = partitionChatTools(candidates, live, input.config);
+    const { eager, discoverable } = partitionChatTools(
+      candidates,
+      live,
+      input.config,
+      input.eager ?? {}
+    );
     const allOffered = [...eager, ...discoverable.map((entry) => entry.def)];
     return {
       tools: eager,

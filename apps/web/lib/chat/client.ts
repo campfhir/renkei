@@ -150,6 +150,8 @@ export const chatClient = {
     getJson<{
       connectors: ConnectorOption[];
       core: string[];
+      /** Where a code project's chat starts instead of `core` or the personal default. */
+      codeDefault?: string[];
       userDefault: { connectors: string[] } | null;
     }>(`${base(tenantId)}/tools`),
 

@@ -1,6 +1,7 @@
 import { partitionChatTools, readOnlyToolNames } from './tool-surface';
 import {
   CODE_PROJECT_CONNECTORS,
+  CODE_PROJECT_DEFAULT_CONNECTORS,
   effectiveToolConfig,
   parseToolConfig,
   projectToolConfig,
@@ -69,6 +70,28 @@ describe('partitionChatTools', () => {
     expect(discoverable).toEqual([]);
   });
 
+  it('offers tools named as eager extras up front, and the rest of their connector behind find_tools', () => {
+    const { eager, discoverable } = partitionChatTools(
+      [
+        descriptor({ name: 'bitbucket_create_pull_request', connector: 'atlassian-bitbucket' }),
+        descriptor({ name: 'bitbucket_list_workspaces', connector: 'atlassian-bitbucket' }),
+        descriptor({ name: 'jira_search_issues', connector: 'jira' }),
+      ],
+      [
+        { name: 'bitbucket_create_pull_request', description: '', inputSchema: {} },
+        { name: 'bitbucket_list_workspaces', description: '', inputSchema: {} },
+        { name: 'jira_search_issues', description: '', inputSchema: {} },
+      ],
+      { connectors: ['atlassian-bitbucket', 'jira'] },
+      { tools: ['bitbucket_create_pull_request'] }
+    );
+    expect(eager.map((tool) => tool.name)).toEqual(['bitbucket_create_pull_request']);
+    expect(discoverable.map((entry) => entry.def.name)).toEqual([
+      'bitbucket_list_workspaces',
+      'jira_search_issues',
+    ]);
+  });
+
   it('keeps a core connector eager even when it is not sandbox/knowledge by name coincidence', () => {
     const { eager, discoverable } = partitionChatTools(
       [descriptor({ name: 'sandbox_run', connector: 'sandbox' })],
@@ -120,6 +143,22 @@ describe('tool config', () => {
       connectors: ['agents', 'cards', 'knowledge', 'sandbox'],
     });
   });
+
+  it('gives a code project’s chat the code default, and never the personal one', () => {
+    const personal = { connectors: ['webex'] };
+    expect(effectiveToolConfig(null, null, personal)).toEqual(personal);
+    expect(effectiveToolConfig(null, null, personal, 'code')).toEqual({
+      connectors: [...CODE_PROJECT_DEFAULT_CONNECTORS],
+    });
+    expect(CODE_PROJECT_DEFAULT_CONNECTORS).toEqual([...CODE_PROJECT_DEFAULT_CONNECTORS].sort());
+    expect(CODE_PROJECT_DEFAULT_CONNECTORS).toContain('atlassian-bitbucket');
+    expect(CODE_PROJECT_DEFAULT_CONNECTORS).toContain('jira');
+    expect(CODE_PROJECT_DEFAULT_CONNECTORS).not.toContain('agents');
+    // The chat's and the project's own choice still win.
+    expect(effectiveToolConfig(null, { connectors: ['b'] }, personal, 'code')).toEqual({
+      connectors: ['b'],
+    });
+  });
 });
 
 describe('withRequiredConnectors', () => {
@@ -141,13 +180,14 @@ describe('withRequiredConnectors', () => {
 describe('projectToolConfig', () => {
   it('always carries Bitbucket in a code project, whatever the chat chose', () => {
     expect(CODE_PROJECT_CONNECTORS).toContain('atlassian-bitbucket');
-    // The core set, when nothing was chosen.
-    expect(projectToolConfig(effectiveToolConfig(null, null), 'code').connectors).toEqual([
-      'agents',
+    // The code default, when nothing was chosen — Bitbucket already in it.
+    expect(
+      projectToolConfig(effectiveToolConfig(null, null, null, 'code'), 'code').connectors
+    ).toEqual([...CODE_PROJECT_DEFAULT_CONNECTORS]);
+    // A chat that chose without it still gets it.
+    expect(projectToolConfig({ connectors: ['jira'] }, 'code').connectors).toEqual([
       'atlassian-bitbucket',
-      'cards',
-      'knowledge',
-      'sandbox',
+      'jira',
     ]);
     // A chat that turned everything off still gets it.
     expect(projectToolConfig({ connectors: [] }, 'code').connectors).toEqual([

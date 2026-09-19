@@ -670,6 +670,7 @@ export default function ChatThread({
                 onChange={changeConnectors}
                 slug={slug}
                 locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+                context={codeProjectId ? 'code' : 'chat'}
               />
             ) : null}
             <OverflowMenu items={overflow} />
@@ -685,6 +686,7 @@ export default function ChatThread({
                   onChange={changeConnectors}
                   slug={slug}
                   locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+                  context={codeProjectId ? 'code' : 'chat'}
                 />
                 <button
                   type="button"
