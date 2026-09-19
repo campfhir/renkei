@@ -380,7 +380,29 @@ export function buildHistory(
     }
   }
   // A conversation must open with the person, and the model answers a
-  // person: leading assistant rows (from a deleted first prompt) go.
-  while (out.length > 0 && out[0].role === 'assistant') out.shift();
+  // person: leading assistant rows (from a deleted first prompt, or the
+  // row just past a compaction boundary) go. A tool_result at the head
+  // then answers a call that is no longer sent — the assistant row that
+  // made it was folded into the summary or shifted off here — and every
+  // provider rejects a result with no call before it (the OpenAI dialect
+  // as a leading `tool` message, Anthropic as an unmatched tool_result).
+  // So the head is settled as a whole: shift assistants, strip orphaned
+  // results, and go again until the first message is the person's own.
+  for (;;) {
+    const first = out[0];
+    if (!first) break;
+    if (first.role === 'assistant') {
+      out.shift();
+      continue;
+    }
+    const kept = first.content.filter((block) => block.type !== 'tool_result');
+    if (kept.length === first.content.length) break;
+    if (kept.length === 0) {
+      out.shift();
+      continue;
+    }
+    first.content = kept;
+    break;
+  }
   return out;
 }

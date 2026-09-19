@@ -413,9 +413,25 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
             channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
         if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id);
+        // The pass's own end, so the thread's card does not take a reply
+        // that fails later for a fold that did not.
+        channel.emit({
+          type: 'compaction_progress',
+          turnId: input.turnId,
+          foldedSoFar: compacted?.foldedCount ?? 0,
+          totalToFold: compacted?.foldedCount ?? 0,
+          status: 'done',
+        });
       } catch (error) {
         log('chat auto-compaction failed: {message}', {
           message: error instanceof Error ? error.message : String(error),
+        });
+        channel.emit({
+          type: 'compaction_progress',
+          turnId: input.turnId,
+          foldedSoFar: 0,
+          totalToFold: 0,
+          status: 'failed',
         });
       }
     }

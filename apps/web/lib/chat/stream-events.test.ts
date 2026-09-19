@@ -386,3 +386,60 @@ describe('subagent_progress', () => {
     expect(state.subagents).toEqual({});
   });
 });
+
+describe('compaction_progress with a status of its own', () => {
+  const turn = {
+    id: 't1',
+    status: 'running' as const,
+    kind: 'reply' as const,
+    error: null,
+    startedAt: new Date(0).toISOString(),
+    finishedAt: null,
+  };
+
+  it('keeps a pass that said it was done, even when the reply then fails', () => {
+    let state = initialThreadState([], turn);
+    state = applyStreamEvent(state, {
+      type: 'compaction_progress',
+      turnId: 't1',
+      foldedSoFar: 40,
+      totalToFold: 40,
+    });
+    state = applyStreamEvent(state, {
+      type: 'compaction_progress',
+      turnId: 't1',
+      foldedSoFar: 40,
+      totalToFold: 40,
+      status: 'done',
+    });
+    state = applyStreamEvent(state, {
+      type: 'turn_end',
+      turnId: 't1',
+      status: 'failed',
+      error: 'The model rejected the request.',
+    });
+    expect(state.compaction).toEqual({
+      turnId: 't1',
+      status: 'done',
+      foldedSoFar: 40,
+      totalToFold: 40,
+    });
+  });
+
+  it('lets a pass still running take the turn’s outcome', () => {
+    let state = initialThreadState([], turn);
+    state = applyStreamEvent(state, {
+      type: 'compaction_progress',
+      turnId: 't1',
+      foldedSoFar: 10,
+      totalToFold: 40,
+    });
+    state = applyStreamEvent(state, {
+      type: 'turn_end',
+      turnId: 't1',
+      status: 'failed',
+      error: 'x',
+    });
+    expect(state.compaction?.status).toBe('failed');
+  });
+});

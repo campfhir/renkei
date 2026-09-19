@@ -85,7 +85,19 @@ export type ChatStreamEvent =
    * chat_compact tool running inside an ordinary reply turn alike, so
    * either way the thread can show it live.
    */
-  | { type: 'compaction_progress'; turnId: string; foldedSoFar: number; totalToFold: number }
+  | {
+      type: 'compaction_progress';
+      turnId: string;
+      foldedSoFar: number;
+      totalToFold: number;
+      /**
+       * The pass's own end, when it runs inside a reply turn (start-turn.ts):
+       * 'done' once the summary is written, 'failed' when it threw. Without
+       * it the card could only read the pass's fate off the turn's — and a
+       * reply that fails AFTER a successful fold would say the fold failed.
+       */
+      status?: 'done' | 'failed';
+    }
   /**
    * A sub-agent (code_delegate) reporting how far it is — raised at its
    * start, after every model call, and at its end — keyed by the
@@ -286,7 +298,7 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         ...state,
         compaction: {
           turnId: event.turnId,
-          status: 'running',
+          status: event.status ?? 'running',
           foldedSoFar: event.foldedSoFar,
           totalToFold: event.totalToFold,
         },
@@ -339,8 +351,12 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         ...state,
         pendingToolCalls: [],
         pendingPermission: null,
+        // A pass that already said how it ended keeps its word; one still
+        // running when the turn ends takes the turn's outcome.
         compaction:
-          state.compaction && state.compaction.turnId === event.turnId
+          state.compaction &&
+          state.compaction.turnId === event.turnId &&
+          state.compaction.status === 'running'
             ? { ...state.compaction, status: event.status === 'completed' ? 'done' : 'failed' }
             : state.compaction,
         turn: state.turn

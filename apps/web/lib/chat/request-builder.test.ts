@@ -146,6 +146,78 @@ describe('buildHistory', () => {
     expect(history).toEqual([]);
   });
 
+  it('settles the head after a compaction boundary: no leading assistant, no orphaned tool result', () => {
+    // The fold cut between an assistant's tool calls (now in the summary)
+    // and their results: the first unfolded rows are the results, a text
+    // reply, and only then the person's next prompt. Sent as they are,
+    // the request opens with a tool result answering no call — the 400
+    // the OpenAI dialect gives as "role 'tool' must be a response to a
+    // preceding message with 'tool_calls'".
+    const history = buildHistory(
+      [
+        row({
+          seq: 1,
+          role: 'assistant',
+          summaryId: 'sum',
+          blocks: [{ type: 'tool_use', id: 't1', name: 'code_read_file', input: {} }],
+        }),
+        row({
+          seq: 2,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: 't1', content: 'file text' }],
+        }),
+        row({ seq: 3, role: 'assistant', blocks: [{ type: 'text', text: 'I read it.' }] }),
+        row({ seq: 4, role: 'user', blocks: [{ type: 'text', text: 'now change it' }] }),
+        row({
+          seq: 5,
+          role: 'assistant',
+          blocks: [{ type: 'tool_use', id: 't2', name: 'code_edit_file', input: {} }],
+        }),
+        row({
+          seq: 6,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: 't2', content: 'edited' }],
+        }),
+      ],
+      target,
+      null
+    );
+    expect(history.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(history[0].content).toEqual([{ type: 'text', text: 'now change it' }]);
+    expect(history[2].content).toEqual([
+      { type: 'tool_result', toolUseId: 't2', content: 'edited' },
+    ]);
+  });
+
+  it('keeps the person’s text when only the tool results beside it are orphaned', () => {
+    const history = buildHistory(
+      [
+        row({
+          seq: 1,
+          role: 'assistant',
+          summaryId: 'sum',
+          blocks: [{ type: 'tool_use', id: 't1', name: 'x', input: {} }],
+        }),
+        row({
+          seq: 2,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: 't1', content: 'r' }],
+        }),
+        row({ seq: 3, role: 'user', blocks: [{ type: 'text', text: 'hello again' }] }),
+        row({ seq: 4, role: 'assistant', blocks: [{ type: 'text', text: 'hi' }] }),
+      ],
+      target,
+      null
+    );
+    expect(history).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'hello again' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+    ]);
+  });
+
   it('excludes messages folded into a compaction summary', () => {
     const history = buildHistory(
       [

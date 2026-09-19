@@ -144,11 +144,33 @@ function unfoldedOf(messages: StoredMessage[]): StoredMessage[] {
     .sort((a, b) => a.seq - b.seq);
 }
 
-/** The oldest messages outside the keep-recent window — this pass's fold set. */
-function foldCandidates(unfolded: StoredMessage[]): StoredMessage[] {
+/**
+ * The oldest messages outside the keep-recent window — this pass's fold
+ * set. Never cut between a call and its results: a boundary that leaves
+ * an assistant row's tool_use folded and the tool_results row after it
+ * unfolded hands the next request a result with no call before it, which
+ * every provider rejects (request-builder.ts settles the head defensively
+ * too; this keeps the boundary clean at the source). The fold set grows
+ * by the results row instead, at the cost of one row of the recent window.
+ */
+export function foldCandidates(unfolded: StoredMessage[]): StoredMessage[] {
   const foldable = unfolded.length - CHAT_COMPACT_KEEP_RECENT;
   if (foldable < CHAT_COMPACT_MIN_FOLD) return [];
-  return unfolded.slice(0, Math.min(foldable, CHAT_COMPACT_MAX_FOLD_MESSAGES));
+  let end = Math.min(foldable, CHAT_COMPACT_MAX_FOLD_MESSAGES);
+  while (end < unfolded.length && endsMidRound(unfolded, end)) end += 1;
+  return unfolded.slice(0, end);
+}
+
+/** The row before `end` made tool calls, and the row at `end` carries their results. */
+function endsMidRound(unfolded: StoredMessage[], end: number): boolean {
+  const last = unfolded[end - 1];
+  const next = unfolded[end];
+  if (!last || !next || last.role !== 'assistant' || next.role !== 'user') return false;
+  const calls = new Set(
+    last.blocks.flatMap((block) => (block.type === 'tool_use' ? [block.id] : []))
+  );
+  if (calls.size === 0) return false;
+  return next.blocks.some((block) => block.type === 'tool_result' && calls.has(block.toolUseId));
 }
 
 /** Whether a turn about to build its history should compact first. */
