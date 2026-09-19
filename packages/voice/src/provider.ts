@@ -38,6 +38,12 @@ export interface SynthesisResult {
   contentType: string;
   /** The encoded audio, streamed as the vendor hands it over. */
   body: ReadableStream<Uint8Array>;
+  /**
+   * The encoding's constant bitrate, when it has one: what turns the
+   * bytes streamed into seconds of audio for the usage ledger without
+   * decoding. Absent for a variable-rate encoding.
+   */
+  bitrateKbps?: number;
 }
 
 export interface TranscriptionRequest {

@@ -35,6 +35,8 @@ import {
 /** MP3 at 24 kHz: every browser plays it, and a sentence is a few KB. */
 export const AZURE_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
 export const AZURE_OUTPUT_CONTENT_TYPE = 'audio/mpeg';
+/** The format above is constant-rate: 48 kbit of MP3 is one second of audio. */
+export const AZURE_OUTPUT_BITRATE_KBPS = 48;
 
 /** Azure's own ceiling on the short-audio recognition endpoint. */
 export const AZURE_MAX_UTTERANCE_SECONDS = 60;
@@ -263,6 +265,7 @@ export class AzureSpeechProvider implements VoiceProvider {
         val: {
           contentType: AZURE_OUTPUT_CONTENT_TYPE,
           body: untilDrained(response.body, timeout.clear),
+          bitrateKbps: AZURE_OUTPUT_BITRATE_KBPS,
         },
       };
     } catch (error) {

@@ -1172,6 +1172,19 @@ export interface UserPreferences {
   value: Json;
 }
 
+export interface VoiceUsage {
+  audio_ms: Generated<number>;
+  characters: Generated<number>;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  kind: string;
+  locale: string | null;
+  provider: string | null;
+  subject: string;
+  tenant_id: string;
+  voice: string | null;
+}
+
 export interface WebexDirtyWindows {
   day: string;
   marked_at: Generated<Timestamp>;
@@ -1290,6 +1303,7 @@ export interface DB {
   tool_calls: ToolCalls;
   upload_slots: UploadSlots;
   user_preferences: UserPreferences;
+  voice_usage: VoiceUsage;
   webex_dirty_windows: WebexDirtyWindows;
   webex_sent_messages: WebexSentMessages;
   webhook_subscriptions: WebhookSubscriptions;

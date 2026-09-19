@@ -420,7 +420,33 @@ test('my usage — surface breakdown and efficiency', async ({ page }, testInfo)
   await shot(page, testInfo, 'my-usage-surface-and-efficiency');
 });
 
+test('my usage — voice card', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/utilization`);
+  await expect(page.getByRole('heading', { name: 'My usage' })).toBeVisible();
+  const voice = page.getByRole('heading', { name: 'Voice', exact: true });
+  await expect(voice).toBeVisible();
+  await expect(page.getByText('Read aloud', { exact: true })).toBeVisible();
+  await expect(page.getByText('Spoken', { exact: true })).toBeVisible();
+  await voice.scrollIntoViewIfNeeded();
+  await shot(page, testInfo, 'my-usage-voice', { fullPage: false });
+});
+
 test.describe('admin — organization usage', () => {
+  test('voice card and boards', async ({ page }, testInfo) => {
+    await page.goto(`/${E2E_SLUG}/admin/usage`);
+    await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
+    const listeners = page.getByRole('heading', { name: 'Top listeners' });
+    await expect(listeners).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Top speakers' })).toBeVisible();
+    // The seeded person listens most and the other subject talks most.
+    await expect(page.getByRole('button', { name: 'E2E Tester' }).first()).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'e2e-colleague@example.com' }).first()
+    ).toBeVisible();
+    await listeners.scrollIntoViewIfNeeded();
+    await shot(page, testInfo, 'admin-organization-usage-voice', { fullPage: false });
+  });
+
   test('overview', async ({ page }, testInfo) => {
     await page.goto(`/${E2E_SLUG}/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();

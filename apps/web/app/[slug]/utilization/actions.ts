@@ -28,6 +28,8 @@ import {
   type EfficientAgentRow,
   type OrgTokenTotals,
 } from '@/lib/usage/org-usage';
+import { getVoiceTotals, ZERO_VOICE_TOTALS, type VoiceTotals } from '@/lib/usage/voice-usage';
+import { resolveVoiceProvider } from '@/lib/voice/config';
 import { bucketUtilization, resolvePeriod, type UtilizationBucket } from './window';
 
 export interface UtilizationReport {
@@ -43,6 +45,10 @@ export interface UtilizationReport {
   surfaceTokens: OrgTokenTotals;
   /** This person's own agents, ranked by tool calls per token — no active-user rate here, there's only one person. */
   efficientAgents: EfficientAgentRow[];
+  /** Replies read to them and their own speech recognised. */
+  voice: VoiceTotals;
+  /** The org has a speech service; with none, and nothing ever used, the voice card is left out. */
+  voiceAvailable: boolean;
   error?: string;
   signedOut?: boolean;
 }
@@ -84,6 +90,8 @@ export async function getUtilizationReport(
     attention: [],
     surfaceTokens: ZERO_SURFACE_TOKENS,
     efficientAgents: [],
+    voice: ZERO_VOICE_TOTALS,
+    voiceAvailable: false,
   };
 
   const session = await getSessionFromCookies(tenantId);
@@ -100,14 +108,17 @@ export async function getUtilizationReport(
   const span = { days: period.days, endOffsetDays: 0 };
 
   try {
-    const [totals, daily, agents, attention, surfaceTokens, efficientAgents] = await Promise.all([
-      getUtilizationTotals(db, tenantId, subject, period.days, timeZone),
-      getUtilizationSeries(db, tenantId, subject, period.days, timeZone),
-      getAgentUtilization(db, tenantId, subject, period.days, timeZone),
-      getFailureSignatures(db, tenantId, subject, period.days, timeZone),
-      getSurfaceTokenTotals(db, tenantId, span, timeZone, subject),
-      getMostEfficientAgents(db, tenantId, span, timeZone, 10, 3, subject),
-    ]);
+    const [totals, daily, agents, attention, surfaceTokens, efficientAgents, voice, voiceProvider] =
+      await Promise.all([
+        getUtilizationTotals(db, tenantId, subject, period.days, timeZone),
+        getUtilizationSeries(db, tenantId, subject, period.days, timeZone),
+        getAgentUtilization(db, tenantId, subject, period.days, timeZone),
+        getFailureSignatures(db, tenantId, subject, period.days, timeZone),
+        getSurfaceTokenTotals(db, tenantId, span, timeZone, subject),
+        getMostEfficientAgents(db, tenantId, span, timeZone, 10, 3, subject),
+        getVoiceTotals(db, tenantId, span, timeZone, subject),
+        resolveVoiceProvider(tenantId),
+      ]);
     return {
       periodKey: period.key,
       days: period.days,
@@ -118,6 +129,8 @@ export async function getUtilizationReport(
       attention,
       surfaceTokens,
       efficientAgents,
+      voice,
+      voiceAvailable: voiceProvider !== null,
     };
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };

@@ -1172,6 +1172,25 @@ export async function seed(client: Client): Promise<void> {
     [E2E_TENANT_ID, AGENT_RICH_ID, E2E_SUBJECT, AGENT_PLAIN_ID]
   );
 
+  // Voice-ledger rows behind the Voice card and the listener/speaker
+  // boards: this person is read to a lot and talks a little, the other
+  // subject the reverse, so the two boards rank them differently. Same
+  // day spread as the run log. (Cleanup rides the tenant delete's cascade.)
+  await client.query(
+    `INSERT INTO voice_usage (tenant_id, subject, kind, characters, audio_ms, provider, voice, locale, created_at)
+     SELECT $1, person.subject, piece.kind,
+            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen ELSE 0 END,
+            CASE WHEN piece.kind = 'speech' THEN piece.amount * person.listen * 65
+                 ELSE piece.amount * person.talk END,
+            'azure-speech', CASE WHEN piece.kind = 'speech' THEN 'en-GB-SoniaNeural' END, 'en-GB',
+            NOW() - make_interval(days => spread.days_ago, mins => n)
+     FROM (VALUES (0, 3), (1, 2), (2, 4), (12, 6), (70, 9), (320, 20)) AS spread(days_ago, runs)
+     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n
+     CROSS JOIN (VALUES ('speech', 420), ('transcription', 6500)) AS piece(kind, amount)
+     CROSS JOIN (VALUES ($2, 3, 1), ($3, 1, 4)) AS person(subject, listen, talk)`,
+    [E2E_TENANT_ID, E2E_SUBJECT, 'e2e-colleague@example.com']
+  );
+
   // Connectors the org has switched on. Without these the connectors page
   // renders a single card and its grid cannot be judged at all — the layout
   // only has a shape once there is more than one thing in it.
