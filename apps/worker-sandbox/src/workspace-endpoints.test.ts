@@ -391,7 +391,16 @@ describe('git-show', () => {
     // worker runs as root; git then refuses the test's own commands as
     // another user's repository unless told the directory is safe.
     git('-c', `safe.directory=${dir}`, 'add', 'tracked.txt');
-    git('-c', `safe.directory=${dir}`, 'commit', '-q', '-m', 'change two lines');
+    git(
+      '-c',
+      `safe.directory=${dir}`,
+      'commit',
+      '-q',
+      '-m',
+      'change two lines',
+      '-m',
+      'Because the old ones no longer matched the fixture.'
+    );
     const sha = git('-c', `safe.directory=${dir}`, 'rev-parse', 'HEAD');
     const identity = identityFor(TARGET);
     if (identity) {
@@ -410,6 +419,7 @@ describe('git-show', () => {
         sha,
         shortSha: sha.slice(0, 7),
         subject: 'change two lines',
+        body: 'Because the old ones no longer matched the fixture.',
         author: 'Ada',
       })
     );
