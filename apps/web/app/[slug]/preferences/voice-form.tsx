@@ -130,6 +130,22 @@ export default function VoiceForm({
         />
         Read every reply aloud as it arrives
       </label>
+      <label className="mt-2 flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={prefs.pushToTalk}
+          onChange={(event) => change({ ...prefs, pushToTalk: event.target.checked })}
+        />
+        <span>
+          <span className="block">Press to talk in a voice conversation</span>
+          <span className="block text-xs text-gray-500 dark:text-gray-400">
+            Like a walkie-talkie: press Talk, speak, press Done. Nothing is sent while you pause to
+            think, and ten seconds of silence ends a recording. Off, the microphone sends what you
+            said once you pause.
+          </span>
+        </span>
+      </label>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm">

@@ -12,6 +12,13 @@
  * mid-sentence: the thread silences the voice and cancels the turn on that
  * signal, and sends the utterance when it closes.
  *
+ * In `manual` mode (the walkie-talkie preference) the detector decides
+ * nothing: `beginTake()` opens an utterance and `endTake()` closes it, so
+ * a pause to think is never mistaken for the end of a sentence. The only
+ * things that close a take unasked are a long silence — ten seconds with
+ * nothing said, the person having walked away or forgotten the button —
+ * and the length cap the transcription route accepts.
+ *
  * Echo cancellation is asked of the browser so the assistant's own voice
  * from the speakers is not heard as the person talking; on a device that
  * cannot cancel it, `holdWhileSpeaking` raises the bar while the assistant
@@ -27,12 +34,26 @@ export interface RecorderOptions {
    * playback while the microphone is open (lib/voice/device-settings.ts).
    */
   echoCancellation?: boolean;
+  /**
+   * `auto` (default): an utterance starts and ends by loudness. `manual`:
+   * it starts with `beginTake()` and ends with `endTake()`.
+   */
+  mode?: RecorderMode;
   onSpeechStart: () => void;
   onUtterance: (wav: ArrayBuffer, durationMs: number) => void;
+  /**
+   * The utterance closed, however it closed — sent, or too short to be
+   * worth sending; in manual mode, by the button, by silence, or by the
+   * cap. What a Talk button needs to show itself released.
+   */
+  onSpeechEnd?: (reason: SpeechEndReason) => void;
   /** Loudness, 0–1, for a level meter; called often. */
   onLevel?: (level: number) => void;
   onError: (message: string) => void;
 }
+
+export type RecorderMode = 'auto' | 'manual';
+export type SpeechEndReason = 'pause' | 'ended' | 'silence' | 'length';
 
 /** Frames this long are what the detector judges; ~50 ms at 16 kHz. */
 const FRAME_SAMPLES = 800;
@@ -40,12 +61,26 @@ const FRAME_SAMPLES = 800;
 const PRE_ROLL_FRAMES = 6;
 /** Consecutive loud frames that count as speech starting. */
 const START_FRAMES = 3;
-/** Quiet frames that close an utterance: ~800 ms of silence. */
-const END_FRAMES = 16;
-/** Shorter than this is a click or a cough, not a sentence. */
+/**
+ * Quiet frames that close an utterance: ~1.6 s of silence. Long enough
+ * that a breath, or a pause to find the next word, is not taken for the
+ * end of what the person meant to say; the reply is that much later to
+ * start, which is the trade.
+ */
+const END_FRAMES = 32;
+/** In manual mode, this much silence closes the take unasked: ten seconds. */
+const SILENCE_FLOOR_FRAMES = 200;
+/** Less sound than this in an utterance is a click or a cough, not a sentence. */
 const MIN_UTTERANCE_MS = 300;
 /** Longer than this is sent as it is, so a monologue still gets an answer. */
 const MAX_UTTERANCE_MS = 45_000;
+/**
+ * A manual take may run longer — the person chose when to stop — up to
+ * what the transcription route accepts (2 MiB of 16 kHz mono: ~65 s).
+ */
+const MAX_TAKE_MS = 60_000;
+/** Silence and length are judged per frame; frames are this long. */
+const FRAME_MS = (FRAME_SAMPLES * 1000) / TARGET_SAMPLE_RATE;
 /** The quietest "loud"; below this a room is silent whatever the floor says. */
 const MIN_THRESHOLD = 0.012;
 
@@ -60,18 +95,27 @@ export class UtteranceRecorder {
   private utterance: Float32Array[] = [];
   private loudRun = 0;
   private quietRun = 0;
+  /** Loud frames in the open utterance: what was actually said, pre-roll and pauses aside. */
+  private loudFrames = 0;
   private speaking = false;
   private noiseFloor = 0.004;
   private muted = false;
   private holding = false;
   private stopped = true;
+  private readonly manual: boolean;
 
-  constructor(private readonly options: RecorderOptions) {}
+  constructor(private readonly options: RecorderOptions) {
+    this.manual = options.mode === 'manual';
+  }
 
   /** While true, sound is ignored — a mute button, or the mic simply idle. */
   setMuted(muted: boolean): void {
     this.muted = muted;
-    if (muted) this.reset();
+    if (!muted) return;
+    const taking = this.taking;
+    this.reset();
+    // A take dropped by muting is still over; the button must show it.
+    if (taking) this.options.onSpeechEnd?.('ended');
   }
 
   /**
@@ -85,6 +129,33 @@ export class UtteranceRecorder {
 
   get active(): boolean {
     return !this.stopped;
+  }
+
+  /** In manual mode: an utterance is open, being recorded. */
+  get taking(): boolean {
+    return this.manual && this.speaking;
+  }
+
+  /**
+   * Manual mode: open an utterance now. Fires `onSpeechStart` just as a
+   * detected start would, so pressing Talk interrupts a reply the same
+   * way talking over it does.
+   */
+  beginTake(): void {
+    if (!this.manual || this.speaking) return;
+    this.speaking = true;
+    this.quietRun = 0;
+    this.loudRun = 0;
+    this.loudFrames = 0;
+    this.utterance = [...this.preRoll];
+    this.preRoll = [];
+    this.options.onSpeechStart();
+  }
+
+  /** Manual mode: close the open utterance and send it. */
+  endTake(): void {
+    if (!this.taking) return;
+    this.close(this.durationMs(), 'ended');
   }
 
   async start(): Promise<boolean> {
@@ -117,7 +188,10 @@ export class UtteranceRecorder {
     const context = new AudioContext();
     this.context = context;
     this.source = context.createMediaStreamSource(stream);
-    const onFrames = (frames: Float32Array) => this.ingest(frames, context.sampleRate);
+    const onFrames = (frames: Float32Array) => {
+      // A late block from the worklet after stop() is nothing to judge.
+      if (!this.stopped) this.ingest(frames, context.sampleRate);
+    };
     try {
       if (!context.audioWorklet) throw new Error('no worklet');
       await context.audioWorklet.addModule('/voice-capture-worklet.js');
@@ -170,12 +244,16 @@ export class UtteranceRecorder {
     this.utterance = [];
     this.loudRun = 0;
     this.quietRun = 0;
+    this.loudFrames = 0;
     this.speaking = false;
   }
 
-  /** Raw frames at the device rate → 16 kHz frames of FRAME_SAMPLES each. */
-  private ingest(frames: Float32Array, sampleRate: number): void {
-    if (this.stopped) return;
+  /**
+   * Raw frames at the device rate → 16 kHz frames of FRAME_SAMPLES each.
+   * The microphone's path in; public so the detector can be fed without
+   * one (recorder.test.ts).
+   */
+  ingest(frames: Float32Array, sampleRate: number): void {
     const resampled = resample(frames, sampleRate, TARGET_SAMPLE_RATE);
     this.pending.push(resampled);
     this.pendingLength += resampled.length;
@@ -195,23 +273,28 @@ export class UtteranceRecorder {
     if (this.muted) return;
 
     // The floor follows the quiet: fast down, slow up, so a long
-    // utterance does not teach the detector that talking is silence.
-    if (!this.speaking) {
-      this.noiseFloor =
-        level < this.noiseFloor
-          ? this.noiseFloor * 0.8 + level * 0.2
-          : this.noiseFloor * 0.98 + level * 0.02;
-    }
+    // utterance does not teach the detector that talking is silence. A
+    // frame already loud against it barely moves it — in manual mode
+    // nothing stops the floor learning while a person talks before
+    // pressing Talk, and it must not learn that their voice is the room.
     const threshold = Math.max(MIN_THRESHOLD, this.noiseFloor * 3) * (this.holding ? 2.5 : 1);
     const loud = level > threshold;
+    if (!this.speaking) {
+      const weight = level < this.noiseFloor ? 0.2 : loud ? 0.002 : 0.02;
+      this.noiseFloor = this.noiseFloor * (1 - weight) + level * weight;
+    }
 
     if (!this.speaking) {
       this.preRoll.push(frame);
       if (this.preRoll.length > PRE_ROLL_FRAMES) this.preRoll.shift();
+      // Manual mode: nothing starts on its own; the pre-roll is kept so
+      // the word already begun when the button was pressed is not lost.
+      if (this.manual) return;
       this.loudRun = loud ? this.loudRun + 1 : 0;
       if (this.loudRun >= START_FRAMES) {
         this.speaking = true;
         this.quietRun = 0;
+        this.loudFrames = this.loudRun;
         this.utterance = [...this.preRoll];
         this.preRoll = [];
         this.options.onSpeechStart();
@@ -221,17 +304,30 @@ export class UtteranceRecorder {
 
     this.utterance.push(frame);
     this.quietRun = loud ? 0 : this.quietRun + 1;
-    const durationMs = (this.utterance.length * FRAME_SAMPLES * 1000) / TARGET_SAMPLE_RATE;
-    if (this.quietRun >= END_FRAMES || durationMs >= MAX_UTTERANCE_MS) this.close(durationMs);
+    if (loud) this.loudFrames += 1;
+    const durationMs = this.durationMs();
+    if (this.manual) {
+      if (this.quietRun >= SILENCE_FLOOR_FRAMES) this.close(durationMs, 'silence');
+      else if (durationMs >= MAX_TAKE_MS) this.close(durationMs, 'length');
+      return;
+    }
+    if (this.quietRun >= END_FRAMES) this.close(durationMs, 'pause');
+    else if (durationMs >= MAX_UTTERANCE_MS) this.close(durationMs, 'length');
   }
 
-  private close(durationMs: number): void {
+  private durationMs(): number {
+    return this.utterance.length * FRAME_MS;
+  }
+
+  private close(durationMs: number, reason: SpeechEndReason): void {
     const frames = this.utterance;
-    const spokenMs = durationMs - (this.quietRun * FRAME_SAMPLES * 1000) / TARGET_SAMPLE_RATE;
+    const spokenMs = this.loudFrames * FRAME_MS;
     this.utterance = [];
     this.speaking = false;
     this.loudRun = 0;
     this.quietRun = 0;
+    this.loudFrames = 0;
+    this.options.onSpeechEnd?.(reason);
     if (spokenMs < MIN_UTTERANCE_MS) return;
     this.options.onUtterance(encodeWav(concat(frames)), Math.round(durationMs));
   }

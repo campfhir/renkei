@@ -46,6 +46,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'changed',
+        title: 'A voice conversation waits longer before it answers',
+        detail:
+          'Pausing to find the next word no longer sends what you had said so far: the microphone now waits about a second and a half of silence before it takes a sentence as finished. Dictation waits the same.',
+      },
+      {
+        kind: 'added',
+        title: 'Press to talk in a voice conversation',
+        detail:
+          'A new Voice preference makes the conversation a walkie-talkie: press Talk, say what you want, press Done — or the space bar for either — and nothing is sent while you think. Ten seconds of silence ends a recording on its own, and pressing Talk over a reply interrupts it. Off by default.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The first word of a reply is no longer cut off',
+        detail:
+          'On a Bluetooth speaker or headset, the short silence while the next sentence of a reply was fetched could send the device to sleep, and the start of the sentence was lost to it waking up. The speaker is now kept open between sentences, and for the whole of a voice conversation.',
+      },
+      {
         kind: 'fixed',
         title: 'Web search reaches chats once an admin switches it on',
         detail:

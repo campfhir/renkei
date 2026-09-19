@@ -12,6 +12,14 @@
  * `stop()` is immediate and total — the current sound stops, queued pieces
  * are dropped, in-flight fetches are abandoned — because the person
  * pressing it, or talking over it, wants silence now.
+ *
+ * Between pieces the element has nothing to play, and in that gap — the
+ * vendor's latency on the next sentence — a Bluetooth speaker or a
+ * headset hears the stream stop, powers its amplifier down, and swallows
+ * the first syllable of the next piece waking up. So while a stream is
+ * open, and for as long as voice mode asks (`hold`), a whisper of noise
+ * far below hearing is played through the same output: the channel never
+ * closes, and the next piece starts where the last one left off.
  */
 
 import { voiceClient, type SpeechRequest } from './client';
@@ -47,6 +55,11 @@ export class SpeechQueue {
   private samples: Float32Array<ArrayBuffer> | null = null;
   private levelListeners = new Set<(level: number) => void>();
   private levelFrame = 0;
+  // The keep-alive: a looped noise buffer through a near-zero gain, on
+  // while a stream is open or a holder asks. Nodes are made per hold —
+  // a buffer source plays once — and dropped when the hold ends.
+  private keepAlive: { source: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private holders = 0;
 
   constructor(
     private readonly tenantId: string,
@@ -70,6 +83,7 @@ export class SpeechQueue {
   private setState(state: SpeechQueueState): void {
     if (state === this.lastState) return;
     this.lastState = state;
+    this.updateKeepAlive();
     for (const listener of this.listeners) listener(state);
   }
 
@@ -131,11 +145,71 @@ export class SpeechQueue {
     this.levelFrame = requestAnimationFrame(tick);
   }
 
+  /**
+   * Keep the output open while nothing plays. Returns the release.
+   * Voice mode holds for as long as it is open, so the first sentence
+   * of a reply lands on a speaker that is already awake; the queue holds
+   * on its own from `begin()` to idle.
+   */
+  hold(): () => void {
+    this.holders += 1;
+    this.updateKeepAlive();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.holders -= 1;
+      this.updateKeepAlive();
+    };
+  }
+
+  private updateKeepAlive(): void {
+    const wanted = this.holders > 0 || this.lastState !== 'idle';
+    if (wanted === (this.keepAlive !== null)) return;
+    const context = this.audioContext;
+    if (!wanted) {
+      if (this.keepAlive) {
+        try {
+          this.keepAlive.source.stop();
+        } catch {
+          // Never started, or already stopped: nothing to release.
+        }
+        this.keepAlive.source.disconnect();
+        this.keepAlive.gain.disconnect();
+        this.keepAlive = null;
+      }
+      return;
+    }
+    if (!context) return;
+    try {
+      // A second of white noise, looped, at −60 dBFS: below anything a
+      // room lets a person hear, above what a device treats as silence.
+      // Noise rather than a constant so no DC reaches an amplifier.
+      const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let index = 0; index < data.length; index += 1) data[index] = Math.random() * 2 - 1;
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      const gain = context.createGain();
+      gain.gain.value = 0.001;
+      source.connect(gain);
+      gain.connect(context.destination);
+      source.start();
+      this.keepAlive = { source, gain };
+      void context.resume().catch(() => undefined);
+    } catch {
+      // No keep-alive: the gaps are as they were.
+    }
+  }
+
   /** From a click: takes the browser's permission to play sound later. */
   prime(): void {
     const audio = this.ensureAudio();
     this.ensureAnalyser();
     void this.audioContext?.resume().catch(() => undefined);
+    // A hold taken before the context existed starts now that it does.
+    this.updateKeepAlive();
     if (audio.src) return;
     // A tiny silent WAV: one sample. Playing it unlocks the element.
     audio.src =
@@ -260,6 +334,8 @@ export class SpeechQueue {
   /** Release the element; for unmount. */
   dispose(): void {
     this.stop();
+    this.holders = 0;
+    this.updateKeepAlive();
     this.listeners.clear();
     this.levelListeners.clear();
     if (this.levelFrame) cancelAnimationFrame(this.levelFrame);

@@ -140,6 +140,7 @@ export default function ChatThread({
       rate: 1,
       autoPlay: false,
       locale: null,
+      pushToTalk: false,
       accent: 'rainbow',
       userAccent: 'emerald',
     }
@@ -725,6 +726,7 @@ export default function ChatThread({
           accent={voicePrefs.accent}
           userAccent={voicePrefs.userAccent}
           echoCancellation={echoCancellation}
+          pushToTalk={voicePrefs.pushToTalk}
           replyText={lastTurn ? replyProse(state.messages, lastTurn.id) : ''}
           onSend={(text) => queueOrSend({ text, attachments: [] })}
           onInterrupt={() => void stop()}

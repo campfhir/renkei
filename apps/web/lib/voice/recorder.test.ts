@@ -1,0 +1,118 @@
+/**
+ * The timing of the detector, pinned: how long a pause must be before an
+ * utterance is sent (a breath mid-sentence must not be), what a manual
+ * take does and does not do on its own, and the ten-second silence that
+ * closes one unasked. Frames are fed straight into the detector — there
+ * is no microphone here — at the rate it judges, 50 ms each.
+ */
+
+import { UtteranceRecorder, type RecorderOptions, type SpeechEndReason } from './recorder';
+
+const FRAME = 800; // 50 ms at 16 kHz
+const SECOND = 20; // frames
+
+/** The detector without a microphone: fed frames by hand. */
+function harness(over: Partial<RecorderOptions> = {}) {
+  const starts: number[] = [];
+  const ends: SpeechEndReason[] = [];
+  const utterances: number[] = [];
+  const recorder = new UtteranceRecorder({
+    onSpeechStart: () => starts.push(1),
+    onSpeechEnd: (reason) => ends.push(reason),
+    onUtterance: (_wav, durationMs) => utterances.push(durationMs),
+    onError: () => undefined,
+    ...over,
+  });
+  const feed = (frames: number, loud: boolean) => {
+    for (let index = 0; index < frames; index += 1) {
+      const frame = new Float32Array(FRAME);
+      if (loud) for (let at = 0; at < FRAME; at += 1) frame[at] = at % 2 === 0 ? 0.3 : -0.3;
+      recorder.ingest(frame, 16_000);
+    }
+  };
+  return { recorder, feed, starts, ends, utterances };
+}
+
+describe('UtteranceRecorder (auto)', () => {
+  it('starts on a few loud frames and keeps recording through a short pause', () => {
+    const { feed, starts, ends, utterances } = harness();
+    feed(SECOND, false);
+    feed(3, true);
+    expect(starts).toHaveLength(1);
+    feed(SECOND, true);
+    // An 800 ms pause used to end the utterance; now it is a breath.
+    feed(16, false);
+    expect(ends).toHaveLength(0);
+    expect(utterances).toHaveLength(0);
+    feed(SECOND, true);
+    feed(32, false);
+    expect(ends).toEqual(['pause']);
+    expect(utterances).toHaveLength(1);
+    // Pre-roll, the speech and the closing silence are all in the take.
+    expect(utterances[0]).toBeGreaterThan(3_000);
+  });
+
+  it('drops a click: a start too short to be a sentence', () => {
+    const { feed, ends, utterances } = harness();
+    feed(SECOND, false);
+    feed(4, true);
+    feed(32, false);
+    expect(ends).toEqual(['pause']);
+    expect(utterances).toHaveLength(0);
+  });
+});
+
+describe('UtteranceRecorder (manual)', () => {
+  it('never starts on its own; Talk starts and Done sends', () => {
+    const { recorder, feed, starts, ends, utterances } = harness({ mode: 'manual' });
+    feed(SECOND, false);
+    feed(2 * SECOND, true);
+    expect(starts).toHaveLength(0);
+    expect(recorder.taking).toBe(false);
+    recorder.beginTake();
+    expect(starts).toHaveLength(1);
+    expect(recorder.taking).toBe(true);
+    feed(SECOND, true);
+    // A long pause to think is not the end of the take.
+    feed(5 * SECOND, false);
+    expect(ends).toHaveLength(0);
+    feed(SECOND, true);
+    recorder.endTake();
+    expect(recorder.taking).toBe(false);
+    expect(ends).toEqual(['ended']);
+    expect(utterances).toHaveLength(1);
+    expect(utterances[0]).toBeGreaterThanOrEqual(7_000);
+  });
+
+  it('ten seconds of silence closes a take unasked', () => {
+    const { recorder, feed, ends, utterances } = harness({ mode: 'manual' });
+    recorder.beginTake();
+    feed(SECOND, true);
+    feed(10 * SECOND - 1, false);
+    expect(ends).toHaveLength(0);
+    feed(1, false);
+    expect(ends).toEqual(['silence']);
+    expect(utterances).toHaveLength(1);
+    expect(recorder.taking).toBe(false);
+  });
+
+  it('Talk then Done at once sends nothing: there was nothing said', () => {
+    const { recorder, feed, ends, utterances } = harness({ mode: 'manual' });
+    feed(SECOND, false);
+    recorder.beginTake();
+    feed(2, true);
+    recorder.endTake();
+    expect(ends).toEqual(['ended']);
+    expect(utterances).toHaveLength(0);
+  });
+
+  it('a take dropped by muting is over, and nothing is sent', () => {
+    const { recorder, feed, ends, utterances } = harness({ mode: 'manual' });
+    recorder.beginTake();
+    feed(SECOND, true);
+    recorder.setMuted(true);
+    expect(ends).toEqual(['ended']);
+    expect(utterances).toHaveLength(0);
+    expect(recorder.taking).toBe(false);
+  });
+});
