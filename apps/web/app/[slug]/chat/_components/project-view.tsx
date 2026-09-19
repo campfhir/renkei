@@ -25,6 +25,17 @@ import ShareModal from './share-modal';
 import ToolsPopover from './tools-popover';
 import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import Markdown from './markdown';
+import { formatTokens } from '@/lib/format-tokens';
+
+/** A code project's own token spend — this component stays generic to chat/chat_project too. */
+interface ChatTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+interface ProjectTokenUsage {
+  total: ChatTokenUsage;
+  byChat: Record<string, ChatTokenUsage>;
+}
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -39,6 +50,7 @@ export default function ProjectView({
   aside = null,
   defaultInstructions = null,
   readme = null,
+  usage = null,
 }: {
   slug: string;
   tenantId: string;
@@ -66,6 +78,12 @@ export default function ProjectView({
    * the repository describes itself.
    */
   readme?: { path: string; text: string } | null;
+  /**
+   * Token spend: the project's total and each chat's own (input + output,
+   * `chat_turns` summed across every turn) — a code project's only, shown
+   * beside the chats list.
+   */
+  usage?: ProjectTokenUsage | null;
 }) {
   const router = useRouter();
   const { project, role, files, memory, chats } = initial;
@@ -199,31 +217,54 @@ export default function ProjectView({
   // The chats inside the project, each with the mark the app menu gives
   // its kind. A code project shows them right under its environment; a
   // chat project after its memory.
+  const totalTokens = usage ? usage.total.inputTokens + usage.total.outputTokens : 0;
   const chatsSection = (
     <section className={sectionClass}>
-      <h2 className="mb-2 text-sm font-semibold">Chats in this project</h2>
+      <div className="mb-2 flex items-center gap-2">
+        <h2 className="text-sm font-semibold">Chats in this project</h2>
+        {totalTokens > 0 ? (
+          <span
+            className="ml-auto text-xs text-gray-500"
+            title={`${usage!.total.inputTokens.toLocaleString('en-US')} in · ${usage!.total.outputTokens.toLocaleString('en-US')} out, across every chat`}
+          >
+            {formatTokens(totalTokens)} tokens total
+          </span>
+        ) : null}
+      </div>
       {chats.length === 0 ? (
         <p className="text-sm text-gray-500">No chats yet.</p>
       ) : (
         <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-          {chats.map((chat) => (
-            <li key={chat.id}>
-              <Link
-                href={`/${slug}/chat/${chat.id}`}
-                className="flex items-center gap-2 py-1.5 hover:underline"
-              >
-                <Icon
-                  path={variant === 'code' ? ICONS.code : ICONS.pages}
-                  className="h-4 w-4 shrink-0 text-gray-400"
-                />
-                <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
-                <span className="text-xs text-gray-500">
-                  {chat.ownerName ? `${chat.ownerName} · ` : ''}
-                  <LocalTime at={chat.updatedAt} format="date" />
-                </span>
-              </Link>
-            </li>
-          ))}
+          {chats.map((chat) => {
+            const chatSpend = usage?.byChat[chat.id];
+            const tokens = chatSpend ? chatSpend.inputTokens + chatSpend.outputTokens : 0;
+            return (
+              <li key={chat.id}>
+                <Link
+                  href={`/${slug}/chat/${chat.id}`}
+                  className="flex items-center gap-2 py-1.5 hover:underline"
+                >
+                  <Icon
+                    path={variant === 'code' ? ICONS.code : ICONS.pages}
+                    className="h-4 w-4 shrink-0 text-gray-400"
+                  />
+                  <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
+                  {tokens > 0 ? (
+                    <span
+                      className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                      title={`${chatSpend!.inputTokens.toLocaleString('en-US')} in · ${chatSpend!.outputTokens.toLocaleString('en-US')} out`}
+                    >
+                      {formatTokens(tokens)} tokens
+                    </span>
+                  ) : null}
+                  <span className="text-xs text-gray-500">
+                    {chat.ownerName ? `${chat.ownerName} · ` : ''}
+                    <LocalTime at={chat.updatedAt} format="date" />
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
