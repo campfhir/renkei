@@ -61,7 +61,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'changed',
         title: 'A Bluetooth headset keeps its stereo profile more often',
         detail:
-          'Turning off “Cancel echo on this device” now turns off the browser’s noise suppression and automatic gain as well, since any one of them makes a headset switch to its hands-free profile, and on iPhone and iPad the page tells the system it is only playing back except while the microphone is actually open. The speaker menu can also choose which microphone and, where the browser allows, which speaker this device uses.',
+          'Turning off “Cancel echo on this device” now turns off the browser’s noise suppression and automatic gain as well, since any one of them makes a headset switch to its hands-free profile, and on iPhone and iPad the page tells the system it is only playing back except while the microphone is actually open. In a voice conversation the microphone is now open only when it can be used: between Talk and Done with press-to-talk, and — with echo cancellation off — only while the assistant is neither thinking nor speaking, so the reply plays in stereo; Stop brings the microphone back at once. The speaker menu can also choose which microphone and, where the browser allows, which speaker this device uses.',
       },
       {
         kind: 'changed',
