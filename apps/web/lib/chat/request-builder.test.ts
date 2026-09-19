@@ -219,6 +219,26 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('2026-09-04T10:00:00.000Z');
   });
 
+  it('asks a voice turn to say what it is doing before each call, and only a voice turn', () => {
+    const base = {
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: false,
+      now: new Date('2026-09-04T10:00:00Z'),
+    };
+    expect(buildSystemPrompt({ ...base, voice: true })).toContain('read aloud');
+    expect(buildSystemPrompt({ ...base, voice: true })).toContain('Before each tool call');
+    expect(buildSystemPrompt(base)).not.toContain('read aloud');
+  });
+
   it('describes a code project’s repository and how to work in it', () => {
     const base = {
       personName: null,
@@ -328,7 +348,11 @@ describe('buildSystemPrompt with search_knowledge', () => {
     expect(alone).toMatch(/runs behind the live systems it indexes/);
     expect(alone).not.toMatch(/not the automatic first move/);
 
-    const withDiscovery = buildSystemPrompt({ ...base, hasKnowledge: true, hasDiscoverableTools: true });
+    const withDiscovery = buildSystemPrompt({
+      ...base,
+      hasKnowledge: true,
+      hasDiscoverableTools: true,
+    });
     expect(withDiscovery).toMatch(/runs behind the live systems it indexes/);
     expect(withDiscovery).toMatch(/use that first/);
     expect(withDiscovery).toMatch(/not the automatic first move just because it's already active/);

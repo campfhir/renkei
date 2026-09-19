@@ -53,7 +53,7 @@ export const chatClient = {
   sendTurn: (
     tenantId: string,
     chatId: string,
-    input: { text: string; attachmentIds: string[]; llmModelId?: string | null }
+    input: { text: string; attachmentIds: string[]; llmModelId?: string | null; voice?: boolean }
   ) =>
     sendJsonFull<StartedTurn & { code?: string }>(
       `${base(tenantId)}/chats/${chatId}/turns`,

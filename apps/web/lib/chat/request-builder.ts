@@ -50,6 +50,13 @@ export interface SystemPromptInput {
   /** search_knowledge is among the tools; the prompt then says when it is worth a call. */
   hasKnowledge: boolean;
   /**
+   * The turn came from a voice conversation: the reply is read aloud as
+   * it streams and the person cannot see the tool calls, so the prompt
+   * asks for a sentence before each call saying what it is doing, and
+   * for prose that reads well aloud.
+   */
+  voice?: boolean;
+  /**
    * outlook_search_users is among the tools: there is a live employee
    * directory, so the prompt says to use it — not search_knowledge or a
    * file — for who someone is. Optional so existing callers/fixtures that
@@ -141,6 +148,18 @@ const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools liste
  */
 const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. Whether to work on a new branch is your call from what the person asks: a change meant for review goes on a branch of its own, a quick fix or an experiment they want on the current branch stays there. For a change with independent parts, or an investigation that would flood this conversation, hand a self-contained task to a sub-agent with code_delegate (its own instructions, the same tools, no pushing) and read its report critically — you own the result. Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. Say what you changed and what you ran.`;
 
+/**
+ * A voice conversation has no transcript to glance at while the reply is
+ * worked out: what the model writes is read aloud as it streams, and a
+ * tool call is silence. So the model narrates — one plain sentence before
+ * each call saying what it is about to do and with what, which is more
+ * exact than anything the page could say from the tool's name ("Looking
+ * for a slot with Priya and Marcus on Thursday" rather than "searching
+ * calendar"). And prose that reads aloud: no tables, headings, lists or
+ * code unless asked, names and numbers said plainly.
+ */
+const VOICE_BRIEF = `This is a voice conversation: what you write is read aloud to the person as it streams, and they cannot see the tools you call — a call is silence to them. Before each tool call, say in one short, plain sentence what you are about to do and with what, then call it: "Looking for a slot with Priya and Marcus on Thursday afternoon", "Checking OPS-41 in Jira", "Searching the last sprint for issues that slipped". After several calls in a row, say in a sentence what you have found so far before going on. Write the reply the way you would say it: short sentences, no headings, tables, bullet lists, code or links unless asked for them, names and numbers said plainly, and a question at the end only when you need an answer.`;
+
 function fileLine(file: { id: string; filename: string; contentType: string; sizeBytes: number }) {
   return `- ${file.filename} (${file.contentType}, ${Math.round(file.sizeBytes / 1024)} KB, attachment id ${file.id})`;
 }
@@ -194,6 +213,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     sections.push(
       `Files attached to this chat (their text, when it could be extracted, is inline in the messages; read the rest with chat_read_attachment):\n${input.chatFiles.map(fileLine).join('\n')}`
     );
+  }
+  if (input.voice) {
+    sections.push(VOICE_BRIEF);
   }
   if (input.hasTools) {
     sections.push(

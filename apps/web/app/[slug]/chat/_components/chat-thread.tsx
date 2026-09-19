@@ -13,7 +13,7 @@
  * address change, no reload, nothing lost mid-reply.
  */
 
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -58,7 +58,7 @@ import { CodeChatButtons, useCodeChatTools } from '../../code/_components/code-c
 import { Counts } from '../../code/_components/diff-view';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import VoiceMenu from './voice-menu';
-import VoiceMode from './voice-mode';
+import VoiceMode, { type VoiceActivity } from './voice-mode';
 import { useMediaQuery } from '@/lib/use-media-query';
 
 interface ThreadProps {
@@ -349,6 +349,7 @@ export default function ChatThread({
         text: input.text,
         attachmentIds: input.attachments.map((attachment) => attachment.id),
         llmModelId: modelId,
+        ...(input.voice ? { voice: true } : {}),
       });
       setSending(false);
       if (started.error || !started.data) {
@@ -566,6 +567,37 @@ export default function ChatThread({
   }
   if (isOwner) overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
   const lastTurn = state.turn;
+  // For voice mode: the tool calls in flight by name, and whether the
+  // model is mid-thought with nothing said yet. Read off the messages,
+  // not the turn view: a turn started from this page has no view until a
+  // snapshot arrives, and the calls are in flight before then.
+  const voiceActivity = useMemo((): VoiceActivity[] => {
+    if (state.pendingToolCalls.length === 0) return [];
+    // Each call with what the model said just before it, if anything: a
+    // voice turn is asked to introduce its calls, and the page announces
+    // only the ones it did not.
+    const calls = new Map<string, { name: string; said: string | null }>();
+    for (const message of state.messages) {
+      let said: string | null = null;
+      for (const block of message.blocks) {
+        if (block.type === 'text' && block.text.trim()) said = block.text.trim();
+        if (block.type === 'tool_use') calls.set(block.id, { name: block.name, said });
+      }
+    }
+    return state.pendingToolCalls.map((id) => ({
+      id,
+      name: calls.get(id)?.name ?? 'tool',
+      said: calls.get(id)?.said ?? null,
+    }));
+  }, [state.messages, state.pendingToolCalls]);
+  const voiceThinking = useMemo(() => {
+    if (!running) return false;
+    const streaming = [...state.messages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.status === 'streaming');
+    const last = streaming?.blocks[streaming.blocks.length - 1];
+    return last?.type === 'thinking' || last?.type === 'redacted_thinking';
+  }, [running, state.messages]);
   const canRetry =
     isOwner &&
     !running &&
@@ -771,7 +803,14 @@ export default function ChatThread({
           microphone={microphone}
           pushToTalk={voicePrefs.pushToTalk}
           replyText={lastTurn ? replyProse(state.messages, lastTurn.id) : ''}
-          onSend={(text) => queueOrSend({ text, attachments: [] })}
+          activity={voiceActivity}
+          thinking={voiceThinking}
+          permission={
+            state.pendingPermission && running
+              ? { pending: state.pendingPermission, canDecide: isOwner, onDecide: decidePermission }
+              : null
+          }
+          onSend={(text) => queueOrSend({ text, attachments: [], voice: true })}
           onInterrupt={() => void stop()}
           onClose={() => setVoiceMode(false)}
         />
