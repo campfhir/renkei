@@ -7,17 +7,34 @@
  * at, replace by pasting a `.env`, or prune, without leaving the chat;
  * **Add files**, which puts files a person picks or drops straight into
  * the checkout, untracked, for the chat's tools to read, use and commit;
- * and **Changes**, with the checkout's uncommitted +added −deleted on
- * it, opening every diff side by side on a wide screen and stacked on a
- * narrow one, with the lines of context to taste and a button that asks
- * the chat to commit, push and open a pull request. The counts refresh
- * when a turn ends, since that is when the checkout changes.
+ * and **Changes** — everything this chat did to the repository. Its
+ * button carries the checkout's uncommitted +added −deleted and the
+ * count of commits the chat made; the panel shows the uncommitted diff
+ * first and then, newest first, each commit the chat made
+ * (lib/code/chat-commits.ts reads them off the transcript), with where
+ * it stands now — pushed, or only here; on the current branch or not —
+ * and its diff a click away (`…/diff?commit=`). Diffs open side by side
+ * on a wide screen and stacked on a narrow one, with the lines of
+ * context to taste, and a button asks the chat to commit, push and open
+ * a pull request. The counts refresh when a turn ends, since that is
+ * when the checkout changes.
  */
 
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import type { ChatMessageView } from '@/lib/chat/views';
+import { commitsInTranscript, type ChatCommit } from '@/lib/code/chat-commits';
+import LocalTime from '@/components/local-time';
 import DiffView, { Counts } from './diff-view';
 import { LoadingLine, Spinner } from '@/components/skeleton';
 
@@ -34,6 +51,20 @@ interface DiffPayload {
   files: DiffFileStat[];
   truncated: boolean;
   available: boolean;
+}
+
+/** One commit as `…/diff?commit=` answers it: the diff plus where the commit stands now. */
+interface CommitPayload extends DiffPayload {
+  commit: {
+    sha: string;
+    shortSha: string;
+    subject: string;
+    author: string;
+    date: string;
+    parents: string[];
+  } | null;
+  pushed?: boolean;
+  inHead?: boolean;
 }
 
 interface Variable {
@@ -54,9 +85,12 @@ const inputClass =
 export interface CodeChatToolsHandle {
   /** The checkout's uncommitted totals, when a checkout is there. */
   stat: { added: number; deleted: number; files: number } | null;
+  /** The commits this chat has made, oldest first, off its transcript. */
+  commits: ChatCommit[];
   openEnvironment: () => void;
   openFiles: () => void;
-  openChanges: () => void;
+  /** Open the panel — on one commit's diff when a hash is given. */
+  openChanges: (commitSha?: string) => void;
   /** The dialogs — rendered once by the caller, outside any menu that closes. */
   modals: ReactNode;
 }
@@ -73,6 +107,7 @@ export function useCodeChatTools({
   projectId,
   canEdit,
   running,
+  messages,
   onAsk,
 }: {
   tenantId: string;
@@ -81,14 +116,24 @@ export function useCodeChatTools({
   canEdit: boolean;
   /** A turn is in flight: the counts refresh when it ends. */
   running: boolean;
+  /** The thread as it stands, for the commits the chat has made. */
+  messages: ChatMessageView[];
   /** Sends a message to the chat as the person — the pull request ask. */
   onAsk: ((text: string) => Promise<boolean>) | null;
 }): CodeChatToolsHandle {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId ?? ''}`;
   const [stat, setStat] = useState<{ added: number; deleted: number; files: number } | null>(null);
-  const [changesOpen, setChangesOpen] = useState(false);
+  // Closed, or open — on the working tree, or on one commit's diff.
+  const [changes, setChanges] = useState<{ open: boolean; commit: string | null }>({
+    open: false,
+    commit: null,
+  });
   const [envOpen, setEnvOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const commits = useMemo(
+    () => (projectId ? commitsInTranscript(messages) : []),
+    [projectId, messages]
+  );
 
   const refreshStat = useCallback(async () => {
     if (!projectId) return;
@@ -115,18 +160,20 @@ export function useCodeChatTools({
 
   const modals = projectId ? (
     <>
-      {changesOpen ? (
+      {changes.open ? (
         <ChangesModal
           base={base}
+          commits={commits}
+          initialCommit={changes.commit}
           onClose={() => {
-            setChangesOpen(false);
+            setChanges({ open: false, commit: null });
             void refreshStat();
           }}
           onAsk={
             canEdit && onAsk
               ? async () => {
                   const sent = await onAsk(PULL_REQUEST_ASK);
-                  if (sent) setChangesOpen(false);
+                  if (sent) setChanges({ open: false, commit: null });
                 }
               : null
           }
@@ -147,13 +194,42 @@ export function useCodeChatTools({
     </>
   ) : null;
 
+  // Stable, so a milestone card's handler (message-list.tsx) is too.
+  const openChanges = useCallback(
+    (commitSha?: string) => setChanges({ open: true, commit: commitSha ?? null }),
+    []
+  );
+
   return {
     stat,
+    commits,
     openEnvironment: () => setEnvOpen(true),
     openFiles: () => setFilesOpen(true),
-    openChanges: () => setChangesOpen(true),
+    openChanges,
     modals,
   };
+}
+
+/** The Changes button's badge: uncommitted counts, and how many commits the chat made. */
+export function ChangesBadge({ tools }: { tools: CodeChatToolsHandle }) {
+  const uncommitted = tools.stat && tools.stat.files > 0;
+  if (!uncommitted && tools.commits.length === 0) return null;
+  return (
+    <span className="flex items-center gap-1.5">
+      {uncommitted && tools.stat ? (
+        <Counts added={tools.stat.added} deleted={tools.stat.deleted} />
+      ) : null}
+      {tools.commits.length > 0 ? (
+        <span
+          className="rounded-full bg-gray-100 px-1.5 font-mono text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+          title={`${tools.commits.length} commit${tools.commits.length === 1 ? '' : 's'} made in this chat`}
+        >
+          {tools.commits.length}
+          <Icon path={ICONS.gitCommit} className="ml-0.5 inline h-3 w-3 align-[-2px]" />
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 const buttonClass =
@@ -193,16 +269,14 @@ export function CodeChatButtons({
       ) : null}
       <button
         type="button"
-        onClick={tools.openChanges}
+        onClick={() => tools.openChanges()}
         aria-label="Changes"
-        title="Uncommitted changes in the checkout"
+        title="What this chat changed: uncommitted changes in the checkout, and the commits it made"
         className={buttonClass}
       >
         <Icon path={ICONS.diff} className="h-4 w-4" />
         <span>Changes</span>
-        {tools.stat && tools.stat.files > 0 ? (
-          <Counts added={tools.stat.added} deleted={tools.stat.deleted} />
-        ) : null}
+        <ChangesBadge tools={tools} />
       </button>
     </>
   );
@@ -362,12 +436,30 @@ function AddFilesModal({ base, onClose }: { base: string; onClose: () => void })
   );
 }
 
+function totalsOf(files: DiffFileStat[]): { added: number; deleted: number } {
+  return files.reduce(
+    (sum, file) => ({ added: sum.added + file.added, deleted: sum.deleted + file.deleted }),
+    { added: 0, deleted: 0 }
+  );
+}
+
+/**
+ * Everything the chat did to the repository: the working tree's
+ * uncommitted changes, then the commits the chat made, newest first,
+ * each with where it stands and its diff on demand. Opened on one
+ * commit, that commit's fold starts open and the list scrolls to it.
+ */
 function ChangesModal({
   base,
+  commits,
+  initialCommit,
   onClose,
   onAsk,
 }: {
   base: string;
+  commits: ChatCommit[];
+  /** A commit's hash to open on, or null for the working tree. */
+  initialCommit: string | null;
   onClose: () => void;
   onAsk: (() => Promise<void>) | null;
 }) {
@@ -375,6 +467,11 @@ function ChangesModal({
   const [payload, setPayload] = useState<DiffPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
+  const [openCommits, setOpenCommits] = useState<Set<string>>(
+    () => new Set(initialCommit ? [initialCommit] : [])
+  );
+  const [uncommittedOpen, setUncommittedOpen] = useState(initialCommit === null);
+  const focus = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -389,12 +486,20 @@ function ChangesModal({
     };
   }, [base, context]);
 
-  const totals = payload
-    ? payload.files.reduce(
-        (sum, file) => ({ added: sum.added + file.added, deleted: sum.deleted + file.deleted }),
-        { added: 0, deleted: 0 }
-      )
-    : null;
+  // Opened on a commit: bring it into view once the list is there.
+  useEffect(() => {
+    focus.current?.scrollIntoView({ block: 'start' });
+  }, []);
+
+  const totals = payload ? totalsOf(payload.files) : null;
+  const newestFirst = useMemo(() => [...commits].reverse(), [commits]);
+  const toggleCommit = (sha: string) =>
+    setOpenCommits((current) => {
+      const next = new Set(current);
+      if (next.has(sha)) next.delete(sha);
+      else next.add(sha);
+      return next;
+    });
 
   return (
     <Modal title="Changes" onClose={onClose} size="wide">
@@ -402,7 +507,7 @@ function ChangesModal({
         {payload ? (
           <span>
             {payload.available
-              ? `${payload.files.length} file${payload.files.length === 1 ? '' : 's'} changed on ${payload.branch || 'the branch'}, uncommitted`
+              ? `${payload.files.length} uncommitted file${payload.files.length === 1 ? '' : 's'} on ${payload.branch || 'the branch'} · ${commits.length} commit${commits.length === 1 ? '' : 's'} made in this chat`
               : 'The checkout is not ready.'}
           </span>
         ) : (
@@ -411,7 +516,6 @@ function ChangesModal({
             Loading…
           </span>
         )}
-        {totals ? <Counts added={totals.added} deleted={totals.deleted} /> : null}
         <label className="ml-auto flex items-center gap-1.5">
           Context
           <select
@@ -432,13 +536,70 @@ function ChangesModal({
           {error}
         </p>
       ) : null}
-      <div className="max-h-[70vh] overflow-y-auto">
-        {payload ? <DiffView diff={payload.diff} /> : null}
-        {payload?.truncated ? (
-          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-            The diff was cut short; the counts cover everything.
-          </p>
-        ) : null}
+      <div className="max-h-[70vh] space-y-3 overflow-y-auto">
+        <section>
+          <button
+            type="button"
+            onClick={() => setUncommittedOpen((open) => !open)}
+            aria-expanded={uncommittedOpen}
+            className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-900"
+          >
+            <Icon
+              path={ICONS.chevron}
+              className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${uncommittedOpen ? 'rotate-90' : ''}`}
+            />
+            <span className="flex-1">Uncommitted</span>
+            {payload && payload.available ? (
+              payload.files.length > 0 && totals ? (
+                <Counts added={totals.added} deleted={totals.deleted} />
+              ) : (
+                <span className="text-xs font-normal text-gray-500">clean</span>
+              )
+            ) : null}
+          </button>
+          {uncommittedOpen ? (
+            <div className="mt-1 pl-1">
+              {payload ? (
+                <DiffView diff={payload.diff} />
+              ) : (
+                <LoadingLine label="Reading the working tree…" />
+              )}
+              {payload?.truncated ? (
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                  The diff was cut short; the counts cover everything.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+        <section>
+          <h3 className="px-1 py-1 text-sm font-semibold">
+            Commits from this chat
+            <span className="ml-2 text-xs font-normal text-gray-500">
+              newest first · committed changes, pushed or not yet
+            </span>
+          </h3>
+          {newestFirst.length === 0 ? (
+            <p className="px-1 text-xs text-gray-500">
+              No commits yet. Ask the chat to commit, or use the button below once there are
+              changes.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {newestFirst.map((commit) => (
+                <li key={commit.toolUseId} ref={commit.sha === initialCommit ? focus : undefined}>
+                  <CommitRow
+                    base={base}
+                    commit={commit}
+                    context={context}
+                    open={openCommits.has(commit.sha)}
+                    onToggle={() => toggleCommit(commit.sha)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
       {onAsk && payload && payload.files.length > 0 ? (
         <div className="mt-3 flex items-center justify-end gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
@@ -459,6 +620,159 @@ function ChangesModal({
         </div>
       ) : null}
     </Modal>
+  );
+}
+
+/**
+ * One commit the chat made: its hash, subject and branch off the
+ * transcript, then — asked of the worker — where it stands now (pushed
+ * to origin by anyone, or only in this checkout; on the current branch's
+ * history, or not, after a switch or a re-clone) and, opened, its diff
+ * with the lines of context the panel is set to.
+ */
+function CommitRow({
+  base,
+  commit,
+  context,
+  open,
+  onToggle,
+}: {
+  base: string;
+  commit: ChatCommit;
+  context: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const [state, setState] = useState<CommitPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // The row's state (counts, pushed, on the branch) is one cheap call on
+  // mount; the diff text is fetched only while the row is open, at the
+  // context in force.
+  useEffect(() => {
+    let cancelled = false;
+    void getJson<CommitPayload>(
+      `${base}/diff?commit=${encodeURIComponent(commit.sha)}&stat=1`
+    ).then((result) => {
+      if (cancelled) return;
+      if (result.data) setState((current) => current ?? result.data ?? null);
+      else setError(result.error ?? 'The commit could not be read.');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, commit.sha]);
+  const [diff, setDiff] = useState<{ context: number; payload: CommitPayload } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    if (diff && diff.context === context) return;
+    let cancelled = false;
+    void getJson<CommitPayload>(
+      `${base}/diff?commit=${encodeURIComponent(commit.sha)}&context=${context}`
+    ).then((result) => {
+      if (cancelled) return;
+      if (result.data) {
+        setDiff({ context, payload: result.data });
+        setState(result.data);
+      } else setError(result.error ?? 'The commit could not be read.');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, context, base, commit.sha, diff]);
+
+  const known = state?.available && state.commit ? state : null;
+  const totals = known ? totalsOf(known.files) : null;
+  const pushed = known ? known.pushed === true : commit.pushedInChat;
+  const badge = (text: string, tone: string, title: string) => (
+    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${tone}`} title={title}>
+      {text}
+    </span>
+  );
+  return (
+    <div className="rounded-md border border-gray-200 dark:border-gray-800">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-900"
+      >
+        <Icon
+          path={ICONS.chevron}
+          className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+        <Icon path={ICONS.gitCommit} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+        <span className="shrink-0 font-mono text-gray-500">
+          {known?.commit?.shortSha ?? commit.sha}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {known?.commit?.subject || commit.subject || '(no subject)'}
+        </span>
+        <span className="hidden shrink-0 font-mono text-[10px] text-gray-500 sm:inline">
+          {commit.branch}
+        </span>
+        {pushed
+          ? badge(
+              'pushed',
+              'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300',
+              known
+                ? 'A branch on origin holds this commit.'
+                : 'A push in this chat carried this commit.'
+            )
+          : badge(
+              'not pushed',
+              'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
+              'Only in the checkout so far; nothing on origin has it.'
+            )}
+        {known && known.inHead === false
+          ? badge(
+              'not on branch',
+              'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+              `Not in ${known.branch || 'the current branch'}'s history — the checkout has switched branches since.`
+            )
+          : null}
+        {state && !known
+          ? badge(
+              'gone',
+              'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
+              'The checkout no longer has this commit — it was cloned again since.'
+            )
+          : null}
+        {totals ? <Counts added={totals.added} deleted={totals.deleted} /> : null}
+        <span className="hidden shrink-0 text-gray-400 sm:inline">
+          <LocalTime at={commit.at} format="datetime" />
+        </span>
+      </button>
+      {open ? (
+        <div className="border-t border-gray-200 px-2 py-2 dark:border-gray-800">
+          {error ? (
+            <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+              {error}
+            </p>
+          ) : state && !known ? (
+            <p className="text-xs text-gray-500">
+              The checkout no longer has this commit, so its diff cannot be shown.
+            </p>
+          ) : diff && diff.context === context ? (
+            <>
+              {known?.commit ? (
+                <p className="mb-2 text-xs text-gray-500">
+                  {known.commit.author ? `${known.commit.author} · ` : ''}
+                  <span className="font-mono">{known.commit.sha}</span>
+                </p>
+              ) : null}
+              <DiffView diff={diff.payload.diff} openAll />
+              {diff.payload.truncated ? (
+                <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                  The diff was cut short; the counts cover everything.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <LoadingLine label="Reading the commit…" />
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

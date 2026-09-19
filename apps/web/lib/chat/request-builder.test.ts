@@ -509,3 +509,44 @@ describe('buildSystemPrompt with user memory', () => {
     expect(inProject).not.toContain('Prefers concise answers');
   });
 });
+
+describe('buildSystemPrompt in auto mode', () => {
+  const base = {
+    personName: null,
+    orgName: null,
+    userMemoryText: null,
+    chatSummary: null,
+    chatFiles: [],
+    hasTools: true,
+    hasDiscoverableTools: false,
+    hasKnowledge: false,
+    hasSandbox: false,
+    filesAllowed: false,
+    now: new Date('2026-09-04T10:00:00Z'),
+    project: {
+      name: 'Billing',
+      instructions: null,
+      memoryText: null,
+      files: [],
+      code: {
+        repoFullName: 'acme/billing',
+        branch: 'main',
+        ready: true,
+        notReady: null,
+        envNames: [],
+      },
+    },
+  };
+
+  it('tells the model to work unattended and to end with task_complete, only when on', () => {
+    const on = buildSystemPrompt({ ...base, autoMode: true });
+    expect(on).toContain('Auto mode is on');
+    expect(on).toContain('task_complete');
+    expect(on.indexOf('code project on the repository')).toBeLessThan(
+      on.indexOf('Auto mode is on')
+    );
+    const off = buildSystemPrompt(base);
+    expect(off).not.toContain('Auto mode');
+    expect(off).not.toContain('task_complete');
+  });
+});

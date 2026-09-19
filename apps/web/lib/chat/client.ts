@@ -40,6 +40,7 @@ export const chatClient = {
       llmModelId?: string | null;
       toolConfig?: { connectors: string[] } | null;
       thinkingEnabled?: boolean;
+      autoMode?: boolean;
       archived?: boolean;
     }
   ) => sendJsonFull(`${base(tenantId)}/chats/${chatId}`, 'PATCH', patch),

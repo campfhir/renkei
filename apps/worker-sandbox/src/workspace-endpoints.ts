@@ -158,6 +158,9 @@ function targetOf(body: Body): store.WorkspaceTarget | null {
   return { tenantId, subject };
 }
 
+/** A commit named by its hash or a prefix of it — never a ref, which could name anything. */
+const COMMIT_SHA = /^[0-9a-f]{4,40}$/i;
+
 /** Git's answer for the model: both streams, bounded, scrubbed by the caller. */
 function gitText(result: RunResult): string {
   const text = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n');
@@ -783,6 +786,88 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     });
   }
 
+  /**
+   * One commit as the checkout has it: its header (sha, subject, author,
+   * date, parents), its diff against its first parent with per-file
+   * counts, and where it stands — `pushed` when any remote branch holds
+   * it, `inHead` when the current branch's history does. `commit` is a
+   * sha or its prefix, never a ref: the page asks by the hash a commit
+   * tool answered with, and a name could be made to mean anything.
+   * `statOnly` skips the text, for a list that wants counts and state.
+   */
+  async function gitShow(
+    workspace: store.StoredWorkspace,
+    env: OpenedEnv,
+    body: Body,
+    response: ServerResponse
+  ) {
+    const wanted = str(body.commit).trim();
+    if (!COMMIT_SHA.test(wanted)) {
+      return sendError(response, 400, 'bad_request', 'A commit is named by its hash.');
+    }
+    const context =
+      typeof body.context === 'number' && Number.isFinite(body.context)
+        ? Math.min(DIFF_MAX_CONTEXT, Math.max(0, Math.floor(body.context)))
+        : DIFF_DEFAULT_CONTEXT;
+    const statOnly = body.statOnly === true;
+    const input = runInputFor(workspace, env, 60_000);
+    const resolved = await runGit(input, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `${wanted}^{commit}`,
+    ]);
+    const sha = resolved.stdout.trim();
+    if (resolved.exitCode !== 0 || !sha) {
+      return sendError(response, 404, 'not_found', `No commit ${wanted} in the checkout.`);
+    }
+    const header = await runGit(input, [
+      'show',
+      '--no-patch',
+      '--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%P',
+      sha,
+    ]);
+    const [fullSha, shortSha, subject, author, date, parents] = header.stdout.trim().split('\0');
+    const numstat = await runGit(input, ['show', '--format=', '--numstat', sha, '--']);
+    const files: { path: string; added: number; deleted: number; status: string }[] = [];
+    for (const line of numstat.stdout.split('\n')) {
+      const [added, deleted, ...rest] = line.split('\t');
+      const path = rest.join('\t');
+      if (!path) continue;
+      files.push({
+        path,
+        added: added === '-' ? 0 : Number(added) || 0,
+        deleted: deleted === '-' ? 0 : Number(deleted) || 0,
+        status: 'modified',
+      });
+    }
+    const patch = statOnly
+      ? null
+      : await runGit(input, ['show', '--format=', '--no-color', `-U${context}`, sha, '--']);
+    const remote = await runGit(input, ['branch', '-r', '--contains', sha]);
+    const ancestor = await runGit(input, ['merge-base', '--is-ancestor', sha, 'HEAD']);
+    const branch = await currentBranch(workspace, env);
+    const text = patch?.stdout ?? '';
+    const truncated = text.length > DIFF_MAX_CHARS;
+    await store.touchWorkspace(db, workspace.id, { branch });
+    sendJson(response, 200, {
+      branch,
+      commit: {
+        sha: fullSha ?? sha,
+        shortSha: shortSha ?? sha.slice(0, 7),
+        subject: scrubEnv(subject ?? '', env),
+        author: scrubEnv(author ?? '', env),
+        date: date ?? '',
+        parents: (parents ?? '').split(' ').filter(Boolean),
+      },
+      pushed: remote.exitCode === 0 && remote.stdout.trim() !== '',
+      inHead: ancestor.exitCode === 0,
+      diff: scrubEnv(truncated ? text.slice(0, DIFF_MAX_CHARS) : text, env),
+      files: files.map((file) => ({ ...file, path: scrubEnv(file.path, env) })),
+      truncated,
+    });
+  }
+
   async function gitCommit(
     workspace: store.StoredWorkspace,
     env: OpenedEnv,
@@ -1040,6 +1125,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     exec,
     'git-status': gitStatus,
     'git-diff': gitDiff,
+    'git-show': gitShow,
     'git-commit': gitCommit,
     'git-push': gitPush,
     'git-pull': gitPull,

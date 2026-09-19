@@ -459,6 +459,7 @@ export interface ChatProjects {
 
 export interface Chats {
   archived_at: Timestamp | null;
+  auto_mode: Generated<boolean>;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   last_message_at: Timestamp | null;

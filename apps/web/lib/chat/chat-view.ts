@@ -74,6 +74,7 @@ export async function loadChatView(
       llmModelId: chat.llmModelId,
       toolConfig: chat.toolConfig,
       thinkingEnabled: chat.thinkingEnabled,
+      autoMode: chat.autoMode,
       ownerSubject: chat.ownerSubject,
       ownerName: owner ? (owner.display_name ?? owner.email ?? null) : null,
       role: access.role,

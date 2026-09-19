@@ -10,6 +10,15 @@
  * its result under it. The tool_results rows the runner stores are not
  * shown on their own; each result is looked up by id and shown under the
  * call that made it. A cursor marks the streaming end.
+ *
+ * Two kinds of call are NOT folded away. A milestone — a commit, a push,
+ * anything said to Bitbucket (lib/code/milestones.ts) — is lifted out of
+ * the run as a card of its own, in order, with the tool's own first line
+ * and link, so the calls a person is waiting for never hide under "12
+ * tool calls"; a commit's card opens its diff in the Changes panel. And
+ * auto mode's `task_complete` reads as the task's end. Auto mode's nudge
+ * rows (kind 'nudge', the runner telling the model to carry on) show as
+ * a small note between replies, never as the person's bubble.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -24,7 +33,15 @@ import type {
   TurnView,
 } from '@/lib/chat/views';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
+import { parseCommitResult } from '@/lib/code/chat-commits';
+import {
+  milestoneKindOf,
+  milestoneSentence,
+  milestoneSummary,
+  type MilestoneState,
+} from '@/lib/code/milestones';
 import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
+import { parseTaskCompletion, TASK_COMPLETE_TOOL } from '@/lib/chat/auto-mode';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
 import ListenButton from './listen-button';
@@ -52,6 +69,7 @@ const GIT_ICONS = {
 
 function toolIconFor(name: string): string {
   if (name === 'chat_compact') return ICONS.package;
+  if (name === TASK_COMPLETE_TOOL) return ICONS.check;
   if (name.startsWith('project_memory_') || name.startsWith('chat_memory_')) return ICONS.memory;
   const git = gitGlyphFor(name);
   if (git) return GIT_ICONS[git];
@@ -112,6 +130,12 @@ export interface PromptActions {
   onEdit: (message: ChatMessageView) => void;
 }
 
+/** What a code project's chat can do from a milestone card. */
+export interface CodeActions {
+  /** Open the Changes panel on this commit's diff. */
+  onShowCommit: (sha: string) => void;
+}
+
 /** Reading a reply aloud, when the org has a voice service. */
 export interface ReplySpeech {
   /** The turn whose reply is playing right now, if any. */
@@ -135,6 +159,7 @@ export default function MessageList({
   promptActions,
   speech = null,
   permission = null,
+  code = null,
 }: {
   tenantId: string;
   messages: ChatMessageView[];
@@ -147,6 +172,8 @@ export default function MessageList({
   speech?: ReplySpeech | null;
   /** The tool call the running turn is waiting on, shown inline in that reply. */
   permission?: PermissionPrompt | null;
+  /** In a code project's chat: what a milestone card can open. */
+  code?: CodeActions | null;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -214,6 +241,7 @@ export default function MessageList({
                 speech={speech}
                 speechKey={group.key}
                 permission={running && group.key === lastTurnKey ? permission : null}
+                code={code}
               />
             ) : null}
           </div>
@@ -268,7 +296,11 @@ type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
 type Segment =
   | { kind: 'text'; text: string }
   | { kind: 'note'; text: string }
-  | { kind: 'work'; steps: WorkStep[] };
+  | { kind: 'work'; steps: WorkStep[] }
+  /** A commit, a push, a word to Bitbucket — a card of its own, never folded. */
+  | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
+  /** Auto mode's runner-written "carry on", between two of the model's replies. */
+  | { kind: 'nudge'; text: string };
 
 type WorkStep =
   | { kind: 'thinking'; text: string }
@@ -285,7 +317,15 @@ function segment(messages: ChatMessageView[], results: Map<string, ToolResult>):
     return created;
   };
   for (const message of messages) {
-    if (message.role !== 'assistant') continue;
+    if (message.role !== 'assistant') {
+      if (message.kind === 'nudge') {
+        const text = message.blocks
+          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+          .join('\n');
+        out.push({ kind: 'nudge', text });
+      }
+      continue;
+    }
     for (const block of message.blocks) {
       switch (block.type) {
         case 'text':
@@ -297,9 +337,15 @@ function segment(messages: ChatMessageView[], results: Map<string, ToolResult>):
         case 'redacted_thinking':
           work().steps.push({ kind: 'redacted' });
           break;
-        case 'tool_use':
-          work().steps.push({ kind: 'call', block, result: results.get(block.id) ?? null });
+        case 'tool_use': {
+          const step = { kind: 'call' as const, block, result: results.get(block.id) ?? null };
+          if (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL) {
+            out.push({ kind: 'milestone', step });
+          } else {
+            work().steps.push(step);
+          }
           break;
+        }
         case 'tool_result':
           break;
         case 'document':
@@ -459,6 +505,7 @@ function Reply({
   speech,
   speechKey,
   permission,
+  code,
 }: {
   messages: ChatMessageView[];
   results: Map<string, ToolResult>;
@@ -467,6 +514,7 @@ function Reply({
   speech: ReplySpeech | null;
   speechKey: string;
   permission: PermissionPrompt | null;
+  code: CodeActions | null;
 }) {
   const segments = useMemo(() => segment(messages, results), [messages, results]);
   // The call the ask is about, for the card to show its input.
@@ -507,6 +555,32 @@ function Reply({
                 {part.text}
               </p>
             );
+          case 'nudge':
+            return <NudgeNote key={index} text={part.text} />;
+          case 'milestone': {
+            const step = part.step;
+            const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
+            const pending =
+              !step.result && !waiting && (tail || pendingToolCalls.includes(step.block.id));
+            return (
+              <MilestoneCard
+                key={index}
+                step={step}
+                state={
+                  waiting
+                    ? 'waiting'
+                    : pending
+                      ? 'pending'
+                      : step.result?.isError
+                        ? 'failed'
+                        : step.result
+                          ? 'done'
+                          : 'failed'
+                }
+                code={code}
+              />
+            );
+          }
           case 'work':
             return (
               <WorkFold
@@ -720,6 +794,170 @@ function WorkFold({
         })}
       </ol>
     </details>
+  );
+}
+
+/**
+ * Auto mode's word to carry on, between two replies: the runner wrote it
+ * in the person's place, so it reads as a note in the margin, not as a
+ * message of theirs.
+ */
+function NudgeNote({ text }: { text: string }) {
+  return (
+    <p
+      className="my-2 flex items-start gap-1.5 text-xs text-violet-700 dark:text-violet-300"
+      title={text}
+    >
+      <Icon path={ICONS.loop} className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>
+        Auto mode: the task was not marked complete, so the assistant was told to carry on.
+      </span>
+    </p>
+  );
+}
+
+/**
+ * A milestone, lifted out of the fold: a commit, a push, a pull request
+ * opened or merged, a pipeline started — or any other word to Bitbucket,
+ * more quietly. The sentence is the card's own (lib/code/milestones.ts),
+ * the headline is the tool's first line, the link the tool's own; the
+ * input and the full result fold under it. A commit's card opens its
+ * diff in the Changes panel; auto mode's task_complete reads as the end
+ * of the task, with the model's summary as its headline.
+ */
+function MilestoneCard({
+  step,
+  state,
+  code,
+}: {
+  step: Extract<WorkStep, { kind: 'call' }>;
+  state: MilestoneState;
+  code: CodeActions | null;
+}) {
+  const name = step.block.name;
+  const isTaskEnd = name === TASK_COMPLETE_TOOL;
+  const completion = isTaskEnd ? parseTaskCompletion(step.block.input) : null;
+  const kind = isTaskEnd ? 'act' : (milestoneKindOf(name) ?? 'read');
+  const resultText = step.result?.content ?? '';
+  const summary = step.result && !step.result.isError ? milestoneSummary(resultText) : null;
+  const commit =
+    name === 'code_git_commit' && step.result && !step.result.isError
+      ? parseCommitResult(resultText)
+      : null;
+  const sentence = isTaskEnd
+    ? state === 'done'
+      ? completion?.outcome === 'needs_input'
+        ? 'Needs your input'
+        : 'Task complete'
+      : state === 'failed'
+        ? 'The task could not be marked complete'
+        : 'Marking the task complete'
+    : milestoneSentence(name, state);
+  const headline = isTaskEnd
+    ? completion?.summary || null
+    : commit
+      ? `${commit.sha} ${commit.subject}`.trim()
+      : (summary?.headline ?? null);
+  const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
+  const tone =
+    state === 'failed'
+      ? 'border-red-200 bg-red-50/60 dark:border-red-900/60 dark:bg-red-950/30'
+      : state === 'waiting'
+        ? 'border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30'
+        : isTaskEnd && completion?.outcome === 'needs_input'
+          ? 'border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30'
+          : kind === 'act'
+            ? 'border-blue-200 bg-blue-50/60 dark:border-blue-900/60 dark:bg-blue-950/30'
+            : 'border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/60';
+  const iconTone =
+    state === 'failed'
+      ? 'text-red-500'
+      : state === 'pending' || state === 'waiting'
+        ? 'text-blue-500'
+        : isTaskEnd
+          ? completion?.outcome === 'needs_input'
+            ? 'text-amber-600 dark:text-amber-400'
+            : 'text-green-600 dark:text-green-400'
+          : kind === 'act'
+            ? 'text-blue-600 dark:text-blue-400'
+            : 'text-gray-400';
+  return (
+    <div
+      className={`my-2 max-w-xl rounded-lg border px-3 py-2 text-sm ${tone}`}
+      data-milestone={name}
+    >
+      <div className="flex items-start gap-2">
+        <span className={`mt-0.5 shrink-0 ${iconTone}`}>
+          <Icon path={toolIconFor(name)} className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className={`${kind === 'act' ? 'font-medium' : ''} text-gray-900 dark:text-gray-100`}>
+            <span title={name}>{sentence}</span>
+            {state === 'pending' ? <span className="chat-dots" aria-hidden="true" /> : null}
+            {commit ? (
+              <span className="ml-1.5 text-xs font-normal text-gray-500">on {commit.branch}</span>
+            ) : null}
+          </p>
+          {headline ? (
+            <p
+              className={`mt-0.5 break-words text-xs text-gray-700 dark:text-gray-300 ${commit ? 'font-mono' : ''}`}
+            >
+              {headline}
+            </p>
+          ) : null}
+          {step.result?.isError ? (
+            <p className="mt-0.5 break-words text-xs text-red-700 dark:text-red-300">
+              {resultText.split('\n').find((line) => line.trim()) ?? 'The call failed.'}
+            </p>
+          ) : null}
+          {(summary?.link || (commit && code)) && state === 'done' ? (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+              {commit && code ? (
+                <button
+                  type="button"
+                  onClick={() => code.onShowCommit(commit.sha)}
+                  className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+                >
+                  <Icon path={ICONS.diff} className="h-3.5 w-3.5" />
+                  View diff
+                </button>
+              ) : null}
+              {summary?.link ? (
+                <a
+                  href={summary.link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+                >
+                  <Icon path={ICONS.externalLink} className="h-3.5 w-3.5" />
+                  {summary.link.label}
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+          <details className="chat-fold mt-1">
+            <summary>
+              Details
+              <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
+            </summary>
+            <div className="space-y-2">
+              <div>
+                <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Input</p>
+                <pre className="chat-pre">{args}</pre>
+              </div>
+              {step.result ? (
+                <div>
+                  <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+                    {step.result.isError ? 'Error' : 'Result'}
+                  </p>
+                  <pre className="chat-pre">{step.result.content}</pre>
+                </div>
+              ) : null}
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -369,6 +369,77 @@ describe('git-diff', () => {
   });
 });
 
+describe('git-show', () => {
+  it('answers one commit by its hash: header, diff with counts, and whether it was pushed', async () => {
+    // The repository git-diff set up above, with its tracked change now committed.
+    const dir = workspaceDir(STORAGE_KEY);
+    const git = (...args: string[]) =>
+      execFileSync('git', args, {
+        cwd: dir,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Ada',
+          GIT_AUTHOR_EMAIL: 'ada@x',
+          GIT_COMMITTER_NAME: 'Ada',
+          GIT_COMMITTER_EMAIL: 'ada@x',
+        },
+        stdio: 'pipe',
+      })
+        .toString()
+        .trim();
+    // git-diff's test handed the checkout to the caller's uid where the
+    // worker runs as root; git then refuses the test's own commands as
+    // another user's repository unless told the directory is safe.
+    git('-c', `safe.directory=${dir}`, 'add', 'tracked.txt');
+    git('-c', `safe.directory=${dir}`, 'commit', '-q', '-m', 'change two lines');
+    const sha = git('-c', `safe.directory=${dir}`, 'rev-parse', 'HEAD');
+    const identity = identityFor(TARGET);
+    if (identity) {
+      execFileSync('chown', ['-R', `${identity.uid}:${identity.gid}`, dir], { stdio: 'pipe' });
+    }
+    const result = await post(enabledBase, 'workspaces/git-show', {
+      ...TARGET,
+      id: 'ws-1',
+      commit: sha.slice(0, 7),
+      context: 1,
+    });
+    expect(result.status).toBe(200);
+    expect(result.json.branch).toBe('main');
+    expect(result.json.commit).toEqual(
+      expect.objectContaining({
+        sha,
+        shortSha: sha.slice(0, 7),
+        subject: 'change two lines',
+        author: 'Ada',
+      })
+    );
+    expect(result.json.commit.parents).toHaveLength(1);
+    expect(result.json.pushed).toBe(false);
+    expect(result.json.inHead).toBe(true);
+    expect(result.json.files).toEqual([
+      { path: 'tracked.txt', added: 2, deleted: 1, status: 'modified' },
+    ]);
+    expect(result.json.diff).toContain('+++ b/tracked.txt');
+    expect(result.json.diff).toContain('-two');
+    const stat = await post(enabledBase, 'workspaces/git-show', {
+      ...TARGET,
+      id: 'ws-1',
+      commit: sha,
+      statOnly: true,
+    });
+    expect(stat.json.diff).toBe('');
+    expect(stat.json.files).toHaveLength(1);
+    expect(
+      (await post(enabledBase, 'workspaces/git-show', { ...TARGET, id: 'ws-1', commit: 'HEAD' }))
+        .status
+    ).toBe(400);
+    expect(
+      (await post(enabledBase, 'workspaces/git-show', { ...TARGET, id: 'ws-1', commit: 'abcdef0' }))
+        .status
+    ).toBe(404);
+  });
+});
+
 describe('uploading', () => {
   async function upload(query: Record<string, string>, body: Uint8Array<ArrayBuffer>) {
     const response = await fetch(

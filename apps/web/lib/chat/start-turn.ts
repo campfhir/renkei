@@ -52,6 +52,12 @@ import { openTurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
+import {
+  AUTO_MAX_CONTINUES,
+  AUTO_NUDGE_TEXT,
+  TASK_COMPLETE_TOOL,
+  taskCompleteTool,
+} from './auto-mode';
 import { readProjectMemory, renderProjectMemory } from './memory';
 import { readUserMemory, renderUserMemory } from './user-memory';
 import { notifyChatReplyDesktop } from './reply-notification';
@@ -420,12 +426,18 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       project?.kind === 'code'
         ? await codeProjectContext(db, project, { subject: input.session.subject })
         : null;
+    // Auto mode (auto-mode.ts) is a code project's way of working: its
+    // tools run unasked and the turn carries on until task_complete.
+    // Read off the chat row the turn started from, so a switch flipped
+    // mid-turn takes effect on the next Send, never halfway through.
+    const auto = project?.kind === 'code' && input.chat.autoMode && !readOnly;
     // A blocked local tool is withheld the same way a blocked connector
     // tool is: the model is never offered a verb it may not use.
     const baseLocalTools = (
       input.localTools ?? [
         ...(await chatLocalTools(db, localContext, toolConfig, filesAllowed)),
         ...(code?.tools ?? []),
+        ...(auto ? [taskCompleteTool()] : []),
       ]
     ).filter((tool) => !denied.has(tool.def.name));
     const discoveryTool = findToolsTool(surface.discoverable);
@@ -466,6 +478,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
+      autoMode: auto,
       now: new Date(),
     });
 
@@ -481,8 +494,22 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
         discoverableTools: surface.discoverable.map((entry) => entry.def),
         // Every call that acts asks first, unless this person has said
-        // "always" for that tool (permission-prefs.ts).
-        permissions: { alwaysAllowed: new Set(permissionPrefs.alwaysAllow), denied },
+        // "always" for that tool (permission-prefs.ts) — or the chat is in
+        // auto mode, where nothing asks and only a blocked tool refuses.
+        permissions: {
+          alwaysAllowed: new Set(permissionPrefs.alwaysAllow),
+          denied,
+          ...(auto ? { allowAll: true } : {}),
+        },
+        ...(auto
+          ? {
+              autoContinue: {
+                doneTool: TASK_COMPLETE_TOOL,
+                nudge: AUTO_NUDGE_TEXT,
+                maxContinues: AUTO_MAX_CONTINUES,
+              },
+            }
+          : {}),
         channel,
         store,
         log,

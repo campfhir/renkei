@@ -11,6 +11,7 @@
  */
 
 import type { LlmContentBlock, LlmMessage } from '@renkei/agent-llm';
+import { AUTO_BRIEF } from './auto-mode';
 import type { StoredMessage } from './messages';
 
 export interface SystemPromptInput {
@@ -66,6 +67,12 @@ export interface SystemPromptInput {
   hasSandbox: boolean;
   /** The org has somewhere to keep files; false means none can be made or attached. */
   filesAllowed: boolean;
+  /**
+   * Auto mode (auto-mode.ts): the turn works unattended, its tools run
+   * unasked, and the model ends the task with task_complete — the brief
+   * says so, right after the project it works in.
+   */
+  autoMode?: boolean;
   now: Date;
 }
 
@@ -204,6 +211,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
       );
     }
     sections.push(project.join('\n\n'));
+    if (input.autoMode) sections.push(AUTO_BRIEF);
   } else if (input.userMemoryText) {
     sections.push(
       `Memory (notes kept about this person across their chats, newest last):\n${input.userMemoryText}`

@@ -21,6 +21,8 @@ export interface ChatRow {
   llmModelId: string | null;
   toolConfig: ChatToolConfig | null;
   thinkingEnabled: boolean;
+  /** See ChatView.autoMode. */
+  autoMode: boolean;
   lastMessageAt: Date | null;
   archivedAt: Date | null;
   createdAt: Date;
@@ -36,6 +38,7 @@ const CHAT_COLUMNS = [
   'llm_model_id',
   'tool_config',
   'thinking_enabled',
+  'auto_mode',
   'last_message_at',
   'archived_at',
   'created_at',
@@ -54,6 +57,7 @@ type RawChat = {
   llm_model_id: string | null;
   tool_config: unknown;
   thinking_enabled: boolean;
+  auto_mode: boolean;
   last_message_at: Date | null;
   archived_at: Date | null;
   created_at: Date;
@@ -70,6 +74,7 @@ function rowOf(raw: RawChat): ChatRow {
     llmModelId: raw.llm_model_id,
     toolConfig: parseToolConfig(raw.tool_config),
     thinkingEnabled: raw.thinking_enabled,
+    autoMode: raw.auto_mode,
     lastMessageAt: raw.last_message_at,
     archivedAt: raw.archived_at,
     createdAt: raw.created_at,
@@ -185,6 +190,7 @@ export interface ChatPatch {
   llmModelId?: string | null;
   toolConfig?: ChatToolConfig | null;
   thinkingEnabled?: boolean;
+  autoMode?: boolean;
   archived?: boolean;
 }
 
@@ -205,6 +211,7 @@ export async function updateChat(
         ? { tool_config: patch.toolConfig ? toolConfigJson(patch.toolConfig) : null }
         : {}),
       ...(patch.thinkingEnabled !== undefined ? { thinking_enabled: patch.thinkingEnabled } : {}),
+      ...(patch.autoMode !== undefined ? { auto_mode: patch.autoMode } : {}),
       ...(patch.archived !== undefined
         ? { archived_at: patch.archived ? sql<Date>`NOW()` : null }
         : {}),
