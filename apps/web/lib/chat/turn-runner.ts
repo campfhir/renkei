@@ -50,6 +50,7 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { randomUUID } from 'node:crypto';
+import { secure } from '@/lib/logger';
 import type { McpClient, McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext, LocalToolSet } from './local-tools';
 import type { ChatStreamEvent } from './stream-events';
@@ -246,7 +247,14 @@ export interface TurnRunnerDeps {
   store: TurnStore;
   now?: () => number;
   limits?: Partial<TurnLimits>;
-  log?: (message: string, fields: Record<string, unknown>) => void;
+  /**
+   * `level` defaults to 'warn' (every existing call site, and the no-op
+   * default below, only ever meant that). 'debug' is for the tool-call
+   * attempt/outcome trace below — routine, not a warning, but real
+   * evidence of what the chat actually did, kept for whoever turns the
+   * log level down to answer "did it even try?" after the fact.
+   */
+  log?: (message: string, fields: Record<string, unknown>, level?: 'debug' | 'warn') => void;
 }
 
 /**
@@ -477,6 +485,14 @@ function clip(text: string, max: number): string {
     ? `${text.slice(0, max)}\n…[${text.length - max} more characters clipped]`
     : text;
 }
+
+/**
+ * How much of a tool call's arguments or result rides on a debug log line —
+ * matches the connectors' own request/response logging (mcp-tools/common.ts):
+ * a secure()-marked value past ~2KB of ciphertext falls into blob storage,
+ * which the log viewer does not decrypt on read, so this keeps it inline.
+ */
+const LOG_BODY_MAX_CHARS = 1300;
 
 function argsOf(input: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -915,7 +931,22 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             }
             break;
           }
-          case 'input_json_delta':
+          case 'input_json_delta': {
+            // Kept on the block itself, not just mirrored to the channel:
+            // if the request ends (timeout, error, cancel) before this
+            // block's own block_stop, `blocks` below is what gets
+            // persisted, and it would otherwise still be the `{}`
+            // placeholder block_start opened with — see LlmContentBlock's
+            // `partialJson` doc. A normal finish replaces the whole block
+            // from the assembled reply (below), which never carries this,
+            // so it never lingers on a call that actually completed.
+            const block = blocks[event.index];
+            if (block?.type === 'tool_use') {
+              blocks[event.index] = {
+                ...block,
+                partialJson: (block.partialJson ?? '') + event.partialJson,
+              };
+            }
             emit({
               type: 'input_json_delta',
               messageId: assistant.id,
@@ -923,6 +954,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
               partialJson: event.partialJson,
             });
             break;
+          }
           case 'block_stop':
             // The parsed input arrives with the assembled response below;
             // the view learns it there.
@@ -1071,6 +1103,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const runTool = async (use: (typeof toolUses)[number]): Promise<McpToolResult> => {
         const refusal = refused.get(use.id);
         if (refusal) {
+          log(
+            'chat tool call refused: {tool} {reason}',
+            {
+              tool: use.name,
+              toolUseId: use.id,
+              reason: refusal,
+            },
+            'debug'
+          );
           return {
             content: [
               {
@@ -1087,6 +1128,34 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             meta: {},
           };
         }
+        // A record that the call actually happened, whatever comes of it —
+        // the transcript alone cannot answer "did it even try?" once a
+        // reply is interrupted or its stored blocks lose the arguments
+        // (see the LlmContentBlock.partialJson doc); this always can, at
+        // the cost of turning the chat's own log level down to see it.
+        log(
+          'chat tool call: {tool}',
+          {
+            tool: use.name,
+            toolUseId: use.id,
+            local: deps.localTools.has(use.name),
+            input: secure(clip(JSON.stringify(use.input ?? {}), LOG_BODY_MAX_CHARS)),
+          },
+          'debug'
+        );
+        const logOutcome = (outcome: McpToolResult) => {
+          log(
+            'chat tool call outcome: {tool} {isError}',
+            {
+              tool: use.name,
+              toolUseId: use.id,
+              isError: outcome.isError === true,
+              result: secure(clip(textOfResult(outcome), LOG_BODY_MAX_CHARS)),
+            },
+            'debug'
+          );
+          return outcome;
+        };
         try {
           if (deps.localTools.has(use.name)) {
             // Unlike an MCP call, a local tool has no AbortSignal of its own —
@@ -1097,37 +1166,41 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             // turn's own default; one that runs a bounded loop of its own
             // (a sub-agent) declares a longer budget so this race does not
             // fire — and orphan it — while it is still legitimately working.
-            return await raceTimeout(
-              deps.localTools.run(use.name, use.input, {
-                ...deps.localContext,
-                toolUseId: use.id,
-                // A sub-agent (code_delegate) spends its own model calls
-                // through this sink rather than the loop above, so its
-                // usage never reaches `totals` on its own — fold it in
-                // here, once, so the turn's outcome (and chat_turns) count
-                // what delegation actually cost.
-                recordUsage: deps.localContext.recordUsage
-                  ? async (usage: LlmUsage) => {
-                      totals.inputTokens += usage.inputTokens;
-                      totals.outputTokens += usage.outputTokens;
-                      await deps.localContext.recordUsage!(usage);
-                    }
-                  : undefined,
-              }),
-              deps.localTools.timeoutMsFor(use.name) ?? limits.toolTimeoutMs,
-              `local tool ${use.name} timed out`
+            return logOutcome(
+              await raceTimeout(
+                deps.localTools.run(use.name, use.input, {
+                  ...deps.localContext,
+                  toolUseId: use.id,
+                  // A sub-agent (code_delegate) spends its own model calls
+                  // through this sink rather than the loop above, so its
+                  // usage never reaches `totals` on its own — fold it in
+                  // here, once, so the turn's outcome (and chat_turns) count
+                  // what delegation actually cost.
+                  recordUsage: deps.localContext.recordUsage
+                    ? async (usage: LlmUsage) => {
+                        totals.inputTokens += usage.inputTokens;
+                        totals.outputTokens += usage.outputTokens;
+                        await deps.localContext.recordUsage!(usage);
+                      }
+                    : undefined,
+                }),
+                deps.localTools.timeoutMsFor(use.name) ?? limits.toolTimeoutMs,
+                `local tool ${use.name} timed out`
+              )
             );
           }
           if (deps.mcp) {
-            return await deps.mcp.callTool(use.name, argsOf(use.input), limits.toolTimeoutMs);
+            return logOutcome(
+              await deps.mcp.callTool(use.name, argsOf(use.input), limits.toolTimeoutMs)
+            );
           }
-          return {
+          return logOutcome({
             content: [
               { type: 'text', text: `The tool ${use.name} is not available in this chat.` },
             ],
             isError: true,
             meta: {},
-          };
+          });
         } catch (error) {
           log('chat tool call failed: {tool} {message}', {
             tool: use.name,

@@ -1194,6 +1194,114 @@ describe('runChatTurn on a reply that said nothing', () => {
   });
 });
 
+describe('runChatTurn on a request that fails mid-argument-stream', () => {
+  it('keeps the partial JSON on the persisted block instead of a blank input', async () => {
+    // A real provider streams a tool call's arguments piece by piece
+    // (block_start with an empty `{}` placeholder, then input_json_delta
+    // chunks) before the request as a whole resolves. If the request
+    // fails or drops after the arguments finished streaming but before
+    // the provider signals the call is done, the runner must not have
+    // discarded what it already saw.
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-partial-1');
+    const droppedMidStream: LlmProvider = {
+      async complete() {
+        throw new Error('not used — this test drives stream() directly');
+      },
+      async stream(_request, options) {
+        options.onEvent({ type: 'message_start' });
+        options.onEvent({
+          type: 'block_start',
+          index: 0,
+          block: { type: 'tool_use', id: 'tu_1', name: 'agent_patch_steps', input: {} },
+        });
+        options.onEvent({ type: 'input_json_delta', index: 0, partialJson: '{"name": "Test' });
+        options.onEvent({ type: 'input_json_delta', index: 0, partialJson: 'Step"}' });
+        // The connection drops here — no block_stop, no message_end.
+        return err('network' as const);
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(droppedMidStream),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-partial-1')
+    );
+    expect(outcome.status).toBe('failed');
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows[0].blocks[0]).toEqual({
+      type: 'tool_use',
+      id: 'tu_1',
+      name: 'agent_patch_steps',
+      input: {},
+      partialJson: '{"name": "TestStep"}',
+    });
+  });
+});
+
+describe('runChatTurn logs every tool call attempt', () => {
+  it('logs the attempt and outcome at debug, whether the call ran or was refused', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-log-1');
+    const calls: string[] = [];
+    const logged: { message: string; fields: Record<string, unknown>; level?: string }[] = [];
+    const echo: LocalTool = {
+      def: { name: 'local_echo', description: 'echo', inputSchema: { type: 'object' } },
+      async execute(input) {
+        return textResult(`echo ${String(input.value)}`);
+      },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(
+          provider([
+            toolCall('jira_create_issue', { summary: 'x' }),
+            toolCall('local_echo', { value: 1 }),
+            text('Done'),
+          ])
+        ),
+        tools: [{ name: 'jira_create_issue', description: '', inputSchema: {} }],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([echo]),
+        localContext,
+        // jira_create_issue is not in readOnlyTools, so it needs asking —
+        // deny it to exercise the refused path in the same test.
+        permissions: { alwaysAllowed: new Set(), denied: new Set() },
+        readOnlyTools: new Set(['local_echo']),
+        channel,
+        store: fake.store,
+        log: (message, fields, level) => logged.push({ message, fields, level }),
+        limits: { flushMs: 5, permissionWaitMs: 10_000, permissionPollMs: 5 },
+      },
+      inputFor('turn-log-1')
+    );
+    // Deny the ask as soon as it appears.
+    await waitUntil(() => fake.asks.length === 1);
+    fake.decideOnRow('deny');
+    await run;
+    const byMessage = (needle: string) => logged.filter((row) => row.message.includes(needle));
+    const refused = byMessage('chat tool call refused');
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({ level: 'debug', fields: { tool: 'jira_create_issue' } });
+    const attempts = byMessage('chat tool call:');
+    expect(attempts.map((row) => row.fields.tool)).toEqual(['local_echo']);
+    expect(attempts[0]).toMatchObject({ level: 'debug', fields: { local: true } });
+    const outcomes = byMessage('chat tool call outcome');
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]).toMatchObject({
+      level: 'debug',
+      fields: { tool: 'local_echo', isError: false },
+    });
+  });
+});
+
 describe('runChatTurn in auto mode', () => {
   const doneTool: LocalTool = {
     def: { name: 'task_complete', description: 'done', inputSchema: { type: 'object' } },

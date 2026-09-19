@@ -58,7 +58,13 @@ export function parseBlock(value: unknown): LlmContentBlock | null {
         : null;
     case 'tool_use':
       return typeof block.id === 'string' && typeof block.name === 'string'
-        ? { type: 'tool_use', id: block.id, name: block.name, input: block.input ?? {} }
+        ? {
+            type: 'tool_use',
+            id: block.id,
+            name: block.name,
+            input: block.input ?? {},
+            ...(typeof block.partialJson === 'string' ? { partialJson: block.partialJson } : {}),
+          }
         : null;
     case 'tool_result':
       return typeof block.toolUseId === 'string' && typeof block.content === 'string'
