@@ -821,6 +821,39 @@ describe('runChatTurn', () => {
       },
     ]);
   });
+
+  it("honors a local tool's own longer timeout over the turn's default", async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-patient');
+    // The turn's own toolTimeoutMs is far too short for this tool, but the
+    // tool declares its own budget — a sub-agent's, in the real code —
+    // and the runner must race against THAT, not the turn's default, or
+    // it abandons work that was always going to finish in time.
+    const patient: LocalTool = {
+      def: { name: 'local_patient', description: 'takes a while', inputSchema: { type: 'object' } },
+      timeoutMs: 500,
+      execute: () => new Promise((resolve) => setTimeout(() => resolve(textResult('done')), 50)),
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('local_patient', {}), text('Recovered')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([patient]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, toolTimeoutMs: 10 },
+      },
+      inputFor('turn-patient')
+    );
+    expect(outcome.status).toBe('completed');
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    const results = rows.find((row) => row.kind === 'tool_results');
+    expect(results?.blocks).toEqual([
+      { type: 'tool_result', toolUseId: 'tu_local_patient', content: 'done' },
+    ]);
+  });
 });
 
 describe('runChatTurn permissions', () => {

@@ -1033,9 +1033,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           if (deps.localTools.has(use.name)) {
             // Unlike an MCP call, a local tool has no AbortSignal of its own —
             // it is an in-process await with nothing to cancel it. Race it
-            // against the same budget an MCP call gets so a local tool that
-            // never settles can't hold the turn (and its heartbeat) open
-            // forever; the orphaned call keeps running, but the loop moves on.
+            // against a budget so a local tool that never settles can't hold
+            // the turn (and its heartbeat) open forever; the orphaned call
+            // keeps running, but the loop moves on. Most tools share the
+            // turn's own default; one that runs a bounded loop of its own
+            // (a sub-agent) declares a longer budget so this race does not
+            // fire — and orphan it — while it is still legitimately working.
             return await raceTimeout(
               deps.localTools.run(use.name, use.input, {
                 ...deps.localContext,
@@ -1053,7 +1056,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
                     }
                   : undefined,
               }),
-              limits.toolTimeoutMs,
+              deps.localTools.timeoutMsFor(use.name) ?? limits.toolTimeoutMs,
               `local tool ${use.name} timed out`
             );
           }

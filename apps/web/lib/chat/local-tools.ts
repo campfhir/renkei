@@ -53,6 +53,16 @@ export interface LocalTool {
    * of the same round instead of waiting its turn. Absent means it acts.
    */
   readOnly?: boolean;
+  /**
+   * Overrides the turn's own `toolTimeoutMs` for this call. Almost every
+   * local tool finishes in seconds and is well served by the turn's
+   * default; a tool that runs a bounded loop of its own (a code project's
+   * sub-agent) can legitimately take far longer, and racing it against
+   * the ordinary default would abandon it mid-work — orphaning it to keep
+   * running unseen while the caller is told it failed. Absent, the turn's
+   * own limit applies.
+   */
+  timeoutMs?: number;
   execute(input: Record<string, unknown>, context: LocalToolContext): Promise<McpToolResult>;
 }
 
@@ -61,6 +71,8 @@ export interface LocalToolSet {
   defs(): LlmToolDef[];
   /** The names of the tools declared read-only. */
   readOnlyNames(): string[];
+  /** This tool's own timeout override, or null when the turn's own limit applies. */
+  timeoutMsFor(name: string): number | null;
   run(name: string, input: unknown, context: LocalToolContext): Promise<McpToolResult>;
 }
 
@@ -79,6 +91,7 @@ export function createLocalToolSet(tools: LocalTool[]): LocalToolSet {
     defs: () => [...byName.values()].map((tool) => tool.def),
     readOnlyNames: () =>
       [...byName.values()].filter((tool) => tool.readOnly === true).map((tool) => tool.def.name),
+    timeoutMsFor: (name) => byName.get(name)?.timeoutMs ?? null,
     async run(name, input, context) {
       const tool = byName.get(name);
       if (!tool) return errorResult(`Unknown tool ${name}.`);
