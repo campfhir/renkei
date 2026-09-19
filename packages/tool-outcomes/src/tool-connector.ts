@@ -27,6 +27,8 @@ const EXACT: Record<string, string> = {
   web_search: 'web-search',
   // Cross-connector upload-slot status; grouped with Jira like whoami.
   check_file_upload: 'jira',
+  // Pure date arithmetic, no connector of its own; grouped with Jira too.
+  resolve_date: 'jira',
   // The orchestrator and the two Jira periods it loops over.
   daily_summary: 'jira',
   sprint_summary: 'jira',

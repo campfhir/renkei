@@ -24,7 +24,7 @@
 export const CHAT_CORE_CONNECTORS: readonly string[] = ['agents', 'cards', 'knowledge', 'sandbox'];
 
 /** Always offered whatever the toolset, because they carry no connector risk. */
-export const CHAT_ALWAYS_TOOLS: readonly string[] = ['whoami'];
+export const CHAT_ALWAYS_TOOLS: readonly string[] = ['whoami', 'resolve_date'];
 
 /**
  * On in every chat of a code project, whatever the toolset says: the
