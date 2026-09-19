@@ -14,10 +14,9 @@
  *   anything that acts alone and in order, and only once the owner has
  *   allowed it (below) — store the results as a user-role `tool_results`
  *   row, open a fresh assistant row, and go again;
- *   if the reply ran out of room before it said anything (stopped on
- *   `max_tokens` with no text and no tool call — a thought cut short),
- *   quietly ask the model to try again rather than finish on it, up to
- *   MAX_TRUNCATED_RETRIES times;
+ *   if the reply said nothing at all — no text, no tool call, just a
+ *   thought — quietly ask the model to try again rather than finish on
+ *   it, up to MAX_SILENT_RETRIES times, whatever stopped it;
  *   otherwise finish.
  *
  * Permission. A call that changes something — anything the catalog does
@@ -160,15 +159,16 @@ export const DEFAULT_TURN_LIMITS: TurnLimits = {
 };
 
 /**
- * How many times a reply that ran out of room before saying anything is
- * quietly asked to try again before the turn just ends on it. See
- * `truncatedRetries` in runChatTurn.
+ * How many times a reply that said nothing — thought, and then just
+ * stopped, whatever the stop reason — is quietly asked to try again
+ * before the turn gives up and ends on it. See `silentRetries` in
+ * runChatTurn.
  */
-export const MAX_TRUNCATED_RETRIES = 2;
+export const MAX_SILENT_RETRIES = 2;
 
 /** What the runner tells the model in its own place when this happens. */
-export const TRUNCATED_REPLY_NUDGE =
-  'Your last reply ran out of room before you said anything to the person — it only got as far as thinking. Answer them directly now, more concisely.';
+export const SILENT_REPLY_NUDGE =
+  'Your last reply stopped without saying anything to the person or calling a tool — it only got as far as thinking. Answer them directly now.';
 
 /**
  * The turn's permission policy. Absent, nothing asks — the runner then
@@ -513,14 +513,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   let taskDone = false;
   let continues = 0;
   let spawnedSubagent = false;
-  // A reply that ran out of room before saying anything — no text, no
-  // tool call, nothing but a thinking block cut short — has left the
-  // person with nothing to read. That is never actually "done", auto
-  // mode or not, so the runner quietly asks the model to try again
-  // rather than ending the turn on it and making the person prompt
-  // again themselves. Bounded so a chat whose answers never fit does
-  // not loop forever.
-  let truncatedRetries = 0;
+  // A reply that stopped without any text or tool call — a thought and
+  // nothing else, whether it ran out of room mid-thinking or the model
+  // simply stopped there — has left the person with nothing to read.
+  // That is never actually "done", auto mode or not, so the runner
+  // quietly asks the model to try again rather than ending the turn on
+  // it and making the person type "continue" themselves, turn after
+  // turn. Bounded so a chat that never manages an answer does not loop
+  // forever.
+  let silentRetries = 0;
 
   const messages: LlmMessage[] = [...input.history];
   let assistant = input.assistantMessage;
@@ -999,20 +1000,21 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       if (subagentTool && toolUses.some((use) => use.name === subagentTool)) {
         spawnedSubagent = true;
       }
-      // Hitting the token ceiling mid-thought leaves nothing for the
-      // person to read — that is a cut-off, not a finished reply, in
-      // every chat, auto mode or not. Try again a bounded number of
-      // times before falling back to ending the turn as it stands.
+      // A thought and nothing else leaves nothing for the person to
+      // read — that is not a finished reply in any chat, auto mode or
+      // not, whatever stop reason came back with it. Try again a
+      // bounded number of times before falling back to ending the turn
+      // as it stands.
       const hasAnswer = reply.content.some(
         (block) => (block.type === 'text' && block.text.trim() !== '') || block.type === 'tool_use'
       );
-      if (reply.stopReason === 'max_tokens' && !hasAnswer && truncatedRetries < MAX_TRUNCATED_RETRIES) {
-        truncatedRetries += 1;
-        log('chat turn ran out of room before answering; retrying ({count} of {max})', {
-          count: truncatedRetries,
-          max: MAX_TRUNCATED_RETRIES,
+      if (!hasAnswer && silentRetries < MAX_SILENT_RETRIES) {
+        silentRetries += 1;
+        log('chat turn said nothing; retrying ({count} of {max})', {
+          count: silentRetries,
+          max: MAX_SILENT_RETRIES,
         });
-        await appendNudgeRow(TRUNCATED_REPLY_NUDGE);
+        await appendNudgeRow(SILENT_REPLY_NUDGE);
         await startNextAssistant();
         continue;
       }
