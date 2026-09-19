@@ -22,18 +22,29 @@
  * Echo cancellation is asked of the browser so the assistant's own voice
  * from the speakers is not heard as the person talking; on a device that
  * cannot cancel it, `holdWhileSpeaking` raises the bar while the assistant
- * speaks instead.
+ * speaks instead. Off, the browser's other voice processing (noise
+ * suppression, automatic gain) is off with it: each of the three is what
+ * makes an operating system treat the stream as a call and move a
+ * Bluetooth headset to its hands-free profile, and a person who turned
+ * it off did so because of that.
+ *
+ * While the microphone is open the device's audio session is a recording
+ * one (audio-session.ts); it is closed the moment the recorder stops.
  */
 
+import { recordingSession } from './audio-session';
 import { concat, encodeWav, resample, rms, TARGET_SAMPLE_RATE } from './wav';
 
 export interface RecorderOptions {
   /**
-   * Ask the browser to cancel the speakers' echo from the microphone.
-   * Default true; off where the platform's voice-call path degrades
-   * playback while the microphone is open (lib/voice/device-settings.ts).
+   * Ask the browser to cancel the speakers' echo from the microphone, and
+   * to suppress noise and level the gain. Default true; off where the
+   * platform's voice-call path degrades playback while the microphone is
+   * open (lib/voice/device-settings.ts), and then all three are off.
    */
   echoCancellation?: boolean;
+  /** An `audioinput` device id from enumerateDevices; null or unknown is the default. */
+  deviceId?: string | null;
   /**
    * `auto` (default): an utterance starts and ends by loudness. `manual`:
    * it starts with `beginTake()` and ends with `endTake()`.
@@ -102,6 +113,9 @@ export class UtteranceRecorder {
   private muted = false;
   private holding = false;
   private stopped = true;
+  private releaseSession: (() => void) | null = null;
+  /** Bumped by start() and stop(), so an open that outlives its stop() is dropped. */
+  private opening = 0;
   private readonly manual: boolean;
 
   constructor(private readonly options: RecorderOptions) {
@@ -164,17 +178,32 @@ export class UtteranceRecorder {
       this.options.onError('This browser cannot use the microphone.');
       return false;
     }
+    const processing = this.options.echoCancellation ?? true;
+    const constraints: MediaTrackConstraints = {
+      channelCount: 1,
+      echoCancellation: processing,
+      noiseSuppression: processing,
+      autoGainControl: processing,
+    };
+    const attempt = (this.opening += 1);
+    const releaseSession = recordingSession();
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: this.options.echoCancellation ?? true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: this.options.deviceId
+            ? { ...constraints, deviceId: { exact: this.options.deviceId } }
+            : constraints,
+        });
+      } catch (error) {
+        // The chosen microphone is gone (unplugged, another machine):
+        // the default is better than nothing.
+        if (!this.options.deviceId || !(error instanceof Error)) throw error;
+        if (error.name !== 'OverconstrainedError' && error.name !== 'NotFoundError') throw error;
+        stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+      }
     } catch (error) {
+      releaseSession();
       const denied = error instanceof Error && error.name === 'NotAllowedError';
       this.options.onError(
         denied
@@ -183,6 +212,13 @@ export class UtteranceRecorder {
       );
       return false;
     }
+    if (attempt !== this.opening) {
+      // Stopped while the microphone was opening: it is not wanted.
+      for (const track of stream.getTracks()) track.stop();
+      releaseSession();
+      return false;
+    }
+    this.releaseSession = releaseSession;
     this.stream = stream;
     this.stopped = false;
     const context = new AudioContext();
@@ -225,6 +261,7 @@ export class UtteranceRecorder {
   }
 
   stop(): void {
+    this.opening += 1;
     this.stopped = true;
     this.reset();
     this.node?.disconnect();
@@ -235,6 +272,8 @@ export class UtteranceRecorder {
     this.context = null;
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
+    this.releaseSession?.();
+    this.releaseSession = null;
   }
 
   private reset(): void {
@@ -327,8 +366,10 @@ export class UtteranceRecorder {
     this.loudRun = 0;
     this.quietRun = 0;
     this.loudFrames = 0;
+    if (spokenMs >= MIN_UTTERANCE_MS) {
+      this.options.onUtterance(encodeWav(concat(frames)), Math.round(durationMs));
+    }
+    // The last word: a listener may stop the recorder on it.
     this.options.onSpeechEnd?.(reason);
-    if (spokenMs < MIN_UTTERANCE_MS) return;
-    this.options.onUtterance(encodeWav(concat(frames)), Math.round(durationMs));
   }
 }

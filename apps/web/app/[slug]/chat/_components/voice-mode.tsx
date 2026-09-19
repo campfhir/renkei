@@ -14,9 +14,20 @@
  * chat that reads exactly like the conversation went.
  *
  * With the walkie-talkie preference (`pushToTalk`) the microphone waits
- * for a press instead of a voice: Talk opens the recording, Done closes
- * and sends it, and a ten-second silence closes it unasked. Pressing
- * Talk over a reply interrupts it the way speaking over it does.
+ * for a press instead of a voice: Talk opens the microphone and the
+ * recording, Done closes and sends it, and a ten-second silence closes
+ * it unasked. Pressing Talk over a reply interrupts it the way speaking
+ * over it does.
+ *
+ * When the microphone is open is what decides how a Bluetooth headset
+ * sounds: any open microphone puts it on its hands-free profile, mono
+ * and narrow, for as long as the track lives. So the microphone is only
+ * open when it can be used. Press-to-talk closes it between takes. With
+ * echo cancellation off — the setting for exactly such a headset — it is
+ * closed while the assistant thinks and speaks and opened again the
+ * moment the assistant is done, and Stop is the way to have it back
+ * sooner. Only with echo cancellation on, where talking over a reply is
+ * how it is interrupted, does it stay open throughout.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -41,6 +52,7 @@ export default function VoiceMode({
   accent,
   userAccent,
   echoCancellation,
+  microphone,
   pushToTalk,
   onSend,
   onInterrupt,
@@ -60,6 +72,8 @@ export default function VoiceMode({
    * interrupt it — and Stop is how a reply is cut short.
    */
   echoCancellation: boolean;
+  /** This device's chosen microphone, or null for the default. */
+  microphone: string | null;
   /** Walkie-talkie: Talk starts a recording and Done ends it; nothing starts on its own. */
   pushToTalk: boolean;
   queueState: SpeechQueueState;
@@ -76,8 +90,10 @@ export default function VoiceMode({
   const [phase, setPhase] = useState<Phase>('starting');
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
-  // Push-to-talk: a take is open, between Talk and Done.
+  // Push-to-talk: a take is open, between Talk and Done; and the moment
+  // before, while the microphone is opening for it.
   const [recording, setRecording] = useState(false);
+  const [opening, setOpening] = useState(false);
   // The microphone's loudness reaches the wave by subscription, never
   // through state: a render per reading would redraw the whole overlay.
   const micLevels = useRef(new LevelEmitter());
@@ -91,9 +107,14 @@ export default function VoiceMode({
   useEffect(() => {
     const instance = new UtteranceRecorder({
       echoCancellation,
+      deviceId: microphone,
       mode: pushToTalk ? 'manual' : 'auto',
       onSpeechStart: () => {
-        if (pushToTalk) setRecording(true);
+        // A take was interrupted by the press that opened it (toggleTake).
+        if (pushToTalk) {
+          setRecording(true);
+          return;
+        }
         const { running: busy, queueState: state, onInterrupt: interrupt } = latest.current;
         // Talking over the assistant: silence it and drop the reply.
         if (busy || state !== 'idle') interrupt();
@@ -115,23 +136,54 @@ export default function VoiceMode({
           if (!sent) setError('The message could not be sent.');
         })();
       },
-      onSpeechEnd: () => setRecording(false),
+      onSpeechEnd: () => {
+        setRecording(false);
+        // Push-to-talk: the microphone is only open for the take.
+        if (pushToTalk) {
+          instance.stop();
+          micLevels.current.emit(0);
+        }
+      },
       onLevel: (next) => micLevels.current.emit(next),
       onError: (message) => {
         setError(message);
-        setPhase('error');
+        // Without a microphone there is no voice mode — unless it is only
+        // wanted per take, when the next Talk can try again.
+        if (!pushToTalk) setPhase('error');
       },
     });
     recorder.current = instance;
-    void instance.start().then((ok) => {
-      if (ok) setPhase('listening');
-    });
+    if (pushToTalk) {
+      setPhase('listening');
+    } else {
+      void instance.start().then((ok) => {
+        if (ok) setPhase('listening');
+      });
+    }
     return () => {
       instance.stop();
       recorder.current = null;
       setRecording(false);
+      setOpening(false);
     };
-  }, [tenantId, locale, echoCancellation, pushToTalk]);
+  }, [tenantId, locale, echoCancellation, microphone, pushToTalk]);
+
+  // Without echo cancellation the microphone has no use while the
+  // assistant works — it is closed to speech anyway — so its track is
+  // released for that time and opened again after, which is what lets a
+  // headset play the reply in stereo. Stop makes "after" now.
+  const busy = running || queueState !== 'idle';
+  const releaseWhileBusy = !pushToTalk && !echoCancellation;
+  useEffect(() => {
+    const instance = recorder.current;
+    if (!releaseWhileBusy || !instance || phase === 'starting' || phase === 'error') return;
+    if (busy) {
+      instance.stop();
+      micLevels.current.emit(0);
+    } else if (!instance.active) {
+      void instance.start();
+    }
+  }, [releaseWhileBusy, busy, phase]);
 
   // The speaker stays open for the whole conversation, so a reply's first
   // word is not lost to a headset waking up (lib/voice/speech-queue.ts).
@@ -165,19 +217,32 @@ export default function VoiceMode({
     onClose();
   }, [queue, onClose]);
 
-  /** Push-to-talk: Talk opens a take (interrupting a reply), Done closes and sends it. */
+  /**
+   * Push-to-talk: Talk interrupts a reply, opens the microphone and a
+   * take; Done closes and sends it, and the microphone closes with it.
+   */
   const toggleTake = useCallback(() => {
     const instance = recorder.current;
-    if (!instance || !instance.active) return;
-    if (instance.taking) instance.endTake();
-    else instance.beginTake();
-  }, []);
+    if (!instance || opening) return;
+    if (instance.taking) {
+      instance.endTake();
+      return;
+    }
+    const { running: turn, queueState: state, onInterrupt: interrupt } = latest.current;
+    if (turn || state !== 'idle') interrupt();
+    setError(null);
+    setOpening(true);
+    void instance.start().then((ok) => {
+      setOpening(false);
+      if (ok && recorder.current === instance) instance.beginTake();
+    });
+  }, [opening]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') close();
       // Space is Talk/Done, unless a control has the keyboard already.
-      if (event.key === ' ' && pushToTalk && !muted && phase !== 'starting' && phase !== 'error') {
+      if (event.key === ' ' && pushToTalk && phase !== 'starting' && phase !== 'error') {
         if (
           event.target instanceof Element &&
           event.target.closest('button, input, select, textarea, a')
@@ -190,7 +255,7 @@ export default function VoiceMode({
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [close, pushToTalk, muted, phase, toggleTake]);
+  }, [close, pushToTalk, phase, toggleTake]);
 
   const label =
     phase === 'starting'
@@ -199,21 +264,23 @@ export default function VoiceMode({
         ? 'Voice mode could not start'
         : muted
           ? 'Muted — unmute to talk'
-          : phase === 'recording'
-            ? 'Recording — press Done when you have finished'
-            : phase === 'listening'
-              ? pushToTalk
-                ? 'Press Talk to speak'
-                : 'Listening'
-              : phase === 'transcribing'
-                ? 'Heard you…'
-                : phase === 'thinking'
-                  ? 'Thinking…'
-                  : pushToTalk
-                    ? 'Speaking — press Talk to interrupt'
-                    : echoCancellation
-                      ? 'Speaking — talk to interrupt'
-                      : 'Speaking — press Stop to interrupt';
+          : opening
+            ? 'Opening the microphone…'
+            : phase === 'recording'
+              ? 'Recording — press Done when you have finished'
+              : phase === 'listening'
+                ? pushToTalk
+                  ? 'Press Talk to speak'
+                  : 'Listening'
+                : phase === 'transcribing'
+                  ? 'Heard you…'
+                  : phase === 'thinking'
+                    ? 'Thinking…'
+                    : pushToTalk
+                      ? 'Speaking — press Talk to interrupt'
+                      : echoCancellation
+                        ? 'Speaking — talk to interrupt'
+                        : 'Speaking — press Stop to talk';
   const tone: WaveTone =
     phase === 'speaking'
       ? 'speaking'
@@ -225,7 +292,6 @@ export default function VoiceMode({
   // Whose sound the wave follows: the speaker's, the microphone's, or none.
   const waveLevels = tone === 'speaking' ? queue : tone === 'listening' ? micLevels.current : null;
   const spokenReply = replyText ? speakableText(replyText) : '';
-  const busy = running || queueState !== 'idle';
 
   return (
     <div
@@ -297,7 +363,7 @@ export default function VoiceMode({
           <button
             type="button"
             onClick={toggleTake}
-            disabled={phase === 'starting' || phase === 'error' || muted}
+            disabled={phase === 'starting' || phase === 'error' || opening}
             aria-pressed={recording}
             aria-keyshortcuts="Space"
             title={recording ? 'Stop recording and send (Space)' : 'Start recording (Space)'}
@@ -311,19 +377,21 @@ export default function VoiceMode({
             {recording ? 'Done' : 'Talk'}
           </button>
         ) : null}
-        <button
-          type="button"
-          onClick={() => setMuted((value) => !value)}
-          aria-pressed={muted}
-          className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium ${
-            muted
-              ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200'
-              : 'border-gray-300 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900'
-          }`}
-        >
-          <Icon path={muted ? ICONS.microphoneOff : ICONS.microphone} className="h-4 w-4" />
-          {muted ? 'Unmute' : 'Mute'}
-        </button>
+        {pushToTalk ? null : (
+          <button
+            type="button"
+            onClick={() => setMuted((value) => !value)}
+            aria-pressed={muted}
+            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium ${
+              muted
+                ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200'
+                : 'border-gray-300 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900'
+            }`}
+          >
+            <Icon path={muted ? ICONS.microphoneOff : ICONS.microphone} className="h-4 w-4" />
+            {muted ? 'Unmute' : 'Mute'}
+          </button>
+        )}
         {busy ? (
           <button
             type="button"

@@ -116,7 +116,11 @@ export interface PromptActions {
 export interface ReplySpeech {
   /** The turn whose reply is playing right now, if any. */
   playingKey: string | null;
+  /** That playback is held, to be resumed. */
+  paused: boolean;
   onListen: (key: string, markdown: string) => void;
+  onPause: () => void;
+  onResume: () => void;
   onStop: () => void;
 }
 
@@ -535,8 +539,12 @@ function Reply({
           <CopyButton text={copyText} />
           {speech ? (
             <ListenButton
-              playing={speech.playingKey === speechKey}
+              state={
+                speech.playingKey !== speechKey ? 'idle' : speech.paused ? 'paused' : 'playing'
+              }
               onListen={() => speech.onListen(speechKey, copyText)}
+              onPause={speech.onPause}
+              onResume={speech.onResume}
               onStop={speech.onStop}
             />
           ) : null}

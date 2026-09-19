@@ -46,6 +46,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'fixed',
+        title: 'A reply is read as one voice, not sentence by sentence',
+        detail:
+          'The sound no longer stops and starts between the sentences of a reply: each is fetched and prepared ahead and joined to the last with a natural sentence break, and the speaker stays open for the whole reply and the whole of a voice conversation. Only a sentence the speech service has not delivered yet leaves a gap.',
+      },
+      {
+        kind: 'added',
+        title: 'Pause a reply being read',
+        detail:
+          'Under a reply, Listen becomes Pause while it is read and a Stop appears beside it. Pause holds the reading where it is; Resume carries on from the same word.',
+      },
+      {
+        kind: 'changed',
+        title: 'A Bluetooth headset keeps its stereo profile more often',
+        detail:
+          'Turning off “Cancel echo on this device” now turns off the browser’s noise suppression and automatic gain as well, since any one of them makes a headset switch to its hands-free profile, and on iPhone and iPad the page tells the system it is only playing back except while the microphone is actually open. In a voice conversation the microphone is now open only when it can be used: between Talk and Done with press-to-talk, and — with echo cancellation off — only while the assistant is neither thinking nor speaking, so the reply plays in stereo; Stop brings the microphone back at once. The speaker menu can also choose which microphone and, where the browser allows, which speaker this device uses.',
+      },
+      {
         kind: 'changed',
         title: 'A voice conversation waits longer before it answers',
         detail:

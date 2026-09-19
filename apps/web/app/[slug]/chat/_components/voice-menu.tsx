@@ -21,7 +21,8 @@ import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
 import { useDismiss } from '@/lib/use-dismiss';
 import { voiceClient } from '@/lib/voice/client';
-import type { SpeechQueueState } from '@/lib/voice/speech-queue';
+import { listAudioDevices, type AudioDevice } from '@/lib/voice/device-settings';
+import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
 import type { LevelSource } from '@/lib/voice/levels';
 import { VoiceWaveIcon, WAVE_ACCENTS } from './voice-wave';
 
@@ -44,8 +45,12 @@ export default function VoiceMenu({
   queueState,
   levels,
   echoCancellation,
+  microphone,
+  audioOutput,
   onChange,
   onEchoCancellation,
+  onMicrophone,
+  onAudioOutput,
   onStopReading,
   onStartVoiceMode,
   onPrime,
@@ -61,6 +66,11 @@ export default function VoiceMenu({
   /** This device's echo-cancellation choice, and how to change it. */
   echoCancellation: boolean;
   onEchoCancellation: (on: boolean) => void;
+  /** This device's microphone and speaker choices; null is the system default. */
+  microphone: string | null;
+  onMicrophone: (deviceId: string | null) => void;
+  audioOutput: string | null;
+  onAudioOutput: (deviceId: string | null) => void;
   onStopReading: () => void;
   onStartVoiceMode: () => void;
   /** Called from the click that turns sound on, to unlock playback. */
@@ -70,9 +80,27 @@ export default function VoiceMenu({
   const [open, setOpen] = useState(false);
   const [voices, setVoices] = useState<VoiceInfo[] | null>(null);
   const [voicesError, setVoicesError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<{
+    microphones: AudioDevice[];
+    outputs: AudioDevice[];
+  } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, ref, close);
+
+  // The devices, named, each time the menu opens: a headset connected
+  // since last time, or names that appeared once the microphone was allowed.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void listAudioDevices().then((listed) => {
+      if (!cancelled) setDevices(listed);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+  const canChooseOutput = SpeechQueue.canChooseOutput();
 
   useEffect(() => {
     if (!open || voices !== null) return;
@@ -107,6 +135,12 @@ export default function VoiceMenu({
     [voices, locale, prefs.voice]
   );
   const reading = queueState !== 'idle';
+  const deviceOptions = (list: AudioDevice[], chosen: string | null) =>
+    // A chosen device that is not listed now stays listed, so the choice is
+    // visible and can be dropped; it is the default until it is back.
+    chosen && !list.some((device) => device.id === chosen)
+      ? [...list, { id: chosen, label: 'Chosen device (not connected)' }]
+      : list;
 
   return (
     <div ref={ref} className="relative">
@@ -126,7 +160,7 @@ export default function VoiceMenu({
         className="relative flex items-center justify-center rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
       >
         {reading ? (
-          <VoiceWaveIcon levels={queueState === 'speaking' ? levels : null} accent={prefs.accent} />
+          <VoiceWaveIcon levels={queueState === 'loading' ? null : levels} accent={prefs.accent} />
         ) : (
           <Icon path={ICONS.speaker} className="h-5 w-5" />
         )}
@@ -307,10 +341,54 @@ export default function VoiceMenu({
               <span className="block">Cancel echo on this device</span>
               <span className="block text-[11px] text-gray-500">
                 Lets you talk over a reply. Turn off if the assistant sounds one-sided or muffled
-                while the microphone is open; then Stop cuts a reply short.
+                while the microphone is open — a Bluetooth headset then keeps its stereo profile —
+                and Stop cuts a reply short instead.
               </span>
             </span>
           </button>
+          {devices && (devices.microphones.length > 0 || microphone) ? (
+            <label className="block px-2 py-1">
+              <span className="block text-[11px] font-medium text-gray-500">
+                Microphone on this device
+              </span>
+              <select
+                value={microphone ?? ''}
+                onChange={(event) => onMicrophone(event.target.value || null)}
+                className="mt-0.5 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+              >
+                <option value="">System default</option>
+                {deviceOptions(devices.microphones, microphone).map((device) => (
+                  <option key={device.id} value={device.id}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {canChooseOutput && devices && (devices.outputs.length > 0 || audioOutput) ? (
+            <label className="block px-2 py-1">
+              <span className="block text-[11px] font-medium text-gray-500">
+                Speaker on this device
+              </span>
+              <select
+                value={audioOutput ?? ''}
+                onChange={(event) => onAudioOutput(event.target.value || null)}
+                className="mt-0.5 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+              >
+                <option value="">System default</option>
+                {deviceOptions(devices.outputs, audioOutput).map((device) => (
+                  <option key={device.id} value={device.id}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {devices && devices.microphones.length === 0 && devices.outputs.length === 0 ? (
+            <p className="px-2 py-1 text-[11px] text-gray-500">
+              Devices are named here once the microphone has been used.
+            </p>
+          ) : null}
           <div className="my-1 border-t border-gray-200 dark:border-gray-800" />
           <button
             type="button"
