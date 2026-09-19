@@ -326,8 +326,12 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       llmModelId: input.llm.modelConfigId,
     },
   });
-  const log = (message: string, fields: Record<string, unknown>) =>
-    logger.warn(message, {
+  const log = (
+    message: string,
+    fields: Record<string, unknown>,
+    level: 'debug' | 'warn' = 'warn'
+  ) =>
+    logger[level](message, {
       component: 'chat/turn',
       tenantId: input.tenantId,
       chatId: input.chat.id,
