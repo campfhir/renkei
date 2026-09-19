@@ -10,6 +10,7 @@ import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { getChannelAvailability } from '@/lib/notification-channels';
 import { listChatConnectors } from '@/lib/chat/tool-surface';
 import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
+import { CODE_PROJECT_CONNECTORS, CODE_PROJECT_DEFAULT_CONNECTORS } from '@/lib/chat/tool-config';
 import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
 import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
@@ -44,6 +45,7 @@ export default async function PreferencesPage({
     myAgents,
     chatConnectors,
     chatDefault,
+    codeDefault,
     voice,
     toolPermissions,
     actToolGroups,
@@ -65,6 +67,7 @@ export default async function PreferencesPage({
       : [],
     listChatConnectors(tenant.id, session.subject),
     getDefaultChatTools(tenant.id, session.subject, { fresh: true }),
+    getDefaultChatTools(tenant.id, session.subject, { fresh: true, kind: 'code' }),
     // Null when the org has no voice service; the section is then left out.
     loadVoiceAvailability(tenant.id, session.subject),
     getChatToolPermissionPrefs(tenant.id, session.subject, { fresh: true }),
@@ -144,6 +147,16 @@ export default async function PreferencesPage({
           tenantId={tenant.id}
           connectors={chatToolOptions}
           initialDefault={chatDefault?.connectors ?? null}
+        />
+      </div>
+      <div className="mb-6">
+        <DefaultToolsForm
+          tenantId={tenant.id}
+          connectors={chatToolOptions}
+          initialDefault={codeDefault?.connectors ?? null}
+          kind="code"
+          baseline={CODE_PROJECT_DEFAULT_CONNECTORS}
+          locked={CODE_PROJECT_CONNECTORS}
         />
       </div>
       <div className="mb-6">

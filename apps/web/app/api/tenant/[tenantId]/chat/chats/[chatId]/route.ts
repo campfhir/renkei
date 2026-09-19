@@ -56,6 +56,7 @@ export async function PATCH(
     patch.toolConfig = parsed;
   }
   if (typeof body.thinkingEnabled === 'boolean') patch.thinkingEnabled = body.thinkingEnabled;
+  if (typeof body.autoMode === 'boolean') patch.autoMode = body.autoMode;
   if (typeof body.archived === 'boolean') patch.archived = body.archived;
 
   const updated = await updateChat(db, tenantId, session.subject, chatId, patch);

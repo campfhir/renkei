@@ -1,7 +1,12 @@
 /**
- * A person's own default chat toolset — the connectors a brand new chat (or
- * a project-less chat whose project has none either) starts with, before
- * anyone has picked a toolset for that specific chat.
+ * A person's own default toolsets — the connectors a brand new chat (or a
+ * project-less chat whose project has none either) starts with, before
+ * anyone has picked a toolset for that specific chat; and, apart from it,
+ * the connectors a NEW CODE PROJECT is given the moment it is created
+ * (code/projects/route.ts copies it onto the project, so a later change
+ * to the preference leaves existing projects as they are). Two keys, one
+ * shape: a developer's default has nothing to do with the chat default a
+ * person saved for mail and tickets.
  *
  * Stored in @renkei/user-prefs's key/value table (`user_preferences`) under
  * its own key, the same way every other preference is added — no migration,
@@ -18,10 +23,21 @@
 import { getDatabase } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
+import {
+  parseToolConfig,
+  toolConfigJson,
+  type ChatToolConfig,
+  type ToolDefaultsKind,
+} from './tool-config';
 
-/** The one preference key so far, next to 'notifications' in the same table. */
+/** The ordinary chat default's key, next to 'notifications' in the same table. */
 export const CHAT_TOOLS_PREF_KEY = 'chatTools';
+/** The code project default's key: what a new code project inherits. */
+export const CODE_PROJECT_TOOLS_PREF_KEY = 'codeProjectTools';
+
+function prefKey(kind: ToolDefaultsKind): string {
+  return kind === 'code' ? CODE_PROJECT_TOOLS_PREF_KEY : CHAT_TOOLS_PREF_KEY;
+}
 
 const CACHE_TTL_MS = 60_000;
 
@@ -32,7 +48,8 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-const cacheKey = (tenantId: string, subject: string) => `${tenantId} ${subject}`;
+const cacheKey = (tenantId: string, subject: string, kind: ToolDefaultsKind) =>
+  `${tenantId} ${subject} ${kind}`;
 
 /**
  * This person's saved default toolset, or null when they have never set one
@@ -46,9 +63,10 @@ const cacheKey = (tenantId: string, subject: string) => `${tenantId} ${subject}`
 export async function getDefaultChatTools(
   tenantId: string,
   subject: string,
-  options: { fresh?: boolean } = {}
+  options: { fresh?: boolean; kind?: ToolDefaultsKind } = {}
 ): Promise<ChatToolConfig | null> {
-  const key = cacheKey(tenantId, subject);
+  const kind = options.kind ?? 'chat';
+  const key = cacheKey(tenantId, subject, kind);
   const cached = cache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
@@ -62,7 +80,7 @@ export async function getDefaultChatTools(
         .select('value')
         .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
-        .where('key', '=', CHAT_TOOLS_PREF_KEY)
+        .where('key', '=', prefKey(kind))
         .executeTakeFirst(),
     'DB_ERROR' as const
   );
@@ -73,15 +91,17 @@ export async function getDefaultChatTools(
   return value;
 }
 
-/** Save, or clear (pass null) this person's default chat toolset. */
+/** Save, or clear (pass null) this person's default toolset of that kind. */
 export async function setDefaultChatTools(
   tenantId: string,
   subject: string,
-  config: ChatToolConfig | null
+  config: ChatToolConfig | null,
+  kind: ToolDefaultsKind = 'chat'
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
+  const key = prefKey(kind);
 
   const written = await wrapAsync(async () => {
     if (config === null) {
@@ -89,7 +109,7 @@ export async function setDefaultChatTools(
         .deleteFrom('user_preferences')
         .where('tenant_id', '=', tenantId)
         .where('subject', '=', subject)
-        .where('key', '=', CHAT_TOOLS_PREF_KEY)
+        .where('key', '=', key)
         .execute();
       return;
     }
@@ -97,7 +117,7 @@ export async function setDefaultChatTools(
     const now = new Date().toISOString();
     await db
       .insertInto('user_preferences')
-      .values({ tenant_id: tenantId, subject, key: CHAT_TOOLS_PREF_KEY, value, updated_at: now })
+      .values({ tenant_id: tenantId, subject, key, value, updated_at: now })
       .onConflict((oc) =>
         oc.columns(['tenant_id', 'subject', 'key']).doUpdateSet({ value, updated_at: now })
       )
@@ -105,6 +125,6 @@ export async function setDefaultChatTools(
   }, 'DB_ERROR' as const);
   if (!written.ok) return written;
 
-  cache.delete(cacheKey(tenantId, subject));
+  cache.delete(cacheKey(tenantId, subject, kind));
   return ok();
 }

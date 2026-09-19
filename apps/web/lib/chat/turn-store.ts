@@ -20,6 +20,7 @@ import {
 } from './turns';
 import { notifyChatToolPermission } from './permission-notification';
 import { touchChat } from './store';
+import { interruptSubagentRunsOfTurn } from './subagent-runs';
 import type { TurnStore } from './turn-runner';
 import type { AttachmentView } from './views';
 
@@ -61,6 +62,8 @@ export function createTurnStore(
     },
     async finishTurn(outcome) {
       await finishTurn(db, scope.turnId, outcome);
+      // A sub-agent still marked running now has no turn to report to.
+      await interruptSubagentRunsOfTurn(db, scope.turnId);
       await touchChat(db, scope.chatId, {});
     },
     async recordUsage(usage) {

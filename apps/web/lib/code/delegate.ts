@@ -5,8 +5,18 @@
  * chat stays in charge — it decides what to delegate, reads the report,
  * and alone commits and pushes (a sub-agent cannot push or delegate
  * further). Each sub-agent's calls are made on the turn's own model and
- * counted against the turn's usage; nothing streams to the page until
- * the report comes back as an ordinary tool result.
+ * counted against the turn's usage.
+ *
+ * The point of delegating is what stays OUT of the chat: the sub-agent's
+ * file reads, searches, edits and test runs are its own conversation,
+ * never the orchestrator's, so the chat's context holds the report and
+ * not the hundred results behind it. That conversation is not thrown
+ * away, though: when the turn hands the tool a recorder
+ * (LocalToolContext.subagents, lib/chat/subagent-runs.ts) the run is
+ * kept — task, progress after every model call, and the whole transcript
+ * at the end — keyed to the delegating call, for the thread's card and
+ * the transcript a person can open. Progress reaches the page live
+ * through the same recorder; the report comes back as the tool result.
  */
 
 import {
@@ -54,12 +64,15 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
     description:
       'Hand one bounded task to a sub-agent: a fresh model loop with its own instructions and the ' +
       'same repository tools (reading, searching, editing, running commands, committing — never ' +
-      'pushing), which works until done and answers with a report. Use it to split independent ' +
-      'pieces of a larger change, to investigate one question in depth (readOnly for a pure ' +
-      'investigation), or to keep a long exploration out of this conversation. Give it a complete, ' +
-      'self-contained task — it sees nothing of this chat — and read its report critically; you ' +
-      'remain responsible for the result, for running the tests, and for committing and pushing. ' +
-      `A sub-agent makes at most maxSteps model calls (default ${DELEGATE_DEFAULT_STEPS}).`,
+      'pushing), which works until done and answers with a report. This is the usual way to do ' +
+      'anything that takes more than a handful of tool calls — an investigation, finding every ' +
+      'place a change touches, one self-contained piece of a change, a test suite run and fixed — ' +
+      'because its calls and results stay in its own conversation and only the report enters ' +
+      'this one (readOnly for a pure investigation). Give it a complete, self-contained task and ' +
+      'say what to report — it sees nothing of this chat — and read its report critically; you ' +
+      'remain responsible for the result, for checking what it claims, and for committing and ' +
+      `pushing. A sub-agent makes at most maxSteps model calls (default ${DELEGATE_DEFAULT_STEPS}). ` +
+      'A person can open its full transcript from this chat, so the report can stay brief.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -116,10 +129,42 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
       const controller = new AbortController();
       const calls: string[] = [];
       let lastText = '';
+      // The run's record, when the turn keeps one: started now, told
+      // after every model call, closed with the transcript at the end.
+      const recorder = context.subagents ?? null;
+      const runId =
+        recorder && context.toolUseId
+          ? await recorder.start({
+              toolUseId: context.toolUseId,
+              task,
+              instructions: instructions || null,
+              readOnly,
+              maxSteps,
+            })
+          : null;
+      const close = async (
+        status: 'completed' | 'failed',
+        outcome: string,
+        error: string | null,
+        steps: number
+      ) => {
+        if (recorder && runId) {
+          await recorder.finish(runId, {
+            status,
+            transcript: messages,
+            report: status === 'completed' ? outcome : null,
+            error,
+            steps,
+            toolCalls: calls.length,
+          });
+        }
+        return status === 'completed' ? textResult(outcome) : errorResult(outcome);
+      };
 
       for (let step = 1; step <= maxSteps; step += 1) {
         if (Date.now() > deadline) {
-          return textResult(report('stopped: out of time', lastText, calls, step - 1));
+          const text = report('stopped: out of time', lastText, calls, step - 1);
+          return close('completed', text, 'out of time', step - 1);
         }
         const result = await streamOrComplete(
           llm.provider,
@@ -136,10 +181,10 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
           { onEvent: () => {}, signal: controller.signal }
         );
         if (!result.ok) {
-          return errorResult(
+          const failure =
             `The sub-agent's model call failed: ${friendlyLlmError(result.err.type)}` +
-              (lastText ? `\n\nIts last message:\n${lastText}` : '')
-          );
+            (lastText ? `\n\nIts last message:\n${lastText}` : '');
+          return close('failed', failure, friendlyLlmError(result.err.type), step - 1);
         }
         const reply = result.val;
         if (context.recordUsage) await context.recordUsage(reply.usage);
@@ -154,12 +199,33 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
             block.type === 'tool_use'
         );
         if (reply.stopReason !== 'tool_use' || uses.length === 0) {
-          return textResult(report('done', lastText, calls, step));
+          if (recorder && runId) {
+            await recorder.progress(runId, {
+              steps: step,
+              toolCalls: calls.length,
+              lastTool: null,
+              usage: reply.usage,
+            });
+          }
+          return close('completed', report('done', lastText, calls, step), null, step);
+        }
+        for (const use of uses) calls.push(use.name);
+        if (recorder && runId) {
+          await recorder.progress(runId, {
+            steps: step,
+            toolCalls: calls.length,
+            lastTool: uses[uses.length - 1]?.name ?? null,
+            usage: reply.usage,
+          });
         }
         const results: LlmContentBlock[] = [];
         for (const use of uses) {
-          calls.push(use.name);
-          const outcome = await set.run(use.name, use.input, context);
+          const outcome = await set.run(use.name, use.input, {
+            ...context,
+            toolUseId: use.id,
+            // A sub-agent's own tools record nothing further: one run, one record.
+            subagents: undefined,
+          });
           const outText = textOfResult(outcome);
           results.push({
             type: 'tool_result',
@@ -173,8 +239,11 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
         }
         messages.push({ role: 'user', content: results });
       }
-      return textResult(
-        report(`stopped after ${maxSteps} steps (maxSteps)`, lastText, calls, maxSteps)
+      return close(
+        'completed',
+        report(`stopped after ${maxSteps} steps (maxSteps)`, lastText, calls, maxSteps),
+        `stopped after ${maxSteps} steps`,
+        maxSteps
       );
     },
   };

@@ -1,4 +1,5 @@
 import {
+  foldCandidates,
   needsCompaction,
   CHAT_COMPACT_CHAR_THRESHOLD,
   CHAT_COMPACT_KEEP_RECENT,
@@ -74,5 +75,47 @@ describe('needsCompaction', () => {
       bigRow(i + 1, perMessage, { status: 'failed' })
     );
     expect(needsCompaction(messages)).toBe(false);
+  });
+});
+
+describe('foldCandidates', () => {
+  const count = CHAT_COMPACT_KEEP_RECENT + CHAT_COMPACT_MIN_FOLD + 1;
+  // The boundary the window alone would pick: this many oldest rows.
+  const cut = count - CHAT_COMPACT_KEEP_RECENT;
+
+  function rows(atBoundary: 'round' | 'prose'): StoredMessage[] {
+    return Array.from({ length: count }, (_, i) => {
+      const seq = i + 1;
+      if (atBoundary === 'round' && seq === cut) {
+        return row({
+          seq,
+          role: 'assistant',
+          blocks: [{ type: 'tool_use', id: 'call', name: 'code_read_file', input: {} }],
+        });
+      }
+      if (atBoundary === 'round' && seq === cut + 1) {
+        return row({
+          seq,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: 'call', content: 'text' }],
+        });
+      }
+      return row({ seq, role: seq % 2 === 1 ? 'user' : 'assistant' });
+    });
+  }
+
+  it('takes the oldest rows outside the recent window', () => {
+    expect(foldCandidates(rows('prose')).map((message) => message.seq)).toEqual(
+      Array.from({ length: cut }, (_, i) => i + 1)
+    );
+  });
+
+  it('never cuts between a call and its results: the results row folds too', () => {
+    const picked = foldCandidates(rows('round'));
+    expect(picked.map((message) => message.seq)).toEqual(
+      Array.from({ length: cut + 1 }, (_, i) => i + 1)
+    );
+    expect(picked[picked.length - 1].kind).toBe('tool_results');
   });
 });

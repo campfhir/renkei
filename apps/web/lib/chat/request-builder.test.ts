@@ -146,6 +146,78 @@ describe('buildHistory', () => {
     expect(history).toEqual([]);
   });
 
+  it('settles the head after a compaction boundary: no leading assistant, no orphaned tool result', () => {
+    // The fold cut between an assistant's tool calls (now in the summary)
+    // and their results: the first unfolded rows are the results, a text
+    // reply, and only then the person's next prompt. Sent as they are,
+    // the request opens with a tool result answering no call — the 400
+    // the OpenAI dialect gives as "role 'tool' must be a response to a
+    // preceding message with 'tool_calls'".
+    const history = buildHistory(
+      [
+        row({
+          seq: 1,
+          role: 'assistant',
+          summaryId: 'sum',
+          blocks: [{ type: 'tool_use', id: 't1', name: 'code_read_file', input: {} }],
+        }),
+        row({
+          seq: 2,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: 't1', content: 'file text' }],
+        }),
+        row({ seq: 3, role: 'assistant', blocks: [{ type: 'text', text: 'I read it.' }] }),
+        row({ seq: 4, role: 'user', blocks: [{ type: 'text', text: 'now change it' }] }),
+        row({
+          seq: 5,
+          role: 'assistant',
+          blocks: [{ type: 'tool_use', id: 't2', name: 'code_edit_file', input: {} }],
+        }),
+        row({
+          seq: 6,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: 't2', content: 'edited' }],
+        }),
+      ],
+      target,
+      null
+    );
+    expect(history.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(history[0].content).toEqual([{ type: 'text', text: 'now change it' }]);
+    expect(history[2].content).toEqual([
+      { type: 'tool_result', toolUseId: 't2', content: 'edited' },
+    ]);
+  });
+
+  it('keeps the person’s text when only the tool results beside it are orphaned', () => {
+    const history = buildHistory(
+      [
+        row({
+          seq: 1,
+          role: 'assistant',
+          summaryId: 'sum',
+          blocks: [{ type: 'tool_use', id: 't1', name: 'x', input: {} }],
+        }),
+        row({
+          seq: 2,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: 't1', content: 'r' }],
+        }),
+        row({ seq: 3, role: 'user', blocks: [{ type: 'text', text: 'hello again' }] }),
+        row({ seq: 4, role: 'assistant', blocks: [{ type: 'text', text: 'hi' }] }),
+      ],
+      target,
+      null
+    );
+    expect(history).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'hello again' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+    ]);
+  });
+
   it('excludes messages folded into a compaction summary', () => {
     const history = buildHistory(
       [
@@ -507,5 +579,144 @@ describe('buildSystemPrompt with user memory', () => {
       now: new Date('2026-09-04T00:00:00Z'),
     });
     expect(inProject).not.toContain('Prefers concise answers');
+  });
+});
+
+describe('buildSystemPrompt in auto mode', () => {
+  const base = {
+    personName: null,
+    orgName: null,
+    userMemoryText: null,
+    chatSummary: null,
+    chatFiles: [],
+    hasTools: true,
+    hasDiscoverableTools: false,
+    hasKnowledge: false,
+    hasSandbox: false,
+    filesAllowed: false,
+    now: new Date('2026-09-04T10:00:00Z'),
+    project: {
+      name: 'Billing',
+      instructions: null,
+      memoryText: null,
+      files: [],
+      code: {
+        repoFullName: 'acme/billing',
+        branch: 'main',
+        ready: true,
+        notReady: null,
+        envNames: [],
+      },
+    },
+  };
+
+  it('tells the model to work unattended and to end with task_complete, only when on', () => {
+    const on = buildSystemPrompt({ ...base, autoMode: true });
+    expect(on).toContain('Auto mode is on');
+    expect(on).toContain('task_complete');
+    expect(on.indexOf('code project on the repository')).toBeLessThan(
+      on.indexOf('Auto mode is on')
+    );
+    const off = buildSystemPrompt(base);
+    expect(off).not.toContain('Auto mode');
+    expect(off).not.toContain('task_complete');
+  });
+});
+
+describe('buildHistory with elideEarlierToolResults', () => {
+  const long = 'x'.repeat(2_000);
+  const rows = [
+    row({ seq: 1, role: 'user', blocks: [{ type: 'text', text: 'hi' }] }),
+    row({
+      seq: 2,
+      role: 'assistant',
+      blocks: [
+        { type: 'tool_use', id: 'r1', name: 'code_read_file', input: {} },
+        { type: 'tool_use', id: 'd1', name: 'code_delegate', input: {} },
+      ],
+    }),
+    row({
+      seq: 3,
+      role: 'user',
+      kind: 'tool_results',
+      blocks: [
+        { type: 'tool_result', toolUseId: 'r1', content: long },
+        { type: 'tool_result', toolUseId: 'd1', content: long },
+      ],
+    }),
+    row({ seq: 4, role: 'assistant', blocks: [{ type: 'text', text: 'ok' }] }),
+    row({ seq: 5, role: 'user', turnId: 'now', blocks: [{ type: 'text', text: 'more' }] }),
+    row({
+      seq: 6,
+      role: 'assistant',
+      turnId: 'now',
+      blocks: [{ type: 'tool_use', id: 'r2', name: 'code_read_file', input: {} }],
+    }),
+    row({
+      seq: 7,
+      role: 'user',
+      turnId: 'now',
+      kind: 'tool_results',
+      blocks: [{ type: 'tool_result', toolUseId: 'r2', content: long }],
+    }),
+    row({ seq: 8, role: 'assistant', turnId: 'now', status: 'streaming', blocks: [] }),
+  ];
+
+  it('trims earlier turns’ results to their head, keeps a sub-agent’s report and this turn’s results whole', () => {
+    const history = buildHistory(rows, target, 'm8', { elideEarlierToolResults: true });
+    const blocks = history.flatMap((message) => message.content);
+    const read = blocks.find((block) => block.type === 'tool_result' && block.toolUseId === 'r1');
+    const delegated = blocks.find(
+      (block) => block.type === 'tool_result' && block.toolUseId === 'd1'
+    );
+    expect(read && read.type === 'tool_result' ? read.content.length : 0).toBeLessThan(800);
+    expect(read && read.type === 'tool_result' ? read.content : '').toContain(
+      'trimmed from context'
+    );
+    expect(delegated && delegated.type === 'tool_result' ? delegated.content : '').toBe(long);
+    const now = blocks.find((block) => block.type === 'tool_result' && block.toolUseId === 'r2');
+    expect(now && now.type === 'tool_result' ? now.content : '').toBe(long);
+  });
+
+  it('changes nothing without the option', () => {
+    const history = buildHistory(rows, target, 'm8');
+    const read = history
+      .flatMap((message) => message.content)
+      .find((block) => block.type === 'tool_result' && block.toolUseId === 'r1');
+    expect(read && read.type === 'tool_result' ? read.content : '').toBe(long);
+  });
+});
+
+describe('buildSystemPrompt’s code brief', () => {
+  it('tells the orchestrator to delegate and that earlier results are trimmed', () => {
+    const prompt = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: false,
+      now: new Date('2026-09-04T10:00:00Z'),
+      project: {
+        name: 'Billing',
+        instructions: null,
+        memoryText: null,
+        files: [],
+        code: {
+          repoFullName: 'acme/billing',
+          branch: 'main',
+          ready: true,
+          notReady: null,
+          envNames: [],
+        },
+      },
+    });
+    expect(prompt).toContain('So delegate');
+    expect(prompt).toContain('code_delegate');
+    expect(prompt).toContain('trimmed from your context');
   });
 });

@@ -22,7 +22,13 @@ import {
   PROJECT_INSTRUCTIONS_MAX_CHARS,
   PROJECT_NAME_MAX_CHARS,
 } from '@/lib/chat/projects';
-import { parseToolConfig } from '@/lib/chat/tool-config';
+import {
+  CODE_PROJECT_CONNECTORS,
+  defaultToolConfig,
+  parseToolConfig,
+  withRequiredConnectors,
+} from '@/lib/chat/tool-config';
+import { getDefaultChatTools } from '@/lib/chat/tool-prefs';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { codeProjectAccess, codeProjectAccessMessage } from '@/lib/code/access';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
@@ -86,7 +92,18 @@ export async function POST(
     body.instructions === undefined
       ? DEFAULT_CODE_INSTRUCTIONS
       : (optionalString(body.instructions, PROJECT_INSTRUCTIONS_MAX_CHARS) ?? null);
-  const toolConfig = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
+  // The toolset the project's chats start with: what the form chose, else
+  // the person's own default for code projects, else the code default —
+  // copied onto the project now (tool-config.ts), so a later change to the
+  // preference leaves this project as it was made. Bitbucket rides along
+  // whatever was chosen; it is locked on in every code chat anyway.
+  const chosen = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
+  const toolConfig = withRequiredConnectors(
+    chosen ??
+      (await getDefaultChatTools(tenantId, session.subject, { fresh: true, kind: 'code' })) ??
+      defaultToolConfig('code'),
+    CODE_PROJECT_CONNECTORS
+  );
   const dotenv = typeof body.env === 'string' ? body.env : '';
   if (dotenv.length > DOTENV_MAX_CHARS) return jsonError(413, 'invalid', 'The .env is too large.');
 

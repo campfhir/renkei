@@ -85,7 +85,25 @@ export type ChatStreamEvent =
    * chat_compact tool running inside an ordinary reply turn alike, so
    * either way the thread can show it live.
    */
-  | { type: 'compaction_progress'; turnId: string; foldedSoFar: number; totalToFold: number }
+  | {
+      type: 'compaction_progress';
+      turnId: string;
+      foldedSoFar: number;
+      totalToFold: number;
+      /**
+       * The pass's own end, when it runs inside a reply turn (start-turn.ts):
+       * 'done' once the summary is written, 'failed' when it threw. Without
+       * it the card could only read the pass's fate off the turn's — and a
+       * reply that fails AFTER a successful fold would say the fold failed.
+       */
+      status?: 'done' | 'failed';
+    }
+  /**
+   * A sub-agent (code_delegate) reporting how far it is — raised at its
+   * start, after every model call, and at its end — keyed by the
+   * delegating call's tool_use id, which is the card in the thread.
+   */
+  | { type: 'subagent_progress'; turnId: string; subagent: SubagentProgress }
   | {
       type: 'snapshot';
       turn: TurnView;
@@ -99,6 +117,17 @@ export type ChatStreamEvent =
    * replies produced.
    */
   | { type: 'truncate'; fromSeq: number; removedArtifactIds: string[] };
+
+/** A sub-agent's live state, as the thread shows it on its card. */
+export interface SubagentProgress {
+  toolUseId: string;
+  status: 'running' | 'completed' | 'failed' | 'interrupted';
+  steps: number;
+  maxSteps: number;
+  toolCalls: number;
+  /** The tool it last reached for, while running. */
+  lastTool: string | null;
+}
 
 export interface CompactionProgress {
   turnId: string;
@@ -119,6 +148,8 @@ export interface ThreadState {
   compaction: CompactionProgress | null;
   /** The tool call the running turn is waiting on the owner for, if any. */
   pendingPermission: PendingToolPermission | null;
+  /** Sub-agents this page has watched, by the delegating call's id; kept after they end. */
+  subagents: Record<string, SubagentProgress>;
 }
 
 function withArtifacts(current: AttachmentView[], added: AttachmentView[]): AttachmentView[] {
@@ -257,12 +288,17 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
       return state.pendingPermission?.toolUseId === event.toolUseId
         ? { ...state, pendingPermission: null }
         : state;
+    case 'subagent_progress':
+      return {
+        ...state,
+        subagents: { ...state.subagents, [event.subagent.toolUseId]: event.subagent },
+      };
     case 'compaction_progress':
       return {
         ...state,
         compaction: {
           turnId: event.turnId,
-          status: 'running',
+          status: event.status ?? 'running',
           foldedSoFar: event.foldedSoFar,
           totalToFold: event.totalToFold,
         },
@@ -281,6 +317,7 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         // on), whatever a stale live event said.
         pendingPermission:
           event.turn.status === 'running' ? (event.turn.pendingPermission ?? null) : null,
+        subagents: state.subagents,
         compaction:
           event.turn.kind === 'compaction'
             ? {
@@ -306,6 +343,7 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         artifacts: state.artifacts.filter((artifact) => !removed.has(artifact.id)),
         compaction: null,
         pendingPermission: null,
+        subagents: {},
       };
     }
     case 'turn_end':
@@ -313,8 +351,12 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         ...state,
         pendingToolCalls: [],
         pendingPermission: null,
+        // A pass that already said how it ended keeps its word; one still
+        // running when the turn ends takes the turn's outcome.
         compaction:
-          state.compaction && state.compaction.turnId === event.turnId
+          state.compaction &&
+          state.compaction.turnId === event.turnId &&
+          state.compaction.status === 'running'
             ? { ...state.compaction, status: event.status === 'completed' ? 'done' : 'failed' }
             : state.compaction,
         turn: state.turn
@@ -360,5 +402,6 @@ export function initialThreadState(
     compaction: null,
     pendingPermission:
       activeTurn?.status === 'running' ? (activeTurn.pendingPermission ?? null) : null,
+    subagents: {},
   };
 }

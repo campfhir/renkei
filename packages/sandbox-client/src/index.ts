@@ -991,6 +991,77 @@ export async function sbWorkspaceGitDiff(
   };
 }
 
+/** One commit as the worker describes it (the `git-show` verb). */
+export interface WireCommit {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  author: string;
+  /** ISO 8601, as git wrote it. */
+  date: string;
+  parents: string[];
+}
+
+/**
+ * One commit of the checkout by its hash (or a prefix): its header, its
+ * diff against its parent with per-file counts, and where it stands —
+ * `pushed` when a remote branch holds it, `inHead` when the current
+ * branch's history does. `statOnly` skips the diff text.
+ */
+export async function sbWorkspaceGitShow(
+  target: SandboxTarget,
+  input: { id: string; commit: string; context?: number; statOnly?: boolean }
+): Promise<
+  ClientResult<{
+    branch: string;
+    commit: WireCommit;
+    pushed: boolean;
+    inHead: boolean;
+    diff: string;
+    files: WireDiffFile[];
+    truncated: boolean;
+  }>
+> {
+  const result = await workspaceCall('git-show', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !isRecord(value.commit) || !Array.isArray(value.files)) {
+    return malformed();
+  }
+  const files: WireDiffFile[] = [];
+  for (const raw of value.files) {
+    if (!isRecord(raw)) return malformed();
+    files.push({
+      path: str(raw.path),
+      added: typeof raw.added === 'number' ? raw.added : 0,
+      deleted: typeof raw.deleted === 'number' ? raw.deleted : 0,
+      status: 'modified',
+    });
+  }
+  const commit = value.commit;
+  return {
+    ok: true,
+    val: {
+      branch: str(value.branch),
+      commit: {
+        sha: str(commit.sha),
+        shortSha: str(commit.shortSha),
+        subject: str(commit.subject),
+        author: str(commit.author),
+        date: str(commit.date),
+        parents: Array.isArray(commit.parents)
+          ? commit.parents.filter((entry): entry is string => typeof entry === 'string')
+          : [],
+      },
+      pushed: value.pushed === true,
+      inHead: value.inHead === true,
+      diff: str(value.diff),
+      files,
+      truncated: value.truncated === true,
+    },
+  };
+}
+
 export async function sbWorkspaceGitCommit(
   target: SandboxTarget,
   input: {

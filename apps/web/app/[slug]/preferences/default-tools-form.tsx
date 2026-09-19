@@ -1,11 +1,14 @@
 'use client';
 
 /**
- * The person's saved default chat toolset — the actual, discoverable home
- * for the preference that tools-popover.tsx's "Save as my default" /
- * "Clear my default" links write to. Those links exist for convenience
- * mid-chat; this section is where someone finds and changes the setting on
- * its own, without needing to already be in a chat.
+ * The person's saved default toolsets — the actual, discoverable home for
+ * the preferences that tools-popover.tsx's "Save as my default" / "Clear
+ * my default" links write to. Those links exist for convenience mid-chat;
+ * this section is where someone finds and changes the setting on its own,
+ * without needing to already be in a chat. Rendered twice: once for new
+ * chats (`kind` 'chat', falling back to the core set) and once for new
+ * code projects ('code', falling back to the code default, with Bitbucket
+ * locked on — a new code project is given this toolset when it is made).
  */
 
 import { useState } from 'react';
@@ -22,18 +25,27 @@ export default function DefaultToolsForm({
   tenantId,
   connectors,
   initialDefault,
+  kind = 'chat',
+  baseline,
+  locked = [],
 }: {
   tenantId: string;
   connectors: ChatToolOption[];
-  /** null = no saved default yet — a new chat falls back to the core set. */
+  /** null = no saved default yet — the built-in default for the kind applies. */
   initialDefault: string[] | null;
+  /** Which default this section is: for new chats, or for new code projects. */
+  kind?: 'chat' | 'code';
+  /** The built-in default shown when nothing is saved; the core connectors when absent. */
+  baseline?: readonly string[];
+  /** Always on for this kind (a code project's Bitbucket): checked, and not a choice. */
+  locked?: readonly string[];
 }) {
   const [selected, setSelected] = useState<string[] | null>(initialDefault);
   const [savedDefault, setSavedDefault] = useState<string[] | null>(initialDefault);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
 
-  const core = connectors.filter((option) => option.core).map((option) => option.key);
-  const effective = new Set(selected ?? core);
+  const core = baseline ?? connectors.filter((option) => option.core).map((option) => option.key);
+  const effective = new Set([...(selected ?? core), ...locked]);
 
   function toggle(key: string, on: boolean) {
     const next = new Set(effective);
@@ -45,7 +57,7 @@ export default function DefaultToolsForm({
 
   async function save() {
     setStatus('saving');
-    const result = await chatClient.setDefaultTools(tenantId, [...effective].sort());
+    const result = await chatClient.setDefaultTools(tenantId, [...effective].sort(), kind);
     if (result.data) {
       setSavedDefault(result.data.userDefault?.connectors ?? null);
       setStatus('saved');
@@ -56,7 +68,7 @@ export default function DefaultToolsForm({
 
   async function clear() {
     setStatus('saving');
-    const result = await chatClient.setDefaultTools(tenantId, null);
+    const result = await chatClient.setDefaultTools(tenantId, null, kind);
     if (!result.error) {
       setSelected(null);
       setSavedDefault(null);
@@ -68,16 +80,16 @@ export default function DefaultToolsForm({
 
   return (
     <section
-      aria-labelledby="default-tools-heading"
+      aria-labelledby={`default-tools-heading-${kind}`}
       className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
     >
-      <h3 id="default-tools-heading" className="font-semibold">
-        Default tools for new chats
+      <h3 id={`default-tools-heading-${kind}`} className="font-semibold">
+        {kind === 'code' ? 'Default tools for new code projects' : 'Default tools for new chats'}
       </h3>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
-        What a brand new chat starts with, before you pick anything for it — a project you start the
-        chat in still wins over this if it has its own toolset, and anything you change inside a
-        specific chat only ever affects that chat.
+        {kind === 'code'
+          ? 'What a code project is given the moment you create it — its chats start from the project’s toolset, and you can still change it on the project’s page or in any chat. Existing projects keep what they were made with. Bitbucket is always on in a code project.'
+          : 'What a brand new chat starts with, before you pick anything for it — a project you start the chat in still wins over this if it has its own toolset, and anything you change inside a specific chat only ever affects that chat.'}
       </p>
 
       {connectors.length === 0 ? (
@@ -94,6 +106,7 @@ export default function DefaultToolsForm({
               <input
                 type="checkbox"
                 checked={effective.has(option.key)}
+                disabled={locked.includes(option.key)}
                 onChange={(event) => toggle(option.key, event.target.checked)}
               />
               <span className="flex-1">{option.label}</span>
@@ -119,7 +132,7 @@ export default function DefaultToolsForm({
             disabled={status === 'saving'}
             className="text-sm text-gray-500 hover:underline disabled:opacity-50"
           >
-            Reset to the core set
+            {kind === 'code' ? 'Reset to the code default' : 'Reset to the core set'}
           </button>
         ) : null}
         {status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}

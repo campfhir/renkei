@@ -13,6 +13,7 @@ import type {
   ModelOption,
   ToolPermissionDecision,
 } from './views';
+import type { SubagentRunView } from './subagent-runs';
 import type { ConnectorOption } from './tool-surface';
 import type { GrantView, GrantRole, ResourceKind } from './access';
 import type { StartedTurn } from './start-turn';
@@ -29,6 +30,12 @@ export const chatClient = {
       `${base(tenantId)}/chats/search?${new URLSearchParams({ q: query }).toString()}`
     ),
 
+  /** A sub-agent's run — its task, progress, report and full transcript — by the delegating call. */
+  getSubagentRun: (tenantId: string, chatId: string, toolUseId: string) =>
+    getJson<{ run: SubagentRunView }>(
+      `${base(tenantId)}/chats/${chatId}/subagents/${encodeURIComponent(toolUseId)}`
+    ),
+
   getChat: (tenantId: string, chatId: string) =>
     getJson<{ chat: ChatView; messages: ChatMessageView[] }>(`${base(tenantId)}/chats/${chatId}`),
 
@@ -40,6 +47,7 @@ export const chatClient = {
       llmModelId?: string | null;
       toolConfig?: { connectors: string[] } | null;
       thinkingEnabled?: boolean;
+      autoMode?: boolean;
       archived?: boolean;
     }
   ) => sendJsonFull(`${base(tenantId)}/chats/${chatId}`, 'PATCH', patch),
@@ -142,15 +150,24 @@ export const chatClient = {
     getJson<{
       connectors: ConnectorOption[];
       core: string[];
+      /** Where a code project starts when the person has no code default of their own. */
+      codeDefault?: string[];
+      /** The person's saved default for new code projects, if any. */
+      userCodeDefault?: { connectors: string[] } | null;
       userDefault: { connectors: string[] } | null;
     }>(`${base(tenantId)}/tools`),
 
   /** Save (or, with null, clear) this person's default chat toolset. */
-  setDefaultTools: (tenantId: string, connectors: string[] | null) =>
+  /** Save or clear one of the person's defaults: for new chats, or for new code projects. */
+  setDefaultTools: (
+    tenantId: string,
+    connectors: string[] | null,
+    kind: 'chat' | 'code' = 'chat'
+  ) =>
     sendJsonFull<{ userDefault: { connectors: string[] } | null }>(
       `${base(tenantId)}/tools`,
       'PUT',
-      { userDefault: connectors ? { connectors } : null }
+      { userDefault: connectors ? { connectors } : null, kind }
     ),
 
   uploadAttachment: async (

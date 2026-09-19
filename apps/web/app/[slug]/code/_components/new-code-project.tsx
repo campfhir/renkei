@@ -17,6 +17,8 @@ import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
+import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
+import ToolsPopover from '../../chat/_components/tools-popover';
 import { repoSlugFromName } from '@/lib/code/repo-slug';
 import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
 
@@ -39,6 +41,9 @@ export default function NewCodeProject({
   const [branch, setBranch] = useState('');
   const [env, setEnv] = useState('');
   const [instructions, setInstructions] = useState(DEFAULT_CODE_INSTRUCTIONS);
+  // null: the project inherits your default for code projects (else the
+  // code default) when it is made; a list is this project's own choice.
+  const [connectors, setConnectors] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,6 +60,7 @@ export default function NewCodeProject({
         branch: branch.trim(),
         env,
         instructions: instructions.trim(),
+        ...(connectors ? { toolConfig: { connectors } } : {}),
       }
     );
     setBusy(false);
@@ -213,6 +219,29 @@ export default function NewCodeProject({
             out of everything the model reads.
           </span>
         </label>
+
+        <div className="text-sm">
+          <span className="mb-1 block text-xs font-medium text-gray-500">
+            Tools — the connectors chats in this project start with
+          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <ToolsPopover
+              tenantId={tenantId}
+              selected={connectors}
+              onChange={setConnectors}
+              context="project"
+              kind="code"
+              locked={CODE_PROJECT_CONNECTORS}
+              saveDefault
+              slug={slug}
+            />
+            <span className="text-xs text-gray-500">
+              {connectors
+                ? `${connectors.length} chosen for this project.`
+                : 'Inherits your default for code projects (or the code default: Bitbucket, Jira, Confluence, knowledge, the sandbox). Saved on the project when it is made; change it on the project’s page later.'}
+            </span>
+          </div>
+        </div>
 
         <label className="block text-sm">
           <span className="mb-1 block text-xs font-medium text-gray-500">
@@ -531,7 +560,11 @@ function CreateRepository({
             className={inputClass}
           >
             <option value="">
-              {!workspace ? 'Pick a workspace first' : projects === null ? 'Loading…' : 'Pick a project'}
+              {!workspace
+                ? 'Pick a workspace first'
+                : projects === null
+                  ? 'Loading…'
+                  : 'Pick a project'}
             </option>
             {(projects ?? []).map((entry) => (
               <option key={entry.key} value={entry.key}>

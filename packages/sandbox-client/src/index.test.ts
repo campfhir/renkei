@@ -15,6 +15,7 @@ import {
   sbReadFile,
   sbWriteFile,
   sbDeleteFile,
+  sbWorkspaceGitShow,
   clientFailure,
 } from './index';
 
@@ -494,5 +495,81 @@ describe('sandboxBrowserEnabled', () => {
     process.env.SANDBOX_BROWSER_ENABLED = '1';
     delete process.env.SANDBOX_WORKER_URL;
     expect(sandboxBrowserEnabled()).toBe(false);
+  });
+});
+
+describe('sbWorkspaceGitShow', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('POSTs the hash to workspaces/git-show and reads the commit, its state and its files back', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          branch: 'feat/x',
+          commit: {
+            sha: 'a'.repeat(40),
+            shortSha: 'aaaaaaa',
+            subject: 'Fix the login timeout',
+            author: 'Ada',
+            date: '2026-09-01T10:00:00+00:00',
+            parents: ['b'.repeat(40)],
+          },
+          pushed: true,
+          inHead: true,
+          diff: 'diff --git a/x b/x\n',
+          files: [{ path: 'x', added: 1, deleted: 2, status: 'modified' }],
+          truncated: false,
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await sbWorkspaceGitShow(TARGET, { id: 'ws-1', commit: 'aaaaaaa', context: 5 });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://sandbox.internal:8092/v1/workspaces/git-show',
+      expect.objectContaining({ method: 'POST' })
+    );
+    const request = fetchSpy.mock.calls[0]?.[1];
+    expect(JSON.parse(String(request?.body))).toEqual({
+      ...TARGET,
+      id: 'ws-1',
+      commit: 'aaaaaaa',
+      context: 5,
+    });
+    expect(result).toEqual({
+      ok: true,
+      val: {
+        branch: 'feat/x',
+        commit: {
+          sha: 'a'.repeat(40),
+          shortSha: 'aaaaaaa',
+          subject: 'Fix the login timeout',
+          author: 'Ada',
+          date: '2026-09-01T10:00:00+00:00',
+          parents: ['b'.repeat(40)],
+        },
+        pushed: true,
+        inHead: true,
+        diff: 'diff --git a/x b/x\n',
+        files: [{ path: 'x', added: 1, deleted: 2, status: 'modified' }],
+        truncated: false,
+      },
+    });
+  });
+
+  it('answers unreachable when the commit is missing from the answer', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ branch: 'main', files: [] }), { status: 200 })
+      );
+    const result = await sbWorkspaceGitShow(TARGET, { id: 'ws-1', commit: 'aaaaaaa' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.err.kind).toBe('unreachable');
   });
 });

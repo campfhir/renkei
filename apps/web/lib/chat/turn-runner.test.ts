@@ -1033,3 +1033,147 @@ describe('runChatTurn permissions', () => {
     expect(fake.pending()).toBeNull();
   });
 });
+
+describe('runChatTurn in auto mode', () => {
+  const doneTool: LocalTool = {
+    def: { name: 'task_complete', description: 'done', inputSchema: { type: 'object' } },
+    readOnly: true,
+    async execute() {
+      return textResult('Noted.');
+    },
+  };
+  const autoContinue = { doneTool: 'task_complete', nudge: 'Carry on.', maxContinues: 3 };
+
+  it('nudges the model on when a reply ends without task_complete, then completes once it is called', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-auto-1');
+    const watched = watch(channel);
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(
+          provider([
+            text('I have made a start.'),
+            toolCall('task_complete', { outcome: 'done', summary: 'All done.' }),
+            text('Finished: the tests pass.'),
+          ])
+        ),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([doneTool]),
+        localContext,
+        autoContinue,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-auto-1')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.iterations).toBe(3);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    // The first reply, the nudge in the person's place, the reply that
+    // called task_complete, its result, and the final reply.
+    expect(rows.map((row) => `${row.role}:${row.kind}`)).toEqual([
+      'assistant:assistant',
+      'user:nudge',
+      'assistant:assistant',
+      'user:tool_results',
+      'assistant:assistant',
+    ]);
+    expect(rows[1].blocks).toEqual([{ type: 'text', text: 'Carry on.' }]);
+    expect(rows[4].blocks).toEqual([{ type: 'text', text: 'Finished: the tests pass.' }]);
+    const state = watched.state();
+    expect(state.messages.map((message) => message.kind)).toEqual([
+      'assistant',
+      'nudge',
+      'assistant',
+      'tool_results',
+      'assistant',
+    ]);
+    expect(state.messages[1].blocks).toEqual([{ type: 'text', text: 'Carry on.' }]);
+    expect(state.turn?.status).toBe('completed');
+  });
+
+  it('gives up after maxContinues nudges and completes the turn as it stands', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-auto-2');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([text('Still thinking about it.')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([doneTool]),
+        localContext,
+        autoContinue,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-auto-2')
+    );
+    expect(outcome.status).toBe('completed');
+    // The first reply plus one per nudge.
+    expect(outcome.iterations).toBe(4);
+    const nudges = [...fake.rows.values()].filter((row) => row.kind === 'nudge');
+    expect(nudges).toHaveLength(3);
+  });
+
+  it('does not nudge a turn that was stopped, and never without autoContinue', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-auto-3');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([text('Not done, but no auto mode.')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([doneTool]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-auto-3')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.iterations).toBe(1);
+    expect([...fake.rows.values()].some((row) => row.kind === 'nudge')).toBe(false);
+  });
+
+  it('runs act tools without asking under allowAll, and still refuses a blocked one', async () => {
+    const fake = fakeStore();
+    const calls: string[] = [];
+    const channel = openTurnChannel('turn-auto-4');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(
+          provider([
+            toolCall('jira_create_issue', { summary: 'x' }),
+            toolCall('outlook_send_mail', { to: 'a' }),
+            text('Done'),
+          ])
+        ),
+        tools: [],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([]),
+        localContext,
+        permissions: {
+          alwaysAllowed: new Set(),
+          denied: new Set(['outlook_send_mail']),
+          allowAll: true,
+        },
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-auto-4')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(fake.asks).toEqual([]);
+    expect(calls).toEqual(['jira_create_issue:{"summary":"x"}']);
+    const refusal = [...fake.rows.values()]
+      .filter((row) => row.kind === 'tool_results')
+      .flatMap((row) => row.blocks)
+      .find((block) => block.type === 'tool_result' && block.toolUseId === 'tu_outlook_send_mail');
+    expect(refusal && refusal.type === 'tool_result' ? refusal.isError : null).toBe(true);
+  });
+});

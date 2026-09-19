@@ -77,6 +77,7 @@ export default function Composer({
   onCompact,
   onStop,
   modelControl,
+  modeControl,
   voiceControl,
   dictation,
   editing,
@@ -98,6 +99,8 @@ export default function Composer({
   onCompact: () => Promise<boolean>;
   onStop: () => Promise<void>;
   modelControl: ReactNode;
+  /** The Auto switch, in a code project's chat (auto-mode-toggle.tsx); nothing elsewhere. */
+  modeControl?: ReactNode;
   /** The speaker menu, when the org has a voice service; nothing otherwise. */
   voiceControl?: ReactNode;
   /** The microphone beside the box, when the org has a voice service. */
@@ -470,7 +473,10 @@ export default function Composer({
               )}
             </button>
           ) : null}
-          <div className="min-w-0 flex-1">{modelControl}</div>
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            {modelControl}
+            {modeControl}
+          </div>
           {running ? (
             <button
               type="button"

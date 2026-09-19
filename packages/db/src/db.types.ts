@@ -459,6 +459,7 @@ export interface ChatProjects {
 
 export interface Chats {
   archived_at: Timestamp | null;
+  auto_mode: Generated<boolean>;
   created_at: Generated<Timestamp>;
   id: Generated<string>;
   last_message_at: Timestamp | null;
@@ -469,6 +470,30 @@ export interface Chats {
   thinking_enabled: Generated<boolean>;
   title: string | null;
   tool_config: Json | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ChatSubagentRuns {
+  chat_id: string;
+  error: string | null;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  input_tokens: Generated<number>;
+  instructions: string | null;
+  last_tool: string | null;
+  max_steps: number;
+  output_tokens: Generated<number>;
+  read_only: Generated<boolean>;
+  report: string | null;
+  started_at: Generated<Timestamp>;
+  status: Generated<string>;
+  steps: Generated<number>;
+  task: string;
+  tenant_id: string;
+  tool_calls: Generated<number>;
+  tool_use_id: string;
+  transcript: string | null;
+  turn_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1246,6 +1271,7 @@ export interface DB {
   chat_messages: ChatMessages;
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;
+  chat_subagent_runs: ChatSubagentRuns;
   chat_summaries: ChatSummaries;
   chat_turns: ChatTurns;
   chat_user_memories: ChatUserMemories;

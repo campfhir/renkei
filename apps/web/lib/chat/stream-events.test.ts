@@ -336,3 +336,110 @@ describe('tool permission events', () => {
     expect(ended.pendingPermission).toBeNull();
   });
 });
+
+describe('subagent_progress', () => {
+  it('keeps each sub-agent’s latest state by its delegating call, through a snapshot, until a truncate', () => {
+    const { applyStreamEvent: apply, initialThreadState: initial } =
+      jest.requireActual<typeof import('./stream-events')>('./stream-events');
+    let state = initial([], null);
+    state = apply(state, {
+      type: 'subagent_progress',
+      turnId: 't1',
+      subagent: {
+        toolUseId: 'd1',
+        status: 'running',
+        steps: 1,
+        maxSteps: 40,
+        toolCalls: 2,
+        lastTool: 'code_read_file',
+      },
+    });
+    state = apply(state, {
+      type: 'subagent_progress',
+      turnId: 't1',
+      subagent: {
+        toolUseId: 'd1',
+        status: 'completed',
+        steps: 5,
+        maxSteps: 40,
+        toolCalls: 9,
+        lastTool: null,
+      },
+    });
+    expect(state.subagents.d1).toEqual(
+      expect.objectContaining({ status: 'completed', steps: 5, toolCalls: 9 })
+    );
+    state = apply(state, {
+      type: 'snapshot',
+      turn: {
+        id: 't1',
+        status: 'completed',
+        kind: 'reply',
+        error: null,
+        startedAt: new Date(0).toISOString(),
+        finishedAt: null,
+      },
+      messages: [],
+    });
+    expect(state.subagents.d1?.status).toBe('completed');
+    state = apply(state, { type: 'truncate', fromSeq: 1, removedArtifactIds: [] });
+    expect(state.subagents).toEqual({});
+  });
+});
+
+describe('compaction_progress with a status of its own', () => {
+  const turn = {
+    id: 't1',
+    status: 'running' as const,
+    kind: 'reply' as const,
+    error: null,
+    startedAt: new Date(0).toISOString(),
+    finishedAt: null,
+  };
+
+  it('keeps a pass that said it was done, even when the reply then fails', () => {
+    let state = initialThreadState([], turn);
+    state = applyStreamEvent(state, {
+      type: 'compaction_progress',
+      turnId: 't1',
+      foldedSoFar: 40,
+      totalToFold: 40,
+    });
+    state = applyStreamEvent(state, {
+      type: 'compaction_progress',
+      turnId: 't1',
+      foldedSoFar: 40,
+      totalToFold: 40,
+      status: 'done',
+    });
+    state = applyStreamEvent(state, {
+      type: 'turn_end',
+      turnId: 't1',
+      status: 'failed',
+      error: 'The model rejected the request.',
+    });
+    expect(state.compaction).toEqual({
+      turnId: 't1',
+      status: 'done',
+      foldedSoFar: 40,
+      totalToFold: 40,
+    });
+  });
+
+  it('lets a pass still running take the turn’s outcome', () => {
+    let state = initialThreadState([], turn);
+    state = applyStreamEvent(state, {
+      type: 'compaction_progress',
+      turnId: 't1',
+      foldedSoFar: 10,
+      totalToFold: 40,
+    });
+    state = applyStreamEvent(state, {
+      type: 'turn_end',
+      turnId: 't1',
+      status: 'failed',
+      error: 'x',
+    });
+    expect(state.compaction?.status).toBe('failed');
+  });
+});

@@ -67,7 +67,13 @@ when the project's checkout is ready (`lib/code/turn.ts`):
 A pull request is `bitbucket_create_pull_request`, as before. The worker
 verbs behind these (`/v1/workspaces/*`, `/v1/env/*` on
 `apps/worker-sandbox`) are reachable only from the web app with the
-bearer key; nothing on the MCP surface reaches a checkout.
+bearer key; nothing on the MCP surface reaches a checkout. Two verbs
+serve the page rather than the model: `git-diff` (the working tree
+against HEAD, untracked files included, with per-file counts) and
+`git-show` (one commit by its hash — never a ref — with its header, its
+diff against its parent, and where it stands: `pushed` when any remote
+branch holds it, `inHead` when the current branch's history does), both
+behind `…/code/projects/[projectId]/diff`, the latter with `?commit=`.
 
 ## Why a shell, after "curated verbs, not a shell"
 

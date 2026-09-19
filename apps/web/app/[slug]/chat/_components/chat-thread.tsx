@@ -54,8 +54,12 @@ import MessageList from './message-list';
 import ModelSelect from './model-select';
 import ToolsPopover from './tools-popover';
 import ShareModal from './share-modal';
-import { CodeChatButtons, useCodeChatTools } from '../../code/_components/code-chat-tools';
-import { Counts } from '../../code/_components/diff-view';
+import {
+  ChangesBadge,
+  CodeChatButtons,
+  useCodeChatTools,
+} from '../../code/_components/code-chat-tools';
+import AutoModeToggle from './auto-mode-toggle';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import VoiceMenu from './voice-menu';
 import VoiceMode, { type VoiceActivity } from './voice-mode';
@@ -129,6 +133,7 @@ export default function ChatThread({
     initialChat.llmModelId ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null
   );
   const [thinking, setThinking] = useState(initialChat.thinkingEnabled);
+  const [autoMode, setAutoMode] = useState(initialChat.autoMode);
   const [connectors, setConnectors] = useState<string[] | null>(
     initialChat.toolConfig?.connectors ?? null
   );
@@ -517,6 +522,15 @@ export default function ChatThread({
     },
     [chat.id, tenantId]
   );
+  // Auto mode (lib/chat/auto-mode.ts): kept on the chat row, read by the
+  // next Send; a switch flipped mid-turn does not change the running one.
+  const changeAutoMode = useCallback(
+    async (on: boolean) => {
+      setAutoMode(on);
+      await chatClient.updateChat(tenantId, chat.id, { autoMode: on });
+    },
+    [chat.id, tenantId]
+  );
   const changeConnectors = useCallback(
     async (next: string[] | null) => {
       setConnectors(next);
@@ -538,11 +552,25 @@ export default function ChatThread({
   const codeProjectId = chat.projectKind === 'code' && chat.projectId ? chat.projectId : null;
   const codeTools = useCodeChatTools({
     tenantId,
+    chatId: chat.id,
     projectId: codeProjectId,
     canEdit: isOwner,
     running,
+    messages: state.messages,
     onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
   });
+  const openCommit = codeTools.openChanges;
+  const openSubagent = codeTools.openSubagent;
+  const codeActions = useMemo(
+    () =>
+      codeProjectId
+        ? { onShowCommit: (sha: string) => openCommit(sha), onShowSubagent: openSubagent }
+        : null,
+    [codeProjectId, openCommit, openSubagent]
+  );
+  // The branch under the title: the page's word until the first look at
+  // the checkout, then whatever the last look said.
+  const branch = codeProjectId ? (codeTools.branch ?? chat.projectBranch) : null;
   const overflow: OverflowItem[] = [
     {
       label: 'New chat',
@@ -558,10 +586,10 @@ export default function ChatThread({
     overflow.push({
       label: 'Changes',
       icon: ICONS.diff,
-      onSelect: codeTools.openChanges,
+      onSelect: () => codeTools.openChanges(),
       extra:
-        codeTools.stat && codeTools.stat.files > 0 ? (
-          <Counts added={codeTools.stat.added} deleted={codeTools.stat.deleted} />
+        (codeTools.stat && codeTools.stat.files > 0) || codeTools.commits.length > 0 ? (
+          <ChangesBadge tools={codeTools} />
         ) : undefined,
     });
   }
@@ -625,6 +653,7 @@ export default function ChatThread({
                   id: chat.projectId,
                   name: chat.projectName,
                   href: projectHref(slug, chat.projectId, chat.projectKind),
+                  branch,
                 }
               : null
           }
@@ -641,6 +670,7 @@ export default function ChatThread({
                 onChange={changeConnectors}
                 slug={slug}
                 locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+                kind={codeProjectId ? 'code' : 'chat'}
               />
             ) : null}
             <OverflowMenu items={overflow} />
@@ -656,6 +686,7 @@ export default function ChatThread({
                   onChange={changeConnectors}
                   slug={slug}
                   locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+                  kind={codeProjectId ? 'code' : 'chat'}
                 />
                 <button
                   type="button"
@@ -698,6 +729,8 @@ export default function ChatThread({
             ? { pending: state.pendingPermission, canDecide: isOwner, onDecide: decidePermission }
             : null
         }
+        code={codeActions}
+        subagents={state.subagents}
         speech={
           voice && speechQueue
             ? {
@@ -754,6 +787,15 @@ export default function ChatThread({
               onThinking={changeThinking}
               hasHistory={state.messages.length > 0}
             />
+          }
+          modeControl={
+            codeProjectId ? (
+              <AutoModeToggle
+                on={autoMode}
+                onChange={changeAutoMode}
+                disabled={models.length === 0}
+              />
+            ) : null
           }
           dictation={
             voice

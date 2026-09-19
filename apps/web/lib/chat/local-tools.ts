@@ -11,6 +11,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { LlmToolDef, LlmUsage, ResolvedLlm } from '@renkei/agent-llm';
 import type { McpToolResult } from '@renkei/mcp-client';
+import type { SubagentRecorder } from './subagent-runs';
 
 export interface LocalToolContext {
   db: Kysely<DB>;
@@ -35,6 +36,14 @@ export interface LocalToolContext {
    * for a context with no turn behind it (none today).
    */
   emitProgress?: (progress: { foldedSoFar: number; totalToFold: number }) => void;
+  /**
+   * The id of the tool_use block being answered — the runner sets it per
+   * call, so a tool that keeps a record of its own (a sub-agent's run)
+   * can key that record to the call the thread shows.
+   */
+  toolUseId?: string;
+  /** Where a code chat's sub-agents record their runs (subagent-runs.ts); absent, they do not. */
+  subagents?: SubagentRecorder;
 }
 
 export interface LocalTool {

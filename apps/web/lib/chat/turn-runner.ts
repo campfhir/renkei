@@ -59,7 +59,7 @@ export interface TurnStore {
   /** Appends a row at the chat's next seq; returns its id, seq and time. */
   appendMessage(input: {
     role: 'user' | 'assistant';
-    kind: 'assistant' | 'tool_results';
+    kind: 'assistant' | 'tool_results' | 'nudge';
     status: MessageStatus;
     blocks: LlmContentBlock[];
   }): Promise<{ id: string; seq: number; createdAt: Date }>;
@@ -165,6 +165,12 @@ export const DEFAULT_TURN_LIMITS: TurnLimits = {
 export interface TurnPermissions {
   alwaysAllowed: ReadonlySet<string>;
   /**
+   * Auto mode (auto-mode.ts): nothing asks. Every call runs as if the
+   * person had said "always" for it — except the tools in `denied`,
+   * which stay refused. The person chose this for the chat.
+   */
+  allowAll?: boolean;
+  /**
    * Tools the person blocked outright (permission-prefs.ts). The surface
    * never offers these, so a call can only come from the model's memory
    * of an earlier turn — refused without asking, and said so.
@@ -179,6 +185,20 @@ export const PERMISSION_TIMEOUT_RESULT =
   'Nobody allowed this tool call in time, so it was not made. Tell the person what you were going to do; they can ask again when they are ready.';
 export const PERMISSION_BLOCKED_RESULT =
   'The person has blocked this tool in their preferences, so it cannot be used in this chat. Do not retry it or work around it; tell them what you were going to do and let them decide.';
+
+/**
+ * Auto mode's other half (auto-mode.ts): the turn does not end when the
+ * model stops talking. A reply that ends without a successful call to
+ * `doneTool` is answered by the runner itself with `nudge` as a user-role
+ * row of kind 'nudge', and the loop goes again — in the same turn, so
+ * Stop, the wall clock and the iteration cap still bound it. After
+ * `maxContinues` nudges the turn completes as it is.
+ */
+export interface AutoContinue {
+  doneTool: string;
+  nudge: string;
+  maxContinues: number;
+}
 
 export interface TurnRunnerDeps {
   llm: ResolvedLlm;
@@ -201,6 +221,8 @@ export interface TurnRunnerDeps {
   discoverableTools?: LlmToolDef[];
   /** See TurnPermissions; omitted means no call ever asks. */
   permissions?: TurnPermissions;
+  /** See AutoContinue; omitted means a reply without tool calls ends the turn. */
+  autoContinue?: AutoContinue;
   channel: TurnChannel;
   store: TurnStore;
   now?: () => number;
@@ -457,10 +479,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const denied = deps.permissions?.denied ?? new Set<string>();
   const needsPermission = (name: string) =>
     deps.permissions !== undefined &&
+    deps.permissions.allowAll !== true &&
     !denied.has(name) &&
     !readOnlyTools.has(name) &&
     !alwaysAllowed.has(name);
   let permissionWaited = 0;
+  // Auto mode: whether the model has marked the task finished this turn,
+  // and how many times it has been told to carry on.
+  let taskDone = false;
+  let continues = 0;
 
   const messages: LlmMessage[] = [...input.history];
   let assistant = input.assistantMessage;
@@ -600,6 +627,45 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         });
       }
     }
+  };
+
+  /**
+   * Auto mode's word to carry on: a user-role row the runner writes in
+   * the person's place, stored, streamed and pushed into the conversation
+   * like a prompt — but of kind 'nudge', so the thread shows it as a
+   * note rather than as something the person typed.
+   */
+  const appendNudgeRow = async (text: string) => {
+    const block: LlmContentBlock = { type: 'text', text };
+    const row = await store.appendMessage({
+      role: 'user',
+      kind: 'nudge',
+      status: 'complete',
+      blocks: [block],
+    });
+    emit({
+      type: 'message_start',
+      messageId: row.id,
+      turnId: input.turnId,
+      seq: row.seq,
+      role: 'user',
+      kind: 'nudge',
+      llmModelId: null,
+      provider: null,
+      model: null,
+      createdAt: row.createdAt.toISOString(),
+    });
+    emit({ type: 'block_start', messageId: row.id, index: 0, block: toChatBlock(block) });
+    emit({ type: 'block_stop', messageId: row.id, index: 0 });
+    emit({
+      type: 'message_end',
+      messageId: row.id,
+      status: 'complete',
+      stopReason: null,
+      usage: null,
+      error: null,
+    });
+    messages.push({ role: 'user', content: [block] });
   };
 
   /** A fresh assistant row for the next reply, announced. */
@@ -897,6 +963,19 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           block.type === 'tool_use'
       );
       if (reply.stopReason !== 'tool_use' || toolUses.length === 0) {
+        // Auto mode: the model stopped, but the task is not marked done —
+        // tell it to carry on and go again, within this same turn.
+        const auto = deps.autoContinue;
+        if (auto && !taskDone && continues < auto.maxContinues) {
+          continues += 1;
+          log('chat auto mode: nudging the model on ({count} of {max})', {
+            count: continues,
+            max: auto.maxContinues,
+          });
+          await appendNudgeRow(auto.nudge);
+          await startNextAssistant();
+          continue;
+        }
         clearInterval(timer);
         const outcome: TurnOutcome = { status: 'completed', error: null, iterations, ...totals };
         await store.finishTurn(outcome);
@@ -958,7 +1037,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             // never settles can't hold the turn (and its heartbeat) open
             // forever; the orphaned call keeps running, but the loop moves on.
             return await raceTimeout(
-              deps.localTools.run(use.name, use.input, deps.localContext),
+              deps.localTools.run(use.name, use.input, { ...deps.localContext, toolUseId: use.id }),
               limits.toolTimeoutMs,
               `local tool ${use.name} timed out`
             );
@@ -1020,6 +1099,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         stage = null;
         for (const [index, use] of group.entries()) {
           const outcome = outcomes[index];
+          if (deps.autoContinue && use.name === deps.autoContinue.doneTool && !outcome.isError) {
+            taskDone = true;
+          }
           const text = textOfResult(outcome);
           results.push({
             type: 'tool_result',

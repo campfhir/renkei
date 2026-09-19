@@ -9,7 +9,12 @@ import type { LlmContentBlock, LlmUsage } from '@renkei/agent-llm';
 
 export type ChatRole = 'owner' | 'viewer';
 export type MessageRole = 'user' | 'assistant';
-export type MessageKind = 'prompt' | 'assistant' | 'tool_results';
+/**
+ * 'nudge': a user-role row the runner itself wrote in auto mode — the
+ * word to carry on when a reply ended without the task marked complete
+ * (auto-mode.ts). Shown as a note, never as the person's bubble.
+ */
+export type MessageKind = 'prompt' | 'assistant' | 'tool_results' | 'nudge';
 export type MessageStatus = 'complete' | 'streaming' | 'canceled' | 'interrupted' | 'failed';
 export type TurnStatus = 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
 /** 'compaction': a chat_compact pass riding the turn machinery, no messages of its own. */
@@ -92,9 +97,17 @@ export interface ChatView {
   projectName: string | null;
   /** Which section the project lives under; null outside a project. */
   projectKind: 'chat' | 'code' | null;
+  /** A code project's checkout branch as the worker last saw it; null when none is usable. */
+  projectBranch: string | null;
   llmModelId: string | null;
   toolConfig: ChatToolConfigView | null;
   thinkingEnabled: boolean;
+  /**
+   * Auto mode (auto-mode.ts): the chat's tools run without asking and a
+   * turn carries on until the model marks the task complete. Only a code
+   * project's chat honours it; elsewhere it is stored and ignored.
+   */
+  autoMode: boolean;
   ownerSubject: string;
   ownerName: string | null;
   role: ChatRole;
@@ -116,6 +129,8 @@ export interface ChatListItem {
   /** Which kind of project that is — a chat in a code project is listed
    *  with a different mark than one in a chat project. Null outside one. */
   projectKind: 'chat' | 'code' | null;
+  /** A code project's checkout branch, named under the title beside the project. */
+  projectBranch: string | null;
   updatedAt: string;
   lastMessageAt: string | null;
   archived: boolean;

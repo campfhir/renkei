@@ -1,9 +1,15 @@
 /**
  * Which connectors a chat offers the model — the per-chat/per-project
  * toolset. Stored as jsonb on the chat and the project; the chat's own
- * setting wins, the project's applies to chats without one, the person's
- * own saved default (tool-prefs.ts) applies when neither does, and no
- * preference at all means the core set.
+ * setting wins, the project's applies to chats without one, and what
+ * applies when neither says depends on where the chat is: an ordinary
+ * chat starts from the person's own saved chat default (tool-prefs.ts),
+ * else the core set; a code project's chat starts from the person's own
+ * saved code-project default, else the code default — the connectors a
+ * developer's work reaches for. The two personal defaults are separate
+ * preferences: one saved with mail and tickets in mind never leaks into
+ * the other. A new code project is given its owner's code default at
+ * creation, so most code chats find a toolset on their project.
  *
  * Pure: the tool catalog and the MCP list are joined in tool-surface.ts.
  * The person's saved default is resolved by the caller (it needs the
@@ -30,6 +36,50 @@ export const CHAT_ALWAYS_TOOLS: readonly string[] = ['whoami'];
  */
 export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket'];
 
+/**
+ * Where a code project's chat starts when neither it nor its project has
+ * chosen a toolset: the repository's host, the tracker and the wiki the
+ * work is described in, the organization's knowledge, and the sandbox's
+ * browser and fetch for anything at a URL. Not the platform's own agents
+ * and cards, which an ordinary chat starts with and a developer's chat
+ * has no call for. What a person's own code-project default starts from
+ * (tool-prefs.ts) and falls back to. Sorted, like a parsed config.
+ */
+export const CODE_PROJECT_DEFAULT_CONNECTORS: readonly string[] = [
+  'atlassian-bitbucket',
+  'atlassian-confluence',
+  'jira',
+  'knowledge',
+  'sandbox',
+];
+
+/**
+ * What a code project's chat is offered UP FRONT, on every request, rather
+ * than behind find_tools (tool-surface.ts): the core connectors' tools as
+ * in any chat, plus the pull-request and pipeline tools of Bitbucket by
+ * name — the calls the code brief names outright, so the model never has
+ * to search for how to open the pull request it was told to open. The
+ * rest of Bitbucket (repositories, permissions, source browsing) and all
+ * of Jira and Confluence stay discoverable: one call away, never in the
+ * prompt's prefix on every turn.
+ */
+export const CODE_PROJECT_EAGER_TOOLS: readonly string[] = [
+  'bitbucket_create_pull_request',
+  'bitbucket_get_pull_request',
+  'bitbucket_list_pull_requests',
+  'bitbucket_update_pull_request',
+  'bitbucket_get_pull_request_diff',
+  'bitbucket_list_pr_comments',
+  'bitbucket_add_pr_comment',
+  'bitbucket_merge_pull_request',
+  'bitbucket_list_pipelines',
+  'bitbucket_get_pipeline',
+  'bitbucket_get_pipeline_step_log',
+];
+
+/** Which default a chat falls back to: an ordinary chat's, or a code project's. */
+export type ToolDefaultsKind = 'chat' | 'code';
+
 export interface ChatToolConfig {
   connectors: string[];
 }
@@ -54,16 +104,24 @@ export function parseToolConfig(value: unknown): ChatToolConfig | null {
   return { connectors };
 }
 
-export function defaultToolConfig(): ChatToolConfig {
-  return { connectors: [...CHAT_CORE_CONNECTORS] };
+export function defaultToolConfig(kind: ToolDefaultsKind = 'chat'): ChatToolConfig {
+  return {
+    connectors: [...(kind === 'code' ? CODE_PROJECT_DEFAULT_CONNECTORS : CHAT_CORE_CONNECTORS)],
+  };
 }
 
+/**
+ * The toolset a chat runs with: its own, else its project's, else the
+ * person's saved default OF THIS KIND (the caller reads the right one —
+ * tool-prefs.ts keeps two), else the built-in default for the kind.
+ */
 export function effectiveToolConfig(
   chat: ChatToolConfig | null,
   project: ChatToolConfig | null,
-  userDefault: ChatToolConfig | null = null
+  userDefault: ChatToolConfig | null = null,
+  kind: ToolDefaultsKind = 'chat'
 ): ChatToolConfig {
-  return chat ?? project ?? userDefault ?? defaultToolConfig();
+  return chat ?? project ?? userDefault ?? defaultToolConfig(kind);
 }
 
 /**

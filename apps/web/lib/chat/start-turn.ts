@@ -42,7 +42,7 @@ import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
 import { buildHistory, buildSystemPrompt } from './request-builder';
-import { effectiveToolConfig, projectToolConfig } from './tool-config';
+import { CODE_PROJECT_EAGER_TOOLS, effectiveToolConfig, projectToolConfig } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { getChatToolPermissionPrefs } from './permission-prefs';
 import { resolveChatToolSurface } from './tool-surface';
@@ -52,9 +52,16 @@ import { openTurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
+import {
+  AUTO_MAX_CONTINUES,
+  AUTO_NUDGE_TEXT,
+  TASK_COMPLETE_TOOL,
+  taskCompleteTool,
+} from './auto-mode';
 import { readProjectMemory, renderProjectMemory } from './memory';
 import { readUserMemory, renderUserMemory } from './user-memory';
 import { notifyChatReplyDesktop } from './reply-notification';
+import { createSubagentRecorder } from './subagent-runs';
 
 /**
  * The hard ceiling on one Send: past this, even chunking is refused (an
@@ -332,17 +339,27 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const project = input.chat.projectId
       ? await getProjectRow(db, input.tenantId, input.chat.projectId)
       : null;
+    const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
     // Only consulted when neither the chat nor the project has its own
-    // toolset, so a cache miss here never costs a chat that already has one.
+    // toolset, so a cache miss here never costs a chat that already has
+    // one. A code project's chat reads the person's code-project default,
+    // never their chat default (tool-prefs.ts keeps the two apart).
     const userDefault =
       input.chat.toolConfig || project?.toolConfig
         ? null
-        : await getDefaultChatTools(input.tenantId, input.session.subject);
+        : await getDefaultChatTools(input.tenantId, input.session.subject, {
+            kind: defaultsKind,
+          });
     // A code project's chats always carry the Bitbucket connector on top
     // of whatever was chosen (tool-config.ts): the code_* tools push, the
     // connector's tools open the pull request.
     const toolConfig = projectToolConfig(
-      effectiveToolConfig(input.chat.toolConfig, project?.toolConfig ?? null, userDefault),
+      effectiveToolConfig(
+        input.chat.toolConfig,
+        project?.toolConfig ?? null,
+        userDefault,
+        defaultsKind
+      ),
       project?.kind
     );
     // A code project's turn is a working session with far higher limits
@@ -368,6 +385,9 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       config: toolConfig,
       ttlSeconds: Math.ceil((wallClockMs + permissionWaitMs) / 1000) + 15 * 60,
       excluded: denied,
+      // A code chat is told to open the pull request by name: those tools
+      // are offered up front rather than behind find_tools.
+      ...(defaultsKind === 'code' ? { eager: { tools: CODE_PROJECT_EAGER_TOOLS } } : {}),
     });
     release = surface.release;
 
@@ -393,9 +413,25 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
             channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
         if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id);
+        // The pass's own end, so the thread's card does not take a reply
+        // that fails later for a fold that did not.
+        channel.emit({
+          type: 'compaction_progress',
+          turnId: input.turnId,
+          foldedSoFar: compacted?.foldedCount ?? 0,
+          totalToFold: compacted?.foldedCount ?? 0,
+          status: 'done',
+        });
       } catch (error) {
         log('chat auto-compaction failed: {message}', {
           message: error instanceof Error ? error.message : String(error),
+        });
+        channel.emit({
+          type: 'compaction_progress',
+          turnId: input.turnId,
+          foldedSoFar: 0,
+          totalToFold: 0,
+          status: 'failed',
         });
       }
     }
@@ -412,6 +448,20 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       recordUsage: (usage: LlmUsage) => store.recordUsage(usage),
       emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>
         channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
+      // A code chat's sub-agents keep their runs (subagent-runs.ts) and
+      // report progress on the turn's stream; nothing of theirs enters
+      // this turn's history but the report.
+      ...(project?.kind === 'code'
+        ? {
+            subagents: createSubagentRecorder(
+              db,
+              { tenantId: input.tenantId, chatId: input.chat.id, turnId: input.turnId },
+              (subagent) =>
+                channel.emit({ type: 'subagent_progress', turnId: input.turnId, subagent }),
+              log
+            ),
+          }
+        : {}),
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     // A code project's checkout, when it is there to work in: the code_*
@@ -420,12 +470,18 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       project?.kind === 'code'
         ? await codeProjectContext(db, project, { subject: input.session.subject })
         : null;
+    // Auto mode (auto-mode.ts) is a code project's way of working: its
+    // tools run unasked and the turn carries on until task_complete.
+    // Read off the chat row the turn started from, so a switch flipped
+    // mid-turn takes effect on the next Send, never halfway through.
+    const auto = project?.kind === 'code' && input.chat.autoMode && !readOnly;
     // A blocked local tool is withheld the same way a blocked connector
     // tool is: the model is never offered a verb it may not use.
     const baseLocalTools = (
       input.localTools ?? [
         ...(await chatLocalTools(db, localContext, toolConfig, filesAllowed)),
         ...(code?.tools ?? []),
+        ...(auto ? [taskCompleteTool()] : []),
       ]
     ).filter((tool) => !denied.has(tool.def.name));
     const discoveryTool = findToolsTool(surface.discoverable);
@@ -440,7 +496,11 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         llmModelId: input.llm.modelConfigId,
         providerName: input.llm.providerName,
       },
-      input.assistantMessage.id
+      input.assistantMessage.id,
+      // A code chat's context is for coordinating: earlier turns' tool
+      // results are trimmed to their head (request-builder.ts), and the
+      // brief says to call again rather than recall.
+      { elideEarlierToolResults: project?.kind === 'code' }
     );
     // What earlier turns found through find_tools stays offered: the model
     // calls a tool it remembers whether or not its schema is in the request,
@@ -466,6 +526,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
+      autoMode: auto,
       now: new Date(),
     });
 
@@ -481,8 +542,22 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
         discoverableTools: surface.discoverable.map((entry) => entry.def),
         // Every call that acts asks first, unless this person has said
-        // "always" for that tool (permission-prefs.ts).
-        permissions: { alwaysAllowed: new Set(permissionPrefs.alwaysAllow), denied },
+        // "always" for that tool (permission-prefs.ts) — or the chat is in
+        // auto mode, where nothing asks and only a blocked tool refuses.
+        permissions: {
+          alwaysAllowed: new Set(permissionPrefs.alwaysAllow),
+          denied,
+          ...(auto ? { allowAll: true } : {}),
+        },
+        ...(auto
+          ? {
+              autoContinue: {
+                doneTool: TASK_COMPLETE_TOOL,
+                nudge: AUTO_NUDGE_TEXT,
+                maxContinues: AUTO_MAX_CONTINUES,
+              },
+            }
+          : {}),
         channel,
         store,
         log,
