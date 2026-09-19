@@ -167,6 +167,16 @@ const toolCall = (name: string, input: unknown): LlmResponse => ({
   usage: { inputTokens: 20, outputTokens: 8 },
 });
 
+/** A reply that said nothing: just a thought, no text and no tool call. */
+const silentThinking = (
+  thinking: string,
+  stopReason: LlmResponse['stopReason'] = 'max_tokens'
+): LlmResponse => ({
+  content: [{ type: 'thinking', thinking, signature: 'sig' }],
+  stopReason,
+  usage: { inputTokens: 20, outputTokens: 4096 },
+});
+
 function fakeMcp(calls: string[]): McpClient {
   return {
     async initialize() {},
@@ -1064,6 +1074,123 @@ describe('runChatTurn permissions', () => {
     expect(outcome.status).toBe('canceled');
     expect(calls).toEqual([]);
     expect(fake.pending()).toBeNull();
+  });
+});
+
+describe('runChatTurn on a reply that said nothing', () => {
+  it('retries a thinking-only max_tokens reply instead of finishing on it', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-trunc-1');
+    const watched = watch(channel);
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([silentThinking('still working through it...'), text('Here you go.')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-trunc-1')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.iterations).toBe(2);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows.map((row) => `${row.role}:${row.kind}`)).toEqual([
+      'assistant:assistant',
+      'user:nudge',
+      'assistant:assistant',
+    ]);
+    const state = watched.state();
+    expect(state.messages.map((message) => message.kind)).toEqual([
+      'assistant',
+      'nudge',
+      'assistant',
+    ]);
+    expect(state.messages[2].blocks).toEqual([{ type: 'text', text: 'Here you go.' }]);
+  });
+
+  it('retries a thinking-only reply that stopped naturally too, not only on max_tokens', async () => {
+    // The model can decide to stop right after thinking, with an
+    // ordinary end_turn — the person still gets nothing to read, and
+    // this happened turn after turn (each needing a fresh "continue"
+    // from the person) before this fix, not just once mid-thought.
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-trunc-1b');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(
+          provider([silentThinking('let me think about this...', 'end_turn'), text('Here you go.')])
+        ),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-trunc-1b')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.iterations).toBe(2);
+    const nudges = [...fake.rows.values()].filter((row) => row.kind === 'nudge');
+    expect(nudges).toHaveLength(1);
+  });
+
+  it('gives up after MAX_SILENT_RETRIES and finishes the turn as it stands', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-trunc-2');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([silentThinking('thinking...')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-trunc-2')
+    );
+    expect(outcome.status).toBe('completed');
+    // The first reply plus one retry per MAX_SILENT_RETRIES (2), then it
+    // stops trying and completes on the last (still empty) reply.
+    expect(outcome.iterations).toBe(3);
+    const nudges = [...fake.rows.values()].filter((row) => row.kind === 'nudge');
+    expect(nudges).toHaveLength(2);
+  });
+
+  it('does not retry a max_tokens reply that already said something', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-trunc-3');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(
+          provider([
+            {
+              content: [{ type: 'text', text: 'Here is what I have so far, cut off mid-' }],
+              stopReason: 'max_tokens',
+              usage: { inputTokens: 20, outputTokens: 4096 },
+            },
+          ])
+        ),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-trunc-3')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.iterations).toBe(1);
+    expect([...fake.rows.values()].some((row) => row.kind === 'nudge')).toBe(false);
   });
 });
 
