@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
 import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
+import { segment, type Segment, type ToolResult, type WorkStep } from '@/lib/chat/segment';
 import type {
   ChatBlock,
   ChatMessageView,
@@ -296,80 +297,7 @@ function groupTurns(messages: ChatMessageView[]): TurnGroup[] {
   return groups;
 }
 
-type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
-
-/** A reply, read across its rows: prose, and the work between the prose. */
-type Segment =
-  | { kind: 'text'; text: string }
-  | { kind: 'note'; text: string }
-  | { kind: 'work'; steps: WorkStep[] }
-  /** A commit, a push, a word to Bitbucket — a card of its own, never folded. */
-  | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
-  /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
-  | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
-  /** Auto mode's runner-written "carry on", between two of the model's replies. */
-  | { kind: 'nudge'; text: string };
-
-export type WorkStep =
-  | { kind: 'thinking'; text: string }
-  | { kind: 'redacted' }
-  | { kind: 'call'; block: Extract<ChatBlock, { type: 'tool_use' }>; result: ToolResult | null };
-
-function segment(messages: ChatMessageView[], results: Map<string, ToolResult>): Segment[] {
-  const out: Segment[] = [];
-  const work = (): Extract<Segment, { kind: 'work' }> => {
-    const last = out[out.length - 1];
-    if (last && last.kind === 'work') return last;
-    const created: Extract<Segment, { kind: 'work' }> = { kind: 'work', steps: [] };
-    out.push(created);
-    return created;
-  };
-  for (const message of messages) {
-    if (message.role !== 'assistant') {
-      if (message.kind === 'nudge') {
-        const text = message.blocks
-          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-          .join('\n');
-        out.push({ kind: 'nudge', text });
-      }
-      continue;
-    }
-    for (const block of message.blocks) {
-      switch (block.type) {
-        case 'text':
-          if (block.text.trim()) out.push({ kind: 'text', text: block.text });
-          break;
-        case 'thinking':
-          work().steps.push({ kind: 'thinking', text: block.thinking });
-          break;
-        case 'redacted_thinking':
-          work().steps.push({ kind: 'redacted' });
-          break;
-        case 'tool_use': {
-          const step = { kind: 'call' as const, block, result: results.get(block.id) ?? null };
-          if (block.name === 'code_delegate') {
-            out.push({ kind: 'subagent', step });
-          } else if (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL) {
-            out.push({ kind: 'milestone', step });
-          } else {
-            work().steps.push(step);
-          }
-          break;
-        }
-        case 'tool_result':
-          break;
-        case 'document':
-        case 'image':
-          out.push({
-            kind: 'note',
-            text: `${block.type === 'document' ? (block.title ?? 'Document') : 'Image'} attached`,
-          });
-          break;
-      }
-    }
-  }
-  return out;
-}
+export type { ToolResult, Segment, WorkStep };
 
 /**
  * One inline card for whatever compaction is doing right now — a
@@ -884,6 +812,7 @@ function SubagentCard({
   const record: { task?: unknown; readOnly?: unknown; instructions?: unknown } = input;
   const task = typeof record.task === 'string' ? record.task.trim() : '';
   const taskLine = task.split('\n').find((line) => line.trim()) ?? '';
+  const instructions = typeof record.instructions === 'string' ? record.instructions.trim() : '';
   const readOnly = record.readOnly === true;
   const resultText = step.result?.content ?? '';
   const reportLine = step.result ? (resultText.split('\n').find((line) => line.trim()) ?? '') : '';
@@ -899,82 +828,66 @@ function SubagentCard({
           ? 'The sub-agent failed'
           : 'Sub-agent reported';
   const live = progress && progress.status === 'running' ? progress : null;
-  const tone =
-    state === 'failed'
-      ? 'border-red-200 bg-red-50/60 dark:border-red-900/60 dark:bg-red-950/30'
-      : 'border-indigo-200 bg-indigo-50/60 dark:border-indigo-900/60 dark:bg-indigo-950/30';
+  const inline = live
+    ? `${live.steps}/${live.maxSteps} calls · ${live.toolCalls} tool call${live.toolCalls === 1 ? '' : 's'}`
+    : !running && reportLine
+      ? reportLine
+      : taskLine;
   return (
-    <div className={`my-2 max-w-xl rounded-lg border px-3 py-2 text-sm ${tone}`} data-subagent>
-      <div className="flex items-start gap-2">
-        <span
-          className={`mt-0.5 shrink-0 ${state === 'failed' ? 'text-red-500' : running ? 'text-indigo-500' : 'text-indigo-600 dark:text-indigo-400'}`}
-        >
-          <Icon path={ICONS.group} className="h-4 w-4" />
+    <details className={`chat-fold ${state === 'failed' ? 'chat-fold-error' : ''}`} data-subagent>
+      <summary>
+        <Icon
+          path={ICONS.group}
+          className={`h-3.5 w-3.5 shrink-0 ${state === 'failed' ? 'text-red-500' : 'text-indigo-500 dark:text-indigo-400'}`}
+        />
+        <span className="shrink-0" title={step.block.name}>
+          {sentence}
         </span>
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-gray-900 dark:text-gray-100">
-            <span title={step.block.name}>{sentence}</span>
-            {state === 'pending' ? <span className="chat-dots" aria-hidden="true" /> : null}
-            {readOnly ? (
-              <span className="ml-1.5 text-xs font-normal text-gray-500">read-only</span>
-            ) : null}
+        {state === 'pending' ? <span className="chat-dots shrink-0" aria-hidden="true" /> : null}
+        {readOnly ? <span className="shrink-0 text-gray-400">read-only</span> : null}
+        {inline ? <span className="min-w-0 flex-1 truncate text-gray-400">· {inline}</span> : null}
+        <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
+      </summary>
+      <div className="space-y-2">
+        {task ? (
+          <div>
+            <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Task</p>
+            <p className="break-words">{task}</p>
+          </div>
+        ) : null}
+        {instructions ? (
+          <div>
+            <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Instructions</p>
+            <p className="break-words">{instructions}</p>
+          </div>
+        ) : null}
+        {live ? (
+          <p className="text-gray-600 dark:text-gray-400">
+            {live.steps} of {live.maxSteps} model call{live.maxSteps === 1 ? '' : 's'} ·{' '}
+            {live.toolCalls} tool call{live.toolCalls === 1 ? '' : 's'}
+            {live.lastTool ? ` · ${milestoneSentence(live.lastTool, 'pending')}` : ''}
           </p>
-          {taskLine ? (
-            <p className="mt-0.5 break-words text-xs text-gray-700 dark:text-gray-300" title={task}>
-              {taskLine}
+        ) : null}
+        {step.result ? (
+          <div>
+            <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+              {step.result.isError ? 'Error' : 'Report'}
             </p>
-          ) : null}
-          {live ? (
-            <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
-              {live.steps} of {live.maxSteps} model call{live.maxSteps === 1 ? '' : 's'} ·{' '}
-              {live.toolCalls} tool call{live.toolCalls === 1 ? '' : 's'}
-              {live.lastTool ? ` · ${milestoneSentence(live.lastTool, 'pending')}` : ''}
-            </p>
-          ) : null}
-          {!running && reportLine ? (
-            <p
-              className={`mt-1 break-words text-xs ${state === 'failed' ? 'text-red-700 dark:text-red-300' : 'text-gray-600 dark:text-gray-400'}`}
-            >
-              {reportLine}
-            </p>
-          ) : null}
-          {code ? (
-            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
-              <button
-                type="button"
-                onClick={() => code.onShowSubagent(step.block.id)}
-                className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
-              >
-                <Icon path={ICONS.history} className="h-3.5 w-3.5" />
-                {running ? 'Follow the sub-agent' : 'View transcript'}
-              </button>
-            </div>
-          ) : null}
-          <details className="chat-fold mt-1">
-            <summary>
-              {step.result ? 'Task and report' : 'Task'}
-              <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
-            </summary>
-            <div className="space-y-2">
-              <div>
-                <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Task</p>
-                <pre className="chat-pre">
-                  {step.block.partialJson ?? JSON.stringify(step.block.input, null, 2)}
-                </pre>
-              </div>
-              {step.result ? (
-                <div>
-                  <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
-                    {step.result.isError ? 'Error' : 'Report'}
-                  </p>
-                  <pre className="chat-pre">{step.result.content}</pre>
-                </div>
-              ) : null}
-            </div>
-          </details>
-        </div>
+            <pre className="chat-pre">{step.result.content}</pre>
+          </div>
+        ) : null}
+        {code ? (
+          <button
+            type="button"
+            onClick={() => code.onShowSubagent(step.block.id)}
+            className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+          >
+            <Icon path={ICONS.history} className="h-3.5 w-3.5" />
+            {running ? 'Follow the sub-agent' : 'View transcript'}
+          </button>
+        ) : null}
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -1040,16 +953,6 @@ function MilestoneCard({
       ? `${commit.sha} ${commit.subject}`.trim()
       : (summary?.headline ?? null);
   const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
-  const tone =
-    state === 'failed'
-      ? 'border-red-200 bg-red-50/60 dark:border-red-900/60 dark:bg-red-950/30'
-      : state === 'waiting'
-        ? 'border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30'
-        : isTaskEnd && completion?.outcome === 'needs_input'
-          ? 'border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30'
-          : kind === 'act'
-            ? 'border-blue-200 bg-blue-50/60 dark:border-blue-900/60 dark:bg-blue-950/30'
-            : 'border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/60';
   const iconTone =
     state === 'failed'
       ? 'text-red-500'
@@ -1062,83 +965,72 @@ function MilestoneCard({
           : kind === 'act'
             ? 'text-blue-600 dark:text-blue-400'
             : 'text-gray-400';
+  const failLine = step.result?.isError
+    ? (resultText.split('\n').find((line) => line.trim()) ?? 'The call failed.')
+    : null;
+  const inline = failLine ?? headline;
+  const hasActions = (summary?.link || (commit && code)) && state === 'done';
   return (
-    <div
-      className={`my-2 max-w-xl rounded-lg border px-3 py-2 text-sm ${tone}`}
+    <details
+      className={`chat-fold ${state === 'failed' ? 'chat-fold-error' : ''}`}
       data-milestone={name}
     >
-      <div className="flex items-start gap-2">
-        <span className={`mt-0.5 shrink-0 ${iconTone}`}>
-          <Icon path={toolIconFor(name)} className="h-4 w-4" />
+      <summary>
+        <Icon path={toolIconFor(name)} className={`h-3.5 w-3.5 shrink-0 ${iconTone}`} />
+        <span className="shrink-0" title={name}>
+          {sentence}
         </span>
-        <div className="min-w-0 flex-1">
-          <p className={`${kind === 'act' ? 'font-medium' : ''} text-gray-900 dark:text-gray-100`}>
-            <span title={name}>{sentence}</span>
-            {state === 'pending' ? <span className="chat-dots" aria-hidden="true" /> : null}
-            {commit ? (
-              <span className="ml-1.5 text-xs font-normal text-gray-500">on {commit.branch}</span>
+        {state === 'pending' ? <span className="chat-dots shrink-0" aria-hidden="true" /> : null}
+        {commit ? <span className="shrink-0 text-gray-400">on {commit.branch}</span> : null}
+        {inline ? (
+          <span
+            className={`min-w-0 flex-1 truncate ${failLine ? 'text-red-600 dark:text-red-400' : 'text-gray-400'} ${commit && !failLine ? 'font-mono' : ''}`}
+          >
+            · {inline}
+          </span>
+        ) : null}
+        <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
+      </summary>
+      <div className="space-y-2">
+        {hasActions ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {commit && code ? (
+              <button
+                type="button"
+                onClick={() => code.onShowCommit(commit.sha)}
+                className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+              >
+                <Icon path={ICONS.diff} className="h-3.5 w-3.5" />
+                View diff
+              </button>
             ) : null}
-          </p>
-          {headline ? (
-            <p
-              className={`mt-0.5 break-words text-xs text-gray-700 dark:text-gray-300 ${commit ? 'font-mono' : ''}`}
-            >
-              {headline}
-            </p>
-          ) : null}
-          {step.result?.isError ? (
-            <p className="mt-0.5 break-words text-xs text-red-700 dark:text-red-300">
-              {resultText.split('\n').find((line) => line.trim()) ?? 'The call failed.'}
-            </p>
-          ) : null}
-          {(summary?.link || (commit && code)) && state === 'done' ? (
-            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
-              {commit && code ? (
-                <button
-                  type="button"
-                  onClick={() => code.onShowCommit(commit.sha)}
-                  className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
-                >
-                  <Icon path={ICONS.diff} className="h-3.5 w-3.5" />
-                  View diff
-                </button>
-              ) : null}
-              {summary?.link ? (
-                <a
-                  href={summary.link.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
-                >
-                  <Icon path={ICONS.externalLink} className="h-3.5 w-3.5" />
-                  {summary.link.label}
-                </a>
-              ) : null}
-            </div>
-          ) : null}
-          <details className="chat-fold mt-1">
-            <summary>
-              Details
-              <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
-            </summary>
-            <div className="space-y-2">
-              <div>
-                <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Input</p>
-                <pre className="chat-pre">{args}</pre>
-              </div>
-              {step.result ? (
-                <div>
-                  <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
-                    {step.result.isError ? 'Error' : 'Result'}
-                  </p>
-                  <pre className="chat-pre">{step.result.content}</pre>
-                </div>
-              ) : null}
-            </div>
-          </details>
+            {summary?.link ? (
+              <a
+                href={summary.link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+              >
+                <Icon path={ICONS.externalLink} className="h-3.5 w-3.5" />
+                {summary.link.label}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
+        <div>
+          <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Input</p>
+          <pre className="chat-pre">{args}</pre>
         </div>
+        {step.result ? (
+          <div>
+            <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
+              {step.result.isError ? 'Error' : 'Result'}
+            </p>
+            <pre className="chat-pre">{step.result.content}</pre>
+          </div>
+        ) : null}
       </div>
-    </div>
+    </details>
   );
 }
 

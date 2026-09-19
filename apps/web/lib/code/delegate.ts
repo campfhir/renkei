@@ -22,6 +22,7 @@
 import {
   streamOrComplete,
   type LlmContentBlock,
+  type LlmErrorKind,
   type LlmMessage,
   type LlmToolDef,
 } from '@renkei/agent-llm';
@@ -38,13 +39,46 @@ import { friendlyLlmError, textOfResult } from '@/lib/chat/turn-runner';
 export const DELEGATE_DEFAULT_STEPS = 40;
 export const DELEGATE_MAX_STEPS = 200;
 export const DELEGATE_WALL_CLOCK_MS = 45 * 60_000;
+/**
+ * The orchestrator's own patience for the whole `code_delegate` call — well
+ * past the sub-agent's own wall clock so the turn's generic per-tool race
+ * (`toolTimeoutMs`, a couple of minutes — right for an ordinary call) never
+ * fires on one still legitimately working. A race that DID fire here would
+ * not stop the sub-agent — it has no cancellation of its own — only tell
+ * the orchestrator (wrongly) that it failed while it kept running, unseen,
+ * to a real report the thread would show as permanently failed regardless.
+ */
+export const DELEGATE_TOOL_TIMEOUT_MS = DELEGATE_WALL_CLOCK_MS + 15 * 60_000;
 const RESULT_MAX_CHARS = 30_000;
 const REPORT_MAX_CHARS = 20_000;
 const TASK_MAX_CHARS = 20_000;
 const INSTRUCTIONS_MAX_CHARS = 20_000;
 
+/**
+ * Error kinds worth a retry within one step: transport and provider hiccups
+ * that the next attempt often clears on its own. `auth` and `invalid_request`
+ * describe the request or credentials, not the moment, so retrying changes
+ * nothing; `aborted` is the caller's own decision, never a fault to retry.
+ */
+const RETRYABLE_LLM_ERRORS = new Set<LlmErrorKind>([
+  'network',
+  'timeout',
+  'rate_limit',
+  'overloaded',
+  'provider_error',
+]);
+const MODEL_CALL_MAX_ATTEMPTS = 3;
+const MODEL_CALL_RETRY_DELAY_MS = 2_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** The delegating tool's own name — start-turn.ts gates auto mode's task_complete nudge on it. */
+export const CODE_DELEGATE_TOOL = 'code_delegate';
+
 /** Tools a sub-agent never gets: publishing and further delegation stay with the orchestrator. */
-const WITHHELD = new Set(['code_git_push', 'code_delegate', 'code_clone']);
+const WITHHELD = new Set(['code_git_push', CODE_DELEGATE_TOOL, 'code_clone']);
 
 const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output. Do not push, do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, and anything you could not do or are unsure of. Be concrete and brief.`;
 
@@ -60,7 +94,7 @@ function str(value: unknown): string {
 export function codeDelegateTool(tools: LocalTool[]): LocalTool {
   const offered = tools.filter((tool) => !WITHHELD.has(tool.def.name));
   const def: LlmToolDef = {
-    name: 'code_delegate',
+    name: CODE_DELEGATE_TOOL,
     description:
       'Hand one bounded task to a sub-agent: a fresh model loop with its own instructions and the ' +
       'same repository tools (reading, searching, editing, running commands, committing — never ' +
@@ -107,6 +141,7 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
 
   return {
     def,
+    timeoutMs: DELEGATE_TOOL_TIMEOUT_MS,
     async execute(input, context: LocalToolContext) {
       const llm = context.llm;
       if (!llm) return errorResult('Sub-agents are not available in this chat.');
@@ -161,12 +196,8 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
         return status === 'completed' ? textResult(outcome) : errorResult(outcome);
       };
 
-      for (let step = 1; step <= maxSteps; step += 1) {
-        if (Date.now() > deadline) {
-          const text = report('stopped: out of time', lastText, calls, step - 1);
-          return close('completed', text, 'out of time', step - 1);
-        }
-        const result = await streamOrComplete(
+      const callModel = () =>
+        streamOrComplete(
           llm.provider,
           {
             system,
@@ -180,6 +211,31 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
           },
           { onEvent: () => {}, signal: controller.signal }
         );
+
+      for (let step = 1; step <= maxSteps; step += 1) {
+        if (Date.now() > deadline) {
+          const text = report('stopped: out of time', lastText, calls, step - 1);
+          return close('completed', text, 'out of time', step - 1);
+        }
+        // A step's own model call gets a few attempts before the whole run
+        // gives up on it: nothing here has shown the person anything yet
+        // (onEvent above is a no-op — a sub-agent's deltas never reach the
+        // thread), so retrying from scratch is exactly as safe as trying
+        // once. Only a kind that describes the moment, not the request or
+        // the credentials, is worth another attempt.
+        let result = await callModel();
+        for (
+          let attempt = 1;
+          !result.ok &&
+          attempt < MODEL_CALL_MAX_ATTEMPTS &&
+          RETRYABLE_LLM_ERRORS.has(result.err.type) &&
+          Date.now() < deadline &&
+          !controller.signal.aborted;
+          attempt += 1
+        ) {
+          await sleep(MODEL_CALL_RETRY_DELAY_MS * attempt);
+          result = await callModel();
+        }
         if (!result.ok) {
           const failure =
             `The sub-agent's model call failed: ${friendlyLlmError(result.err.type)}` +

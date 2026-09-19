@@ -821,6 +821,39 @@ describe('runChatTurn', () => {
       },
     ]);
   });
+
+  it("honors a local tool's own longer timeout over the turn's default", async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-patient');
+    // The turn's own toolTimeoutMs is far too short for this tool, but the
+    // tool declares its own budget — a sub-agent's, in the real code —
+    // and the runner must race against THAT, not the turn's default, or
+    // it abandons work that was always going to finish in time.
+    const patient: LocalTool = {
+      def: { name: 'local_patient', description: 'takes a while', inputSchema: { type: 'object' } },
+      timeoutMs: 500,
+      execute: () => new Promise((resolve) => setTimeout(() => resolve(textResult('done')), 50)),
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('local_patient', {}), text('Recovered')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([patient]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, toolTimeoutMs: 10 },
+      },
+      inputFor('turn-patient')
+    );
+    expect(outcome.status).toBe('completed');
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    const results = rows.find((row) => row.kind === 'tool_results');
+    expect(results?.blocks).toEqual([
+      { type: 'tool_result', toolUseId: 'tu_local_patient', content: 'done' },
+    ]);
+  });
 });
 
 describe('runChatTurn permissions', () => {
@@ -1042,7 +1075,30 @@ describe('runChatTurn in auto mode', () => {
       return textResult('Noted.');
     },
   };
-  const autoContinue = { doneTool: 'task_complete', nudge: 'Carry on.', maxContinues: 3 };
+  const autoContinue = {
+    doneTool: 'task_complete',
+    nudge: 'Carry on.',
+    maxContinues: 3,
+    subagentTool: 'code_delegate',
+  };
+  const delegateTool: LocalTool = {
+    def: {
+      name: 'code_delegate',
+      description: 'delegate to a sub-agent',
+      inputSchema: { type: 'object' },
+    },
+    readOnly: true,
+    async execute() {
+      return textResult('Sub-agent done.');
+    },
+  };
+  const lookTool: LocalTool = {
+    def: { name: 'local_look', description: 'look around', inputSchema: { type: 'object' } },
+    readOnly: true,
+    async execute() {
+      return textResult('nothing yet');
+    },
+  };
 
   it('nudges the model on when a reply ends without task_complete, then completes once it is called', async () => {
     const fake = fakeStore();
@@ -1052,14 +1108,15 @@ describe('runChatTurn in auto mode', () => {
       {
         llm: llmOf(
           provider([
-            text('I have made a start.'),
+            toolCall('code_delegate', {}),
+            text('Still working on it.'),
             toolCall('task_complete', { outcome: 'done', summary: 'All done.' }),
             text('Finished: the tests pass.'),
           ])
         ),
         tools: [],
         mcp: null,
-        localTools: createLocalToolSet([doneTool]),
+        localTools: createLocalToolSet([doneTool, delegateTool]),
         localContext,
         autoContinue,
         channel,
@@ -1069,29 +1126,56 @@ describe('runChatTurn in auto mode', () => {
       inputFor('turn-auto-1')
     );
     expect(outcome.status).toBe('completed');
-    expect(outcome.iterations).toBe(3);
+    expect(outcome.iterations).toBe(4);
     const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
-    // The first reply, the nudge in the person's place, the reply that
+    // The first reply (a tool call), its result, the reply that stops
+    // without finishing, the nudge in the person's place, the reply that
     // called task_complete, its result, and the final reply.
     expect(rows.map((row) => `${row.role}:${row.kind}`)).toEqual([
+      'assistant:assistant',
+      'user:tool_results',
       'assistant:assistant',
       'user:nudge',
       'assistant:assistant',
       'user:tool_results',
       'assistant:assistant',
     ]);
-    expect(rows[1].blocks).toEqual([{ type: 'text', text: 'Carry on.' }]);
-    expect(rows[4].blocks).toEqual([{ type: 'text', text: 'Finished: the tests pass.' }]);
+    expect(rows[3].blocks).toEqual([{ type: 'text', text: 'Carry on.' }]);
+    expect(rows[6].blocks).toEqual([{ type: 'text', text: 'Finished: the tests pass.' }]);
     const state = watched.state();
     expect(state.messages.map((message) => message.kind)).toEqual([
+      'assistant',
+      'tool_results',
       'assistant',
       'nudge',
       'assistant',
       'tool_results',
       'assistant',
     ]);
-    expect(state.messages[1].blocks).toEqual([{ type: 'text', text: 'Carry on.' }]);
+    expect(state.messages[3].blocks).toEqual([{ type: 'text', text: 'Carry on.' }]);
     expect(state.turn?.status).toBe('completed');
+  });
+
+  it('does not nudge a reply that never touched a tool — a plain answer, not unfinished work', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-auto-1b');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([text('No, those are gitignored; only the tests are committed.')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([doneTool, lookTool]),
+        localContext,
+        autoContinue,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-auto-1b')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.iterations).toBe(1);
+    expect([...fake.rows.values()].some((row) => row.kind === 'nudge')).toBe(false);
   });
 
   it('gives up after maxContinues nudges and completes the turn as it stands', async () => {
@@ -1099,10 +1183,10 @@ describe('runChatTurn in auto mode', () => {
     const channel = openTurnChannel('turn-auto-2');
     const outcome = await runChatTurn(
       {
-        llm: llmOf(provider([text('Still thinking about it.')])),
+        llm: llmOf(provider([toolCall('code_delegate', {}), text('Still thinking about it.')])),
         tools: [],
         mcp: null,
-        localTools: createLocalToolSet([doneTool]),
+        localTools: createLocalToolSet([doneTool, delegateTool]),
         localContext,
         autoContinue,
         channel,
@@ -1112,10 +1196,33 @@ describe('runChatTurn in auto mode', () => {
       inputFor('turn-auto-2')
     );
     expect(outcome.status).toBe('completed');
-    // The first reply plus one per nudge.
-    expect(outcome.iterations).toBe(4);
+    // The sub-agent call, its result, the reply plus one per nudge.
+    expect(outcome.iterations).toBe(5);
     const nudges = [...fake.rows.values()].filter((row) => row.kind === 'nudge');
     expect(nudges).toHaveLength(3);
+  });
+
+  it('does not nudge a turn that only called ordinary tools, never a sub-agent', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-auto-2b');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('local_look', {}), text('Looked around; all set.')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([doneTool, delegateTool, lookTool]),
+        localContext,
+        autoContinue,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-auto-2b')
+    );
+    expect(outcome.status).toBe('completed');
+    // The tool call, its result, and the final reply — no nudge in between.
+    expect(outcome.iterations).toBe(2);
+    expect([...fake.rows.values()].some((row) => row.kind === 'nudge')).toBe(false);
   });
 
   it('does not nudge a turn that was stopped, and never without autoContinue', async () => {

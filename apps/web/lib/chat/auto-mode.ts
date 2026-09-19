@@ -9,15 +9,19 @@
  *    org read-only mode still offers no act tool at all, but a commit,
  *    a push, a pull request, a Jira comment go through unasked. The
  *    person chose this for the chat, and Stop is always there.
- *  - The turn does not end when the model stops talking. A reply that
- *    ends without `task_complete` having been called is answered by the
- *    runner itself with a nudge row (kind 'nudge', role user) telling
- *    the model to carry on, and the loop goes again — inside the same
- *    turn, so the chat's one-running-turn rule, its wall clock and Stop
- *    all still hold. `task_complete` is the model's word that the task
- *    is done (or that it truly needs the person), and ends the turn as
- *    a plain reply would. AUTO_MAX_CONTINUES bounds a model that never
- *    says so.
+ *  - A turn that hands work to a sub-agent (`code_delegate`) does not
+ *    end when the model stops talking without `task_complete` having
+ *    been called: the runner answers with a nudge row (kind 'nudge',
+ *    role user) telling the model to carry on, and the loop goes again —
+ *    inside the same turn, so the chat's one-running-turn rule, its wall
+ *    clock and Stop all still hold. `task_complete` is the model's word
+ *    that the delegated work is done (or that it truly needs the
+ *    person), and ends the turn as a plain reply would.
+ *    AUTO_MAX_CONTINUES bounds a model that never says so. A turn that
+ *    never delegated is never nudged: answering directly, or doing the
+ *    work itself in this same reply, is finished the moment the reply
+ *    is — only a sub-agent leaves something that can be mid-flight when
+ *    the model stops talking (turn-runner.ts's `spawnedSubagent`).
  *
  * Only a code project's chat honours the switch (start-turn.ts): its
  * turns already run under working-session limits (lib/code/turn.ts),
@@ -41,14 +45,14 @@ export type TaskOutcome = 'done' | 'needs_input';
  * loop from the transcript itself.
  */
 export const AUTO_NUDGE_TEXT =
-  'Auto mode: the task has not been marked complete. Carry on with it — check what remains, do the next piece, run what proves it. ' +
+  'Auto mode: a sub-agent was started for this task and it has not been marked complete. Carry on with it — check what remains, do the next piece, run what proves it. ' +
   `When it is genuinely finished and verified, call ${TASK_COMPLETE_TOOL} with outcome "done" and a summary; if you truly cannot proceed without the person, call it with outcome "needs_input" and say what you need.`;
 
 /** The system prompt's brief for an auto-mode turn (request-builder.ts). */
 export const AUTO_BRIEF =
   'Auto mode is on: you are working unattended on the task the person gave you, and your tools run without asking for permission. Work it through to completion in this reply — decide rather than ask, act rather than propose, verify with the project’s own checks, and keep going after a setback. ' +
-  `When the task is genuinely complete and verified, call ${TASK_COMPLETE_TOOL} with outcome "done" and a short summary of what changed and what you ran; if you truly cannot proceed without the person (a missing credential, a choice with material consequences that the task leaves open), call it with outcome "needs_input" and say exactly what you need. ` +
-  `If you stop without calling ${TASK_COMPLETE_TOOL}, you will simply be told to continue.`;
+  `${TASK_COMPLETE_TOOL} only matters once you have delegated part of the task to a sub-agent (code_delegate): once every sub-agent you started has reported and its work is verified, call it with outcome "done" and a short summary of what changed and what you ran; if you truly cannot proceed without the person (a missing credential, a choice with material consequences that the task leaves open), call it with outcome "needs_input" and say exactly what you need instead. ` +
+  `If a turn that started a sub-agent stops without calling ${TASK_COMPLETE_TOOL}, you will simply be told to continue. A reply that answers directly, or that does the work itself without delegating, needs no ${TASK_COMPLETE_TOOL} call at all — just answer normally.`;
 
 /** The recorded end of a task: what the model said when it called task_complete. */
 export interface TaskCompletion {
@@ -72,10 +76,12 @@ export function taskCompleteTool(): LocalTool {
     def: {
       name: TASK_COMPLETE_TOOL,
       description:
-        'Auto mode only: mark the task finished. Call it with outcome "done" once the task is ' +
-        'genuinely complete and verified, or "needs_input" when you cannot proceed without the ' +
-        'person — then say so in your reply. Until it is called, a reply that ends is answered with ' +
-        'a request to continue.',
+        'Auto mode only, and only if you delegated part of this task to a sub-agent (code_delegate): ' +
+        'mark the task finished. Call it with outcome "done" once every sub-agent you started has ' +
+        'reported and the task is genuinely complete and verified, or "needs_input" when you cannot ' +
+        'proceed without the person — then say so in your reply. A turn that started a sub-agent and ' +
+        'ends without calling this is answered with a request to continue; a reply that never ' +
+        'delegated needs no call to this at all.',
       inputSchema: {
         type: 'object',
         properties: {
