@@ -15,12 +15,17 @@
  * geometry is what makes the light slide from one step to the next.
  *
  * A target is looked for rather than assumed: pages hydrate, the chat's
- * composer mounts after its thread, and a step may have just navigated.
- * When nothing visible answers within a moment — the menu column is a
- * drawer on a phone, and an anchor a page never rendered is still a valid
- * tour — the card sits centred with no spotlight, and the looking goes on
- * more slowly in case the page is merely late. Every step's copy is
- * written to survive the centred case.
+ * composer mounts after its thread, a step may have just navigated, and
+ * an anchor the menu carries is off screen until the nav opens its
+ * drawer for the step (nav.tsx watches `activeTarget` for that). So the
+ * looking is not one question but a watch: the registry is asked at
+ * once, again as anchors register, and on the same beat that keeps the
+ * spotlight in place, until something visible answers. The page is
+ * dimmed meanwhile. When nothing has answered within a moment — an
+ * anchor a page never rendered is still a valid tour — the card sits
+ * centred with no spotlight, and moves beside the target should it turn
+ * up after all. Every step's copy is written to survive the centred
+ * case.
  *
  * The page underneath does not take clicks while a step is up. A tour is
  * a caption for a workflow, not a mode in which to perform it; letting a
@@ -164,29 +169,39 @@ export default function CoachMarkOverlay({
     if (!step.target) setLooked(true);
   }, [step.target, index, tour.id]);
 
-  // Ask the registry for the step's target — again whenever an anchor
-  // registers, which is how a page that renders late is caught without
-  // polling. Nothing on screen after a moment: the card goes centred, and
-  // moves beside the target should it register after all.
-  useEffect(() => {
-    if (!step.target) return;
+  /** Ask the registry for the step's target; true once something visible holds it. */
+  const look = useCallback((): boolean => {
+    if (!step.target) return false;
     const found = resolveAnchor(step.target);
-    if (found) {
-      if (targetRef.current === found) return;
+    if (!found) return false;
+    if (targetRef.current !== found) {
       targetRef.current = found;
       found.scrollIntoView({ block: 'center', inline: 'nearest' });
       setSpot(boxOf(found));
-      setLooked(true);
-      return;
     }
+    setLooked(true);
+    return true;
+  }, [step.target, resolveAnchor]);
+
+  // Look at once, and again whenever an anchor registers — how a page
+  // that renders late is caught. Nothing on screen after a moment: the
+  // card goes centred. (`refresh` below keeps looking either way.)
+  useEffect(() => {
+    if (!step.target || look()) return;
     const timer = setTimeout(() => setLooked(true), LOOK_FOR_MS);
     return () => clearTimeout(timer);
-  }, [step.target, index, tour.id, resolveAnchor, anchorsVersion]);
+  }, [step.target, index, tour.id, look, anchorsVersion]);
 
-  // Keep the spotlight on the target as the page moves under it.
+  // Keep the spotlight on the target as the page moves under it — and,
+  // while nothing is held, keep looking: an anchor that registered long
+  // ago but sat off screen (the menu's, until its drawer opens) registers
+  // nothing when it comes into view, so only a look would find it.
   const refresh = useCallback(() => {
     const element = targetRef.current;
-    if (!element) return;
+    if (!element) {
+      look();
+      return;
+    }
     if (!element.isConnected || !isVisible(element)) {
       targetRef.current = null;
       setSpot(null);
@@ -202,7 +217,7 @@ export default function CoachMarkOverlay({
         ? current
         : next;
     });
-  }, []);
+  }, [look]);
   useEffect(() => {
     window.addEventListener('resize', refresh);
     window.addEventListener('scroll', refresh, true);
@@ -250,13 +265,32 @@ export default function CoachMarkOverlay({
     return () => window.removeEventListener('keydown', onKey);
   }, [onSkip, onNext, onBack, index]);
 
-  if (!mounted || !looked) return null;
+  if (!mounted) return null;
+
+  // Still looking: the page is dimmed and takes no clicks, as it will
+  // once the card is up, so a step does not flash the page in between.
+  if (!looked) {
+    return createPortal(
+      <div
+        data-testid="coach-mark-layer"
+        className="fixed inset-0 z-[60] bg-black/55"
+        aria-hidden="true"
+      />,
+      document.body
+    );
+  }
 
   const centred = spot === null;
+  // On a narrow screen the card spans the width at one edge: the bottom,
+  // unless the spotlight's centre is in the lower half, when a card at
+  // the bottom would cover what it points at (the Chat group in the
+  // drawer runs on down the screen), and it goes to the top instead.
   const cardStyle = centred
     ? undefined
     : narrow
-      ? { left: MARGIN, right: MARGIN, bottom: MARGIN }
+      ? spot.top + spot.height / 2 > window.innerHeight / 2
+        ? { left: MARGIN, right: MARGIN, top: MARGIN }
+        : { left: MARGIN, right: MARGIN, bottom: MARGIN }
       : cardPos
         ? { top: cardPos.top, left: cardPos.left }
         : { top: MARGIN, left: MARGIN, visibility: 'hidden' as const };

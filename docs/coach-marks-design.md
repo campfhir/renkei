@@ -142,8 +142,13 @@ as a silently untargeted step.
 | `connectors-endpoint` | the MCP endpoint block                 |
 | `admin-sections`      | the Organization page's area grid      |
 
-A missing or hidden target (the nav column is a drawer on a phone) degrades
-to a centred card with no spotlight, so a tour never blocks on layout.
+A missing target degrades to a centred card with no spotlight, so a tour
+never blocks on layout. A target the menu carries is not left missing: the
+engine publishes the step's target (`activeTarget`), and the nav opens its
+drawer for it on a phone — or brings back a column the hamburger has hidden
+on a desktop — for as long as the step lasts. The overlay keeps looking for
+its target on the same beat that keeps the spotlight in place, which is how
+it finds one that registered long ago but only just came into view.
 
 ## Testing
 

@@ -29,6 +29,12 @@ export const CoachAnchorContext = createContext<RegisterAnchor | null>(null);
 export interface CoachMarkContextValue {
   /** The tour on screen, if any. */
   active: { tourId: string; index: number } | null;
+  /**
+   * The anchor the step on screen spotlights — what a component that
+   * keeps its anchor in a drawer or a menu watches, to bring it out for
+   * the step. Null between tours and on a step without a target.
+   */
+  activeTarget: CoachAnchor | null;
   /** The org's switch: off, no tour runs for anyone and the Tutorials door is closed. */
   enabled: boolean;
   /** Whether tours may start unasked for this person. */

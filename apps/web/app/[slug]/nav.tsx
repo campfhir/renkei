@@ -90,8 +90,10 @@ export default function AppNav({
   const [menuOpen, setMenuOpen] = useState(false);
   // Reads the layout's poller for the badge on the avatar.
   const { unread } = useNotifications();
-  // The Tutorials door only exists while the org has the tours switched on.
-  const { enabled: toursEnabled } = useCoachMarks();
+  // The Tutorials door only exists while the org has the tours switched on;
+  // the target is what a tour is pointing at right now, for the menu to
+  // come out for.
+  const { enabled: toursEnabled, activeTarget } = useCoachMarks();
   const [signingOut, setSigningOut] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
@@ -203,6 +205,34 @@ export default function AppNav({
     },
   ];
 
+  // A step that spotlights something in the menu needs the menu on screen.
+  // On a phone the drawer opens for it; on a wide screen a column the
+  // hamburger has tucked away comes back for it. Both go when the step
+  // moves on — the drawer only if the tour opened it, the column without
+  // touching the remembered choice. The overlay finds the anchor once it
+  // is in view; nothing here tells it to.
+  const menuAnchors: (CoachAnchor | undefined)[] = groups.flatMap((group) => [
+    group.coach,
+    ...group.items.map((item) => item.coach),
+  ]);
+  const wanted = activeTarget !== null && menuAnchors.includes(activeTarget);
+  const [revealed, setRevealed] = useState(false);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const openedForTour = useRef(false);
+  useEffect(() => {
+    setRevealed(wanted && !isNarrow);
+    if (wanted && isNarrow) {
+      if (!openRef.current) {
+        openedForTour.current = true;
+        setOpen(true);
+      }
+    } else if (openedForTour.current) {
+      openedForTour.current = false;
+      setOpen(false);
+    }
+  }, [wanted, isNarrow]);
+
   // The account menu: the person's own settings and records, then the
   // organization console for operators. Groups are separated by rules.
   const accountGroups: NavItem[][] = [
@@ -312,7 +342,7 @@ export default function AppNav({
 
   // Below lg the column does not exist, so the hamburger opens the drawer;
   // above it, the same button shows or hides the column.
-  const columnOpen = pinned && !isNarrow;
+  const columnOpen = (pinned || revealed) && !isNarrow;
 
   return (
     <>
@@ -468,7 +498,7 @@ export default function AppNav({
 
       <div className="flex items-start">
         {/* The column — the same menu, standing beside the page from lg up */}
-        {pinned ? (
+        {pinned || revealed ? (
           <nav
             aria-label="Application"
             className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-72 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 lg:flex dark:border-gray-800 dark:bg-gray-950"
