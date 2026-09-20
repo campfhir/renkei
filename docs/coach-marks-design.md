@@ -51,9 +51,13 @@ it — so an operator can report on adoption.
 5. **The Tutorials page** (`/[slug]/tutorials`, in the account menu) lists
    every tour the person may see with its status — Not started, In
    progress, Completed, Skipped — and a Start/Replay button, plus the
-   auto-show switch. Replay navigates to the tour's start path with
-   `?tour=<id>`; the engine reads that query on mount, starts the tour
-   regardless of history or the preference, and cleans the URL.
+   auto-show switch. Replay hands the tour id to the engine through
+   sessionStorage and navigates to the tour's start path; the engine
+   starts it on the first page that matches the tour, regardless of
+   history or the preference. (Not a `?tour=` query: `/chat/new` redirects
+   to the thread it creates and the query would be lost on the way. A
+   `?tour=<id>` link is honoured too, for a doc or an email, and cleaned
+   from the address once read.) A request older than a minute is dropped.
 
 6. **Progress is its own table**, `coach_mark_progress` (migration 114),
    one row per (tenant, subject, tour). A jsonb blob in `user_preferences`
@@ -71,7 +75,11 @@ it — so an operator can report on adoption.
    `/api/tenant/[tenantId]/coach-marks` with `{ tourId, version, event,
 step }` where event is `viewed` (on start), `step` (each advance),
    `completed`, or `dismissed`. Subject comes from the session, never the
-   body. A lost request loses a data point, never a tour.
+   body. A lost request loses a data point, never a tour. Reports leave the
+   browser one at a time, and the route reads and writes the row under a
+   per-row advisory lock: a `step` and the `completed` right behind it
+   must not race, or the stale one lands last and the tour reads as
+   unfinished.
 
 8. **The report** is operator-only at `/[slug]/admin/tutorials`, linked from
    the Organization page under "People and records": per tour, how many
@@ -85,7 +93,7 @@ step }` where event is `viewed` (on start), `step` (each advance),
 | ------------ | -------------------- | ---- | --------- | -------------------------------------------------------- |
 | `welcome`    | `/[slug]` (home)     | yes  | everyone  | the shell: feed, workspace menu, chat, account menu      |
 | `agents`     | `/[slug]/agents`     | yes  | everyone  | making an agent, importing one, what a listed agent does |
-| `chat`       | `/[slug]/chat/new`   | yes  | everyone  | the composer: message, tools, model, prompts, send       |
+| `chat`       | `/[slug]/chat/<id>`  | yes  | everyone  | the composer: message, tools, model, prompts, send       |
 | `connectors` | `/[slug]/connectors` | yes  | everyone  | adding a connector, the MCP endpoint                     |
 | `admin`      | `/[slug]/admin`      | yes  | operators | the console's areas                                      |
 
@@ -156,6 +164,6 @@ and unit tests green on its own.
 - [x] 4. Tutorials page `/[slug]/tutorials` + account-menu item + replay via
       `?tour=`.
 - [x] 5. Admin report `/[slug]/admin/tutorials` + Organization page link.
-- [ ] 6. Playwright spec with screenshots (desktop-light, desktop-dark,
+- [x] 6. Playwright spec with screenshots (desktop-light, desktop-dark,
       mobile); seed sets the shared user's preference off.
-- [ ] 7. Docs: `docs/README.md` index entry; this file's status updated.
+- [x] 7. Docs: as-built notes in `mcp-gateway.md` and `architecture.md`; this file's status updated.

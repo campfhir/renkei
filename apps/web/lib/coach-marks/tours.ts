@@ -17,12 +17,12 @@ import type { CoachMarkTour } from './types';
  * feature its tour describes: bump `version`.
  */
 
+/** A thread — '/chat/<id>' — where the composer is; not the list, projects, prompts or memory. */
 const isChatThread = (path: string): boolean =>
-  path === '/chat' ||
-  (path.startsWith('/chat/') &&
-    !['/chat/projects', '/chat/prompts', '/chat/memory', '/chat/new'].some((other) =>
-      path.startsWith(other)
-    ));
+  path.startsWith('/chat/') &&
+  !['/chat/projects', '/chat/prompts', '/chat/memory', '/chat/new'].some((other) =>
+    path.startsWith(other)
+  );
 
 export const COACH_MARK_TOURS: CoachMarkTour[] = [
   {

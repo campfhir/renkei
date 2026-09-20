@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -90,7 +90,17 @@ export async function listCoachMarkProgress(
   return result.val.map(toView);
 }
 
-/** Apply one reported event to this person's row for the tour and persist it. */
+/**
+ * Apply one reported event to this person's row for the tour and persist it.
+ *
+ * Read, reduce, write — inside a transaction that first takes an advisory
+ * lock on the row's key. Two reports for the same row can arrive together
+ * (a 'step' and the 'completed' right behind it, or two tabs), and without
+ * the lock each would read the row before the other wrote it, and the
+ * later write would carry the earlier word: 'viewed' over 'completed'. An
+ * advisory lock rather than SELECT … FOR UPDATE because the first report
+ * of a tour has no row to lock yet.
+ */
 export async function recordCoachMarkEvent(
   db: Kysely<DB>,
   tenantId: string,
@@ -98,51 +108,52 @@ export async function recordCoachMarkEvent(
   record: CoachMarkRecord
 ): Promise<Result<CoachMarkProgressView, 'DB_ERROR'>> {
   const now = new Date().toISOString();
-  const existing = await wrapAsync(
-    () =>
-      db
-        .selectFrom('coach_mark_progress')
-        .select(COLUMNS)
-        .where('tenant_id', '=', tenantId)
-        .where('subject', '=', subject)
-        .where('tour_id', '=', record.tourId)
-        .executeTakeFirst(),
-    'DB_ERROR' as const
-  );
-  if (!existing.ok) return err('DB_ERROR' as const);
-
-  const next = applyCoachMarkEvent(existing.val ? toView(existing.val) : null, record, now);
-  const values = {
-    tour_version: next.version,
-    status: next.status,
-    step_reached: next.stepReached,
-    steps_total: next.stepsTotal,
-    view_count: next.viewCount,
-    completed_count: next.completedCount,
-    dismissed_count: next.dismissedCount,
-    last_viewed_at: next.lastViewedAt,
-    completed_at: next.completedAt,
-    dismissed_at: next.dismissedAt,
-    updated_at: now,
-  };
+  const lockKey = `coach_mark_progress:${tenantId}:${subject}:${record.tourId}`;
 
   const written = await wrapAsync(
     () =>
-      db
-        .insertInto('coach_mark_progress')
-        .values({
-          tenant_id: tenantId,
-          subject,
-          tour_id: next.tourId,
-          first_viewed_at: next.firstViewedAt,
-          ...values,
-        })
-        .onConflict((oc) => oc.columns(['tenant_id', 'subject', 'tour_id']).doUpdateSet(values))
-        .execute(),
+      db.transaction().execute(async (trx) => {
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`.execute(trx);
+
+        const existing = await trx
+          .selectFrom('coach_mark_progress')
+          .select(COLUMNS)
+          .where('tenant_id', '=', tenantId)
+          .where('subject', '=', subject)
+          .where('tour_id', '=', record.tourId)
+          .executeTakeFirst();
+
+        const next = applyCoachMarkEvent(existing ? toView(existing) : null, record, now);
+        const values = {
+          tour_version: next.version,
+          status: next.status,
+          step_reached: next.stepReached,
+          steps_total: next.stepsTotal,
+          view_count: next.viewCount,
+          completed_count: next.completedCount,
+          dismissed_count: next.dismissedCount,
+          last_viewed_at: next.lastViewedAt,
+          completed_at: next.completedAt,
+          dismissed_at: next.dismissedAt,
+          updated_at: now,
+        };
+        await trx
+          .insertInto('coach_mark_progress')
+          .values({
+            tenant_id: tenantId,
+            subject,
+            tour_id: next.tourId,
+            first_viewed_at: next.firstViewedAt,
+            ...values,
+          })
+          .onConflict((oc) => oc.columns(['tenant_id', 'subject', 'tour_id']).doUpdateSet(values))
+          .execute();
+        return next;
+      }),
     'DB_ERROR' as const
   );
   if (!written.ok) return err('DB_ERROR' as const);
-  return ok(next);
+  return ok(written.val);
 }
 
 /** One person's rows on the operator's report. */

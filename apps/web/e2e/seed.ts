@@ -382,6 +382,15 @@ export async function seed(client: Client): Promise<void> {
     [E2E_TENANT_ID, E2E_SUBJECT, E2E_SUBJECT, 'E2E Tester']
   );
 
+  // The coach marks stay out of every other spec's way: this person has
+  // tours switched off, so no card lands on a page a screenshot is about
+  // to capture. coach-marks.spec.ts signs in as a subject of its own.
+  await client.query(
+    `INSERT INTO user_preferences (tenant_id, subject, key, value)
+     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+    [E2E_TENANT_ID, E2E_SUBJECT]
+  );
+
   // A Jira grant row so the tool catalog enumerates Jira tools for this user
   // (the catalog reads scopes straight off the row and never touches the
   // tokens, so dummies are fine — nothing in e2e ever calls Jira). Granular

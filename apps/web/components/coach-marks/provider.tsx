@@ -42,6 +42,8 @@ import type { CoachMarkEvent, CoachMarkProgressView, CoachMarkTour } from '@/lib
 import CoachMarkOverlay from './overlay';
 
 const PENDING_KEY = 'renkei:coach-mark-pending';
+/** A request older than this is stale — the person went elsewhere — and is dropped. */
+const PENDING_TTL_MS = 60_000;
 /** Let the page paint before a card lands on it. */
 const AUTO_START_DELAY_MS = 500;
 
@@ -73,14 +75,10 @@ export function useCoachMarks(): CoachMarkContextValue {
   return value;
 }
 
-function readPending(): string | null {
-  try {
-    const query = new URLSearchParams(window.location.search).get('tour');
-    if (query) return query;
-    return window.sessionStorage.getItem(PENDING_KEY);
-  } catch {
-    return null;
-  }
+interface Pending {
+  id: string;
+  /** From a `?tour=` link: runs on this very page, wherever that is. */
+  explicit: boolean;
 }
 
 function clearPending(): void {
@@ -88,6 +86,32 @@ function clearPending(): void {
     window.sessionStorage.removeItem(PENDING_KEY);
   } catch {
     // Nothing stored, nothing to clear.
+  }
+}
+
+function readPending(): Pending | null {
+  try {
+    const query = new URLSearchParams(window.location.search).get('tour');
+    if (query) return { id: query, explicit: true };
+    const stored = window.sessionStorage.getItem(PENDING_KEY);
+    if (!stored) return null;
+    const [id, at] = stored.split('|');
+    if (!id || Date.now() - Number(at) > PENDING_TTL_MS) {
+      clearPending();
+      return null;
+    }
+    return { id, explicit: false };
+  } catch {
+    return null;
+  }
+}
+
+function writePending(id: string): boolean {
+  try {
+    window.sessionStorage.setItem(PENDING_KEY, `${id}|${Date.now()}`);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -118,6 +142,9 @@ export default function CoachMarkProvider({
   const endedOnRef = useRef<string | null>(null);
   const activeRef = useRef<Active | null>(null);
   activeRef.current = active;
+  // Reports go out one at a time, in order: a 'step' still in flight when
+  // 'completed' leaves must not land second and read as the later word.
+  const reportQueue = useRef<Promise<void>>(Promise.resolve());
 
   const record = useCallback(
     (tour: CoachMarkTour, event: CoachMarkEvent, step: number) => {
@@ -139,14 +166,18 @@ export default function CoachMarkProvider({
         return next;
       });
       // keepalive: a Finish followed at once by a navigation still lands.
-      void fetch(`/api/tenant/${tenantId}/coach-marks`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        keepalive: true,
-      }).catch(() => {
-        // A lost report is a lost data point, never a lost tour.
-      });
+      reportQueue.current = reportQueue.current.then(() =>
+        fetch(`/api/tenant/${tenantId}/coach-marks`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          keepalive: true,
+        })
+          .then(() => undefined)
+          .catch(() => {
+            // A lost report is a lost data point, never a lost tour.
+          })
+      );
     },
     [tenantId]
   );
@@ -169,15 +200,19 @@ export default function CoachMarkProvider({
     if (activeRef.current) return;
     const path = slugRelativePath(pathname, slug);
 
-    const requestedId = readPending();
-    if (requestedId) {
-      const requested = tourById(requestedId);
-      clearPending();
-      if (requested && toursFor(COACH_MARK_TOURS, isOperator).includes(requested)) {
-        if (new URLSearchParams(window.location.search).has('tour')) {
-          router.replace(pathname);
-        }
+    const pending = readPending();
+    if (pending) {
+      const requested = tourById(pending.id);
+      if (!requested || !toursFor(COACH_MARK_TOURS, isOperator).includes(requested)) {
+        clearPending();
+      } else if (pending.explicit || requested.matches(path)) {
+        clearPending();
+        if (pending.explicit) router.replace(pathname);
         begin(requested, true);
+        return;
+      } else {
+        // Asked for, but this is not its page yet — '/chat/new' on the way
+        // to the thread it makes. It waits; nothing else starts meanwhile.
         return;
       }
     }
@@ -260,9 +295,7 @@ export default function CoachMarkProvider({
         begin(tour, true);
         return;
       }
-      try {
-        window.sessionStorage.setItem(PENDING_KEY, tour.id);
-      } catch {
+      if (!writePending(tour.id)) {
         // No storage: fall back to the query, which the start page reads too.
         router.push(`/${slug}${tour.startPath}?tour=${encodeURIComponent(tour.id)}`);
         return;

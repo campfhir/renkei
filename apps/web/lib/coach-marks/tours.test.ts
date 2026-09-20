@@ -59,7 +59,9 @@ describe('the tour registry', () => {
   it('does not let the chat tour claim the chat sub-pages', () => {
     const chat = tourById('chat');
     expect(chat).not.toBeNull();
-    expect(chat?.matches('/chat')).toBe(true);
+    expect(chat?.matches('/chat/0d9f8e2c-1111-4222-8333-444455556666')).toBe(true);
+    expect(chat?.matches('/chat')).toBe(false);
+    expect(chat?.matches('/chat/new')).toBe(false);
     expect(chat?.matches('/chat/projects')).toBe(false);
     expect(chat?.matches('/chat/prompts/abc')).toBe(false);
     expect(chat?.matches('/chat/memory')).toBe(false);

@@ -194,7 +194,7 @@ export default async function AdminTutorialsPage({
                         return (
                           <td key={tour.id} className="px-4 py-2">
                             <span
-                              className={`rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
+                              className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
                               title={
                                 row
                                   ? `Step ${row.stepReached + 1} of ${row.stepsTotal} · viewed ${row.viewCount}×, completed ${row.completedCount}×, skipped ${row.dismissedCount}×`

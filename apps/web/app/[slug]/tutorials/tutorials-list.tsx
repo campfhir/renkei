@@ -116,7 +116,7 @@ export default function TutorialsList({
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-semibold">{tour.title}</h3>
                     <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
+                      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
                     >
                       {label}
                     </span>

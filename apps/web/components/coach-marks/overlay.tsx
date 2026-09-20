@@ -14,12 +14,13 @@
  * SVG mask or four rectangles to keep in agreement; a transition on its
  * geometry is what makes the light slide from one step to the next.
  *
- * A target is looked for briefly rather than assumed: pages hydrate, the
- * chat's composer mounts after its thread, and a step may have just
- * navigated. When nothing visible answers within a moment — the menu
- * column is a drawer on a phone, and an anchor a page never rendered is
- * still a valid tour — the card sits centred with no spotlight. Every
- * step's copy is written to survive that.
+ * A target is looked for rather than assumed: pages hydrate, the chat's
+ * composer mounts after its thread, and a step may have just navigated.
+ * When nothing visible answers within a moment — the menu column is a
+ * drawer on a phone, and an anchor a page never rendered is still a valid
+ * tour — the card sits centred with no spotlight, and the looking goes on
+ * more slowly in case the page is merely late. Every step's copy is
+ * written to survive the centred case.
  *
  * The page underneath does not take clicks while a step is up. A tour is
  * a caption for a workflow, not a mode in which to perform it; letting a
@@ -62,9 +63,11 @@ interface Box {
 const SPOT_PAD = 6;
 const GAP = 12;
 const MARGIN = 16;
-/** How long a step waits for its target before settling for the centre. */
+/** How long a step waits for its target before showing the card centred. */
 const LOOK_FOR_MS = 2000;
 const LOOK_EVERY_MS = 100;
+/** After that, the target is still looked for — a page may finish loading late — but at a stroll. */
+const LOOK_LATE_EVERY_MS = 500;
 
 function boxOf(element: Element): Box {
   const rect = element.getBoundingClientRect();
@@ -188,11 +191,9 @@ export default function CoachMarkOverlay({
         setLooked(true);
         return;
       }
-      if (Date.now() - startedAt >= LOOK_FOR_MS) {
-        setLooked(true);
-        return;
-      }
-      timer = setTimeout(look, LOOK_EVERY_MS);
+      const late = Date.now() - startedAt >= LOOK_FOR_MS;
+      if (late) setLooked(true);
+      timer = setTimeout(look, late ? LOOK_LATE_EVERY_MS : LOOK_EVERY_MS);
     };
     look();
     return () => {
