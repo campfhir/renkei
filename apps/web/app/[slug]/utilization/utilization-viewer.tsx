@@ -29,6 +29,7 @@ import { Leaderboard } from '@/components/leaderboard';
 import type { EfficientAgentRow } from '@/lib/usage/org-usage';
 import type { AgentUtilizationRow } from '@/lib/usage/user-utilization';
 import { LoadingLine } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -236,6 +237,8 @@ export default function UtilizationViewer({
   initial: UtilizationReport;
 }) {
   const [report, setReport] = useState(initial);
+  const periodAnchor = useCoachAnchor('utilization-period');
+  const statsAnchor = useCoachAnchor('utilization-stats');
   const [series, setSeries] = useState<Series>('tokens');
   const [showDisabled, setShowDisabled] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -286,7 +289,7 @@ export default function UtilizationViewer({
         </p>
       )}
 
-      <nav className="flex flex-wrap items-center gap-2" aria-label="Period">
+      <nav className="flex flex-wrap items-center gap-2" aria-label="Period" {...periodAnchor}>
         {UTILIZATION_PERIODS.map((period) => (
           <button
             key={period.key}
@@ -306,7 +309,7 @@ export default function UtilizationViewer({
         {pending && <LoadingLine />}
       </nav>
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4" {...statsAnchor}>
         <Stat
           label="Tokens"
           value={formatTokens(totalTokens)}

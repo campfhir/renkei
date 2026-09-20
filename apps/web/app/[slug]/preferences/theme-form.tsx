@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import type { ThemeMode } from '@renkei/user-prefs/prefs';
 import { applyThemeMode, setStoredThemeMode } from '@/lib/theme';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] = [
   { value: 'auto', label: 'Auto', hint: 'Matches your system, and follows it if it changes.' },
@@ -51,9 +52,11 @@ export default function ThemeForm({ tenantId, initial }: { tenantId: string; ini
     }
   }
 
+  const anchor = useCoachAnchor('prefs-appearance');
   return (
     <section
       aria-labelledby="appearance-heading"
+      {...anchor}
       className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
     >
       <h3 id="appearance-heading" className="font-semibold">

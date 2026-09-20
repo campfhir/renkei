@@ -26,6 +26,7 @@ import {
   type MirthPermission,
 } from '@renkei/connector-mirth/pure';
 import { sendJson } from '@/lib/fetch-json';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { inputClass } from '../admin/mirth/instance-config-fields';
 
 export interface MirthConnectionView {
@@ -224,8 +225,14 @@ export default function MirthConnector({
     return `${permissions.length} of ${MIRTH_PERMISSIONS.length} permissions`;
   };
 
+  const cardAnchor = useCoachAnchor('card-mirth');
+  const listAnchor = useCoachAnchor('mirth-list');
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <div
+      {...cardAnchor}
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+    >
       <h2 className="text-base font-semibold">Mirth Connect</h2>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
         Your organization&apos;s Mirth Connect servers. Connect each with your own Mirth account —
@@ -233,7 +240,7 @@ export default function MirthConnector({
         tools may do on that server; Mirth still has the final say.
       </p>
 
-      <ul className="mt-3 space-y-3">
+      <ul {...listAnchor} className="mt-3 space-y-3">
         {instances.map((instance) => (
           <li
             key={instance.id}

@@ -2,6 +2,7 @@
 
 import ConnectorIcon from '@/components/connector-icon';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ScopePicker from '@/components/scope-picker';
@@ -92,8 +93,11 @@ export default function BitbucketConnector({
     }
   }
 
+  const scopesAnchor = useCoachAnchor('bitbucket-scopes');
+  const connectAnchor = useCoachAnchor('bitbucket-connect');
+
   return (
-    <ConnectorShell nested={nested}>
+    <ConnectorShell nested={nested} anchor="card-bitbucket">
       <div className="flex items-center justify-between gap-4">
         <ConnectorHeading nested={nested}>
           <ConnectorIcon capabilityKey="atlassian-bitbucket" label="Bitbucket" size={20} />
@@ -127,7 +131,10 @@ export default function BitbucketConnector({
 
       {!connected && (
         <div className="mt-3">
-          <details className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+          <details
+            {...scopesAnchor}
+            className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800"
+          >
             <summary className="cursor-pointer text-sm font-medium">
               What Renkei may do ({selectedIds.size} of {pickable.length} capabilities)
             </summary>
@@ -148,6 +155,7 @@ export default function BitbucketConnector({
             </div>
           </details>
           <a
+            {...connectAnchor}
             href={authorizeUrl}
             className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
@@ -157,26 +165,28 @@ export default function BitbucketConnector({
       )}
 
       {connected && (
-        <AuthorizedPermissions
-          options={ATLASSIAN_BITBUCKET_SCOPE_OPTIONS}
-          authorized={priorScopes}
-          connectorLabel="Bitbucket"
-        >
-          <ScopePicker
-            groups={ATLASSIAN_BITBUCKET_SCOPE_GROUPS}
+        <div {...scopesAnchor}>
+          <AuthorizedPermissions
             options={ATLASSIAN_BITBUCKET_SCOPE_OPTIONS}
-            checked={selectedIds}
-            onToggle={toggleOption}
-            available={ceiling}
-            audience="user"
-          />
-          <a
-            href={authorizeUrl}
-            className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+            authorized={priorScopes}
+            connectorLabel="Bitbucket"
           >
-            Approve updated permissions
-          </a>
-        </AuthorizedPermissions>
+            <ScopePicker
+              groups={ATLASSIAN_BITBUCKET_SCOPE_GROUPS}
+              options={ATLASSIAN_BITBUCKET_SCOPE_OPTIONS}
+              checked={selectedIds}
+              onToggle={toggleOption}
+              available={ceiling}
+              audience="user"
+            />
+            <a
+              href={authorizeUrl}
+              className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Approve updated permissions
+            </a>
+          </AuthorizedPermissions>
+        </div>
       )}
 
       {connected &&

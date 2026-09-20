@@ -12,6 +12,7 @@ import { StatusPill } from '../../run-timeline';
 import RunsSearch from '../../runs-search';
 import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /** The status tabs the pages offer; 'queued' stays reachable via All. */
 const STATUS_TABS = ['succeeded', 'failed', 'stopped', 'waiting', 'running', 'canceled'] as const;
@@ -66,7 +67,7 @@ export default async function AgentRunsPage({
         <BackLink href={`/${slug}/agents/${agentId}`} label={`“${agent.name}”`} />
         <h1 className="min-w-0 truncate text-xl font-bold">Runs of “{agent.name}”</h1>
       </div>
-      <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+      <CoachTarget name="runs-filters" className="mb-4 flex flex-wrap items-center gap-2 text-sm">
         {[
           { label: 'All', value: undefined },
           ...STATUS_TABS.map((value) => ({ label: statusLabel(value), value })),
@@ -83,7 +84,7 @@ export default async function AgentRunsPage({
             {tab.label}
           </Link>
         ))}
-      </div>
+      </CoachTarget>
       <div className="mb-4">
         <RunsSearch basePath={basePath} status={filter} initialQ={query ?? ''} />
       </div>

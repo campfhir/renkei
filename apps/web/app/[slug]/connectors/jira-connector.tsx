@@ -2,6 +2,7 @@
 
 import ConnectorIcon from '@/components/connector-icon';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { useEffect, useState } from 'react';
 import ScopePicker from '@/components/scope-picker';
 import AuthorizedPermissions from '@/components/authorized-permissions';
@@ -118,8 +119,11 @@ export default function JiraConnector({
     }
   }
 
+  const scopesAnchor = useCoachAnchor('jira-scopes');
+  const connectAnchor = useCoachAnchor('jira-connect');
+
   return (
-    <ConnectorShell nested={nested}>
+    <ConnectorShell nested={nested} anchor="card-jira">
       <div className="flex items-center justify-between gap-4">
         <ConnectorHeading nested={nested}>
           <ConnectorIcon capabilityKey="jira" label="Jira" size={20} />
@@ -149,31 +153,36 @@ export default function JiraConnector({
       )}
 
       {status?.connected && (
-        <AuthorizedPermissions
-          options={ATLASSIAN_SCOPE_OPTIONS}
-          authorized={priorScopes}
-          connectorLabel="Jira"
-        >
-          <ScopePicker
-            groups={ATLASSIAN_SCOPE_GROUPS}
+        <div {...scopesAnchor}>
+          <AuthorizedPermissions
             options={ATLASSIAN_SCOPE_OPTIONS}
-            checked={selectedIds}
-            onToggle={toggleOption}
-            available={ceiling}
-            audience="user"
-          />
-          <a
-            href={authorizeUrl}
-            className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+            authorized={priorScopes}
+            connectorLabel="Jira"
           >
-            Approve updated permissions
-          </a>
-        </AuthorizedPermissions>
+            <ScopePicker
+              groups={ATLASSIAN_SCOPE_GROUPS}
+              options={ATLASSIAN_SCOPE_OPTIONS}
+              checked={selectedIds}
+              onToggle={toggleOption}
+              available={ceiling}
+              audience="user"
+            />
+            <a
+              href={authorizeUrl}
+              className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Approve updated permissions
+            </a>
+          </AuthorizedPermissions>
+        </div>
       )}
 
       {status !== null && !status.connected && (
         <div className="mt-3">
-          <details className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+          <details
+            {...scopesAnchor}
+            className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800"
+          >
             <summary className="cursor-pointer text-sm font-medium">
               What Renkei may do ({selectedIds.size} of {pickable.length} capabilities)
             </summary>
@@ -200,6 +209,7 @@ export default function JiraConnector({
             </div>
           </details>
           <a
+            {...connectAnchor}
             href={authorizeUrl}
             className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >

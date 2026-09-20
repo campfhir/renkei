@@ -19,6 +19,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { searchLogs, type LogSearchResult } from './actions';
 import { describeWindow, DEFAULT_WINDOW_DAYS, DEFAULT_LOG_LEVELS, type LogWindow } from './window';
 import { Spinner } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /** The levels this gateway actually writes, in severity order. */
 const LEVELS = ['debug', 'info', 'warn', 'error', 'critical'];
@@ -81,6 +82,8 @@ export default function LogsViewer({
   const [range, setRange] = useState<LogDateRange>(initialWindow);
   const [sort, setSort] = useState<SortState>({ column: 'timestamp', direction: 'desc' });
   const [page, setPage] = useState(1);
+  const levelsAnchor = useCoachAnchor('logs-levels');
+  const searchAnchor = useCoachAnchor('logs-search');
   const [showHelp, setShowHelp] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -184,7 +187,7 @@ export default function LogsViewer({
       )}
 
       <section className="flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div className="log-levels">
+        <div className="log-levels" {...levelsAnchor}>
           <LogLevelFilter
             levels={LEVELS}
             value={levels}
@@ -207,7 +210,7 @@ export default function LogsViewer({
 
       <section>
         <div className="flex items-center gap-3">
-          <div className="log-search flex-1">
+          <div className="log-search flex-1" {...searchAnchor}>
             <LogSearchBar
               logs={logs}
               onSearch={(next) => {

@@ -15,6 +15,7 @@ import {
 } from '@renkei/agents';
 import type { TriggerPayload } from '@/lib/agents/store';
 import { FixedMark } from './fixed-marker';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface AgentChoice {
   id: string;
@@ -83,6 +84,7 @@ export function TriggerNode({
   onSelect: (index: number) => void;
   onAdd: () => void;
 }) {
+  const triggersAnchor = useCoachAnchor('builder-triggers');
   return (
     <div className="relative w-80 rounded-xl border border-gray-300 bg-gray-50 p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       {/*
@@ -147,6 +149,7 @@ export function TriggerNode({
         type="button"
         onClick={onAdd}
         className="mt-2 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+        {...triggersAnchor}
       >
         + Add a trigger
       </button>

@@ -29,6 +29,7 @@ import { TOP_TOOLS } from './window';
 import { friendlyToolName } from '@/lib/tool-name';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { LoadingLine, LoadingRegion, SkeletonText } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const PERIODS = [
   { days: 1, label: '24 hours' },
@@ -487,6 +488,8 @@ export default function UsageViewer({
   tools: ToolDescriptor[];
 }) {
   const [report, setReport] = useState(initial);
+  const periodAnchor = useCoachAnchor('usage-period');
+  const statsAnchor = useCoachAnchor('usage-stats');
   const [pending, startTransition] = useTransition();
   const [selected, setSelected] = useState<Row | null>(null);
 
@@ -556,7 +559,7 @@ export default function UsageViewer({
         </p>
       )}
 
-      <nav className="flex flex-wrap items-center gap-2" aria-label="Period">
+      <nav className="flex flex-wrap items-center gap-2" aria-label="Period" {...periodAnchor}>
         {PERIODS.map((period) => (
           <button
             key={period.days}
@@ -596,7 +599,7 @@ export default function UsageViewer({
         {pending && <LoadingLine />}
       </nav>
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4" {...statsAnchor}>
         <Stat label="Calls" value={report.totalCalls.toLocaleString()} />
         <Stat
           label="Failed"

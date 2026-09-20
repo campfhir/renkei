@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { saveDisabledConnectors } from './availability-client';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
  * The off switches for one connector's capability keys, on its own page.
@@ -36,8 +37,13 @@ export default function AvailabilityToggles({
     setBusy(false);
   }
 
+  const availabilityAnchor = useCoachAnchor('admin-connector-availability');
+
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <section
+      {...availabilityAnchor}
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+    >
       <h2 className="font-semibold">Offered to everyone</h2>
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
         Switch off to stop these tools being offered to anyone in the organization, immediately.

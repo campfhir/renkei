@@ -127,6 +127,8 @@ export const ICONS = {
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01',
   /** An arrow leaving a door — Sign out. */
   signOut: 'M10 4H5v16h5M14 8l4 4-4 4M8 12h10',
+  /** A light bulb — the Tutorials door: the coach marks that explain a page. */
+  bulb: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.4c.7.6 1 1.5 1 2.6h6c0-1.1.3-2 1-2.6A6 6 0 0 0 12 3z',
   /** A speaker with waves — replies read aloud, and the voice menu. */
   speaker: 'M4 9.5v5h3.5L12 18.5v-13L7.5 9.5zM15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10',
   /** The same speaker, struck through — reading stopped. */

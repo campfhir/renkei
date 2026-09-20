@@ -22,6 +22,7 @@ import ToolsPopover from '../../chat/_components/tools-popover';
 import { repoSlugFromName } from '@/lib/code/repo-slug';
 import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
 import type { CodeProjectTemplate } from '@/lib/code/project-templates';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -37,6 +38,7 @@ export default function NewCodeProject({
 }) {
   const router = useRouter();
   const [name, setName] = useState('');
+  const instructionsAnchor = useCoachAnchor('code-instructions');
   const [repoMode, setRepoMode] = useState<'choose' | 'create'>('choose');
   const [chosen, setChosen] = useState<RepoChoice | null>(null);
   const [branch, setBranch] = useState('');
@@ -291,6 +293,7 @@ export default function NewCodeProject({
             maxLength={20_000}
             placeholder="How to run the tests, the conventions to keep, what not to touch…"
             className={inputClass}
+            {...instructionsAnchor}
           />
           <span className="mt-1 block text-xs text-gray-500">
             {templates && templates.length > 0
@@ -389,6 +392,7 @@ function RepositoryBrowser({
     error: browseError,
   } = useWorkspaceAndProject(base, enabled);
   const [query, setQuery] = useState('');
+  const repoAnchor = useCoachAnchor('code-repo-search');
   const [repos, setRepos] = useState<RepoChoice[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -470,6 +474,7 @@ function RepositoryBrowser({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="billing"
+            {...repoAnchor}
             autoComplete="off"
             spellCheck={false}
             disabled={!enabled}

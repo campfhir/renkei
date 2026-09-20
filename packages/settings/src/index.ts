@@ -217,6 +217,15 @@ export interface OrgSettings {
    */
   knowledgeKeywordEnrichment: boolean;
   /**
+   * Whether the coach marks — the guided tours that walk people through
+   * a page (apps/web/lib/coach-marks) — run at all in this org. On by
+   * default. The escape hatch: a tour that misbehaves is an overlay in
+   * front of every page it belongs on, and this takes every tour down at
+   * once, for everyone, without a deploy. Off, nothing starts unasked,
+   * the Tutorials page says so, and nobody can start one by hand either.
+   */
+  coachMarksEnabled: boolean;
+  /**
    * Items shorter than this many characters are not sent for keyword
    * extraction. A one-line chat message or a two-sentence mail has nothing
    * a model can add over its own words, and skipping it is the difference
@@ -259,6 +268,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   logRetentionDays: 0,
   logLevel: 'info',
   knowledgeKeywordEnrichment: false,
+  coachMarksEnabled: true,
   knowledgeKeywordMinChars: 500,
 };
 
@@ -392,6 +402,7 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     knowledgeKeywordEnrichment: Boolean(
       coerce(stored.get('knowledge_keyword_enrichment'), d.knowledgeKeywordEnrichment)
     ),
+    coachMarksEnabled: Boolean(coerce(stored.get('coach_marks_enabled'), d.coachMarksEnabled)),
     knowledgeKeywordMinChars: Number(
       coerce(stored.get('knowledge_keyword_min_chars'), d.knowledgeKeywordMinChars)
     ),
@@ -442,6 +453,7 @@ export async function setOrgSettings(
     ['log_retention_days', updates.logRetentionDays],
     ['log_level', updates.logLevel],
     ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
+    ['coach_marks_enabled', updates.coachMarksEnabled],
     ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
   ];
 

@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { getJson, sendJson } from '@/lib/fetch-json';
 import ShareConfigFields, { draftPayload, emptyDraft } from './share-config-fields';
 import type { ShareDraft } from './share-config-fields';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 interface ShareRow {
   id: string;
@@ -60,13 +61,16 @@ export default function ShareList({ slug }: { slug: string }) {
     await load();
   };
 
+  const listAnchor = useCoachAnchor('admin-shares-list');
+  const newAnchor = useCoachAnchor('admin-shares-new');
+
   return (
     <div className="space-y-4">
       {shares.length === 0 && !draft ? (
         <p className="text-sm text-gray-600 dark:text-gray-400">No shares registered yet.</p>
       ) : null}
 
-      <ul className="space-y-2">
+      <ul {...listAnchor} className="space-y-2">
         {shares.map((share) => (
           <li key={share.id} className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
             <div className="flex items-start justify-between gap-2">
@@ -118,6 +122,7 @@ export default function ShareList({ slug }: { slug: string }) {
         </div>
       ) : (
         <button
+          {...newAnchor}
           type="button"
           onClick={() => setDraft(emptyDraft())}
           className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"

@@ -13,6 +13,7 @@ import AudienceControl from './audience-control';
 import { getDatabase } from '@renkei/db';
 import { observedIdpGroups } from '@/lib/identity';
 import { getTenantOidcClaims, DEFAULT_GROUPS_CLAIM } from '@/lib/tenant-operations';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * One connector's page: its credentials form, and the org-wide switches
@@ -84,13 +85,15 @@ export default async function AdminConnectorPage({
         </p>
       </div>
 
-      {Form ? (
-        <Form slug={slug} tenantId={tenantRef.id} origin={origin} />
-      ) : (
-        <section className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
-          Nothing to configure: Renkei provides this connector without credentials.
-        </section>
-      )}
+      <CoachTarget name="admin-connector-form">
+        {Form ? (
+          <Form slug={slug} tenantId={tenantRef.id} origin={origin} />
+        ) : (
+          <section className="rounded-lg border border-gray-200 bg-white p-4 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
+            Nothing to configure: Renkei provides this connector without credentials.
+          </section>
+        )}
+      </CoachTarget>
 
       {switches.length > 0 && (
         <AvailabilityToggles slug={slug} initialDisabled={disabledConnectors} products={switches} />

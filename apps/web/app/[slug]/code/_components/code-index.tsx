@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Icon, ICONS } from '@/components/icons';
 import type { ProjectListItem } from '@/lib/chat/sidebar';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function CodeIndex({
   slug,
@@ -23,6 +24,7 @@ export default function CodeIndex({
   const mine = projects.filter((project) => project.role === 'owner');
   const shared = projects.filter((project) => project.role !== 'owner');
 
+  const newAnchor = useCoachAnchor('code-new');
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
@@ -31,6 +33,7 @@ export default function CodeIndex({
           <Link
             href={`/${slug}/code/new`}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+            {...newAnchor}
           >
             New code project
           </Link>

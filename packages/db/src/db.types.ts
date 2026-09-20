@@ -540,6 +540,25 @@ export interface ChatUserMemories {
   updated_at: Generated<Timestamp>;
 }
 
+export interface CoachMarkProgress {
+  completed_at: Timestamp | null;
+  completed_count: Generated<number>;
+  dismissed_at: Timestamp | null;
+  dismissed_count: Generated<number>;
+  first_viewed_at: Generated<Timestamp>;
+  last_viewed_at: Generated<Timestamp>;
+  reported_at: Generated<Timestamp>;
+  status: string;
+  step_reached: Generated<number>;
+  steps_total: Generated<number>;
+  subject: string;
+  tenant_id: string;
+  tour_id: string;
+  tour_version: Generated<number>;
+  updated_at: Generated<Timestamp>;
+  view_count: Generated<number>;
+}
+
 export interface CodeProjectTemplates {
   created_at: Generated<Timestamp>;
   description: string | null;
@@ -1286,6 +1305,7 @@ export interface DB {
   chat_turns: ChatTurns;
   chat_user_memories: ChatUserMemories;
   chats: Chats;
+  coach_mark_progress: CoachMarkProgress;
   code_project_templates: CodeProjectTemplates;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;

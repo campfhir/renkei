@@ -2,6 +2,7 @@
 
 import ConnectorIcon from '@/components/connector-icon';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -57,8 +58,10 @@ export default function OnBaseConnector({
     }
   }
 
+  const connectAnchor = useCoachAnchor('onbase-connect');
+
   return (
-    <ConnectorShell nested={nested}>
+    <ConnectorShell nested={nested} anchor="card-onbase">
       <div className="flex items-center justify-between gap-4">
         <ConnectorHeading nested={nested}>
           <ConnectorIcon capabilityKey="onbase" label="OnBase" size={20} />
@@ -93,6 +96,7 @@ export default function OnBaseConnector({
 
       {!connected && (
         <a
+          {...connectAnchor}
           href={`/api/onbase/${tenantId}/authorize`}
           className="mt-3 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >

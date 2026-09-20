@@ -7,6 +7,7 @@ import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { DialogFooter } from './chat-nav';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface LibraryListItem {
   id: string;
@@ -27,6 +28,7 @@ export default function LibrariesIndex({
 }) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
+  const newAnchor = useCoachAnchor('prompts-new');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
@@ -60,6 +62,7 @@ export default function LibrariesIndex({
           type="button"
           onClick={() => setCreating(true)}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          {...newAnchor}
         >
           New library
         </button>

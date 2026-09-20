@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
 import { humanizeSystemName } from '@/lib/email-sanitizer-display';
+import CoachTarget from '@/components/coach-marks/anchor';
+import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 
 /**
  * Content-free admin surface: a rule is a sender/domain/subject pattern
@@ -44,12 +46,30 @@ const inputClass =
 const labelClass = 'block text-sm font-medium mb-1';
 const hintClass = 'mt-1 text-xs text-gray-500 dark:text-gray-400';
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+function Card({
+  title,
+  anchor,
+  children,
+}: {
+  title: string;
+  /** The coach-mark anchor this card carries, for the page's tour. */
+  anchor?: CoachAnchor;
+  children: React.ReactNode;
+}) {
+  const className =
+    'rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950';
+  const body = (
+    <>
       <h2 className="mb-3 font-semibold">{title}</h2>
       {children}
-    </div>
+    </>
+  );
+  return anchor ? (
+    <CoachTarget name={anchor} className={className}>
+      {body}
+    </CoachTarget>
+  ) : (
+    <div className={className}>{body}</div>
   );
 }
 
@@ -192,7 +212,7 @@ function RulesCard({ slug }: { slug: string }) {
   }
 
   return (
-    <Card title="Classifier rules">
+    <Card title="Classifier rules" anchor="admin-sanitizer-rules">
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         Evaluated in priority order (lowest first); the first enabled match wins. Mail matching no
         rule is treated as human correspondence — links decoded, whitespace tidied, and whatever

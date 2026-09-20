@@ -14,6 +14,7 @@
 
 import { useState } from 'react';
 import { sendJson } from '@/lib/fetch-json';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { inputClass } from '../admin/file-shares/share-config-fields';
 
 export interface ShareConnectionView {
@@ -198,8 +199,14 @@ export default function FilesharesConnector({
     patchShare(share.id, null);
   };
 
+  const cardAnchor = useCoachAnchor('card-fileshares');
+  const listAnchor = useCoachAnchor('fileshares-list');
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <div
+      {...cardAnchor}
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+    >
       <h2 className="text-base font-semibold">File shares</h2>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
         Org network shares (SMB/SFTP). Connect each with your own file-server account — what you can
@@ -207,7 +214,7 @@ export default function FilesharesConnector({
         the servers still have the final say.
       </p>
 
-      <ul className="mt-3 space-y-3">
+      <ul {...listAnchor} className="mt-3 space-y-3">
         {shares.map((share) => (
           <li
             key={share.id}

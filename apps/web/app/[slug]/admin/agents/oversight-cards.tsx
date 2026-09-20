@@ -22,6 +22,7 @@ import type { ModelTokenUsage, TokenUsage, UsageBuckets } from '@/lib/agents/age
 import { modelLabel } from '@/lib/agents/model-label';
 import AdminAgentToggle from './[agentId]/admin-agent-toggle';
 import { sortAgentRows, type OversightSortKey } from './oversight-sort';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export type RunBuckets = UsageBuckets;
 
@@ -74,9 +75,12 @@ export default function OversightCards({
   );
   const label = periodLabel(bucket).toLowerCase();
 
+  const controlsAnchor = useCoachAnchor('admin-oversight-controls');
+  const orgAnchor = useCoachAnchor('admin-oversight-org');
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div {...controlsAnchor} className="flex flex-wrap items-center justify-between gap-2">
         <PeriodToggle value={bucket} onChange={setBucket} />
         <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
           Sort by
@@ -97,7 +101,7 @@ export default function OversightCards({
         </label>
       </div>
 
-      <section className={CARD} aria-label="Organization">
+      <section {...orgAnchor} className={CARD} aria-label="Organization">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
           All agents · {label}
         </p>

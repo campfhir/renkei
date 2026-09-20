@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { sendJson } from '@/lib/fetch-json';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const OPTIONS = [
   { days: 7, label: '1 week' },
@@ -15,8 +16,13 @@ export function RetentionForm({ slug, current }: { slug: string; current: number
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
 
+  const retentionAnchor = useCoachAnchor('admin-oversight-retention');
+
   return (
-    <div className="mt-8 rounded-md border border-gray-200 p-4 dark:border-gray-800">
+    <div
+      {...retentionAnchor}
+      className="mt-8 rounded-md border border-gray-200 p-4 dark:border-gray-800"
+    >
       <p className="text-sm font-semibold">Run history retention</p>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
         How long agent run records (including their step details) are kept before being deleted.

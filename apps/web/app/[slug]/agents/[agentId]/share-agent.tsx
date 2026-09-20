@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingRegion, SkeletonList } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
  * The owner's sharing control, opened from the overview header's Share
@@ -233,12 +234,14 @@ export default function ShareAgentButton({
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
+  const shareAnchor = useCoachAnchor('agent-share');
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+        {...shareAnchor}
       >
         <Icon path={ICONS.share} />
         Share

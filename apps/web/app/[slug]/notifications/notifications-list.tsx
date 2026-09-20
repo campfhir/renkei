@@ -37,6 +37,7 @@ import {
   notificationSourceLabel,
   parseBatchNotificationMeta,
 } from '@/lib/notifications/batch-meta';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface NotificationCard {
   id: string;
@@ -145,6 +146,7 @@ export default function NotificationsList({
   const [confirming, setConfirming] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
+  const markAllAnchor = useCoachAnchor('notifications-mark-all');
   // Optimistic: sits between the real unreadCount prop and "0 unread now",
   // so a still-loading server refresh doesn't flash the button back.
   const [allMarkedRead, setAllMarkedRead] = useState(false);
@@ -389,6 +391,7 @@ export default function NotificationsList({
             type="button"
             disabled={markingAll}
             onClick={() => void markAllRead()}
+            {...markAllAnchor}
             className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
           >
             <Icon path={ICONS.check} className="h-4 w-4" />

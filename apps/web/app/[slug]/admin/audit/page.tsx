@@ -4,6 +4,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import AuditList, { type AuditEventRow } from './audit-list';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * The tenant's audit trail (migration 038): who signed in, connected or
@@ -81,13 +82,15 @@ export default async function AuditPage({
         usage lives on the Tools page. Showing the latest {events.length} events.
       </p>
 
-      {events.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
-          Nothing yet — events appear as people sign in, connect accounts and build agents.
-        </div>
-      ) : (
-        <AuditList events={events} />
-      )}
+      <CoachTarget name="admin-audit-list">
+        {events.length === 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
+            Nothing yet — events appear as people sign in, connect accounts and build agents.
+          </div>
+        ) : (
+          <AuditList events={events} />
+        )}
+      </CoachTarget>
     </div>
   );
 }

@@ -47,6 +47,7 @@ import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
 import ListenButton from './listen-button';
 import Markdown from './markdown';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
  * A tool call's icon, by name: memory tools get the bookmark, recalling
@@ -1067,10 +1068,12 @@ function PermissionCard({
   };
   const buttonClass =
     'rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 disabled:cursor-default';
+  const cardAnchor = useCoachAnchor('chat-permission-card');
   return (
     <div
       role="group"
       aria-label="Permission needed"
+      {...cardAnchor}
       className="my-2 max-w-xl rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40"
     >
       <div className="flex items-start gap-2">
