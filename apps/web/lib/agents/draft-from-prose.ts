@@ -34,9 +34,11 @@ import {
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_STEPS,
+  TIME_UNITS,
   TRIGGER_EVENT_CATALOG,
   flattenActionSteps,
   isBranchStep,
+  isTimeUnit,
   isValidTimezone,
   CURRENT_STEPS_VERSION,
   customOutcomeSlug,
@@ -48,6 +50,7 @@ import {
   type AgentStepNode,
   type AgentStepsDoc,
   type BranchPath,
+  type DateSegment,
   type FailureHandling,
   type GroupStep,
   type InstructionSegment,
@@ -90,6 +93,19 @@ const REFINE_MIN_BUDGET_MS = 60_000;
 /** The reviewer is a small call; give it this much at most. */
 const REVIEW_TIMEOUT_MS = 25_000;
 
+/** A date segment's fields → the wire's `key=value;key=value` date payload. */
+function dateTokenPayload(segment: DateSegment): string {
+  const fields = [
+    `amount=${segment.amount}`,
+    `unit=${segment.unit}`,
+    `timezone=${segment.timezone}`,
+  ];
+  if (segment.atTime) fields.push(`atTime=${segment.atTime}`);
+  if (segment.boundary) fields.push(`boundary=${segment.boundary}`);
+  if (segment.format) fields.push(`format=${segment.format}`);
+  return fields.join(';');
+}
+
 /** Segments → the wire's token syntax, so current steps round-trip exactly. */
 function segmentsToTokens(segments: InstructionSegment[]): string {
   return segments
@@ -101,6 +117,8 @@ function segmentsToTokens(segments: InstructionSegment[]): string {
           return `{{tool:${segment.name}}}`;
         case 'var':
           return `{{var:${segment.name}}}`;
+        case 'date':
+          return `{{date:${dateTokenPayload(segment)}}}`;
       }
     })
     .join('');
@@ -256,6 +274,25 @@ function promptOf(
     '- Each step does ONE thing and may use AT MOST ONE tool, looked up with find_tools (a step may also be pure reasoning with no tool).',
     '- When a step covers MANY items (a sprint of issues, a folder of mail, a search result set), choose the bulk tool (named *_bulk_*) or a single search over per-item tools — one step, one call, never one step per item. Search find_tools for the task first; it surfaces bulk variants alongside the per-item ones.',
     '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY a tool name find_tools actually returned to you, and ONLY variables from the list below.',
+    '- When a step, condition, retry guidance, or ending message needs an actual DATE or TIME ' +
+      '("since yesterday", "before last Friday", "created this week", "at 9am tomorrow", "in the ' +
+      'last 3 hours"), use a DATE CHIP instead of writing the date yourself or reasoning about ' +
+      'it: {{date:amount=N;unit=UNIT;timezone=ZONE}}. This is resolved to the actual instant ' +
+      'BEFORE the step ever runs — never hand-calculate a date in the instruction\'s own words, ' +
+      'and never spend a tool call on one. "amount" is a signed whole number and "unit" is one ' +
+      `of ${TIME_UNITS.join(', ')} — e.g. "amount=-1;unit=day" is yesterday, "amount=0;unit=day" ` +
+      'is today, "amount=2;unit=week" is a fortnight out. "timezone" is an IANA zone (e.g. ' +
+      '"America/Los_Angeles", "UTC") — use the zone the description is written in, never your ' +
+      'own. Optional fields, added with more ";key=value" pairs: "atTime=HH:MM" (24-hour, sets ' +
+      'the time of day after the shift — e.g. "at 9am tomorrow" is ' +
+      '"amount=1;unit=day;timezone=ZONE;atTime=09:00"); "boundary=start" or "boundary=end" ' +
+      '(snap to the start/end of the unit — e.g. "since the start of today" is ' +
+      '"amount=0;unit=day;timezone=ZONE;boundary=start"; ignored when atTime is given); and ' +
+      '"format=iso" (default — an exact instant, what a tool call wants), "format=date" ' +
+      '(YYYY-MM-DD, for a query language that takes a plain day) or "format=datetime" (a local ' +
+      'reading, for text a person will read). A date chip may appear anywhere a {{var:...}} chip ' +
+      'may — a step\'s instruction, a branch or loop condition, retry guidance, or an ending\'s ' +
+      'message — never inside a {{tool:...}} call\'s own reasoning.',
     "- A step's model sees ONLY the variables that step names as {{var:...}} chips (plus the " +
       'builtins and the current loop item). A step that alludes to the triggering event, an ' +
       'earlier result or a saved list in words alone ("reply to the message", "use the ticket ' +
@@ -271,7 +308,7 @@ function promptOf(
     '- When the description forks on a condition ("if a ticket exists, comment on it; ' +
       'otherwise create one"), use a BRANCH object in the steps array: {"kind": "branch", ' +
       '"name": short label, "condition": the deciding question in plain words (may use ' +
-      '{{var:...}}, NEVER {{tool:...}} — do any tool work in a step BEFORE the branch and ' +
+      '{{var:...}} and {{date:...}}, NEVER {{tool:...}} — do any tool work in a step BEFORE the branch and ' +
       `save the result), "paths": 2 to ${MAX_BRANCH_PATHS} routes, each {"label": short path name, ` +
       '"steps": array of steps (same shape as top-level steps; may be empty — an empty path ' +
       'just continues)}. The LAST path is the fallback taken when nothing else clearly ' +
@@ -285,7 +322,7 @@ function promptOf(
       '"loop", "name": short label, EITHER "over": the name of a saved LIST variable with ' +
       '"itemName": a short name for the current item (steps inside reference it as ' +
       '{{var:itemName}}) OR "until": the stop condition in plain words (checked AFTER each ' +
-      `round; may use {{var:...}}, never {{tool:...}}), "maxIterations": 1-${MAX_LOOP_ITERATIONS} rounds, and ` +
+      `round; may use {{var:...}} and {{date:...}}, never {{tool:...}}), "maxIterations": 1-${MAX_LOOP_ITERATIONS} rounds, and ` +
       '"steps": the body. To carry results out of the loop, add "collectFrom": the saveAs ' +
       'name of a step INSIDE the body and "collectVar": a new list name — each round appends ' +
       'what that step saved, and later steps (or a later loop\'s "over") can use the list. ' +
@@ -311,7 +348,7 @@ function promptOf(
       'END object as the LAST entry of that list: {"kind": "end", "name": short label, ' +
       '"result": "success" (finished as intended) | "failure" (a deliberate failure exit) | ' +
       '"stop" (nothing to do — graceful, silent), "message": an optional note on why, shown ' +
-      'on the run\'s own timeline (may use {{var:...}} for real context, never {{tool:...}}). ' +
+      'on the run\'s own timeline (may use {{var:...}} and {{date:...}} for real context, never {{tool:...}}). ' +
       'Reaching an end object ends the WHOLE run — never put steps after one in the same ' +
       'list. Only add one when the description calls for an explicit, distinctly-labeled ' +
       'ending — a plain finish at the end of the last step needs no END object at all. When ' +
@@ -350,7 +387,7 @@ function promptOf(
       'an error (e.g. "nothing found" can mean the automation does not apply) — the run ends ' +
       'silently and shows as skipped rather than failed — and {"outcome": code, "action": ' +
       '"continue"} notes the failure and moves on to the next step (the step\'s saved result ' +
-      'becomes the failure summary). Guidance may use {{var:...}} and ' +
+      'becomes the failure summary). Guidance may use {{var:...}}, {{date:...}} and ' +
       '{{tool:...}} chips — guidance tools become available to the step ONLY on retries (the ' +
       'corrective set). Unlisted codes stop.',
     '- When the user\'s description implies retrying (e.g. "search again with different ' +
@@ -482,8 +519,8 @@ function promptOf(
     `  "steps": array of 1 to ${maxSteps} objects, in execution order, each:`,
     '  {',
     '    "name": string — a short step label, at most 80 characters, never empty,',
-    '    "instruction": string — the plain-words instruction with {{tool:...}} and',
-    '      {{var:...}} tokens inline; never empty,',
+    '    "instruction": string — the plain-words instruction with {{tool:...}},',
+    '      {{var:...}} and {{date:...}} tokens inline; never empty,',
     '    "tool": string or null — EXACTLY the tool_name inside the instruction\'s',
     '      {{tool:...}} token, or null for a reasoning step with no tool,',
     '    "saveAs": string or null — a short result name when later steps reference it',
@@ -500,8 +537,8 @@ function promptOf(
     '          silently), or "continue" (note the failure and move on to the next step),',
     '        "guidance": string — required when action is "retry" (what to do differently);',
     '          on any other action an OPTIONAL note the step model reads ("that is a valid',
-    '          answer — record it and move on"); plain words, may use {{tool:...}} and',
-    '          {{var:...}} tokens; or null,',
+    '          answer — record it and move on"); plain words, may use {{tool:...}},',
+    '          {{var:...}} and {{date:...}} tokens; or null,',
     '        "when": string or omitted — ONLY with an invented outcome code: one plain',
     '          sentence saying when the condition applies (e.g. "the results exist but',
     '          none match the description closely enough"). The step model judges it by',
@@ -526,8 +563,8 @@ function promptOf(
     '  {',
     '    "kind": "branch",',
     '    "name": string — a short label for the decision, never empty,',
-    '    "condition": string — the deciding question in plain words; {{var:...}} allowed,',
-    '      {{tool:...}} forbidden,',
+    '    "condition": string — the deciding question in plain words; {{var:...}} and',
+    '      {{date:...}} allowed, {{tool:...}} forbidden,',
     `    "paths": array of 2 to ${MAX_BRANCH_PATHS} routes, in order, the LAST being the fallback;`,
     '      each { "label": string — short path name (e.g. "A ticket exists"),',
     '             "steps": array of steps (may be empty — an empty path just continues) }' +
@@ -541,7 +578,7 @@ function promptOf(
     '    "over": string or null — the name of a saved LIST variable to go through,',
     '    "itemName": string or null — required with "over": what to call the current item,',
     '    "until": string or null — INSTEAD of "over": the stop condition in plain words,',
-    '      checked after each round; {{var:...}} allowed, {{tool:...}} forbidden,',
+    '      checked after each round; {{var:...}} and {{date:...}} allowed, {{tool:...}} forbidden,',
     `    "maxIterations": integer 1-${MAX_LOOP_ITERATIONS} — the round ceiling,`,
     '    "collectFrom": string or null — the saveAs name of a step INSIDE the body whose',
     '      result each round appends,',
@@ -561,8 +598,8 @@ function promptOf(
     '    "kind": "end",',
     '    "name": string — a short label for the ending, never empty,',
     '    "result": "success", "failure", or "stop",',
-    '    "message": string or null — an optional note on why; {{var:...}} allowed,',
-    '      {{tool:...}} forbidden' + (revising ? ',' : ''),
+    '    "message": string or null — an optional note on why; {{var:...}} and {{date:...}}',
+    '      allowed, {{tool:...}} forbidden' + (revising ? ',' : ''),
     ...(revising
       ? ['    "from": string or null — the sN id of the existing end marker, or null']
       : []),
@@ -572,7 +609,80 @@ function promptOf(
   ].join('\n');
 }
 
-const TOKEN_PATTERN = /\{\{(tool|var):([^}]{1,128})\}\}/g;
+const TOKEN_PATTERN = /\{\{(tool|var|date):([^}]{1,200})\}\}/g;
+
+const DATE_TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * A date chip's wire payload — `key=value` fields separated by `;` (never
+ * JSON: the token's own `[^}]` scan cannot tell a payload's closing `}` from
+ * the token's, so the payload itself must never contain braces). Mirrors
+ * DateSegment (packages/agents/src/steps.ts) field for field. Diagnosing
+ * rather than silently dropping: an unusable date is exactly the kind of
+ * quietly-wrong output this chip exists to prevent, so a bad payload is
+ * worth a corrective round trip rather than degrading to inert text.
+ */
+function parseDateToken(payload: string): { segment: DateSegment } | { error: string } {
+  const fields = new Map<string, string>();
+  for (const part of payload.split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq < 0) {
+      return { error: `has an unreadable field "${trimmed}" — use "key=value" pairs separated by ";"` };
+    }
+    fields.set(trimmed.slice(0, eq).trim(), trimmed.slice(eq + 1).trim());
+  }
+
+  const amountRaw = fields.get('amount');
+  const unitRaw = fields.get('unit');
+  const timezoneRaw = fields.get('timezone');
+  if (amountRaw === undefined || unitRaw === undefined || timezoneRaw === undefined) {
+    return {
+      error:
+        'is missing "amount", "unit" or "timezone" — e.g. ' +
+        '"amount=-3;unit=hour;timezone=America/Los_Angeles"',
+    };
+  }
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || !Number.isInteger(amount)) {
+    return { error: `has a non-integer "amount" ("${amountRaw}")` };
+  }
+  if (!isTimeUnit(unitRaw)) {
+    return {
+      error: `has an unknown "unit" ("${unitRaw}") — use ${TIME_UNITS.join(', ')}`,
+    };
+  }
+  if (!isValidTimezone(timezoneRaw)) {
+    return {
+      error: `has an unrecognized "timezone" ("${timezoneRaw}") — use an IANA zone like "America/Los_Angeles" or "UTC"`,
+    };
+  }
+  const atTime = fields.get('atTime');
+  if (atTime !== undefined && !DATE_TIME_OF_DAY_PATTERN.test(atTime)) {
+    return { error: `has an "atTime" that is not 24-hour "HH:MM" ("${atTime}")` };
+  }
+  const boundary = fields.get('boundary');
+  if (boundary !== undefined && boundary !== 'start' && boundary !== 'end') {
+    return { error: `has an unknown "boundary" ("${boundary}") — use "start" or "end"` };
+  }
+  const format = fields.get('format');
+  if (format !== undefined && format !== 'iso' && format !== 'date' && format !== 'datetime') {
+    return { error: `has an unknown "format" ("${format}") — use "iso", "date" or "datetime"` };
+  }
+
+  return {
+    segment: {
+      t: 'date',
+      amount,
+      unit: unitRaw,
+      timezone: timezoneRaw,
+      ...(atTime !== undefined ? { atTime } : {}),
+      ...(boundary !== undefined ? { boundary } : {}),
+      ...(format !== undefined ? { format } : {}),
+    },
+  };
+}
 
 /** Token string → segments, keeping only chips that verify. */
 function segmentsOf(
@@ -606,6 +716,13 @@ function segmentsOf(
       // attached trigger provides would bounce at save ("not something this
       // agent knows"), so it degrades to text like any other unknown var.
       segments.push({ t: 'var', name });
+    } else if (kind === 'date') {
+      const parsed = parseDateToken(name);
+      if ('segment' in parsed) segments.push(parsed.segment);
+      // An unusable date payload degrades to text, same as any other
+      // dropped chip — the caller's own scan (see below) is what reports
+      // the diagnosis back to the model as corrective feedback.
+      else pushText(name);
     } else {
       // An invented tool, a duplicate tool chip, or an unknown variable:
       // keep the words, drop the chip — the builder shows text the user
@@ -1254,6 +1371,13 @@ function conditionSegments(
           ? unknownTriggerVarProblem(`${label} (condition)`, name, state.knownVars)
           : `${label} references {{var:${name}}} in its condition, which no earlier step saves and no trigger provides.`
       );
+    } else if (kind === 'date') {
+      const parsedDate = parseDateToken(name);
+      if ('error' in parsedDate) {
+        state.softProblems.push(
+          `${label} (condition) uses {{date:${name}}}, which ${parsedDate.error}.`
+        );
+      }
     }
   }
   // No tool chips in a condition ever — drop even valid ones.
@@ -1511,6 +1635,13 @@ function parseEndEntry(entry: unknown, label: string, state: ParseState): Termin
           ? unknownTriggerVarProblem(`${label} (end message)`, name, state.knownVars)
           : `${label} references {{var:${name}}} in its message, which no earlier step saves and no trigger provides.`
       );
+    } else if (kind === 'date') {
+      const parsedDate = parseDateToken(name);
+      if ('error' in parsedDate) {
+        state.softProblems.push(
+          `${label} (end message) uses {{date:${name}}}, which ${parsedDate.error}.`
+        );
+      }
     }
   }
   const origin = originOf(state, wire.from);
@@ -1548,6 +1679,11 @@ function parseActionEntry(
           ? unknownTriggerVarProblem(label, name, knownVars)
           : `${label} references {{var:${name}}}, which no earlier step saves and no trigger provides.`
       );
+    } else if (kind === 'date') {
+      const parsedDate = parseDateToken(name);
+      if ('error' in parsedDate) {
+        softProblems.push(`${label} uses {{date:${name}}}, which ${parsedDate.error}.`);
+      }
     }
   }
   if (

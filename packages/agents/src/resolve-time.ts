@@ -31,6 +31,25 @@ export type TimeUnit = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year';
 
 export const TIME_UNITS: readonly TimeUnit[] = ['minute', 'hour', 'day', 'week', 'month', 'year'];
 
+/**
+ * Type guard for TIME_UNITS — narrows a plain string to `TimeUnit` without a
+ * cast, for a caller that read `unit` off the wire (JSON, a token payload, an
+ * MCP tool call) as a bare string.
+ */
+export function isTimeUnit(value: string): value is TimeUnit {
+  switch (value) {
+    case 'minute':
+    case 'hour':
+    case 'day':
+    case 'week':
+    case 'month':
+    case 'year':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export interface ResolveTimeRequest {
   /** IANA zone every wall-clock field is read and written in. */
   timezone: string;

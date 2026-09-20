@@ -39,6 +39,7 @@ import { registerAgentTools, AGENTS_CONNECTOR } from '@/lib/mcp-tools/agents';
 import { registerLogTools, LOGS_CONNECTOR } from '@/lib/mcp-tools/logs';
 import { registerUserMemoryTools, USER_MEMORY_CONNECTOR } from '@/lib/mcp-tools/user-memory';
 import { registerUploadStatusTool } from '@/lib/mcp-tools/upload-slots';
+import { registerResolveDateTool } from '@/lib/mcp-tools/resolve-date';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
@@ -412,6 +413,11 @@ export async function registerRenkeiTools(
   // mint the slot it reads — so it registers on the raw server, ungated,
   // the way whoami does.
   registerUploadStatusTool(server, context);
+  // resolve_date is a pure computation with no connector of its own — it
+  // registers ungated too, and CHAT_ALWAYS_TOOLS (tool-config.ts) keeps it
+  // offered on every chat turn whatever toolset is chosen, so a date is
+  // never something the model has to work out or hallucinate.
+  registerResolveDateTool(server, context);
   if (webexAvailable) {
     // Production's one path: the caller's own WebEx grant. Anything else (a
     // future sandbox credential) is injected by whoever calls
