@@ -45,6 +45,11 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn('last_viewed_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`NOW()`))
     .addColumn('completed_at', 'timestamptz')
     .addColumn('dismissed_at', 'timestamptz')
+    // The browser's own clock on the latest report applied. Reports leave
+    // the browser as they happen and may arrive in any order; one older
+    // than this is a straggler and is ignored, so a 'viewed' that lands
+    // after the 'dismissed' it preceded cannot reopen the pass.
+    .addColumn('reported_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`NOW()`))
     .addColumn('updated_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`NOW()`))
     .addPrimaryKeyConstraint('coach_mark_progress_pkey', ['tenant_id', 'subject', 'tour_id'])
     .execute();

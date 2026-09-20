@@ -7,7 +7,8 @@ import RenkeiMark from '@/components/renkei-mark';
 import { Icon, ICONS } from '@/components/icons';
 import { useNotifications } from '@/components/notification-center';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { coachAnchor, type CoachAnchor } from '@/lib/coach-marks/anchors';
+import type { CoachAnchor } from '@/lib/coach-marks/anchors';
+import { useCoachAnchor, type CoachAnchorProps } from '@/components/coach-marks/anchor';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
 
@@ -93,6 +94,20 @@ export default function AppNav({
   const router = useRouter();
   const drawerRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // The places a tour may point at in the nav, registered with the
+  // coach-mark engine while they are on screen. The menu renders twice
+  // (drawer and column), so a group's anchor is carried by both copies.
+  const menuButtonAnchor = useCoachAnchor('nav-menu-button');
+  const accountAnchor = useCoachAnchor('nav-account');
+  const workspaceAnchor = useCoachAnchor('nav-workspace');
+  const chatAnchor = useCoachAnchor('nav-chat');
+  const tutorialsAnchor = useCoachAnchor('account-tutorials');
+  const anchors: Partial<Record<CoachAnchor, CoachAnchorProps>> = {
+    'nav-workspace': workspaceAnchor,
+    'nav-chat': chatAnchor,
+    'account-tutorials': tutorialsAnchor,
+  };
 
   // The avatar menu closes on navigation, Escape, and any click outside it.
   useEffect(() => setMenuOpen(false), [pathname]);
@@ -235,7 +250,7 @@ export default function AppNav({
   const menu = (
     <>
       {groups.map((group) => (
-        <div key={group.label} className="mb-5" {...(group.coach ? coachAnchor(group.coach) : {})}>
+        <div key={group.label} className="mb-5" {...(group.coach ? anchors[group.coach] : {})}>
           <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
             {group.label}
           </p>
@@ -300,7 +315,7 @@ export default function AppNav({
           aria-label={columnOpen ? 'Hide menu' : 'Open menu'}
           aria-expanded={isNarrow ? open : columnOpen}
           onClick={() => (isNarrow ? setOpen(true) : togglePinned())}
-          {...coachAnchor('nav-menu-button')}
+          {...menuButtonAnchor}
           className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900"
         >
           <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
@@ -323,7 +338,7 @@ export default function AppNav({
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               onClick={() => setMenuOpen((o) => !o)}
-              {...coachAnchor('nav-account')}
+              {...accountAnchor}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white ring-blue-300 hover:ring-2 dark:ring-blue-800"
             >
               {initials}
@@ -370,7 +385,7 @@ export default function AppNav({
                         href={item.href}
                         role="menuitem"
                         className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
-                        {...(item.coach ? coachAnchor(item.coach) : {})}
+                        {...(item.coach ? anchors[item.coach] : {})}
                       >
                         <Icon
                           path={item.icon}

@@ -12,7 +12,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import type { ModelOption } from '@/lib/chat/views';
-import { coachAnchor } from '@/lib/coach-marks/anchors';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function ModelSelect({
   models,
@@ -30,6 +30,7 @@ export default function ModelSelect({
   hasHistory: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const modelAnchor = useCoachAnchor('chat-model');
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, ref, close);
@@ -46,7 +47,7 @@ export default function ModelSelect({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Model"
-        {...coachAnchor('chat-model')}
+        {...modelAnchor}
         className="flex max-w-[14rem] items-center gap-1.5 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
       >
         <span className="truncate">{current?.label ?? 'Choose a model'}</span>

@@ -1,3 +1,4 @@
+import type { CoachAnchor } from './anchors';
 import type { CoachMarkProgressView, CoachMarkTour } from './types';
 
 /**
@@ -19,6 +20,21 @@ export function toursFor(tours: readonly CoachMarkTour[], isOperator: boolean): 
 }
 
 /**
+ * Whether the page in front of the person is one this tour belongs on:
+ * every anchor it requires is mounted (the components said so), and its
+ * path gate, if it has one, agrees. A tour that requires nothing and gates
+ * nothing belongs everywhere — an announcement rather than a walkthrough.
+ */
+export function isEligible(
+  tour: CoachMarkTour,
+  path: string,
+  mounted: ReadonlySet<CoachAnchor>
+): boolean {
+  if (tour.matches && !tour.matches(path)) return false;
+  return (tour.requires ?? []).every((anchor) => mounted.has(anchor));
+}
+
+/**
  * Whether this person's row settles the tour at its CURRENT version: a
  * completion or a dismissal of this edition. A row from an older edition,
  * or one still mid-way ('viewed'), leaves the tour eligible to auto-start
@@ -36,19 +52,20 @@ export function isSettled(
 
 /**
  * The tour to start unasked on this page, or null: the first, in registry
- * order, that auto-starts, matches the path, is for this person, and is
- * not settled — and only when they have auto-start on at all.
+ * order, that auto-starts, belongs here, is for this person, and is not
+ * settled — and only when they have auto-start on at all.
  */
 export function pickAutoStartTour(input: {
   tours: readonly CoachMarkTour[];
   path: string;
+  mounted: ReadonlySet<CoachAnchor>;
   isOperator: boolean;
   autoStart: boolean;
   progress: ReadonlyMap<string, CoachMarkProgressView>;
 }): CoachMarkTour | null {
   if (!input.autoStart) return null;
   for (const tour of toursFor(input.tours, input.isOperator)) {
-    if (!tour.autoStart || !tour.matches(input.path)) continue;
+    if (!tour.autoStart || !isEligible(tour, input.path, input.mounted)) continue;
     if (isSettled(input.progress.get(tour.id), tour)) continue;
     return tour;
   }

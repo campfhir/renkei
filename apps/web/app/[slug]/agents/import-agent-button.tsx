@@ -9,11 +9,12 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { coachAnchor } from '@/lib/coach-marks/anchors';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function ImportAgentButton({ slug, tenantId }: { slug: string; tenantId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const importAnchor = useCoachAnchor('agents-import');
   const [markdown, setMarkdown] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +50,7 @@ export default function ImportAgentButton({ slug, tenantId }: { slug: string; te
         type="button"
         onClick={() => setOpen(true)}
         className="shrink-0 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-        {...coachAnchor('agents-import')}
+        {...importAnchor}
       >
         Import
       </button>

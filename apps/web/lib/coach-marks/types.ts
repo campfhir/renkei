@@ -46,12 +46,23 @@ export interface CoachMarkTour {
   startPath: string;
   /**
    * Whether the tour may start unasked when someone who has not seen it
-   * lands on a page it matches. Off means Tutorials-page only — for a tour
-   * that is reference material rather than a first-run greeting.
+   * lands on a page it belongs on. Off means Tutorials-page only — for a
+   * tour that is reference material rather than a first-run greeting.
    */
   autoStart: boolean;
-  /** Whether a slug-relative path is one this tour belongs on. */
-  matches: (path: string) => boolean;
+  /**
+   * The anchors that must be on screen for this tour to belong here. The
+   * components carrying them register with the engine as they mount
+   * (`useCoachAnchor`), so "is this the agents page, and has it rendered"
+   * is a set lookup — never a selector query, never a path pattern. A
+   * tour with no requirements belongs everywhere `matches` allows.
+   */
+  requires?: CoachAnchor[];
+  /**
+   * An extra gate on the slug-relative path, for a tour whose anchors
+   * alone do not pin it down (the nav's are on every page). Rarely needed.
+   */
+  matches?: (path: string) => boolean;
   /** Who may see it at all; an operator-only tour never appears for anyone else. */
   audience: 'everyone' | 'operators';
   steps: CoachMarkStep[];
@@ -76,6 +87,8 @@ export interface CoachMarkProgressView {
   lastViewedAt: string;
   completedAt: string | null;
   dismissedAt: string | null;
+  /** The browser's clock on the latest report applied, ISO; older reports are stragglers. */
+  reportedAt: string;
 }
 
 /** What the browser reports as a tour runs. */

@@ -372,6 +372,7 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
   await expect(card).toHaveAttribute('data-coach-tour', 'agents');
   await card.getByRole('button', { name: 'Skip tour' }).click();
   await expect(card).toHaveCount(0);
+  await expect.poll(() => progressOf('agents')).toMatchObject({ status: 'dismissed' });
 });
 
 test('the operator report shows who viewed, finished and skipped', async ({ page }, testInfo) => {

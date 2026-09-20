@@ -16,6 +16,12 @@ export interface CoachMarkRecord {
   /** The 0-based step the event happened at. */
   step: number;
   stepsTotal: number;
+  /**
+   * The browser's clock when the event happened, ms. Reports are sent as
+   * they happen and may land in any order; the reducer applies only one
+   * newer than the row's last, so order of arrival cannot change the story.
+   */
+  at: number;
 }
 
 const EVENTS: readonly CoachMarkEvent[] = ['viewed', 'step', 'completed', 'dismissed'];
@@ -45,12 +51,19 @@ export function parseCoachMarkRecord(body: unknown): CoachMarkRecord | null {
   const version = isSmallInt(raw.version) ? Math.min(raw.version, tour.version) : tour.version;
   const stepsTotal = tour.steps.length;
   const step = isSmallInt(raw.step) ? Math.min(raw.step, stepsTotal - 1) : 0;
+  // A clock the server cannot check; a missing or absurd one reads as now,
+  // which at worst lets a straggler through.
+  const at =
+    typeof raw.at === 'number' && Number.isFinite(raw.at) && raw.at > 0 && raw.at < 1e14
+      ? Math.floor(raw.at)
+      : Date.now();
   return {
     tourId: tour.id,
     version: Math.max(1, version),
     event: raw.event,
     step,
     stepsTotal,
+    at,
   };
 }
 
@@ -69,12 +82,17 @@ export function everyTargetKnown(targets: readonly (string | undefined)[]): bool
  * - `step` only raises `stepReached` — going Back never lowers it.
  * - `completed` and `dismissed` settle the pass and bump their counter.
  *   Both keep the higher of the current step and the one reported.
+ * - A report older than the row's last applied one is a straggler that
+ *   arrived out of order, and changes nothing.
  */
 export function applyCoachMarkEvent(
   existing: CoachMarkProgressView | null,
   record: CoachMarkRecord,
   now: string
 ): CoachMarkProgressView {
+  if (existing && record.at <= Date.parse(existing.reportedAt)) return existing;
+  const reportedAt = new Date(record.at).toISOString();
+
   const base: CoachMarkProgressView = existing ?? {
     tourId: record.tourId,
     version: record.version,
@@ -88,6 +106,7 @@ export function applyCoachMarkEvent(
     lastViewedAt: now,
     completedAt: null,
     dismissedAt: null,
+    reportedAt,
   };
 
   // A pass begins with 'viewed'; any other event without one is the same
@@ -102,8 +121,9 @@ export function applyCoachMarkEvent(
         stepsTotal: record.stepsTotal,
         viewCount: base.viewCount + 1,
         lastViewedAt: now,
+        reportedAt,
       }
-    : base;
+    : { ...base, reportedAt };
 
   const stepReached = Math.max(started.stepReached, record.step);
   let status: CoachMarkStatus = started.status;
@@ -125,8 +145,8 @@ export function applyCoachMarkEvent(
       break;
     case 'step':
     case 'viewed':
-      // A 'step' arriving after a pass settled (a late request) is that
-      // pass's, and must not reopen it.
+      // A 'step' after a pass settled — a Back the person pressed, then a
+      // Skip that overtook it — is that pass's, and must not reopen it.
       if (!opening && status !== 'viewed') return started;
       status = 'viewed';
       break;

@@ -25,6 +25,7 @@ interface ProgressRow {
   last_viewed_at: Date | string;
   completed_at: Date | string | null;
   dismissed_at: Date | string | null;
+  reported_at: Date | string;
 }
 
 const STATUSES: readonly CoachMarkStatus[] = ['viewed', 'completed', 'dismissed'];
@@ -51,6 +52,7 @@ function toView(row: ProgressRow): CoachMarkProgressView {
     lastViewedAt: iso(row.last_viewed_at),
     completedAt: row.completed_at === null ? null : iso(row.completed_at),
     dismissedAt: row.dismissed_at === null ? null : iso(row.dismissed_at),
+    reportedAt: iso(row.reported_at),
   };
 }
 
@@ -67,6 +69,7 @@ const COLUMNS = [
   'last_viewed_at',
   'completed_at',
   'dismissed_at',
+  'reported_at',
 ] as const;
 
 /** Every tour this person has a row for. Never throws: a failure reads as nothing seen. */
@@ -97,9 +100,10 @@ export async function listCoachMarkProgress(
  * lock on the row's key. Two reports for the same row can arrive together
  * (a 'step' and the 'completed' right behind it, or two tabs), and without
  * the lock each would read the row before the other wrote it, and the
- * later write would carry the earlier word: 'viewed' over 'completed'. An
- * advisory lock rather than SELECT … FOR UPDATE because the first report
- * of a tour has no row to lock yet.
+ * later write would carry the earlier word. The lock makes each apply
+ * whole; the reducer's own clock check (progress.ts) makes their order
+ * irrelevant. An advisory lock rather than SELECT … FOR UPDATE because
+ * the first report of a tour has no row to lock yet.
  */
 export async function recordCoachMarkEvent(
   db: Kysely<DB>,
@@ -135,6 +139,7 @@ export async function recordCoachMarkEvent(
           last_viewed_at: next.lastViewedAt,
           completed_at: next.completedAt,
           dismissed_at: next.dismissedAt,
+          reported_at: next.reportedAt,
           updated_at: now,
         };
         await trx
@@ -196,6 +201,7 @@ export async function listCoachMarkReport(
           'coach_mark_progress.last_viewed_at as last_viewed_at',
           'coach_mark_progress.completed_at as completed_at',
           'coach_mark_progress.dismissed_at as dismissed_at',
+          'coach_mark_progress.reported_at as reported_at',
           'coach_mark_progress.updated_at as updated_at',
           'identities.display_name as display_name',
           'identities.email as email',

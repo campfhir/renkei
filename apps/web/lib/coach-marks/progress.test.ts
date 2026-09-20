@@ -5,12 +5,15 @@ const T0 = '2026-03-01T09:00:00.000Z';
 const T1 = '2026-03-01T09:05:00.000Z';
 const T2 = '2026-03-02T09:00:00.000Z';
 
+/** Each record made is a moment later than the last, as a browser's would be. */
+let clock = Date.parse('2026-03-01T08:00:00.000Z');
 const record = (over: Partial<CoachMarkRecord>): CoachMarkRecord => ({
   tourId: 'welcome',
   version: 1,
   event: 'viewed',
   step: 0,
   stepsTotal: 6,
+  at: (clock += 1000),
   ...over,
 });
 
@@ -19,9 +22,22 @@ describe('parseCoachMarkRecord', () => {
   const total = welcome?.steps.length ?? 0;
 
   it('accepts a body naming a real tour and a real event', () => {
-    expect(parseCoachMarkRecord({ tourId: 'welcome', version: 1, event: 'step', step: 2 })).toEqual(
-      { tourId: 'welcome', version: 1, event: 'step', step: 2, stepsTotal: total }
-    );
+    expect(
+      parseCoachMarkRecord({
+        tourId: 'welcome',
+        version: 1,
+        event: 'step',
+        step: 2,
+        at: 1700000000000,
+      })
+    ).toEqual({
+      tourId: 'welcome',
+      version: 1,
+      event: 'step',
+      step: 2,
+      stepsTotal: total,
+      at: 1700000000000,
+    });
   });
 
   it('rejects anything else', () => {
@@ -30,6 +46,19 @@ describe('parseCoachMarkRecord', () => {
     expect(parseCoachMarkRecord({ tourId: 'nope', event: 'viewed' })).toBeNull();
     expect(parseCoachMarkRecord({ tourId: 'welcome', event: 'finished' })).toBeNull();
     expect(parseCoachMarkRecord({ event: 'viewed' })).toBeNull();
+  });
+
+  it('reads a missing or absurd clock as now', () => {
+    const before = Date.now();
+    const parsed = parseCoachMarkRecord({ tourId: 'welcome', event: 'viewed' });
+    expect(parsed?.at).toBeGreaterThanOrEqual(before);
+    expect(parsed?.at).toBeLessThanOrEqual(Date.now());
+    expect(
+      parseCoachMarkRecord({ tourId: 'welcome', event: 'viewed', at: -5 })?.at
+    ).toBeGreaterThanOrEqual(before);
+    expect(
+      parseCoachMarkRecord({ tourId: 'welcome', event: 'viewed', at: 'yesterday' })?.at
+    ).toBeGreaterThanOrEqual(before);
   });
 
   it('clamps the step and the version to what the registry has', () => {
@@ -142,5 +171,19 @@ describe('applyCoachMarkEvent', () => {
     const late = applyCoachMarkEvent(done, record({ event: 'step', step: 4 }), T1);
     expect(late.status).toBe('completed');
     expect(late.stepReached).toBe(5);
+  });
+
+  it('ignores a report that happened before the last one applied, whatever it says', () => {
+    const viewed = record({ event: 'viewed' });
+    const dismissed = record({ event: 'dismissed', step: 1 });
+    // The dismissal lands first; the 'viewed' that preceded it straggles in.
+    const settled = applyCoachMarkEvent(null, dismissed, T1);
+    const after = applyCoachMarkEvent(settled, viewed, T1);
+    expect(after).toBe(settled);
+    expect(after.status).toBe('dismissed');
+    // A genuinely new pass, later on the clock, does open.
+    const replay = applyCoachMarkEvent(after, record({ event: 'viewed' }), T2);
+    expect(replay.status).toBe('viewed');
+    expect(replay.viewCount).toBe(2);
   });
 });

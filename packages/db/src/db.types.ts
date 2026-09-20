@@ -547,6 +547,7 @@ export interface CoachMarkProgress {
   dismissed_count: Generated<number>;
   first_viewed_at: Generated<Timestamp>;
   last_viewed_at: Generated<Timestamp>;
+  reported_at: Generated<Timestamp>;
   status: string;
   step_reached: Generated<number>;
   steps_total: Generated<number>;

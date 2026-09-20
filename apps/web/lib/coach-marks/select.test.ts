@@ -1,4 +1,12 @@
-import { isSettled, pickAutoStartTour, slugRelativePath, stateLabel, toursFor } from './select';
+import type { CoachAnchor } from './anchors';
+import {
+  isEligible,
+  isSettled,
+  pickAutoStartTour,
+  slugRelativePath,
+  stateLabel,
+  toursFor,
+} from './select';
 import type { CoachMarkProgressView, CoachMarkTour } from './types';
 
 const tour = (over: Partial<CoachMarkTour> & { id: string }): CoachMarkTour => ({
@@ -7,7 +15,6 @@ const tour = (over: Partial<CoachMarkTour> & { id: string }): CoachMarkTour => (
   description: '',
   startPath: `/${over.id}`,
   autoStart: true,
-  matches: (path) => path === `/${over.id}`,
   audience: 'everyone',
   steps: [{ id: 'one', title: 'One', body: 'One.' }],
   ...over,
@@ -25,11 +32,14 @@ const row = (over: Partial<CoachMarkProgressView> & { tourId: string }): CoachMa
   lastViewedAt: '2026-01-01T00:00:00.000Z',
   completedAt: '2026-01-01T00:00:00.000Z',
   dismissedAt: null,
+  reportedAt: '2026-01-01T00:00:00.000Z',
   ...over,
 });
 
 const progressOf = (...rows: CoachMarkProgressView[]) =>
   new Map(rows.map((entry) => [entry.tourId, entry]));
+
+const onScreen = (...anchors: CoachAnchor[]): ReadonlySet<CoachAnchor> => new Set(anchors);
 
 describe('slugRelativePath', () => {
   it('strips the slug and keeps the rest', () => {
@@ -56,6 +66,26 @@ describe('toursFor', () => {
   });
 });
 
+describe('isEligible', () => {
+  it('belongs where every required anchor is on screen — whatever the path', () => {
+    const agents = tour({ id: 'agents', requires: ['agents-new', 'agents-list'] });
+    expect(isEligible(agents, '/agents', onScreen('agents-new', 'agents-list'))).toBe(true);
+    expect(isEligible(agents, '/anything', onScreen('agents-new', 'agents-list'))).toBe(true);
+    expect(isEligible(agents, '/agents', onScreen('agents-new'))).toBe(false);
+    expect(isEligible(agents, '/agents', onScreen())).toBe(false);
+  });
+
+  it('belongs everywhere when it requires nothing', () => {
+    expect(isEligible(tour({ id: 'news' }), '/wherever', onScreen())).toBe(true);
+  });
+
+  it('honours a path gate on top of the anchors', () => {
+    const gated = tour({ id: 'g', requires: ['nav-account'], matches: (path) => path === '/' });
+    expect(isEligible(gated, '/', onScreen('nav-account'))).toBe(true);
+    expect(isEligible(gated, '/agents', onScreen('nav-account'))).toBe(false);
+  });
+});
+
 describe('isSettled', () => {
   const current = tour({ id: 'a', version: 2 });
 
@@ -76,35 +106,52 @@ describe('isSettled', () => {
 
 describe('pickAutoStartTour', () => {
   const tours = [
-    tour({ id: 'welcome', matches: (path) => path === '/' }),
-    tour({ id: 'manual', autoStart: false, matches: () => true }),
-    tour({ id: 'ops', audience: 'operators', matches: () => true }),
-    tour({ id: 'agents' }),
+    tour({ id: 'welcome', requires: ['home-feed'] }),
+    tour({ id: 'manual', autoStart: false }),
+    tour({ id: 'ops', audience: 'operators' }),
+    tour({ id: 'agents', requires: ['agents-new'] }),
   ];
-  const base = { tours, isOperator: false, autoStart: true, progress: progressOf() };
+  const base = {
+    tours,
+    path: '/',
+    isOperator: false,
+    autoStart: true,
+    progress: progressOf(),
+  };
 
-  it('picks the first unseen auto-start tour that matches the path', () => {
-    expect(pickAutoStartTour({ ...base, path: '/' })?.id).toBe('welcome');
-    expect(pickAutoStartTour({ ...base, path: '/agents' })?.id).toBe('agents');
+  it('picks the first unseen auto-start tour whose anchors are on screen', () => {
+    expect(pickAutoStartTour({ ...base, mounted: onScreen('home-feed') })?.id).toBe('welcome');
+    expect(pickAutoStartTour({ ...base, mounted: onScreen('agents-new') })?.id).toBe('agents');
+    expect(pickAutoStartTour({ ...base, mounted: onScreen('nav-account') })).toBeNull();
   });
 
   it('skips a settled tour, a manual one, and an operator one for a non-operator', () => {
     expect(
-      pickAutoStartTour({ ...base, path: '/', progress: progressOf(row({ tourId: 'welcome' })) })
+      pickAutoStartTour({
+        ...base,
+        mounted: onScreen('home-feed'),
+        progress: progressOf(row({ tourId: 'welcome' })),
+      })
     ).toBeNull();
-    expect(pickAutoStartTour({ ...base, path: '/nowhere' })).toBeNull();
-    expect(pickAutoStartTour({ ...base, path: '/nowhere', isOperator: true })?.id).toBe('ops');
+    // 'ops' requires nothing, so it belongs on every page — for an operator.
+    expect(pickAutoStartTour({ ...base, mounted: onScreen(), isOperator: true })?.id).toBe('ops');
   });
 
   it('offers a tour again after a pass that was neither finished nor skipped', () => {
     const abandoned = row({ tourId: 'welcome', status: 'viewed', completedCount: 0 });
-    expect(pickAutoStartTour({ ...base, path: '/', progress: progressOf(abandoned) })?.id).toBe(
-      'welcome'
-    );
+    expect(
+      pickAutoStartTour({
+        ...base,
+        mounted: onScreen('home-feed'),
+        progress: progressOf(abandoned),
+      })?.id
+    ).toBe('welcome');
   });
 
   it('picks nothing at all when the person has auto-start off', () => {
-    expect(pickAutoStartTour({ ...base, path: '/', autoStart: false })).toBeNull();
+    expect(
+      pickAutoStartTour({ ...base, mounted: onScreen('home-feed'), autoStart: false })
+    ).toBeNull();
   });
 });
 

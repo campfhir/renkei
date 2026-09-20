@@ -12,17 +12,14 @@ import type { CoachMarkTour } from './types';
  * body should still make sense with the spotlight missing, because on a
  * phone the menu column is a drawer and the card falls back to the centre.
  *
- * Adding a tour for a new feature: anchors on the feature's elements
- * (anchors.ts), a tour here, and the tour test does the rest. Reworking a
- * feature its tour describes: bump `version`.
+ * Where a tour belongs is said by its `requires`: the anchors that have to
+ * be mounted. The chat tour needs the composer, so it starts on a thread
+ * and nowhere else, and only once the thread has rendered — no path
+ * pattern, no selector. Adding a tour for a new feature: anchors on the
+ * feature's elements (anchors.ts, `useCoachAnchor`), a tour here naming
+ * them, a row in docs/coach-mark-coverage.md, and the tour test does the
+ * rest. Reworking a feature its tour describes: bump `version`.
  */
-
-/** A thread — '/chat/<id>' — where the composer is; not the list, projects, prompts or memory. */
-const isChatThread = (path: string): boolean =>
-  path.startsWith('/chat/') &&
-  !['/chat/projects', '/chat/prompts', '/chat/memory', '/chat/new'].some((other) =>
-    path.startsWith(other)
-  );
 
 export const COACH_MARK_TOURS: CoachMarkTour[] = [
   {
@@ -33,7 +30,7 @@ export const COACH_MARK_TOURS: CoachMarkTour[] = [
       'A first look around: the home feed, the menu, chat, and where your settings live.',
     startPath: '/',
     autoStart: true,
-    matches: (path) => path === '/',
+    requires: ['home-feed'],
     audience: 'everyone',
     steps: [
       {
@@ -83,7 +80,7 @@ export const COACH_MARK_TOURS: CoachMarkTour[] = [
     description: 'How to create an agent, import one, and what each listed agent can do.',
     startPath: '/agents',
     autoStart: true,
-    matches: (path) => path === '/agents',
+    requires: ['agents-new'],
     audience: 'everyone',
     steps: [
       {
@@ -117,7 +114,7 @@ export const COACH_MARK_TOURS: CoachMarkTour[] = [
       'The composer: what to type, which tools the assistant may use, and the model it runs on.',
     startPath: '/chat/new',
     autoStart: true,
-    matches: isChatThread,
+    requires: ['chat-composer'],
     audience: 'everyone',
     steps: [
       {
@@ -157,7 +154,7 @@ export const COACH_MARK_TOURS: CoachMarkTour[] = [
     description: 'Connecting your own accounts, and the endpoint your LLM app talks to.',
     startPath: '/connectors',
     autoStart: true,
-    matches: (path) => path === '/connectors',
+    requires: ['connectors-add'],
     audience: 'everyone',
     steps: [
       {
@@ -183,7 +180,7 @@ export const COACH_MARK_TOURS: CoachMarkTour[] = [
     description: 'For operators: what each area of the console is for.',
     startPath: '/admin',
     autoStart: true,
-    matches: (path) => path === '/admin',
+    requires: ['admin-sections'],
     audience: 'operators',
     steps: [
       {

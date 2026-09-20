@@ -5,7 +5,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { coachAnchor } from '@/lib/coach-marks/anchors';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 interface AdminArea {
   href: string;
@@ -159,7 +159,7 @@ export default async function AdminPage({
           Everything an operator configures for {slug}. Activity for the whole organization is on
           the shared Activity page.
         </p>
-        <div {...coachAnchor('admin-sections')}>
+        <CoachTarget name="admin-sections">
           {adminSections(slug).map((section) => (
             <section key={section.label} className="mb-8">
               <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -180,7 +180,7 @@ export default async function AdminPage({
               </ul>
             </section>
           ))}
-        </div>
+        </CoachTarget>
       </div>
     );
   }

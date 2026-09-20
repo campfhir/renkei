@@ -32,26 +32,9 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
 import { useMediaQuery } from '@/lib/use-media-query';
-import { coachSelector } from '@/lib/coach-marks/anchors';
+import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 import type { CoachMarkPlacement, CoachMarkTour } from '@/lib/coach-marks/types';
-
-/** Whether an element takes up space somewhere a person could see it. */
-function isVisible(element: Element): boolean {
-  const rect = element.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return false;
-  // The phone drawer parks itself at left: -100%: on the page, off the screen.
-  if (rect.right <= 0 || rect.bottom <= 0) return false;
-  if (rect.left >= window.innerWidth) return false;
-  return true;
-}
-
-/** The first visible element carrying the anchor; the menu renders twice, drawer and column. */
-function findTarget(selector: string): Element | null {
-  for (const element of document.querySelectorAll(selector)) {
-    if (isVisible(element)) return element;
-  }
-  return null;
-}
+import { isVisible } from './visible';
 
 interface Box {
   top: number;
@@ -63,11 +46,8 @@ interface Box {
 const SPOT_PAD = 6;
 const GAP = 12;
 const MARGIN = 16;
-/** How long a step waits for its target before showing the card centred. */
+/** How long a step waits for its target to register before showing the card centred. */
 const LOOK_FOR_MS = 2000;
-const LOOK_EVERY_MS = 100;
-/** After that, the target is still looked for — a page may finish loading late — but at a stroll. */
-const LOOK_LATE_EVERY_MS = 500;
 
 function boxOf(element: Element): Box {
   const rect = element.getBoundingClientRect();
@@ -140,6 +120,8 @@ function placeCard(
 export default function CoachMarkOverlay({
   tour,
   index,
+  resolveAnchor,
+  anchorsVersion,
   onNext,
   onBack,
   onSkip,
@@ -147,6 +129,10 @@ export default function CoachMarkOverlay({
 }: {
   tour: CoachMarkTour;
   index: number;
+  /** The engine's registry: the anchor's element on screen, or null while it is not. */
+  resolveAnchor: (name: CoachAnchor) => Element | null;
+  /** Bumped as anchors register and unregister — when to ask the registry again. */
+  anchorsVersion: number;
   onNext: () => void;
   onBack: () => void;
   onSkip: () => void;
@@ -169,37 +155,33 @@ export default function CoachMarkOverlay({
   const [looked, setLooked] = useState(false);
   const [cardPos, setCardPos] = useState<{ top: number; left: number } | null>(null);
 
-  // Find the step's target, waiting briefly for it to appear.
+  // A new step: forget the last target and start looking afresh.
   useEffect(() => {
     targetRef.current = null;
     setSpot(null);
     setLooked(false);
     setCardPos(null);
-    if (!step.target) {
+    if (!step.target) setLooked(true);
+  }, [step.target, index, tour.id]);
+
+  // Ask the registry for the step's target — again whenever an anchor
+  // registers, which is how a page that renders late is caught without
+  // polling. Nothing on screen after a moment: the card goes centred, and
+  // moves beside the target should it register after all.
+  useEffect(() => {
+    if (!step.target) return;
+    const found = resolveAnchor(step.target);
+    if (found) {
+      if (targetRef.current === found) return;
+      targetRef.current = found;
+      found.scrollIntoView({ block: 'center', inline: 'nearest' });
+      setSpot(boxOf(found));
       setLooked(true);
       return;
     }
-    const selector = coachSelector(step.target);
-    const startedAt = Date.now();
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const look = () => {
-      const found = findTarget(selector);
-      if (found) {
-        targetRef.current = found;
-        found.scrollIntoView({ block: 'center', inline: 'nearest' });
-        setSpot(boxOf(found));
-        setLooked(true);
-        return;
-      }
-      const late = Date.now() - startedAt >= LOOK_FOR_MS;
-      if (late) setLooked(true);
-      timer = setTimeout(look, late ? LOOK_LATE_EVERY_MS : LOOK_EVERY_MS);
-    };
-    look();
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [step.target, index, tour.id]);
+    const timer = setTimeout(() => setLooked(true), LOOK_FOR_MS);
+    return () => clearTimeout(timer);
+  }, [step.target, index, tour.id, resolveAnchor, anchorsVersion]);
 
   // Keep the spotlight on the target as the page moves under it.
   const refresh = useCallback(() => {

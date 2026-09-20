@@ -10,10 +10,10 @@ import { COACH_MARK_TOURS, tourById } from './tours';
  * outrank a stored row.
  */
 describe('the tour registry', () => {
-  it('has at least the welcome tour, first', () => {
+  it('has at least the welcome tour, first, pinned to the home feed', () => {
     expect(COACH_MARK_TOURS[0]?.id).toBe('welcome');
     expect(COACH_MARK_TOURS[0]?.autoStart).toBe(true);
-    expect(COACH_MARK_TOURS[0]?.matches('/')).toBe(true);
+    expect(COACH_MARK_TOURS[0]?.requires).toEqual(['home-feed']);
   });
 
   it('gives every tour a unique id fit for a column and a URL', () => {
@@ -32,14 +32,13 @@ describe('the tour registry', () => {
     }
   });
 
-  it('starts every tour on a page it matches', () => {
+  it('pins every auto-start tour to at least one anchor, all of them known', () => {
     for (const tour of COACH_MARK_TOURS) {
       expect(tour.startPath.startsWith('/')).toBe(true);
-      // '/chat/new' redirects to a thread, which the chat tour matches;
-      // every other tour matches its own start path directly.
-      const landing =
-        tour.id === 'chat' ? '/chat/0d9f8e2c-1111-4222-8333-444455556666' : tour.startPath;
-      expect(tour.matches(landing)).toBe(true);
+      // A tour that requires nothing belongs on every page; one that starts
+      // unasked must say where it belongs, or it would greet every visit.
+      if (tour.autoStart) expect(tour.requires?.length ?? 0).toBeGreaterThan(0);
+      expect(everyTargetKnown(tour.requires ?? [])).toBe(true);
     }
   });
 
@@ -56,15 +55,11 @@ describe('the tour registry', () => {
     }
   });
 
-  it('does not let the chat tour claim the chat sub-pages', () => {
+  it('pins the chat tour to the composer, so it belongs on a thread and nowhere else', () => {
     const chat = tourById('chat');
     expect(chat).not.toBeNull();
-    expect(chat?.matches('/chat/0d9f8e2c-1111-4222-8333-444455556666')).toBe(true);
-    expect(chat?.matches('/chat')).toBe(false);
-    expect(chat?.matches('/chat/new')).toBe(false);
-    expect(chat?.matches('/chat/projects')).toBe(false);
-    expect(chat?.matches('/chat/prompts/abc')).toBe(false);
-    expect(chat?.matches('/chat/memory')).toBe(false);
+    expect(chat?.requires).toEqual(['chat-composer']);
+    expect(chat?.matches).toBeUndefined();
   });
 
   it('looks a tour up by id, and nothing else', () => {

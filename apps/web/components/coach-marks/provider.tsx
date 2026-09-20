@@ -2,21 +2,32 @@
 
 /**
  * The coach-mark engine, mounted once in the tenant layout around the nav
- * and the page: it decides when a tour starts, walks its steps (across
- * pages when a step says so), draws the current one (overlay.tsx), and
- * reports each turn to the server so the tour is not shown twice and the
- * operator's report has its rows.
+ * and the page: it keeps the registry of anchors on screen, decides when
+ * a tour starts, walks its steps (across pages when a step says so),
+ * draws the current one (overlay.tsx), and reports each turn to the
+ * server so the tour is not shown twice and the operator's report has
+ * its rows.
  *
- * Two ways in. A tour starts UNASKED when the person lands on a page it
- * matches, has not settled it at its current version, and has auto-start
- * on — one per page load, the first in registry order, half a second
- * after arrival so the page has painted (select.ts holds the rule). Or it
- * starts BY REQUEST: the Tutorials page calls `startTour`, which leaves
- * the id in sessionStorage and navigates to the tour's start path, where
- * this picks it up — sessionStorage rather than a query string because
- * '/chat/new' redirects to a fresh thread and a query would be lost on
- * the way; a `?tour=<id>` link is honoured too, for a doc or an email
- * that wants to point at one, and cleaned from the address once read.
+ * Where a tour belongs is a question the components answer. Each anchor
+ * a tour can point at is carried by a component that registers itself
+ * here as it mounts (`useCoachAnchor`), so the engine holds the set of
+ * anchors on screen at any moment and a tour's `requires` is checked
+ * against that set — no selector is ever run against the DOM, and no
+ * path pattern has to be kept in step with the routes. A page that
+ * renders late registers late, and the engine re-evaluates as it does.
+ *
+ * Two ways in. A tour starts UNASKED when the page it belongs on is in
+ * front of someone who has not settled it at its current version and has
+ * auto-start on — one per page load, the first in registry order, half a
+ * second after the last anchor settled so the page has painted. Or it
+ * starts BY REQUEST: the Tutorials page calls `startTour`, which runs the
+ * tour at once if this is already its page, or leaves the id in
+ * sessionStorage and navigates to the tour's start path, where the first
+ * page that satisfies it picks it up — sessionStorage rather than a
+ * query string because '/chat/new' redirects to a fresh thread and a
+ * query would be lost on the way; a `?tour=<id>` link is honoured too,
+ * for a doc or an email that wants to point at one, and cleaned from the
+ * address once read.
  *
  * What the layout passes in — rows and the preference — is the state at
  * the last full page load. A layout does not re-render on a client-side
@@ -24,27 +35,28 @@
  * tour finished on one page must not offer itself on the next.
  */
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 import { applyCoachMarkEvent, type CoachMarkRecord } from '@/lib/coach-marks/progress';
-import { pickAutoStartTour, slugRelativePath, toursFor } from '@/lib/coach-marks/select';
+import {
+  isEligible,
+  pickAutoStartTour,
+  slugRelativePath,
+  toursFor,
+} from '@/lib/coach-marks/select';
 import { COACH_MARK_TOURS, tourById } from '@/lib/coach-marks/tours';
 import type { CoachMarkEvent, CoachMarkProgressView, CoachMarkTour } from '@/lib/coach-marks/types';
+import { CoachAnchorContext, CoachMarkContext, type CoachMarkContextValue } from './context';
 import CoachMarkOverlay from './overlay';
+import { isVisible } from './visible';
+
+export { useCoachMarks } from './context';
 
 const PENDING_KEY = 'renkei:coach-mark-pending';
 /** A request older than this is stale — the person went elsewhere — and is dropped. */
 const PENDING_TTL_MS = 60_000;
-/** Let the page paint before a card lands on it. */
+/** Let the page paint, and its anchors settle, before a card lands on it. */
 const AUTO_START_DELAY_MS = 500;
 
 interface Active {
@@ -52,27 +64,6 @@ interface Active {
   index: number;
   /** Started from the Tutorials page or a link, not unasked. */
   manual: boolean;
-}
-
-interface CoachMarkContextValue {
-  /** The tour on screen, if any. */
-  active: { tourId: string; index: number } | null;
-  /** Whether tours may start unasked for this person. */
-  autoStart: boolean;
-  /** The person's rows, as this engine last knew them. */
-  progress: ReadonlyMap<string, CoachMarkProgressView>;
-  /** Start a tour by hand: navigates to where it begins and runs it there. */
-  startTour: (tourId: string) => void;
-  /** Flip the preference, here and on the server. */
-  setAutoStart: (value: boolean) => Promise<boolean>;
-}
-
-const CoachMarkContext = createContext<CoachMarkContextValue | null>(null);
-
-export function useCoachMarks(): CoachMarkContextValue {
-  const value = useContext(CoachMarkContext);
-  if (!value) throw new Error('useCoachMarks must be used inside CoachMarkProvider');
-  return value;
 }
 
 interface Pending {
@@ -142,18 +133,59 @@ export default function CoachMarkProvider({
   const endedOnRef = useRef<string | null>(null);
   const activeRef = useRef<Active | null>(null);
   activeRef.current = active;
-  // Reports go out one at a time, in order: a 'step' still in flight when
-  // 'completed' leaves must not land second and read as the later word.
-  const reportQueue = useRef<Promise<void>>(Promise.resolve());
+  // Each report carries the moment it happened, strictly increasing within
+  // this tab, so they can leave at once and land in any order: the server
+  // ignores one older than the last it applied. (Waiting for each response
+  // before sending the next was tried; a Skip right behind a slow 'viewed'
+  // had not even left when the page unloaded, and was lost.)
+  const lastReportAt = useRef(0);
+
+  // The registry: anchor → the elements on the page carrying it (the menu
+  // carries each of its own twice, drawer and column). Kept in a ref so
+  // registering is cheap; `anchorsVersion` is what tells React the set
+  // moved, and `mounted` is the set the rules read.
+  const registry = useRef(new Map<CoachAnchor, Set<Element>>());
+  const [anchorsVersion, setAnchorsVersion] = useState(0);
+  const registerAnchor = useCallback((name: CoachAnchor, element: Element) => {
+    let elements = registry.current.get(name);
+    if (!elements) {
+      elements = new Set();
+      registry.current.set(name, elements);
+    }
+    elements.add(element);
+    setAnchorsVersion((version) => version + 1);
+    return () => {
+      const current = registry.current.get(name);
+      if (!current) return;
+      current.delete(element);
+      if (current.size === 0) registry.current.delete(name);
+      setAnchorsVersion((version) => version + 1);
+    };
+  }, []);
+  const mounted = useMemo<ReadonlySet<CoachAnchor>>(
+    () => new Set(registry.current.keys()),
+    // The ref holds the truth; the version is what invalidates this view of it.
+    [anchorsVersion]
+  );
+  /** The element a step's spotlight goes on: the anchor's first element that is on screen. */
+  const resolveAnchor = useCallback((name: CoachAnchor): Element | null => {
+    for (const element of registry.current.get(name) ?? []) {
+      if (element.isConnected && isVisible(element)) return element;
+    }
+    return null;
+  }, []);
 
   const record = useCallback(
     (tour: CoachMarkTour, event: CoachMarkEvent, step: number) => {
+      const at = Math.max(Date.now(), lastReportAt.current + 1);
+      lastReportAt.current = at;
       const body: CoachMarkRecord = {
         tourId: tour.id,
         version: tour.version,
         event,
         step,
         stepsTotal: tour.steps.length,
+        at,
       };
       // The same reducer the server runs, so the local copy agrees with the
       // row it will read on the next full load.
@@ -166,18 +198,14 @@ export default function CoachMarkProvider({
         return next;
       });
       // keepalive: a Finish followed at once by a navigation still lands.
-      reportQueue.current = reportQueue.current.then(() =>
-        fetch(`/api/tenant/${tenantId}/coach-marks`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-          keepalive: true,
-        })
-          .then(() => undefined)
-          .catch(() => {
-            // A lost report is a lost data point, never a lost tour.
-          })
-      );
+      void fetch(`/api/tenant/${tenantId}/coach-marks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        keepalive: true,
+      }).catch(() => {
+        // A lost report is a lost data point, never a lost tour.
+      });
     },
     [tenantId]
   );
@@ -195,7 +223,8 @@ export default function CoachMarkProvider({
     setActive(null);
   }, [pathname]);
 
-  // On arrival at a page: a requested tour first, else one that starts unasked.
+  // Whenever the page or the anchors on it change: a requested tour
+  // first, else one that starts unasked.
   useEffect(() => {
     if (activeRef.current) return;
     const path = slugRelativePath(pathname, slug);
@@ -205,14 +234,14 @@ export default function CoachMarkProvider({
       const requested = tourById(pending.id);
       if (!requested || !toursFor(COACH_MARK_TOURS, isOperator).includes(requested)) {
         clearPending();
-      } else if (pending.explicit || requested.matches(path)) {
+      } else if (pending.explicit || isEligible(requested, path, mounted)) {
         clearPending();
         if (pending.explicit) router.replace(pathname);
         begin(requested, true);
         return;
       } else {
-        // Asked for, but this is not its page yet — '/chat/new' on the way
-        // to the thread it makes. It waits; nothing else starts meanwhile.
+        // Asked for, but its anchors are not here yet — '/chat/new' on the
+        // way to the thread it makes. It waits; nothing else starts.
         return;
       }
     }
@@ -221,6 +250,7 @@ export default function CoachMarkProvider({
     const tour = pickAutoStartTour({
       tours: COACH_MARK_TOURS,
       path,
+      mounted,
       isOperator,
       autoStart,
       progress,
@@ -230,9 +260,10 @@ export default function CoachMarkProvider({
       if (!activeRef.current) begin(tour, false);
     }, AUTO_START_DELAY_MS);
     return () => clearTimeout(timer);
-    // `progress` and `autoStart` are read when the path changes, not
-    // re-run as they move — a tour just finished here must not restart.
-  }, [pathname, slug, isOperator, begin, router]);
+    // `progress` and `autoStart` are read when the page or its anchors
+    // change, not re-run as they move — a tour just finished here must not
+    // restart.
+  }, [pathname, mounted, slug, isOperator, begin, router]);
 
   const next = useCallback(() => {
     const current = activeRef.current;
@@ -290,8 +321,7 @@ export default function CoachMarkProvider({
     (tourId: string) => {
       const tour = tourById(tourId);
       if (!tour) return;
-      const path = slugRelativePath(pathname, slug);
-      if (tour.matches(path)) {
+      if (isEligible(tour, slugRelativePath(pathname, slug), mounted)) {
         begin(tour, true);
         return;
       }
@@ -302,7 +332,7 @@ export default function CoachMarkProvider({
       }
       router.push(`/${slug}${tour.startPath}`);
     },
-    [pathname, slug, begin, router]
+    [pathname, slug, mounted, begin, router]
   );
 
   const value = useMemo<CoachMarkContextValue>(
@@ -310,25 +340,30 @@ export default function CoachMarkProvider({
       active: active ? { tourId: active.tour.id, index: active.index } : null,
       autoStart,
       progress,
+      mounted,
       startTour,
       setAutoStart,
     }),
-    [active, autoStart, progress, startTour, setAutoStart]
+    [active, autoStart, progress, mounted, startTour, setAutoStart]
   );
 
   return (
-    <CoachMarkContext.Provider value={value}>
-      {children}
-      {active ? (
-        <CoachMarkOverlay
-          tour={active.tour}
-          index={active.index}
-          onNext={next}
-          onBack={back}
-          onSkip={skip}
-          onMute={active.manual ? null : mute}
-        />
-      ) : null}
-    </CoachMarkContext.Provider>
+    <CoachAnchorContext.Provider value={registerAnchor}>
+      <CoachMarkContext.Provider value={value}>
+        {children}
+        {active ? (
+          <CoachMarkOverlay
+            tour={active.tour}
+            index={active.index}
+            resolveAnchor={resolveAnchor}
+            anchorsVersion={anchorsVersion}
+            onNext={next}
+            onBack={back}
+            onSkip={skip}
+            onMute={active.manual ? null : mute}
+          />
+        ) : null}
+      </CoachMarkContext.Provider>
+    </CoachAnchorContext.Provider>
   );
 }

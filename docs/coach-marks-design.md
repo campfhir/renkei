@@ -19,11 +19,13 @@ it — so an operator can report on adoption.
 
 1. **Tours are code, not data.** A tour is a typed object in
    `apps/web/lib/coach-marks/tours.ts`; steps point at UI elements through
-   `data-coach="<anchor>"` attributes that pages and the nav carry. Adding a
-   tour for a new feature is: add the anchors to the feature's markup, add
-   the tour to the registry, done. No admin authoring UI — the tour text is
-   product copy that ships with the feature it describes, and lives in the
-   same commit.
+   anchors the components carry (`useCoachAnchor('agents-new')` in a
+   client component, `<CoachTarget name=…>` around a server-rendered
+   one). Adding a tour for a new feature is: anchors on the feature's
+   components, a tour in the registry naming them, a row in
+   `coach-mark-coverage.md`, done. No admin authoring UI — the tour text
+   is product copy that ships with the feature it describes, and lives in
+   the same commit.
 
 2. **One engine, mounted once.** A `CoachMarkProvider` sits in the tenant
    layout (`app/[slug]/layout.tsx`) beside the nav, so a tour can spotlight
@@ -34,14 +36,20 @@ it — so an operator can report on adoption.
    It sits at z-[60], above the modal/toast budget of z-50 documented in
    `toast-stack.tsx`: a tour is the thing in front by definition.
 
-3. **Auto-start rules.** A tour declares where it starts (a path under the
-   slug) and whether it auto-starts. On every route change the engine
-   picks the first auto-start tour, in registry order, whose start path
-   matches and which this person has neither completed nor dismissed at
-   the tour's current `version` — and only if their coach-mark preference
-   is on. One tour per page load; nothing chains. Bumping a tour's
-   `version` re-shows it to everyone (the way to teach a reworked feature).
-   A tour may require the operator role.
+3. **Where a tour belongs is said by the components, not by the URL.**
+   The engine keeps a registry of the anchors on screen: an anchored
+   component registers as it mounts and withdraws as it unmounts, through
+   the provider's context. A tour declares `requires`, the anchors that
+   must be mounted, and is eligible when they all are — a set lookup, no
+   selector run against the DOM and no path pattern to keep in step with
+   the routes. A page that renders late registers late, and the engine
+   re-evaluates as it does. Whenever the page or its anchors change, the
+   first eligible auto-start tour, in registry order, that this person
+   has neither completed nor dismissed at the tour's current `version`
+   starts half a second later — only if their coach-mark preference is
+   on, one per page load, nothing chaining. Bumping a tour's `version`
+   re-shows it to everyone (the way to teach a reworked feature). A tour
+   may require the operator role.
 
 4. **Dismissal is per tour, and there is a global switch.** "Skip tour"
    records that tour as dismissed and it does not come back. The card also
@@ -75,11 +83,15 @@ it — so an operator can report on adoption.
    `/api/tenant/[tenantId]/coach-marks` with `{ tourId, version, event,
 step }` where event is `viewed` (on start), `step` (each advance),
    `completed`, or `dismissed`. Subject comes from the session, never the
-   body. A lost request loses a data point, never a tour. Reports leave the
-   browser one at a time, and the route reads and writes the row under a
-   per-row advisory lock: a `step` and the `completed` right behind it
-   must not race, or the stale one lands last and the tour reads as
-   unfinished.
+   body. A lost request loses a data point, never a tour. Reports leave
+   the browser as they happen, each stamped with the browser's clock
+   (strictly increasing within a tab), and the reducer ignores one older
+   than the last it applied — so a `step` and the `completed` right
+   behind it may land in either order and the story is the same. The
+   route reads and writes the row under a per-row advisory lock so each
+   apply is whole. (Sending reports one at a time, each waiting for the
+   last response, was tried first: a Skip behind a slow response had not
+   left the browser when the page unloaded, and was lost.)
 
 8. **The report** is operator-only at `/[slug]/admin/tutorials`, linked from
    the Organization page under "People and records": per tour, how many

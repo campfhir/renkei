@@ -15,7 +15,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import AddConnectorModal, { type CatalogItem } from './add-connector-modal';
-import { coachAnchor } from '@/lib/coach-marks/anchors';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export function AddConnectorButton({
   tenantId,
@@ -28,12 +28,13 @@ export function AddConnectorButton({
   emphasis?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const addAnchor = useCoachAnchor('connectors-add');
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        {...coachAnchor('connectors-add')}
+        {...addAnchor}
         className={
           emphasis
             ? 'inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700'
