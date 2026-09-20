@@ -78,63 +78,67 @@ export default async function AboutPage({
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="mb-6 flex items-center gap-3">
-        <RenkeiMark className="h-10 w-10 shrink-0" title="Renkei" />
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold">Renkei</h1>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            A permission-aware knowledge and action layer over the tools your organization already
-            uses.
-          </p>
+    <div className="flex min-h-screen flex-col">
+      <div className="mx-auto max-w-3xl flex-1 px-4 py-6">
+        <div className="mb-6 flex items-center gap-3">
+          <RenkeiMark className="h-10 w-10 shrink-0" title="Renkei" />
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold">Renkei</h1>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              A permission-aware knowledge and action layer over the tools your organization already
+              uses.
+            </p>
+          </div>
+        </div>
+
+        <h2 className="mb-1 text-lg font-semibold">What&rsquo;s changed</h2>
+        <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
+          Newest first. Only changes you would notice are listed.
+        </p>
+
+        <div className="space-y-8">
+          {CHANGELOG.map((release, index) => (
+            <section key={`${release.date ?? 'unreleased'}-${release.heading ?? index}`}>
+              <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-gray-200 pb-2 dark:border-gray-800">
+                <h3 className="font-semibold">
+                  {/* An unreleased group is dated by its heading alone — putting
+                      today's date on work that has not shipped would be a lie
+                      the reader has no way to check. */}
+                  {release.date ? releaseDate(release.date) : (release.heading ?? 'Unreleased')}
+                </h3>
+                {release.date && release.heading ? (
+                  <span className="text-sm text-gray-500 dark:text-gray-400">{release.heading}</span>
+                ) : null}
+              </div>
+
+              <ul className="space-y-3">
+                {release.entries.map((entry) => {
+                  const style = KIND_STYLE[entry.kind];
+                  return (
+                    <li key={entry.title} className="flex gap-3">
+                      <span
+                        className={`mt-0.5 h-fit shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${style.className}`}
+                      >
+                        {style.label}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{entry.title}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">{entry.detail}</p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
         </div>
       </div>
 
-      <h2 className="mb-1 text-lg font-semibold">What&rsquo;s changed</h2>
-      <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        Newest first. Only changes you would notice are listed.
-      </p>
-
-      <div className="space-y-8">
-        {CHANGELOG.map((release, index) => (
-          <section key={`${release.date ?? 'unreleased'}-${release.heading ?? index}`}>
-            <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-gray-200 pb-2 dark:border-gray-800">
-              <h3 className="font-semibold">
-                {/* An unreleased group is dated by its heading alone — putting
-                    today's date on work that has not shipped would be a lie
-                    the reader has no way to check. */}
-                {release.date ? releaseDate(release.date) : (release.heading ?? 'Unreleased')}
-              </h3>
-              {release.date && release.heading ? (
-                <span className="text-sm text-gray-500 dark:text-gray-400">{release.heading}</span>
-              ) : null}
-            </div>
-
-            <ul className="space-y-3">
-              {release.entries.map((entry) => {
-                const style = KIND_STYLE[entry.kind];
-                return (
-                  <li key={entry.title} className="flex gap-3">
-                    <span
-                      className={`mt-0.5 h-fit shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${style.className}`}
-                    >
-                      {style.label}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{entry.title}</p>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{entry.detail}</p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ))}
-      </div>
-
-      <p className="mt-10 border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
-        Build {buildLabel(packageJson.version)}
-      </p>
+      <footer className="border-t border-gray-200 px-4 py-4 dark:border-gray-800">
+        <p className="mx-auto max-w-3xl text-xs text-gray-500 dark:text-gray-400">
+          Build {buildLabel(packageJson.version)}
+        </p>
+      </footer>
     </div>
   );
 }
