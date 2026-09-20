@@ -38,6 +38,7 @@ import {
   TRIGGER_EVENT_CATALOG,
   flattenActionSteps,
   isBranchStep,
+  isTimeUnit,
   isValidTimezone,
   CURRENT_STEPS_VERSION,
   customOutcomeSlug,
@@ -610,7 +611,6 @@ function promptOf(
 
 const TOKEN_PATTERN = /\{\{(tool|var|date):([^}]{1,200})\}\}/g;
 
-const DATE_UNIT_SET = new Set<string>(TIME_UNITS);
 const DATE_TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
@@ -648,7 +648,7 @@ function parseDateToken(payload: string): { segment: DateSegment } | { error: st
   if (!Number.isFinite(amount) || !Number.isInteger(amount)) {
     return { error: `has a non-integer "amount" ("${amountRaw}")` };
   }
-  if (!DATE_UNIT_SET.has(unitRaw)) {
+  if (!isTimeUnit(unitRaw)) {
     return {
       error: `has an unknown "unit" ("${unitRaw}") — use ${TIME_UNITS.join(', ')}`,
     };
@@ -675,7 +675,7 @@ function parseDateToken(payload: string): { segment: DateSegment } | { error: st
     segment: {
       t: 'date',
       amount,
-      unit: unitRaw as DateSegment['unit'],
+      unit: unitRaw,
       timezone: timezoneRaw,
       ...(atTime !== undefined ? { atTime } : {}),
       ...(boundary !== undefined ? { boundary } : {}),

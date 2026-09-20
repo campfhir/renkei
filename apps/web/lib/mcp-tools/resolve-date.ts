@@ -32,7 +32,7 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { resolveTime, type TimeUnit } from '@renkei/agents';
+import { isTimeUnit, resolveTime, type TimeUnit } from '@renkei/agents';
 import type { MCPToolContext } from './common';
 
 /** Mirrors TIME_UNITS (packages/agents/src/resolve-time.ts) as a zod enum —
@@ -118,7 +118,7 @@ export function registerResolveDateTool(server: McpServer, _context: MCPToolCont
     async (args: Record<string, unknown>) => {
       const timezone = typeof args.timezone === 'string' ? args.timezone.trim() : '';
       const amount = typeof args.amount === 'number' ? args.amount : undefined;
-      const unit = typeof args.unit === 'string' ? (args.unit as TimeUnit) : undefined;
+      const unit = typeof args.unit === 'string' && isTimeUnit(args.unit) ? args.unit : undefined;
       const atTime = typeof args.atTime === 'string' ? args.atTime : undefined;
       const boundary =
         args.boundary === 'start' || args.boundary === 'end' ? args.boundary : undefined;

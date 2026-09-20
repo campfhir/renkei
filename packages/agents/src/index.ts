@@ -194,6 +194,7 @@ export {
 
 export {
   describeDateSegment,
+  isTimeUnit,
   resolveTime,
   TIME_UNITS,
   type ResolveTimeRequest,
