@@ -4,16 +4,17 @@ import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { COACH_MARK_TOURS } from '@/lib/coach-marks/tours';
-import { stateLabel, type CoachMarkStateLabel } from '@/lib/coach-marks/select';
+import { stateLabel } from '@/lib/coach-marks/select';
 import { listCoachMarkReport } from '@/lib/coach-marks/store';
 import LocalTime from '@/components/local-time';
 import CoachTarget from '@/components/coach-marks/anchor';
+import PersonTours, { type PersonTourRow } from './person-tours';
 
 /**
  * The operator's view of the coach marks: per tour, how many people have
  * started it and how each pass ended; then everyone who has seen any tour,
- * one column per tour, so "who never finished the welcome tour" is a
- * glance rather than a query. Names come from the identity spine, as on
+ * with a chip per tour (the first few, and "+n" for the rest), so "who
+ * never finished the welcome tour" is a glance rather than a query. Names come from the identity spine, as on
  * every other admin report; a subject the spine has no row for shows as
  * the subject itself.
  */
@@ -24,14 +25,6 @@ interface TourTotals {
   dismissed: number;
   inProgress: number;
 }
-
-const BADGE: Record<CoachMarkStateLabel, string> = {
-  'Not started': 'text-gray-400 dark:text-gray-600',
-  'In progress': 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
-  Completed: 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300',
-  Skipped: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-  Updated: 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300',
-};
 
 export default async function AdminTutorialsPage({
   params,
@@ -178,9 +171,30 @@ export default async function AdminTutorialsPage({
                       .map((row) => row.lastViewedAt)
                       .sort()
                       .at(-1);
-                    // One chip per tour seen, so "which ones" is a hover away
-                    // without a column per tour — there are too many for that.
+                    // One chip per tour seen, in registry order, so "which
+                    // ones" is a glance without a column per tour — there
+                    // are too many for that, and by now too many for chips
+                    // as well, which is what the cell's "+n" is for.
                     const byId = new Map(person.tours.map((row) => [row.tourId, row]));
+                    const name = person.displayName ?? person.email ?? person.subject;
+                    const tourRows: PersonTourRow[] = COACH_MARK_TOURS.flatMap((tour) => {
+                      const row = byId.get(tour.id);
+                      if (!row) return [];
+                      return [
+                        {
+                          id: tour.id,
+                          title: tour.title,
+                          area: tour.area,
+                          label: stateLabel(row, tour),
+                          stepReached: row.stepReached,
+                          stepsTotal: row.stepsTotal,
+                          viewCount: row.viewCount,
+                          completedCount: row.completedCount,
+                          dismissedCount: row.dismissedCount,
+                          lastViewedAt: row.lastViewedAt,
+                        },
+                      ];
+                    });
                     return (
                       <tr
                         key={person.subject}
@@ -188,9 +202,7 @@ export default async function AdminTutorialsPage({
                         className="border-b border-gray-100 last:border-0 dark:border-gray-900"
                       >
                         <td className="px-4 py-2">
-                          <p className="font-medium">
-                            {person.displayName ?? person.email ?? person.subject}
-                          </p>
+                          <p className="font-medium">{name}</p>
                           {person.email && person.displayName ? (
                             <p className="text-xs text-gray-500">{person.email}</p>
                           ) : null}
@@ -214,25 +226,7 @@ export default async function AdminTutorialsPage({
                           {counts.viewed}
                         </td>
                         <td className="px-4 py-2">
-                          <div className="flex flex-wrap gap-1">
-                            {COACH_MARK_TOURS.filter((tour) => byId.has(tour.id)).map((tour) => {
-                              const row = byId.get(tour.id);
-                              const label = stateLabel(row, tour);
-                              return (
-                                <span
-                                  key={tour.id}
-                                  className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
-                                  title={
-                                    row
-                                      ? `${label} · step ${row.stepReached + 1} of ${row.stepsTotal} · viewed ${row.viewCount}×, completed ${row.completedCount}×, skipped ${row.dismissedCount}×`
-                                      : undefined
-                                  }
-                                >
-                                  {tour.title}
-                                </span>
-                              );
-                            })}
-                          </div>
+                          <PersonTours name={name} tours={tourRows} />
                         </td>
                         <td className="px-4 py-2 text-xs text-gray-500">
                           {latest ? <LocalTime at={latest} /> : '—'}

@@ -378,6 +378,15 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
 test('the operator report shows who viewed, finished and skipped', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/admin/tutorials`);
   await expect(page.getByRole('heading', { level: 1, name: 'Tutorials' })).toBeVisible();
+  // The report has a tour of its own, and this person may still have
+  // auto-start on: let it greet, then skip it, so the table below is
+  // clickable. The table was rendered before the skip, so its numbers are
+  // the ones asserted here.
+  await page.waitForTimeout(1200);
+  if ((await page.getByTestId('coach-mark').count()) > 0) {
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('coach-mark')).toHaveCount(0);
+  }
   // The totals count everyone in the tenant — the other projects' people
   // included — so the assertion is on this person's own row.
   const row = page.getByTestId('tutorial-person').filter({ hasText: subject });
@@ -390,4 +399,19 @@ test('the operator report shows who viewed, finished and skipped', async ({ page
   await expect(row.getByText('Welcome to Renkei')).toBeVisible();
   await expect(page.getByTestId('tour-totals-welcome')).toBeVisible();
   await shot(page, testInfo, 'coach-admin-report');
+
+  // Five tours seen, four chips in the row: the fifth is behind "+1",
+  // which opens every tour as a table.
+  const more = row.getByTestId('person-tours-more');
+  await expect(more).toHaveText('+1');
+  await more.click();
+  const dialog = page.getByRole('dialog');
+  // Rendered twice — a table for a desktop, a card list for a phone —
+  // and one of the two is on screen.
+  const rows = dialog.getByTestId('person-tour').filter({ visible: true });
+  await expect(rows).toHaveCount(5);
+  await expect(rows.filter({ hasText: 'Chat' })).toContainText('Completed');
+  await shot(page, testInfo, 'coach-admin-report-person');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
 });
