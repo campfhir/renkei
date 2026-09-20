@@ -43,7 +43,8 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
+    date: '2026-09-19',
+    heading: 'Voice conversations: speak and listen',
     entries: [
       {
         kind: 'added',
