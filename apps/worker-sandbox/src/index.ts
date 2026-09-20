@@ -44,6 +44,7 @@ import { BrowserSessions } from './browser';
 import { SecretVault } from './secret-vault';
 import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
+import { watchLogLevel } from '@renkei/settings';
 
 function envFlag(name: string): boolean {
   return /^(1|true|yes|on)$/i.test((process.env[name] ?? '').trim());
@@ -56,6 +57,11 @@ function fatal(message: string): never {
 
 async function main(): Promise<void> {
   await attachPersistentLogging();
+  // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+  // before the database is reachable; once it is, the org `logLevel` dial
+  // (packages/settings) governs, polled and reapplied here so a saved
+  // change takes effect without restarting this process.
+  watchLogLevel(logger);
 
   // A rejection nobody awaited must not take the whole worker — and every
   // browser session and unlocked secret — down with it; log it and carry

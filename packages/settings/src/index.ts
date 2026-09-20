@@ -13,6 +13,29 @@ import { getDatabase } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
+/**
+ * The write-time log levels an org may choose, restricted to the names
+ * @campfhir/bored-logs ranks by severity (silent/critical are equally
+ * severe, so only one is offered). Ordered least to most verbose — the
+ * order `<select>` options are rendered in, and the order `LOG_LEVEL_RANK`
+ * below assigns ranks by.
+ */
+export const LOG_LEVELS = ['critical', 'error', 'warn', 'info', 'debug'] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+/** Severity rank — higher is more verbose — matching bored-logs' own LOG_LEVELS map. */
+export const LOG_LEVEL_RANK: Record<LogLevel, number> = {
+  critical: 0,
+  error: 1,
+  warn: 2,
+  info: 3,
+  debug: 7,
+};
+
+export function isLogLevel(value: unknown): value is LogLevel {
+  return typeof value === 'string' && LOG_LEVELS.some((level) => level === value);
+}
+
 /** Org-scoped policy (Decision #13: org-admins set defaults and limits). */
 export interface OrgSettings {
   /** Org-wide read-only mode: no mutating capability is exposed. */
@@ -164,13 +187,27 @@ export interface OrgSettings {
    */
   webexWebhookHealthMinutes: number;
   /**
-   * How long bored-logs rows are kept before the retention sweep purges
-   * them. 0 = keep forever (the default — deleting observability data is an
-   * explicit choice). The logs table is deployment-wide, so with several
-   * tenants the sweep honors the LONGEST retention any tenant asks for and
-   * purges nothing while any tenant keeps the default.
+   * How long this tenant's own bored-logs rows are kept before the
+   * retention sweep purges them. 0 = keep forever (the default — deleting
+   * observability data is an explicit choice). The sweep deletes straight
+   * through each row's `tenantId` attribute, so one org's dial only ever
+   * purges that org's rows — it does not wait on, or get vetoed by,
+   * anyone else's choice.
    */
   logRetentionDays: number;
+  /**
+   * The minimum severity written to the console and to the logs table,
+   * process-wide. Unlike retention, a write-time level cannot be sliced
+   * per tenant — every tenant's activity flows through the same adapters
+   * in the same process — so the effective level applied at runtime is the
+   * MOST VERBOSE level any tenant has asked for (`getEffectiveLogLevel` /
+   * `watchLogLevel`, in `./log-level-sync`), the same "the more permissive
+   * request wins" choice `logRetentionDays` makes when tenants disagree.
+   * Applied within the sync's poll interval, not at the next deploy — this
+   * is what makes the level "dynamic while running": changing it here
+   * takes effect without restarting anything.
+   */
+  logLevel: LogLevel;
   /**
    * Whether the knowledge index asks the org's default LLM model for
    * search keywords when it ingests an item (packages/knowledge/src/
@@ -220,6 +257,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // users, one `/webhooks` call per grant every pass.
   webexWebhookHealthMinutes: 60,
   logRetentionDays: 0,
+  logLevel: 'info',
   knowledgeKeywordEnrichment: false,
   knowledgeKeywordMinChars: 500,
 };
@@ -236,6 +274,10 @@ const orgCache = new Map<string, CacheEntry<OrgSettings>>();
 function coerce(current: unknown, fallback: boolean | number): boolean | number {
   if (typeof fallback === 'boolean') return typeof current === 'boolean' ? current : fallback;
   return typeof current === 'number' && Number.isFinite(current) ? current : fallback;
+}
+
+function coerceLogLevel(current: unknown, fallback: LogLevel): LogLevel {
+  return isLogLevel(current) ? current : fallback;
 }
 
 /** The first non-scalar setting, so it needs its own guard rather than coerce. */
@@ -346,6 +388,7 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       coerce(stored.get('webex_webhook_health_minutes'), d.webexWebhookHealthMinutes)
     ),
     logRetentionDays: Number(coerce(stored.get('log_retention_days'), d.logRetentionDays)),
+    logLevel: coerceLogLevel(stored.get('log_level'), d.logLevel),
     knowledgeKeywordEnrichment: Boolean(
       coerce(stored.get('knowledge_keyword_enrichment'), d.knowledgeKeywordEnrichment)
     ),
@@ -367,38 +410,40 @@ export async function setOrgSettings(
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const pairs: Array<[string, boolean | number | string[] | Record<string, string[]> | undefined]> =
-    [
-      ['read_only', updates.readOnly],
-      ['disabled_connectors', updates.disabledConnectors],
-      ['connector_audiences', updates.connectorAudiences],
-      ['enable_dcr', updates.enableDcr],
-      ['max_jql_results', updates.maxJqlResults],
-      ['max_attachment_bytes', updates.maxAttachmentBytes],
-      ['rate_limit_per_user_per_minute', updates.rateLimitPerUserPerMinute],
-      ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
-      ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],
-      ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
-      ['redaction_enabled', updates.redactionEnabled],
-      ['redaction_detectors', updates.redactionDetectors],
-      ['redaction_mrn_formats', updates.redactionMrnFormats],
-      ['agent_run_retention_days', updates.agentRunRetentionDays],
-      ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
-      ['agent_usage_retention_days', updates.agentUsageRetentionDays],
-      ['chat_retention_days', updates.chatRetentionDays],
-      ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
-      ['agent_max_chain_depth', updates.agentMaxChainDepth],
-      ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
-      ['agent_max_step_attempts', updates.agentMaxStepAttempts],
-      ['agent_max_steps', updates.agentMaxSteps],
-      ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
-      ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
-      ['content_poll_minutes', updates.contentPollMinutes],
-      ['webex_webhook_health_minutes', updates.webexWebhookHealthMinutes],
-      ['log_retention_days', updates.logRetentionDays],
-      ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
-      ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
-    ];
+  const pairs: Array<
+    [string, boolean | number | string | string[] | Record<string, string[]> | undefined]
+  > = [
+    ['read_only', updates.readOnly],
+    ['disabled_connectors', updates.disabledConnectors],
+    ['connector_audiences', updates.connectorAudiences],
+    ['enable_dcr', updates.enableDcr],
+    ['max_jql_results', updates.maxJqlResults],
+    ['max_attachment_bytes', updates.maxAttachmentBytes],
+    ['rate_limit_per_user_per_minute', updates.rateLimitPerUserPerMinute],
+    ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
+    ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],
+    ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
+    ['redaction_enabled', updates.redactionEnabled],
+    ['redaction_detectors', updates.redactionDetectors],
+    ['redaction_mrn_formats', updates.redactionMrnFormats],
+    ['agent_run_retention_days', updates.agentRunRetentionDays],
+    ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
+    ['agent_usage_retention_days', updates.agentUsageRetentionDays],
+    ['chat_retention_days', updates.chatRetentionDays],
+    ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
+    ['agent_max_chain_depth', updates.agentMaxChainDepth],
+    ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
+    ['agent_max_step_attempts', updates.agentMaxStepAttempts],
+    ['agent_max_steps', updates.agentMaxSteps],
+    ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
+    ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
+    ['content_poll_minutes', updates.contentPollMinutes],
+    ['webex_webhook_health_minutes', updates.webexWebhookHealthMinutes],
+    ['log_retention_days', updates.logRetentionDays],
+    ['log_level', updates.logLevel],
+    ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
+    ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
+  ];
 
   for (const [key, value] of pairs) {
     if (value === undefined) continue;
@@ -449,3 +494,5 @@ export function getPublicBaseUrl(): string | null {
 export function invalidateSettingsCache(): void {
   orgCache.clear();
 }
+
+export { getEffectiveLogLevel, watchLogLevel } from './log-level-sync';

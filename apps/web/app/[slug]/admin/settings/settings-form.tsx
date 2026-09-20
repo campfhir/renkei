@@ -3,9 +3,16 @@
 import { useState } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 
+// Mirrors @renkei/settings' LOG_LEVELS — kept local rather than imported so
+// this client component never pulls in that package's @renkei/db (pg)
+// dependency. The API route is the source of truth for validation.
+const LOG_LEVELS = ['critical', 'error', 'warn', 'info', 'debug'] as const;
+type LogLevel = (typeof LOG_LEVELS)[number];
+
 export interface EditableSettings {
   readOnly: boolean;
   enableDcr: boolean;
+  logLevel: LogLevel;
   maxJqlResults: number;
   maxAttachmentBytes: number;
   rateLimitPerUserPerMinute: number;
@@ -129,6 +136,26 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
     );
   }
 
+  function logLevelSelect() {
+    return (
+      <select
+        aria-label="logLevel"
+        value={values.logLevel}
+        onChange={(event) =>
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the select only offers LogLevel values
+          set('logLevel', event.target.value as LogLevel)
+        }
+        className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+      >
+        {LOG_LEVELS.map((level) => (
+          <option key={level} value={level}>
+            {level}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
   async function save() {
     setState('saving');
     setError(null);
@@ -208,6 +235,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
 
       <Section title="Data & logs">
         <Row
+          label="Log level"
+          hint="Minimum severity written to the console and the logs table. Takes effect within about 30 seconds, no restart needed — but it applies process-wide, so with several organizations sharing a deployment, the most verbose level any of them asks for is what every organization's logs get written at."
+        >
+          {logLevelSelect()}
+        </Row>
+        <Row
           label="Content poll interval (minutes)"
           hint="How stale watched Jira projects, Confluence spaces and document libraries may get before they are polled again. Lower = fresher search results and more provider API calls."
         >
@@ -239,7 +272,7 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         </Row>
         <Row
           label="Log retention (days)"
-          hint="How long platform logs are kept before being purged. 0 keeps them forever. Deployment-wide: with several organizations, the longest retention wins."
+          hint="How long this organization's own logs are kept before being purged. 0 keeps them forever."
         >
           {numberInput('logRetentionDays', '0–3,650')}
         </Row>

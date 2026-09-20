@@ -108,6 +108,22 @@ describe('org settings', () => {
     if (result.ok) expect(result.val.maxJqlResults).toBe(DEFAULT_ORG_SETTINGS.maxJqlResults);
   });
 
+  it('rejects a stored log level outside the known set in favor of the default', async () => {
+    const store = stubDb();
+    store.tenantRows.set('tenant-1:log_level', 'trace');
+
+    const result = await getOrgSettings('tenant-1');
+    if (result.ok) expect(result.val.logLevel).toBe(DEFAULT_ORG_SETTINGS.logLevel);
+  });
+
+  it('round-trips a valid log level', async () => {
+    stubDb();
+    await setOrgSettings('tenant-1', { logLevel: 'debug' });
+
+    const result = await getOrgSettings('tenant-1');
+    if (result.ok) expect(result.val.logLevel).toBe('debug');
+  });
+
   it('serves cached reads within the TTL and invalidates on write', async () => {
     const store = stubDb();
 

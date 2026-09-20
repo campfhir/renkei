@@ -49,6 +49,10 @@ function buildLogger() {
     })
   );
 
+  // The org `logLevel` dial (packages/settings) is applied dynamically from
+  // instrumentation.ts's register() hook, not here: that hook runs once at
+  // real server boot, whereas this module is imported by hundreds of unit
+  // tests that never expect a background DB-polling timer to start.
   return built;
 }
 

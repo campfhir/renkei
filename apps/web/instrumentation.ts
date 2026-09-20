@@ -1,5 +1,6 @@
 import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
+import { watchLogLevel } from '@renkei/settings';
 import type { LogCipher } from '@/lib/log-encryption';
 
 // register() re-runs on dev recompiles, and the logger it decorates is a
@@ -17,6 +18,15 @@ export async function register() {
     // lib/logger.ts) — this boot line just makes the plain-English
     // announcement, first, before anything that could fail.
     logger.info('booting {application} {version}', { component: 'web/instrumentation' });
+
+    // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+    // before the database is reachable; once it is, the org `logLevel` dial
+    // (packages/settings) governs, polled and reapplied here so a saved
+    // change takes effect without a restart. Started here (real server
+    // boot, guarded above against re-running on a dev recompile) rather
+    // than at module load in lib/logger.ts, which hundreds of unit tests
+    // import without expecting a background DB-polling timer to start.
+    watchLogLevel(logger);
 
     const { PostgresAdapter } = await import('@campfhir/bored-logs/adapters/psql');
 
