@@ -43,7 +43,7 @@ export interface UtilizationTotals {
 }
 
 export interface UtilizationDay {
-  /** YYYY-MM-DD, in the viewer's zone. */
+  /** The bucket key in the viewer's zone: YYYY-MM-DD, or YYYY-MM-DDTHH for an hourly series. */
   day: string;
   inputTokens: number;
   outputTokens: number;
@@ -84,16 +84,6 @@ export interface FailureSignature {
   lastAt: string;
   /** The most recent error message for this signature — the owner's own content. */
   lastError: string | null;
-}
-
-/**
- * The window's start: the viewer's local midnight, `days` calendar days
- * ending today, as an instant. `NOW() AT TIME ZONE tz` is the viewer's
- * wall clock; truncated to the day and stepped back, then read as an
- * instant in that same zone again.
- */
-export function sinceLocal(days: number, timeZone: string): RawBuilder<Date> {
-  return sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${Math.max(0, days - 1)})) AT TIME ZONE ${timeZone})`;
 }
 
 /**
@@ -168,10 +158,9 @@ export async function getUtilizationTotals(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number,
+  span: UsageSpan,
   timeZone: string
 ): Promise<UtilizationTotals> {
-  const since = sinceLocal(days, timeZone);
   const [tokens, runs, calls] = await Promise.all([
     db
       .selectFrom('llm_calls')
@@ -187,7 +176,7 @@ export async function getUtilizationTotals(
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('created_at', '>=', since)
+      .where(inSpan('created_at', span, timeZone))
       .executeTakeFirst(),
     db
       .selectFrom('agent_run_log')
@@ -197,7 +186,7 @@ export async function getUtilizationTotals(
       ])
       .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
-      .where('created_at', '>=', since)
+      .where(inSpan('created_at', span, timeZone))
       .executeTakeFirst(),
     db
       .selectFrom('tool_calls')
@@ -207,7 +196,7 @@ export async function getUtilizationTotals(
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('started_at', '>=', since)
+      .where(inSpan('started_at', span, timeZone))
       .executeTakeFirst(),
   ]);
   return {
@@ -231,45 +220,45 @@ export async function getUtilizationSeries(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number,
-  timeZone: string
+  span: UsageSpan,
+  timeZone: string,
+  granularity: 'day' | 'hour' = 'day'
 ): Promise<UtilizationDay[]> {
-  const since = sinceLocal(days, timeZone);
   const [tokenRows, runRows, callRows] = await Promise.all([
     db
       .selectFrom('llm_calls')
       .select(({ fn }) => [
-        localDayOf('created_at', timeZone).as('day'),
+        localBucketOf('created_at', timeZone, granularity).as('day'),
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('created_at', '>=', since)
+      .where(inSpan('created_at', span, timeZone))
       .groupBy(sql`day`)
       .execute(),
     db
       .selectFrom('agent_run_log')
       .select([
-        localDayOf('created_at', timeZone).as('day'),
+        localBucketOf('created_at', timeZone, granularity).as('day'),
         sql<string>`count(*)`.as('runs'),
         sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
       ])
       .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
-      .where('created_at', '>=', since)
+      .where(inSpan('created_at', span, timeZone))
       .groupBy(sql`day`)
       .execute(),
     db
       .selectFrom('tool_calls')
       .select([
-        localDayOf('started_at', timeZone).as('day'),
+        localBucketOf('started_at', timeZone, granularity).as('day'),
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('started_at', '>=', since)
+      .where(inSpan('started_at', span, timeZone))
       .groupBy(sql`day`)
       .execute(),
   ]);
@@ -313,7 +302,7 @@ export async function getAgentUtilization(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number,
+  span: UsageSpan,
   timeZone: string
 ): Promise<AgentUtilizationRow[]> {
   const agents = await db
@@ -325,7 +314,8 @@ export async function getAgentUtilization(
     .execute();
   if (agents.length === 0) return [];
   const ids = agents.map((agent) => agent.id);
-  const since = sinceLocal(days, timeZone);
+  const since = spanStart(span, timeZone);
+  const end = spanEnd(span, timeZone);
 
   const [runRows, tokenRows, callRows, failureRows] = await Promise.all([
     db
@@ -338,7 +328,7 @@ export async function getAgentUtilization(
       .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', subject)
       .where('agent_id', 'in', ids)
-      .where('created_at', '>=', since)
+      .where(inSpan('created_at', span, timeZone))
       .groupBy('agent_id')
       .execute(),
     db
@@ -351,7 +341,7 @@ export async function getAgentUtilization(
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where('agent_id', 'in', ids)
-      .where('created_at', '>=', since)
+      .where(inSpan('created_at', span, timeZone))
       .groupBy('agent_id')
       .execute(),
     db
@@ -360,17 +350,18 @@ export async function getAgentUtilization(
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
       .where('agent_id', 'in', ids)
-      .where('started_at', '>=', since)
+      .where(inSpan('started_at', span, timeZone))
       .groupBy('agent_id')
       .execute(),
     // The newest failure per agent — DISTINCT ON walks the (agent,
     // created_at) index once.
-    sql<{
-      agent_id: string;
-      created_at: Date;
-      step_name: string | null;
-      error_kind: string | null;
-    }>`
+    end === null
+      ? sql<{
+          agent_id: string;
+          created_at: Date;
+          step_name: string | null;
+          error_kind: string | null;
+        }>`
       SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
       FROM agent_run_log
       WHERE tenant_id = ${tenantId}
@@ -378,6 +369,22 @@ export async function getAgentUtilization(
         AND agent_id IN (${sql.join(ids)})
         AND status = 'failed'
         AND created_at >= ${since}
+      ORDER BY agent_id, created_at DESC
+    `.execute(db)
+      : sql<{
+          agent_id: string;
+          created_at: Date;
+          step_name: string | null;
+          error_kind: string | null;
+        }>`
+      SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
+      FROM agent_run_log
+      WHERE tenant_id = ${tenantId}
+        AND owner_subject = ${subject}
+        AND agent_id IN (${sql.join(ids)})
+        AND status = 'failed'
+        AND created_at >= ${since}
+        AND created_at < ${end}
       ORDER BY agent_id, created_at DESC
     `.execute(db),
   ]);
@@ -417,12 +424,14 @@ export async function getAgentUtilization(
 /**
  * The recurring failures across this person's agents, most frequent
  * first. `limit` keeps the attention list a list rather than a log.
+ * Disabled agents are excluded — an agent that is off is not something
+ * to fix right now, and its old failures would just be noise.
  */
 export async function getFailureSignatures(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number,
+  span: UsageSpan,
   timeZone: string,
   limit = 5
 ): Promise<FailureSignature[]> {
@@ -450,7 +459,8 @@ export async function getFailureSignatures(
     WHERE f.tenant_id = ${tenantId}
       AND f.owner_subject = ${subject}
       AND f.status = 'failed'
-      AND f.created_at >= ${sinceLocal(days, timeZone)}
+      AND a.enabled
+      AND ${inSpan('f.created_at', span, timeZone)}
     GROUP BY f.agent_id, a.name, f.step_name, f.error_kind, f.outcome_code
     ORDER BY count DESC, last_at DESC
     LIMIT ${limit}

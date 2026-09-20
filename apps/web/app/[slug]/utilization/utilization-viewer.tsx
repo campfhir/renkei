@@ -19,6 +19,7 @@ import {
   UTILIZATION_PERIODS,
   failureKindLabel,
   formatTokens,
+  periodCaption,
   tokensPerRun,
   type UtilizationBucket,
 } from './window';
@@ -26,6 +27,7 @@ import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { Leaderboard } from '@/components/leaderboard';
 import type { EfficientAgentRow } from '@/lib/usage/org-usage';
+import type { AgentUtilizationRow } from '@/lib/usage/user-utilization';
 import { LoadingLine } from '@/components/skeleton';
 
 type Series = 'tokens' | 'runs' | 'tools';
@@ -146,6 +148,84 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
+/** The "By agent" table's rows — shared between the on and off groups. */
+function AgentTable({ agents, slug }: { agents: AgentUtilizationRow[]; slug: string }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
+          <tr>
+            <th className="px-3 py-2 font-medium">Agent</th>
+            <th className="px-3 py-2 text-right font-medium">Runs</th>
+            <th className="px-3 py-2 text-right font-medium">Failed</th>
+            <th className="px-3 py-2 text-right font-medium">Tokens</th>
+            <th className="px-3 py-2 text-right font-medium">Per run</th>
+            <th className="px-3 py-2 font-medium">Last failure</th>
+            <th className="px-3 py-2 font-medium" aria-label="Actions" />
+          </tr>
+        </thead>
+        <tbody>
+          {agents.map((agent) => {
+            const tokens = agent.inputTokens + agent.outputTokens;
+            return (
+              <tr key={agent.agentId} className="border-t border-gray-200 dark:border-gray-800">
+                <td className="px-3 py-2">
+                  <Link
+                    href={`/${slug}/agents/${agent.agentId}`}
+                    className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    {agent.name}
+                  </Link>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {agent.runs.toLocaleString('en-US')}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {agent.failures > 0 ? (
+                    <span className="text-red-600 dark:text-red-400">{agent.failures}</span>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums"
+                  title={`${agent.inputTokens.toLocaleString('en-US')} in, ${agent.outputTokens.toLocaleString('en-US')} out`}
+                >
+                  {formatTokens(tokens)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {agent.runs > 0
+                    ? formatTokens(tokensPerRun(agent.inputTokens, agent.outputTokens, agent.runs))
+                    : '—'}
+                </td>
+                <td className="max-w-xs truncate px-3 py-2 text-xs text-gray-600 dark:text-gray-400">
+                  {agent.lastFailureAt ? (
+                    <>
+                      {agent.lastFailureStep ? `at “${agent.lastFailureStep}”, ` : ''}
+                      {failureKindLabel(agent.lastFailureKind)} ·{' '}
+                      {new Date(agent.lastFailureAt).toLocaleDateString()}
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <Link
+                    href={`/${slug}/agents/${agent.agentId}#improve`}
+                    className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    Improve
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function UtilizationViewer({
   slug,
   tenantId,
@@ -157,6 +237,7 @@ export default function UtilizationViewer({
 }) {
   const [report, setReport] = useState(initial);
   const [series, setSeries] = useState<Series>('tokens');
+  const [showDisabled, setShowDisabled] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function refresh(periodKey: string) {
@@ -177,9 +258,10 @@ export default function UtilizationViewer({
   const perRun = tokensPerRun(totals.inputTokens, totals.outputTokens, totals.runs);
   const failureRate = totals.runs > 0 ? (totals.failures / totals.runs) * 100 : 0;
   const toolErrorRate = totals.toolCalls > 0 ? (totals.toolErrors / totals.toolCalls) * 100 : 0;
-  const periodLabel =
-    UTILIZATION_PERIODS.find((period) => period.key === report.periodKey)?.label ??
-    `${report.days} days`;
+  const activePeriod = UTILIZATION_PERIODS.find((period) => period.key === report.periodKey);
+  const caption = activePeriod ? periodCaption(activePeriod) : `Over the last ${report.days} days`;
+  const enabledAgents = report.agents.filter((agent) => agent.enabled);
+  const disabledAgents = report.agents.filter((agent) => !agent.enabled);
 
   return (
     <div className="flex flex-col gap-5" data-wide-page>
@@ -276,9 +358,7 @@ export default function UtilizationViewer({
 
       <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
         <figcaption className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Over the last {periodLabel}
-          </span>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{caption}</span>
           <span className="ml-auto inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-700">
             {SERIES.map((option) => (
               <button
@@ -378,9 +458,19 @@ export default function UtilizationViewer({
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-          By agent
-        </h2>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">By agent</h2>
+          {disabledAgents.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDisabled((value) => !value)}
+              aria-pressed={showDisabled}
+              className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {showDisabled ? 'Hide' : 'Show'} {disabledAgents.length} off
+            </button>
+          )}
+        </div>
         {report.agents.length === 0 ? (
           <p className="text-sm text-gray-500 dark:text-gray-400">
             You have no agents yet.{' '}
@@ -390,90 +480,26 @@ export default function UtilizationViewer({
             .
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Agent</th>
-                  <th className="px-3 py-2 text-right font-medium">Runs</th>
-                  <th className="px-3 py-2 text-right font-medium">Failed</th>
-                  <th className="px-3 py-2 text-right font-medium">Tokens</th>
-                  <th className="px-3 py-2 text-right font-medium">Per run</th>
-                  <th className="px-3 py-2 font-medium">Last failure</th>
-                  <th className="px-3 py-2 font-medium" aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {report.agents.map((agent) => {
-                  const tokens = agent.inputTokens + agent.outputTokens;
-                  return (
-                    <tr
-                      key={agent.agentId}
-                      className="border-t border-gray-200 dark:border-gray-800"
-                    >
-                      <td className="px-3 py-2">
-                        <Link
-                          href={`/${slug}/agents/${agent.agentId}`}
-                          className="font-medium text-blue-600 hover:underline dark:text-blue-400"
-                        >
-                          {agent.name}
-                        </Link>
-                        {!agent.enabled && (
-                          <span className="ml-2 text-xs text-gray-400">(off)</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {agent.runs.toLocaleString('en-US')}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {agent.failures > 0 ? (
-                          <span className="text-red-600 dark:text-red-400">{agent.failures}</span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td
-                        className="px-3 py-2 text-right tabular-nums"
-                        title={`${agent.inputTokens.toLocaleString('en-US')} in, ${agent.outputTokens.toLocaleString('en-US')} out`}
-                      >
-                        {formatTokens(tokens)}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {agent.runs > 0
-                          ? formatTokens(
-                              tokensPerRun(agent.inputTokens, agent.outputTokens, agent.runs)
-                            )
-                          : '—'}
-                      </td>
-                      <td className="max-w-xs truncate px-3 py-2 text-xs text-gray-600 dark:text-gray-400">
-                        {agent.lastFailureAt ? (
-                          <>
-                            {agent.lastFailureStep ? `at “${agent.lastFailureStep}”, ` : ''}
-                            {failureKindLabel(agent.lastFailureKind)} ·{' '}
-                            {new Date(agent.lastFailureAt).toLocaleDateString()}
-                          </>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <Link
-                          href={`/${slug}/agents/${agent.agentId}#improve`}
-                          className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                        >
-                          Improve
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="flex flex-col gap-4">
+            {enabledAgents.length > 0 ? (
+              <AgentTable agents={enabledAgents} slug={slug} />
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">All your agents are off.</p>
+            )}
+            {showDisabled && disabledAgents.length > 0 && (
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  Off
+                </h3>
+                <AgentTable agents={disabledAgents} slug={slug} />
+              </div>
+            )}
           </div>
         )}
         <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          Days are calendar days in {report.timeZone}; a bar shows one day&rsquo;s runs with that
-          day&rsquo;s tool calls and tokens.
+          Days are calendar days in {report.timeZone}; a bar shows one{' '}
+          {activePeriod && activePeriod.days <= 1 ? "hour's" : "day's"} runs with that{' '}
+          {activePeriod && activePeriod.days <= 1 ? 'hour' : 'day'}&rsquo;s tool calls and tokens.
         </p>
       </section>
     </div>

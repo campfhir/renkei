@@ -30,7 +30,12 @@ import {
 } from '@/lib/usage/org-usage';
 import { getVoiceTotals, ZERO_VOICE_TOTALS, type VoiceTotals } from '@/lib/usage/voice-usage';
 import { resolveVoiceProvider } from '@/lib/voice/config';
-import { bucketUtilization, resolvePeriod, type UtilizationBucket } from './window';
+import {
+  bucketUtilization,
+  resolvePeriod,
+  seriesGranularity,
+  type UtilizationBucket,
+} from './window';
 
 export interface UtilizationReport {
   periodKey: string;
@@ -104,16 +109,15 @@ export async function getUtilizationReport(
   if (!dbResult.ok) return { ...empty, error: 'Database unavailable' };
   const db = dbResult.val;
   const subject = session.subject;
-  // This page's periods all run up to today; the org-usage queries take a span.
-  const span = { days: period.days, endOffsetDays: 0 };
+  const span = { days: period.days, endOffsetDays: period.endOffsetDays };
 
   try {
     const [totals, daily, agents, attention, surfaceTokens, efficientAgents, voice, voiceProvider] =
       await Promise.all([
-        getUtilizationTotals(db, tenantId, subject, period.days, timeZone),
-        getUtilizationSeries(db, tenantId, subject, period.days, timeZone),
-        getAgentUtilization(db, tenantId, subject, period.days, timeZone),
-        getFailureSignatures(db, tenantId, subject, period.days, timeZone),
+        getUtilizationTotals(db, tenantId, subject, span, timeZone),
+        getUtilizationSeries(db, tenantId, subject, span, timeZone, seriesGranularity(period.days)),
+        getAgentUtilization(db, tenantId, subject, span, timeZone),
+        getFailureSignatures(db, tenantId, subject, span, timeZone),
         getSurfaceTokenTotals(db, tenantId, span, timeZone, subject),
         getMostEfficientAgents(db, tenantId, span, timeZone, 10, 3, subject),
         getVoiceTotals(db, tenantId, span, timeZone, subject),
@@ -124,7 +128,7 @@ export async function getUtilizationReport(
       days: period.days,
       timeZone,
       totals,
-      series: bucketUtilization(daily, period.days, new Date(), timeZone),
+      series: bucketUtilization(daily, span, new Date(), timeZone),
       agents,
       attention,
       surfaceTokens,
