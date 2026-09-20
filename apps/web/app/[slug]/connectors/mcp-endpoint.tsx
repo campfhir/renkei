@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
  * The MCP endpoint URL with a copy button — the artifact a user pastes into
@@ -16,6 +17,7 @@ import { useEffect, useState } from 'react';
 export default function McpEndpoint({ tenantId }: { tenantId: string }) {
   const [url, setUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  const endpointAnchor = useCoachAnchor('connectors-endpoint');
 
   useEffect(() => {
     setUrl(`${window.location.origin}/api/mcp/${tenantId}/http`);
@@ -32,7 +34,10 @@ export default function McpEndpoint({ tenantId }: { tenantId: string }) {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <div
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+      {...endpointAnchor}
+    >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:gap-8">
         {/*
           The prose is the side that gives. It has `lg:flex-1` so it takes

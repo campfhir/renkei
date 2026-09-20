@@ -38,6 +38,7 @@ import { boardRows, formatDuration, type RankedVoiceUserRow } from '@/lib/usage/
 import { ActivityCalendar } from '@/components/activity-calendar';
 import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -306,6 +307,8 @@ export default function OrgUsageViewer({
   const [series, setSeries] = useState<Series>('tokens');
   const [includeAgents, setIncludeAgents] = useState(initial.includeAgentsInTopUsers);
   const [pending, startTransition] = useTransition();
+  const periodAnchor = useCoachAnchor('admin-usage-period');
+  const personAnchor = useCoachAnchor('admin-usage-person');
 
   function refresh(periodKey: string, nextIncludeAgents: boolean, subject: string | null) {
     startTransition(async () => {
@@ -417,7 +420,7 @@ export default function OrgUsageViewer({
       )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <nav className="flex flex-wrap items-center gap-2" aria-label="Period">
+        <nav {...periodAnchor} className="flex flex-wrap items-center gap-2" aria-label="Period">
           {ORG_USAGE_PERIODS.map((option) => (
             <button
               key={option.key}
@@ -435,7 +438,7 @@ export default function OrgUsageViewer({
             </button>
           ))}
         </nav>
-        <label className="ml-auto flex items-center gap-2 text-sm">
+        <label {...personAnchor} className="ml-auto flex items-center gap-2 text-sm">
           <span className="text-gray-500 dark:text-gray-400">Person</span>
           <select
             value={subject ?? ''}

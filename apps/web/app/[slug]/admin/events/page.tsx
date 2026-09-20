@@ -5,6 +5,7 @@ import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import type { Json } from '@renkei/db';
 import EventsList, { type EventRow, type EventStatus } from './events-list';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * The event monitor: every webhook delivery and internal event, its source,
@@ -186,13 +187,15 @@ export default async function EventsPage({
         handed off, and how it resolved. Showing the latest {events.length}.
       </p>
 
-      {events.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
-          Nothing yet — events appear as connected providers deliver webhooks.
-        </div>
-      ) : (
-        <EventsList events={events} />
-      )}
+      <CoachTarget name="admin-events-list">
+        {events.length === 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
+            Nothing yet — events appear as connected providers deliver webhooks.
+          </div>
+        ) : (
+          <EventsList events={events} />
+        )}
+      </CoachTarget>
     </div>
   );
 }

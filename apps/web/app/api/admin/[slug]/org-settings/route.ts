@@ -93,7 +93,12 @@ const NUMERIC_KEYS = [
   'knowledgeKeywordMinChars',
 ] as const;
 
-const BOOLEAN_KEYS = ['readOnly', 'enableDcr', 'knowledgeKeywordEnrichment'] as const;
+const BOOLEAN_KEYS = [
+  'readOnly',
+  'enableDcr',
+  'knowledgeKeywordEnrichment',
+  'coachMarksEnabled',
+] as const;
 
 type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number] | 'logLevel';
 
@@ -123,6 +128,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
+    coachMarksEnabled: settings.coachMarksEnabled,
   };
 }
 

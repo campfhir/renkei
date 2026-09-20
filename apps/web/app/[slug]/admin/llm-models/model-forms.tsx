@@ -11,6 +11,7 @@ import RemoveButton from '@/components/remove-button';
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { LoadingRegion, SkeletonCards } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -111,6 +112,8 @@ function draftOf(row: ModelRow): ModelDraft {
 }
 
 export default function ModelForms({ slug }: { slug: string }) {
+  const listAnchor = useCoachAnchor('admin-models-list');
+  const addAnchor = useCoachAnchor('admin-models-add');
   const [models, setModels] = useState<ModelRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
@@ -254,7 +257,7 @@ export default function ModelForms({ slug }: { slug: string }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div {...listAnchor} className="space-y-4">
       {loadError ? <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p> : null}
 
       {(models ?? []).length === 0 && editingId === null ? (
@@ -648,6 +651,7 @@ export default function ModelForms({ slug }: { slug: string }) {
         </form>
       ) : (
         <button
+          {...addAnchor}
           type="button"
           onClick={startCreate}
           className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"

@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import { formatIsGeneric } from '@renkei/redaction';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 interface DetectorInfo {
   key: string;
@@ -94,6 +95,8 @@ export default function RedactionForm({ slug }: { slug: string }) {
   const [patternText, setPatternText] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const masterAnchor = useCoachAnchor('admin-redaction-master');
+  const detectorsAnchor = useCoachAnchor('admin-redaction-detectors');
 
   useEffect(() => {
     let live = true;
@@ -161,7 +164,10 @@ export default function RedactionForm({ slug }: { slug: string }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+      <section
+        {...masterAnchor}
+        className="rounded-lg border border-gray-200 p-4 dark:border-gray-800"
+      >
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -182,7 +188,7 @@ export default function RedactionForm({ slug }: { slug: string }) {
         </label>
       </section>
 
-      <section>
+      <section {...detectorsAnchor}>
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
           What to look for
         </h2>

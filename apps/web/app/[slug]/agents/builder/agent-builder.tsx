@@ -66,6 +66,7 @@ import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
 import { SaveConfirmPanel } from './review-panel';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface AgentBuilderProps {
   slug: string;
@@ -133,6 +134,10 @@ export function AgentBuilder({
   existing,
 }: AgentBuilderProps) {
   const router = useRouter();
+  // The builder's tour targets (lib/coach-marks/tours/workspace.ts).
+  const nameAnchor = useCoachAnchor('builder-name');
+  const canvasAnchor = useCoachAnchor('builder-canvas');
+  const saveAnchor = useCoachAnchor('builder-save');
   const [agentId, setAgentId] = useState<string | null>(existing?.id ?? null);
   const [name, setName] = useState(existing?.name ?? '');
   const [steps, setSteps] = useState<AgentStepNode[]>(
@@ -1175,7 +1180,7 @@ export function AgentBuilder({
                 </div>
               ) : null}
 
-              <div>
+              <div {...nameAnchor}>
                 <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
                   Name it
                 </label>
@@ -1320,6 +1325,7 @@ export function AgentBuilder({
                 onClick={handleSave}
                 disabled={saving || clientIssues.length > 0}
                 className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                {...saveAnchor}
               >
                 {saving ? 'Saving…' : agentId ? 'Update' : 'Save'}
               </button>
@@ -1331,7 +1337,7 @@ export function AgentBuilder({
             gap — without it the flow chart butts up against the Worth
             checking panel. */}
         <div className="mt-8 min-w-0 flex-1 space-y-6 lg:mt-0">
-          <section>
+          <section {...canvasAnchor}>
             <FlowCanvas
               nodes={steps}
               ordinals={ordinals}
@@ -1393,6 +1399,7 @@ export function AgentBuilder({
               onClick={handleSave}
               disabled={saving || clientIssues.length > 0}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              {...saveAnchor}
             >
               {saving ? 'Saving…' : agentId ? 'Update' : 'Save'}
             </button>

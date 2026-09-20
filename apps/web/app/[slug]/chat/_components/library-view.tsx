@@ -13,6 +13,7 @@ import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { DialogFooter } from './chat-nav';
 import ShareModal from './share-modal';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 interface PromptItem {
   id: string;
@@ -46,6 +47,8 @@ export default function LibraryView({
   const base = `/api/tenant/${tenantId}/chat/prompt-libraries/${library.id}`;
   const [editing, setEditing] = useState<PromptItem | 'new' | null>(null);
   const [title, setTitle] = useState('');
+  const shareAnchor = useCoachAnchor('library-share');
+  const newPromptAnchor = useCoachAnchor('library-new-prompt');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +128,7 @@ export default function LibraryView({
             onClick={() => setShare(true)}
             aria-label="Share library"
             title="Share"
+            {...shareAnchor}
             className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
           >
             <Icon path={ICONS.share} className="h-5 w-5" />
@@ -135,6 +139,7 @@ export default function LibraryView({
             type="button"
             onClick={() => open('new')}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+            {...newPromptAnchor}
           >
             New prompt
           </button>

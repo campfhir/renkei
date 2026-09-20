@@ -35,6 +35,7 @@ import {
   type ChatToolPermissionPrefs,
   type ToolPermissionRule,
 } from '@/lib/chat/permission-rules';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const RULES: readonly { rule: ToolPermissionRule; label: string; hint: string }[] = [
   { rule: 'ask', label: 'Ask', hint: 'The chat stops and asks each time.' },
@@ -95,9 +96,11 @@ export default function ToolPermissionsForm({
   );
   const unlisted = [...prefs.alwaysAllow, ...prefs.alwaysDeny].filter((name) => !listed.has(name));
 
+  const anchor = useCoachAnchor('prefs-permissions');
   return (
     <section
       aria-labelledby="tool-permissions-heading"
+      {...anchor}
       className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
     >
       <div className="p-4 pb-3">

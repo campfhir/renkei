@@ -9,6 +9,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { listAgents } from '@/lib/agents/store';
 import { listAgentsSharedWith } from '@/lib/agents/access-grants';
 import { AgentsList } from './agents-list';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * Your agents — every signed-in user's own list (agents are per-user
@@ -51,28 +52,32 @@ export default async function AgentsPage({
         <h1 className="min-w-0 truncate text-xl font-bold">Agents</h1>
         <div className="flex shrink-0 items-center gap-2">
           <ImportAgentButton slug={slug} tenantId={tenant.id} />
-          <Link
-            href={`/${slug}/agents/new`}
-            className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            New agent
-          </Link>
+          <CoachTarget name="agents-new" as="span" className="inline-flex shrink-0">
+            <Link
+              href={`/${slug}/agents/new`}
+              className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              New agent
+            </Link>
+          </CoachTarget>
         </div>
       </div>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Step-by-step helpers you draft yourself — they act with your own connections, on your
         triggers, and keep a full history of every run.
       </p>
-      <AgentsList
-        slug={slug}
-        tenantId={tenant.id}
-        agents={agents}
-        shared={shared.map((listing) => ({
-          agent: listing.agent,
-          sharedBy: listing.ownerName || listing.ownerEmail || 'a colleague',
-          expiresAt: listing.expiresAt,
-        }))}
-      />
+      <CoachTarget name="agents-list">
+        <AgentsList
+          slug={slug}
+          tenantId={tenant.id}
+          agents={agents}
+          shared={shared.map((listing) => ({
+            agent: listing.agent,
+            sharedBy: listing.ownerName || listing.ownerEmail || 'a colleague',
+            expiresAt: listing.expiresAt,
+          }))}
+        />
+      </CoachTarget>
     </div>
   );
 }

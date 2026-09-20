@@ -548,3 +548,31 @@ export function parseVoicePrefs(stored: unknown): VoicePrefs {
     userAccent: isVoiceAccent(raw.userAccent) ? raw.userAccent : DEFAULT_VOICE_PREFS.userAccent,
   };
 }
+
+/**
+ * Whether the coach marks — the guided tours that walk somebody through a
+ * workflow (apps/web/lib/coach-marks) — may start on their own when this
+ * person lands on a page with one they have not seen. A fifth scope, read
+ * by the tenant layout on every page and written from the Tutorials page
+ * and the tour card's own "Don't show tutorials". Off never hides a tour
+ * the person starts by hand; it only stops them appearing unasked. Which
+ * tours they have seen is not a preference but a record, and lives in
+ * `coach_mark_progress`.
+ */
+export const COACH_MARKS_KEY = 'coach_marks';
+
+export interface CoachMarkPrefs {
+  /** Tours may appear unasked on a page whose tour this person has not seen. */
+  autoStart: boolean;
+}
+
+export const DEFAULT_COACH_MARK_PREFS: CoachMarkPrefs = { autoStart: true };
+
+/** Survives whatever jsonb hands back; anything unrecognisable is the default. */
+export function parseCoachMarkPrefs(stored: unknown): CoachMarkPrefs {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
+    return DEFAULT_COACH_MARK_PREFS;
+  }
+  const raw: Record<string, unknown> = { ...stored };
+  return { autoStart: boolOr(raw.autoStart, DEFAULT_COACH_MARK_PREFS.autoStart) };
+}

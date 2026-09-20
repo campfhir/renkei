@@ -35,6 +35,7 @@ import StepsOutline from './steps-outline';
 import SharedWithPanel from './shared-with-panel';
 import ImprovePanel from './improve-panel';
 import { latestOptimization } from '@/lib/agents/optimization-store';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 const TOOL_USAGE_WINDOW_DAYS = 30;
 
@@ -192,13 +193,15 @@ export default async function AgentOverviewPage({
           Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}
         </span>
       )}
-      <Link
-        href={`/${slug}/agents/${agentId}/edit`}
-        className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
-      >
-        <Icon path={ICONS.pencil} />
-        Edit
-      </Link>
+      <CoachTarget name="agent-edit" as="span" className="inline-flex">
+        <Link
+          href={`/${slug}/agents/${agentId}/edit`}
+          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
+        >
+          <Icon path={ICONS.pencil} />
+          Edit
+        </Link>
+      </CoachTarget>
     </>
   );
   const invocationRows: { label: string; count: number }[] = [
@@ -262,7 +265,10 @@ export default async function AgentOverviewPage({
 
           {/* When does it run — the schedule/event answer the card view has
               but this page was missing. */}
-          <div className="mb-3 rounded-md border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950">
+          <CoachTarget
+            name="agent-runs-card"
+            className="mb-3 rounded-md border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950"
+          >
             <div className="flex items-start justify-between gap-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 Runs
@@ -305,7 +311,7 @@ export default async function AgentOverviewPage({
                 No triggers — runs only when started by hand.
               </p>
             )}
-          </div>
+          </CoachTarget>
 
           {reviewNotes.length > 0 ? (
             <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950">

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
  * The per-user opt-in for what Outlook content Renkei indexes. Everything
@@ -83,8 +84,10 @@ export default function OutlookIndexingPrefs({ tenantId }: { tenantId: string })
     }
   }
 
+  const indexingAnchor = useCoachAnchor('outlook-indexing');
+
   return (
-    <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800">
+    <div {...indexingAnchor} className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800">
       <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
         What gets indexed
         <span className="ml-1 font-normal">

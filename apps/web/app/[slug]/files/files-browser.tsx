@@ -22,6 +22,7 @@ import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import { LoadingRegion, SkeletonHeading, SkeletonTable } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -438,6 +439,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
 
   const rowGrid = 'grid grid-cols-[minmax(0,1fr)_5.5rem_9.5rem_2.25rem] items-center gap-2';
 
+  const toolbarAnchor = useCoachAnchor('files-toolbar');
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -464,7 +466,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         <div className="flex items-center gap-2">
           <PathBar path={path} onNavigate={(target) => open(share, target)} />
         </div>
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2" {...toolbarAnchor}>
           <div className="relative min-w-0 flex-1">
             <Icon
               path={ICONS.search}

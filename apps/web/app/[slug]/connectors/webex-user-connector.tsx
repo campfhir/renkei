@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ScopePicker from '@/components/scope-picker';
 import AuthorizedPermissions from '@/components/authorized-permissions';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { WEBEX_SCOPE_GROUPS, WEBEX_USER_SCOPE_OPTIONS } from '@/lib/webex-scopes';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 
@@ -105,8 +106,16 @@ export default function WebexUserConnector({
     }
   }
 
+  const cardAnchor = useCoachAnchor('card-webex');
+  const scopesAnchor = useCoachAnchor('webex-scopes');
+  const connectAnchor = useCoachAnchor('webex-connect');
+  const spacesAnchor = useCoachAnchor('webex-watch-spaces');
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <div
+      {...cardAnchor}
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+    >
       <div className="flex items-center justify-between gap-4">
         <h2 className="flex items-center gap-2 font-semibold">
           <ConnectorIcon capabilityKey="webex" label="WebEx" size={20} />
@@ -140,7 +149,10 @@ export default function WebexUserConnector({
       )}
 
       {connected && (
-        <div className="mt-3 rounded-md border border-gray-200 p-3 dark:border-gray-800">
+        <div
+          {...spacesAnchor}
+          className="mt-3 rounded-md border border-gray-200 p-3 dark:border-gray-800"
+        >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0 max-w-md">
               <p className="text-sm font-medium">Watch all my spaces</p>
@@ -180,7 +192,10 @@ export default function WebexUserConnector({
 
       {!connected && (
         <div className="mt-3">
-          <details className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+          <details
+            {...scopesAnchor}
+            className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800"
+          >
             <summary className="cursor-pointer text-sm font-medium">
               What Renkei may do ({selectedIds.size} of {pickable.length} capabilities)
             </summary>
@@ -200,6 +215,7 @@ export default function WebexUserConnector({
             </div>
           </details>
           <a
+            {...connectAnchor}
             href={authorizeUrl}
             className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
           >
@@ -209,26 +225,28 @@ export default function WebexUserConnector({
       )}
 
       {connected && (
-        <AuthorizedPermissions
-          options={WEBEX_USER_SCOPE_OPTIONS}
-          authorized={priorScopes}
-          connectorLabel="WebEx"
-        >
-          <ScopePicker
-            groups={WEBEX_SCOPE_GROUPS}
+        <div {...scopesAnchor}>
+          <AuthorizedPermissions
             options={WEBEX_USER_SCOPE_OPTIONS}
-            checked={selectedIds}
-            onToggle={toggleOption}
-            available={ceiling}
-            audience="user"
-          />
-          <a
-            href={authorizeUrl}
-            className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+            authorized={priorScopes}
+            connectorLabel="WebEx"
           >
-            Approve updated permissions
-          </a>
-        </AuthorizedPermissions>
+            <ScopePicker
+              groups={WEBEX_SCOPE_GROUPS}
+              options={WEBEX_USER_SCOPE_OPTIONS}
+              checked={selectedIds}
+              onToggle={toggleOption}
+              available={ceiling}
+              audience="user"
+            />
+            <a
+              href={authorizeUrl}
+              className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Approve updated permissions
+            </a>
+          </AuthorizedPermissions>
+        </div>
       )}
 
       {connected &&

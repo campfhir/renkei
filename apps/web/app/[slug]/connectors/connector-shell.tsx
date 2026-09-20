@@ -1,6 +1,8 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import CoachTarget from '@/components/coach-marks/anchor';
+import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 
 /**
  * The box a connector card draws itself in — top level, or nested inside a
@@ -18,22 +20,25 @@ import type { ReactNode } from 'react';
  */
 export function ConnectorShell({
   nested = false,
+  anchor,
   children,
 }: {
   nested?: boolean;
+  /** The coach-mark anchor this box carries, for the tour about its product. */
+  anchor?: CoachAnchor;
   children: ReactNode;
 }) {
-  return (
-    <div
-      className={
-        nested
-          ? 'rounded-lg border border-gray-200 bg-gray-50/60 p-3 dark:border-gray-800 dark:bg-gray-900/40'
-          : 'rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950'
-      }
-    >
-      {children}
-    </div>
-  );
+  const className = nested
+    ? 'rounded-lg border border-gray-200 bg-gray-50/60 p-3 dark:border-gray-800 dark:bg-gray-900/40'
+    : 'rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950';
+  if (anchor) {
+    return (
+      <CoachTarget name={anchor} className={className}>
+        {children}
+      </CoachTarget>
+    );
+  }
+  return <div className={className}>{children}</div>;
 }
 
 /**

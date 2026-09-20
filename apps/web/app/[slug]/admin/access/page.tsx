@@ -9,6 +9,7 @@ import { grantProviderLabel } from '@/lib/provider-labels';
 import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
 import RevokeGrantButton from './revoke-grant-button';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * Access: who is connected to what — one table, a row per person and
@@ -151,123 +152,127 @@ export default async function AccessPage({
         .
       </p>
 
-      {sorted.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
-          Nobody yet — people appear when they first sign in.
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-          <table className="w-full text-sm">
-            <caption className="sr-only">
-              {sorted.length} people, {linked} linked connectors
-            </caption>
-            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
-              <tr>
-                <th className="px-3 py-2 font-medium">Person</th>
-                <th className="px-3 py-2 font-medium">Connector</th>
-                <th className="px-3 py-2 font-medium">Account</th>
-                <th className="px-3 py-2 font-medium">Expires</th>
-                <th className="px-3 py-2 font-medium">Last active</th>
-                <th className="px-3 py-2 font-medium" aria-label="Actions" />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((person) => {
-                const rows = grantsBySubject.get(person.subject) ?? [];
-                const personCell = (
-                  <td className="px-3 py-2 align-top" rowSpan={Math.max(1, rows.length)}>
-                    <Link
-                      href={`/${slug}/admin/usage?user=${encodeURIComponent(person.subject)}`}
-                      className="font-medium text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      {person.name}
-                    </Link>
-                    {person.email && person.email !== person.name && (
-                      <span className="block break-all text-xs text-gray-500">{person.email}</span>
-                    )}
-                  </td>
-                );
-                const activeCell = (
-                  <td
-                    className="px-3 py-2 align-top text-xs text-gray-500"
-                    rowSpan={Math.max(1, rows.length)}
-                  >
-                    {person.lastActive ? (
-                      <LocalTime at={person.lastActive} format="date" />
-                    ) : (
-                      'never signed in'
-                    )}
-                  </td>
-                );
-                if (rows.length === 0) {
-                  return (
-                    <tr
-                      key={person.subject}
-                      className="border-t border-gray-200 dark:border-gray-800"
-                    >
-                      {personCell}
-                      <td className="px-3 py-2 text-gray-400 dark:text-gray-600" colSpan={3}>
-                        No connectors linked
-                      </td>
-                      {activeCell}
-                      <td className="px-3 py-2" />
-                    </tr>
-                  );
-                }
-                return rows.map((grant, index) => (
-                  <tr
-                    key={`${person.subject}:${grant.provider}:${grant.accountId}`}
-                    className={
-                      index === 0
-                        ? 'border-t border-gray-200 dark:border-gray-800'
-                        : 'border-t border-gray-100 dark:border-gray-900'
-                    }
-                  >
-                    {index === 0 && personCell}
-                    <td className="px-3 py-2">
-                      <span className="inline-flex items-center gap-1.5">
-                        <ConnectorIcon
-                          capabilityKey={PROVIDER_ICON_KEY[grant.provider] ?? grant.provider}
-                          label={grantProviderLabel(grant.provider)}
-                          size={16}
-                        />
-                        {grantProviderLabel(grant.provider)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
-                      {grant.displayName ?? grant.accountId}
-                    </td>
-                    <td className="px-3 py-2 text-xs">
-                      {grant.expired ? (
-                        <span
-                          className="text-amber-700 dark:text-amber-400"
-                          title="Token expired; refresh due"
-                        >
-                          ⚠️ expired
-                        </span>
-                      ) : (
-                        <span className="text-gray-500">
-                          <LocalTime at={grant.expiresAt} format="date" />
+      <CoachTarget name="admin-access-table">
+        {sorted.length === 0 ? (
+          <div className="rounded-lg border border-gray-200 bg-white p-6 text-center text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-400">
+            Nobody yet — people appear when they first sign in.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+            <table className="w-full text-sm">
+              <caption className="sr-only">
+                {sorted.length} people, {linked} linked connectors
+              </caption>
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Person</th>
+                  <th className="px-3 py-2 font-medium">Connector</th>
+                  <th className="px-3 py-2 font-medium">Account</th>
+                  <th className="px-3 py-2 font-medium">Expires</th>
+                  <th className="px-3 py-2 font-medium">Last active</th>
+                  <th className="px-3 py-2 font-medium" aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((person) => {
+                  const rows = grantsBySubject.get(person.subject) ?? [];
+                  const personCell = (
+                    <td className="px-3 py-2 align-top" rowSpan={Math.max(1, rows.length)}>
+                      <Link
+                        href={`/${slug}/admin/usage?user=${encodeURIComponent(person.subject)}`}
+                        className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+                      >
+                        {person.name}
+                      </Link>
+                      {person.email && person.email !== person.name && (
+                        <span className="block break-all text-xs text-gray-500">
+                          {person.email}
                         </span>
                       )}
                     </td>
-                    {index === 0 && activeCell}
-                    <td className="px-3 py-2 text-right">
-                      <RevokeGrantButton
-                        slug={slug}
-                        provider={grant.provider}
-                        providerLabel={grantProviderLabel(grant.provider)}
-                        accountId={grant.accountId}
-                        displayName={person.name}
-                      />
+                  );
+                  const activeCell = (
+                    <td
+                      className="px-3 py-2 align-top text-xs text-gray-500"
+                      rowSpan={Math.max(1, rows.length)}
+                    >
+                      {person.lastActive ? (
+                        <LocalTime at={person.lastActive} format="date" />
+                      ) : (
+                        'never signed in'
+                      )}
                     </td>
-                  </tr>
-                ));
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                  );
+                  if (rows.length === 0) {
+                    return (
+                      <tr
+                        key={person.subject}
+                        className="border-t border-gray-200 dark:border-gray-800"
+                      >
+                        {personCell}
+                        <td className="px-3 py-2 text-gray-400 dark:text-gray-600" colSpan={3}>
+                          No connectors linked
+                        </td>
+                        {activeCell}
+                        <td className="px-3 py-2" />
+                      </tr>
+                    );
+                  }
+                  return rows.map((grant, index) => (
+                    <tr
+                      key={`${person.subject}:${grant.provider}:${grant.accountId}`}
+                      className={
+                        index === 0
+                          ? 'border-t border-gray-200 dark:border-gray-800'
+                          : 'border-t border-gray-100 dark:border-gray-900'
+                      }
+                    >
+                      {index === 0 && personCell}
+                      <td className="px-3 py-2">
+                        <span className="inline-flex items-center gap-1.5">
+                          <ConnectorIcon
+                            capabilityKey={PROVIDER_ICON_KEY[grant.provider] ?? grant.provider}
+                            label={grantProviderLabel(grant.provider)}
+                            size={16}
+                          />
+                          {grantProviderLabel(grant.provider)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
+                        {grant.displayName ?? grant.accountId}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {grant.expired ? (
+                          <span
+                            className="text-amber-700 dark:text-amber-400"
+                            title="Token expired; refresh due"
+                          >
+                            ⚠️ expired
+                          </span>
+                        ) : (
+                          <span className="text-gray-500">
+                            <LocalTime at={grant.expiresAt} format="date" />
+                          </span>
+                        )}
+                      </td>
+                      {index === 0 && activeCell}
+                      <td className="px-3 py-2 text-right">
+                        <RevokeGrantButton
+                          slug={slug}
+                          provider={grant.provider}
+                          providerLabel={grantProviderLabel(grant.provider)}
+                          accountId={grant.accountId}
+                          displayName={person.name}
+                        />
+                      </td>
+                    </tr>
+                  ));
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CoachTarget>
     </div>
   );
 }

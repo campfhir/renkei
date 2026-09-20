@@ -4,6 +4,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import FilesBrowser from './files-browser';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * The files browser: the human face of the same seam the fileshare_* tools
@@ -33,7 +34,9 @@ export default async function FilesPage({
         page and it opens here. What you can see and change is what your account may on the file
         server.
       </p>
-      <FilesBrowser tenantId={tenant.id} />
+      <CoachTarget name="files-browser">
+        <FilesBrowser tenantId={tenant.id} />
+      </CoachTarget>
     </div>
   );
 }

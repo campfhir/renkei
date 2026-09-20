@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
+import CoachTarget, { useCoachAnchor } from '@/components/coach-marks/anchor';
+import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 
 // Mirrors @renkei/settings' LOG_LEVELS — kept local rather than imported so
 // this client component never pulls in that package's @renkei/db (pg)
@@ -11,6 +13,7 @@ type LogLevel = (typeof LOG_LEVELS)[number];
 
 export interface EditableSettings {
   readOnly: boolean;
+  coachMarksEnabled: boolean;
   enableDcr: boolean;
   logLevel: LogLevel;
   maxJqlResults: number;
@@ -39,12 +42,30 @@ export interface EditableSettings {
 const inputClass =
   'w-28 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm tabular-nums dark:border-gray-700 dark:bg-gray-900';
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+function Section({
+  title,
+  anchor,
+  children,
+}: {
+  title: string;
+  /** The coach-mark anchor this section carries, for the settings tour. */
+  anchor?: CoachAnchor;
+  children: React.ReactNode;
+}) {
+  const className =
+    'rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950';
+  const body = (
+    <>
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">{title}</h2>
       <div className="space-y-4">{children}</div>
-    </section>
+    </>
+  );
+  return anchor ? (
+    <CoachTarget as="section" name={anchor} className={className}>
+      {body}
+    </CoachTarget>
+  ) : (
+    <section className={className}>{body}</section>
   );
 }
 
@@ -176,9 +197,11 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
     setState('saved');
   }
 
+  const saveAnchor = useCoachAnchor('admin-settings-save');
+
   return (
     <div className="space-y-4">
-      <Section title="Safety">
+      <Section title="Safety" anchor="admin-settings-safety">
         <Row
           label="Read-only mode"
           hint="Hides every tool that changes an external system, org-wide and immediately. Read tools keep working. The brake to pull while investigating."
@@ -187,6 +210,16 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
             on={values.readOnly}
             onChange={(next) => set('readOnly', next)}
             label="Read-only mode"
+          />
+        </Row>
+        <Row
+          label="Guided tours"
+          hint="The coach marks that walk people through a page. Off takes every tour down for everyone at once — nothing starts on its own, and nobody can start one from Tutorials — the brake to pull if a tour misbehaves."
+        >
+          <Toggle
+            on={values.coachMarksEnabled}
+            onChange={(next) => set('coachMarksEnabled', next)}
+            label="Guided tours"
           />
         </Row>
       </Section>
@@ -348,6 +381,7 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
 
       <div className="flex items-center gap-3">
         <button
+          {...saveAnchor}
           type="button"
           disabled={state === 'saving' || !dirty}
           onClick={() => void save()}

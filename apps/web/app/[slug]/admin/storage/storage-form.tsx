@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 import type { StorageView } from '@/lib/storage-admin';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -62,8 +63,11 @@ export default function StorageForm({
     else setError(result.data.detail);
   }
 
+  const formAnchor = useCoachAnchor('admin-storage-form');
+
   return (
     <form
+      {...formAnchor}
       onSubmit={save}
       className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
     >

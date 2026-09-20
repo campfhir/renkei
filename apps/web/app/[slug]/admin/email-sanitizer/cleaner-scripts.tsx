@@ -6,6 +6,7 @@ import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { CONTENT_KINDS, describeKinds } from '@/lib/email-sanitizer/content-kinds';
 import type { CleanerScriptKind } from '@renkei/email-sanitizer';
 import { LoadingLine } from '@/components/skeleton';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
  * Monaco is a few megabytes and touches `window` on import, so it is loaded
@@ -84,6 +85,7 @@ export default function CleanerScripts({
   const url = `/api/admin/${slug}/email-sanitizer/scripts`;
   const [scripts, setScripts] = useState<CleanerScript[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const scriptsAnchor = useCoachAnchor('admin-sanitizer-scripts');
 
   // Editor state — one shared form for create and edit.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -242,7 +244,10 @@ export default function CleanerScripts({
   }
 
   return (
-    <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <div
+      {...scriptsAnchor}
+      className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+    >
       <h2 className="text-sm font-semibold">Cleaner scripts</h2>
       <p className="text-xs text-gray-500 dark:text-gray-400">
         Where all boilerplate removal happens: a function <code>(email) =&gt; string</code> that

@@ -44,6 +44,7 @@ import { GroupNode } from './group-node';
 import { TerminalNode } from './terminal-node';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export type BuilderSelection =
   { type: 'step'; id: string } | { type: 'trigger'; index: number } | { type: 'new-trigger' };
@@ -120,6 +121,7 @@ function Connector({
   onInsert: CanvasHandlers['onInsert'];
 }) {
   const [open, setOpen] = useState(false);
+  const addAnchor = useCoachAnchor('builder-add');
   const menuRef = useRef<HTMLDivElement>(null);
   // Clicking anywhere else (or Escape) cancels the add — each connector owns
   // its own popup, so without this they only closed by re-clicking their "+".
@@ -149,6 +151,7 @@ function Connector({
         title="Add a step, branch, loop, or group here"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
+        {...addAnchor}
         className="absolute top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-gray-300 bg-white text-xs leading-none text-gray-400 hover:border-blue-500 hover:text-blue-600 dark:border-gray-700 dark:bg-gray-950 dark:hover:border-blue-400"
       >
         +

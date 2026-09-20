@@ -13,6 +13,7 @@
 
 import { useState } from 'react';
 import { chatClient } from '@/lib/chat/client';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 interface ChatToolOption {
   key: string;
@@ -78,9 +79,11 @@ export default function DefaultToolsForm({
     }
   }
 
+  const anchor = useCoachAnchor('prefs-default-tools');
   return (
     <section
       aria-labelledby={`default-tools-heading-${kind}`}
+      {...anchor}
       className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
     >
       <h3 id={`default-tools-heading-${kind}`} className="font-semibold">

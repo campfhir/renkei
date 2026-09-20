@@ -9,6 +9,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { LoadingLine } from '@/components/skeleton';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const K_OPTIONS = [10, 20, 30];
 
@@ -517,10 +518,12 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
     return `${groups.length} result${groups.length === 1 ? '' : 's'} from ${list}`;
   }, [result, groups]);
 
+  const searchAnchor = useCoachAnchor('knowledge-search');
+  const sourcesAnchor = useCoachAnchor('knowledge-sources');
   return (
     <div>
       <form onSubmit={(e) => void runSearch(e)} className="mb-4 space-y-2">
-        <div className="flex gap-2">
+        <div className="flex gap-2" {...searchAnchor}>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -564,7 +567,7 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
           </select>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2" {...sourcesAnchor}>
           <span className="text-xs text-gray-500 dark:text-gray-400">Sources:</span>
           {SOURCE_OPTIONS.map((option) => {
             const active = sources.has(option.id);
