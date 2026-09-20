@@ -19,6 +19,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import { coachAnchor } from '@/lib/coach-marks/anchors';
 import Modal from '@/components/modal';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
@@ -366,6 +367,7 @@ export default function Composer({
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
+        {...coachAnchor('chat-composer')}
         className={`rounded-xl border bg-white transition dark:bg-gray-900 ${
           dragging
             ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
@@ -505,6 +507,7 @@ export default function Composer({
               aria-label="Send"
               disabled={disabled || uploading > 0 || (!text.trim() && attachments.length === 0)}
               className="rounded-md bg-blue-600 p-1.5 text-white hover:bg-blue-700 disabled:opacity-40"
+              {...coachAnchor('chat-send')}
             >
               <Icon path={ICONS.send} className="h-5 w-5" />
             </button>

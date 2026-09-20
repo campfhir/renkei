@@ -148,14 +148,14 @@ and unit tests green on its own.
 - [x] 1. Storage: migration `114-coach-mark-progress`, `EXPECTED_MIGRATIONS`,
       `db.types.ts` regenerated; `coach_marks` preference in
       `@renkei/user-prefs` (+ parser test); preferences route accepts it.
-- [ ] 2. Registry + engine: `lib/coach-marks/{types,tours,select,anchor}.ts`,
+- [x] 2. Registry + engine: `lib/coach-marks/{types,tours,select,anchor}.ts`,
       `components/coach-marks/{provider,overlay}.tsx`, mounted in the
       tenant layout; `data-coach` anchors in nav and pages; unit tests.
-- [ ] 3. Recording: `POST /api/tenant/[tenantId]/coach-marks` +
+- [x] 3. Recording: `POST /api/tenant/[tenantId]/coach-marks` +
       `lib/coach-marks/progress.ts` (upsert reducer + test).
-- [ ] 4. Tutorials page `/[slug]/tutorials` + account-menu item + replay via
+- [x] 4. Tutorials page `/[slug]/tutorials` + account-menu item + replay via
       `?tour=`.
-- [ ] 5. Admin report `/[slug]/admin/tutorials` + Organization page link.
+- [x] 5. Admin report `/[slug]/admin/tutorials` + Organization page link.
 - [ ] 6. Playwright spec with screenshots (desktop-light, desktop-dark,
       mobile); seed sets the shared user's preference off.
 - [ ] 7. Docs: `docs/README.md` index entry; this file's status updated.

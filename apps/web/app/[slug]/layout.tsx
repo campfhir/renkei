@@ -7,9 +7,11 @@ import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
 import { PATHNAME_HEADER, safeReturnPath } from '@/lib/return-path';
-import { getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
+import { getCoachMarkPrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { getDatabase } from '@renkei/db';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
+import { listCoachMarkProgress } from '@/lib/coach-marks/store';
+import CoachMarkProvider from '@/components/coach-marks/provider';
 import { NotificationCenter } from '@/components/notification-center';
 import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
@@ -69,12 +71,17 @@ export default async function TenantLayout({
 
   const prefs = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
   const theme = await getThemePrefs(tenant.id, session.subject, { fresh: true });
+  const coachMarks = await getCoachMarkPrefs(tenant.id, session.subject, { fresh: true });
 
-  // The menu carries the person's chats on every page.
+  // The menu carries the person's chats on every page, and the coach-mark
+  // engine needs to know which tours this person has already settled.
   const dbResult = getDatabase();
-  const chats = dbResult.ok
-    ? await loadChatSidebar(dbResult.val, tenant.id, session.subject)
-    : null;
+  const [chats, coachMarkProgress] = dbResult.ok
+    ? await Promise.all([
+        loadChatSidebar(dbResult.val, tenant.id, session.subject),
+        listCoachMarkProgress(dbResult.val, tenant.id, session.subject),
+      ])
+    : [null, []];
 
   const version = getVersionInfo();
 
@@ -96,17 +103,27 @@ export default async function TenantLayout({
         <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
           {/* The nav frames the page: it owns the <main> so the menu column can
               stand beside it on a wide screen. */}
-          <AppNav
+          {/* The coach marks wrap the nav AND the page: a tour spotlights
+              both, and walks across pages without unmounting. */}
+          <CoachMarkProvider
             slug={tenant.slug}
             tenantId={tenant.id}
-            userName={userName}
-            userEmail={identity?.email ?? null}
             isOperator={isOperator}
-            chats={chats}
-            version={version}
+            autoStart={coachMarks.autoStart}
+            progress={coachMarkProgress}
           >
-            {children}
-          </AppNav>
+            <AppNav
+              slug={tenant.slug}
+              tenantId={tenant.id}
+              userName={userName}
+              userEmail={identity?.email ?? null}
+              isOperator={isOperator}
+              chats={chats}
+              version={version}
+            >
+              {children}
+            </AppNav>
+          </CoachMarkProvider>
           <NotificationCorner
             tenantId={tenant.id}
             corner={prefs?.toastCorner ?? 'bottom-right'}

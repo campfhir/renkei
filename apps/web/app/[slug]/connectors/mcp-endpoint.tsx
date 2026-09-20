@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { coachAnchor } from '@/lib/coach-marks/anchors';
 
 /**
  * The MCP endpoint URL with a copy button — the artifact a user pastes into
@@ -32,7 +33,10 @@ export default function McpEndpoint({ tenantId }: { tenantId: string }) {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <div
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+      {...coachAnchor('connectors-endpoint')}
+    >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:gap-8">
         {/*
           The prose is the side that gives. It has `lg:flex-1` so it takes

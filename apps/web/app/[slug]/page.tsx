@@ -6,6 +6,7 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ActionableCards from './cards';
 import AutoRefresh from '@/components/auto-refresh';
+import { coachAnchor } from '@/lib/coach-marks/anchors';
 
 /**
  * Where a signed-in user lands: the actionable-item feed, which is the point
@@ -33,7 +34,7 @@ export default async function HomePage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="mb-1 flex items-baseline justify-between gap-4">
+      <div className="mb-1 flex items-baseline justify-between gap-4" {...coachAnchor('home-feed')}>
         <h1 className="text-xl font-bold">Actionable items</h1>
         <Link
           href={showArchived ? `/${slug}` : `/${slug}?archived=1`}

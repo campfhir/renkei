@@ -5,6 +5,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
+import { coachAnchor } from '@/lib/coach-marks/anchors';
 
 interface AdminArea {
   href: string;
@@ -126,6 +127,11 @@ function adminSections(slug: string): AdminSection[] {
           detail: 'Who changed what in the console.',
         },
         {
+          href: `${admin}/tutorials`,
+          label: 'Tutorials',
+          detail: 'Who has taken the guided tours, who finished them, and who skipped.',
+        },
+        {
           href: `${admin}/events`,
           label: 'Events',
           detail: 'The inbound event stream and its processing.',
@@ -153,26 +159,28 @@ export default async function AdminPage({
           Everything an operator configures for {slug}. Activity for the whole organization is on
           the shared Activity page.
         </p>
-        {adminSections(slug).map((section) => (
-          <section key={section.label} className="mb-8">
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              {section.label}
-            </h2>
-            <ul className="grid gap-3 sm:grid-cols-2">
-              {section.areas.map((area) => (
-                <li key={area.href}>
-                  <Link
-                    href={area.href}
-                    className="block h-full rounded-xl border border-gray-200 bg-white p-4 hover:border-blue-300 hover:bg-blue-50/40 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-blue-800 dark:hover:bg-blue-950/20"
-                  >
-                    <p className="text-sm font-semibold">{area.label}</p>
-                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{area.detail}</p>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+        <div {...coachAnchor('admin-sections')}>
+          {adminSections(slug).map((section) => (
+            <section key={section.label} className="mb-8">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                {section.label}
+              </h2>
+              <ul className="grid gap-3 sm:grid-cols-2">
+                {section.areas.map((area) => (
+                  <li key={area.href}>
+                    <Link
+                      href={area.href}
+                      className="block h-full rounded-xl border border-gray-200 bg-white p-4 hover:border-blue-300 hover:bg-blue-50/40 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-blue-800 dark:hover:bg-blue-950/20"
+                    >
+                      <p className="text-sm font-semibold">{area.label}</p>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{area.detail}</p>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
       </div>
     );
   }

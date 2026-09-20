@@ -1,0 +1,82 @@
+import type { CoachAnchor } from './anchors';
+
+/**
+ * What a tour IS — pure shapes, no React and no database, so the registry,
+ * the selection rules and the progress reducer can each be unit-tested on
+ * their own and the worker could one day read the registry too.
+ */
+
+/** Which side of its target a step's card prefers; 'auto' picks the roomiest. */
+export type CoachMarkPlacement = 'top' | 'bottom' | 'left' | 'right' | 'auto';
+
+export interface CoachMarkStep {
+  /** Stable within the tour; recorded nowhere, used for React keys and tests. */
+  id: string;
+  title: string;
+  /** Plain prose. One or two sentences: a coach mark is a caption, not a page. */
+  body: string;
+  /**
+   * The anchor to spotlight. Absent, the card sits centred with no
+   * spotlight — an intro or a wrap-up. A target that is not on the page
+   * (or is hidden, as the menu column is on a phone) degrades to the same.
+   */
+  target?: CoachAnchor;
+  placement?: CoachMarkPlacement;
+  /**
+   * The slug-relative path this step lives on, when it differs from the
+   * tour's start path. The engine navigates there when the step is
+   * reached — a tour may walk through a workflow across pages.
+   */
+  path?: string;
+}
+
+export interface CoachMarkTour {
+  /** The registry key, recorded in `coach_mark_progress.tour_id`. Never reuse one. */
+  id: string;
+  /**
+   * Bump when the tour changes enough that people who finished the old one
+   * should see it again — a reworked feature. Progress at an older version
+   * reads as unseen for auto-start, and as "Updated" on the Tutorials page.
+   */
+  version: number;
+  title: string;
+  /** For the Tutorials page: what this tour teaches, in a sentence. */
+  description: string;
+  /** Slug-relative: '/' for home, '/agents'… Replay goes here. */
+  startPath: string;
+  /**
+   * Whether the tour may start unasked when someone who has not seen it
+   * lands on a page it matches. Off means Tutorials-page only — for a tour
+   * that is reference material rather than a first-run greeting.
+   */
+  autoStart: boolean;
+  /** Whether a slug-relative path is one this tour belongs on. */
+  matches: (path: string) => boolean;
+  /** Who may see it at all; an operator-only tour never appears for anyone else. */
+  audience: 'everyone' | 'operators';
+  steps: CoachMarkStep[];
+}
+
+/** The latest outcome a person's row for a tour records. */
+export type CoachMarkStatus = 'viewed' | 'completed' | 'dismissed';
+
+/** What the browser and the pages need to know about one person's row. */
+export interface CoachMarkProgressView {
+  tourId: string;
+  version: number;
+  status: CoachMarkStatus;
+  /** The furthest 0-based step reached this time through. */
+  stepReached: number;
+  stepsTotal: number;
+  viewCount: number;
+  completedCount: number;
+  dismissedCount: number;
+  /** ISO timestamps. */
+  firstViewedAt: string;
+  lastViewedAt: string;
+  completedAt: string | null;
+  dismissedAt: string | null;
+}
+
+/** What the browser reports as a tour runs. */
+export type CoachMarkEvent = 'viewed' | 'step' | 'completed' | 'dismissed';

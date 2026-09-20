@@ -9,6 +9,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { listAgents } from '@/lib/agents/store';
 import { listAgentsSharedWith } from '@/lib/agents/access-grants';
 import { AgentsList } from './agents-list';
+import { coachAnchor } from '@/lib/coach-marks/anchors';
 
 /**
  * Your agents — every signed-in user's own list (agents are per-user
@@ -54,6 +55,7 @@ export default async function AgentsPage({
           <Link
             href={`/${slug}/agents/new`}
             className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            {...coachAnchor('agents-new')}
           >
             New agent
           </Link>
@@ -63,16 +65,18 @@ export default async function AgentsPage({
         Step-by-step helpers you draft yourself — they act with your own connections, on your
         triggers, and keep a full history of every run.
       </p>
-      <AgentsList
-        slug={slug}
-        tenantId={tenant.id}
-        agents={agents}
-        shared={shared.map((listing) => ({
-          agent: listing.agent,
-          sharedBy: listing.ownerName || listing.ownerEmail || 'a colleague',
-          expiresAt: listing.expiresAt,
-        }))}
-      />
+      <div {...coachAnchor('agents-list')}>
+        <AgentsList
+          slug={slug}
+          tenantId={tenant.id}
+          agents={agents}
+          shared={shared.map((listing) => ({
+            agent: listing.agent,
+            sharedBy: listing.ownerName || listing.ownerEmail || 'a colleague',
+            expiresAt: listing.expiresAt,
+          }))}
+        />
+      </div>
     </div>
   );
 }

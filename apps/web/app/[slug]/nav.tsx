@@ -7,6 +7,7 @@ import RenkeiMark from '@/components/renkei-mark';
 import { Icon, ICONS } from '@/components/icons';
 import { useNotifications } from '@/components/notification-center';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { coachAnchor, type CoachAnchor } from '@/lib/coach-marks/anchors';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
 
@@ -47,6 +48,8 @@ interface NavItem {
   exact?: boolean;
   /** A small "+" link at the row's right edge — New chat, beside Chat. */
   plus?: { href: string; label: string };
+  /** The coach-mark anchor a tour may spotlight this row by. */
+  coach?: CoachAnchor;
 }
 
 interface NavGroup {
@@ -54,6 +57,8 @@ interface NavGroup {
   items: NavItem[];
   /** Rendered under the items — the Chat section's recent chats. */
   extra?: ReactNode;
+  /** The coach-mark anchor a tour may spotlight this group by. */
+  coach?: CoachAnchor;
 }
 
 /**
@@ -148,6 +153,7 @@ export default function AppNav({
   const groups: NavGroup[] = [
     {
       label: 'Workspace',
+      coach: 'nav-workspace',
       items: [
         { href: `/${slug}`, label: 'Home', icon: ICONS.home, exact: true },
         { href: `/${slug}/agents`, label: 'Agents', icon: ICONS.agent },
@@ -157,6 +163,7 @@ export default function AppNav({
     },
     {
       label: 'Chat',
+      coach: 'nav-chat',
       items: [
         {
           href: `/${slug}/chat`,
@@ -185,6 +192,13 @@ export default function AppNav({
       { href: `/${slug}/notifications`, label: 'Notifications', icon: ICONS.bell },
       { href: `/${slug}/preferences`, label: 'Preferences', icon: ICONS.sliders },
       { href: `/${slug}/connectors`, label: 'Connectors', icon: ICONS.plug },
+      // The tours: replay one, or turn off the ones that start unasked.
+      {
+        href: `/${slug}/tutorials`,
+        label: 'Tutorials',
+        icon: ICONS.bulb,
+        coach: 'account-tutorials',
+      },
     ],
     [
       { href: `/${slug}/batch-jobs`, label: 'Batch jobs', icon: ICONS.layers },
@@ -221,7 +235,7 @@ export default function AppNav({
   const menu = (
     <>
       {groups.map((group) => (
-        <div key={group.label} className="mb-5">
+        <div key={group.label} className="mb-5" {...(group.coach ? coachAnchor(group.coach) : {})}>
           <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
             {group.label}
           </p>
@@ -286,6 +300,7 @@ export default function AppNav({
           aria-label={columnOpen ? 'Hide menu' : 'Open menu'}
           aria-expanded={isNarrow ? open : columnOpen}
           onClick={() => (isNarrow ? setOpen(true) : togglePinned())}
+          {...coachAnchor('nav-menu-button')}
           className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900"
         >
           <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
@@ -308,6 +323,7 @@ export default function AppNav({
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               onClick={() => setMenuOpen((o) => !o)}
+              {...coachAnchor('nav-account')}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white ring-blue-300 hover:ring-2 dark:ring-blue-800"
             >
               {initials}
@@ -354,6 +370,7 @@ export default function AppNav({
                         href={item.href}
                         role="menuitem"
                         className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
+                        {...(item.coach ? coachAnchor(item.coach) : {})}
                       >
                         <Icon
                           path={item.icon}

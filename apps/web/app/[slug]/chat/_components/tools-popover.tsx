@@ -20,6 +20,7 @@ import { chatClient } from '@/lib/chat/client';
 import type { ConnectorOption } from '@/lib/chat/tool-surface';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { LoadingLine } from '@/components/skeleton';
+import { coachAnchor } from '@/lib/coach-marks/anchors';
 
 /** Catalog label for a capability key, falling back to the key itself. */
 function connectorLabel(key: string): string {
@@ -116,6 +117,7 @@ export default function ToolsPopover({
         aria-expanded={open}
         aria-label="Tools"
         title="Which tools the assistant may use"
+        {...coachAnchor('chat-tools')}
         className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
       >
         <Icon path={ICONS.tool} className="h-4 w-4" />
