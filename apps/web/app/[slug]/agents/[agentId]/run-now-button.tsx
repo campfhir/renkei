@@ -19,6 +19,7 @@ import { useRefresh } from '@/lib/use-refresh';
 import { invokeAgentRun } from '@/lib/agents/invoke-client';
 import { Icon, ICONS } from '@/components/icons';
 import ConfirmRunModal from '../confirm-run-modal';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function RunNowButton({
   slug,
@@ -57,6 +58,7 @@ export default function RunNowButton({
     }
   };
 
+  const runNowAnchor = useCoachAnchor('agent-run-now');
   return (
     <div className="flex flex-col items-end gap-1">
       <button
@@ -64,6 +66,7 @@ export default function RunNowButton({
         disabled={busy || pending}
         onClick={() => void start()}
         title="Start a run now, without waiting for a trigger."
+        {...runNowAnchor}
         className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
       >
         <Icon path={ICONS.play} className="h-3.5 w-3.5" />

@@ -382,12 +382,12 @@ test('the operator report shows who viewed, finished and skipped', async ({ page
   // included — so the assertion is on this person's own row.
   const row = page.getByTestId('tutorial-person').filter({ hasText: subject });
   await expect(row).toHaveCount(1);
-  const cells = row.getByRole('cell');
-  await expect(cells.nth(1)).toHaveText('Skipped'); // welcome: replayed, then skipped
-  await expect(cells.nth(2)).toHaveText('Skipped'); // agents
-  await expect(cells.nth(3)).toHaveText('Completed'); // chat
-  await expect(cells.nth(4)).toHaveText('Skipped'); // connectors: Escape
-  await expect(cells.nth(5)).toHaveText('Skipped'); // admin: "don't show"
+  // chat completed; welcome (replayed, then skipped), agents, connectors
+  // (Escape) and admin ("don't show") skipped.
+  await expect(row.getByTestId('person-completed')).toHaveText('1');
+  await expect(row.getByTestId('person-skipped')).toHaveText('4');
+  await expect(row.getByTestId('person-in-progress')).toHaveText('0');
+  await expect(row.getByText('Welcome to Renkei')).toBeVisible();
   await expect(page.getByTestId('tour-totals-welcome')).toBeVisible();
   await shot(page, testInfo, 'coach-admin-report');
 });

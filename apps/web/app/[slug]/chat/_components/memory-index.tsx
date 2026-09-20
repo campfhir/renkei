@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const MEMORY_MAX_CHARS = 500;
 
@@ -38,6 +39,7 @@ export default function MemoryIndex({
   const router = useRouter();
   const base = `/api/tenant/${tenantId}/chat/memory`;
   const [note, setNote] = useState('');
+  const addAnchor = useCoachAnchor('memory-add');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -118,8 +120,8 @@ export default function MemoryIndex({
       </header>
       <div className="mx-auto max-w-3xl space-y-4 p-4">
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Notes the assistant keeps about you across every chat you own — not a project's own
-          chats, which keep separate memory of their own.
+          Notes the assistant keeps about you across every chat you own — not a project's own chats,
+          which keep separate memory of their own.
         </p>
 
         {initialSummary ? (
@@ -203,6 +205,7 @@ export default function MemoryIndex({
             value={note}
             onChange={(event) => setNote(event.target.value)}
             placeholder="Add a note the assistant should remember about you"
+            {...addAnchor}
             rows={3}
             maxLength={MEMORY_MAX_CHARS}
             className={textareaClass}

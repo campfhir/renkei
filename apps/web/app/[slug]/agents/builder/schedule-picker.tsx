@@ -391,7 +391,9 @@ function ActiveHoursEditor({
     const effectiveEnd = untilMidnight ? '24:00' : end;
     if (!start || !effectiveEnd || start >= effectiveEnd || days.length === 0) return;
     const window: ActiveHoursWindow =
-      days.length === 7 ? { start, end: effectiveEnd } : { start, end: effectiveEnd, weekdays: days };
+      days.length === 7
+        ? { start, end: effectiveEnd }
+        : { start, end: effectiveEnd, weekdays: days };
     onChange([...windows, window]);
     setUntilMidnight(false);
     setDays(ALL_WEEKDAYS);

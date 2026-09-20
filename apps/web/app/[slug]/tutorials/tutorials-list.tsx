@@ -18,11 +18,16 @@ import { useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { useCoachMarks } from '@/components/coach-marks/provider';
 import { stateLabel, type CoachMarkStateLabel } from '@/lib/coach-marks/select';
-import type { CoachMarkProgressView } from '@/lib/coach-marks/types';
+import {
+  COACH_MARK_AREAS,
+  type CoachMarkArea,
+  type CoachMarkProgressView,
+} from '@/lib/coach-marks/types';
 import LocalTime from '@/components/local-time';
 
 export interface TourListing {
   id: string;
+  area: CoachMarkArea;
   version: number;
   title: string;
   description: string;
@@ -100,64 +105,76 @@ export default function TutorialsList({
         ) : null}
       </section>
 
-      <ul className="space-y-3" aria-label="Tours">
-        {tours.map((tour) => {
-          const row = rowFor(tour);
-          const label = stateLabel(row, tour);
-          const taken = row !== undefined;
-          return (
-            <li
-              key={tour.id}
-              data-testid={`tutorial-${tour.id}`}
-              className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold">{tour.title}</h3>
-                    <span
-                      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
-                    >
-                      {label}
-                    </span>
-                    {tour.audience === 'operators' ? (
-                      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-950/60 dark:text-violet-300">
-                        Operators
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                    {tour.description}
-                  </p>
-                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {tour.steps} {tour.steps === 1 ? 'step' : 'steps'}
-                    {row?.completedAt ? (
-                      <>
-                        {' · completed '}
-                        <LocalTime at={row.completedAt} format="date" />
-                      </>
-                    ) : row?.dismissedAt ? (
-                      <>
-                        {' · skipped '}
-                        <LocalTime at={row.dismissedAt} format="date" />
-                        {` at step ${row.stepReached + 1} of ${row.stepsTotal}`}
-                      </>
-                    ) : null}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => engine.startTour(tour.id)}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-                >
-                  <Icon path={ICONS.play} className="h-3.5 w-3.5" />
-                  {taken ? 'Replay' : 'Start'}
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      {COACH_MARK_AREAS.filter((area) => tours.some((tour) => tour.area === area)).map((area) => (
+        <section key={area} aria-labelledby={`tours-${area.replace(/\s+/g, '-').toLowerCase()}`}>
+          <h2
+            id={`tours-${area.replace(/\s+/g, '-').toLowerCase()}`}
+            className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500"
+          >
+            {area}
+          </h2>
+          <ul className="space-y-3" aria-label={`${area} tours`}>
+            {tours
+              .filter((tour) => tour.area === area)
+              .map((tour) => {
+                const row = rowFor(tour);
+                const label = stateLabel(row, tour);
+                const taken = row !== undefined;
+                return (
+                  <li
+                    key={tour.id}
+                    data-testid={`tutorial-${tour.id}`}
+                    className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-semibold">{tour.title}</h3>
+                          <span
+                            className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
+                          >
+                            {label}
+                          </span>
+                          {tour.audience === 'operators' ? (
+                            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-950/60 dark:text-violet-300">
+                              Operators
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                          {tour.description}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {tour.steps} {tour.steps === 1 ? 'step' : 'steps'}
+                          {row?.completedAt ? (
+                            <>
+                              {' · completed '}
+                              <LocalTime at={row.completedAt} format="date" />
+                            </>
+                          ) : row?.dismissedAt ? (
+                            <>
+                              {' · skipped '}
+                              <LocalTime at={row.dismissedAt} format="date" />
+                              {` at step ${row.stepReached + 1} of ${row.stepsTotal}`}
+                            </>
+                          ) : null}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => engine.startTour(tour.id)}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                      >
+                        <Icon path={ICONS.play} className="h-3.5 w-3.5" />
+                        {taken ? 'Replay' : 'Start'}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }

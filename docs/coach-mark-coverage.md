@@ -16,31 +16,31 @@ it in passing (a step in the welcome tour, say) but nothing walks through it.
 
 ## Workspace
 
-| Feature          | Where                        | Audience | Tour      | Status  |
-| ---------------- | ---------------------------- | -------- | --------- | ------- |
-| Home feed        | `/[slug]`                    | everyone | `welcome` | Covered |
-| Agents list      | `/[slug]/agents`             | everyone | `agents`  | Covered |
-| Agent builder    | `/[slug]/agents/new`, `edit` | everyone | —         | None    |
-| Agent runs       | `/[slug]/agents/[id]/runs`   | everyone | —         | None    |
-| Sharing an agent | agent page                   | everyone | —         | None    |
-| Knowledge search | `/[slug]/knowledge`          | everyone | `welcome` | Partial |
-| Files            | `/[slug]/files`              | everyone | `welcome` | Partial |
+| Feature             | Where                        | Audience | Tour            | Status  |
+| ------------------- | ---------------------------- | -------- | --------------- | ------- |
+| Home feed           | `/[slug]`                    | everyone | `welcome`       | Covered |
+| Agents list         | `/[slug]/agents`             | everyone | `agents`        | Covered |
+| Agent builder       | `/[slug]/agents/new`, `edit` | everyone | `agent-builder` | Covered |
+| Agent runs          | `/[slug]/agents/[id]/runs`   | everyone | `agent-runs`    | Covered |
+| Agent page, sharing | `/[slug]/agents/[id]`        | everyone | `agent-detail`  | Covered |
+| Knowledge search    | `/[slug]/knowledge`          | everyone | `knowledge`     | Covered |
+| Files               | `/[slug]/files`              | everyone | `files`         | Covered |
 
 ## Chat
 
-| Feature                      | Where                   | Audience | Tour      | Status  |
-| ---------------------------- | ----------------------- | -------- | --------- | ------- |
-| Composer, tools, model, send | `/[slug]/chat/[id]`     | everyone | `chat`    | Covered |
-| Attachments                  | composer                | everyone | —         | None    |
-| Prompt picker (`/`)          | composer                | everyone | `chat`    | Partial |
-| Voice mode and dictation     | composer                | everyone | —         | None    |
-| Compaction (`/compact`)      | thread                  | everyone | —         | None    |
-| Tool permission asks         | thread                  | everyone | —         | None    |
-| Sharing a chat               | thread title bar        | everyone | —         | None    |
-| Projects                     | `/[slug]/chat/projects` | everyone | `welcome` | Partial |
-| Code projects                | `/[slug]/code`          | everyone | —         | None    |
-| Prompt libraries             | `/[slug]/chat/prompts`  | everyone | `welcome` | Partial |
-| Memory                       | `/[slug]/chat/memory`   | everyone | `welcome` | Partial |
+| Feature                      | Where                   | Audience | Tour                                 | Status  |
+| ---------------------------- | ----------------------- | -------- | ------------------------------------ | ------- |
+| Composer, tools, model, send | `/[slug]/chat/[id]`     | everyone | `chat`                               | Covered |
+| Attachments                  | composer                | everyone | `chat-composer-more`                 | Covered |
+| Prompt picker (`/`)          | composer                | everyone | `chat-composer-more`                 | Covered |
+| Voice mode and dictation     | composer                | everyone | `chat-composer-more`                 | Covered |
+| Compaction (`/compact`)      | thread                  | everyone | `chat-composer-more`                 | Partial |
+| Tool permission asks         | thread                  | everyone | `chat-permission`                    | Covered |
+| Sharing a chat               | thread title bar        | everyone | `chat-composer-more`                 | Covered |
+| Projects                     | `/[slug]/chat/projects` | everyone | `projects`, `project`                | Covered |
+| Code projects                | `/[slug]/code`          | everyone | `code`, `code-new`                   | Covered |
+| Prompt libraries             | `/[slug]/chat/prompts`  | everyone | `prompt-libraries`, `prompt-library` | Covered |
+| Memory                       | `/[slug]/chat/memory`   | everyone | `memory`                             | Covered |
 
 ## Account menu
 

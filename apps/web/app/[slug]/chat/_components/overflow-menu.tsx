@@ -12,6 +12,7 @@
 import { useRef, useState, type ReactNode } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface OverflowItem {
   label: string;
@@ -26,6 +27,7 @@ export interface OverflowItem {
 export default function OverflowMenu({ items }: { items: OverflowItem[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const moreAnchor = useCoachAnchor('chat-more');
   useDismiss(open, ref, () => setOpen(false));
   if (items.length === 0) return null;
   return (
@@ -37,6 +39,7 @@ export default function OverflowMenu({ items }: { items: OverflowItem[] }) {
         aria-haspopup="menu"
         aria-expanded={open}
         title="More"
+        {...moreAnchor}
         className="flex items-center rounded-md border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
       >
         <Icon path={ICONS.moreHorizontal} className="h-4 w-4" />

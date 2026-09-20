@@ -120,6 +120,9 @@ export default function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerAnchor = useCoachAnchor('chat-composer');
   const sendAnchor = useCoachAnchor('chat-send');
+  const attachAnchor = useCoachAnchor('chat-attach');
+  const promptAnchor = useCoachAnchor('chat-prompt');
+  const voiceAnchor = useCoachAnchor('chat-voice');
 
   // Dictation: one recorder while the microphone is on; each utterance
   // is transcribed and appended to whatever is in the box.
@@ -426,6 +429,7 @@ export default function Composer({
               onClick={() => fileInputRef.current?.click()}
               aria-label="Attach a file"
               title="Attach a file"
+              {...attachAnchor}
               disabled={disabled}
               className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             >
@@ -447,6 +451,7 @@ export default function Composer({
             onClick={() => setPrompts(true)}
             aria-label="Insert a prompt"
             title="Prompt libraries"
+            {...promptAnchor}
             disabled={disabled}
             className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
@@ -459,6 +464,7 @@ export default function Composer({
               onClick={() => (dictating ? stopDictation() : void startDictation())}
               aria-pressed={dictating}
               aria-label={dictating ? 'Stop dictating' : 'Dictate'}
+              {...voiceAnchor}
               title={dictating ? 'Stop dictating' : 'Dictate: speak into the box'}
               disabled={disabled}
               className={`flex items-center justify-center rounded-md p-1.5 disabled:opacity-40 ${

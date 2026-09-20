@@ -159,21 +159,24 @@ export default async function AdminTutorialsPage({
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800">
                   <th className="px-4 py-2 font-semibold">Person</th>
-                  {COACH_MARK_TOURS.map((tour) => (
-                    <th key={tour.id} className="px-4 py-2 font-semibold">
-                      {tour.title}
-                    </th>
-                  ))}
+                  <th className="px-4 py-2 text-right font-semibold">Completed</th>
+                  <th className="px-4 py-2 text-right font-semibold">Skipped</th>
+                  <th className="px-4 py-2 text-right font-semibold">In progress</th>
+                  <th className="px-4 py-2 font-semibold">Tours</th>
                   <th className="px-4 py-2 font-semibold">Last activity</th>
                 </tr>
               </thead>
               <tbody>
                 {people.map((person) => {
-                  const bySubject = new Map(person.tours.map((row) => [row.tourId, row]));
+                  const counts = { completed: 0, dismissed: 0, viewed: 0 };
+                  for (const row of person.tours) counts[row.status] += 1;
                   const latest = person.tours
                     .map((row) => row.lastViewedAt)
                     .sort()
                     .at(-1);
+                  // One chip per tour seen, so "which ones" is a hover away
+                  // without a column per tour — there are too many for that.
+                  const byId = new Map(person.tours.map((row) => [row.tourId, row]));
                   return (
                     <tr
                       key={person.subject}
@@ -188,24 +191,45 @@ export default async function AdminTutorialsPage({
                           <p className="text-xs text-gray-500">{person.email}</p>
                         ) : null}
                       </td>
-                      {COACH_MARK_TOURS.map((tour) => {
-                        const row = bySubject.get(tour.id);
-                        const label = stateLabel(row, tour);
-                        return (
-                          <td key={tour.id} className="px-4 py-2">
-                            <span
-                              className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
-                              title={
-                                row
-                                  ? `Step ${row.stepReached + 1} of ${row.stepsTotal} · viewed ${row.viewCount}×, completed ${row.completedCount}×, skipped ${row.dismissedCount}×`
-                                  : undefined
-                              }
-                            >
-                              {label}
-                            </span>
-                          </td>
-                        );
-                      })}
+                      <td
+                        data-testid="person-completed"
+                        className="px-4 py-2 text-right tabular-nums"
+                      >
+                        {counts.completed}
+                      </td>
+                      <td
+                        data-testid="person-skipped"
+                        className="px-4 py-2 text-right tabular-nums"
+                      >
+                        {counts.dismissed}
+                      </td>
+                      <td
+                        data-testid="person-in-progress"
+                        className="px-4 py-2 text-right tabular-nums"
+                      >
+                        {counts.viewed}
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {COACH_MARK_TOURS.filter((tour) => byId.has(tour.id)).map((tour) => {
+                            const row = byId.get(tour.id);
+                            const label = stateLabel(row, tour);
+                            return (
+                              <span
+                                key={tour.id}
+                                className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
+                                title={
+                                  row
+                                    ? `${label} · step ${row.stepReached + 1} of ${row.stepsTotal} · viewed ${row.viewCount}×, completed ${row.completedCount}×, skipped ${row.dismissedCount}×`
+                                    : undefined
+                                }
+                              >
+                                {tour.title}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </td>
                       <td className="px-4 py-2 text-xs text-gray-500">
                         {latest ? <LocalTime at={latest} /> : '—'}
                       </td>

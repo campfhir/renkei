@@ -30,9 +30,22 @@ export interface CoachMarkStep {
   path?: string;
 }
 
+/** How the Tutorials page groups the tours, in this order. */
+export const COACH_MARK_AREAS = [
+  'Getting started',
+  'Workspace',
+  'Chat',
+  'Your account',
+  'Connectors',
+  'Organization',
+] as const;
+export type CoachMarkArea = (typeof COACH_MARK_AREAS)[number];
+
 export interface CoachMarkTour {
   /** The registry key, recorded in `coach_mark_progress.tour_id`. Never reuse one. */
   id: string;
+  /** Which heading it sits under on the Tutorials page. */
+  area: CoachMarkArea;
   /**
    * Bump when the tour changes enough that people who finished the old one
    * should see it again — a reworked feature. Progress at an older version

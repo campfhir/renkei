@@ -60,6 +60,7 @@ export default async function TutorialsPage({
   // Functions do not cross to the client; the list gets the data of each tour.
   const tours = toursFor(COACH_MARK_TOURS, isOperator).map((tour) => ({
     id: tour.id,
+    area: tour.area,
     version: tour.version,
     title: tour.title,
     description: tour.description,

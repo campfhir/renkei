@@ -239,7 +239,12 @@ export default function CoachMarkProvider({
         clearPending();
       } else if (pending.explicit || isEligible(requested, path, mounted)) {
         clearPending();
-        if (pending.explicit) router.replace(pathname);
+        // Drop `?tour=` from the address through the browser's own history,
+        // which Next keeps in step with: a router navigation here raced a
+        // page that was itself redirecting ('/chat/new') and tripped React.
+        if (pending.explicit) {
+          window.history.replaceState(window.history.state, '', pathname);
+        }
         begin(requested, true);
         return;
       } else {

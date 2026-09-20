@@ -10,6 +10,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function RunsSearch({
   basePath,
@@ -24,6 +25,7 @@ export default function RunsSearch({
 }) {
   const router = useRouter();
   const [value, setValue] = useState(initialQ);
+  const searchAnchor = useCoachAnchor('runs-search');
   const first = useRef(true);
 
   useEffect(() => {
@@ -51,6 +53,7 @@ export default function RunsSearch({
       onChange={(event) => setValue(event.target.value)}
       placeholder="Search runs — trigger text, error, or a run id"
       aria-label="Search runs"
+      {...searchAnchor}
       className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 sm:max-w-xs"
     />
   );

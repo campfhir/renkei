@@ -26,6 +26,7 @@ import ToolsPopover from './tools-popover';
 import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import Markdown from './markdown';
 import { formatTokens } from '@/lib/format-tokens';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /** A code project's own token spend — this component stays generic to chat/chat_project too. */
 interface ChatTokenUsage {
@@ -218,8 +219,12 @@ export default function ProjectView({
   // its kind. A code project shows them right under its environment; a
   // chat project after its memory.
   const totalTokens = usage ? usage.total.inputTokens + usage.total.outputTokens : 0;
+  const chatsAnchor = useCoachAnchor('project-chats');
+  const aboutAnchor = useCoachAnchor('project-about');
+  const filesAnchor = useCoachAnchor('project-files');
+  const memoryAnchor = useCoachAnchor('project-memory');
   const chatsSection = (
-    <section className={sectionClass}>
+    <section className={sectionClass} {...chatsAnchor}>
       <div className="mb-2 flex items-center gap-2">
         <h2 className="text-sm font-semibold">Chats in this project</h2>
         {totalTokens > 0 ? (
@@ -420,7 +425,7 @@ export default function ProjectView({
               </details>
             </section>
           ) : null}
-          <section className={sectionClass}>
+          <section className={sectionClass} {...aboutAnchor}>
             <h2 className="mb-2 text-sm font-semibold">About</h2>
             {canEdit ? (
               <div className="space-y-3">
@@ -491,7 +496,7 @@ export default function ProjectView({
           </section>
 
           {variant === 'code' ? null : (
-            <section className={sectionClass}>
+            <section className={sectionClass} {...filesAnchor}>
               <div className="mb-2 flex items-center gap-2">
                 <h2 className="text-sm font-semibold">Files</h2>
                 {canEdit ? (
@@ -537,7 +542,7 @@ export default function ProjectView({
             </section>
           )}
 
-          <section className={sectionClass}>
+          <section className={sectionClass} {...memoryAnchor}>
             <div className="mb-2">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-semibold">Memory</h2>

@@ -10,6 +10,7 @@ import {
 import type { CoachMarkProgressView, CoachMarkTour } from './types';
 
 const tour = (over: Partial<CoachMarkTour> & { id: string }): CoachMarkTour => ({
+  area: 'Workspace',
   version: 1,
   title: over.id,
   description: '',
