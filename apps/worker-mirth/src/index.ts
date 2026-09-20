@@ -25,6 +25,7 @@ import { parseEncryptionKey } from '@renkei/crypto';
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { createMirthServer } from './server';
 import { logger, attachPersistentLogging } from './logger';
+import { watchLogLevel } from '@renkei/settings';
 
 function fatal(message: string): never {
   console.error(`FATAL [worker-mirth]: ${message}`);
@@ -33,6 +34,11 @@ function fatal(message: string): never {
 
 async function main(): Promise<void> {
   await attachPersistentLogging();
+  // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+  // before the database is reachable; once it is, the org `logLevel` dial
+  // (packages/settings) governs, polled and reapplied here so a saved
+  // change takes effect without restarting this process.
+  watchLogLevel(logger);
 
   const apiKeys = (process.env.MIRTH_WORKER_API_KEY ?? '')
     .split(',')

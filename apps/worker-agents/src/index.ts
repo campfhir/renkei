@@ -41,6 +41,7 @@ import {
 } from './maintenance';
 import { createMemoryCompactionSweep, MEMORY_COMPACTION_SWEEP_MS } from './memory-compaction';
 import { logger, attachPersistentLogging } from './logger';
+import { watchLogLevel } from '@renkei/settings';
 
 // 30s keeps a scheduled agent's mean lateness ~15s — the "runs when I said
 // it would" feel; the sweep is one indexed select + optimistic updates, so
@@ -63,6 +64,11 @@ function webBaseUrl(): string {
 
 async function main(): Promise<void> {
   await attachPersistentLogging();
+  // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+  // before the database is reachable; once it is, the org `logLevel` dial
+  // (packages/settings) governs, polled and reapplied here so a saved
+  // change takes effect without restarting this process.
+  watchLogLevel(logger);
 
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('Database unavailable at boot');

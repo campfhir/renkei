@@ -44,6 +44,7 @@ import {
   MICROSOFT_SUBSCRIPTION_INTERVAL_MS,
 } from './health/microsoft-subscriptions';
 import { logger, attachPersistentLogging } from './logger';
+import { watchLogLevel } from '@renkei/settings';
 
 /**
  * Handlers register unconditionally; whether a connector is actually
@@ -94,6 +95,11 @@ const loop = createEventLoop({
 
 async function main(): Promise<void> {
   await attachPersistentLogging();
+  // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
+  // before the database is reachable; once it is, the org `logLevel` dial
+  // (packages/settings) governs, polled and reapplied here so a saved
+  // change takes effect without restarting this process.
+  watchLogLevel(logger);
   registerConnectorHandlers();
   // application/version/commit ride on every line as global attrs (see
   // logger.ts) — this boot line just makes the plain-English announcement.

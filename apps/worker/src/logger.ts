@@ -2,7 +2,6 @@ import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
-import { watchLogLevel } from '@renkei/settings';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 import packageJson from '../package.json';
 
@@ -47,14 +46,6 @@ logger.addAdapter(
     maskSecure: process.env.NODE_ENV === 'production',
   })
 );
-
-// CONSOLE_LOG_LEVEL/LOG_DB_LEVEL above and below only set the level for the
-// few seconds before the database is reachable; once it is, the org
-// `logLevel` dial (packages/settings) governs, polled and reapplied here so
-// a saved change takes effect without restarting this process. Picks up
-// the PostgresAdapter attachPersistentLogging() adds later too, since it
-// reads `logger.adapters` fresh on every poll.
-watchLogLevel(logger);
 
 /**
  * Attach the persistence adapter — called from main() at boot. Two shapes,

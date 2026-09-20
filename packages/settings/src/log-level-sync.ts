@@ -29,7 +29,7 @@ const DEFAULT_POLL_INTERVAL_MS = 30_000;
  */
 export async function getEffectiveLogLevel(): Promise<LogLevel | null> {
   const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
+  if (!dbResult?.ok) return null;
 
   let tenants: { id: string }[];
   try {
@@ -71,7 +71,10 @@ function hasLevel(value: unknown): value is LevelHolder {
  *
  * Safe to call once per process and leave running for its lifetime: the
  * timer is unref'd so it never keeps the process alive on its own, and a
- * database hiccup just skips that tick rather than resetting the level.
+ * database hiccup just skips that tick rather than resetting the level —
+ * `apply` never rejects, so a failure here (a misbehaving test double
+ * included) can never surface as an unhandled rejection and take down the
+ * process this poller exists to keep logging for.
  *
  * Returns a stop function (tests only; production processes never call it).
  */
@@ -80,10 +83,14 @@ export function watchLogLevel(
   intervalMs = DEFAULT_POLL_INTERVAL_MS
 ): () => void {
   const apply = async () => {
-    const level = await getEffectiveLogLevel();
-    if (level === null) return;
-    for (const adapter of logger.adapters) {
-      if (hasLevel(adapter)) adapter.level = level;
+    try {
+      const level = await getEffectiveLogLevel();
+      if (level === null) return;
+      for (const adapter of logger.adapters) {
+        if (hasLevel(adapter)) adapter.level = level;
+      }
+    } catch {
+      // Best-effort sync; the next poll retries.
     }
   };
 

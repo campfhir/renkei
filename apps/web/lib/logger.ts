@@ -1,5 +1,4 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
-import { watchLogLevel } from '@renkei/settings';
 import packageJson from '../package.json';
 
 /**
@@ -50,14 +49,10 @@ function buildLogger() {
     })
   );
 
-  // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL above and in instrumentation.ts only set
-  // the level for the few seconds before the database is reachable; once it
-  // is, the org `logLevel` dial (packages/settings) governs, polled and
-  // reapplied here so a saved change takes effect without a restart. Picks
-  // up the PostgresAdapter instrumentation.ts attaches later too, since it
-  // reads `built.adapters` fresh on every poll.
-  watchLogLevel(built);
-
+  // The org `logLevel` dial (packages/settings) is applied dynamically from
+  // instrumentation.ts's register() hook, not here: that hook runs once at
+  // real server boot, whereas this module is imported by hundreds of unit
+  // tests that never expect a background DB-polling timer to start.
   return built;
 }
 
