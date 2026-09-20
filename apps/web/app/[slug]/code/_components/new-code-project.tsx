@@ -21,6 +21,7 @@ import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import ToolsPopover from '../../chat/_components/tools-popover';
 import { repoSlugFromName } from '@/lib/code/repo-slug';
 import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
+import type { CodeProjectTemplate } from '@/lib/code/project-templates';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -41,11 +42,22 @@ export default function NewCodeProject({
   const [branch, setBranch] = useState('');
   const [env, setEnv] = useState('');
   const [instructions, setInstructions] = useState(DEFAULT_CODE_INSTRUCTIONS);
+  const [templates, setTemplates] = useState<CodeProjectTemplate[] | null>(null);
+  // Tracks the picker's own selection, separate from `instructions` —
+  // once picked, the text is free to diverge as it is edited, and the
+  // picker should not silently snap back to matching it.
+  const [templateId, setTemplateId] = useState('builtin:generic');
   // null: the project inherits your default for code projects (else the
   // code default) when it is made; a list is this project's own choice.
   const [connectors, setConnectors] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getJson<{ templates: CodeProjectTemplate[] }>(
+      `/api/tenant/${tenantId}/code/project-templates`
+    ).then((result) => setTemplates(result.data?.templates ?? []));
+  }, [tenantId]);
 
   const create = async () => {
     if (!chosen) return;
@@ -247,6 +259,39 @@ export default function NewCodeProject({
           <span className="mb-1 block text-xs font-medium text-gray-500">
             Instructions — what every chat in this project should know
           </span>
+          {templates && templates.length > 0 ? (
+            <select
+              value={templateId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setTemplateId(next);
+                const template = templates.find((entry) => entry.id === next);
+                if (template) setInstructions(template.instructions);
+              }}
+              className={`${inputClass} mb-2`}
+            >
+              <optgroup label="Built-in">
+                {templates
+                  .filter((template) => template.source === 'builtin')
+                  .map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+              </optgroup>
+              {templates.some((template) => template.source === 'custom') ? (
+                <optgroup label="This organization">
+                  {templates
+                    .filter((template) => template.source === 'custom')
+                    .map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                </optgroup>
+              ) : null}
+            </select>
+          ) : null}
           <textarea
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
@@ -256,9 +301,9 @@ export default function NewCodeProject({
             className={inputClass}
           />
           <span className="mt-1 block text-xs text-gray-500">
-            A developer’s standing brief to start from — change it here or on the project’s page
-            later; add how this repository runs its tests, the conventions to keep, what not to
-            touch.
+            {templates && templates.length > 0
+              ? 'Pick a starting point above, then make it this project’s own — add how this repository runs its tests, the conventions to keep, what not to touch.'
+              : 'A developer’s standing brief to start from — change it here or on the project’s page later; add how this repository runs its tests, the conventions to keep, what not to touch.'}
           </span>
         </label>
 

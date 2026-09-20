@@ -78,6 +78,11 @@ function adminSections(slug: string): AdminSection[] {
           label: 'Holiday calendars',
           detail: 'The days schedules skip.',
         },
+        {
+          href: `${admin}/project-templates`,
+          label: 'Project templates',
+          detail: 'The starting instructions offered when someone creates a code project.',
+        },
       ],
     },
     {
