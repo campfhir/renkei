@@ -51,6 +51,8 @@ interface Box {
 const SPOT_PAD = 6;
 const GAP = 12;
 const MARGIN = 16;
+/** The sticky top bar (nav.tsx's h-14) that a target scrolled to the top must clear. */
+const TOP_BAR = 56;
 /** How long a step waits for its target to register before showing the card centred. */
 const LOOK_FOR_MS = 2000;
 
@@ -65,6 +67,38 @@ function boxOf(element: Element): Box {
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
+
+/**
+ * Bring a found target into view. Centred, as a rule; a target taller than
+ * the screen (a settings grid, the console's areas) is brought to the
+ * top instead, just under the top bar, so what it starts with — its
+ * heading — is what is read, rather than its middle.
+ */
+function scrollTo(element: Element): void {
+  const tall = element.getBoundingClientRect().height > window.innerHeight - TOP_BAR - MARGIN;
+  element.scrollIntoView({ block: tall ? 'start' : 'center', inline: 'nearest' });
+  if (!tall) return;
+  const top = element.getBoundingClientRect().top;
+  if (top < TOP_BAR + MARGIN) window.scrollBy({ top: top - TOP_BAR - MARGIN });
+}
+
+/**
+ * On a narrow screen the card spans the width at the top or the bottom
+ * edge. The bottom, as a rule — the top of a target is its heading, and
+ * a card there hides what the target is — unless the bottom would cover
+ * more than twice as much of the spotlight (the Chat group in the
+ * drawer, which runs on down the screen).
+ */
+function narrowEdgeFor(spot: Box, cardHeight: number): 'top' | 'bottom' {
+  const vh = window.innerHeight;
+  const bottom = spot.top + spot.height;
+  const atTop = Math.max(0, Math.min(bottom, MARGIN + cardHeight) - Math.max(spot.top, MARGIN));
+  const atBottom = Math.max(
+    0,
+    Math.min(bottom, vh - MARGIN) - Math.max(spot.top, vh - MARGIN - cardHeight)
+  );
+  return atTop * 2 < atBottom ? 'top' : 'bottom';
+}
 
 /**
  * Where the card goes beside its spotlight: the preferred side when it
@@ -159,6 +193,7 @@ export default function CoachMarkOverlay({
   const [spot, setSpot] = useState<Box | null>(null);
   const [looked, setLooked] = useState(false);
   const [cardPos, setCardPos] = useState<{ top: number; left: number } | null>(null);
+  const [narrowEdge, setNarrowEdge] = useState<'top' | 'bottom'>('bottom');
 
   // A new step: forget the last target and start looking afresh.
   useEffect(() => {
@@ -176,7 +211,7 @@ export default function CoachMarkOverlay({
     if (!found) return false;
     if (targetRef.current !== found) {
       targetRef.current = found;
-      found.scrollIntoView({ block: 'center', inline: 'nearest' });
+      scrollTo(found);
       setSpot(boxOf(found));
     }
     setLooked(true);
@@ -231,11 +266,16 @@ export default function CoachMarkOverlay({
 
   // Place the card once it has a size and the spotlight has a place.
   useLayoutEffect(() => {
-    if (!spot || narrow || !cardRef.current) {
+    if (!spot || !cardRef.current) {
       setCardPos(null);
       return;
     }
     const rect = cardRef.current.getBoundingClientRect();
+    if (narrow) {
+      setCardPos(null);
+      setNarrowEdge(narrowEdgeFor(spot, rect.height));
+      return;
+    }
     setCardPos(
       placeCard(spot, { width: rect.width, height: rect.height }, step.placement ?? 'auto')
     );
@@ -281,14 +321,10 @@ export default function CoachMarkOverlay({
   }
 
   const centred = spot === null;
-  // On a narrow screen the card spans the width at one edge: the bottom,
-  // unless the spotlight's centre is in the lower half, when a card at
-  // the bottom would cover what it points at (the Chat group in the
-  // drawer runs on down the screen), and it goes to the top instead.
   const cardStyle = centred
     ? undefined
     : narrow
-      ? spot.top + spot.height / 2 > window.innerHeight / 2
+      ? narrowEdge === 'top'
         ? { left: MARGIN, right: MARGIN, top: MARGIN }
         : { left: MARGIN, right: MARGIN, bottom: MARGIN }
       : cardPos

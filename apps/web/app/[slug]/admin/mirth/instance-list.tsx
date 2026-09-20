@@ -98,48 +98,51 @@ export default function InstanceList({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-4">
-      {instances.length === 0 && !draft ? (
-        <p className="text-sm text-gray-600 dark:text-gray-400">No instances registered yet.</p>
-      ) : null}
+      {/* The tour's anchor covers the note too, so the step has a target while the list is empty. */}
+      <div {...listAnchor} className="space-y-4">
+        {instances.length === 0 && !draft ? (
+          <p className="text-sm text-gray-600 dark:text-gray-400">No instances registered yet.</p>
+        ) : null}
 
-      <ul {...listAnchor} className="space-y-2">
-        {instances.map((instance) => (
-          <li
-            key={instance.id}
-            className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">
-                  {instance.name}
-                  <span className="ml-2 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-normal text-gray-600 dark:border-gray-700 dark:text-gray-400">
-                    {instance.environment}
-                  </span>
-                  {!instance.enabled ? (
-                    <span className="ml-2 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-normal text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                      disabled
+        <ul className="space-y-2">
+          {instances.map((instance) => (
+            <li
+              key={instance.id}
+              className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {instance.name}
+                    <span className="ml-2 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-normal text-gray-600 dark:border-gray-700 dark:text-gray-400">
+                      {instance.environment}
                     </span>
-                  ) : null}
-                  {!instance.tlsVerify ? (
-                    <span className="ml-2 rounded-full border border-amber-300 px-2 py-0.5 text-xs font-normal text-amber-700 dark:border-amber-800 dark:text-amber-400">
-                      TLS unverified
-                    </span>
-                  ) : null}
-                </p>
-                <p className="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
-                  {instance.baseUrl}
-                </p>
+                    {!instance.enabled ? (
+                      <span className="ml-2 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-normal text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        disabled
+                      </span>
+                    ) : null}
+                    {!instance.tlsVerify ? (
+                      <span className="ml-2 rounded-full border border-amber-300 px-2 py-0.5 text-xs font-normal text-amber-700 dark:border-amber-800 dark:text-amber-400">
+                        TLS unverified
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+                    {instance.baseUrl}
+                  </p>
+                </div>
+                <Link
+                  href={`/${slug}/admin/mirth/${instance.id}`}
+                  className="shrink-0 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Manage
+                </Link>
               </div>
-              <Link
-                href={`/${slug}/admin/mirth/${instance.id}`}
-                className="shrink-0 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-              >
-                Manage
-              </Link>
-            </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {draft ? (
         <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">

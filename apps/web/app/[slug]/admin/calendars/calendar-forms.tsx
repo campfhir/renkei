@@ -206,49 +206,52 @@ export default function CalendarForms({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-4">
-      {calendars.length === 0 && !draft ? (
-        <p className="text-sm text-gray-600 dark:text-gray-400">No calendars yet.</p>
-      ) : null}
+      {/* The tour's anchor covers the note too, so the step has a target while the list is empty. */}
+      <div {...listAnchor} className="space-y-4">
+        {calendars.length === 0 && !draft ? (
+          <p className="text-sm text-gray-600 dark:text-gray-400">No calendars yet.</p>
+        ) : null}
 
-      <ul {...listAnchor} className="space-y-2">
-        {calendars.map((calendar) => (
-          <li
-            key={calendar.id}
-            className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{calendar.name}</p>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {calendar.dates.length} date entr{calendar.dates.length === 1 ? 'y' : 'ies'}:{' '}
-                  {calendar.dates.slice(0, 6).map(describeEntry).join(', ')}
-                  {calendar.dates.length > 6 ? ', …' : ''}
-                </p>
+        <ul className="space-y-2">
+          {calendars.map((calendar) => (
+            <li
+              key={calendar.id}
+              className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{calendar.name}</p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {calendar.dates.length} date entr{calendar.dates.length === 1 ? 'y' : 'ies'}:{' '}
+                    {calendar.dates.slice(0, 6).map(describeEntry).join(', ')}
+                    {calendar.dates.length > 6 ? ', …' : ''}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      setDraft({ id: calendar.id, name: calendar.name, dates: calendar.dates })
+                    }
+                    className="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void remove(calendar.id)}
+                    className="text-sm text-red-600 hover:underline dark:text-red-400"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    setDraft({ id: calendar.id, name: calendar.name, dates: calendar.dates })
-                  }
-                  className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void remove(calendar.id)}
-                  className="text-sm text-red-600 hover:underline dark:text-red-400"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {draft ? (
         <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">

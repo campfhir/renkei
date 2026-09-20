@@ -244,11 +244,11 @@ export const COACH_ANCHORS = [
   'admin-connector-availability',
   /** A connector's page: an audience control (which groups it is offered to). */
   'admin-connector-audience',
-  /** File shares: the list of registered shares. */
+  /** File shares: the list of registered shares (or its empty note). */
   'admin-shares-list',
   /** File shares: + New share. */
   'admin-shares-new',
-  /** Mirth Connect: the list of registered instances. */
+  /** Mirth Connect: the list of registered instances (or its empty note). */
   'admin-mirth-list',
   /** Mirth Connect: + New instance. */
   'admin-mirth-new',
@@ -268,7 +268,7 @@ export const COACH_ANCHORS = [
   'admin-oversight-org',
   /** Agent oversight: the run history retention form. */
   'admin-oversight-retention',
-  /** Holiday calendars: the list of calendars. */
+  /** Holiday calendars: the list of calendars (or its empty note). */
   'admin-calendars-list',
   /** Holiday calendars: + New calendar. */
   'admin-calendars-new',
