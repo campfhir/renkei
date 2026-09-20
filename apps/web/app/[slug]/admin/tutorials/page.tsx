@@ -7,6 +7,7 @@ import { COACH_MARK_TOURS } from '@/lib/coach-marks/tours';
 import { stateLabel, type CoachMarkStateLabel } from '@/lib/coach-marks/select';
 import { listCoachMarkReport } from '@/lib/coach-marks/store';
 import LocalTime from '@/components/local-time';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * The operator's view of the coach marks: per tour, how many people have
@@ -93,53 +94,55 @@ export default async function AdminTutorialsPage({
         >
           By tour
         </h2>
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800">
-                <th className="px-4 py-2 font-semibold">Tour</th>
-                <th className="px-4 py-2 text-right font-semibold">Viewed</th>
-                <th className="px-4 py-2 text-right font-semibold">Completed</th>
-                <th className="px-4 py-2 text-right font-semibold">Skipped</th>
-                <th className="px-4 py-2 text-right font-semibold">In progress</th>
-                <th className="px-4 py-2 text-right font-semibold">Completion</th>
-              </tr>
-            </thead>
-            <tbody>
-              {COACH_MARK_TOURS.map((tour) => {
-                const total = totals.get(tour.id) ?? {
-                  viewed: 0,
-                  completed: 0,
-                  dismissed: 0,
-                  inProgress: 0,
-                };
-                return (
-                  <tr
-                    key={tour.id}
-                    data-testid={`tour-totals-${tour.id}`}
-                    className="border-b border-gray-100 last:border-0 dark:border-gray-900"
-                  >
-                    <td className="px-4 py-2">
-                      <span className="font-medium">{tour.title}</span>
-                      <span className="ml-2 text-xs text-gray-500">
-                        v{tour.version} · {tour.steps.length}{' '}
-                        {tour.steps.length === 1 ? 'step' : 'steps'}
-                        {tour.audience === 'operators' ? ' · operators' : ''}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-right tabular-nums">{total.viewed}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{total.completed}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{total.dismissed}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">{total.inProgress}</td>
-                    <td className="px-4 py-2 text-right tabular-nums">
-                      {percent(total.completed, total.viewed)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <CoachTarget name="admin-tutorials-tours">
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800">
+                  <th className="px-4 py-2 font-semibold">Tour</th>
+                  <th className="px-4 py-2 text-right font-semibold">Viewed</th>
+                  <th className="px-4 py-2 text-right font-semibold">Completed</th>
+                  <th className="px-4 py-2 text-right font-semibold">Skipped</th>
+                  <th className="px-4 py-2 text-right font-semibold">In progress</th>
+                  <th className="px-4 py-2 text-right font-semibold">Completion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {COACH_MARK_TOURS.map((tour) => {
+                  const total = totals.get(tour.id) ?? {
+                    viewed: 0,
+                    completed: 0,
+                    dismissed: 0,
+                    inProgress: 0,
+                  };
+                  return (
+                    <tr
+                      key={tour.id}
+                      data-testid={`tour-totals-${tour.id}`}
+                      className="border-b border-gray-100 last:border-0 dark:border-gray-900"
+                    >
+                      <td className="px-4 py-2">
+                        <span className="font-medium">{tour.title}</span>
+                        <span className="ml-2 text-xs text-gray-500">
+                          v{tour.version} · {tour.steps.length}{' '}
+                          {tour.steps.length === 1 ? 'step' : 'steps'}
+                          {tour.audience === 'operators' ? ' · operators' : ''}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">{total.viewed}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{total.completed}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{total.dismissed}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{total.inProgress}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">
+                        {percent(total.completed, total.viewed)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CoachTarget>
       </section>
 
       <section aria-labelledby="people-heading">
@@ -149,97 +152,99 @@ export default async function AdminTutorialsPage({
         >
           By person
         </h2>
-        {people.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-400">
-            Nobody has seen a tour yet.
-          </p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800">
-                  <th className="px-4 py-2 font-semibold">Person</th>
-                  <th className="px-4 py-2 text-right font-semibold">Completed</th>
-                  <th className="px-4 py-2 text-right font-semibold">Skipped</th>
-                  <th className="px-4 py-2 text-right font-semibold">In progress</th>
-                  <th className="px-4 py-2 font-semibold">Tours</th>
-                  <th className="px-4 py-2 font-semibold">Last activity</th>
-                </tr>
-              </thead>
-              <tbody>
-                {people.map((person) => {
-                  const counts = { completed: 0, dismissed: 0, viewed: 0 };
-                  for (const row of person.tours) counts[row.status] += 1;
-                  const latest = person.tours
-                    .map((row) => row.lastViewedAt)
-                    .sort()
-                    .at(-1);
-                  // One chip per tour seen, so "which ones" is a hover away
-                  // without a column per tour — there are too many for that.
-                  const byId = new Map(person.tours.map((row) => [row.tourId, row]));
-                  return (
-                    <tr
-                      key={person.subject}
-                      data-testid="tutorial-person"
-                      className="border-b border-gray-100 last:border-0 dark:border-gray-900"
-                    >
-                      <td className="px-4 py-2">
-                        <p className="font-medium">
-                          {person.displayName ?? person.email ?? person.subject}
-                        </p>
-                        {person.email && person.displayName ? (
-                          <p className="text-xs text-gray-500">{person.email}</p>
-                        ) : null}
-                      </td>
-                      <td
-                        data-testid="person-completed"
-                        className="px-4 py-2 text-right tabular-nums"
+        <CoachTarget name="admin-tutorials-people">
+          {people.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-600 dark:border-gray-700 dark:text-gray-400">
+              Nobody has seen a tour yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800">
+                    <th className="px-4 py-2 font-semibold">Person</th>
+                    <th className="px-4 py-2 text-right font-semibold">Completed</th>
+                    <th className="px-4 py-2 text-right font-semibold">Skipped</th>
+                    <th className="px-4 py-2 text-right font-semibold">In progress</th>
+                    <th className="px-4 py-2 font-semibold">Tours</th>
+                    <th className="px-4 py-2 font-semibold">Last activity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {people.map((person) => {
+                    const counts = { completed: 0, dismissed: 0, viewed: 0 };
+                    for (const row of person.tours) counts[row.status] += 1;
+                    const latest = person.tours
+                      .map((row) => row.lastViewedAt)
+                      .sort()
+                      .at(-1);
+                    // One chip per tour seen, so "which ones" is a hover away
+                    // without a column per tour — there are too many for that.
+                    const byId = new Map(person.tours.map((row) => [row.tourId, row]));
+                    return (
+                      <tr
+                        key={person.subject}
+                        data-testid="tutorial-person"
+                        className="border-b border-gray-100 last:border-0 dark:border-gray-900"
                       >
-                        {counts.completed}
-                      </td>
-                      <td
-                        data-testid="person-skipped"
-                        className="px-4 py-2 text-right tabular-nums"
-                      >
-                        {counts.dismissed}
-                      </td>
-                      <td
-                        data-testid="person-in-progress"
-                        className="px-4 py-2 text-right tabular-nums"
-                      >
-                        {counts.viewed}
-                      </td>
-                      <td className="px-4 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          {COACH_MARK_TOURS.filter((tour) => byId.has(tour.id)).map((tour) => {
-                            const row = byId.get(tour.id);
-                            const label = stateLabel(row, tour);
-                            return (
-                              <span
-                                key={tour.id}
-                                className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
-                                title={
-                                  row
-                                    ? `${label} · step ${row.stepReached + 1} of ${row.stepsTotal} · viewed ${row.viewCount}×, completed ${row.completedCount}×, skipped ${row.dismissedCount}×`
-                                    : undefined
-                                }
-                              >
-                                {tour.title}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2 text-xs text-gray-500">
-                        {latest ? <LocalTime at={latest} /> : '—'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        <td className="px-4 py-2">
+                          <p className="font-medium">
+                            {person.displayName ?? person.email ?? person.subject}
+                          </p>
+                          {person.email && person.displayName ? (
+                            <p className="text-xs text-gray-500">{person.email}</p>
+                          ) : null}
+                        </td>
+                        <td
+                          data-testid="person-completed"
+                          className="px-4 py-2 text-right tabular-nums"
+                        >
+                          {counts.completed}
+                        </td>
+                        <td
+                          data-testid="person-skipped"
+                          className="px-4 py-2 text-right tabular-nums"
+                        >
+                          {counts.dismissed}
+                        </td>
+                        <td
+                          data-testid="person-in-progress"
+                          className="px-4 py-2 text-right tabular-nums"
+                        >
+                          {counts.viewed}
+                        </td>
+                        <td className="px-4 py-2">
+                          <div className="flex flex-wrap gap-1">
+                            {COACH_MARK_TOURS.filter((tour) => byId.has(tour.id)).map((tour) => {
+                              const row = byId.get(tour.id);
+                              const label = stateLabel(row, tour);
+                              return (
+                                <span
+                                  key={tour.id}
+                                  className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${BADGE[label]}`}
+                                  title={
+                                    row
+                                      ? `${label} · step ${row.stepReached + 1} of ${row.stepsTotal} · viewed ${row.viewCount}×, completed ${row.completedCount}×, skipped ${row.dismissedCount}×`
+                                      : undefined
+                                  }
+                                >
+                                  {tour.title}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-xs text-gray-500">
+                          {latest ? <LocalTime at={latest} /> : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CoachTarget>
       </section>
     </div>
   );

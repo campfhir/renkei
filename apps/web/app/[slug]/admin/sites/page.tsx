@@ -5,6 +5,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { readAtlassianMetadata } from '@renkei/provider-grants';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * Every external place this org's Renkei reaches, in two kinds:
@@ -113,88 +114,91 @@ export default async function SitesPage({
         .
       </p>
 
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-        Atlassian sites
-      </h2>
-      {sites.size === 0 ? (
-        <p className="mb-6 text-sm text-gray-500">
-          None yet — they appear when someone connects Jira, JSM or Confluence.
-        </p>
-      ) : (
-        <div className="mb-8 space-y-3">
-          {[...sites.values()].map((site) => (
-            <div
-              key={site.cloudId}
-              className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                {site.siteUrl ? (
-                  <a
-                    href={site.siteUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
-                  >
-                    {site.siteUrl.replace(/^https?:\/\//, '')}
-                  </a>
-                ) : (
-                  <span className="font-semibold">{site.cloudId}</span>
-                )}
-                {[...site.products].map((product) => (
-                  <span
-                    key={product}
-                    className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
-                  >
-                    {product}
-                  </span>
-                ))}
+      <CoachTarget name="admin-sites-atlassian">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+          Atlassian sites
+        </h2>
+        {sites.size === 0 ? (
+          <p className="mb-6 text-sm text-gray-500">
+            None yet — they appear when someone connects Jira, JSM or Confluence.
+          </p>
+        ) : (
+          <div className="mb-8 space-y-3">
+            {[...sites.values()].map((site) => (
+              <div
+                key={site.cloudId}
+                className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  {site.siteUrl ? (
+                    <a
+                      href={site.siteUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      {site.siteUrl.replace(/^https?:\/\//, '')}
+                    </a>
+                  ) : (
+                    <span className="font-semibold">{site.cloudId}</span>
+                  )}
+                  {[...site.products].map((product) => (
+                    <span
+                      key={product}
+                      className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
+                    >
+                      {product}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-1 break-all font-mono text-xs text-gray-500">{site.cloudId}</p>
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                  {site.users.size === 1
+                    ? `1 connected account: ${[...site.users][0]}`
+                    : `${site.users.size} connected accounts: ${[...site.users].join(', ')}`}
+                </p>
               </div>
-              <p className="mt-1 break-all font-mono text-xs text-gray-500">{site.cloudId}</p>
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                {site.users.size === 1
-                  ? `1 connected account: ${[...site.users][0]}`
-                  : `${site.users.size} connected accounts: ${[...site.users].join(', ')}`}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-        Indexed for knowledge search
-      </h2>
-      {watches.length === 0 ? (
-        <p className="text-sm text-gray-500">
-          Nothing indexed yet — people set up watches on their Knowledge page.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {watches.map((watch) => (
-            <div
-              key={`${watch.provider}:${watch.scope_type}:${watch.scope_key}`}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-800 dark:bg-gray-950"
-            >
-              <div className="min-w-0">
-                <span className="font-medium">{watch.scope_label || watch.scope_key}</span>
-                <span className="ml-2 text-xs text-gray-500">
-                  {WATCH_KIND[watch.scope_type] ?? `${watch.provider} ${watch.scope_type}`}
+            ))}
+          </div>
+        )}
+      </CoachTarget>
+      <CoachTarget name="admin-sites-indexed">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+          Indexed for knowledge search
+        </h2>
+        {watches.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            Nothing indexed yet — people set up watches on their Knowledge page.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {watches.map((watch) => (
+              <div
+                key={`${watch.provider}:${watch.scope_type}:${watch.scope_key}`}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-800 dark:bg-gray-950"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium">{watch.scope_label || watch.scope_key}</span>
+                  <span className="ml-2 text-xs text-gray-500">
+                    {WATCH_KIND[watch.scope_type] ?? `${watch.provider} ${watch.scope_type}`}
+                  </span>
+                </div>
+                <span
+                  className={`text-xs ${
+                    !watch.enabled
+                      ? 'text-gray-400 dark:text-gray-600'
+                      : watch.sync_status === 'error'
+                        ? 'text-red-600 dark:text-red-400'
+                        : 'text-gray-500'
+                  }`}
+                >
+                  {!watch.enabled ? 'off' : watch.sync_status}
                 </span>
               </div>
-              <span
-                className={`text-xs ${
-                  !watch.enabled
-                    ? 'text-gray-400 dark:text-gray-600'
-                    : watch.sync_status === 'error'
-                      ? 'text-red-600 dark:text-red-400'
-                      : 'text-gray-500'
-                }`}
-              >
-                {!watch.enabled ? 'off' : watch.sync_status}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </CoachTarget>
     </div>
   );
 }

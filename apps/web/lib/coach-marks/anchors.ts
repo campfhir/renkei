@@ -231,6 +231,77 @@ export const COACH_ANCHORS = [
   'card-secrets',
   /** Add secret. */
   'secrets-add',
+
+  // The organization console (operators). One tour per area; each area's
+  // first anchor is what its tour requires.
+  /** Connector setup: the Find a connector box. */
+  'admin-connectors-search',
+  /** Connector setup: the rows, grouped by category. */
+  'admin-connectors-list',
+  /** A connector's page: its registration form (or the note that it needs none). */
+  'admin-connector-form',
+  /** A connector's page: the Offered to everyone switches. */
+  'admin-connector-availability',
+  /** A connector's page: an audience control (which groups it is offered to). */
+  'admin-connector-audience',
+  /** File shares: the list of registered shares. */
+  'admin-shares-list',
+  /** File shares: + New share. */
+  'admin-shares-new',
+  /** Mirth Connect: the list of registered instances. */
+  'admin-mirth-list',
+  /** Mirth Connect: + New instance. */
+  'admin-mirth-new',
+  /** Sites: the Atlassian sites block. */
+  'admin-sites-atlassian',
+  /** Sites: the Indexed for knowledge search block. */
+  'admin-sites-indexed',
+  /** Agent models: the list of models. */
+  'admin-models-list',
+  /** Agent models: + Add a model. */
+  'admin-models-add',
+  /** Storage: the Azure Blob Storage form. */
+  'admin-storage-form',
+  /** Agent oversight: the period toggle and sort. */
+  'admin-oversight-controls',
+  /** Agent oversight: the organization-wide totals card. */
+  'admin-oversight-org',
+  /** Agent oversight: the run history retention form. */
+  'admin-oversight-retention',
+  /** Holiday calendars: the list of calendars. */
+  'admin-calendars-list',
+  /** Holiday calendars: + New calendar. */
+  'admin-calendars-new',
+  /** Organization usage: the period pills. */
+  'admin-usage-period',
+  /** Organization usage: the Person picker. */
+  'admin-usage-person',
+  /** Sensitive data: the Filter tool results master switch. */
+  'admin-redaction-master',
+  /** Sensitive data: the What to look for detectors. */
+  'admin-redaction-detectors',
+  /** Email sanitizer: the Classifier rules card. */
+  'admin-sanitizer-rules',
+  /** Email sanitizer: the Cleaner scripts card. */
+  'admin-sanitizer-scripts',
+  /** Settings: the Safety section (read-only mode, guided tours). */
+  'admin-settings-safety',
+  /** Settings: Save settings. */
+  'admin-settings-save',
+  /** Settings: the Identity section (sign-in, role and groups claims). */
+  'admin-settings-identity',
+  /** Access: the people-and-connectors table (or its empty note). */
+  'admin-access-table',
+  /** Audit: the day-by-day list (or its empty note). */
+  'admin-audit-list',
+  /** Events: the list (or its empty note). */
+  'admin-events-list',
+  /** Events: the status pills above the table. */
+  'admin-events-filters',
+  /** Tutorials report: the By tour table. */
+  'admin-tutorials-tours',
+  /** Tutorials report: the By person table (or its empty note). */
+  'admin-tutorials-people',
 ] as const;
 
 export type CoachAnchor = (typeof COACH_ANCHORS)[number];

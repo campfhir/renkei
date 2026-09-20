@@ -91,22 +91,35 @@ mentions it without a step of its own.
 
 ## Organization console (operators)
 
-| Feature                 | Where                           | Tour    | Status  |
-| ----------------------- | ------------------------------- | ------- | ------- |
-| Console overview        | `/[slug]/admin`                 | `admin` | Covered |
-| Connector setup         | `/[slug]/admin/connectors`      | —       | None    |
-| File shares             | `/[slug]/admin/file-shares`     | —       | None    |
-| Mirth Connect instances | `/[slug]/admin/mirth`           | —       | None    |
-| Sites                   | `/[slug]/admin/sites`           | —       | None    |
-| Models                  | `/[slug]/admin/llm-models`      | —       | None    |
-| Storage                 | `/[slug]/admin/storage`         | —       | None    |
-| Agent oversight         | `/[slug]/admin/agents`          | —       | None    |
-| Holiday calendars       | `/[slug]/admin/calendars`       | —       | None    |
-| Organization usage      | `/[slug]/admin/usage`           | —       | None    |
-| Sensitive data          | `/[slug]/admin/redaction`       | —       | None    |
-| Email sanitizer         | `/[slug]/admin/email-sanitizer` | —       | None    |
-| Settings                | `/[slug]/admin/settings`        | —       | None    |
-| Access                  | `/[slug]/admin/access`          | —       | None    |
-| Audit                   | `/[slug]/admin/audit`           | —       | None    |
-| Events                  | `/[slug]/admin/events`          | —       | None    |
-| Tutorials report        | `/[slug]/admin/tutorials`       | `admin` | Partial |
+One tour per area, each greeting an operator's first visit. A connector's
+own page (`/admin/connectors/[configKey]`) has a tour of its own, pinned to
+the registration form.
+
+| Feature                 | Where                                  | Tour                     | Status  |
+| ----------------------- | -------------------------------------- | ------------------------ | ------- |
+| Console overview        | `/[slug]/admin`                        | `admin`                  | Covered |
+| Connector setup         | `/[slug]/admin/connectors`             | `admin-connectors`       | Covered |
+| A connector's page      | `/[slug]/admin/connectors/[configKey]` | `admin-connector-detail` | Covered |
+| File shares             | `/[slug]/admin/file-shares`            | `admin-file-shares`      | Covered |
+| A share's page          | `/[slug]/admin/file-shares/[shareId]`  | `admin-file-shares`      | Partial |
+| Mirth Connect instances | `/[slug]/admin/mirth`                  | `admin-mirth`            | Covered |
+| An instance's page      | `/[slug]/admin/mirth/[instanceId]`     | `admin-mirth`            | Partial |
+| Sites                   | `/[slug]/admin/sites`                  | `admin-sites`            | Covered |
+| Models                  | `/[slug]/admin/llm-models`             | `admin-models`           | Covered |
+| Storage                 | `/[slug]/admin/storage`                | `admin-storage`          | Covered |
+| Agent oversight         | `/[slug]/admin/agents`                 | `admin-agents`           | Covered |
+| An agent's oversight    | `/[slug]/admin/agents/[agentId]`       | `admin-agents`           | Partial |
+| Holiday calendars       | `/[slug]/admin/calendars`              | `admin-calendars`        | Covered |
+| Organization usage      | `/[slug]/admin/usage`                  | `admin-usage`            | Covered |
+| Sensitive data          | `/[slug]/admin/redaction`              | `admin-redaction`        | Covered |
+| Email sanitizer         | `/[slug]/admin/email-sanitizer`        | `admin-email-sanitizer`  | Covered |
+| Settings                | `/[slug]/admin/settings`               | `admin-settings`         | Covered |
+| Access                  | `/[slug]/admin/access`                 | `admin-access`           | Covered |
+| Audit                   | `/[slug]/admin/audit`                  | `admin-audit`            | Covered |
+| Events                  | `/[slug]/admin/events`                 | `admin-events`           | Covered |
+| Tutorials report        | `/[slug]/admin/tutorials`              | `admin-tutorials`        | Covered |
+
+The Partial rows are detail pages a list tour describes without stepping
+onto: a share's grants and folder limits, an instance's settings, an
+agent's per-model and per-step breakdown. Each is a candidate for a tour
+of its own when its page settles.

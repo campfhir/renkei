@@ -8,6 +8,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { SettingsForm, type EditableSettings } from './settings-form';
 import IdentityForm from './identity-form';
 import { observedIdpGroups } from '@/lib/identity';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
  * The org's operating settings — everything adjustable that has no more
@@ -137,7 +138,11 @@ export default async function SettingsPage({
         </ul>
       </section>
 
-      <section className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-800 dark:bg-gray-950">
+      <CoachTarget
+        as="section"
+        name="admin-settings-identity"
+        className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-800 dark:bg-gray-950"
+      >
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
           Identity
         </h2>
@@ -167,7 +172,7 @@ export default async function SettingsPage({
             observedGroups={observedGroups.length}
           />
         )}
-      </section>
+      </CoachTarget>
     </div>
   );
 }

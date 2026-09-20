@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
 import InstanceConfigFields, { draftPayload, emptyDraft } from './instance-config-fields';
 import type { InstanceDraft } from './instance-config-fields';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 interface InstanceRow {
   id: string;
@@ -92,13 +93,16 @@ export default function InstanceList({ slug }: { slug: string }) {
     await load();
   };
 
+  const listAnchor = useCoachAnchor('admin-mirth-list');
+  const newAnchor = useCoachAnchor('admin-mirth-new');
+
   return (
     <div className="space-y-4">
       {instances.length === 0 && !draft ? (
         <p className="text-sm text-gray-600 dark:text-gray-400">No instances registered yet.</p>
       ) : null}
 
-      <ul className="space-y-2">
+      <ul {...listAnchor} className="space-y-2">
         {instances.map((instance) => (
           <li
             key={instance.id}
@@ -173,6 +177,7 @@ export default function InstanceList({ slug }: { slug: string }) {
         </div>
       ) : (
         <button
+          {...newAnchor}
           type="button"
           onClick={() => setDraft(emptyDraft())}
           className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"

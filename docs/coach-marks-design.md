@@ -191,7 +191,7 @@ and unit tests green on its own.
       `coach-mark-coverage.md` + its test.
 - [x] 9. Escape hatch: `coachMarksEnabled` org setting, settings-page
       toggle, inert engine + closed Tutorials door; `coach-marks-off.spec.ts`.
-- [ ] 10. Fill the inventory, one batch per commit, each batch = anchors +
+- [x] 10. Fill the inventory, one batch per commit, each batch = anchors +
       tours (split into `lib/coach-marks/tours/<area>.ts`) + coverage rows +
       the tour-walk spec (`coach-marks-walk.spec.ts`: every tour started by
       id, stepped through, each step captured). Tours gain an `area` for
@@ -207,4 +207,6 @@ and unit tests green on its own.
         OnBase admin, file shares, Mirth, sandbox secrets). Card tours are
         on request only; `ConnectorShell` takes an `anchor` so a server
         suite card can pin its product panels.
-  - [ ] 10e. Organization console: one tour per area.
+  - [x] 10e. Organization console: one tour per area, plus a connector's
+        own page. Server pages pin their blocks with `CoachTarget`; the
+        settings and sanitizer card helpers take an `anchor`.

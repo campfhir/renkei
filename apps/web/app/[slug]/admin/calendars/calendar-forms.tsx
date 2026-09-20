@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { BlackoutEntry } from '@renkei/agents';
 import { getJson, sendJson } from '@/lib/fetch-json';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -200,13 +201,16 @@ export default function CalendarForms({ slug }: { slug: string }) {
     await load();
   };
 
+  const listAnchor = useCoachAnchor('admin-calendars-list');
+  const newAnchor = useCoachAnchor('admin-calendars-new');
+
   return (
     <div className="space-y-4">
       {calendars.length === 0 && !draft ? (
         <p className="text-sm text-gray-600 dark:text-gray-400">No calendars yet.</p>
       ) : null}
 
-      <ul className="space-y-2">
+      <ul {...listAnchor} className="space-y-2">
         {calendars.map((calendar) => (
           <li
             key={calendar.id}
@@ -279,6 +283,7 @@ export default function CalendarForms({ slug }: { slug: string }) {
         </div>
       ) : (
         <button
+          {...newAnchor}
           type="button"
           onClick={() => setDraft({ id: null, name: '', dates: [] })}
           className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"

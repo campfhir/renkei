@@ -20,6 +20,7 @@ import ConnectorIcon from '@/components/connector-icon';
 import { Icon, ICONS } from '@/components/icons';
 import { CONNECTOR_CATEGORY_LABELS, type ConnectorCategory } from '@/lib/connector-catalog';
 import { saveDisabledConnectors } from './availability-client';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface ConnectorRow {
   configKey: string;
@@ -115,6 +116,9 @@ export default function ConnectorList({
     setBusy(false);
   }
 
+  const searchAnchor = useCoachAnchor('admin-connectors-search');
+  const listAnchor = useCoachAnchor('admin-connectors-list');
+
   return (
     <div>
       <label className="relative mb-4 block">
@@ -122,6 +126,7 @@ export default function ConnectorList({
           <Icon path={ICONS.search} />
         </span>
         <input
+          {...searchAnchor}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Find a connector"
@@ -133,107 +138,109 @@ export default function ConnectorList({
 
       {groups.length === 0 && <p className="text-sm text-gray-500">No connector matches.</p>}
 
-      {groups.map(([category, list]) => (
-        <section key={category} className="mb-6">
-          <h2 className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">
-            {CONNECTOR_CATEGORY_LABELS[category]}
-          </h2>
-          <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white dark:divide-gray-900 dark:border-gray-800 dark:bg-gray-950">
-            {list.map((row) => {
-              const href = row.manageHref ?? `/${slug}/admin/connectors/${row.configKey}`;
-              const allOff =
-                row.products.some((product) => product.togglable) &&
-                row.products
-                  .filter((product) => product.togglable)
-                  .every((product) => disabled.has(product.capabilityKey));
-              return (
-                <li key={row.configKey} className="flex items-start gap-3 px-4 py-3">
-                  {/* A fixed slot, so marks of wildly different widths still
+      <div {...listAnchor}>
+        {groups.map(([category, list]) => (
+          <section key={category} className="mb-6">
+            <h2 className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">
+              {CONNECTOR_CATEGORY_LABELS[category]}
+            </h2>
+            <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white dark:divide-gray-900 dark:border-gray-800 dark:bg-gray-950">
+              {list.map((row) => {
+                const href = row.manageHref ?? `/${slug}/admin/connectors/${row.configKey}`;
+                const allOff =
+                  row.products.some((product) => product.togglable) &&
+                  row.products
+                    .filter((product) => product.togglable)
+                    .every((product) => disabled.has(product.capabilityKey));
+                return (
+                  <li key={row.configKey} className="flex items-start gap-3 px-4 py-3">
+                    {/* A fixed slot, so marks of wildly different widths still
                       leave every label starting at the same x. */}
-                  <span className="flex h-6 w-20 shrink-0 items-center justify-center">
-                    <ConnectorIcon
-                      capabilityKey={row.products[0].capabilityKey}
-                      label={row.label}
-                      size={22}
-                      maxWidth={76}
-                      className={allOff ? 'opacity-40 grayscale' : ''}
-                    />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={href}
-                        className={`text-sm font-medium hover:underline ${allOff ? 'text-gray-400 dark:text-gray-600' : ''}`}
-                      >
-                        {row.label}
-                      </Link>
-                      {row.configurable ? (
-                        !row.configured ? (
-                          <Pill tone="gray">Not configured</Pill>
-                        ) : row.enabled ? (
-                          <Pill tone="green">Enabled</Pill>
+                    <span className="flex h-6 w-20 shrink-0 items-center justify-center">
+                      <ConnectorIcon
+                        capabilityKey={row.products[0].capabilityKey}
+                        label={row.label}
+                        size={22}
+                        maxWidth={76}
+                        className={allOff ? 'opacity-40 grayscale' : ''}
+                      />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          href={href}
+                          className={`text-sm font-medium hover:underline ${allOff ? 'text-gray-400 dark:text-gray-600' : ''}`}
+                        >
+                          {row.label}
+                        </Link>
+                        {row.configurable ? (
+                          !row.configured ? (
+                            <Pill tone="gray">Not configured</Pill>
+                          ) : row.enabled ? (
+                            <Pill tone="green">Enabled</Pill>
+                          ) : (
+                            <Pill tone="yellow">Disabled</Pill>
+                          )
+                        ) : row.manageHref ? (
+                          <Pill tone="gray">Managed separately</Pill>
                         ) : (
-                          <Pill tone="yellow">Disabled</Pill>
-                        )
-                      ) : row.manageHref ? (
-                        <Pill tone="gray">Managed separately</Pill>
-                      ) : (
-                        <Pill tone="gray">Built in</Pill>
-                      )}
-                      {allOff && <Pill tone="red">Off</Pill>}
-                      {row.products.some((product) => product.audienceGroups > 0) && (
-                        <Pill tone="yellow">Restricted</Pill>
-                      )}
-                    </div>
-                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                      {row.products.length === 1
-                        ? row.products[0].summary
-                        : row.products.map((product) => product.label).join(' · ')}
-                    </p>
-                    {/* One switch per capability key: SharePoint can go off
+                          <Pill tone="gray">Built in</Pill>
+                        )}
+                        {allOff && <Pill tone="red">Off</Pill>}
+                        {row.products.some((product) => product.audienceGroups > 0) && (
+                          <Pill tone="yellow">Restricted</Pill>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        {row.products.length === 1
+                          ? row.products[0].summary
+                          : row.products.map((product) => product.label).join(' · ')}
+                      </p>
+                      {/* One switch per capability key: SharePoint can go off
                         without taking mail with it. */}
-                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                      {row.products
-                        .filter((product) => product.togglable)
-                        .map((product) => {
-                          const off = disabled.has(product.capabilityKey);
-                          return (
-                            <label
-                              key={product.capabilityKey}
-                              className="flex items-center gap-1.5 text-xs"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={!off}
-                                disabled={busy}
-                                onChange={(event) =>
-                                  void toggle(product.capabilityKey, event.target.checked)
-                                }
-                              />
-                              <span className={off ? 'text-gray-400' : ''}>
-                                {row.products.length > 1 ? product.label : 'Offered'}
-                                <span className="ml-1 font-mono text-[10px] text-gray-400">
-                                  {product.toolPrefix}
+                      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+                        {row.products
+                          .filter((product) => product.togglable)
+                          .map((product) => {
+                            const off = disabled.has(product.capabilityKey);
+                            return (
+                              <label
+                                key={product.capabilityKey}
+                                className="flex items-center gap-1.5 text-xs"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={!off}
+                                  disabled={busy}
+                                  onChange={(event) =>
+                                    void toggle(product.capabilityKey, event.target.checked)
+                                  }
+                                />
+                                <span className={off ? 'text-gray-400' : ''}>
+                                  {row.products.length > 1 ? product.label : 'Offered'}
+                                  <span className="ml-1 font-mono text-[10px] text-gray-400">
+                                    {product.toolPrefix}
+                                  </span>
                                 </span>
-                              </span>
-                            </label>
-                          );
-                        })}
+                              </label>
+                            );
+                          })}
+                      </div>
                     </div>
-                  </div>
-                  <Link
-                    href={href}
-                    aria-label={`Open ${row.label}`}
-                    className="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                  >
-                    <Icon path={ICONS.chevron} />
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
+                    <Link
+                      href={href}
+                      aria-label={`Open ${row.label}`}
+                      className="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                    >
+                      <Icon path={ICONS.chevron} />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
 
       {/* Jira and JSM share one capability key, so one switch covers both.
           Saying so beats letting an operator discover it. */}

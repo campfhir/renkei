@@ -119,6 +119,8 @@ const WALKS: Record<string, Walk> = {
   'connect-fileshares': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-mirth': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'browser-secrets': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  // A connector's own page: the seed registers Atlassian.
+  'admin-connector-detail': { path: `/${E2E_SLUG}/admin/connectors/atlassian`, spotlight: true },
 };
 
 let client: Client;
@@ -202,6 +204,12 @@ for (const tour of COACH_MARK_TOURS) {
       await card.getByRole('button', { name: last ? 'Finish' : 'Next' }).click();
     }
     await expect(card).toHaveCount(0);
+    // Finish sends its completion report as a keepalive fetch, which
+    // survives a navigation but not the browser context this test tears
+    // down the instant the card is gone; a beat lets it land, so the
+    // tutorials report the last walk screenshots shows what a person
+    // stepping through would have produced.
+    await page.waitForTimeout(400);
     if (walk.spotlight) expect(lit, `${tour.id}: no step found its target`).toBeGreaterThan(0);
   });
 }

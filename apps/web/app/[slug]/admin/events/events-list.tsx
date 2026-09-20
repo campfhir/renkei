@@ -8,6 +8,7 @@
 
 import { useMemo, useState } from 'react';
 import LocalTime from '@/components/local-time';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export type EventStatus = 'queued' | 'processing' | 'processed' | 'skipped' | 'retrying' | 'failed';
 
@@ -53,6 +54,7 @@ const FILTERS: readonly (EventStatus | 'all')[] = [
 
 export default function EventsList({ events }: { events: EventRow[] }): React.ReactNode {
   const [filter, setFilter] = useState<EventStatus | 'all'>('all');
+  const filtersAnchor = useCoachAnchor('admin-events-filters');
 
   const counts = useMemo(() => {
     const byStatus = new Map<EventStatus, number>();
@@ -66,7 +68,7 @@ export default function EventsList({ events }: { events: EventRow[] }): React.Re
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      <div {...filtersAnchor} className="mb-3 flex flex-wrap gap-1.5">
         {FILTERS.map((option) => {
           const count = option === 'all' ? events.length : (counts.get(option) ?? 0);
           if (option !== 'all' && count === 0) return null;

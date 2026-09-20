@@ -17,6 +17,7 @@
 
 import { useState } from 'react';
 import ChipListInput, { type ChipOption } from '@/components/chip-list-input';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export default function AudienceControl({
   slug,
@@ -81,8 +82,13 @@ export default function AudienceControl({
     return body.groups ?? [];
   }
 
+  const audienceAnchor = useCoachAnchor('admin-connector-audience');
+
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <section
+      {...audienceAnchor}
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+    >
       <h2 className="font-semibold">Who {label} is for</h2>
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
         Groups come from the <code className="text-xs">{groupsClaim}</code> claim at sign-in;{' '}
