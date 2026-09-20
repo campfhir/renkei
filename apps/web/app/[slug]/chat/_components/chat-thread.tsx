@@ -127,6 +127,10 @@ export default function ChatThread({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [share, setShare] = useState(false);
+  const [manageDialog, setManageDialog] = useState<'rename' | 'delete' | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [manageBusy, setManageBusy] = useState(false);
+  const [manageError, setManageError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ChatMessageView | null>(null);
   const [confirmResend, setConfirmResend] = useState<ChatMessageView | null>(null);
   const [modelId, setModelId] = useState<string | null>(
@@ -473,6 +477,38 @@ export default function ChatThread({
     [chat.id, tenantId, router]
   );
 
+  const runManage = useCallback(async (action: () => Promise<{ error: string | null }>) => {
+    setManageBusy(true);
+    setManageError(null);
+    const result = await action();
+    setManageBusy(false);
+    if (result.error) {
+      setManageError(result.error);
+      return;
+    }
+    setManageDialog(null);
+  }, []);
+
+  const toggleArchive = useCallback(() => {
+    void runManage(async () => {
+      const next = !chat.archived;
+      const result = await chatClient.updateChat(tenantId, chat.id, { archived: next });
+      if (!result.error) {
+        setChat((current) => ({ ...current, archived: next }));
+        router.refresh();
+      }
+      return result;
+    });
+  }, [chat.archived, chat.id, tenantId, router, runManage]);
+
+  const deleteChat = useCallback(() => {
+    void runManage(async () => {
+      const result = await chatClient.deleteChat(tenantId, chat.id);
+      if (!result.error) router.push(`/${slug}/chat`);
+      return result;
+    });
+  }, [chat.id, tenantId, slug, router, runManage]);
+
   /**
    * Answer the tool call the turn is waiting on. Returns the error to show,
    * or null: the stream's tool_permission_decided event clears the card.
@@ -593,7 +629,32 @@ export default function ChatThread({
         ) : undefined,
     });
   }
-  if (isOwner) overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
+  if (isOwner) {
+    overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
+    overflow.push({
+      label: 'Rename',
+      icon: ICONS.pencil,
+      onSelect: () => {
+        setRenameDraft(chat.title ?? '');
+        setManageError(null);
+        setManageDialog('rename');
+      },
+    });
+    overflow.push({
+      label: chat.archived ? 'Unarchive' : 'Archive',
+      icon: ICONS.archive,
+      onSelect: toggleArchive,
+    });
+    overflow.push({
+      label: 'Delete',
+      icon: ICONS.trash,
+      danger: true,
+      onSelect: () => {
+        setManageError(null);
+        setManageDialog('delete');
+      },
+    });
+  }
   const lastTurn = state.turn;
   // For voice mode: the tool calls in flight by name, and whether the
   // model is mid-thought with nothing said yet. Read off the messages,
@@ -662,19 +723,16 @@ export default function ChatThread({
         />
         <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
         {compact ? (
-          <>
-            {isOwner ? (
-              <ToolsPopover
-                tenantId={tenantId}
-                selected={connectors}
-                onChange={changeConnectors}
-                slug={slug}
-                locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
-                kind={codeProjectId ? 'code' : 'chat'}
-              />
-            ) : null}
-            <OverflowMenu items={overflow} />
-          </>
+          isOwner ? (
+            <ToolsPopover
+              tenantId={tenantId}
+              selected={connectors}
+              onChange={changeConnectors}
+              slug={slug}
+              locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+              kind={codeProjectId ? 'code' : 'chat'}
+            />
+          ) : null
         ) : (
           <>
             {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
@@ -702,6 +760,7 @@ export default function ChatThread({
             ) : null}
           </>
         )}
+        <OverflowMenu items={overflow} />
       </header>
       {codeTools.modals}
 
@@ -884,6 +943,51 @@ export default function ChatThread({
           title={`Share “${chat.title ?? 'New chat'}”`}
           onClose={() => setShare(false)}
         />
+      ) : null}
+      {manageDialog === 'rename' ? (
+        <Modal title="Rename chat" onClose={() => setManageDialog(null)}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void runManage(async () => {
+                const next = renameDraft.trim();
+                if (!next) return { error: 'The name can’t be empty.' };
+                const saved = await rename(next);
+                return { error: saved ? null : 'The chat could not be renamed.' };
+              });
+            }}
+            className="space-y-3"
+          >
+            <input
+              autoFocus
+              value={renameDraft}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              maxLength={200}
+              className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+            <DialogFooter
+              busy={manageBusy}
+              error={manageError}
+              label="Rename"
+              onCancel={() => setManageDialog(null)}
+            />
+          </form>
+        </Modal>
+      ) : null}
+      {manageDialog === 'delete' ? (
+        <Modal title="Delete chat" onClose={() => setManageDialog(null)}>
+          <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">
+            This deletes the chat, its messages and its files for everyone it was shared with.
+          </p>
+          <DialogFooter
+            busy={manageBusy}
+            error={manageError}
+            label="Delete"
+            danger
+            onCancel={() => setManageDialog(null)}
+            onConfirm={deleteChat}
+          />
+        </Modal>
       ) : null}
     </>
   );

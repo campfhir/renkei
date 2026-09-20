@@ -2,10 +2,12 @@
 
 /**
  * The chat's name in the title bar, and — for its owner — the way to
- * change it: a pencil (or a click on the name) turns it into a field;
- * Enter or leaving the field saves, Escape puts the old name back. Under
- * it, the project the chat sits in, when it does — and, for a code
- * project, the branch its checkout is on right now.
+ * change it: a double-click on the name, or (on a wide screen, revealed
+ * on hover) a pencil beside it, turns it into a field; Enter or leaving
+ * the field saves, Escape puts the old name back. On a narrow screen the
+ * pencil is dropped in favor of the title bar's overflow menu, which has
+ * its own Rename. Under the name, the project the chat sits in, when it
+ * does — and, for a code project, the branch its checkout is on right now.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -87,7 +89,7 @@ export default function ChatTitle({
               onClick={start}
               aria-label="Rename chat"
               title="Rename"
-              className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 lg:opacity-0 lg:group-hover:opacity-100 lg:focus:opacity-100 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+              className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 lg:inline-flex lg:opacity-0 lg:group-hover:opacity-100 lg:focus:opacity-100 dark:hover:bg-gray-900 dark:hover:text-gray-200"
             >
               <Icon path={ICONS.pencil} className="h-3.5 w-3.5" />
             </button>

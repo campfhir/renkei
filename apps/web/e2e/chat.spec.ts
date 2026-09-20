@@ -377,20 +377,32 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(markdown.locator('pre code')).toContainText('closedSprints()');
     await expect(markdown.locator('strong', { hasText: 'move them' })).toBeVisible();
 
-    // The owner renames the chat in place; the menu follows.
-    await page.getByRole('button', { name: 'Rename chat' }).click();
-    const nameField = page.getByRole('textbox', { name: 'Chat name' });
-    await nameField.fill(`${title} — renamed`);
-    await nameField.press('Enter');
+    // The owner renames the chat: in place with the title bar's pencil on a
+    // wide screen, or — the pencil is dropped there — from the title bar's
+    // own overflow menu on a phone.
+    const renameViaTitleBar = async (next: string) => {
+      if (mobile) {
+        await page.getByRole('button', { name: 'More' }).click();
+        await page.getByRole('menuitem', { name: 'Rename' }).click();
+        const dialog = page.getByRole('dialog', { name: 'Rename chat' });
+        await dialog.getByRole('textbox').fill(next);
+        await dialog.getByRole('button', { name: 'Rename' }).click();
+        await expect(dialog).toBeHidden();
+        return;
+      }
+      await page.getByRole('button', { name: 'Rename chat' }).click();
+      const nameField = page.getByRole('textbox', { name: 'Chat name' });
+      await nameField.fill(next);
+      await nameField.press('Enter');
+    };
+    await renameViaTitleBar(`${title} — renamed`);
     await expect(page.getByRole('heading', { level: 1, name: `${title} — renamed` })).toBeVisible();
     await expect(
       page
         .getByRole('navigation', { name: 'Chats' })
         .getByRole('link', { name: `${title} — renamed` })
     ).toBeVisible();
-    await page.getByRole('button', { name: 'Rename chat' }).click();
-    await page.getByRole('textbox', { name: 'Chat name' }).fill(title);
-    await page.getByRole('textbox', { name: 'Chat name' }).press('Enter');
+    await renameViaTitleBar(title);
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
 
     // Files the assistant produced sit behind Artifacts, each a download.
