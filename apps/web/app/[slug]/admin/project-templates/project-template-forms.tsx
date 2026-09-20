@@ -2,10 +2,9 @@
 
 /**
  * Project-template CRUD — the calendar-forms shape: a client-side list
- * plus one draft form serving both create and edit. Built-ins render
- * alongside the org's own but are read-only; "Duplicate to customize"
- * opens the draft form pre-filled with a built-in's text under a new
- * name, so an operator re-authors it rather than starting from blank.
+ * plus one draft form serving both create and edit. Every tenant starts
+ * with a few rows seeded by migration (114-code-project-templates); from
+ * here they are ordinary rows like any other — rename, rewrite or delete.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -19,7 +18,6 @@ interface TemplateRow {
   name: string;
   description: string | null;
   instructions: string;
-  source: 'builtin' | 'custom';
 }
 
 interface Draft {
@@ -86,16 +84,6 @@ export default function ProjectTemplateForms({ slug }: { slug: string }) {
     await load();
   };
 
-  const duplicate = (template: TemplateRow) => {
-    setError(null);
-    setDraft({
-      id: null,
-      name: `${template.name} (copy)`,
-      description: template.description ?? '',
-      instructions: template.instructions,
-    });
-  };
-
   return (
     <div className="space-y-4">
       <ul className="space-y-2">
@@ -106,14 +94,7 @@ export default function ProjectTemplateForms({ slug }: { slug: string }) {
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="flex items-center gap-2 text-sm font-medium">
-                  {template.name}
-                  {template.source === 'builtin' ? (
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-normal text-gray-500 dark:bg-gray-900 dark:text-gray-400">
-                      Built-in
-                    </span>
-                  ) : null}
-                </p>
+                <p className="text-sm font-medium">{template.name}</p>
                 {template.description ? (
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {template.description}
@@ -121,42 +102,29 @@ export default function ProjectTemplateForms({ slug }: { slug: string }) {
                 ) : null}
               </div>
               <div className="flex shrink-0 gap-2">
-                {template.source === 'custom' ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        setDraft({
-                          id: template.id,
-                          name: template.name,
-                          description: template.description ?? '',
-                          instructions: template.instructions,
-                        })
-                      }
-                      className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void remove(template.id)}
-                      className="text-sm text-red-600 hover:underline dark:text-red-400"
-                    >
-                      Delete
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => duplicate(template)}
-                    className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-                  >
-                    Duplicate to customize
-                  </button>
-                )}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    setDraft({
+                      id: template.id,
+                      name: template.name,
+                      description: template.description ?? '',
+                      instructions: template.instructions,
+                    })
+                  }
+                  className="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void remove(template.id)}
+                  className="text-sm text-red-600 hover:underline dark:text-red-400"
+                >
+                  Delete
+                </button>
               </div>
             </div>
           </li>

@@ -46,7 +46,7 @@ export default function NewCodeProject({
   // Tracks the picker's own selection, separate from `instructions` —
   // once picked, the text is free to diverge as it is edited, and the
   // picker should not silently snap back to matching it.
-  const [templateId, setTemplateId] = useState('builtin:generic');
+  const [templateId, setTemplateId] = useState('');
   // null: the project inherits your default for code projects (else the
   // code default) when it is made; a list is this project's own choice.
   const [connectors, setConnectors] = useState<string[] | null>(null);
@@ -270,26 +270,12 @@ export default function NewCodeProject({
               }}
               className={inputClass}
             >
-              <optgroup label="Built-in">
-                {templates
-                  .filter((template) => template.source === 'builtin')
-                  .map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-              </optgroup>
-              {templates.some((template) => template.source === 'custom') ? (
-                <optgroup label="This organization">
-                  {templates
-                    .filter((template) => template.source === 'custom')
-                    .map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.name}
-                      </option>
-                    ))}
-                </optgroup>
-              ) : null}
+              <option value="">Pick a template…</option>
+              {templates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
             </select>
           </label>
         ) : null}
