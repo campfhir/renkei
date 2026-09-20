@@ -192,11 +192,19 @@ and unit tests green on its own.
 - [x] 9. Escape hatch: `coachMarksEnabled` org setting, settings-page
       toggle, inert engine + closed Tutorials door; `coach-marks-off.spec.ts`.
 - [ ] 10. Fill the inventory, one batch per commit, each batch = anchors +
-      tours (split into `lib/coach-marks/tours/<area>.ts`) + coverage rows + the tour-walk spec (`coach-marks-walk.spec.ts`: every tour started
-      by id, stepped through, each step captured). Tours gain an `area`
-      for grouping on the Tutorials page; the report's per-person grid
-      becomes counts per person. - [ ] 10a. Workspace: agent builder, agent detail + runs, knowledge, files. - [ ] 10b. Chat: composer extras, thread menu + sharing, permission
-      ask, projects, prompt libraries, memory, code projects. - [ ] 10c. Account: notifications, preferences, batch jobs, tools
-      usage, my usage, activity, about. - [ ] 10d. Connectors: the add-connector modal and one tour per
-      card (Jira, JSM, Confluence, Bitbucket, Microsoft, WebEx,
-      Zoom, OnBase, OnBase admin, file shares, Mirth, sandbox secrets). - [ ] 10e. Organization console: one tour per area.
+      tours (split into `lib/coach-marks/tours/<area>.ts`) + coverage rows +
+      the tour-walk spec (`coach-marks-walk.spec.ts`: every tour started by
+      id, stepped through, each step captured). Tours gain an `area` for
+      grouping on the Tutorials page; the report's per-person grid becomes
+      counts per person.
+  - [x] 10a. Workspace: agent builder, agent detail + runs, knowledge, files.
+  - [x] 10b. Chat: composer extras, thread menu + sharing, permission ask,
+        projects, prompt libraries, memory, code projects.
+  - [x] 10c. Account: notifications, preferences, batch jobs, tools usage,
+        my usage, activity, about.
+  - [x] 10d. Connectors: the add-connector modal and one tour per card
+        (Jira, JSM, Confluence, Bitbucket, Microsoft, WebEx, Zoom, OnBase,
+        OnBase admin, file shares, Mirth, sandbox secrets). Card tours are
+        on request only; `ConnectorShell` takes an `anchor` so a server
+        suite card can pin its product panels.
+  - [ ] 10e. Organization console: one tour per area.

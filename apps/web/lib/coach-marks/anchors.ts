@@ -154,6 +154,83 @@ export const COACH_ANCHORS = [
   'about-changelog',
   /** The auto-start switch card on Tutorials. */
   'tutorials-switch',
+
+  // The Connectors page: the add-connector modal and each product's card.
+  // A card anchor sits on the whole card (or the product's panel inside a
+  // suite card); the others on the controls inside it that a first
+  // connection goes through. A control only there before connecting (the
+  // capability picker, the Connect button) is absent once connected, and
+  // its step then shows centred.
+  /** The search box in the Add a connector modal. */
+  'connectors-search',
+  /** The catalog rows in the modal, each with its Add. */
+  'connectors-catalog',
+  /** The Jira panel of the Atlassian card. */
+  'card-jira',
+  /** Jira's "What Renkei may do" picker (or the authorized list, once connected). */
+  'jira-scopes',
+  /** Connect Jira. */
+  'jira-connect',
+  /** The Service Management panel. */
+  'card-jsm',
+  /** Its capability picker. */
+  'jsm-scopes',
+  /** Connect Service Management. */
+  'jsm-connect',
+  /** The Confluence panel. */
+  'card-confluence',
+  /** Its capability picker. */
+  'confluence-scopes',
+  /** Connect Confluence. */
+  'confluence-connect',
+  /** The Bitbucket panel. */
+  'card-bitbucket',
+  /** Its capability picker. */
+  'bitbucket-scopes',
+  /** Connect Bitbucket. */
+  'bitbucket-connect',
+  /** The Microsoft 365 card. */
+  'card-microsoft',
+  /** The product panels inside it (Outlook, SharePoint, OneDrive…), each with its capabilities. */
+  'microsoft-products',
+  /** Connect Microsoft 365 (or Re-authorize, once connected). */
+  'microsoft-connect',
+  /** Outlook's "What gets indexed" checkboxes (only once connected). */
+  'outlook-indexing',
+  /** The WebEx card. */
+  'card-webex',
+  /** Its capability picker. */
+  'webex-scopes',
+  /** Connect WebEx. */
+  'webex-connect',
+  /** The "Watch all my spaces" switch (only once connected). */
+  'webex-watch-spaces',
+  /** The Zoom card. */
+  'card-zoom',
+  /** Its capability picker. */
+  'zoom-scopes',
+  /** Connect Zoom. */
+  'zoom-connect',
+  /** The OnBase panel of the Hyland card. */
+  'card-onbase',
+  /** Connect OnBase. */
+  'onbase-connect',
+  /** The OnBase Administration panel. */
+  'card-onbase-admin',
+  /** Connect OnBase Administration. */
+  'onbase-admin-connect',
+  /** The File shares card. */
+  'card-fileshares',
+  /** Its list of shares, each with Connect or its connection. */
+  'fileshares-list',
+  /** The Mirth Connect card. */
+  'card-mirth',
+  /** Its list of instances, each with Connect or its connection. */
+  'mirth-list',
+  /** The Browser secrets card. */
+  'card-secrets',
+  /** Add secret. */
+  'secrets-add',
 ] as const;
 
 export type CoachAnchor = (typeof COACH_ANCHORS)[number];

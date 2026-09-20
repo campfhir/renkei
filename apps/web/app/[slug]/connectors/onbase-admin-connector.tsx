@@ -2,6 +2,7 @@
 
 import ConnectorIcon from '@/components/connector-icon';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -51,8 +52,10 @@ export default function OnBaseAdminConnector({
     }
   }
 
+  const connectAnchor = useCoachAnchor('onbase-admin-connect');
+
   return (
-    <ConnectorShell nested={nested}>
+    <ConnectorShell nested={nested} anchor="card-onbase-admin">
       <div className="flex items-center justify-between gap-4">
         <ConnectorHeading nested={nested}>
           {/* Resolves to the same Hyland mark as OnBase via connector-logos'
@@ -90,6 +93,7 @@ export default function OnBaseAdminConnector({
 
       {!connected && (
         <a
+          {...connectAnchor}
           href={`/api/onbase-admin/${tenantId}/authorize`}
           className="mt-3 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >

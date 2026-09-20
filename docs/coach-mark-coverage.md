@@ -4,7 +4,7 @@ Every feature a person can reach in the app, and whether a guided tour
 explains it yet. This is the working list for growing the coach marks over
 time: pick a row marked **None**, add anchors to its components
 (`useCoachAnchor` in `apps/web/components/coach-marks/anchor.tsx`), write the
-tour in `apps/web/lib/coach-marks/tours.ts`, and move the row to **Covered**.
+tour in `apps/web/lib/coach-marks/tours/<area>.ts`, and move the row to **Covered**.
 
 `apps/web/lib/coach-marks/coverage.test.ts` reads this file: every tour in
 the registry must appear in the Tour column, and every id in that column must
@@ -58,26 +58,36 @@ it in passing (a step in the welcome tour, say) but nothing walks through it.
 
 ## Connecting a connector (as yourself)
 
-The connectors tour covers the page — Add connector and the MCP endpoint —
-but no tour yet walks through connecting one product. Each of these is a
-card on `/[slug]/connectors`; a tour per card would add anchors to the card's
-connect button and any per-product options.
+The `connectors` tour covers the page — Add connector, the MCP endpoint, and
+that every card has a tour — and `add-connector` greets the catalog the first
+time it opens. Each product below is a card on `/[slug]/connectors` with a
+tour of its own, pinned to that card (`requires: ['card-…']`), so a person
+whose organization does not offer the product is not offered its tour
+either. The card tours start only on request — from Tutorials or a
+`?tour=` link — since a page of six cards would otherwise greet every visit
+with the next one.
 
-| Connector               | Notes                                           | Tour | Status |
-| ----------------------- | ----------------------------------------------- | ---- | ------ |
-| Jira                    | Atlassian OAuth; scope picker                   | —    | None   |
-| Jira Service Management | shares the Atlassian grant                      | —    | None   |
-| Confluence              | Atlassian                                       | —    | None   |
-| Bitbucket               | Atlassian                                       | —    | None   |
-| Outlook                 | Microsoft; indexing preferences                 | —    | None   |
-| SharePoint              | Microsoft                                       | —    | None   |
-| OneDrive                | Microsoft                                       | —    | None   |
-| WebEx                   | Integration OAuth; "Watch all my spaces"        | —    | None   |
-| Zoom                    | OAuth                                           | —    | None   |
-| OnBase                  | tenant IdP, PKCE                                | —    | None   |
-| File shares             | per-share credentials                           | —    | None   |
-| Mirth Connect           | per-instance account                            | —    | None   |
-| Sandbox secrets         | on the connectors page when a sandbox is set up | —    | None   |
+| Connector               | Notes                                           | Tour                   | Status  |
+| ----------------------- | ----------------------------------------------- | ---------------------- | ------- |
+| The catalog             | Add connector → search, Add                     | `add-connector`        | Covered |
+| Jira                    | Atlassian OAuth; scope picker                   | `connect-jira`         | Covered |
+| Jira Service Management | own Atlassian consent; Operations group         | `connect-jsm`          | Covered |
+| Confluence              | Atlassian; space watches once connected         | `connect-confluence`   | Covered |
+| Bitbucket               | own OAuth system                                | `connect-bitbucket`    | Covered |
+| Outlook                 | Microsoft; "What gets indexed" once connected   | `connect-microsoft`    | Covered |
+| SharePoint              | Microsoft; library watches once connected       | `connect-microsoft`    | Partial |
+| OneDrive                | Microsoft                                       | `connect-microsoft`    | Covered |
+| WebEx                   | Integration OAuth; "Watch all my spaces"        | `connect-webex`        | Covered |
+| Zoom                    | OAuth; ungranted-scope notice                   | `connect-zoom`         | Covered |
+| OnBase                  | tenant IdP, PKCE; no scope picker               | `connect-onbase`       | Covered |
+| OnBase Administration   | separate Hyland client                          | `connect-onbase-admin` | Covered |
+| File shares             | per-share credentials; write/delete exposure    | `connect-fileshares`   | Covered |
+| Mirth Connect           | per-instance account; permission presets        | `connect-mirth`        | Covered |
+| Sandbox secrets         | on the connectors page when a sandbox is set up | `browser-secrets`      | Covered |
+
+SharePoint is Partial because the library watch manager (which libraries
+feed knowledge search) appears only once connected and the Microsoft tour
+mentions it without a step of its own.
 
 ## Organization console (operators)
 

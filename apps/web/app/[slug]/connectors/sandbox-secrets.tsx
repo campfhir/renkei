@@ -14,6 +14,7 @@
 
 import { useState } from 'react';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { inputClass } from '../admin/file-shares/share-config-fields';
 
 export interface SecretView {
@@ -184,12 +185,19 @@ export default function SandboxSecrets({
       fields: draft.fields.map((field, at) => (at === index ? { ...field, ...patch } : field)),
     });
 
+  const cardAnchor = useCoachAnchor('card-secrets');
+  const addAnchor = useCoachAnchor('secrets-add');
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <div
+      {...cardAnchor}
+      className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+    >
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-semibold">Browser secrets</h2>
         {adding ? null : (
           <button
+            {...addAnchor}
             type="button"
             disabled={busy}
             onClick={() => {

@@ -73,6 +73,14 @@ interface Walk {
   spotlight: boolean;
   /** The address to wait for first, when `path` redirects (a client-side hop). */
   settle?: RegExp;
+  /**
+   * What to open on the page before the tour can begin, for a tour pinned
+   * to something that is not there on arrival (the catalog modal). Such a
+   * tour is asked for the way the Tutorials page asks — a pending request
+   * the engine picks up as soon as the anchor mounts — rather than by
+   * `?tour=`, which starts at once wherever it is.
+   */
+  open?: (page: Page) => Promise<void>;
 }
 const THREAD = /\/chat\/[0-9a-f-]{36}$/;
 const WALKS: Record<string, Walk> = {
@@ -92,6 +100,25 @@ const WALKS: Record<string, Walk> = {
   // New code project link, and /code/new sends the visitor back to /code.
   code: { path: `/${E2E_SLUG}/code`, spotlight: false },
   'code-new': { path: `/${E2E_SLUG}/code`, spotlight: false },
+  // The catalog greets its first opening; the walk opens it.
+  'add-connector': {
+    path: `/${E2E_SLUG}/connectors`,
+    spotlight: true,
+    open: (page) => page.getByRole('button', { name: 'Add connector' }).click(),
+  },
+  // The seed connects Jira, which puts the Atlassian card — Jira and
+  // Service Management — on the page. No other product is added, so every
+  // other card tour is walked with its steps centred.
+  'connect-confluence': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-bitbucket': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-microsoft': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-webex': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-zoom': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-onbase': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-onbase-admin': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-fileshares': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-mirth': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'browser-secrets': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
 };
 
 let client: Client;
@@ -147,9 +174,17 @@ for (const tour of COACH_MARK_TOURS) {
     await page.goto(walk.path);
     if (walk.settle) await page.waitForURL(walk.settle);
     await page.waitForLoadState('domcontentloaded');
-    const landed = new URL(page.url());
-    landed.searchParams.set('tour', tour.id);
-    await page.goto(landed.toString());
+    if (walk.open) {
+      await page.evaluate(
+        (id) => window.sessionStorage.setItem('renkei:coach-mark-pending', `${id}|${Date.now()}`),
+        tour.id
+      );
+      await walk.open(page);
+    } else {
+      const landed = new URL(page.url());
+      landed.searchParams.set('tour', tour.id);
+      await page.goto(landed.toString());
+    }
     const card = page.getByTestId('coach-mark');
     await expect(card).toBeVisible();
     await expect(card).toHaveAttribute('data-coach-tour', tour.id);

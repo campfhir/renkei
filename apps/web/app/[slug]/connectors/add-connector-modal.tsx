@@ -21,6 +21,7 @@ import {
   type ConnectorEntry,
 } from '@/lib/connector-catalog';
 import { searchConnectors } from '@/lib/connector-search';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /** What a catalog row needs — the entry, and where this person stands with it. */
 export interface CatalogItem {
@@ -97,6 +98,9 @@ export default function AddConnectorModal({
     }
   }
 
+  const searchAnchor = useCoachAnchor('connectors-search');
+  const catalogAnchor = useCoachAnchor('connectors-catalog');
+
   return (
     <Modal title="Add a connector" onClose={onClose}>
       <label className="relative mb-2 block">
@@ -104,6 +108,7 @@ export default function AddConnectorModal({
           <Icon path={ICONS.search} />
         </span>
         <input
+          {...searchAnchor}
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -113,7 +118,7 @@ export default function AddConnectorModal({
         />
       </label>
       {error && <p className="mb-2 text-sm text-red-700 dark:text-red-400">{error}</p>}
-      <div className="max-h-96 overflow-y-auto">
+      <div {...catalogAnchor} className="max-h-96 overflow-y-auto">
         {items.length === 0 ? (
           <p className="text-sm text-gray-500">
             Nothing is available to add. Your organization has not set up any connectors for you
