@@ -24,6 +24,7 @@ import {
   disableDesktopNotifications,
   ensurePushSubscription,
 } from '@/lib/push-subscription';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
  * What to be told about, and where.
@@ -477,6 +478,7 @@ export default function PreferencesForm({
     }
   }
 
+  const anchor = useCoachAnchor('prefs-notifications');
   return (
     <div className="space-y-6">
       {/*
@@ -484,7 +486,7 @@ export default function PreferencesForm({
         grouping real for a screen reader rather than a visual accident of
         where the rule sits.
       */}
-      <section aria-labelledby="notifications-heading" className="space-y-3">
+      <section aria-labelledby="notifications-heading" className="space-y-3" {...anchor}>
         <div className="border-b border-gray-200 pb-2 dark:border-gray-800">
           <h2 id="notifications-heading" className="text-lg font-semibold">
             Notifications

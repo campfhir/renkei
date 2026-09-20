@@ -9,6 +9,7 @@ import { listBatches } from '@renkei/batch-jobs-store';
 import { BatchStatusPill, batchStatusLabel, batchProgress } from './batch-status';
 import LocalTime from '@/components/local-time';
 import AutoRefresh from '@/components/auto-refresh';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 const STATUS_TABS = ['running', 'succeeded', 'partial', 'failed'] as const;
 
@@ -45,18 +46,22 @@ export default async function BatchJobsPage({
       <div className="mb-1 flex items-center justify-between gap-3">
         <h1 className="min-w-0 truncate text-xl font-bold">Batch Jobs</h1>
         <div className="flex shrink-0 items-center gap-2">
-          <Link
-            href={`/${slug}/batch-jobs/schedules`}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-          >
-            Schedules
-          </Link>
-          <Link
-            href={`/${slug}/batch-jobs/new`}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            New batch job
-          </Link>
+          <CoachTarget name="batch-jobs-schedules" as="span" className="inline-flex">
+            <Link
+              href={`/${slug}/batch-jobs/schedules`}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Schedules
+            </Link>
+          </CoachTarget>
+          <CoachTarget name="batch-jobs-new" as="span" className="inline-flex">
+            <Link
+              href={`/${slug}/batch-jobs/new`}
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              New batch job
+            </Link>
+          </CoachTarget>
         </div>
       </div>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">

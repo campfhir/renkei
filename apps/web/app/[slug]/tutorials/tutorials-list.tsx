@@ -24,6 +24,7 @@ import {
   type CoachMarkProgressView,
 } from '@/lib/coach-marks/types';
 import LocalTime from '@/components/local-time';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface TourListing {
   id: string;
@@ -53,6 +54,7 @@ export default function TutorialsList({
   autoStart: boolean;
 }) {
   const engine = useCoachMarks();
+  const switchAnchor = useCoachAnchor('tutorials-switch');
   const [status, setStatus] = useState<'idle' | 'saving' | 'failed'>('idle');
   // The engine's copy once it has moved; the server's until then.
   const [touched, setTouched] = useState(false);
@@ -73,6 +75,7 @@ export default function TutorialsList({
     <div className="space-y-6">
       <section
         aria-labelledby="tutorials-auto-heading"
+        {...switchAnchor}
         className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
       >
         <div className="flex flex-wrap items-start justify-between gap-3">

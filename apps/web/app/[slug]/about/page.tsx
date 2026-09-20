@@ -7,6 +7,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { CHANGELOG, buildLabel, type ChangelogEntry } from '@/lib/changelog';
 import RenkeiMark from '@/components/renkei-mark';
 import packageJson from '../../../package.json';
+import CoachTarget from '@/components/coach-marks/anchor';
 
 export const metadata: Metadata = { title: 'About' };
 
@@ -90,10 +91,12 @@ export default async function AboutPage({
         </div>
       </div>
 
-      <h2 className="mb-1 text-lg font-semibold">What&rsquo;s changed</h2>
-      <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        Newest first. Only changes you would notice are listed.
-      </p>
+      <CoachTarget name="about-changelog" className="mb-6">
+        <h2 className="mb-1 text-lg font-semibold">What&rsquo;s changed</h2>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Newest first. Only changes you would notice are listed.
+        </p>
+      </CoachTarget>
 
       <div className="space-y-8">
         {CHANGELOG.map((release, index) => (

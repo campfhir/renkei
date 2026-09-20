@@ -17,6 +17,7 @@ import { voiceClient } from '@/lib/voice/client';
 import { SpeechQueue } from '@/lib/voice/speech-queue';
 import { localeLabel } from '../chat/_components/voice-menu';
 import { WAVE_ACCENTS } from '../chat/_components/voice-wave';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const SAMPLE = 'Hello — this is how replies will sound in your chats.';
 
@@ -109,9 +110,11 @@ export default function VoiceForm({
     queue.finish();
   }
 
+  const anchor = useCoachAnchor('prefs-voice');
   return (
     <section
       aria-labelledby="voice-heading"
+      {...anchor}
       className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
     >
       <h3 id="voice-heading" className="font-semibold">

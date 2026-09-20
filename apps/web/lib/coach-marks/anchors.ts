@@ -118,6 +118,42 @@ export const COACH_ANCHORS = [
   'code-repo-search',
   /** The standing instructions on the new code project form. */
   'code-instructions',
+
+  // The pages behind the avatar.
+  /** The "Choose what appears here" link on the notifications page. */
+  'notifications-preferences-link',
+  /** Mark all as read (only while something is unread). */
+  'notifications-mark-all',
+  /** The Appearance card on Preferences. */
+  'prefs-appearance',
+  /** The Voice card (only when the org has a voice service). */
+  'prefs-voice',
+  /** The default-tools cards (one for chats, one for code projects). */
+  'prefs-default-tools',
+  /** The "What a chat may do" card. */
+  'prefs-permissions',
+  /** The notifications grid. */
+  'prefs-notifications',
+  /** New batch job. */
+  'batch-jobs-new',
+  /** Schedules, beside it. */
+  'batch-jobs-schedules',
+  /** The period pills on the Tools page. */
+  'usage-period',
+  /** The stat tiles on the Tools page. */
+  'usage-stats',
+  /** The period pills on My usage. */
+  'utilization-period',
+  /** The stat tiles on My usage. */
+  'utilization-stats',
+  /** The level filter on Activity. */
+  'logs-levels',
+  /** The search bar on Activity. */
+  'logs-search',
+  /** The changelog heading on About. */
+  'about-changelog',
+  /** The auto-start switch card on Tutorials. */
+  'tutorials-switch',
 ] as const;
 
 export type CoachAnchor = (typeof COACH_ANCHORS)[number];

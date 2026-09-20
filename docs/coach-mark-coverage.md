@@ -44,17 +44,17 @@ it in passing (a step in the welcome tour, say) but nothing walks through it.
 
 ## Account menu
 
-| Feature         | Where                   | Audience | Tour         | Status  |
-| --------------- | ----------------------- | -------- | ------------ | ------- |
-| Notifications   | `/[slug]/notifications` | everyone | —            | None    |
-| Preferences     | `/[slug]/preferences`   | everyone | —            | None    |
-| Connectors page | `/[slug]/connectors`    | everyone | `connectors` | Covered |
-| Tutorials       | `/[slug]/tutorials`     | everyone | `welcome`    | Partial |
-| Batch jobs      | `/[slug]/batch-jobs`    | everyone | —            | None    |
-| Tools (usage)   | `/[slug]/usage`         | everyone | —            | None    |
-| My usage        | `/[slug]/utilization`   | everyone | —            | None    |
-| Activity        | `/[slug]/logs`          | everyone | —            | None    |
-| About           | `/[slug]/about`         | everyone | —            | None    |
+| Feature         | Where                   | Audience | Tour            | Status  |
+| --------------- | ----------------------- | -------- | --------------- | ------- |
+| Notifications   | `/[slug]/notifications` | everyone | `notifications` | Covered |
+| Preferences     | `/[slug]/preferences`   | everyone | `preferences`   | Covered |
+| Connectors page | `/[slug]/connectors`    | everyone | `connectors`    | Covered |
+| Tutorials       | `/[slug]/tutorials`     | everyone | `tutorials`     | Covered |
+| Batch jobs      | `/[slug]/batch-jobs`    | everyone | `batch-jobs`    | Covered |
+| Tools (usage)   | `/[slug]/usage`         | everyone | `tools-usage`   | Covered |
+| My usage        | `/[slug]/utilization`   | everyone | `my-usage`      | Covered |
+| Activity        | `/[slug]/logs`          | everyone | `activity`      | Covered |
+| About           | `/[slug]/about`         | everyone | `about`         | Covered |
 
 ## Connecting a connector (as yourself)
 
