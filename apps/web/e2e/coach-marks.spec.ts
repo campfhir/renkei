@@ -35,7 +35,8 @@ test.use({
   },
   // Every context this spec opens is this project's person, not the shared
   // e2e user: the cookie has the same name as storageState's, so it wins.
-  storageState: async (_fixtures, use, testInfo) => {
+  // eslint-disable-next-line no-empty-pattern
+  storageState: async ({}, use, testInfo) => {
     await use({
       cookies: [
         {
@@ -111,7 +112,8 @@ async function autoStartPref(): Promise<boolean | null> {
   return result.rows[0]?.value.autoStart ?? null;
 }
 
-test.beforeAll(async (_fixtures, testInfo) => {
+// eslint-disable-next-line no-empty-pattern
+test.beforeAll(async ({}, testInfo) => {
   subject = subjectFor(testInfo.project.name);
   displayName = displayNameFor(testInfo.project.name);
   client = new Client({ connectionString: process.env.DATABASE_URL });
