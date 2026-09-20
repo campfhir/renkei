@@ -255,11 +255,11 @@ export default function NewCodeProject({
           </div>
         </div>
 
-        <label className="block text-sm">
-          <span className="mb-1 block text-xs font-medium text-gray-500">
-            Instructions — what every chat in this project should know
-          </span>
-          {templates && templates.length > 0 ? (
+        {templates && templates.length > 0 ? (
+          <label className="block text-sm">
+            <span className="mb-1 block text-xs font-medium text-gray-500">
+              Start from a template
+            </span>
             <select
               value={templateId}
               onChange={(event) => {
@@ -268,7 +268,7 @@ export default function NewCodeProject({
                 const template = templates.find((entry) => entry.id === next);
                 if (template) setInstructions(template.instructions);
               }}
-              className={`${inputClass} mb-2`}
+              className={inputClass}
             >
               <optgroup label="Built-in">
                 {templates
@@ -291,7 +291,13 @@ export default function NewCodeProject({
                 </optgroup>
               ) : null}
             </select>
-          ) : null}
+          </label>
+        ) : null}
+
+        <label className="block text-sm">
+          <span className="mb-1 block text-xs font-medium text-gray-500">
+            Instructions — what every chat in this project should know
+          </span>
           <textarea
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}

@@ -93,7 +93,7 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
         secretbox('e2e-access-token'),
         secretbox('e2e-refresh-token'),
         new Date(Date.now() + 365 * 86_400_000),
-        ['account', 'repository', 'repository:write', 'pullrequest'],
+        ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
         JSON.stringify({ username: 'e2e-dev' }),
       ]
     );
