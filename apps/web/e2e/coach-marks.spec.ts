@@ -22,7 +22,6 @@ test.describe.configure({ mode: 'serial' });
 
 /** This project's own person and session — stable, so the cookie can be set before the rows are. */
 const subjectFor = (project: string) => `e2e-coach-${project}@example.com`;
-const displayNameFor = (project: string) => `Coach Tester (${project})`;
 function sessionIdFor(project: string): string {
   const hex = createHash('sha1').update(`coach-marks:${project}`).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
@@ -91,7 +90,6 @@ interface ProgressRow {
 
 let client: Client;
 let subject: string;
-let displayName: string;
 
 async function progressOf(tourId: string): Promise<ProgressRow | null> {
   const result = await client.query<ProgressRow>(
@@ -115,7 +113,6 @@ async function autoStartPref(): Promise<boolean | null> {
 // eslint-disable-next-line no-empty-pattern
 test.beforeAll(async ({}, testInfo) => {
   subject = subjectFor(testInfo.project.name);
-  displayName = displayNameFor(testInfo.project.name);
   client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
 
@@ -132,12 +129,9 @@ test.beforeAll(async ({}, testInfo) => {
     E2E_TENANT_ID,
     subject,
   ]);
-  await client.query(
-    `INSERT INTO identities (tenant_id, subject, email, display_name)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (tenant_id, subject) DO UPDATE SET display_name = EXCLUDED.display_name`,
-    [E2E_TENANT_ID, subject, subject, displayName]
-  );
+  // No identities row on purpose: the usage screenshots count the tenant's
+  // identities and expect the seed's one. The report names this person by
+  // subject instead, which is what it does for anyone the spine lacks.
   await client.query(
     `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
      VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')`,
@@ -381,7 +375,7 @@ test('the operator report shows who viewed, finished and skipped', async ({ page
   await expect(page.getByRole('heading', { level: 1, name: 'Tutorials' })).toBeVisible();
   // The totals count everyone in the tenant — the other projects' people
   // included — so the assertion is on this person's own row.
-  const row = page.getByTestId('tutorial-person').filter({ hasText: displayName });
+  const row = page.getByTestId('tutorial-person').filter({ hasText: subject });
   await expect(row).toHaveCount(1);
   const cells = row.getByRole('cell');
   await expect(cells.nth(1)).toHaveText('Skipped'); // welcome: replayed, then skipped
