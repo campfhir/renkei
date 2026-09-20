@@ -69,7 +69,7 @@ it — so an operator can report on adoption.
 
 7. **Recording is fire-and-forget from the browser.** The engine POSTs to
    `/api/tenant/[tenantId]/coach-marks` with `{ tourId, version, event,
-   step }` where event is `viewed` (on start), `step` (each advance),
+step }` where event is `viewed` (on start), `step` (each advance),
    `completed`, or `dismissed`. Subject comes from the session, never the
    body. A lost request loses a data point, never a tour.
 
@@ -96,24 +96,24 @@ short and stable; a tour test (`tours.test.ts`) checks every step's target
 names one of these, so renaming one is caught at unit-test time rather than
 as a silently untargeted step.
 
-| anchor                | element                                     |
-| --------------------- | ------------------------------------------- |
-| `nav-menu-button`     | the hamburger                               |
-| `nav-workspace`       | the Workspace group in the menu column      |
-| `nav-chat`            | the Chat group in the menu column           |
-| `nav-account`         | the avatar button                           |
-| `account-tutorials`   | the Tutorials item in the account menu      |
-| `home-feed`           | the actionable-items heading block          |
-| `agents-new`          | the New agent button                        |
-| `agents-import`       | the Import button                           |
-| `agents-list`         | the list of agents                          |
-| `chat-composer`       | the message box                             |
-| `chat-tools`          | the Tools button                            |
-| `chat-model`          | the model picker                            |
-| `chat-send`           | the Send button                             |
-| `connectors-add`      | the Add connector button                    |
-| `connectors-endpoint` | the MCP endpoint block                      |
-| `admin-sections`      | the Organization page's area grid           |
+| anchor                | element                                |
+| --------------------- | -------------------------------------- |
+| `nav-menu-button`     | the hamburger                          |
+| `nav-workspace`       | the Workspace group in the menu column |
+| `nav-chat`            | the Chat group in the menu column      |
+| `nav-account`         | the avatar button                      |
+| `account-tutorials`   | the Tutorials item in the account menu |
+| `home-feed`           | the actionable-items heading block     |
+| `agents-new`          | the New agent button                   |
+| `agents-import`       | the Import button                      |
+| `agents-list`         | the list of agents                     |
+| `chat-composer`       | the message box                        |
+| `chat-tools`          | the Tools button                       |
+| `chat-model`          | the model picker                       |
+| `chat-send`           | the Send button                        |
+| `connectors-add`      | the Add connector button               |
+| `connectors-endpoint` | the MCP endpoint block                 |
+| `admin-sections`      | the Organization page's area grid      |
 
 A missing or hidden target (the nav column is a drawer on a phone) degrades
 to a centred card with no spotlight, so a tour never blocks on layout.
@@ -145,7 +145,7 @@ and unit tests green on its own.
 
 - [x] 0. Environment: local Postgres 16 + pgvector, `.env.development`,
       migrations run, baseline Playwright spec passes in the container.
-- [ ] 1. Storage: migration `114-coach-mark-progress`, `EXPECTED_MIGRATIONS`,
+- [x] 1. Storage: migration `114-coach-mark-progress`, `EXPECTED_MIGRATIONS`,
       `db.types.ts` regenerated; `coach_marks` preference in
       `@renkei/user-prefs` (+ parser test); preferences route accepts it.
 - [ ] 2. Registry + engine: `lib/coach-marks/{types,tours,select,anchor}.ts`,

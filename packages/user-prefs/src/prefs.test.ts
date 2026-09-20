@@ -21,6 +21,8 @@ import {
   DEFAULT_THEME_PREFS,
   parseVoicePrefs,
   DEFAULT_VOICE_PREFS,
+  parseCoachMarkPrefs,
+  DEFAULT_COACH_MARK_PREFS,
   type NotificationPrefs,
   type DeliveryPrefs,
 } from './prefs';
@@ -389,5 +391,21 @@ describe('parseVoicePrefs', () => {
     expect(parseVoicePrefs({ pushToTalk: 'yes' }).pushToTalk).toBe(false);
     expect(parseVoicePrefs({ accent: 'plaid' }).accent).toBe('rainbow');
     expect(parseVoicePrefs({ userAccent: 'plaid' }).userAccent).toBe('emerald');
+  });
+});
+
+describe('parseCoachMarkPrefs', () => {
+  it('defaults an absent or malformed row to auto-start on', () => {
+    expect(parseCoachMarkPrefs(undefined)).toEqual(DEFAULT_COACH_MARK_PREFS);
+    expect(parseCoachMarkPrefs(null)).toEqual(DEFAULT_COACH_MARK_PREFS);
+    expect(parseCoachMarkPrefs(false)).toEqual(DEFAULT_COACH_MARK_PREFS);
+    expect(parseCoachMarkPrefs([false]).autoStart).toBe(true);
+    expect(parseCoachMarkPrefs({}).autoStart).toBe(true);
+  });
+
+  it('keeps a real choice, and only a boolean counts as one', () => {
+    expect(parseCoachMarkPrefs({ autoStart: false })).toEqual({ autoStart: false });
+    expect(parseCoachMarkPrefs({ autoStart: true })).toEqual({ autoStart: true });
+    expect(parseCoachMarkPrefs({ autoStart: 'no' })).toEqual({ autoStart: true });
   });
 });

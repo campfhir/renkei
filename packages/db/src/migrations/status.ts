@@ -143,6 +143,7 @@ export const EXPECTED_MIGRATIONS = [
   '111-chat-auto-mode',
   '112-chat-subagent-runs',
   '113-chat-turn-subagent-usage-backfill',
+  '114-coach-mark-progress',
 ];
 
 export interface MigrationStatus {
