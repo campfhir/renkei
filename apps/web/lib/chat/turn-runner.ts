@@ -172,6 +172,27 @@ export const SILENT_REPLY_NUDGE =
   'Your last reply stopped without saying anything to the person or calling a tool — it only got as far as thinking. Answer them directly now.';
 
 /**
+ * How many times a model call that failed before it produced a single byte
+ * — no block_start ever reached the channel — is retried on a fresh
+ * connection before the turn gives up on it. This is aimed squarely at the
+ * gap a tool permission ask leaves behind: the wait can run anywhere from
+ * a couple of seconds to the whole permissionWaitMs budget with no traffic
+ * to the model provider at all, and a pooled HTTP connection idle that
+ * long is exactly the kind a gateway or load balancer between us and the
+ * provider has often already dropped. The next request reusing it then
+ * fails immediately — not because the model or the request was bad, but
+ * because the wire underneath it was stale. Retrying is safe here
+ * specifically because nothing was shown to the person yet to contradict;
+ * bounded so a genuinely unreachable provider still fails the turn rather
+ * than retrying forever.
+ */
+const MAX_MODEL_CALL_RETRIES = 1;
+
+/** Error kinds worth that retry: a transport-level hiccup, not the provider
+ *  actually answering "no". */
+const RETRYABLE_MODEL_ERROR_KINDS = new Set<LlmErrorKind>(['network', 'provider_error']);
+
+/**
  * The turn's permission policy. Absent, nothing asks — the runner then
  * runs every call as it always did, which is what a test against fakes
  * and a caller with its own gate want. Present, every call the runner
@@ -919,8 +940,6 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       }
       iterations += 1;
 
-      const controller = new AbortController();
-      channel.onCancel(() => controller.abort());
       // A block's final form (tool input parsed) is what the accumulator
       // holds; mirror it to the view on block_stop.
       const mirror = (event: LlmStreamEvent) => {
@@ -1004,21 +1023,48 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       };
 
       stage = 'model';
-      const result = await streamOrComplete(
-        llm.provider,
-        {
-          system: input.system,
-          messages,
-          tools: activeTools,
-          ...(activeTools.length > 0 ? { toolChoice: 'auto' as const } : {}),
-          maxTokens: llm.maxOutputTokens,
-          ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
-          ...(input.thinkingBudget ? { thinking: { budgetTokens: input.thinkingBudget } } : {}),
-          promptCache: true,
-          timeoutMs: 300_000,
-        },
-        { onEvent: mirror, signal: controller.signal }
-      );
+      // Assigned unconditionally on every loop entry below, before any
+      // break — never read until after that first assignment has run.
+      let result!: Awaited<ReturnType<typeof streamOrComplete>>;
+      for (let attempt = 0; ; attempt += 1) {
+        const controller = new AbortController();
+        channel.onCancel(() => controller.abort());
+        result = await streamOrComplete(
+          llm.provider,
+          {
+            system: input.system,
+            messages,
+            tools: activeTools,
+            ...(activeTools.length > 0 ? { toolChoice: 'auto' as const } : {}),
+            maxTokens: llm.maxOutputTokens,
+            ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
+            ...(input.thinkingBudget ? { thinking: { budgetTokens: input.thinkingBudget } } : {}),
+            promptCache: true,
+            timeoutMs: 300_000,
+          },
+          { onEvent: mirror, signal: controller.signal }
+        );
+        if (result.ok) break;
+        if (result.err.type === 'aborted' || cancelRequested) break;
+        // Nothing reached the channel for this attempt (blocks is still
+        // whatever startNextAssistant left it as — see MAX_MODEL_CALL_RETRIES),
+        // the failure is the transport's own kind, and there is budget left:
+        // one more try on a fresh connection before this counts as a real
+        // failure.
+        if (
+          blocks.length > 0 ||
+          !RETRYABLE_MODEL_ERROR_KINDS.has(result.err.type) ||
+          attempt >= MAX_MODEL_CALL_RETRIES
+        ) {
+          break;
+        }
+        log('chat turn model call failed before any output; retrying ({attempt} of {max}): {kind}', {
+          attempt: attempt + 1,
+          max: MAX_MODEL_CALL_RETRIES,
+          kind: result.err.type,
+          message: result.err.message ?? '',
+        });
+      }
       stage = null;
 
       if (!result.ok) {
