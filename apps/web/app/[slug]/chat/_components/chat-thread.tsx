@@ -737,36 +737,26 @@ export default function ChatThread({
           <>
             {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
             {isOwner ? (
-              <ToolsPopover
-                tenantId={tenantId}
-                selected={connectors}
-                onChange={changeConnectors}
-                slug={slug}
-                locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
-                kind={codeProjectId ? 'code' : 'chat'}
-              />
-            ) : null}
-            <Link
-              href={`/${slug}/chat/new${chat.projectId ? `?project=${chat.projectId}` : ''}`}
-              prefetch={false}
-              aria-label="New chat"
-              title="New chat"
-              className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-            >
-              <Icon path={ICONS.plus} className="h-4 w-4" strokeWidth={2.4} />
-              <span>New chat</span>
-            </Link>
-            {isOwner ? (
-              <button
-                type="button"
-                onClick={() => setShare(true)}
-                aria-label="Share chat"
-                title="Share"
-                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-              >
-                <Icon path={ICONS.share} className="h-4 w-4" />
-                <span>Share</span>
-              </button>
+              <>
+                <ToolsPopover
+                  tenantId={tenantId}
+                  selected={connectors}
+                  onChange={changeConnectors}
+                  slug={slug}
+                  locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+                  kind={codeProjectId ? 'code' : 'chat'}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShare(true)}
+                  aria-label="Share chat"
+                  title="Share"
+                  className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+                >
+                  <Icon path={ICONS.share} className="h-4 w-4" />
+                  <span>Share</span>
+                </button>
+              </>
             ) : null}
           </>
         )}
