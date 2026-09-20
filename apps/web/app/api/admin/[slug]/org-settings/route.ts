@@ -12,7 +12,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { getOrgSettings, setOrgSettings, type OrgSettings } from '@renkei/settings';
+import {
+  getOrgSettings,
+  setOrgSettings,
+  isLogLevel,
+  LOG_LEVELS,
+  type OrgSettings,
+  type LogLevel,
+} from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 
@@ -88,12 +95,13 @@ const NUMERIC_KEYS = [
 
 const BOOLEAN_KEYS = ['readOnly', 'enableDcr', 'knowledgeKeywordEnrichment'] as const;
 
-type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number];
+type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number] | 'logLevel';
 
-function editable(settings: OrgSettings): Record<EditableKey, boolean | number> {
+function editable(settings: OrgSettings): Record<EditableKey, boolean | number | LogLevel> {
   return {
     readOnly: settings.readOnly,
     enableDcr: settings.enableDcr,
+    logLevel: settings.logLevel,
     maxJqlResults: settings.maxJqlResults,
     maxAttachmentBytes: settings.maxAttachmentBytes,
     rateLimitPerUserPerMinute: settings.rateLimitPerUserPerMinute,
@@ -161,7 +169,10 @@ export async function PUT(
   const before = editable(current.val);
 
   const updates: Partial<OrgSettings> = {};
-  const changed: Record<string, { from: boolean | number; to: boolean | number }> = {};
+  const changed: Record<
+    string,
+    { from: boolean | number | LogLevel; to: boolean | number | LogLevel }
+  > = {};
 
   for (const key of BOOLEAN_KEYS) {
     if (!(key in submitted)) continue;
@@ -185,6 +196,20 @@ export async function PUT(
     if (clamped !== before[key]) {
       updates[key] = clamped;
       changed[key] = { from: before[key], to: clamped };
+    }
+  }
+
+  if ('logLevel' in submitted) {
+    const value = submitted.logLevel;
+    if (!isLogLevel(value)) {
+      return NextResponse.json(
+        { error: `logLevel must be one of: ${LOG_LEVELS.join(', ')}` },
+        { status: 400 }
+      );
+    }
+    if (value !== before.logLevel) {
+      updates.logLevel = value;
+      changed.logLevel = { from: before.logLevel, to: value };
     }
   }
 

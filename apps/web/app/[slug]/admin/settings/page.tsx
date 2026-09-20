@@ -61,6 +61,7 @@ export default async function SettingsPage({
   const initial: EditableSettings = {
     readOnly: settings.readOnly,
     enableDcr: settings.enableDcr,
+    logLevel: settings.logLevel,
     maxJqlResults: settings.maxJqlResults,
     maxAttachmentBytes: settings.maxAttachmentBytes,
     rateLimitPerUserPerMinute: settings.rateLimitPerUserPerMinute,
