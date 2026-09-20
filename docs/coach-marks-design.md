@@ -56,6 +56,13 @@ it — so an operator can report on adoption.
    offers "Don't show tutorials" which turns the person's preference off.
    Both are reversible from the Tutorials page.
 
+   **And an escape hatch above both.** The org setting `coachMarksEnabled`
+   (Organization → Settings → Guided tours, on by default) takes every
+   tour down for everyone at once, without a deploy: the engine mounts
+   inert, `?tour=` links do nothing, the Tutorials door leaves the account
+   menu and the Tutorials page says why. For a tour that misbehaves —
+   an overlay in front of a page is the worst kind of bug to leave up.
+
 5. **The Tutorials page** (`/[slug]/tutorials`, in the account menu) lists
    every tour the person may see with its status — Not started, In
    progress, Completed, Skipped — and a Start/Replay button, plus the
@@ -179,3 +186,17 @@ and unit tests green on its own.
 - [x] 6. Playwright spec with screenshots (desktop-light, desktop-dark,
       mobile); seed sets the shared user's preference off.
 - [x] 7. Docs: as-built notes in `mcp-gateway.md` and `architecture.md`; this file's status updated.
+- [x] 8. Registry: components register anchors (`useCoachAnchor`), tours
+      declare `requires`; reports stamped with the browser's clock;
+      `coach-mark-coverage.md` + its test.
+- [x] 9. Escape hatch: `coachMarksEnabled` org setting, settings-page
+      toggle, inert engine + closed Tutorials door; `coach-marks-off.spec.ts`.
+- [ ] 10. Fill the inventory, one batch per commit, each batch = anchors +
+      tours (split into `lib/coach-marks/tours/<area>.ts`) + coverage rows + the tour-walk spec (`coach-marks-walk.spec.ts`: every tour started
+      by id, stepped through, each step captured). Tours gain an `area`
+      for grouping on the Tutorials page; the report's per-person grid
+      becomes counts per person. - [ ] 10a. Workspace: agent builder, agent detail + runs, knowledge, files. - [ ] 10b. Chat: composer extras, thread menu + sharing, permission
+      ask, projects, prompt libraries, memory, code projects. - [ ] 10c. Account: notifications, preferences, batch jobs, tools
+      usage, my usage, activity, about. - [ ] 10d. Connectors: the add-connector modal and one tour per
+      card (Jira, JSM, Confluence, Bitbucket, Microsoft, WebEx,
+      Zoom, OnBase, OnBase admin, file shares, Mirth, sandbox secrets). - [ ] 10e. Organization console: one tour per area.

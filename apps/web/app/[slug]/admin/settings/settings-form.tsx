@@ -11,6 +11,7 @@ type LogLevel = (typeof LOG_LEVELS)[number];
 
 export interface EditableSettings {
   readOnly: boolean;
+  coachMarksEnabled: boolean;
   enableDcr: boolean;
   logLevel: LogLevel;
   maxJqlResults: number;
@@ -187,6 +188,16 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
             on={values.readOnly}
             onChange={(next) => set('readOnly', next)}
             label="Read-only mode"
+          />
+        </Row>
+        <Row
+          label="Guided tours"
+          hint="The coach marks that walk people through a page. Off takes every tour down for everyone at once — nothing starts on its own, and nobody can start one from Tutorials — the brake to pull if a tour misbehaves."
+        >
+          <Toggle
+            on={values.coachMarksEnabled}
+            onChange={(next) => set('coachMarksEnabled', next)}
+            label="Guided tours"
           />
         </Row>
       </Section>

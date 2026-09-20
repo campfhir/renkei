@@ -29,6 +29,8 @@ export const CoachAnchorContext = createContext<RegisterAnchor | null>(null);
 export interface CoachMarkContextValue {
   /** The tour on screen, if any. */
   active: { tourId: string; index: number } | null;
+  /** The org's switch: off, no tour runs for anyone and the Tutorials door is closed. */
+  enabled: boolean;
   /** Whether tours may start unasked for this person. */
   autoStart: boolean;
   /** The person's rows, as this engine last knew them. */

@@ -110,6 +110,7 @@ export default function CoachMarkProvider({
   slug,
   tenantId,
   isOperator,
+  enabled,
   autoStart: initialAutoStart,
   progress: initialProgress,
   children,
@@ -117,6 +118,8 @@ export default function CoachMarkProvider({
   slug: string;
   tenantId: string;
   isOperator: boolean;
+  /** The org's switch. Off, nothing starts — unasked or by hand — and nothing draws. */
+  enabled: boolean;
   autoStart: boolean;
   progress: CoachMarkProgressView[];
   children: ReactNode;
@@ -226,7 +229,7 @@ export default function CoachMarkProvider({
   // Whenever the page or the anchors on it change: a requested tour
   // first, else one that starts unasked.
   useEffect(() => {
-    if (activeRef.current) return;
+    if (!enabled || activeRef.current) return;
     const path = slugRelativePath(pathname, slug);
 
     const pending = readPending();
@@ -263,7 +266,7 @@ export default function CoachMarkProvider({
     // `progress` and `autoStart` are read when the page or its anchors
     // change, not re-run as they move — a tour just finished here must not
     // restart.
-  }, [pathname, mounted, slug, isOperator, begin, router]);
+  }, [pathname, mounted, slug, isOperator, enabled, begin, router]);
 
   const next = useCallback(() => {
     const current = activeRef.current;
@@ -320,7 +323,7 @@ export default function CoachMarkProvider({
   const startTour = useCallback(
     (tourId: string) => {
       const tour = tourById(tourId);
-      if (!tour) return;
+      if (!tour || !enabled) return;
       if (isEligible(tour, slugRelativePath(pathname, slug), mounted)) {
         begin(tour, true);
         return;
@@ -332,26 +335,27 @@ export default function CoachMarkProvider({
       }
       router.push(`/${slug}${tour.startPath}`);
     },
-    [pathname, slug, mounted, begin, router]
+    [pathname, slug, mounted, enabled, begin, router]
   );
 
   const value = useMemo<CoachMarkContextValue>(
     () => ({
       active: active ? { tourId: active.tour.id, index: active.index } : null,
+      enabled,
       autoStart,
       progress,
       mounted,
       startTour,
       setAutoStart,
     }),
-    [active, autoStart, progress, mounted, startTour, setAutoStart]
+    [active, enabled, autoStart, progress, mounted, startTour, setAutoStart]
   );
 
   return (
     <CoachAnchorContext.Provider value={registerAnchor}>
       <CoachMarkContext.Provider value={value}>
         {children}
-        {active ? (
+        {active && enabled ? (
           <CoachMarkOverlay
             tour={active.tour}
             index={active.index}

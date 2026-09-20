@@ -60,6 +60,7 @@ export default async function SettingsPage({
   const settings = settingsResult.val;
   const initial: EditableSettings = {
     readOnly: settings.readOnly,
+    coachMarksEnabled: settings.coachMarksEnabled,
     enableDcr: settings.enableDcr,
     logLevel: settings.logLevel,
     maxJqlResults: settings.maxJqlResults,

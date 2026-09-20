@@ -2,6 +2,7 @@ import React from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getCoachMarkPrefs } from '@renkei/user-prefs';
+import { getOrgSettings } from '@renkei/settings';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -34,10 +35,27 @@ export default async function TutorialsPage({
   const isOperator = session.roles.includes(ROLE_OPERATOR);
 
   const dbResult = getDatabase();
-  const [prefs, progress] = await Promise.all([
+  const [prefs, progress, orgSettings] = await Promise.all([
     getCoachMarkPrefs(tenant.id, session.subject, { fresh: true }),
     dbResult.ok ? listCoachMarkProgress(dbResult.val, tenant.id, session.subject) : [],
+    getOrgSettings(tenant.id),
   ]);
+  // The org's switch is off: say so, and offer nothing — a Start button
+  // that did nothing would be worse than no button.
+  if (orgSettings.ok && !orgSettings.val.coachMarksEnabled) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <h1 className="mb-1 text-xl font-bold">Tutorials</h1>
+        <p
+          data-testid="tutorials-off"
+          className="rounded-lg border border-dashed border-gray-300 p-6 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-400"
+        >
+          Guided tours are switched off for this organization. An operator can turn them back on
+          under Organization → Settings.
+        </p>
+      </div>
+    );
+  }
 
   // Functions do not cross to the client; the list gets the data of each tour.
   const tours = toursFor(COACH_MARK_TOURS, isOperator).map((tour) => ({

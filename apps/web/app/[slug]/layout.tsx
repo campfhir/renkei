@@ -9,6 +9,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { PATHNAME_HEADER, safeReturnPath } from '@/lib/return-path';
 import { getCoachMarkPrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { getDatabase } from '@renkei/db';
+import { getOrgSettings } from '@renkei/settings';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { listCoachMarkProgress } from '@/lib/coach-marks/store';
 import CoachMarkProvider from '@/components/coach-marks/provider';
@@ -72,6 +73,12 @@ export default async function TenantLayout({
   const prefs = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
   const theme = await getThemePrefs(tenant.id, session.subject, { fresh: true });
   const coachMarks = await getCoachMarkPrefs(tenant.id, session.subject, { fresh: true });
+  // The org's switch for the tours (the escape hatch) — off, the engine
+  // mounts inert and the Tutorials door goes away. A settings read that
+  // fails reads as on: the switch is for a misbehaving tour, not a
+  // misbehaving database.
+  const orgSettings = await getOrgSettings(tenant.id);
+  const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;
 
   // The menu carries the person's chats on every page, and the coach-mark
   // engine needs to know which tours this person has already settled.
@@ -109,6 +116,7 @@ export default async function TenantLayout({
             slug={tenant.slug}
             tenantId={tenant.id}
             isOperator={isOperator}
+            enabled={coachMarksEnabled}
             autoStart={coachMarks.autoStart}
             progress={coachMarkProgress}
           >

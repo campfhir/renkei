@@ -9,6 +9,7 @@ import { useNotifications } from '@/components/notification-center';
 import { useMediaQuery } from '@/lib/use-media-query';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 import { useCoachAnchor, type CoachAnchorProps } from '@/components/coach-marks/anchor';
+import { useCoachMarks } from '@/components/coach-marks/context';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
 
@@ -89,6 +90,8 @@ export default function AppNav({
   const [menuOpen, setMenuOpen] = useState(false);
   // Reads the layout's poller for the badge on the avatar.
   const { unread } = useNotifications();
+  // The Tutorials door only exists while the org has the tours switched on.
+  const { enabled: toursEnabled } = useCoachMarks();
   const [signingOut, setSigningOut] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
@@ -208,12 +211,16 @@ export default function AppNav({
       { href: `/${slug}/preferences`, label: 'Preferences', icon: ICONS.sliders },
       { href: `/${slug}/connectors`, label: 'Connectors', icon: ICONS.plug },
       // The tours: replay one, or turn off the ones that start unasked.
-      {
-        href: `/${slug}/tutorials`,
-        label: 'Tutorials',
-        icon: ICONS.bulb,
-        coach: 'account-tutorials',
-      },
+      ...(toursEnabled
+        ? [
+            {
+              href: `/${slug}/tutorials`,
+              label: 'Tutorials',
+              icon: ICONS.bulb,
+              coach: 'account-tutorials' as const,
+            },
+          ]
+        : []),
     ],
     [
       { href: `/${slug}/batch-jobs`, label: 'Batch jobs', icon: ICONS.layers },
