@@ -10,6 +10,8 @@ export const ICONS = {
   pencil: 'M17 3l4 4L8 20l-5 1 1-5zM15 5l4 4',
   clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+  /** A lidded box — putting a chat away without deleting it. */
+  archive: 'M3 4h18v4H3zM5 8v12h14V8M10 12h4',
   share: 'M12 3v12M8 7l4-4 4 4M5 11v9h14v-9',
   /** A padlock — something on that cannot be turned off here. */
   lock: 'M6 11h12v10H6zM9 11V7a3 3 0 0 1 6 0v4',
