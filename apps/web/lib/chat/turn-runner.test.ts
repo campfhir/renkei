@@ -1018,6 +1018,37 @@ describe('runChatTurn permissions', () => {
     expect(watched.events.some((event) => event.type === 'tool_call_start')).toBe(false);
   });
 
+  it('retries a model call that fails before any output right after a denial', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p5b');
+    const calls: string[] = [];
+    let modelCalls = 0;
+    // The reply that follows the tool round is a pooled connection's first
+    // use since the ask started — exactly what a gateway between us and
+    // the provider tends to have quietly dropped by the time a person
+    // actually gets to Deny. It fails outright, before a single byte
+    // reaches the channel; the runner should retry it rather than fail
+    // the whole turn over a refusal the person just answered correctly.
+    const staleThenFine: LlmProvider = {
+      async complete() {
+        modelCalls += 1;
+        if (modelCalls === 1) return ok(act('tu_1'));
+        if (modelCalls === 2) return err('network' as const, { message: 'stale connection' });
+        return ok(text('Understood'));
+      },
+    };
+    const run = runChatTurn(
+      deps(fake, channel, [], calls, { llm: llmOf(staleThenFine) }),
+      inputFor('turn-p5b')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    fake.decideOnRow('deny');
+    const outcome = await run;
+    expect(outcome.status).toBe('completed');
+    expect(modelCalls).toBe(3);
+    expect(calls).toEqual([]);
+  });
+
   it('gives up waiting when the permission budget runs out, without failing the turn', async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-p6');
