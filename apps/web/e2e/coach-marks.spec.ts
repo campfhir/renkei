@@ -266,7 +266,11 @@ test('the Tutorials page lists every tour with its state and replays one', async
 }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents`);
   await page.getByRole('button', { name: 'Account menu' }).click();
-  await page.getByRole('menu').getByRole('menuitem', { name: 'Tutorials' }).click();
+  const menu = page.getByRole('menu');
+  // The door: Tutorials sits with the person's own settings, behind the avatar.
+  await expect(menu.getByRole('menuitem', { name: 'Tutorials' })).toBeVisible();
+  await shot(page, testInfo, 'coach-account-menu');
+  await menu.getByRole('menuitem', { name: 'Tutorials' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Tutorials' })).toBeVisible();
 
   await expect(page.getByTestId('tutorial-welcome')).toContainText('Completed');
