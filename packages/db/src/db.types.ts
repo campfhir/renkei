@@ -559,6 +559,16 @@ export interface CoachMarkProgress {
   view_count: Generated<number>;
 }
 
+export interface CodeProjectTemplates {
+  created_at: Generated<Timestamp>;
+  description: string | null;
+  id: Generated<string>;
+  instructions: string;
+  name: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ConnectorConfigs {
   connector: string;
   created_at: Generated<Timestamp>;
@@ -1296,6 +1306,7 @@ export interface DB {
   chat_user_memories: ChatUserMemories;
   chats: Chats;
   coach_mark_progress: CoachMarkProgress;
+  code_project_templates: CodeProjectTemplates;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
   email_classification_log: EmailClassificationLog;
