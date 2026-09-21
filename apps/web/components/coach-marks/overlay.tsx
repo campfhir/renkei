@@ -15,12 +15,17 @@
  * geometry is what makes the light slide from one step to the next.
  *
  * A target is looked for rather than assumed: pages hydrate, the chat's
- * composer mounts after its thread, and a step may have just navigated.
- * When nothing visible answers within a moment — the menu column is a
- * drawer on a phone, and an anchor a page never rendered is still a valid
- * tour — the card sits centred with no spotlight, and the looking goes on
- * more slowly in case the page is merely late. Every step's copy is
- * written to survive the centred case.
+ * composer mounts after its thread, a step may have just navigated, and
+ * an anchor the menu carries is off screen until the nav opens its
+ * drawer for the step (nav.tsx watches `activeTarget` for that). So the
+ * looking is not one question but a watch: the registry is asked at
+ * once, again as anchors register, and on the same beat that keeps the
+ * spotlight in place, until something visible answers. The page is
+ * dimmed meanwhile. When nothing has answered within a moment — an
+ * anchor a page never rendered is still a valid tour — the card sits
+ * centred with no spotlight, and moves beside the target should it turn
+ * up after all. Every step's copy is written to survive the centred
+ * case.
  *
  * The page underneath does not take clicks while a step is up. A tour is
  * a caption for a workflow, not a mode in which to perform it; letting a
@@ -46,6 +51,8 @@ interface Box {
 const SPOT_PAD = 6;
 const GAP = 12;
 const MARGIN = 16;
+/** The sticky top bar (nav.tsx's h-14) that a target scrolled to the top must clear. */
+const TOP_BAR = 56;
 /** How long a step waits for its target to register before showing the card centred. */
 const LOOK_FOR_MS = 2000;
 
@@ -60,6 +67,38 @@ function boxOf(element: Element): Box {
 }
 
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
+
+/**
+ * Bring a found target into view. Centred, as a rule; a target taller than
+ * the screen (a settings grid, the console's areas) is brought to the
+ * top instead, just under the top bar, so what it starts with — its
+ * heading — is what is read, rather than its middle.
+ */
+function scrollTo(element: Element): void {
+  const tall = element.getBoundingClientRect().height > window.innerHeight - TOP_BAR - MARGIN;
+  element.scrollIntoView({ block: tall ? 'start' : 'center', inline: 'nearest' });
+  if (!tall) return;
+  const top = element.getBoundingClientRect().top;
+  if (top < TOP_BAR + MARGIN) window.scrollBy({ top: top - TOP_BAR - MARGIN });
+}
+
+/**
+ * On a narrow screen the card spans the width at the top or the bottom
+ * edge. The bottom, as a rule — the top of a target is its heading, and
+ * a card there hides what the target is — unless the bottom would cover
+ * more than twice as much of the spotlight (the Chat group in the
+ * drawer, which runs on down the screen).
+ */
+function narrowEdgeFor(spot: Box, cardHeight: number): 'top' | 'bottom' {
+  const vh = window.innerHeight;
+  const bottom = spot.top + spot.height;
+  const atTop = Math.max(0, Math.min(bottom, MARGIN + cardHeight) - Math.max(spot.top, MARGIN));
+  const atBottom = Math.max(
+    0,
+    Math.min(bottom, vh - MARGIN) - Math.max(spot.top, vh - MARGIN - cardHeight)
+  );
+  return atTop * 2 < atBottom ? 'top' : 'bottom';
+}
 
 /**
  * Where the card goes beside its spotlight: the preferred side when it
@@ -154,6 +193,7 @@ export default function CoachMarkOverlay({
   const [spot, setSpot] = useState<Box | null>(null);
   const [looked, setLooked] = useState(false);
   const [cardPos, setCardPos] = useState<{ top: number; left: number } | null>(null);
+  const [narrowEdge, setNarrowEdge] = useState<'top' | 'bottom'>('bottom');
 
   // A new step: forget the last target and start looking afresh.
   useEffect(() => {
@@ -164,29 +204,39 @@ export default function CoachMarkOverlay({
     if (!step.target) setLooked(true);
   }, [step.target, index, tour.id]);
 
-  // Ask the registry for the step's target — again whenever an anchor
-  // registers, which is how a page that renders late is caught without
-  // polling. Nothing on screen after a moment: the card goes centred, and
-  // moves beside the target should it register after all.
-  useEffect(() => {
-    if (!step.target) return;
+  /** Ask the registry for the step's target; true once something visible holds it. */
+  const look = useCallback((): boolean => {
+    if (!step.target) return false;
     const found = resolveAnchor(step.target);
-    if (found) {
-      if (targetRef.current === found) return;
+    if (!found) return false;
+    if (targetRef.current !== found) {
       targetRef.current = found;
-      found.scrollIntoView({ block: 'center', inline: 'nearest' });
+      scrollTo(found);
       setSpot(boxOf(found));
-      setLooked(true);
-      return;
     }
+    setLooked(true);
+    return true;
+  }, [step.target, resolveAnchor]);
+
+  // Look at once, and again whenever an anchor registers — how a page
+  // that renders late is caught. Nothing on screen after a moment: the
+  // card goes centred. (`refresh` below keeps looking either way.)
+  useEffect(() => {
+    if (!step.target || look()) return;
     const timer = setTimeout(() => setLooked(true), LOOK_FOR_MS);
     return () => clearTimeout(timer);
-  }, [step.target, index, tour.id, resolveAnchor, anchorsVersion]);
+  }, [step.target, index, tour.id, look, anchorsVersion]);
 
-  // Keep the spotlight on the target as the page moves under it.
+  // Keep the spotlight on the target as the page moves under it — and,
+  // while nothing is held, keep looking: an anchor that registered long
+  // ago but sat off screen (the menu's, until its drawer opens) registers
+  // nothing when it comes into view, so only a look would find it.
   const refresh = useCallback(() => {
     const element = targetRef.current;
-    if (!element) return;
+    if (!element) {
+      look();
+      return;
+    }
     if (!element.isConnected || !isVisible(element)) {
       targetRef.current = null;
       setSpot(null);
@@ -202,7 +252,7 @@ export default function CoachMarkOverlay({
         ? current
         : next;
     });
-  }, []);
+  }, [look]);
   useEffect(() => {
     window.addEventListener('resize', refresh);
     window.addEventListener('scroll', refresh, true);
@@ -216,11 +266,16 @@ export default function CoachMarkOverlay({
 
   // Place the card once it has a size and the spotlight has a place.
   useLayoutEffect(() => {
-    if (!spot || narrow || !cardRef.current) {
+    if (!spot || !cardRef.current) {
       setCardPos(null);
       return;
     }
     const rect = cardRef.current.getBoundingClientRect();
+    if (narrow) {
+      setCardPos(null);
+      setNarrowEdge(narrowEdgeFor(spot, rect.height));
+      return;
+    }
     setCardPos(
       placeCard(spot, { width: rect.width, height: rect.height }, step.placement ?? 'auto')
     );
@@ -250,13 +305,28 @@ export default function CoachMarkOverlay({
     return () => window.removeEventListener('keydown', onKey);
   }, [onSkip, onNext, onBack, index]);
 
-  if (!mounted || !looked) return null;
+  if (!mounted) return null;
+
+  // Still looking: the page is dimmed and takes no clicks, as it will
+  // once the card is up, so a step does not flash the page in between.
+  if (!looked) {
+    return createPortal(
+      <div
+        data-testid="coach-mark-layer"
+        className="fixed inset-0 z-[60] bg-black/55"
+        aria-hidden="true"
+      />,
+      document.body
+    );
+  }
 
   const centred = spot === null;
   const cardStyle = centred
     ? undefined
     : narrow
-      ? { left: MARGIN, right: MARGIN, bottom: MARGIN }
+      ? narrowEdge === 'top'
+        ? { left: MARGIN, right: MARGIN, top: MARGIN }
+        : { left: MARGIN, right: MARGIN, bottom: MARGIN }
       : cardPos
         ? { top: cardPos.top, left: cardPos.left }
         : { top: MARGIN, left: MARGIN, visibility: 'hidden' as const };

@@ -17,8 +17,9 @@ import { ORGANIZATION_TOURS } from './organization';
  * order within each area, so the welcome tour leads.
  *
  * Copy is product text: short, second person, one idea per step. A step's
- * body should still make sense with the spotlight missing, because on a
- * phone the menu column is a drawer and the card falls back to the centre.
+ * body should still make sense with the spotlight missing, because a
+ * target only some pages or orgs have (the attach button needs storage)
+ * leaves the card centred where it is absent.
  *
  * Where a tour belongs is said by its `requires`: the anchors that have to
  * be mounted. The chat tour needs the composer, so it starts on a thread

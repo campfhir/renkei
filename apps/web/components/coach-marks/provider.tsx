@@ -346,6 +346,7 @@ export default function CoachMarkProvider({
   const value = useMemo<CoachMarkContextValue>(
     () => ({
       active: active ? { tourId: active.tour.id, index: active.index } : null,
+      activeTarget: active ? (active.tour.steps[active.index].target ?? null) : null,
       enabled,
       autoStart,
       progress,

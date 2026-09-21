@@ -168,14 +168,13 @@ test('the welcome tour greets a newcomer on the home page and records a completi
 
   await card.getByRole('button', { name: 'Next' }).click();
   await expect(card).toHaveAttribute('data-coach-step', 'workspace');
-  if (testInfo.project.name !== 'mobile') {
-    // The menu column is on screen: the light is on it.
-    await expect(page.getByTestId('coach-mark-spotlight')).toBeVisible();
-  } else {
-    // On a phone the column is a drawer, parked off screen: no spotlight,
-    // and the card is still readable — the copy is written for that.
-    await expect(page.getByTestId('coach-mark-spotlight')).toHaveCount(0);
-  }
+  // The menu is on screen and the light is on it — on a phone because the
+  // drawer opens for the step (the hamburger says so), on a desktop because
+  // the column stands there anyway.
+  const hamburger = page.getByRole('button', { name: /Open menu|Hide menu/ });
+  const mobile = testInfo.project.name === 'mobile';
+  if (mobile) await expect(hamburger).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByTestId('coach-mark-spotlight')).toBeVisible();
   await shot(page, testInfo, 'coach-welcome-3-workspace');
 
   // Back goes back; the arrow keys work too.
@@ -186,9 +185,14 @@ test('the welcome tour greets a newcomer on the home page and records a completi
 
   await card.getByRole('button', { name: 'Next' }).click();
   await expect(card).toHaveAttribute('data-coach-step', 'chat');
+  await expect(page.getByTestId('coach-mark-spotlight')).toBeVisible();
+  await shot(page, testInfo, 'coach-welcome-4-chat');
   await card.getByRole('button', { name: 'Next' }).click();
   await expect(card).toHaveAttribute('data-coach-step', 'account');
   await expect(page.getByTestId('coach-mark-spotlight')).toBeVisible();
+  // The avatar is in the top bar, not the menu: the drawer the tour opened
+  // has gone again.
+  if (mobile) await expect(hamburger).toHaveAttribute('aria-expanded', 'false');
   await shot(page, testInfo, 'coach-welcome-5-account');
 
   await card.getByRole('button', { name: 'Next' }).click();

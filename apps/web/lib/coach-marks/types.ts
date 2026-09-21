@@ -18,7 +18,9 @@ export interface CoachMarkStep {
   /**
    * The anchor to spotlight. Absent, the card sits centred with no
    * spotlight — an intro or a wrap-up. A target that is not on the page
-   * (or is hidden, as the menu column is on a phone) degrades to the same.
+   * (a button only some orgs have) degrades to the same. One the menu
+   * carries is brought on screen for the step: the drawer opens on a
+   * phone, a hidden column comes back on a desktop.
    */
   target?: CoachAnchor;
   placement?: CoachMarkPlacement;

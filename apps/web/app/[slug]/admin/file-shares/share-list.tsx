@@ -66,37 +66,43 @@ export default function ShareList({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-4">
-      {shares.length === 0 && !draft ? (
-        <p className="text-sm text-gray-600 dark:text-gray-400">No shares registered yet.</p>
-      ) : null}
+      {/* The tour's anchor covers the note too, so the step has a target while the list is empty. */}
+      <div {...listAnchor} className="space-y-4">
+        {shares.length === 0 && !draft ? (
+          <p className="text-sm text-gray-600 dark:text-gray-400">No shares registered yet.</p>
+        ) : null}
 
-      <ul {...listAnchor} className="space-y-2">
-        {shares.map((share) => (
-          <li key={share.id} className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">
-                  {share.name}
-                  {!share.enabled ? (
-                    <span className="ml-2 rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                      disabled
-                    </span>
-                  ) : null}
-                </p>
-                <p className="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
-                  {targetOf(share)}
-                </p>
+        <ul className="space-y-2">
+          {shares.map((share) => (
+            <li
+              key={share.id}
+              className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {share.name}
+                    {!share.enabled ? (
+                      <span className="ml-2 rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        disabled
+                      </span>
+                    ) : null}
+                  </p>
+                  <p className="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+                    {targetOf(share)}
+                  </p>
+                </div>
+                <Link
+                  href={`/${slug}/admin/file-shares/${share.id}`}
+                  className="shrink-0 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Manage
+                </Link>
               </div>
-              <Link
-                href={`/${slug}/admin/file-shares/${share.id}`}
-                className="shrink-0 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-              >
-                Manage
-              </Link>
-            </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {draft ? (
         <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
