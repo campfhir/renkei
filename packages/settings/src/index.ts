@@ -232,6 +232,19 @@ export interface OrgSettings {
    * between paying per document and paying per message.
    */
   knowledgeKeywordMinChars: number;
+  /**
+   * How recent a page-presence ping (apps/web/components/
+   * notification-center.tsx, @renkei/notifications' presence.ts) must be,
+   * in seconds, for a chat reply to count as already watched live and skip
+   * its desktop notification entirely — no feed row, no push. 0 turns the
+   * check off: every reply notifies, the behavior before this existed.
+   * Kept short on purpose — this is only meant to catch "the tab is open
+   * on this exact chat right now", not "was here a while ago" — but tuned
+   * per org since it has to clear the ping cadence (~20s while a page is
+   * visible) with room for network jitter, or a genuinely-watching person
+   * would still get notified.
+   */
+  chatReplyPresenceWindowSeconds: number;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -270,6 +283,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   knowledgeKeywordEnrichment: false,
   coachMarksEnabled: true,
   knowledgeKeywordMinChars: 500,
+  chatReplyPresenceWindowSeconds: 30,
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -406,6 +420,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     knowledgeKeywordMinChars: Number(
       coerce(stored.get('knowledge_keyword_min_chars'), d.knowledgeKeywordMinChars)
     ),
+    chatReplyPresenceWindowSeconds: Number(
+      coerce(stored.get('chat_reply_presence_window_seconds'), d.chatReplyPresenceWindowSeconds)
+    ),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -455,6 +472,7 @@ export async function setOrgSettings(
     ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
     ['coach_marks_enabled', updates.coachMarksEnabled],
     ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
+    ['chat_reply_presence_window_seconds', updates.chatReplyPresenceWindowSeconds],
   ];
 
   for (const [key, value] of pairs) {

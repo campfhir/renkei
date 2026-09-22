@@ -18,3 +18,5 @@ export {
 } from './send';
 
 export { isExternalNotificationUrl, isWebUrl } from './targets';
+
+export { pingPresence, wasRecentlyPresent, deleteStalePresencePings } from './presence';

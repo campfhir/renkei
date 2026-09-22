@@ -68,6 +68,10 @@ const NUMERIC_BOUNDS = {
   // the 12k chars the extractor shows the model, so a typo cannot turn
   // enrichment into a no-op that looks switched on.
   knowledgeKeywordMinChars: [0, 100_000],
+  // 0 = off (every chat reply notifies, no presence check at all). 300 is
+  // the typo guard — past a few minutes "recently pinged" stops meaning
+  // anything the check is for.
+  chatReplyPresenceWindowSeconds: [0, 300],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -91,6 +95,7 @@ const NUMERIC_KEYS = [
   'chatRetentionDays',
   'agentOptimizerWindowDays',
   'knowledgeKeywordMinChars',
+  'chatReplyPresenceWindowSeconds',
 ] as const;
 
 const BOOLEAN_KEYS = [
@@ -129,6 +134,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     coachMarksEnabled: settings.coachMarksEnabled,
+    chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
   };
 }
 
