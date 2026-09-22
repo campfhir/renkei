@@ -405,6 +405,118 @@ export default function ModelForms({ slug }: { slug: string }) {
             </select>
           </div>
 
+          {/*
+            Connection info first, what to run on it second: Base URL, API
+            key, and API version are exactly what "List available models"
+            and "Test connection" below need to reach the right endpoint —
+            asking a person to click either before entering a base URL (an
+            Azure deployment, a gateway) or a key never worked.
+          */}
+          <div>
+            <label className={labelClass} htmlFor="model-base-url">
+              Base URL <span className="font-normal text-gray-500">(optional)</span>
+            </label>
+            <input
+              id="model-base-url"
+              className={inputClass}
+              value={draft.baseUrl}
+              placeholder={
+                draft.provider === 'openai'
+                  ? 'https://{resource}.openai.azure.com/openai/v1'
+                  : 'https://api.anthropic.com'
+              }
+              onChange={(event) => {
+                setDraft({ ...draft, baseUrl: event.target.value });
+                clearAvailable();
+              }}
+            />
+            <p className={hintClass}>
+              {PROVIDER_HINTS[draft.provider]?.baseUrl ??
+                'Only for a gateway or proxy in front of the provider.'}
+            </p>
+          </div>
+
+          <div>
+            <label className={labelClass} htmlFor="model-key">
+              API key
+            </label>
+            {/*
+              One connection can serve every model row: when sibling configs
+              already hold a key, the field grows a source picker and
+              "reuse" copies the stored key server-side — it never rides
+              through the browser, and nobody retypes it per model.
+            */}
+            {keyedSiblings.length > 0 ? (
+              <select
+                aria-label="API key source"
+                className={`${inputClass} mb-2`}
+                value={draft.apiKeyFromId}
+                onChange={(event) => {
+                  setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
+                  clearAvailable();
+                }}
+              >
+                <option value="">
+                  {editingId === 'new' ? 'Enter a key' : 'Keep the stored key (or enter a new one)'}
+                </option>
+                {keyedSiblings.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    Reuse the key stored on “{row.label}”
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {draft.apiKeyFromId === '' ? (
+              <>
+                <input
+                  id="model-key"
+                  className={inputClass}
+                  type="password"
+                  value={draft.apiKey}
+                  required={editingId === 'new'}
+                  placeholder={
+                    editingId === 'new'
+                      ? draft.provider === 'openai'
+                        ? 'sk-… or an Azure API key'
+                        : 'sk-ant-…'
+                      : 'Leave blank to keep the stored key'
+                  }
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setDraft({ ...draft, apiKey: event.target.value });
+                    clearAvailable();
+                  }}
+                />
+                <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
+              </>
+            ) : (
+              <p className={hintClass}>
+                Saving copies that key onto this model — still encrypted, never shown.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className={labelClass} htmlFor="model-api-version">
+              API version <span className="font-normal text-gray-500">(optional, Azure)</span>
+            </label>
+            <input
+              id="model-api-version"
+              className={inputClass}
+              value={draft.apiVersion}
+              placeholder="e.g. 2024-05-01-preview"
+              onChange={(event) => {
+                setDraft({ ...draft, apiVersion: event.target.value });
+                clearAvailable();
+              }}
+            />
+            <p className={hintClass}>
+              Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
+              required query parameter: api-version&quot; error). Leave blank for Anthropic, OpenAI,
+              and Azure&apos;s /openai/v1 surface.
+            </p>
+          </div>
+
           <div>
             <label className={labelClass} htmlFor="model-id">
               Model id
@@ -493,90 +605,6 @@ export default function ModelForms({ slug }: { slug: string }) {
             ) : null}
           </div>
 
-          <div>
-            <label className={labelClass} htmlFor="model-key">
-              API key
-            </label>
-            {/*
-              One connection can serve every model row: when sibling configs
-              already hold a key, the field grows a source picker and
-              "reuse" copies the stored key server-side — it never rides
-              through the browser, and nobody retypes it per model.
-            */}
-            {keyedSiblings.length > 0 ? (
-              <select
-                aria-label="API key source"
-                className={`${inputClass} mb-2`}
-                value={draft.apiKeyFromId}
-                onChange={(event) => {
-                  setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
-                  clearAvailable();
-                }}
-              >
-                <option value="">
-                  {editingId === 'new' ? 'Enter a key' : 'Keep the stored key (or enter a new one)'}
-                </option>
-                {keyedSiblings.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    Reuse the key stored on “{row.label}”
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            {draft.apiKeyFromId === '' ? (
-              <>
-                <input
-                  id="model-key"
-                  className={inputClass}
-                  type="password"
-                  value={draft.apiKey}
-                  required={editingId === 'new'}
-                  placeholder={
-                    editingId === 'new'
-                      ? draft.provider === 'openai'
-                        ? 'sk-… or an Azure API key'
-                        : 'sk-ant-…'
-                      : 'Leave blank to keep the stored key'
-                  }
-                  autoComplete="off"
-                  onChange={(event) => {
-                    setDraft({ ...draft, apiKey: event.target.value });
-                    clearAvailable();
-                  }}
-                />
-                <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
-              </>
-            ) : (
-              <p className={hintClass}>
-                Saving copies that key onto this model — still encrypted, never shown.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor="model-base-url">
-              Base URL <span className="font-normal text-gray-500">(optional)</span>
-            </label>
-            <input
-              id="model-base-url"
-              className={inputClass}
-              value={draft.baseUrl}
-              placeholder={
-                draft.provider === 'openai'
-                  ? 'https://{resource}.openai.azure.com/openai/v1'
-                  : 'https://api.anthropic.com'
-              }
-              onChange={(event) => {
-                setDraft({ ...draft, baseUrl: event.target.value });
-                clearAvailable();
-              }}
-            />
-            <p className={hintClass}>
-              {PROVIDER_HINTS[draft.provider]?.baseUrl ??
-                'Only for a gateway or proxy in front of the provider.'}
-            </p>
-          </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelClass} htmlFor="model-max-tokens">
@@ -636,27 +664,6 @@ export default function ModelForms({ slug }: { slug: string }) {
               </p>
             </div>
           ) : null}
-
-          <div>
-            <label className={labelClass} htmlFor="model-api-version">
-              API version <span className="font-normal text-gray-500">(optional, Azure)</span>
-            </label>
-            <input
-              id="model-api-version"
-              className={inputClass}
-              value={draft.apiVersion}
-              placeholder="e.g. 2024-05-01-preview"
-              onChange={(event) => {
-                setDraft({ ...draft, apiVersion: event.target.value });
-                clearAvailable();
-              }}
-            />
-            <p className={hintClass}>
-              Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
-              required query parameter: api-version&quot; error). Leave blank for Anthropic, OpenAI,
-              and Azure&apos;s /openai/v1 surface.
-            </p>
-          </div>
 
           <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
             {/*
