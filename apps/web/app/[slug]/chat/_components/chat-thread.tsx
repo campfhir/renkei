@@ -11,6 +11,15 @@
  * A chat exists before this mounts — "+ New" creates an empty one and
  * lands on its address — so the first Send is a turn like any other: no
  * address change, no reload, nothing lost mid-reply.
+ *
+ * In a code project's chat the page also holds the **code pane**
+ * (code/_components/code-pane.tsx): beside the chat, about 70% of the
+ * main column with a drag handle between and the ratio remembered, when
+ * the column is wide enough; under the title bar as the Code tab of a
+ * Chat | Code switch when it is not. Both are decided by the column's
+ * measured width, never the window's, so a laptop with the app menu open
+ * gets the tabs too. The pane's state lives here (use-code-pane.ts) so it
+ * survives the move between the two.
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
@@ -64,6 +73,11 @@ import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import VoiceMenu from './voice-menu';
 import VoiceMode, { type VoiceActivity } from './voice-mode';
 import { useMediaQuery } from '@/lib/use-media-query';
+import { useElementWidth } from '@/lib/use-element-width';
+import { sendJsonFull } from '@/lib/fetch-json';
+import type { ChatNote } from '@/lib/code/note-text';
+import CodePane from '../../code/_components/code-pane';
+import { useCodePane } from '../../code/_components/use-code-pane';
 
 interface ThreadProps {
   slug: string;
@@ -104,6 +118,42 @@ function parseEvent(data: string): ChatStreamEvent | null {
     // Ignored: the next frame or the safety-net snapshot corrects the view.
   }
   return null;
+}
+
+/** Under this much main column the code pane becomes the Code tab. */
+const SPLIT_MIN_PX = 1024;
+/** The chat pane keeps its compact title bar under this width. */
+const COMPACT_MAX_PX = 640;
+const PANE_OPEN_KEY = 'code-pane:open';
+const PANE_RATIO_KEY = 'code-pane:ratio';
+const DEFAULT_RATIO = 0.7;
+const CHAT_MIN_PX = 320;
+const CODE_MIN_PX = 360;
+
+function readRatio(): number {
+  try {
+    const raw = Number(localStorage.getItem(PANE_RATIO_KEY));
+    return Number.isFinite(raw) && raw > 0.2 && raw < 0.9 ? raw : DEFAULT_RATIO;
+  } catch {
+    return DEFAULT_RATIO;
+  }
+}
+
+/** The files the chat's own tools wrote in this thread, for the commit dialog's tags. */
+function chatWrittenPaths(messages: ChatMessageView[]): Set<string> {
+  const paths = new Set<string>();
+  for (const message of messages) {
+    for (const block of message.blocks) {
+      if (block.type !== 'tool_use') continue;
+      if (block.name !== 'code_write_file' && block.name !== 'code_edit_file') continue;
+      const input: unknown = block.input;
+      if (typeof input === 'object' && input !== null && 'path' in input) {
+        const path: unknown = input.path;
+        if (typeof path === 'string' && path) paths.add(path.replace(/^\.?\/+/, ''));
+      }
+    }
+  }
+  return paths;
 }
 
 export default function ChatThread({
@@ -271,9 +321,86 @@ export default function ChatThread({
   const pauseReading = useCallback(() => speechQueue?.pause(), [speechQueue]);
   const resumeReading = useCallback(() => speechQueue?.resume(), [speechQueue]);
   // Below `sm` the title bar keeps only Tools as a button of its own and
-  // folds the rest into an overflow menu, so the chat's name stays readable.
-  const compact = !useMediaQuery('(min-width: 640px)', true);
+  // folds the rest into an overflow menu, so the chat's name stays
+  // readable — measured on the chat's own column once it is there, since
+  // beside the code pane the column is far narrower than the window.
+  const mediaCompact = !useMediaQuery('(min-width: 640px)', true);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const chatColumnRef = useRef<HTMLDivElement>(null);
+  const frameWidth = useElementWidth(frameRef);
+  const chatWidth = useElementWidth(chatColumnRef);
+  const compact = chatWidth !== null ? chatWidth < COMPACT_MAX_PX : mediaCompact;
+  const touch = useMediaQuery('(pointer: coarse)');
   const lastPrompt = useRef<ComposerSubmit | null>(null);
+  // The code pane's layout: beside the chat, or the Code tab.
+  const codeProjectId = chat.projectKind === 'code' && chat.projectId ? chat.projectId : null;
+  const paneMode: 'split' | 'tabs' =
+    frameWidth !== null && frameWidth < SPLIT_MIN_PX ? 'tabs' : 'split';
+  const [paneOpen, setPaneOpen] = useState(true);
+  const [paneTab, setPaneTab] = useState<'chat' | 'code'>('chat');
+  const [ratio, setRatio] = useState(DEFAULT_RATIO);
+  useEffect(() => {
+    if (!codeProjectId) return;
+    try {
+      setPaneOpen(localStorage.getItem(PANE_OPEN_KEY) !== 'closed');
+    } catch {
+      // Left open.
+    }
+    setRatio(readRatio());
+  }, [codeProjectId]);
+  const togglePane = useCallback(() => {
+    setPaneOpen((open) => {
+      try {
+        localStorage.setItem(PANE_OPEN_KEY, open ? 'closed' : 'open');
+      } catch {
+        // Not remembered, then.
+      }
+      return !open;
+    });
+  }, []);
+  const paneVisible =
+    codeProjectId !== null && (paneMode === 'split' ? paneOpen : paneTab === 'code');
+  // Bumped when a turn ends: the checkout changed, so the pane reads again.
+  const [checkoutVersion, setCheckoutVersion] = useState(0);
+  // What the person did from the pane, for the transcript — held while a
+  // turn runs (the runner is the only writer then) and sent when it ends.
+  const pendingNotes = useRef<ChatNote[]>([]);
+  const runningRef = useRef(false);
+  const postNote = useCallback(
+    async (note: ChatNote) => {
+      if (!codeProjectId) return;
+      if (runningRef.current) {
+        pendingNotes.current.push(note);
+        return;
+      }
+      const result = await sendJsonFull<{ message: ChatMessageView }>(
+        `/api/tenant/${tenantId}/chat/chats/${chat.id}/notes`,
+        'POST',
+        { note }
+      );
+      if (result.data?.message) dispatch({ type: 'row', message: result.data.message });
+      else if (result.status === 409) pendingNotes.current.push(note);
+    },
+    [codeProjectId, tenantId, chat.id]
+  );
+  const pane = useCodePane({
+    tenantId,
+    projectId: codeProjectId,
+    chatId: chat.id,
+    enabled: paneVisible,
+    refreshKey: checkoutVersion,
+    onNote: (note) => void postNote(note),
+  });
+  const chatPaths = useMemo(() => chatWrittenPaths(state.messages), [state.messages]);
+  const openPaneFile = pane.open;
+  const openInPane = useCallback(
+    (path: string) => {
+      openPaneFile(path);
+      if (paneMode === 'tabs') setPaneTab('code');
+      else if (!paneOpen) togglePane();
+    },
+    [openPaneFile, paneMode, paneOpen, togglePane]
+  );
 
   // One EventSource per running turn.
   useEffect(() => {
@@ -286,6 +413,7 @@ export default function ChatThread({
       if (parsed.type === 'turn_end') {
         source.close();
         setActiveTurnId(null);
+        setCheckoutVersion((version) => version + 1);
         // The sidebar's title and ordering come from the server.
         router.refresh();
       }
@@ -295,6 +423,24 @@ export default function ChatThread({
     };
     return () => source.close();
   }, [tenantId, chat, activeTurnId, router]);
+
+  useEffect(() => {
+    runningRef.current = running;
+    if (running || pendingNotes.current.length === 0) return;
+    const held = pendingNotes.current;
+    pendingNotes.current = [];
+    // Several saves of one file while a turn ran are one note.
+    const edited = new Set<string>();
+    const notes: ChatNote[] = [];
+    for (const note of held) {
+      if (note.type === 'edit') note.paths.forEach((path) => edited.add(path));
+      else notes.push(note);
+    }
+    if (edited.size > 0) notes.unshift({ type: 'edit', paths: [...edited] });
+    void (async () => {
+      for (const note of notes) await postNote(note);
+    })();
+  }, [running, postNote]);
 
   /** The optimistic prompt row and the turn to follow: the stream only carries the reply. */
   const begin = useCallback(
@@ -596,7 +742,6 @@ export default function ChatThread({
     chat.projectId && chat.projectName ? projectHref(slug, chat.projectId, chat.projectKind) : null;
   // A chat in a code project: its checkout's changes and environment are
   // a button away in the title bar.
-  const codeProjectId = chat.projectKind === 'code' && chat.projectId ? chat.projectId : null;
   const codeTools = useCodeChatTools({
     tenantId,
     chatId: chat.id,
@@ -611,9 +756,13 @@ export default function ChatThread({
   const codeActions = useMemo(
     () =>
       codeProjectId
-        ? { onShowCommit: (sha: string) => openCommit(sha), onShowSubagent: openSubagent }
+        ? {
+            onShowCommit: (sha: string) => openCommit(sha),
+            onShowSubagent: openSubagent,
+            onOpenFile: openInPane,
+          }
         : null,
-    [codeProjectId, openCommit, openSubagent]
+    [codeProjectId, openCommit, openSubagent, openInPane]
   );
   // The branch under the title: the page's word until the first look at
   // the checkout, then whatever the last look said.
@@ -698,6 +847,50 @@ export default function ChatThread({
     const last = streaming?.blocks[streaming.blocks.length - 1];
     return last?.type === 'thinking' || last?.type === 'redacted_thinking';
   }, [running, state.messages]);
+  // The handle between the panes: drag to resize, the ratio kept per browser.
+  const startResize = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const frame = frameRef.current;
+      if (!frame) return;
+      event.preventDefault();
+      const rect = frame.getBoundingClientRect();
+      let next = ratio;
+      const move = (moveEvent: PointerEvent) => {
+        const min = CODE_MIN_PX / rect.width;
+        const max = 1 - CHAT_MIN_PX / rect.width;
+        next = Math.min(max, Math.max(min, (moveEvent.clientX - rect.left) / rect.width));
+        setRatio(next);
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        try {
+          localStorage.setItem(PANE_RATIO_KEY, String(next));
+        } catch {
+          // Not remembered, then.
+        }
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    },
+    [ratio]
+  );
+  const codePane = codeProjectId ? (
+    <CodePane
+      tenantId={tenantId}
+      projectId={codeProjectId}
+      pane={pane}
+      layout={paneMode === 'tabs' ? 'tab' : 'split'}
+      touch={touch}
+      canEdit={isOwner}
+      chatPaths={chatPaths}
+      personName={null}
+      refreshKey={checkoutVersion}
+      onNote={(note) => void postNote(note)}
+      onAsk={isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null}
+      onClose={togglePane}
+    />
+  ) : null;
   const canRetry =
     isOwner &&
     !running &&
@@ -705,49 +898,112 @@ export default function ChatThread({
     (lastTurn?.status === 'failed' || lastTurn?.status === 'interrupted');
 
   return (
-    <>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-        {backHref ? (
-          <Link
-            href={backHref}
-            aria-label="Back to project"
-            title="Back to the project"
-            className="shrink-0 rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+    <div ref={frameRef} className="flex h-full min-h-0 min-w-0">
+      {codePane && paneMode === 'split' && paneOpen ? (
+        <>
+          <div
+            style={{ width: `${Math.round(ratio * 1000) / 10}%` }}
+            className="flex min-w-0 shrink-0 flex-col"
           >
-            <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
-          </Link>
-        ) : null}
-        <ChatTitle
-          title={title}
-          project={
-            chat.projectId && chat.projectName
-              ? {
-                  id: chat.projectId,
-                  name: chat.projectName,
-                  href: projectHref(slug, chat.projectId, chat.projectKind),
-                  branch,
+            {codePane}
+          </div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the code pane"
+            onPointerDown={startResize}
+            className="w-1 shrink-0 cursor-col-resize border-r border-gray-200 hover:bg-blue-400 dark:border-gray-800 dark:hover:bg-blue-600"
+          />
+        </>
+      ) : null}
+      <div ref={chatColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
+          {backHref ? (
+            <Link
+              href={backHref}
+              aria-label="Back to project"
+              title="Back to the project"
+              className="shrink-0 rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+            >
+              <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+            </Link>
+          ) : null}
+          <ChatTitle
+            title={title}
+            project={
+              chat.projectId && chat.projectName
+                ? {
+                    id: chat.projectId,
+                    name: chat.projectName,
+                    href: projectHref(slug, chat.projectId, chat.projectKind),
+                    branch,
+                  }
+                : null
+            }
+            canRename={isOwner}
+            onRename={rename}
+          />
+          {codePane ? (
+            paneMode === 'tabs' ? (
+              <div
+                role="tablist"
+                aria-label="Chat or code"
+                className="flex shrink-0 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
+              >
+                {(['chat', 'code'] as const).map((which) => (
+                  <button
+                    key={which}
+                    type="button"
+                    role="tab"
+                    aria-selected={paneTab === which}
+                    onClick={() => setPaneTab(which)}
+                    className={`flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
+                      paneTab === which
+                        ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-950 dark:text-gray-100'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
+                  >
+                    <Icon
+                      path={which === 'chat' ? ICONS.chat : ICONS.code}
+                      className="h-3.5 w-3.5"
+                    />
+                    {!compact ? <span>{which === 'chat' ? 'Chat' : 'Code'}</span> : null}
+                    {which === 'code' && pane.dirtyPaths.length > 0 ? (
+                      <span
+                        className="rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 text-white"
+                        title={`${pane.dirtyPaths.length} file${pane.dirtyPaths.length === 1 ? '' : 's'} with unsaved edits`}
+                      >
+                        {pane.dirtyPaths.length}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={togglePane}
+                aria-pressed={paneOpen}
+                aria-label={paneOpen ? 'Hide the code' : 'Show the code'}
+                title={
+                  paneOpen
+                    ? 'Hide the repository’s files'
+                    : 'Show the repository’s files beside the chat'
                 }
-              : null
-          }
-          canRename={isOwner}
-          onRename={rename}
-        />
-        <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
-        {compact ? (
-          isOwner ? (
-            <ToolsPopover
-              tenantId={tenantId}
-              selected={connectors}
-              onChange={changeConnectors}
-              slug={slug}
-              locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
-              kind={codeProjectId ? 'code' : 'chat'}
-            />
-          ) : null
-        ) : (
-          <>
-            {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
-            {isOwner ? (
+                className={`flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium ${
+                  paneOpen
+                    ? 'border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900'
+                }`}
+              >
+                <Icon path={ICONS.code} className="h-4 w-4" />
+                {!compact ? <span>Code</span> : null}
+              </button>
+            )
+          ) : null}
+          <ArtifactsMenu tenantId={tenantId} artifacts={state.artifacts} />
+          {compact ? (
+            isOwner ? (
               <ToolsPopover
                 tenantId={tenantId}
                 selected={connectors}
@@ -756,142 +1012,168 @@ export default function ChatThread({
                 locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
                 kind={codeProjectId ? 'code' : 'chat'}
               />
+            ) : null
+          ) : (
+            <>
+              {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
+              {isOwner ? (
+                <ToolsPopover
+                  tenantId={tenantId}
+                  selected={connectors}
+                  onChange={changeConnectors}
+                  slug={slug}
+                  locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
+                  kind={codeProjectId ? 'code' : 'chat'}
+                />
+              ) : null}
+            </>
+          )}
+          <OverflowMenu items={overflow} />
+        </header>
+        {codeTools.modals}
+
+        {codePane && paneMode === 'tabs' && paneTab === 'code' ? (
+          <div className="flex min-h-0 flex-1 flex-col">{codePane}</div>
+        ) : (
+          <>
+            {!isOwner ? (
+              <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+                Shared by {chat.ownerName ?? 'its owner'} — you can read this chat and watch it
+                live. Only the owner can continue it.
+              </div>
+            ) : null}
+
+            <MessageList
+              tenantId={tenantId}
+              messages={state.messages}
+              pendingToolCalls={state.pendingToolCalls}
+              running={running}
+              turn={state.turn}
+              compaction={state.compaction}
+              promptActions={
+                isOwner && !running && !sending
+                  ? { onResend: setConfirmResend, onEdit: setEditing }
+                  : null
+              }
+              permission={
+                state.pendingPermission && running
+                  ? {
+                      pending: state.pendingPermission,
+                      canDecide: isOwner,
+                      onDecide: decidePermission,
+                    }
+                  : null
+              }
+              code={codeActions}
+              subagents={state.subagents}
+              speech={
+                voice && speechQueue
+                  ? {
+                      playingKey: speech.state === 'idle' ? null : speech.owner,
+                      paused: speech.state === 'paused',
+                      onListen: listen,
+                      onPause: pauseReading,
+                      onResume: resumeReading,
+                      onStop: stopReading,
+                    }
+                  : null
+              }
+              empty={
+                state.messages.length === 0 ? <EmptyState hasModel={currentModel !== null} /> : null
+              }
+            />
+
+            {canRetry ? (
+              <div className="px-4 pb-1">
+                <button
+                  type="button"
+                  onClick={() => lastPrompt.current && void submit(lastPrompt.current)}
+                  className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : null}
+            {error ? (
+              <p className="px-4 pb-1 text-sm text-red-600" role="alert">
+                {error}
+              </p>
+            ) : null}
+
+            {isOwner ? (
+              <Composer
+                tenantId={tenantId}
+                chatId={chat.id}
+                disabled={sending || models.length === 0}
+                running={running}
+                queue={queueView}
+                onRemoveQueued={removeQueued}
+                onClearQueue={() => setQueue([])}
+                uploads={uploadsEnabled}
+                onSubmit={onComposerSubmit}
+                onCompact={queueOrCompact}
+                editing={editing ? { text: promptTextOf(editing) } : null}
+                onCancelEdit={() => setEditing(null)}
+                onStop={stop}
+                modelControl={
+                  <ModelSelect
+                    models={models}
+                    value={modelId}
+                    onChange={changeModel}
+                    thinking={thinking}
+                    onThinking={changeThinking}
+                    hasHistory={state.messages.length > 0}
+                  />
+                }
+                modeControl={
+                  codeProjectId ? (
+                    <AutoModeToggle
+                      on={autoMode}
+                      onChange={changeAutoMode}
+                      disabled={models.length === 0}
+                    />
+                  ) : null
+                }
+                dictation={
+                  voice
+                    ? {
+                        tenantId,
+                        locale: voicePrefs.locale ?? voice.defaultLocale,
+                        detectLanguage: voicePrefs.detectLanguage,
+                        onHeard: setHeardLocale,
+                        accent: voicePrefs.userAccent,
+                        echoCancellation,
+                        microphone,
+                      }
+                    : null
+                }
+                voiceControl={
+                  voice && speechQueue ? (
+                    <VoiceMenu
+                      tenantId={tenantId}
+                      prefs={voicePrefs}
+                      defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
+                      queueState={speech.state}
+                      levels={speechQueue}
+                      echoCancellation={echoCancellation}
+                      onEchoCancellation={changeEchoCancellation}
+                      microphone={microphone}
+                      onMicrophone={changeMicrophone}
+                      audioOutput={audioOutput}
+                      onAudioOutput={changeAudioOutput}
+                      onChange={changeVoicePrefs}
+                      onStopReading={stopReading}
+                      onStartVoiceMode={() => setVoiceMode(true)}
+                      onPrime={() => speechQueue.prime()}
+                      disabled={models.length === 0}
+                    />
+                  ) : null
+                }
+              />
             ) : null}
           </>
         )}
-        <OverflowMenu items={overflow} />
-      </header>
-      {codeTools.modals}
-
-      {!isOwner ? (
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-          Shared by {chat.ownerName ?? 'its owner'} — you can read this chat and watch it live. Only
-          the owner can continue it.
-        </div>
-      ) : null}
-
-      <MessageList
-        tenantId={tenantId}
-        messages={state.messages}
-        pendingToolCalls={state.pendingToolCalls}
-        running={running}
-        turn={state.turn}
-        compaction={state.compaction}
-        promptActions={
-          isOwner && !running && !sending
-            ? { onResend: setConfirmResend, onEdit: setEditing }
-            : null
-        }
-        permission={
-          state.pendingPermission && running
-            ? { pending: state.pendingPermission, canDecide: isOwner, onDecide: decidePermission }
-            : null
-        }
-        code={codeActions}
-        subagents={state.subagents}
-        speech={
-          voice && speechQueue
-            ? {
-                playingKey: speech.state === 'idle' ? null : speech.owner,
-                paused: speech.state === 'paused',
-                onListen: listen,
-                onPause: pauseReading,
-                onResume: resumeReading,
-                onStop: stopReading,
-              }
-            : null
-        }
-        empty={state.messages.length === 0 ? <EmptyState hasModel={currentModel !== null} /> : null}
-      />
-
-      {canRetry ? (
-        <div className="px-4 pb-1">
-          <button
-            type="button"
-            onClick={() => lastPrompt.current && void submit(lastPrompt.current)}
-            className="rounded-md border border-gray-300 px-3 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-          >
-            Retry
-          </button>
-        </div>
-      ) : null}
-      {error ? (
-        <p className="px-4 pb-1 text-sm text-red-600" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      {isOwner ? (
-        <Composer
-          tenantId={tenantId}
-          chatId={chat.id}
-          disabled={sending || models.length === 0}
-          running={running}
-          queue={queueView}
-          onRemoveQueued={removeQueued}
-          onClearQueue={() => setQueue([])}
-          uploads={uploadsEnabled}
-          onSubmit={onComposerSubmit}
-          onCompact={queueOrCompact}
-          editing={editing ? { text: promptTextOf(editing) } : null}
-          onCancelEdit={() => setEditing(null)}
-          onStop={stop}
-          modelControl={
-            <ModelSelect
-              models={models}
-              value={modelId}
-              onChange={changeModel}
-              thinking={thinking}
-              onThinking={changeThinking}
-              hasHistory={state.messages.length > 0}
-            />
-          }
-          modeControl={
-            codeProjectId ? (
-              <AutoModeToggle
-                on={autoMode}
-                onChange={changeAutoMode}
-                disabled={models.length === 0}
-              />
-            ) : null
-          }
-          dictation={
-            voice
-              ? {
-                  tenantId,
-                  locale: voicePrefs.locale ?? voice.defaultLocale,
-                  detectLanguage: voicePrefs.detectLanguage,
-                  onHeard: setHeardLocale,
-                  accent: voicePrefs.userAccent,
-                  echoCancellation,
-                  microphone,
-                }
-              : null
-          }
-          voiceControl={
-            voice && speechQueue ? (
-              <VoiceMenu
-                tenantId={tenantId}
-                prefs={voicePrefs}
-                defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
-                queueState={speech.state}
-                levels={speechQueue}
-                echoCancellation={echoCancellation}
-                onEchoCancellation={changeEchoCancellation}
-                microphone={microphone}
-                onMicrophone={changeMicrophone}
-                audioOutput={audioOutput}
-                onAudioOutput={changeAudioOutput}
-                onChange={changeVoicePrefs}
-                onStopReading={stopReading}
-                onStartVoiceMode={() => setVoiceMode(true)}
-                onPrime={() => speechQueue.prime()}
-                disabled={models.length === 0}
-              />
-            ) : null
-          }
-        />
-      ) : null}
+      </div>
       {voiceMode && voice && speechQueue ? (
         <VoiceMode
           tenantId={tenantId}
@@ -992,7 +1274,7 @@ export default function ChatThread({
           />
         </Modal>
       ) : null}
-    </>
+    </div>
   );
 }
 

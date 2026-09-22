@@ -20,6 +20,8 @@ import { loadCodeProjectUsage, type CodeProjectUsage } from './usage';
 export interface CodeProjectView extends ProjectView {
   code: {
     repoFullName: string;
+    /** ATLASSIAN_BITBUCKET or GITHUB (@renkei/provider-grants) — which host the repository lives on. */
+    repoProvider: string;
     branch: string;
     workspace: {
       id: string;
@@ -73,6 +75,7 @@ export async function loadCodeProjectView(
     ...view,
     code: {
       repoFullName: project.repo.fullName,
+      repoProvider: project.repo.provider,
       branch: project.repo.branch,
       workspace: workspace
         ? {

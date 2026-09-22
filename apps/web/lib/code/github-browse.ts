@@ -2,10 +2,12 @@
  * Reading GitHub for the Code pages with the signed-in person's own
  * grant: the accounts (organizations/user accounts) Renkei's GitHub App
  * is installed on for them, an account's repositories (or searched by
- * name), and a repository's README. Nothing here writes except creating
- * a brand-new repository for the new-project form's "Create new
- * repository" tab. Nothing here writes existing content, and every call
- * is bounded — a picker and a project page, not a mirror.
+ * name), a repository's README, and — for the project page's tree and
+ * the code pane, before any chat has cloned — one directory's entries
+ * or one file's content on the project's branch. Nothing here writes
+ * existing content except creating a brand-new repository for the
+ * new-project form's "Create new repository" tab, and every call is
+ * bounded — a picker and a project page, not a mirror.
  *
  * GitHub has no grouping above a repository the way Bitbucket has
  * projects — repositories sit directly under an account — so this
@@ -17,10 +19,24 @@ import type { NextRequest } from 'next/server';
 import { oauthGitHubAuth, type GitHubAuth } from '@/lib/mcp-tools/github/github-auth';
 import { arr, ghJson, ghRawText, rec, str } from '@/lib/mcp-tools/github/client';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
-import type { RepoChoice } from './bitbucket-browse';
+import type { RepoChoice, SourceEntry } from './bitbucket-browse';
 
 const README_MAX_CHARS = 60_000;
 const README_NAMES = ['README.md', 'readme.md', 'README.MD', 'Readme.md', 'README', 'README.txt'];
+const SOURCE_FILE_MAX_CHARS = 200_000;
+
+/** repos/{owner}/{repo} path, both halves encoded. */
+function repoBase(owner: string, repo: string): string {
+  return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+/** The branch to read: the one given, else the repository's default branch. */
+async function refOf(auth: GitHubAuth, base: string, branch: string): Promise<string | null> {
+  if (branch) return branch;
+  const info = await ghJson(auth, ['repository'], base);
+  if (!info.ok) return null;
+  return str(rec(info.body).default_branch) || null;
+}
 
 export interface GitHubAccount {
   slug: string;
@@ -188,4 +204,93 @@ export async function readReadme(
     }
   }
   return null;
+}
+
+/**
+ * One directory of the repository as GitHub has it on a branch — the
+ * tree a project page shows before anything is cloned. Directories
+ * first, then files with sizes.
+ */
+export async function listSource(
+  auth: GitHubAuth,
+  fullName: string,
+  branch: string,
+  path: string
+): Promise<{ ok: true; entries: SourceEntry[]; ref: string } | { ok: false; error: string }> {
+  const [owner, repo] = fullName.split('/');
+  if (!owner || !repo) return { ok: false, error: 'The repository name is not usable.' };
+  const base = repoBase(owner, repo);
+  const ref = await refOf(auth, base, branch);
+  if (!ref) return { ok: false, error: 'The repository’s branch could not be read.' };
+  const clean = path.replace(/^\/+|\/+$/g, '');
+  const encoded = clean
+    ? clean
+        .split('/')
+        .map((part) => encodeURIComponent(part))
+        .join('/')
+    : '';
+  const listed = await ghJson(
+    auth,
+    ['repository'],
+    `${base}/contents/${encoded}?ref=${encodeURIComponent(ref)}`
+  );
+  if (!listed.ok) return listed;
+  const body = listed.body;
+  // A single-file path answers one object, not an array — not a
+  // directory this tree can list.
+  if (!Array.isArray(body)) return { ok: false, error: 'That path is a file, not a directory.' };
+  const entries: SourceEntry[] = arr(body)
+    .map((entry) => ({
+      path: str(entry.path),
+      kind: str(entry.type) === 'dir' ? ('dir' as const) : ('file' as const),
+      sizeBytes: typeof entry.size === 'number' ? entry.size : null,
+    }))
+    .filter((entry) => entry.path);
+  entries.sort((a, b) => {
+    const rank = (kind: string) => (kind === 'dir' ? 0 : 1);
+    return rank(a.kind) - rank(b.kind) || a.path.localeCompare(b.path);
+  });
+  return { ok: true, entries, ref };
+}
+
+/**
+ * One file's content on a branch (or the repository's default branch),
+ * as raw text — or an error when it cannot be read. Binary files answer
+ * `binary: true` with no text (GitHub's raw media type serves them
+ * as-is, and a null byte is the same signal Bitbucket's reader uses).
+ */
+export async function readSourceFile(
+  auth: GitHubAuth,
+  fullName: string,
+  branch: string,
+  path: string
+): Promise<
+  | { ok: true; text: string; ref: string; truncated: boolean; binary: boolean }
+  | { ok: false; error: string }
+> {
+  const [owner, repo] = fullName.split('/');
+  if (!owner || !repo) return { ok: false, error: 'The repository name is not usable.' };
+  const base = repoBase(owner, repo);
+  const ref = await refOf(auth, base, branch);
+  if (!ref) return { ok: false, error: 'The repository’s branch could not be read.' };
+  const encoded = path
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  const file = await ghRawText(
+    auth,
+    ['repository'],
+    `${base}/contents/${encoded}?ref=${encodeURIComponent(ref)}`,
+    'application/vnd.github.raw+json'
+  );
+  if (!file.ok) return file;
+  if (file.text.includes('\0')) return { ok: true, text: '', ref, truncated: false, binary: true };
+  const truncated = file.text.length > SOURCE_FILE_MAX_CHARS;
+  return {
+    ok: true,
+    text: truncated ? file.text.slice(0, SOURCE_FILE_MAX_CHARS) : file.text,
+    ref,
+    truncated,
+    binary: false,
+  };
 }

@@ -1,7 +1,7 @@
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 import { FrameHeaderSkeleton } from '../../chat/_components/frame-skeleton';
 
-/** The new-project form while the Bitbucket connection is checked. */
+/** The new-project form while the git host connections are checked. */
 export default function NewCodeProjectLoading() {
   return (
     <LoadingRegion label="Loading…" className="flex h-full min-h-0 flex-col">

@@ -3,18 +3,21 @@
  * entries with kind and size, directories first. From the checkout on
  * the sandbox once there is one (`source: 'checkout'` — what the chats
  * actually work in, uncommitted changes included); before that, from
- * Bitbucket on the project's branch (`source: 'bitbucket'`), so the
- * shape of the repository is there to look at without cloning anything.
- * Any member may look; the page asks for each folder as it is opened.
+ * the repository's git host on the project's branch (`source:
+ * 'bitbucket'` or `'github'`), so the shape of the repository is there
+ * to look at without cloning anything. Any member may look; the page
+ * asks for each folder as it is opened.
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { clientFailure, sandboxWorkspacesEnabled, sbWorkspaceLs } from '@renkei/sandbox-client';
+import { GITHUB } from '@renkei/provider-grants';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
-import { bitbucketAuthFor, listSource } from '@/lib/code/bitbucket-browse';
+import { bitbucketAuthFor, listSource as listBitbucketSource } from '@/lib/code/bitbucket-browse';
+import { githubAuthFor, listSource as listGitHubSource } from '@/lib/code/github-browse';
 import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectTarget } from '@/lib/code/scope';
 
@@ -61,17 +64,25 @@ export async function GET(
     });
   }
 
-  const listed = await listSource(
-    await bitbucketAuthFor(request, tenantId, session.subject),
-    project.repo.fullName,
-    project.repo.branch,
-    path
-  );
+  const isGitHub = project.repo.provider === GITHUB;
+  const listed = isGitHub
+    ? await listGitHubSource(
+        await githubAuthFor(request, tenantId, session.subject),
+        project.repo.fullName,
+        project.repo.branch,
+        path
+      )
+    : await listBitbucketSource(
+        await bitbucketAuthFor(request, tenantId, session.subject),
+        project.repo.fullName,
+        project.repo.branch,
+        path
+      );
   if (!listed.ok) return jsonError(409, 'tree', listed.error);
   return NextResponse.json({
     path,
     entries: listed.entries,
-    source: 'bitbucket',
+    source: isGitHub ? 'github' : 'bitbucket',
     branch: listed.ref,
   });
 }

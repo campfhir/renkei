@@ -1,0 +1,127 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-09-22T00:00:00Z"
+  },
+  "title": "Code Project Editor Sketches",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Desktop-Split.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "1 \u00b7 Split view, 70 / 30 (whole app shell)"
+    },
+    "Desktop-Editing.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1152,
+      "h": 844,
+      "title": "2 \u00b7 Editing inline: unsaved edits, changed vs HEAD, a file the turn also wrote (main column only)"
+    },
+    "Desktop-Commit.dc.html": {
+      "x": 2752,
+      "y": 0,
+      "w": 1152,
+      "h": 844,
+      "title": "3 \u00b7 Commit dialog, and what it becomes after the commit (main column only)"
+    },
+    "Phone-Chat.dc.html": {
+      "x": 0,
+      "y": 1260,
+      "w": 390,
+      "h": 844,
+      "title": "4 \u00b7 Chat tab: the switch sits in the title bar",
+      "is_interactive": true
+    },
+    "Phone-Files.dc.html": {
+      "x": 470,
+      "y": 1260,
+      "w": 390,
+      "h": 844,
+      "title": "5 \u00b7 Code tab: changed files first, then the tree",
+      "is_interactive": true
+    },
+    "Phone-Code.dc.html": {
+      "x": 940,
+      "y": 1260,
+      "w": 390,
+      "h": 844,
+      "title": "6 \u00b7 Editing on a phone: plain text area, accessory keys, Save above the keyboard",
+      "is_interactive": true
+    },
+    "Phone-Commit.dc.html": {
+      "x": 1410,
+      "y": 1260,
+      "w": 390,
+      "h": 844,
+      "title": "7 \u00b7 Commit as a bottom sheet"
+    }
+  },
+  "order": [
+    "Desktop-Split.dc.html",
+    "Desktop-Editing.dc.html",
+    "Desktop-Commit.dc.html",
+    "Phone-Chat.dc.html",
+    "Phone-Files.dc.html",
+    "Phone-Code.dc.html",
+    "Phone-Commit.dc.html"
+  ],
+  "notes": {
+    "t-desktop": {
+      "x": 0,
+      "y": -300,
+      "text": "Desktop \u2014 a code chat splits its column: the checkout on the left, the chat on the right",
+      "kind": "title1",
+      "maxW": 3900
+    },
+    "t-phone": {
+      "x": 0,
+      "y": 960,
+      "text": "Phone \u2014 one screen, a Chat / Code switch in the title bar",
+      "kind": "title1",
+      "maxW": 1800
+    },
+    "n-layout": {
+      "x": 1880,
+      "y": 1260,
+      "w": 380,
+      "text": "Layout\n\nThe split lives inside the chat's main column, not the viewport, so it comes and goes with the app menu. Default 70 / 30, a drag handle between, remembered per browser; chat never narrower than 320 px. The chat pane uses its existing compact title bar (overflow menu) whenever it is under 640 px \u2014 measured on the pane, not the window.\n\nUnder about 1024 px of column the same two panes become the two tabs.",
+      "fill": "blue"
+    },
+    "n-save": {
+      "x": 1880,
+      "y": 1660,
+      "w": 380,
+      "text": "Save \u2260 commit\n\nSave writes the file into the checkout on the sandbox worker \u2014 the same place the chat's tools write \u2014 uncommitted. Commit records whatever is in the working tree (yours and the chat's) as the person, on the current branch or a new one. Push stays a separate step, with the person's own Bitbucket grant, exactly as the tools do it.",
+      "fill": "green"
+    },
+    "n-conflict": {
+      "x": 2300,
+      "y": 1260,
+      "w": 380,
+      "text": "Who else is writing\n\nThe checkout is shared with the chat's turn and with other members. Every read carries a content hash; a save sends it back and is refused when the file moved underneath \u2014 the amber banner in board 2. While a turn runs, a file the turn wrote is reloaded on turn end unless it has unsaved edits, in which case the banner offers Compare / Reload theirs / Keep mine.",
+      "fill": "orange"
+    },
+    "n-model": {
+      "x": 2300,
+      "y": 1660,
+      "w": 380,
+      "text": "The chat knows what you did\n\nA save and a commit from the editor each add a small note row to the transcript (like the auto-mode nudge rows): the thread shows it, the Changes panel counts the commit, and the next turn's model sees that a person edited those files by hand instead of finding a surprise in git status.",
+      "fill": "purple"
+    },
+    "n-scope": {
+      "x": 2720,
+      "y": 1260,
+      "w": 380,
+      "text": "Not in the first cut\n\n\u2022 Follow the assistant (editor jumps to the file a turn is writing)\n\u2022 Diff markers against HEAD inside the editor gutter\n\u2022 Multi-cursor / find-and-replace across files\n\u2022 Creating, renaming or deleting files from the pane (the chat's tools do it)\n\u2022 Before a chat has cloned: the tree and files come from Bitbucket read-only, as the project page's tree already does",
+      "fill": "gray"
+    }
+  },
+  "designSystems": []
+}

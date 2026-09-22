@@ -111,9 +111,13 @@ export default function CodeSections({
   );
 
   const [workspaceSlug, repoSlug] = code.repoFullName.split('/');
-  const bitbucketUrl =
+  const isGitHub = code.repoProvider === 'github';
+  const hostLabel = isGitHub ? 'GitHub' : 'Bitbucket';
+  const hostUrl =
     workspaceSlug && repoSlug
-      ? `https://bitbucket.org/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
+      ? isGitHub
+        ? `https://github.com/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
+        : `https://bitbucket.org/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
       : null;
 
   return (
@@ -123,14 +127,14 @@ export default function CodeSections({
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold">Repository</h2>
             {statusPill}
-            {bitbucketUrl ? (
+            {hostUrl ? (
               <a
-                href={bitbucketUrl}
+                href={hostUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
               >
-                Open on Bitbucket
+                Open on {hostLabel}
               </a>
             ) : null}
           </div>
@@ -149,7 +153,7 @@ export default function CodeSections({
           {!code.enabled
             ? 'Code workspaces are not enabled on this deployment; chats here have no code tools.'
             : !workspace
-              ? 'The first chat in this project clones it into the sandbox, with the chatting person’s own Bitbucket access.'
+              ? `The first chat in this project clones it into the sandbox, with the chatting person’s own ${hostLabel} access.`
               : workspace.status === 'failed'
                 ? `The last clone failed: ${workspace.error ?? 'unknown reason'}. The next chat tries again.`
                 : workspace.status === 'cloning'

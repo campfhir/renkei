@@ -61,7 +61,11 @@ export type AuditAction =
   | 'code.project.deleted'
   | 'code.env.replaced'
   | 'code.env.deleted'
-  | 'code.files.uploaded';
+  | 'code.files.uploaded'
+  /** A file saved from the code pane into the checkout, uncommitted. */
+  | 'code.files.saved'
+  | 'code.commit'
+  | 'code.push';
 
 export interface AuditEventInput {
   tenantId: string;

@@ -78,7 +78,7 @@ interface Variable {
 const CONTEXTS = [3, 10, 25, 100] as const;
 
 export const PULL_REQUEST_ASK =
-  'Commit the current changes on a new branch with a clear message, push it, and open a pull request on Bitbucket that says what changed and why.';
+  'Commit the current changes on a new branch with a clear message, push it, and open a pull request that says what changed and why.';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';

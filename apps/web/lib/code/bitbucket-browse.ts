@@ -272,3 +272,46 @@ export async function readReadme(
   }
   return null;
 }
+
+/** The largest file the code pane reads from Bitbucket before a clone, in characters. */
+const SOURCE_FILE_MAX_CHARS = 200_000;
+
+/**
+ * One file of the repository as Bitbucket has it on the branch — what
+ * the code pane shows before any chat has cloned, read-only. A file that
+ * is not text answers `binary`; a long one is cut and says so.
+ */
+export async function readSourceFile(
+  auth: BitbucketAuth,
+  fullName: string,
+  branch: string,
+  path: string
+): Promise<
+  | { ok: true; text: string; ref: string; truncated: boolean; binary: boolean }
+  | { ok: false; error: string }
+> {
+  const [workspace, slug] = fullName.split('/');
+  if (!workspace || !slug) return { ok: false, error: 'The repository name is not usable.' };
+  const base = `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
+  const ref = await refOf(auth, base, branch);
+  if (!ref) return { ok: false, error: 'The repository’s branch could not be read.' };
+  const encoded = path
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  const file = await bbRawText(
+    auth,
+    ['repository'],
+    `${base}/src/${encodeURIComponent(ref)}/${encoded}`
+  );
+  if (!file.ok) return file;
+  if (file.text.includes('\0')) return { ok: true, text: '', ref, truncated: false, binary: true };
+  const truncated = file.text.length > SOURCE_FILE_MAX_CHARS;
+  return {
+    ok: true,
+    text: truncated ? file.text.slice(0, SOURCE_FILE_MAX_CHARS) : file.text,
+    ref,
+    truncated,
+    binary: false,
+  };
+}

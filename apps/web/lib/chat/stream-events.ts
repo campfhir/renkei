@@ -45,6 +45,8 @@ export type ChatStreamEvent =
       model: string | null;
       createdAt: string;
     }
+  /** A whole row appended outside any turn — a code-pane note (lib/code/notes.ts); client-side only. */
+  | { type: 'row'; message: ChatMessageView }
   | { type: 'block_start'; messageId: string; index: number; block: ChatBlock }
   | { type: 'text_delta'; messageId: string; index: number; text: string }
   | { type: 'thinking_delta'; messageId: string; index: number; thinking: string }
@@ -208,6 +210,13 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
       return {
         ...state,
         messages: [...state.messages, message].sort((a, b) => a.seq - b.seq),
+      };
+    }
+    case 'row': {
+      if (state.messages.some((message) => message.id === event.message.id)) return state;
+      return {
+        ...state,
+        messages: [...state.messages, event.message].sort((a, b) => a.seq - b.seq),
       };
     }
     case 'block_start':

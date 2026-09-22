@@ -34,8 +34,8 @@ export default function Modal({
   title: string;
   onClose: () => void;
   children: ReactNode;
-  /** 'wide' for content that needs the room — a diff side by side. */
-  size?: 'md' | 'wide';
+  /** 'lg' for a form with a list in it; 'wide' for content that needs the room — a diff side by side. */
+  size?: 'md' | 'lg' | 'wide';
 }) {
   // There is no document on the server; the portal target exists only once
   // this has mounted. A dialog is opened by a click, so nobody sees the
@@ -63,7 +63,7 @@ export default function Modal({
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className={`w-full ${size === 'wide' ? 'max-w-6xl' : 'max-w-md'} rounded-xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-950`}
+        className={`w-full ${size === 'wide' ? 'max-w-6xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md'} rounded-xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-950`}
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold">{title}</h2>

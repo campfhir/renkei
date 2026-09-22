@@ -13,8 +13,11 @@ export type MessageRole = 'user' | 'assistant';
  * 'nudge': a user-role row the runner itself wrote in auto mode — the
  * word to carry on when a reply ended without the task marked complete
  * (auto-mode.ts). Shown as a note, never as the person's bubble.
+ * 'note': a user-role row the code pane wrote for what the person did
+ * to the checkout by hand — a save, a commit, a push (lib/code/notes.ts).
+ * Shown as a small line too; the model reads it as part of the thread.
  */
-export type MessageKind = 'prompt' | 'assistant' | 'tool_results' | 'nudge';
+export type MessageKind = 'prompt' | 'assistant' | 'tool_results' | 'nudge' | 'note';
 export type MessageStatus = 'complete' | 'streaming' | 'canceled' | 'interrupted' | 'failed';
 export type TurnStatus = 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
 /** 'compaction': a chat_compact pass riding the turn machinery, no messages of its own. */
