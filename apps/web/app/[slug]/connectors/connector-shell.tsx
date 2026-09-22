@@ -1,5 +1,3 @@
-'use client';
-
 import type { ReactNode } from 'react';
 import CoachTarget from '@/components/coach-marks/anchor';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';

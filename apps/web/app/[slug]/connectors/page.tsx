@@ -243,6 +243,254 @@ export default async function ConnectorsPage({
     shown.has('fileshares') ||
     shown.has('mirth');
 
+  /**
+   * Each card, tagged with whether it has something a person added but
+   * never finished connecting. Those float to their own section above
+   * everything else: a card you already use is a reference, but a card you
+   * started and abandoned is the one thing on this page that is actually
+   * blocking you, and it used to be wherever the DOM order happened to put
+   * it — often below several fully-connected cards a returning user has no
+   * reason to look at again.
+   *
+   * Microsoft is exempt from per-product attention: one consent covers
+   * every panel, so "needs attention" for it is simply "not connected at
+   * all", same as every other single-grant card.
+   */
+  const cards: Array<{ key: string; needsAttention: boolean; node: React.ReactNode }> = [];
+
+  if (atlassianShown) {
+    cards.push({
+      key: 'atlassian',
+      needsAttention:
+        (jiraShown && enabledConfig.has('atlassian') && atlassianGrant === undefined) ||
+        (jiraShown && enabledConfig.has('atlassian-jsm') && jsmGrant === undefined) ||
+        (shown.has('atlassian-confluence') && confluenceGrant === undefined) ||
+        (shown.has('atlassian-bitbucket') && bitbucketGrant === undefined),
+      node: (
+        <>
+          <AtlassianConnector
+            tenantId={tenant.id}
+            jira={
+              jiraShown && enabledConfig.has('atlassian')
+                ? {
+                    connected: atlassianGrant !== undefined,
+                    displayName: atlassianGrant?.displayName ?? null,
+                    ceiling: atlassianCeiling,
+                    priorScopes: atlassianGrant?.requestedScopes ?? null,
+                  }
+                : undefined
+            }
+            jsm={
+              jiraShown && enabledConfig.has('atlassian-jsm')
+                ? {
+                    connected: jsmGrant !== undefined,
+                    displayName: jsmGrant?.displayName ?? null,
+                    ceiling: jsmCeiling,
+                    priorScopes: jsmGrant?.requestedScopes ?? null,
+                  }
+                : undefined
+            }
+            confluence={
+              shown.has('atlassian-confluence')
+                ? {
+                    connected: confluenceGrant !== undefined,
+                    displayName: confluenceGrant?.displayName ?? null,
+                    ceiling: confluenceCeiling,
+                    priorScopes: confluenceGrant?.requestedScopes ?? null,
+                  }
+                : undefined
+            }
+            bitbucket={
+              shown.has('atlassian-bitbucket')
+                ? {
+                    connected: bitbucketGrant !== undefined,
+                    displayName: bitbucketGrant?.displayName ?? null,
+                    ceiling: bitbucketCeiling,
+                    priorScopes: bitbucketGrant?.requestedScopes ?? null,
+                  }
+                : undefined
+            }
+          />
+          <RemovableProducts
+            tenantId={tenant.id}
+            products={removable(catalog, ['jira', 'atlassian-confluence', 'atlassian-bitbucket'])}
+          />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('webex')) {
+    cards.push({
+      key: 'webex',
+      needsAttention: webexGrant === undefined,
+      node: (
+        <>
+          <WebexUserConnector
+            tenantId={tenant.id}
+            connected={webexGrant !== undefined}
+            displayName={webexGrant?.displayName ?? null}
+            allSpaces={
+              typeof webexGrant?.metadata === 'object' &&
+              webexGrant.metadata !== null &&
+              !Array.isArray(webexGrant.metadata) &&
+              'allSpaces' in webexGrant.metadata &&
+              webexGrant.metadata.allSpaces === true
+            }
+            ceiling={webexCeiling}
+            priorScopes={webexGrant?.requestedScopes ?? null}
+          />
+          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['webex'])} />
+        </>
+      ),
+    });
+  }
+
+  if (microsoftKeys.length > 0) {
+    cards.push({
+      key: 'microsoft',
+      needsAttention: microsoftGrant === undefined,
+      node: (
+        <>
+          <MicrosoftConnector
+            tenantId={tenant.id}
+            connected={microsoftGrant !== undefined}
+            displayName={microsoftGrant?.displayName ?? null}
+            ceiling={microsoftCeiling}
+            priorScopes={microsoftGrant?.requestedScopes ?? null}
+            shownKeys={microsoftKeys}
+          />
+          <RemovableProducts tenantId={tenant.id} products={removable(catalog, microsoftKeys)} />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('zoom')) {
+    cards.push({
+      key: 'zoom',
+      needsAttention: zoomGrant === undefined,
+      node: (
+        <>
+          {/* Scope drift the Marketplace app hides: Zoom silently drops any
+              requested scope the app doesn't carry, and the only symptom is
+              tools quietly not registering. Surface the difference here. */}
+          <ZoomConnector
+            missingScopes={
+              zoomGrant?.grantedScopes
+                ? (zoomGrant.requestedScopes ?? []).filter(
+                    (scope) => !zoomGrant.grantedScopes?.includes(scope)
+                  )
+                : []
+            }
+            tenantId={tenant.id}
+            connected={zoomGrant !== undefined}
+            displayName={zoomGrant?.displayName ?? null}
+            ceiling={zoomCeiling}
+            priorScopes={zoomGrant?.requestedScopes ?? null}
+          />
+          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['zoom'])} />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('github')) {
+    cards.push({
+      key: 'github',
+      needsAttention: githubGrant === undefined,
+      node: (
+        <>
+          <GitHubConnector
+            tenantId={tenant.id}
+            connected={githubGrant !== undefined}
+            displayName={githubGrant?.displayName ?? null}
+            ceiling={githubCeiling}
+            priorScopes={githubGrant?.requestedScopes ?? null}
+          />
+          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['github'])} />
+        </>
+      ),
+    });
+  }
+
+  if (hylandShown) {
+    cards.push({
+      key: 'hyland',
+      needsAttention:
+        (shown.has('onbase') && onbaseGrant === undefined) ||
+        (shown.has('onbase-admin') && onbaseAdminGrant === undefined),
+      node: (
+        <>
+          <HylandConnector
+            tenantId={tenant.id}
+            onbase={
+              shown.has('onbase')
+                ? {
+                    connected: onbaseGrant !== undefined,
+                    displayName: onbaseGrant?.displayName ?? null,
+                  }
+                : undefined
+            }
+            onbaseAdmin={
+              shown.has('onbase-admin')
+                ? {
+                    connected: onbaseAdminGrant !== undefined,
+                    displayName: onbaseAdminGrant?.displayName ?? null,
+                  }
+                : undefined
+            }
+          />
+          <RemovableProducts
+            tenantId={tenant.id}
+            products={removable(catalog, ['onbase', 'onbase-admin'])}
+          />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('fileshares')) {
+    cards.push({
+      key: 'fileshares',
+      needsAttention: connectableShares.some((share) => share.connection === null),
+      node: (
+        <>
+          <FilesharesConnector tenantId={tenant.id} shares={connectableShares} />
+          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['fileshares'])} />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('mirth')) {
+    cards.push({
+      key: 'mirth',
+      needsAttention: connectableMirthInstances.some((instance) => instance.connection === null),
+      node: (
+        <>
+          <MirthConnector tenantId={tenant.id} instances={connectableMirthInstances} />
+          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['mirth'])} />
+        </>
+      ),
+    });
+  }
+
+  if (browserSecrets) {
+    // Not an "add and connect" surface — it has nothing to be added-but-
+    // unconnected about — so it never counts as needing attention.
+    cards.push({
+      key: 'browser-secrets',
+      needsAttention: false,
+      node: (
+        <SandboxSecrets tenantId={tenant.id} secrets={browserSecrets.ok ? browserSecrets.val : []} />
+      ),
+    });
+  }
+
+  const needsSetup = cards.filter((card) => card.needsAttention);
+  const settled = cards.filter((card) => !card.needsAttention);
+
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -283,9 +531,19 @@ export default async function ConnectorsPage({
         )}
 
         {/*
-        Columns rather than one long stack: with six connectors the stack
-        made you scroll past everything already connected to reach the one
-        you had not.
+        Two passes over the same card list, in the same column mechanism,
+        rather than one flat pass: a card that has something added but not
+        connected is the one thing on this page actually blocking someone,
+        and used to sit wherever the DOM order happened to put it — often
+        below several already-working cards nobody needed to look at again.
+        `needsSetup` gets its own heading and renders first; `settled`
+        follows, unlabeled when nothing needed setup (the common case, once
+        someone has finished onboarding) so the page doesn't insist on a
+        heading for a distinction that isn't live today.
+
+        Columns rather than one long stack within each section: with six
+        connectors the stack made you scroll past everything already
+        connected to reach the one you had not.
 
         Capped at TWO. Three fit the page at `xl` but not the cards: inside
         `max-w-6xl` a third of the width is ~350px, and Atlassian — three
@@ -296,199 +554,49 @@ export default async function ConnectorsPage({
         CSS multi-column rather than a grid, because these cards differ in
         height by a factor of five. Columns pack vertically instead, and
         `break-inside-avoid` on each card is what stops one being split down
-        the middle across a column boundary.
+        the middle across a column boundary. Splitting `needsSetup` into its
+        own multi-column block (instead of just sorting one shared list)
+        keeps that packing well-behaved too: without it, a handful of small
+        unconnected cards trying to balance against one huge connected one
+        is exactly the uneven-column case multi-column already struggles
+        with — a short section balances far more predictably on its own.
 
-        The `-mb-6` cancels the trailing margin of whichever card ends the
-        flow, so the gap to the endpoint row below on a phone is the same
-        `gap-6` as everywhere else.
+        The `-mb-6` cancels the trailing margin of whichever card ends a
+        section's flow, so the gap to what follows — the next section, or
+        the endpoint row on a phone — is the same `gap-6` as everywhere
+        else.
       */}
-        <div className="-mb-6 lg:columns-2 lg:gap-6">
-          {/*
-            One Atlassian card holding all four products. Each keeps its own
-            connect/disconnect controls — they are four separate OAuth apps
-            with four separate grants, unlike Microsoft's single consent.
-          */}
-          {atlassianShown && (
-            <div className="mb-6 break-inside-avoid">
-              <AtlassianConnector
-                tenantId={tenant.id}
-                jira={
-                  jiraShown && enabledConfig.has('atlassian')
-                    ? {
-                        ceiling: atlassianCeiling,
-                        priorScopes: atlassianGrant?.requestedScopes ?? null,
-                      }
-                    : undefined
-                }
-                jsm={
-                  jiraShown && enabledConfig.has('atlassian-jsm')
-                    ? {
-                        connected: jsmGrant !== undefined,
-                        displayName: jsmGrant?.displayName ?? null,
-                        ceiling: jsmCeiling,
-                        priorScopes: jsmGrant?.requestedScopes ?? null,
-                      }
-                    : undefined
-                }
-                confluence={
-                  shown.has('atlassian-confluence')
-                    ? {
-                        connected: confluenceGrant !== undefined,
-                        displayName: confluenceGrant?.displayName ?? null,
-                        ceiling: confluenceCeiling,
-                        priorScopes: confluenceGrant?.requestedScopes ?? null,
-                      }
-                    : undefined
-                }
-                bitbucket={
-                  shown.has('atlassian-bitbucket')
-                    ? {
-                        connected: bitbucketGrant !== undefined,
-                        displayName: bitbucketGrant?.displayName ?? null,
-                        ceiling: bitbucketCeiling,
-                        priorScopes: bitbucketGrant?.requestedScopes ?? null,
-                      }
-                    : undefined
-                }
-              />
-              <RemovableProducts
-                tenantId={tenant.id}
-                products={removable(catalog, [
-                  'jira',
-                  'atlassian-confluence',
-                  'atlassian-bitbucket',
-                ])}
-              />
+        {needsSetup.length > 0 && (
+          <div>
+            <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
+              Needs setup
+            </h2>
+            <div className="-mb-6 lg:columns-2 lg:gap-6">
+              {needsSetup.map((card) => (
+                <div key={card.key} className="mb-6 break-inside-avoid">
+                  {card.node}
+                </div>
+              ))}
             </div>
-          )}
+          </div>
+        )}
 
-          {shown.has('webex') && (
-            <div className="mb-6 break-inside-avoid">
-              <WebexUserConnector
-                tenantId={tenant.id}
-                connected={webexGrant !== undefined}
-                displayName={webexGrant?.displayName ?? null}
-                allSpaces={
-                  typeof webexGrant?.metadata === 'object' &&
-                  webexGrant.metadata !== null &&
-                  !Array.isArray(webexGrant.metadata) &&
-                  'allSpaces' in webexGrant.metadata &&
-                  webexGrant.metadata.allSpaces === true
-                }
-                ceiling={webexCeiling}
-                priorScopes={webexGrant?.requestedScopes ?? null}
-              />
-              <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['webex'])} />
+        {settled.length > 0 && (
+          <div>
+            {needsSetup.length > 0 && (
+              <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                Connected
+              </h2>
+            )}
+            <div className="-mb-6 lg:columns-2 lg:gap-6">
+              {settled.map((card) => (
+                <div key={card.key} className="mb-6 break-inside-avoid">
+                  {card.node}
+                </div>
+              ))}
             </div>
-          )}
-
-          {microsoftKeys.length > 0 && (
-            <div className="mb-6 break-inside-avoid">
-              <MicrosoftConnector
-                tenantId={tenant.id}
-                connected={microsoftGrant !== undefined}
-                displayName={microsoftGrant?.displayName ?? null}
-                ceiling={microsoftCeiling}
-                priorScopes={microsoftGrant?.requestedScopes ?? null}
-                shownKeys={microsoftKeys}
-              />
-              <RemovableProducts
-                tenantId={tenant.id}
-                products={removable(catalog, microsoftKeys)}
-              />
-            </div>
-          )}
-
-          {/* Scope drift the Marketplace app hides: Zoom silently drops any
-              requested scope the app doesn't carry, and the only symptom is
-              tools quietly not registering. Surface the difference here. */}
-          {shown.has('zoom') && (
-            <div className="mb-6 break-inside-avoid">
-              <ZoomConnector
-                missingScopes={
-                  zoomGrant?.grantedScopes
-                    ? (zoomGrant.requestedScopes ?? []).filter(
-                        (scope) => !zoomGrant.grantedScopes?.includes(scope)
-                      )
-                    : []
-                }
-                tenantId={tenant.id}
-                connected={zoomGrant !== undefined}
-                displayName={zoomGrant?.displayName ?? null}
-                ceiling={zoomCeiling}
-                priorScopes={zoomGrant?.requestedScopes ?? null}
-              />
-              <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['zoom'])} />
-            </div>
-          )}
-
-          {shown.has('github') && (
-            <div className="mb-6 break-inside-avoid">
-              <GitHubConnector
-                tenantId={tenant.id}
-                connected={githubGrant !== undefined}
-                displayName={githubGrant?.displayName ?? null}
-                ceiling={githubCeiling}
-                priorScopes={githubGrant?.requestedScopes ?? null}
-              />
-              <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['github'])} />
-            </div>
-          )}
-
-          {hylandShown && (
-            <div className="mb-6 break-inside-avoid">
-              <HylandConnector
-                tenantId={tenant.id}
-                onbase={
-                  shown.has('onbase')
-                    ? {
-                        connected: onbaseGrant !== undefined,
-                        displayName: onbaseGrant?.displayName ?? null,
-                      }
-                    : undefined
-                }
-                onbaseAdmin={
-                  shown.has('onbase-admin')
-                    ? {
-                        connected: onbaseAdminGrant !== undefined,
-                        displayName: onbaseAdminGrant?.displayName ?? null,
-                      }
-                    : undefined
-                }
-              />
-              <RemovableProducts
-                tenantId={tenant.id}
-                products={removable(catalog, ['onbase', 'onbase-admin'])}
-              />
-            </div>
-          )}
-
-          {shown.has('fileshares') && (
-            <div className="mb-6 break-inside-avoid">
-              <FilesharesConnector tenantId={tenant.id} shares={connectableShares} />
-              <RemovableProducts
-                tenantId={tenant.id}
-                products={removable(catalog, ['fileshares'])}
-              />
-            </div>
-          )}
-
-          {shown.has('mirth') && (
-            <div className="mb-6 break-inside-avoid">
-              <MirthConnector tenantId={tenant.id} instances={connectableMirthInstances} />
-              <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['mirth'])} />
-            </div>
-          )}
-
-          {browserSecrets && (
-            <div className="mb-6 break-inside-avoid">
-              <SandboxSecrets
-                tenantId={tenant.id}
-                secrets={browserSecrets.ok ? browserSecrets.val : []}
-              />
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

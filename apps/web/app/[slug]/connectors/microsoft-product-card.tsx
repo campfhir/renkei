@@ -1,5 +1,3 @@
-'use client';
-
 import type { ReactNode } from 'react';
 import ConnectorIcon from '@/components/connector-icon';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
