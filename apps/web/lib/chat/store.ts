@@ -111,7 +111,14 @@ export async function listOwnedChats(
   db: Kysely<DB>,
   tenantId: string,
   ownerSubject: string,
-  options: { includeArchived?: boolean } = {}
+  options: {
+    includeArchived?: boolean;
+    /** Only chats touched at or after this instant. */
+    since?: Date;
+    /** Only chats touched before this instant — the "load more" cursor. */
+    before?: Date;
+    limit?: number;
+  } = {}
 ): Promise<ChatRow[]> {
   let query = db
     .selectFrom('chats')
@@ -119,8 +126,32 @@ export async function listOwnedChats(
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject);
   if (!options.includeArchived) query = query.where('archived_at', 'is', null);
-  const rows = await query.orderBy('updated_at', 'desc').limit(CHAT_LIST_LIMIT).execute();
+  if (options.since) query = query.where('updated_at', '>=', options.since);
+  if (options.before) query = query.where('updated_at', '<', options.before);
+  const rows = await query
+    .orderBy('updated_at', 'desc')
+    .limit(options.limit ?? CHAT_LIST_LIMIT)
+    .execute();
   return rows.map(rowOf);
+}
+
+/** Whether the owner has a chat touched before `before` — the "load more" button's cue to appear. */
+export async function hasOwnedChatBefore(
+  db: Kysely<DB>,
+  tenantId: string,
+  ownerSubject: string,
+  before: Date
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('chats')
+    .select('id')
+    .where('tenant_id', '=', tenantId)
+    .where('owner_subject', '=', ownerSubject)
+    .where('updated_at', '<', before)
+    .where('last_message_at', 'is not', null)
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 /** Chats sitting in these projects, other than the viewer's own. */
@@ -128,7 +159,8 @@ export async function listProjectChats(
   db: Kysely<DB>,
   tenantId: string,
   projectIds: string[],
-  excludeOwner: string | null
+  excludeOwner: string | null,
+  options: { since?: Date } = {}
 ): Promise<ChatRow[]> {
   if (projectIds.length === 0) return [];
   let query = db
@@ -138,6 +170,7 @@ export async function listProjectChats(
     .where('project_id', 'in', projectIds)
     .where('archived_at', 'is', null);
   if (excludeOwner) query = query.where('owner_subject', '!=', excludeOwner);
+  if (options.since) query = query.where('updated_at', '>=', options.since);
   const rows = await query.orderBy('updated_at', 'desc').limit(CHAT_LIST_LIMIT).execute();
   return rows.map(rowOf);
 }

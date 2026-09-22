@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import ScrollActivity from '@/components/scroll-activity';
 import './globals.css';
 
 const geistSans = Geist({
@@ -84,7 +85,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <ScrollActivity />
+        {children}
+      </body>
     </html>
   );
 }
