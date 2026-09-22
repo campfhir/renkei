@@ -274,6 +274,12 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<1 | -1>(1);
   const [foldersFirst, setFoldersFirst] = useState(true);
+  // Called unconditionally, above every early return below: a hook that
+  // only starts firing once `share` is set (i.e. after the "!share" return)
+  // changes this component's hook order between renders, which React
+  // treats as a crash ("Rendered more hooks than during the previous
+  // render"), not a caught error — see the files-click crash report.
+  const toolbarAnchor = useCoachAnchor('files-toolbar');
 
   useEffect(() => {
     try {
@@ -439,7 +445,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
 
   const rowGrid = 'grid grid-cols-[minmax(0,1fr)_5.5rem_9.5rem_2.25rem] items-center gap-2';
 
-  const toolbarAnchor = useCoachAnchor('files-toolbar');
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
