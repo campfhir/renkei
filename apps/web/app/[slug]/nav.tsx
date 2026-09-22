@@ -31,27 +31,6 @@ interface NavProps {
 const NARROW = '(max-width: 1023.98px)';
 const PINNED_KEY = 'renkei:nav-pinned';
 
-/**
- * A scroll container's track sits invisible until a hand is actually on
- * it — see the `.sidebar-scroll` rule in globals.css for the hover and
- * focus cases; `onScroll` covers the third, a wheel or trackpad scroll
- * with the pointer elsewhere, by flagging `.is-scrolling` for a moment
- * after each scroll event.
- */
-function useScrollingClass(): { className: string; onScroll: () => void } {
-  const [scrolling, setScrolling] = useState(false);
-  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (timeout.current) clearTimeout(timeout.current);
-  }, []);
-  const onScroll = () => {
-    setScrolling(true);
-    if (timeout.current) clearTimeout(timeout.current);
-    timeout.current = setTimeout(() => setScrolling(false), 800);
-  };
-  return { className: scrolling ? 'is-scrolling' : '', onScroll };
-}
-
 /** "Ada Lovelace" → "AL"; single word or an email → its first letter. */
 function initialsOf(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -120,8 +99,6 @@ export default function AppNav({
   const router = useRouter();
   const drawerRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const drawerScroll = useScrollingClass();
-  const columnScroll = useScrollingClass();
 
   // The places a tour may point at in the nav, registered with the
   // coach-mark engine while they are on screen. The menu renders twice
@@ -498,8 +475,7 @@ export default function AppNav({
         ref={drawerRef}
         tabIndex={-1}
         aria-label="Application"
-        onScroll={drawerScroll.onScroll}
-        className={`sidebar-scroll fixed inset-y-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-[left] duration-200 ease-out lg:hidden dark:border-gray-800 dark:bg-gray-950 ${drawerScroll.className} ${
+        className={`fixed inset-y-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-[left] duration-200 ease-out lg:hidden dark:border-gray-800 dark:bg-gray-950 ${
           open ? 'left-0' : '-left-full'
         }`}
       >
@@ -525,8 +501,7 @@ export default function AppNav({
         {pinned || revealed ? (
           <nav
             aria-label="Application"
-            onScroll={columnScroll.onScroll}
-            className={`sidebar-scroll sticky top-14 hidden h-[calc(100vh-3.5rem)] w-72 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 lg:flex dark:border-gray-800 dark:bg-gray-950 ${columnScroll.className}`}
+            className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-72 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 lg:flex dark:border-gray-800 dark:bg-gray-950"
           >
             {menu}
           </nav>

@@ -85,36 +85,46 @@ body {
 }
 
 /*
- * The app menu's scroll track (app/[slug]/nav.tsx: the drawer and the
- * column, both wear `.sidebar-scroll`): invisible at rest, so it doesn't
- * read as a second border standing next to the menu's own right edge, and
- * drawn — thin, no arrows — only while a hand is actually on it: hovering
- * or keyboard-focused inside the menu, or `.is-scrolling`, which the
- * container's own onScroll handler sets for a moment after a wheel or
- * trackpad scroll whose pointer isn't over the menu at all.
+ * Every scroll track in the app, not just one panel's: invisible at rest
+ * so it never reads as a second border sitting beside a panel's own edge,
+ * and drawn — thin, no arrows — only while a hand is actually on it:
+ * hovering (which, per the cascade, is also true of every ancestor of
+ * whatever's actually under the pointer — so scrolling a nested list
+ * still lights up its own track, not just the outermost one), keyboard
+ * focus inside it, or `[data-scrolling]`, which components/scroll-
+ * activity.tsx's single app-wide listener sets on an element for a
+ * moment after it scrolls by any means — wheel, trackpad, a dragged
+ * scrollbar thumb, keyboard paging — pointer over it or not.
+ *
+ * `scrollbar-width`/`scrollbar-color` are what Firefox reads (Chromium
+ * and Safari ignore them); the `::-webkit-scrollbar-*` pseudo-elements
+ * are what Chromium and Safari read (Firefox ignores them). Declaring
+ * both, unconditionally, is how one rule covers every engine rather than
+ * needing a browser check.
  */
-.sidebar-scroll {
+* {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
-.sidebar-scroll:hover,
-.sidebar-scroll:focus-within,
-.sidebar-scroll.is-scrolling {
+*:hover,
+*:focus-within,
+*[data-scrolling] {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
-.sidebar-scroll::-webkit-scrollbar {
+*::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
-.sidebar-scroll::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
-.sidebar-scroll::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
   background-color: transparent;
   border-radius: 9999px;
 }
-.sidebar-scroll:hover::-webkit-scrollbar-thumb,
-.sidebar-scroll:focus-within::-webkit-scrollbar-thumb,
-.sidebar-scroll.is-scrolling::-webkit-scrollbar-thumb {
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb,
+*[data-scrolling]::-webkit-scrollbar-thumb {
   background-color: var(--scrollbar-thumb);
 }
 
