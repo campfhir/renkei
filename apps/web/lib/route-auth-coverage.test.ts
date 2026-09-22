@@ -82,6 +82,10 @@ const PUBLIC: Record<string, string> = {
   'api/home-realm/create/route.ts':
     'self-service onboarding — no session can exist before the first tenant; ' +
     'throttled per-client and globally (checkInboundLimit)',
+  'api/manifest/[slug]/route.ts':
+    "the tenant-scoped Web App Manifest linked from [slug]/layout.tsx's generateMetadata; " +
+    'a manifest is fetched by the OS before any page runs, same as the public icon it names, ' +
+    "and holds nothing but this tenant's slug",
   // Protocol discovery documents. Public by specification.
   'api/.well-known/oauth-authorization-server/route.ts': 'RFC 8414 metadata, public by spec',
   'api/.well-known/oauth-protected-resource/route.ts': 'RFC 9728 metadata, public by spec',
