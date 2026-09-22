@@ -73,6 +73,11 @@ export const GLYPH_ONLY = new Set([
   // Voice is the chat speaking and listening through an org-provisioned
   // speech service; drawing that vendor's mark would name the wrong thing.
   'voice',
+  // No shipped GitHub mark yet (the README's marks are sourced from
+  // Wikimedia Commons entries recorded there as public domain; nothing
+  // suitable was vetted for this connector) — the built-in glyph renders
+  // until one is added the same way.
+  'github',
 ]);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */

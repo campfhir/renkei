@@ -65,6 +65,7 @@ function tools(recover?: (lostWorkspaceId: string) => Promise<CheckoutRecovery>)
     target: TARGET,
     workspaceId: WS_ID,
     repoFullName: 'acme/demo',
+    repoProvider: 'atlassian-bitbucket',
     origin: 'https://r.example',
     ...(recover ? { recover } : {}),
   });
@@ -424,7 +425,12 @@ describe('git', () => {
     });
     const result = await tools().get('code_git_push')!.execute({}, context);
     expect(git.resolveWorkspaceGitCredential).toHaveBeenCalledWith(
-      { tenantId: 'tenant-1', subject: 'auth0|alice', origin: 'https://r.example' },
+      {
+        tenantId: 'tenant-1',
+        subject: 'auth0|alice',
+        origin: 'https://r.example',
+        provider: 'atlassian-bitbucket',
+      },
       { write: true }
     );
     expect(client.sbWorkspaceGitPush).toHaveBeenCalledWith(TARGET, {

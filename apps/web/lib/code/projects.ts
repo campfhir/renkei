@@ -6,9 +6,10 @@
  * worker are kept in step — a clone started and recorded, an `.env`
  * replaced, a project deleted with its checkout and variables.
  *
- * A clone spends the person's own Bitbucket grant: the caller resolves
- * the credential (lib/sandbox/workspace-git.ts) and hands it here for
- * one worker call; nothing keeps it.
+ * A clone spends the person's own grant on the project's git host
+ * (Bitbucket or GitHub): the caller resolves the credential
+ * (lib/sandbox/workspace-git.ts) and hands it here for one worker call;
+ * nothing keeps it.
  */
 
 import type { Kysely } from 'kysely';
@@ -26,7 +27,7 @@ import {
   type WireWorkspace,
 } from '@renkei/sandbox-client';
 import { deleteProject, getProjectRow, updateProject, type ProjectRow } from '@/lib/chat/projects';
-import { bitbucketCloneUrl, type WorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { cloneUrlFor, type WorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
 import { codeProjectTarget } from './scope';
 
 export type CodeOutcome<T> = { ok: true; val: T } | { ok: false; status: number; message: string };
@@ -63,7 +64,7 @@ export async function startProjectClone(
     repoFullName: repo.fullName,
     ...(project.repo.branch ? { branch: project.repo.branch } : {}),
     ...(options.depth !== undefined ? { depth: options.depth } : {}),
-    cloneUrl: bitbucketCloneUrl(repo.workspace, repo.repoSlug),
+    cloneUrl: cloneUrlFor(project.repo.provider, repo.workspace, repo.repoSlug),
     authHeader: credential.authHeader,
   });
   if (!cloned.ok) {

@@ -63,6 +63,9 @@ const BRAND: Record<string, string> = {
   // The red-orange of the shipped Mirth Connect mark, so the fallback
   // channel glyph reads as the same product.
   mirth: '#D2492F',
+  // GitHub's near-black; we ship no vendor mark (GLYPH_ONLY), so the
+  // initial-letter glyph carries the colour.
+  github: '#181717',
 };
 
 /** Fallback: the connector's initial on a neutral tile. */

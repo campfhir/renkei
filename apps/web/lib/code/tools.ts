@@ -17,8 +17,9 @@
  * the worker masks every value out of every output before it comes back.
  *
  * Git credentials never appear here either: a push or pull asks the
- * chatting person's own Bitbucket grant for a token, hands the worker a
- * header for that one call, and keeps nothing (lib/sandbox/workspace-git.ts).
+ * chatting person's own grant on the project's git host (Bitbucket or
+ * GitHub) for a token, hands the worker a header for that one call, and
+ * keeps nothing (lib/sandbox/workspace-git.ts).
  */
 
 import {
@@ -52,6 +53,7 @@ import {
 } from '@renkei/sandbox-client';
 import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
 import type { McpToolResult } from '@renkei/mcp-client';
+import { GITHUB } from '@renkei/provider-grants';
 import { commitAuthorFor, resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
 import { codeDelegateTool } from './delegate';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
@@ -70,7 +72,9 @@ export interface CodeToolBinding {
   target: SandboxTarget;
   workspaceId: string;
   repoFullName: string;
-  /** The deployment's origin, for the Bitbucket app reader when a token needs refreshing. */
+  /** ATLASSIAN_BITBUCKET or GITHUB (@renkei/provider-grants) — which grant a push/pull asks. */
+  repoProvider: string;
+  /** The deployment's origin, for the host's app reader when a token needs refreshing. */
   origin: string;
   /**
    * Bring the checkout back when the worker says it is gone (lib/code/turn.ts):
@@ -170,6 +174,11 @@ function withCheckoutRecovery(
       };
     },
   };
+}
+
+/** The tool name that opens a pull request on the project's git host. */
+function prTool(provider: string): string {
+  return provider === GITHUB ? 'github_create_pull_request' : 'bitbucket_create_pull_request';
 }
 
 function str(value: unknown): string {
@@ -614,7 +623,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
           ? input.paths.filter((entry): entry is string => typeof entry === 'string')
           : [];
         const credential = await resolveWorkspaceGitCredential(
-          { tenantId: context.tenantId, subject: context.subject, origin: binding.origin },
+          {
+            tenantId: context.tenantId,
+            subject: context.subject,
+            origin: binding.origin,
+            provider: binding.repoProvider,
+          },
           { write: false }
         );
         const username = typeof credential === 'string' ? '' : credential.username;
@@ -623,7 +637,11 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
           message: str(input.message),
           ...(paths.length ? { paths } : {}),
           ...(str(input.newBranch) ? { newBranch: str(input.newBranch) } : {}),
-          author: commitAuthorFor(username || context.subject, context.userEmail ?? undefined),
+          author: commitAuthorFor(
+            username || context.subject,
+            context.userEmail ?? undefined,
+            binding.repoProvider
+          ),
         });
         if (!committed.ok) return failed(committed.err);
         return textResult(`Committed on ${committed.val.branch}: ${committed.val.commit}`);
@@ -633,9 +651,9 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       def: {
         name: 'code_git_push',
         description:
-          'Push the current branch to origin with the person’s own Bitbucket access (an upstream is ' +
-          'set). Pass branch to push under another remote branch name. Then open a pull request with ' +
-          'bitbucket_create_pull_request. Never force-pushes.',
+          'Push the current branch to origin with the person’s own access to the project’s git ' +
+          'host (an upstream is set). Pass branch to push under another remote branch name. Then ' +
+          `open a pull request with ${prTool(binding.repoProvider)}. Never force-pushes.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -650,7 +668,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const credential = await resolveWorkspaceGitCredential(
-          { tenantId: context.tenantId, subject: context.subject, origin: binding.origin },
+          {
+            tenantId: context.tenantId,
+            subject: context.subject,
+            origin: binding.origin,
+            provider: binding.repoProvider,
+          },
           { write: true }
         );
         if (typeof credential === 'string') return errorResult(credential);
@@ -663,7 +686,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         return textResult(
           `Pushed ${pushed.val.branch} to origin/${pushed.val.remoteBranch}.` +
             (pushed.val.output ? `\n${pushed.val.output}` : '') +
-            `\n\nTo open a pull request: bitbucket_create_pull_request on ${binding.repoFullName} with this branch as the source.`
+            `\n\nTo open a pull request: ${prTool(binding.repoProvider)} on ${binding.repoFullName} with this branch as the source.`
         );
       },
     },
@@ -671,9 +694,9 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       def: {
         name: 'code_git_pull',
         description:
-          'Fast-forward the current branch from origin with the person’s own Bitbucket access — or, ' +
-          'with branch, fetch that remote branch and switch the checkout to it. Refuses rather than ' +
-          'merging when the branches have diverged.',
+          'Fast-forward the current branch from origin with the person’s own access to the ' +
+          'project’s git host — or, with branch, fetch that remote branch and switch the checkout ' +
+          'to it. Refuses rather than merging when the branches have diverged.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -688,7 +711,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const credential = await resolveWorkspaceGitCredential(
-          { tenantId: context.tenantId, subject: context.subject, origin: binding.origin },
+          {
+            tenantId: context.tenantId,
+            subject: context.subject,
+            origin: binding.origin,
+            provider: binding.repoProvider,
+          },
           { write: false }
         );
         if (typeof credential === 'string') return errorResult(credential);

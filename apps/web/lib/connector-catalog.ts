@@ -24,6 +24,7 @@
 /** How the catalog groups entries, for a person scanning rather than searching. */
 export type ConnectorCategory =
   | 'atlassian'
+  | 'code'
   | 'microsoft'
   | 'communications'
   | 'documents'
@@ -34,6 +35,7 @@ export type ConnectorCategory =
 
 export const CONNECTOR_CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   atlassian: 'Atlassian',
+  code: 'Source code hosting',
   microsoft: 'Microsoft 365',
   communications: 'Meetings and messaging',
   documents: 'Document management',
@@ -136,6 +138,28 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     keywords: ['git', 'repos', 'repositories', 'pull requests', 'pr', 'code', 'pipelines', 'ci'],
     suite: 'atlassian',
     grantProviders: ['atlassian-bitbucket'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
+    capabilityKey: 'github',
+    configKey: 'github',
+    label: 'GitHub',
+    summary: 'Repositories, branches, commits, pull requests, code search and Actions.',
+    toolPrefix: 'github_*',
+    category: 'code',
+    keywords: [
+      'git',
+      'repos',
+      'repositories',
+      'pull requests',
+      'pr',
+      'code',
+      'actions',
+      'ci',
+      'workflows',
+    ],
+    grantProviders: ['github'],
     userConnectable: true,
     togglable: true,
   },

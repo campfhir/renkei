@@ -102,6 +102,14 @@ export interface MCPToolContext {
    */
   bitbucketScopes?: string[];
   /**
+   * Same, for the caller's grant on Renkei's GitHub App — computed as
+   * requested ∩ granted (or bare requested when granted is unknown), the
+   * same Bitbucket/Zoom arrangement: a GitHub App's real permissions are
+   * fixed on the App's registration, not requested per authorize call, so
+   * bare granted would erase the user's narrowing.
+   */
+  githubScopes?: string[];
+  /**
    * Present when the caller is an agent run (an agent-runner token,
    * migration 040). `subject`/`userEmail` still name the run OWNER — every
    * gate applies as if the owner called — this only says an agent is doing

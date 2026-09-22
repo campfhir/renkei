@@ -241,8 +241,9 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   set `SANDBOX_WORKSPACES_ENABLED=true` in `.env` — again read by BOTH the
   web app (the Code section and the `code_*` tools its chats get) and
   this worker — to let people make a code project from one of their
-  Bitbucket repositories, paste its `.env`, and have the project's chats
-  work in it: read, edit, run the project's own commands, commit, push.
+  Bitbucket or GitHub repositories, paste its `.env`, and have the
+  project's chats work in it: read, edit, run the project's own
+  commands, commit, push.
   Checkouts live on a second named volume
   (`renkei-sandbox-workspaces` / `sandbox_workspaces`) at
   `SANDBOX_WORKSPACES_DIR` (default `/workspaces`), a week since last use.

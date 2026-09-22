@@ -3,13 +3,15 @@
  * one is a chat project with a repository on it: the row is written and
  * the `.env` (if pasted) goes to the sandbox worker under the project's
  * scope. Nothing is cloned yet — the first chat in the project clones
- * the repository with the chatting person's own Bitbucket grant.
+ * the repository with the chatting person's own grant on the chosen
+ * git host (Bitbucket or GitHub).
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { validateGitRef, validateRepoFullName } from '@renkei/connector-sandbox';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
+import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import {
   chatRequestContext,
   jsonError,
@@ -60,17 +62,22 @@ export async function POST(
   if (!sandboxWorkspacesEnabled()) {
     return jsonError(503, 'unavailable', 'Code workspaces are not enabled on this deployment.');
   }
-  // The same bar the Code page shows: a Bitbucket connection that can
+  const body = await readJsonBody(request);
+  // The host this repository lives on — Bitbucket unless the form said
+  // otherwise, so an older client that never sent `provider` keeps working.
+  const provider =
+    typeof body.provider === 'string' && body.provider === GITHUB ? GITHUB : ATLASSIAN_BITBUCKET;
+  // The same bar the Code page shows: a connection on that host that can
   // clone, push and open pull requests, or no project.
-  const access = await codeProjectAccess(db, tenantId, session.subject);
+  const access = await codeProjectAccess(db, tenantId, session.subject, provider);
   if (!access.ok) {
     return jsonError(
       403,
-      'bitbucket',
-      codeProjectAccessMessage(access) ?? 'Connect Bitbucket first.'
+      provider === GITHUB ? 'github' : 'bitbucket',
+      codeProjectAccessMessage(access, provider) ??
+        `Connect ${provider === GITHUB ? 'GitHub' : 'Bitbucket'} first.`
     );
   }
-  const body = await readJsonBody(request);
   const repo = validateRepoFullName(body.repository);
   if (!repo.ok) return jsonError(400, 'invalid', repo.message);
   // The repository names the project unless the person renamed it; the
@@ -95,8 +102,9 @@ export async function POST(
   // The toolset the project's chats start with: what the form chose, else
   // the person's own default for code projects, else the code default —
   // copied onto the project now (tool-config.ts), so a later change to the
-  // preference leaves this project as it was made. Bitbucket rides along
-  // whatever was chosen; it is locked on in every code chat anyway.
+  // preference leaves this project as it was made. The git host connectors
+  // ride along whatever was chosen; both are locked on in every code chat
+  // anyway (CODE_PROJECT_CONNECTORS).
   const chosen = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
   const toolConfig = withRequiredConnectors(
     chosen ??
@@ -114,7 +122,7 @@ export async function POST(
     description: description || null,
     instructions: instructions || null,
     toolConfig,
-    repo: { provider: 'atlassian-bitbucket', fullName: repo.fullName, branch },
+    repo: { provider, fullName: repo.fullName, branch },
   });
   if (!projectId)
     return jsonError(500, 'content-key', 'The content encryption key is not configured.');

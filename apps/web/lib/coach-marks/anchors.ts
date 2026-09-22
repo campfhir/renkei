@@ -189,6 +189,12 @@ export const COACH_ANCHORS = [
   'bitbucket-scopes',
   /** Connect Bitbucket. */
   'bitbucket-connect',
+  /** The GitHub card. */
+  'card-github',
+  /** Its capability picker. */
+  'github-scopes',
+  /** Connect GitHub. */
+  'github-connect',
   /** The Microsoft 365 card. */
   'card-microsoft',
   /** The product panels inside it (Outlook, SharePoint, OneDrive…), each with its capabilities. */

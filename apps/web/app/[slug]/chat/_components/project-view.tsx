@@ -410,7 +410,7 @@ export default function ProjectView({
                     <h2 className="text-sm font-semibold">README</h2>
                     <p className="text-xs text-gray-500">
                       {readme
-                        ? `${readme.path} on the project’s branch, as Bitbucket has it.`
+                        ? `${readme.path} on the project’s branch, as its host has it.`
                         : 'The repository’s README, when it has one.'}
                     </p>
                   </span>

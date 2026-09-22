@@ -16,7 +16,7 @@ export default function CodeIndex({
   projects: ProjectListItem[];
   /** The deployment runs code workspaces; without them nothing here can be made. */
   enabled: boolean;
-  /** This person's Bitbucket connection carries what a project runs on (lib/code/access.ts). */
+  /** This person's Bitbucket or GitHub connection carries what a project runs on (lib/code/access.ts). */
   canCreate: boolean;
   /** When it does not: what to connect, said the Connectors page's way. */
   accessNotice: string | null;
@@ -41,8 +41,8 @@ export default function CodeIndex({
       </header>
       <div className="mx-auto max-w-3xl space-y-6 p-4">
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          A code project is a repository from Bitbucket, cloned into the sandbox, with the
-          environment its commands need. Chats inside it can read and change the code, run the
+          A code project is a repository from Bitbucket or GitHub, cloned into the sandbox, with
+          the environment its commands need. Chats inside it can read and change the code, run the
           project’s own tests and builds, commit, and push a branch for a pull request — with Jira
           and your other connectors beside them.
         </p>
@@ -60,7 +60,8 @@ export default function CodeIndex({
             <Link href={`/${slug}/connectors`} className="underline">
               Open Connectors
             </Link>
-            . A code project clones, pushes and opens pull requests with your own Bitbucket access.
+            . A code project clones, pushes and opens pull requests with your own access on the
+            repository’s host.
           </p>
         ) : null}
         <Group slug={slug} title="Mine" projects={mine} empty="You have no code projects yet." />

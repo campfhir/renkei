@@ -19,7 +19,9 @@ import {
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
+  GITHUB,
 } from '@renkei/provider-grants';
+import { getGitHubApp } from '@/lib/github-app';
 import { getOnBaseApp } from '@/lib/onbase-app';
 import { obExchangeCode, onbaseClientFailure } from '@/lib/onbase/service-client';
 import {
@@ -223,6 +225,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         code,
         pendingSignIn.scopes
       );
+    }
+    if (pendingSignIn.provider === 'github') {
+      return handleGitHubCallback(request, tenant, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'microsoft') {
       return handleMicrosoftCallback(
@@ -678,6 +683,151 @@ async function handleWebexUserCallback(
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: WEBEX_USER,
+  });
+  invalidateToolCatalogCache(tenant.id, subject);
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/**
+ * Complete the OAuth flow for Renkei's GitHub App: exchange the code at
+ * github.com's token endpoint (a normal client_id/client_secret POST, the
+ * Bitbucket shape rather than Zoom's Basic auth), identify the grantor
+ * via GET /user. GitHub answers a rejected code with HTTP 200 and an
+ * {error: "..."} body rather than a non-2xx status, so that is checked
+ * before response.ok. `scope` on the token response is typically empty
+ * for a GitHub App (permissions are fixed on the App, not requested here)
+ * — the (possibly user-narrowed) request carried through the pending row
+ * is what tool registration narrows by, same as Bitbucket/Zoom.
+ */
+async function handleGitHubCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error('GitHub pending flow has no subject; cannot assign grant owner', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Sign in again before connecting GitHub' }, { status: 400 });
+  }
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const app = await getGitHubApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'GitHub integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
+      code,
+      redirect_uri: app.redirectUri,
+    }),
+  });
+  const rawTokenBody = await tokenResponse.text().catch(() => '');
+  let tokenData: unknown = null;
+  try {
+    tokenData = JSON.parse(rawTokenBody);
+  } catch {
+    // stays null — handled as a malformed response below
+  }
+  const tokens = tokenData as Record<string, unknown> | null;
+  const tokenError = typeof tokens?.error === 'string' ? tokens.error : null;
+  if (!tokenResponse.ok || tokenError) {
+    logger.error('GitHub token exchange failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+      error: tokenError,
+      body: tokenError ? undefined : rawTokenBody.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'GitHub token exchange failed' }, { status: 502 });
+  }
+  const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
+  if (!accessToken) {
+    logger.error('GitHub token response carried no access_token', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Malformed GitHub token response' }, { status: 502 });
+  }
+  const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
+  const expiresIn = typeof tokens?.expires_in === 'number' ? tokens.expires_in : 28_800;
+  const scopeEcho = typeof tokens?.scope === 'string' ? tokens.scope : null;
+
+  // Who granted this. The account id (a stable numeric id, not the login,
+  // which can be renamed) is the durable key; login is what API paths and
+  // the connect card display.
+  const meResponse = await fetch('https://api.github.com/user', {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/vnd.github+json' },
+  });
+  const meData: unknown = await meResponse.json().catch(() => null);
+  const me = meData as Record<string, unknown> | null;
+  const accountId = typeof me?.id === 'number' ? String(me.id) : null;
+  const login = typeof me?.login === 'string' ? me.login : null;
+  if (!meResponse.ok || !accountId || !login) {
+    logger.error('GitHub /user failed; cannot identify grantor', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: meResponse.status,
+    });
+    return NextResponse.json({ error: 'Could not identify GitHub user' }, { status: 502 });
+  }
+  const displayName = typeof me?.name === 'string' && me.name ? me.name : login;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store GitHub grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    GITHUB,
+    tenant.id,
+    {
+      accountId,
+      clientId: app.clientId,
+      displayName,
+      accessToken,
+      refreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      // GitHub App tokens carry no scope claim of their own kind; the
+      // token-response echo (usually empty for a GitHub App) is the only
+      // signal, same fallback shape as Zoom/WebEx.
+      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+      metadata: { login },
+      subject,
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store GitHub grant', { component: 'auth/oauth', tenantId: tenant.id });
+    return NextResponse.json({ error: 'Failed to store GitHub grant' }, { status: 500 });
+  }
+
+  logger.info('GitHub grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: GITHUB,
   });
   invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));

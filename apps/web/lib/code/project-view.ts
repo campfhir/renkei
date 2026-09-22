@@ -11,7 +11,9 @@ import { loadProjectView, type ProjectView } from '@/lib/chat/project-view';
 import { getProjectRow } from '@/lib/chat/projects';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
 import { getPublicBaseUrl } from '@renkei/settings';
-import { bitbucketAuthOf, readReadme } from './bitbucket-browse';
+import { GITHUB } from '@renkei/provider-grants';
+import { bitbucketAuthOf, readReadme as readBitbucketReadme } from './bitbucket-browse';
+import { githubAuthOf, readReadme as readGitHubReadme } from './github-browse';
 import { projectEnv, projectWorkspace } from './projects';
 import { loadCodeProjectUsage, type CodeProjectUsage } from './usage';
 
@@ -30,7 +32,7 @@ export interface CodeProjectView extends ProjectView {
     env: { name: string; updatedAt: string; lastUsedAt: string | null }[];
     /** The deployment runs code workspaces at all. */
     enabled: boolean;
-    /** The repository's README on the project's branch, as Markdown, read from Bitbucket. */
+    /** The repository's README on the project's branch, as Markdown, read from its git host. */
     readme: { path: string; text: string } | null;
     /** Token spend: the project's total and each of its chats' own (usage.ts). */
     usage: CodeProjectUsage;
@@ -46,15 +48,24 @@ export async function loadCodeProjectView(
 ): Promise<CodeProjectView | null> {
   const project = await getProjectRow(db, tenantId, projectId);
   if (!project || project.kind !== 'code' || !project.repo) return null;
-  const [view, workspace, env, readme, usage] = await Promise.all([
+  const origin = getPublicBaseUrl() ?? '';
+  const readme =
+    project.repo.provider === GITHUB
+      ? readGitHubReadme(
+          githubAuthOf({ tenantId, subject: viewerSubject, origin }),
+          project.repo.fullName,
+          project.repo.branch
+        )
+      : readBitbucketReadme(
+          bitbucketAuthOf({ tenantId, subject: viewerSubject, origin }),
+          project.repo.fullName,
+          project.repo.branch
+        );
+  const [view, workspace, env, readmeResult, usage] = await Promise.all([
     loadProjectView(db, tenantId, viewerSubject, projectId, access),
     projectWorkspace(project),
     projectEnv(project),
-    readReadme(
-      bitbucketAuthOf({ tenantId, subject: viewerSubject, origin: getPublicBaseUrl() ?? '' }),
-      project.repo.fullName,
-      project.repo.branch
-    ),
+    readme,
     loadCodeProjectUsage(db, tenantId, projectId),
   ]);
   if (!view) return null;
@@ -79,7 +90,7 @@ export async function loadCodeProjectView(
         lastUsedAt: variable.lastUsedAt,
       })),
       enabled: sandboxWorkspacesEnabled(),
-      readme,
+      readme: readmeResult,
       usage,
     },
   };

@@ -4,8 +4,8 @@
  * repository. Asked once per turn, because the checkout's state lives on
  * the sandbox worker — and because the checkout is made here: nothing is
  * cloned when a project is created; the first turn that needs it clones
- * the repository with the chatting person's own Bitbucket grant and
- * hands the turn a step that waits for it — shown in the chat like a
+ * the repository with the chatting person's own grant on the project's
+ * git host and hands the turn a step that waits for it — shown in the chat like a
  * tool call, "Cloning the repository", right after the prompt — so the
  * tools are usable by the time the model speaks. A checkout the worker's
  * sweep retired, or whose clone failed, is cloned again the same way.
@@ -79,6 +79,7 @@ async function recoverCheckout(
   target: ReturnType<typeof codeProjectTarget>,
   lostId: string
 ): Promise<CheckoutRecovery> {
+  if (!project.repo) return { ok: false, message: 'the project names no repository.' };
   const started = Date.now();
   const seconds = () => Math.round((Date.now() - started) / 1000);
   const fresh = (await getProjectRow(db, project.tenantId, project.id)) ?? project;
@@ -91,7 +92,7 @@ async function recoverCheckout(
   if (!current || current.status === 'failed') {
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
     const credential = await resolveWorkspaceGitCredential(
-      { tenantId: project.tenantId, subject: actor.subject, origin },
+      { tenantId: project.tenantId, subject: actor.subject, origin, provider: project.repo.provider },
       { write: false }
     );
     if (typeof credential === 'string') return { ok: false, message: credential };
@@ -177,7 +178,7 @@ export async function codeProjectContext(
   if (!workspace || workspace.status === 'failed') {
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
     const credential = await resolveWorkspaceGitCredential(
-      { tenantId: project.tenantId, subject: actor.subject, origin },
+      { tenantId: project.tenantId, subject: actor.subject, origin, provider: project.repo.provider },
       { write: false }
     );
     if (typeof credential === 'string') {
@@ -194,6 +195,7 @@ export async function codeProjectContext(
     target,
     workspaceId: workspace.id,
     repoFullName: project.repo.fullName,
+    repoProvider: project.repo.provider,
     origin: actor.origin ?? getPublicBaseUrl() ?? '',
     recover: (lostId) => recoverCheckout(db, project, actor, target, lostId),
   });

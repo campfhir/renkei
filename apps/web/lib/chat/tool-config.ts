@@ -28,13 +28,19 @@ export const CHAT_ALWAYS_TOOLS: readonly string[] = ['whoami', 'resolve_date'];
 
 /**
  * On in every chat of a code project, whatever the toolset says: the
- * project's repository lives on Bitbucket, and the code_* tools stop at
- * the push — opening the pull request, reading its comments, watching
- * the pipeline are the connector's own tools. A code chat without them
- * would be told by its own prompt to call bitbucket_create_pull_request
- * and have nowhere to find it. The picker shows these checked and locked.
+ * project's repository lives on Bitbucket or GitHub, and the code_*
+ * tools stop at the push — opening the pull request, reading its
+ * comments, watching the pipeline/workflow are the connector's own
+ * tools. A code chat without them would be told by its own prompt to
+ * call bitbucket_create_pull_request or github_create_pull_request and
+ * have nowhere to find it. Both ride along on every code project
+ * regardless of which one actually backs it — locking a connector
+ * nobody connected is harmless (it simply registers no tools, same as
+ * any other unconnected entry in a chosen toolset), and it spares every
+ * caller here from having to know the project's repo provider just to
+ * build its default toolset. The picker shows these checked and locked.
  */
-export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket'];
+export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket', 'github'];
 
 /**
  * Where a code project's chat starts when neither it nor its project has
@@ -48,6 +54,7 @@ export const CODE_PROJECT_CONNECTORS: readonly string[] = ['atlassian-bitbucket'
 export const CODE_PROJECT_DEFAULT_CONNECTORS: readonly string[] = [
   'atlassian-bitbucket',
   'atlassian-confluence',
+  'github',
   'jira',
   'knowledge',
   'sandbox',
@@ -75,6 +82,21 @@ export const CODE_PROJECT_EAGER_TOOLS: readonly string[] = [
   'bitbucket_list_pipelines',
   'bitbucket_get_pipeline',
   'bitbucket_get_pipeline_step_log',
+  // The GitHub equivalents — named here too so a GitHub-backed project
+  // gets the same eager treatment; naming a tool that never registers
+  // (the project's repository is on the other host) costs nothing, the
+  // same reasoning as CODE_PROJECT_CONNECTORS carrying both.
+  'github_create_pull_request',
+  'github_get_pull_request',
+  'github_list_pull_requests',
+  'github_update_pull_request',
+  'github_get_pull_request_diff',
+  'github_list_pr_comments',
+  'github_add_pr_comment',
+  'github_merge_pull_request',
+  'github_list_workflow_runs',
+  'github_get_workflow_run',
+  'github_get_workflow_job_log',
 ];
 
 /** Which default a chat falls back to: an ordinary chat's, or a code project's. */
