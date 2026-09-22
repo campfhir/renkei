@@ -183,20 +183,23 @@ describe('withRequiredConnectors', () => {
 });
 
 describe('projectToolConfig', () => {
-  it('always carries Bitbucket in a code project, whatever the chat chose', () => {
+  it('always carries Bitbucket and GitHub in a code project, whatever the chat chose', () => {
     expect(CODE_PROJECT_CONNECTORS).toContain('atlassian-bitbucket');
-    // The code default, when nothing was chosen — Bitbucket already in it.
+    expect(CODE_PROJECT_CONNECTORS).toContain('github');
+    // The code default, when nothing was chosen — both already in it.
     expect(
       projectToolConfig(effectiveToolConfig(null, null, null, 'code'), 'code').connectors
     ).toEqual([...CODE_PROJECT_DEFAULT_CONNECTORS]);
-    // A chat that chose without it still gets it.
+    // A chat that chose without them still gets them.
     expect(projectToolConfig({ connectors: ['jira'] }, 'code').connectors).toEqual([
       'atlassian-bitbucket',
+      'github',
       'jira',
     ]);
-    // A chat that turned everything off still gets it.
+    // A chat that turned everything off still gets them.
     expect(projectToolConfig({ connectors: [] }, 'code').connectors).toEqual([
       'atlassian-bitbucket',
+      'github',
     ]);
   });
 

@@ -32,7 +32,7 @@ export interface CodePaneFile {
   etag: string;
   language: string;
   editable: boolean;
-  source: 'checkout' | 'bitbucket';
+  source: 'checkout' | 'bitbucket' | 'github';
   binary: boolean;
   truncated: boolean;
   error: string | null;
@@ -55,7 +55,7 @@ interface FilePayload {
   truncated: boolean;
   etag: string;
   language: string;
-  source: 'checkout' | 'bitbucket';
+  source: 'checkout' | 'bitbucket' | 'github';
   editable: boolean;
 }
 

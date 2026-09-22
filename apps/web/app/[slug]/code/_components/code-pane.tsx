@@ -460,12 +460,17 @@ function Dot() {
   return <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" title="Unsaved edits" />;
 }
 
+/** The repository's host, for a file read before any chat has cloned. */
+function fileHostLabel(source: CodePaneFile['source']): string {
+  return source === 'github' ? 'GitHub' : 'Bitbucket';
+}
+
 function statusWord(file: CodePaneFile, dirty: boolean, canEdit: boolean): string {
   if (file.state !== 'ready') return '';
   if (file.conflict) return 'Changed in the checkout while you were editing';
   if (dirty) return 'Unsaved edits · Save writes to the checkout';
   if (file.binary) return 'Binary file';
-  if (file.source === 'bitbucket') return 'From Bitbucket · nothing is cloned yet';
+  if (file.source !== 'checkout') return `From ${fileHostLabel(file.source)} · nothing is cloned yet`;
   if (!canEdit) return 'Read-only · only the chat’s owner edits here';
   if (!file.editable) return file.truncated ? 'Too long to edit here' : 'Read-only';
   return 'Saved to the checkout · not committed until you commit';
@@ -509,8 +514,8 @@ function FileBody({
   const readOnly = !file.editable || !canEdit;
   const reason = !canEdit
     ? 'Only the chat’s owner edits here.'
-    : file.source === 'bitbucket'
-      ? 'Read from Bitbucket — send a message so a chat clones the repository, then edit.'
+    : file.source !== 'checkout'
+      ? `Read from ${fileHostLabel(file.source)} — send a message so a chat clones the repository, then edit.`
       : file.truncated
         ? 'Cut short: the file is too long to show whole, so it is read-only here.'
         : !file.editable

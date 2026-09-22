@@ -4,8 +4,9 @@
  * The repository's folders and files as a tree, one directory fetched as
  * it is opened (`…/code/projects/[id]/tree?path=`), directories first —
  * from the checkout on the sandbox once a chat has made one, and from
- * Bitbucket on the project's branch before that, so the shape of the
- * repository is there to look at without cloning anything.
+ * the repository's git host (Bitbucket or GitHub) on the project's
+ * branch before that, so the shape of the repository is there to look
+ * at without cloning anything.
  *
  * On the project page it is a look. In the code pane it is the way to a
  * file: `onOpen` makes every file a button, `selected` marks the one
@@ -28,7 +29,12 @@ interface Entry {
 type Listing =
   { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready'; entries: Entry[] };
 
-type Source = 'checkout' | 'bitbucket';
+type Source = 'checkout' | 'bitbucket' | 'github';
+
+/** The repository's host, for the source-not-cloned copy below. */
+function hostLabel(source: Source | null): string {
+  return source === 'github' ? 'GitHub' : 'Bitbucket';
+}
 
 /** How the working tree has a file: modified against HEAD, or added (untracked). */
 export type FileMark = 'M' | 'A';
@@ -224,7 +230,7 @@ export default function RepoTree({
 
   // The branch the tree shows: the checkout's working branch once a chat
   // has cloned; before that the branch the project was pointed at, as it
-  // is on Bitbucket — origin/<branch>.
+  // is on the repository's host — origin/<branch>.
   const branchLine =
     showBranch && branch ? (
       <p
@@ -232,7 +238,7 @@ export default function RepoTree({
         title={
           source === 'checkout'
             ? 'The working branch of the checkout on the sandbox, uncommitted changes included.'
-            : 'As it is on Bitbucket — nothing is cloned yet.'
+            : `As it is on ${hostLabel(source)} — nothing is cloned yet.`
         }
       >
         <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0 text-gray-400" />

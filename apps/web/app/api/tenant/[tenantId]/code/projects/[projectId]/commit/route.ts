@@ -67,7 +67,12 @@ export async function POST(
   const origin = await getOrigin(request);
   const [credential, person] = await Promise.all([
     resolveWorkspaceGitCredential(
-      { tenantId, subject: session.subject, origin: origin.ok ? origin.val : '' },
+      {
+        tenantId,
+        subject: session.subject,
+        origin: origin.ok ? origin.val : '',
+        provider: project.repo!.provider,
+      },
       { write: false }
     ),
     getIdentityDisplay(tenantId, session.subject),
@@ -80,7 +85,8 @@ export async function POST(
     ...(newBranch ? { newBranch } : {}),
     author: commitAuthorFor(
       person?.displayName || username || session.subject,
-      person?.email ?? undefined
+      person?.email ?? undefined,
+      project.repo!.provider
     ),
   });
   if (!committed.ok) {

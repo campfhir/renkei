@@ -1,18 +1,19 @@
 /**
  * The calls a code chat makes that a person actually waits for — a
- * commit, a push, a pull request opened or merged, a pipeline started,
- * a branch made — and, more quietly, every other exchange with
- * Bitbucket. The thread folds a reply's tool calls into one collapsed
- * line so that ten file reads read as a line, not a wall; these are the
- * calls that must NOT disappear into that line. They are lifted out of
- * the fold as milestone cards, in order, with a sentence, the headline
- * the tool answered with, and the link it gave. Pure; the icons and the
- * cards live in message-list.tsx.
+ * commit, a push, a pull request opened or merged, a pipeline or
+ * workflow started, a branch made — and, more quietly, every other
+ * exchange with the project's git host (Bitbucket or GitHub). The
+ * thread folds a reply's tool calls into one collapsed line so that ten
+ * file reads read as a line, not a wall; these are the calls that must
+ * NOT disappear into that line. They are lifted out of the fold as
+ * milestone cards, in order, with a sentence, the headline the tool
+ * answered with, and the link it gave. Pure; the icons and the cards
+ * live in message-list.tsx.
  */
 
 import { friendlyToolName } from '@/lib/tool-name';
 
-/** An act changes something on Bitbucket or in git's history; a read only looks. */
+/** An act changes something on the git host or in git's history; a read only looks. */
 export type MilestoneKind = 'act' | 'read';
 
 export type MilestoneState = 'pending' | 'done' | 'failed' | 'waiting';
@@ -26,13 +27,13 @@ interface Sentences {
 const SENTENCES: Record<string, Sentences> = {
   code_git_commit: { pending: 'Committing', done: 'Committed', failed: 'The commit failed' },
   code_git_push: {
-    pending: 'Pushing to Bitbucket',
-    done: 'Pushed to Bitbucket',
+    pending: 'Pushing to the remote',
+    done: 'Pushed to the remote',
     failed: 'The push failed',
   },
   code_git_pull: {
-    pending: 'Pulling from Bitbucket',
-    done: 'Pulled from Bitbucket',
+    pending: 'Pulling from the remote',
+    done: 'Pulled from the remote',
     failed: 'The pull failed',
   },
   bitbucket_create_pull_request: {
@@ -175,9 +176,142 @@ const SENTENCES: Record<string, Sentences> = {
     done: 'Searched code on Bitbucket',
     failed: 'The search failed',
   },
+  github_create_pull_request: {
+    pending: 'Opening a pull request',
+    done: 'Opened a pull request',
+    failed: 'The pull request could not be opened',
+  },
+  github_update_pull_request: {
+    pending: 'Updating the pull request',
+    done: 'Updated the pull request',
+    failed: 'The pull request could not be updated',
+  },
+  github_merge_pull_request: {
+    pending: 'Merging the pull request',
+    done: 'Merged the pull request',
+    failed: 'The merge failed',
+  },
+  github_approve_pull_request: {
+    pending: 'Approving the pull request',
+    done: 'Approved the pull request',
+    failed: 'The approval failed',
+  },
+  github_close_pull_request: {
+    pending: 'Closing the pull request',
+    done: 'Closed the pull request',
+    failed: 'The pull request could not be closed',
+  },
+  github_request_pr_changes: {
+    pending: 'Requesting changes on the pull request',
+    done: 'Requested changes on the pull request',
+    failed: 'Changes could not be requested',
+  },
+  github_add_pr_comment: {
+    pending: 'Commenting on the pull request',
+    done: 'Commented on the pull request',
+    failed: 'The comment could not be added',
+  },
+  github_resolve_pr_comment: {
+    pending: 'Resolving a pull request review thread',
+    done: 'Resolved a pull request review thread',
+    failed: 'The thread could not be resolved',
+  },
+  github_create_branch: {
+    pending: 'Creating a branch on GitHub',
+    done: 'Created a branch on GitHub',
+    failed: 'The branch could not be created',
+  },
+  github_delete_branch: {
+    pending: 'Deleting a branch on GitHub',
+    done: 'Deleted a branch on GitHub',
+    failed: 'The branch could not be deleted',
+  },
+  github_commit_file: {
+    pending: 'Committing a file on GitHub',
+    done: 'Committed a file on GitHub',
+    failed: 'The commit failed',
+  },
+  github_commit_files: {
+    pending: 'Committing files on GitHub',
+    done: 'Committed files on GitHub',
+    failed: 'The commit failed',
+  },
+  github_trigger_workflow: {
+    pending: 'Starting a workflow run',
+    done: 'Started a workflow run',
+    failed: 'The workflow run could not be started',
+  },
+  github_cancel_workflow_run: {
+    pending: 'Cancelling a workflow run',
+    done: 'Cancelled a workflow run',
+    failed: 'The workflow run could not be cancelled',
+  },
+  github_get_pull_request: {
+    pending: 'Reading the pull request',
+    done: 'Read the pull request',
+    failed: 'The pull request could not be read',
+  },
+  github_list_pull_requests: {
+    pending: 'Listing pull requests',
+    done: 'Listed pull requests',
+    failed: 'Pull requests could not be listed',
+  },
+  github_get_pull_request_diff: {
+    pending: 'Reading the pull request’s diff',
+    done: 'Read the pull request’s diff',
+    failed: 'The diff could not be read',
+  },
+  github_list_pr_comments: {
+    pending: 'Reading pull request comments',
+    done: 'Read pull request comments',
+    failed: 'The comments could not be read',
+  },
+  github_get_workflow_run: {
+    pending: 'Checking the workflow run',
+    done: 'Checked the workflow run',
+    failed: 'The workflow run could not be read',
+  },
+  github_list_workflow_runs: {
+    pending: 'Listing workflow runs',
+    done: 'Listed workflow runs',
+    failed: 'Workflow runs could not be listed',
+  },
+  github_get_workflow_job_log: {
+    pending: 'Reading a workflow job’s log',
+    done: 'Read a workflow job’s log',
+    failed: 'The log could not be read',
+  },
+  github_list_commits: {
+    pending: 'Listing commits on GitHub',
+    done: 'Listed commits on GitHub',
+    failed: 'Commits could not be listed',
+  },
+  github_get_commit: {
+    pending: 'Reading a commit on GitHub',
+    done: 'Read a commit on GitHub',
+    failed: 'The commit could not be read',
+  },
+  github_get_diff: {
+    pending: 'Reading a diff on GitHub',
+    done: 'Read a diff on GitHub',
+    failed: 'The diff could not be read',
+  },
+  github_list_branches: {
+    pending: 'Listing branches on GitHub',
+    done: 'Listed branches on GitHub',
+    failed: 'Branches could not be listed',
+  },
+  github_search_code: {
+    pending: 'Searching code on GitHub',
+    done: 'Searched code on GitHub',
+    failed: 'The search failed',
+  },
 };
 
-/** The verbs a Bitbucket tool's name carries when it changes something. */
+/** The prefixes of the git-host tool families a code chat's milestones cover. */
+const HOST_TOOL_PREFIXES = ['bitbucket_', 'github_'];
+
+/** The verbs a git-host tool's name carries when it changes something. */
 const ACT_VERBS = new Set([
   'create',
   'update',
@@ -185,11 +319,13 @@ const ACT_VERBS = new Set([
   'merge',
   'approve',
   'decline',
+  'close',
   'request',
   'add',
   'resolve',
   'trigger',
   'stop',
+  'cancel',
   'grant',
   'revoke',
   'commit',
@@ -202,16 +338,17 @@ function baseName(name: string): string {
 
 /**
  * Whether this call is a milestone, and of which kind: the chat's own
- * git verbs that reach the repository's history or Bitbucket, and every
- * `bitbucket_*` tool — acts by their verb, the rest reads.
+ * git verbs that reach the repository's history or its host, and every
+ * `bitbucket_*`/`github_*` tool — acts by their verb, the rest reads.
  */
 export function milestoneKindOf(name: string): MilestoneKind | null {
   const base = baseName(name);
   if (base === 'code_git_commit' || base === 'code_git_push' || base === 'code_git_pull') {
     return 'act';
   }
-  if (!base.startsWith('bitbucket_')) return null;
-  const verb = base.slice('bitbucket_'.length).split('_')[0] ?? '';
+  const prefix = HOST_TOOL_PREFIXES.find((candidate) => base.startsWith(candidate));
+  if (!prefix) return null;
+  const verb = base.slice(prefix.length).split('_')[0] ?? '';
   return ACT_VERBS.has(verb) ? 'act' : 'read';
 }
 

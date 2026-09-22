@@ -4,7 +4,7 @@
  * GET `?path=`: the file's text — from the checkout on the sandbox once
  * there is one (the working tree, uncommitted changes included, the same
  * bytes the chat's tools see), and before any chat has cloned, from
- * Bitbucket on the project's branch, read-only. Every answer carries an
+ * the repository's git host on the project's branch, read-only. Every answer carries an
  * `etag` (a hash of the text as read) that a save hands back, so a file
  * that moved underneath is never overwritten unasked. Any member may
  * read.
@@ -32,8 +32,10 @@ import {
   sbWorkspaceRead,
   sbWorkspaceUpload,
 } from '@renkei/sandbox-client';
+import { GITHUB } from '@renkei/provider-grants';
 import { jsonError } from '@/lib/chat/route-support';
-import { bitbucketAuthFor, readSourceFile } from '@/lib/code/bitbucket-browse';
+import { bitbucketAuthFor, readSourceFile as readBitbucketSourceFile } from '@/lib/code/bitbucket-browse';
+import { githubAuthFor, readSourceFile as readGitHubSourceFile } from '@/lib/code/github-browse';
 import { etagOf } from '@/lib/code/etag';
 import { languageForPath } from '@/lib/code/language';
 import { projectWorkspace } from '@/lib/code/projects';
@@ -92,12 +94,20 @@ export async function GET(
     });
   }
 
-  const file = await readSourceFile(
-    await bitbucketAuthFor(request, tenantId, session.subject),
-    project.repo!.fullName,
-    project.repo!.branch,
-    path.path
-  );
+  const isGitHub = project.repo!.provider === GITHUB;
+  const file = isGitHub
+    ? await readGitHubSourceFile(
+        await githubAuthFor(request, tenantId, session.subject),
+        project.repo!.fullName,
+        project.repo!.branch,
+        path.path
+      )
+    : await readBitbucketSourceFile(
+        await bitbucketAuthFor(request, tenantId, session.subject),
+        project.repo!.fullName,
+        project.repo!.branch,
+        path.path
+      );
   if (!file.ok) return jsonError(409, 'read', file.error);
   return NextResponse.json({
     path: path.path,
@@ -108,7 +118,7 @@ export async function GET(
     totalLines: file.text ? file.text.split('\n').length : 0,
     etag: etagOf(file.text),
     language,
-    source: 'bitbucket',
+    source: isGitHub ? 'github' : 'bitbucket',
     branch: file.ref,
     editable: false,
   });

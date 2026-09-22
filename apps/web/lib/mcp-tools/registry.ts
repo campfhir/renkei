@@ -28,6 +28,7 @@ import {
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
+  GITHUB,
 } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
@@ -52,6 +53,8 @@ import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-too
 import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth';
 import { registerBitbucketTools, BITBUCKET_MCP_CONNECTOR } from '@/lib/mcp-tools/bitbucket';
 import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
+import { registerGitHubTools, GITHUB_MCP_CONNECTOR } from '@/lib/mcp-tools/github';
+import { oauthGitHubAuth } from '@/lib/mcp-tools/github/github-auth';
 import { resolveToolExposure } from '@renkei/connector-fileshares';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
@@ -102,6 +105,8 @@ export interface ConnectorAvailability {
   confluenceScopes: string[];
   bitbucketAvailable: boolean;
   bitbucketScopes: string[];
+  githubAvailable: boolean;
+  githubScopes: string[];
   filesharesAvailable: boolean;
   /** Whether any connected share exposes write tools / delete to the LLM. */
   fileshareWrite: boolean;
@@ -208,6 +213,17 @@ export async function resolveConnectorAvailability(
     ? narrowedScopes(bitbucketGrantRow.requested_scopes, bitbucketGrantRow.granted_scopes)
     : [];
 
+  // GitHub follows the same inverted rule as Zoom/Bitbucket: a GitHub
+  // App's real permissions are fixed on the App's own registration, not
+  // requested at authorize time, so the token always carries whatever
+  // the App was configured with and bare granted would erase the user's
+  // narrowing.
+  const githubGrantRow = await grantRow(db, tenantId, GITHUB, subject);
+  const githubAvailable = githubGrantRow !== undefined;
+  const githubScopes = githubGrantRow
+    ? narrowedScopes(githubGrantRow.requested_scopes, githubGrantRow.granted_scopes)
+    : [];
+
   // File shares are the one connector with no provider_grants row: the
   // caller's own stored connections stand in for the OAuth grant, and the
   // exposure they chose per share decides which tool FAMILIES register —
@@ -263,6 +279,8 @@ export async function resolveConnectorAvailability(
     confluenceScopes,
     bitbucketAvailable,
     bitbucketScopes,
+    githubAvailable,
+    githubScopes,
     filesharesAvailable,
     fileshareWrite,
     fileshareDelete,
@@ -306,6 +324,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
+    ...(availability.githubAvailable ? [GITHUB_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
     ...(availability.mirthAvailable ? [MIRTH_MCP_CONNECTOR] : []),
     ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
@@ -337,6 +356,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   ZOOM_MCP_CONNECTOR,
   CONFLUENCE_MCP_CONNECTOR,
   BITBUCKET_MCP_CONNECTOR,
+  GITHUB_MCP_CONNECTOR,
   FILESHARES_MCP_CONNECTOR,
   MIRTH_MCP_CONNECTOR,
   ONBASE_MCP_CONNECTOR,
@@ -377,6 +397,7 @@ export async function registerRenkeiTools(
     zoomAvailable,
     confluenceAvailable,
     bitbucketAvailable,
+    githubAvailable,
     filesharesAvailable,
     mirthAvailable,
     onbaseAvailable,
@@ -574,6 +595,15 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, BITBUCKET_MCP_CONNECTOR),
       context,
       oauthBitbucketAuth(context)
+    );
+  }
+  if (githubAvailable) {
+    // Production's one path: the caller's own grant on Renkei's GitHub
+    // App. Same reasoning as WebEx/Zoom/Confluence/Bitbucket above.
+    await registerGitHubTools(
+      withCapabilityGate(server, projection, GITHUB_MCP_CONNECTOR),
+      context,
+      oauthGitHubAuth(context)
     );
   }
   if (filesharesAvailable) {

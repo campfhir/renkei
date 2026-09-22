@@ -12,7 +12,7 @@
  * call that made it. A cursor marks the streaming end.
  *
  * Two kinds of call are NOT folded away. A milestone — a commit, a push,
- * anything said to Bitbucket (lib/code/milestones.ts) — is lifted out of
+ * anything said to the repository's git host (lib/code/milestones.ts) — is lifted out of
  * the run as a card of its own, in order, with the tool's own first line
  * and link, so the calls a person is waiting for never hide under "12
  * tool calls"; a commit's card opens its diff in the Changes panel. And
@@ -1001,7 +1001,7 @@ function NudgeNote({ text }: { text: string }) {
 
 /**
  * A milestone, lifted out of the fold: a commit, a push, a pull request
- * opened or merged, a pipeline started — or any other word to Bitbucket,
+ * opened or merged, a pipeline or workflow started — or any other word to the git host,
  * more quietly. The sentence is the card's own (lib/code/milestones.ts),
  * the headline is the tool's first line, the link the tool's own; the
  * input and the full result fold under it. A commit's card opens its

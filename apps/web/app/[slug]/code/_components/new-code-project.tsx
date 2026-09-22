@@ -2,13 +2,14 @@
 
 /**
  * The new-code-project form. The repository is picked from the person's
- * own Bitbucket — browsed workspace → project → repositories, searched by
- * name across everything they belong to, or created fresh (empty) under a
- * chosen workspace and project — never typed by hand for an existing repo;
- * the `.env` is pasted as a file's text and parsed on the server (only the
- * pairs reach the sandbox worker, which seals them, and nothing here shows
- * a value again); the instructions start from a developer's brief. Nothing
- * is cloned yet: the first chat in the project does that.
+ * own Bitbucket or GitHub — browsed workspace/account → (Bitbucket only)
+ * project → repositories, searched by name across everything they
+ * belong to, or created fresh (empty) — never typed by hand for an
+ * existing repo; the `.env` is pasted as a file's text and parsed on the
+ * server (only the pairs reach the sandbox worker, which seals them, and
+ * nothing here shows a value again); the instructions start from a
+ * developer's brief. Nothing is cloned yet: the first chat in the
+ * project does that.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -21,8 +22,12 @@ import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import ToolsPopover from '../../chat/_components/tools-popover';
 import { repoSlugFromName } from '@/lib/code/repo-slug';
 import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
+import type { GitHubAccount } from '@/lib/code/github-browse';
 import type { CodeProjectTemplate } from '@/lib/code/project-templates';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+
+/** A code project's repository provider, as provider_grants and repo_provider name it. */
+type RepoProvider = 'atlassian-bitbucket' | 'github';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -31,14 +36,22 @@ export default function NewCodeProject({
   slug,
   tenantId,
   bitbucketConnected,
+  githubConnected,
 }: {
   slug: string;
   tenantId: string;
   bitbucketConnected: boolean;
+  githubConnected: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState('');
   const instructionsAnchor = useCoachAnchor('code-instructions');
+  // Defaults to whichever host is connected; both connected starts on
+  // Bitbucket and lets the person switch.
+  const [provider, setProvider] = useState<RepoProvider>(
+    bitbucketConnected || !githubConnected ? 'atlassian-bitbucket' : 'github'
+  );
+  const connected = provider === 'github' ? githubConnected : bitbucketConnected;
   const [repoMode, setRepoMode] = useState<'choose' | 'create'>('choose');
   const [chosen, setChosen] = useState<RepoChoice | null>(null);
   const [branch, setBranch] = useState('');
@@ -70,6 +83,7 @@ export default function NewCodeProject({
       'POST',
       {
         name: name.trim() || chosen.name,
+        provider,
         repository: chosen.fullName,
         branch: branch.trim(),
         env,
@@ -109,13 +123,45 @@ export default function NewCodeProject({
         }}
         className="mx-auto max-w-3xl space-y-4 p-4"
       >
-        {!bitbucketConnected ? (
+        {bitbucketConnected && githubConnected ? (
+          <div role="tablist" aria-label="Git host" className="flex gap-1">
+            {(
+              [
+                ['atlassian-bitbucket', 'Bitbucket'],
+                ['github', 'GitHub'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={provider === value}
+                onClick={() => {
+                  if (provider === value) return;
+                  setProvider(value);
+                  setChosen(null);
+                  setBranch('');
+                }}
+                className={`rounded-md px-2 py-1 text-xs font-medium ${
+                  provider === value
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {!connected ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-            Connect Bitbucket first —{' '}
+            Connect {provider === 'github' ? 'GitHub' : 'Bitbucket'} first —{' '}
             <Link href={`/${slug}/connectors`} className="underline">
               on the Connectors page
             </Link>
-            . A code project reads and clones its repository with your own Bitbucket access.
+            . A code project reads and clones its repository with your own access on the
+            repository’s host.
           </p>
         ) : null}
 
@@ -160,8 +206,10 @@ export default function NewCodeProject({
               </div>
               {repoMode === 'choose' ? (
                 <RepositoryBrowser
+                  key={provider}
                   tenantId={tenantId}
-                  enabled={bitbucketConnected}
+                  provider={provider}
+                  enabled={connected}
                   onChoose={(repo) => {
                     setChosen(repo);
                     // The repository names the project until the person
@@ -173,8 +221,10 @@ export default function NewCodeProject({
                 />
               ) : (
                 <CreateRepository
+                  key={provider}
                   tenantId={tenantId}
-                  enabled={bitbucketConnected}
+                  provider={provider}
+                  enabled={connected}
                   onCreated={(repo) => {
                     setChosen(repo);
                     setName((current) => current || repo.name);
@@ -252,7 +302,7 @@ export default function NewCodeProject({
             <span className="text-xs text-gray-500">
               {connectors
                 ? `${connectors.length} chosen for this project.`
-                : 'Inherits your default for code projects (or the code default: Bitbucket, Jira, Confluence, knowledge, the sandbox). Saved on the project when it is made; change it on the project’s page later.'}
+                : 'Inherits your default for code projects (or the code default: Bitbucket, GitHub, Jira, Confluence, knowledge, the sandbox). Saved on the project when it is made; change it on the project’s page later.'}
             </span>
           </div>
         </div>
@@ -317,7 +367,7 @@ export default function NewCodeProject({
           </Link>
           <button
             type="submit"
-            disabled={busy || !bitbucketConnected || !chosen}
+            disabled={busy || !connected || !chosen}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {busy ? 'Creating…' : 'Create project'}
@@ -368,29 +418,51 @@ function useWorkspaceAndProject(base: string, enabled: boolean) {
 }
 
 /**
- * Bitbucket, browsed: the workspaces the person belongs to, a workspace's
- * projects, and the repositories under the chosen one — or a search by
- * name across every workspace. Each list is fetched as it is needed.
+ * The accounts (organizations/user accounts) Renkei's GitHub App is
+ * installed on for this person — GitHub's equivalent of a Bitbucket
+ * workspace, minus the project layer Bitbucket has and GitHub does not.
+ */
+function useGitHubAccounts(base: string, enabled: boolean) {
+  const [accounts, setAccounts] = useState<GitHubAccount[] | null>(null);
+  const [account, setAccount] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void getJson<{ accounts: GitHubAccount[] }>(`${base}/github/accounts`).then((result) => {
+      if (result.data) {
+        setAccounts(result.data.accounts);
+        if (result.data.accounts.length === 1) setAccount(result.data.accounts[0]!.slug);
+      } else setError(result.error ?? 'GitHub could not be read.');
+    });
+  }, [base, enabled]);
+
+  return { accounts, account, setAccount, error };
+}
+
+/**
+ * A repository host, browsed: Bitbucket's workspaces → projects →
+ * repositories, or GitHub's accounts → repositories (no project layer)
+ * — or a search by name across everything the person belongs to. Each
+ * list is fetched as it is needed.
  */
 function RepositoryBrowser({
   tenantId,
+  provider,
   enabled,
   onChoose,
 }: {
   tenantId: string;
+  provider: RepoProvider;
   enabled: boolean;
   onChoose: (repo: RepoChoice) => void;
 }) {
   const base = `/api/tenant/${tenantId}/code`;
-  const {
-    workspaces,
-    workspace,
-    setWorkspace,
-    projects,
-    project,
-    setProject,
-    error: browseError,
-  } = useWorkspaceAndProject(base, enabled);
+  const isGitHub = provider === 'github';
+  const bitbucket = useWorkspaceAndProject(base, enabled && !isGitHub);
+  const github = useGitHubAccounts(base, enabled && isGitHub);
+  const owner = isGitHub ? github.account : bitbucket.workspace;
+  const browseError = isGitHub ? github.error : bitbucket.error;
   const [query, setQuery] = useState('');
   const repoAnchor = useCoachAnchor('code-repo-search');
   const [repos, setRepos] = useState<RepoChoice[] | null>(null);
@@ -398,28 +470,37 @@ function RepositoryBrowser({
   const [error, setError] = useState<string | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // The repository list follows the workspace, the project and the search
-  // text; typing waits a beat so a fast typist makes one request.
+  // The repository list follows the owner (workspace/account), the
+  // Bitbucket project and the search text; typing waits a beat so a fast
+  // typist makes one request.
   useEffect(() => {
     if (!enabled) return;
-    if (!workspace && !query.trim()) {
+    if (!owner && !query.trim()) {
       setRepos(null);
       return;
     }
     // A request the filters have moved past is dropped when it answers,
-    // so a slow workspace-wide listing never overwrites a narrower one.
+    // so a slow account-wide listing never overwrites a narrower one.
     let stale = false;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       void (async () => {
         setLoading(true);
         setError(null);
-        const parts = [
-          workspace ? `workspace=${encodeURIComponent(workspace)}` : '',
-          project ? `project=${encodeURIComponent(project)}` : '',
-          query.trim() ? `q=${encodeURIComponent(query.trim())}` : '',
-        ].filter(Boolean);
-        const listed = await getJson<{ repos: RepoChoice[] }>(`${base}/repos?${parts.join('&')}`);
+        const parts = isGitHub
+          ? [
+              owner ? `account=${encodeURIComponent(owner)}` : '',
+              query.trim() ? `q=${encodeURIComponent(query.trim())}` : '',
+            ]
+          : [
+              owner ? `workspace=${encodeURIComponent(owner)}` : '',
+              bitbucket.project ? `project=${encodeURIComponent(bitbucket.project)}` : '',
+              query.trim() ? `q=${encodeURIComponent(query.trim())}` : '',
+            ];
+        const path = isGitHub ? `${base}/github/repos` : `${base}/repos`;
+        const listed = await getJson<{ repos: RepoChoice[] }>(
+          `${path}?${parts.filter(Boolean).join('&')}`
+        );
         if (stale) return;
         setLoading(false);
         if (listed.data) setRepos(listed.data.repos);
@@ -429,45 +510,61 @@ function RepositoryBrowser({
     return () => {
       stale = true;
     };
-  }, [base, enabled, workspace, project, query]);
+  }, [base, enabled, isGitHub, owner, bitbucket.project, query]);
+
+  const hostLabel = isGitHub ? 'GitHub' : 'Bitbucket';
 
   return (
     <div className="space-y-2 rounded-md border border-gray-300 p-3 dark:border-gray-700">
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className={`grid gap-2 ${isGitHub ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
         <label className="block">
-          <span className="mb-1 block text-xs text-gray-500">Workspace</span>
+          <span className="mb-1 block text-xs text-gray-500">
+            {isGitHub ? 'Account' : 'Workspace'}
+          </span>
           <select
-            value={workspace}
-            onChange={(event) => setWorkspace(event.target.value)}
-            disabled={!enabled || workspaces === null}
+            value={owner}
+            onChange={(event) =>
+              isGitHub ? github.setAccount(event.target.value) : bitbucket.setWorkspace(event.target.value)
+            }
+            disabled={!enabled || (isGitHub ? github.accounts === null : bitbucket.workspaces === null)}
             className={inputClass}
           >
-            <option value="">{workspaces === null ? 'Loading…' : 'All workspaces'}</option>
-            {(workspaces ?? []).map((entry) => (
+            <option value="">
+              {(isGitHub ? github.accounts : bitbucket.workspaces) === null
+                ? 'Loading…'
+                : `All ${isGitHub ? 'accounts' : 'workspaces'}`}
+            </option>
+            {(isGitHub ? github.accounts : bitbucket.workspaces)?.map((entry) => (
               <option key={entry.slug} value={entry.slug}>
                 {entry.name}
               </option>
             ))}
           </select>
         </label>
-        <label className="block">
-          <span className="mb-1 block text-xs text-gray-500">Project</span>
-          <select
-            value={project}
-            onChange={(event) => setProject(event.target.value)}
-            disabled={!workspace || projects === null}
-            className={inputClass}
-          >
-            <option value="">
-              {!workspace ? 'Pick a workspace' : projects === null ? 'Loading…' : 'All projects'}
-            </option>
-            {(projects ?? []).map((entry) => (
-              <option key={entry.key} value={entry.key}>
-                {entry.name}
+        {!isGitHub && (
+          <label className="block">
+            <span className="mb-1 block text-xs text-gray-500">Project</span>
+            <select
+              value={bitbucket.project}
+              onChange={(event) => bitbucket.setProject(event.target.value)}
+              disabled={!bitbucket.workspace || bitbucket.projects === null}
+              className={inputClass}
+            >
+              <option value="">
+                {!bitbucket.workspace
+                  ? 'Pick a workspace'
+                  : bitbucket.projects === null
+                    ? 'Loading…'
+                    : 'All projects'}
               </option>
-            ))}
-          </select>
-        </label>
+              {(bitbucket.projects ?? []).map((entry) => (
+                <option key={entry.key} value={entry.key}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="block">
           <span className="mb-1 block text-xs text-gray-500">Search by name</span>
           <input
@@ -489,11 +586,13 @@ function RepositoryBrowser({
       ) : null}
       {repos === null ? (
         <p className="text-xs text-gray-500">
-          {loading ? 'Searching Bitbucket…' : 'Pick a workspace, or search every one by name.'}
+          {loading
+            ? `Searching ${hostLabel}…`
+            : `Pick ${isGitHub ? 'an account' : 'a workspace'}, or search every one by name.`}
         </p>
       ) : repos.length === 0 ? (
         <p className="text-xs text-gray-500">
-          {loading ? 'Searching Bitbucket…' : 'No repositories match.'}
+          {loading ? `Searching ${hostLabel}…` : 'No repositories match.'}
         </p>
       ) : (
         <ul
@@ -527,45 +626,49 @@ function RepositoryBrowser({
 }
 
 /**
- * A brand-new, empty Bitbucket repository: pick the workspace and the
- * project it belongs to, give it a name, and create it — the resulting
- * repository is handed back exactly as one the browser would have found,
- * so the rest of the form (branch, .env, instructions) treats it the
- * same either way.
+ * A brand-new, empty repository: pick the workspace/project (Bitbucket)
+ * or account (GitHub), give it a name, and create it — the resulting
+ * repository is handed back exactly as one the browser would have
+ * found, so the rest of the form (branch, .env, instructions) treats it
+ * the same either way.
  */
 function CreateRepository({
   tenantId,
+  provider,
   enabled,
   onCreated,
 }: {
   tenantId: string;
+  provider: RepoProvider;
   enabled: boolean;
   onCreated: (repo: RepoChoice) => void;
 }) {
   const base = `/api/tenant/${tenantId}/code`;
-  const {
-    workspaces,
-    workspace,
-    setWorkspace,
-    projects,
-    project,
-    setProject,
-    error: browseError,
-  } = useWorkspaceAndProject(base, enabled);
+  const isGitHub = provider === 'github';
+  const bitbucket = useWorkspaceAndProject(base, enabled && !isGitHub);
+  const github = useGitHubAccounts(base, enabled && isGitHub);
+  const owner = isGitHub ? github.account : bitbucket.workspace;
+  const browseError = isGitHub ? github.error : bitbucket.error;
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const slug = repoSlugFromName(name);
+  const canCreate = isGitHub ? Boolean(owner && slug) : Boolean(owner && bitbucket.project && slug);
 
   const create = async () => {
-    if (!workspace || !project || !slug) return;
+    if (!canCreate) return;
     setBusy(true);
     setError(null);
-    const result = await sendJsonFull<{ repo: RepoChoice }>(`${base}/bitbucket/repos`, 'POST', {
-      workspace,
-      project,
-      name: name.trim(),
-    });
+    const result = isGitHub
+      ? await sendJsonFull<{ repo: RepoChoice }>(`${base}/github/repos`, 'POST', {
+          account: owner,
+          name: name.trim(),
+        })
+      : await sendJsonFull<{ repo: RepoChoice }>(`${base}/bitbucket/repos`, 'POST', {
+          workspace: owner,
+          project: bitbucket.project,
+          name: name.trim(),
+        });
     setBusy(false);
     if (result.error || !result.data) {
       setError(result.error ?? 'The repository could not be created.');
@@ -576,45 +679,55 @@ function CreateRepository({
 
   return (
     <div className="space-y-2 rounded-md border border-gray-300 p-3 dark:border-gray-700">
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className={`grid gap-2 ${isGitHub ? '' : 'sm:grid-cols-2'}`}>
         <label className="block">
-          <span className="mb-1 block text-xs text-gray-500">Workspace</span>
+          <span className="mb-1 block text-xs text-gray-500">
+            {isGitHub ? 'Account' : 'Workspace'}
+          </span>
           <select
-            value={workspace}
-            onChange={(event) => setWorkspace(event.target.value)}
-            disabled={!enabled || workspaces === null}
+            value={owner}
+            onChange={(event) =>
+              isGitHub ? github.setAccount(event.target.value) : bitbucket.setWorkspace(event.target.value)
+            }
+            disabled={!enabled || (isGitHub ? github.accounts === null : bitbucket.workspaces === null)}
             className={inputClass}
           >
-            <option value="">{workspaces === null ? 'Loading…' : 'Pick a workspace'}</option>
-            {(workspaces ?? []).map((entry) => (
+            <option value="">
+              {(isGitHub ? github.accounts : bitbucket.workspaces) === null
+                ? 'Loading…'
+                : `Pick ${isGitHub ? 'an account' : 'a workspace'}`}
+            </option>
+            {(isGitHub ? github.accounts : bitbucket.workspaces)?.map((entry) => (
               <option key={entry.slug} value={entry.slug}>
                 {entry.name}
               </option>
             ))}
           </select>
         </label>
-        <label className="block">
-          <span className="mb-1 block text-xs text-gray-500">Project</span>
-          <select
-            value={project}
-            onChange={(event) => setProject(event.target.value)}
-            disabled={!workspace || projects === null}
-            className={inputClass}
-          >
-            <option value="">
-              {!workspace
-                ? 'Pick a workspace first'
-                : projects === null
-                  ? 'Loading…'
-                  : 'Pick a project'}
-            </option>
-            {(projects ?? []).map((entry) => (
-              <option key={entry.key} value={entry.key}>
-                {entry.name}
+        {!isGitHub && (
+          <label className="block">
+            <span className="mb-1 block text-xs text-gray-500">Project</span>
+            <select
+              value={bitbucket.project}
+              onChange={(event) => bitbucket.setProject(event.target.value)}
+              disabled={!bitbucket.workspace || bitbucket.projects === null}
+              className={inputClass}
+            >
+              <option value="">
+                {!bitbucket.workspace
+                  ? 'Pick a workspace first'
+                  : bitbucket.projects === null
+                    ? 'Loading…'
+                    : 'Pick a project'}
               </option>
-            ))}
-          </select>
-        </label>
+              {(bitbucket.projects ?? []).map((entry) => (
+                <option key={entry.key} value={entry.key}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       <label className="block">
         <span className="mb-1 block text-xs text-gray-500">Repository name</span>
@@ -629,8 +742,8 @@ function CreateRepository({
           className={`font-mono ${inputClass}`}
         />
         <span className="mt-1 block text-xs text-gray-500">
-          {name.trim() && workspace
-            ? `Creates ${workspace}/${slug || '…'} — empty and private.`
+          {name.trim() && owner
+            ? `Creates ${owner}/${slug || '…'} — empty and private.`
             : 'An empty, private repository — the first chat clones it once it has something to work with.'}
         </span>
       </label>
@@ -643,7 +756,7 @@ function CreateRepository({
         <button
           type="button"
           onClick={() => void create()}
-          disabled={busy || !enabled || !workspace || !project || !slug}
+          disabled={busy || !enabled || !canCreate}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {busy ? 'Creating…' : 'Create repository'}

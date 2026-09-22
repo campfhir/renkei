@@ -6,7 +6,8 @@
  * checkboxes, a message, and the branch it lands on or a new one first
  * (`POST …/commit`, authored as the person like the chat's own tool).
  * Then what the same dialog becomes: the hash on its branch, a Push
- * button (`POST …/push`, the person's own Bitbucket grant), and the ask
+ * button (`POST …/push`, the person's own grant on the project's git
+ * host), and the ask
  * that has the chat push and open the pull request. Files this browser
  * saved are tagged "edited here", files the chat's tools wrote in this
  * chat "by the chat"; git cannot say who changed a file in a shared
@@ -25,7 +26,7 @@ import { LoadingLine } from '@/components/skeleton';
 import type { ChangedFile } from './use-code-pane';
 
 export const PUSH_AND_PR_ASK =
-  'Push the current branch and open a pull request on Bitbucket that says what changed and why.';
+  'Push the current branch and open a pull request that says what changed and why.';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';

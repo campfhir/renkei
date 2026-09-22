@@ -8,6 +8,7 @@ import AtlassianConnector from './atlassian-connector';
 import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
 import ZoomConnector from './zoom-connector';
+import GitHubConnector from './github-connector';
 import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
@@ -28,13 +29,16 @@ import {
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
+  GITHUB,
 } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
+import { GITHUB_CONNECTOR } from '@/lib/github-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ZOOM_SCOPES } from '@/lib/zoom-scopes';
+import { DEFAULT_GITHUB_SCOPES } from '@/lib/github-scopes';
 import {
   usableAtlassianCeiling,
   usableAtlassianJsmCeiling,
@@ -197,6 +201,7 @@ export default async function ConnectorsPage({
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
   const microsoftCeiling = ceilingFrom(settingsOf(MICROSOFT_CONNECTOR), DEFAULT_MICROSOFT_SCOPES);
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
+  const githubCeiling = ceilingFrom(settingsOf(GITHUB_CONNECTOR), DEFAULT_GITHUB_SCOPES);
 
   // The caller's own grants, one query, mapped by provider — connection
   // state, and the scopes they previously authorized (seeding the picker on
@@ -207,6 +212,7 @@ export default async function ConnectorsPage({
   const bitbucketGrant = grants.get(ATLASSIAN_BITBUCKET);
   const microsoftGrant = grants.get(MICROSOFT);
   const zoomGrant = grants.get(ZOOM);
+  const githubGrant = grants.get(GITHUB);
   const onbaseGrant = grants.get(ONBASE);
   const onbaseAdminGrant = grants.get(ONBASE_ADMIN);
   const webexGrant = grants.get(WEBEX_USER);
@@ -232,6 +238,7 @@ export default async function ConnectorsPage({
     shown.has('webex') ||
     microsoftKeys.length > 0 ||
     shown.has('zoom') ||
+    shown.has('github') ||
     hylandShown ||
     shown.has('fileshares') ||
     shown.has('mirth');
@@ -412,6 +419,19 @@ export default async function ConnectorsPage({
                 priorScopes={zoomGrant?.requestedScopes ?? null}
               />
               <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['zoom'])} />
+            </div>
+          )}
+
+          {shown.has('github') && (
+            <div className="mb-6 break-inside-avoid">
+              <GitHubConnector
+                tenantId={tenant.id}
+                connected={githubGrant !== undefined}
+                displayName={githubGrant?.displayName ?? null}
+                ceiling={githubCeiling}
+                priorScopes={githubGrant?.requestedScopes ?? null}
+              />
+              <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['github'])} />
             </div>
           )}
 

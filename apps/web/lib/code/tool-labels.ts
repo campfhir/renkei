@@ -39,6 +39,10 @@ const LABELS: Record<string, CodeToolLabel> = {
   bitbucket_create_pull_request_preview: { label: 'Open pull request' },
   bitbucket_create_pull_request_confirm: { label: 'Open pull request' },
   bitbucket_merge_pull_request: { label: 'Merge pull request' },
+  github_create_pull_request: { label: 'Open pull request' },
+  github_create_pull_request_preview: { label: 'Open pull request' },
+  github_create_pull_request_confirm: { label: 'Open pull request' },
+  github_merge_pull_request: { label: 'Merge pull request' },
 };
 
 export function codeToolLabel(name: string): CodeToolLabel | null {

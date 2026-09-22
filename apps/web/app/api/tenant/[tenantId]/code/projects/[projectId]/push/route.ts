@@ -1,8 +1,9 @@
 /**
  * A push made by a person from the code pane: the checkout's current
- * branch to origin, with their own Bitbucket grant riding one worker
- * call, exactly as the chat's `code_git_push` tool does it. Never
- * force-pushes. Editors only; refused in org read-only mode.
+ * branch to origin, with their own grant on the project's git host
+ * riding one worker call, exactly as the chat's `code_git_push` tool
+ * does it. Never force-pushes. Editors only; refused in org read-only
+ * mode.
  */
 
 import type { NextRequest } from 'next/server';
@@ -36,10 +37,15 @@ export async function POST(
   }
   const origin = await getOrigin(request);
   const credential = await resolveWorkspaceGitCredential(
-    { tenantId, subject: session.subject, origin: origin.ok ? origin.val : '' },
+    {
+      tenantId,
+      subject: session.subject,
+      origin: origin.ok ? origin.val : '',
+      provider: project.repo!.provider,
+    },
     { write: true }
   );
-  if (typeof credential === 'string') return jsonError(409, 'bitbucket', credential);
+  if (typeof credential === 'string') return jsonError(409, 'git-credential', credential);
   const pushed = await sbWorkspaceGitPush(codeProjectTarget(tenantId, projectId), {
     id: project.workspaceId,
     authHeader: credential.authHeader,

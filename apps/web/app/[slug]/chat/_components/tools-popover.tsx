@@ -64,9 +64,10 @@ export default function ToolsPopover({
   slug?: string;
   /**
    * Connectors that are always on in this chat, whatever is chosen — a
-   * code project's Bitbucket (tool-config.ts's CODE_PROJECT_CONNECTORS).
-   * The server adds them to every turn's toolset too; here they render
-   * checked and disabled so the picker says what the turn will do.
+   * code project's Bitbucket and GitHub (tool-config.ts's
+   * CODE_PROJECT_CONNECTORS). The server adds them to every turn's
+   * toolset too; here they render checked and disabled so the picker
+   * says what the turn will do.
    */
   locked?: readonly string[];
 }) {

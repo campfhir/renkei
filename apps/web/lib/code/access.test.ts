@@ -1,5 +1,5 @@
 import {
-  bitbucketScopesOf,
+  grantScopesOf,
   codeProjectAccessMessage,
   codeProjectAccessOf,
   CODE_PROJECT_SCOPES,
@@ -34,19 +34,19 @@ const BITBUCKET_LEGACY_GRANTED = [
   'write:repository:bitbucket-legacy',
 ];
 
-describe('bitbucketScopesOf', () => {
+describe('grantScopesOf', () => {
   it('narrows requested by granted when granted is known, else takes requested', () => {
     expect(
-      bitbucketScopesOf({ requested_scopes: ['repository', 'pipeline'], granted_scopes: ALL })
+      grantScopesOf({ requested_scopes: ['repository', 'pipeline'], granted_scopes: ALL })
     ).toEqual(['repository']);
     expect(
-      bitbucketScopesOf({ requested_scopes: ['repository', 'pipeline'], granted_scopes: null })
+      grantScopesOf({ requested_scopes: ['repository', 'pipeline'], granted_scopes: null })
     ).toEqual(['repository', 'pipeline']);
   });
 
   it('takes requested alone when granted is in the vocabulary Bitbucket really reports', () => {
     expect(
-      bitbucketScopesOf({
+      grantScopesOf({
         requested_scopes: ['repository', 'pipeline'],
         granted_scopes: BITBUCKET_LEGACY_GRANTED,
       })

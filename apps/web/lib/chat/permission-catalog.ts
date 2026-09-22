@@ -62,6 +62,7 @@ export function codeActTools(): ActToolEntry[] {
     target: { tenantId: '', subject: '' },
     workspaceId: '',
     repoFullName: '',
+    repoProvider: '',
     origin: '',
   });
   return dedupe(actNamesOf([...bound, codeDelegateTool(bound)]));

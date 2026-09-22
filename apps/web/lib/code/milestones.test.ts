@@ -25,7 +25,7 @@ describe('milestoneKindOf', () => {
 describe('milestoneSentence', () => {
   it('has a sentence per state for the known tools', () => {
     expect(milestoneSentence('code_git_commit', 'pending')).toBe('Committing');
-    expect(milestoneSentence('code_git_push', 'done')).toBe('Pushed to Bitbucket');
+    expect(milestoneSentence('code_git_push', 'done')).toBe('Pushed to the remote');
     expect(milestoneSentence('bitbucket_create_pull_request_confirm', 'done')).toBe(
       'Opened a pull request'
     );

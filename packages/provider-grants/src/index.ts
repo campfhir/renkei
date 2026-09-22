@@ -29,6 +29,7 @@ export {
   readAtlassianMetadata,
 } from './atlassian';
 export { ATLASSIAN_BITBUCKET, BitbucketAdapter, readBitbucketMetadata } from './bitbucket';
+export { GITHUB, GitHubAdapter, readGitHubMetadata } from './github';
 export { WEBEX_USER, WebexUserAdapter } from './webex';
 export { ZOOM, ZoomAdapter } from './zoom';
 export { ONBASE, OnBaseAdapter, ONBASE_ADMIN, OnBaseAdminAdapter, type OnBaseRefresh } from './onbase';
