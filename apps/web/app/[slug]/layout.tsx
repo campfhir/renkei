@@ -11,7 +11,7 @@ import { PATHNAME_HEADER, safeReturnPath } from '@/lib/return-path';
 import { getCoachMarkPrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
-import { loadChatSidebar } from '@/lib/chat/sidebar';
+import { chatSidebarActiveSince, loadChatSidebar } from '@/lib/chat/sidebar';
 import { listCoachMarkProgress } from '@/lib/coach-marks/store';
 import CoachMarkProvider from '@/components/coach-marks/provider';
 import { NotificationCenter } from '@/components/notification-center';
@@ -103,7 +103,9 @@ export default async function TenantLayout({
   const dbResult = getDatabase();
   const [chats, coachMarkProgress] = dbResult.ok
     ? await Promise.all([
-        loadChatSidebar(dbResult.val, tenant.id, session.subject),
+        loadChatSidebar(dbResult.val, tenant.id, session.subject, {
+          since: chatSidebarActiveSince(),
+        }),
         listCoachMarkProgress(dbResult.val, tenant.id, session.subject),
       ])
     : [null, []];

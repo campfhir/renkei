@@ -24,6 +24,12 @@ const base = (tenantId: string) => `/api/tenant/${tenantId}/chat`;
 export const chatClient = {
   sidebar: (tenantId: string) => getJson<ChatSidebarData>(`${base(tenantId)}/chats`),
 
+  /** The next page of the viewer's own chats older than `before` — the sidebar's "Load more". */
+  moreChats: (tenantId: string, before: string) =>
+    getJson<{ chats: ChatSidebarData['chats']; nextBefore: string | null }>(
+      `${base(tenantId)}/chats/more?${new URLSearchParams({ before }).toString()}`
+    ),
+
   /** The listed chats whose messages contain `query`, with a snippet each. */
   searchChats: (tenantId: string, query: string) =>
     getJson<{ query: string; hits: ChatSearchHit[] }>(

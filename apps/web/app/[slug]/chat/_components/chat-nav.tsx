@@ -59,12 +59,74 @@ export function ChatList({
     active: true,
     archived: false,
   });
+  /*
+    The server only loads activity from the last CHAT_SIDEBAR_ACTIVE_DAYS
+    (see lib/chat/sidebar.ts) into `data`. "Load more" pages older owned
+    chats in on top of that, kept here rather than in `data` because a
+    server refresh (any mutation below, or anything else on the page that
+    calls router.refresh()) only ever re-fetches that same recent window.
+    A chat touched again — renamed, archived, moved — falls back inside
+    the window and reappears in `data.chats` on the next refresh, at which
+    point it's dropped from here so the fresh copy wins; one deleted while
+    it lived only here is dropped by `onDeleted` since no refresh can do
+    that for us.
+  */
+  const [extraChats, setExtraChats] = useState<ChatListItem[]>([]);
+  const [moreBefore, setMoreBefore] = useState(data.moreChatsBefore);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => {
+    // Only follow the server's cursor while nothing has been paged in yet —
+    // once "Load more" has advanced it, a fresh `data` prop (the window
+    // never moves) must not rewind it back and re-offer already-loaded rows.
+    if (extraChats.length === 0) setMoreBefore(data.moreChatsBefore);
+  }, [data.moreChatsBefore, extraChats.length]);
+  const windowChats = useMemo(() => {
+    const freshIds = new Set(data.chats.map((chat) => chat.id));
+    return [...data.chats, ...extraChats.filter((chat) => !freshIds.has(chat.id))];
+  }, [data.chats, extraChats]);
+  const removeExtraChat = useCallback((chatId: string) => {
+    setExtraChats((current) => current.filter((chat) => chat.id !== chatId));
+  }, []);
+  const loadMore = useCallback(async () => {
+    if (!moreBefore || loadingMore) return;
+    setLoadingMore(true);
+    const result = await chatClient.moreChats(tenantId, moreBefore);
+    setLoadingMore(false);
+    if (result.data) {
+      setExtraChats((current) => [...current, ...result.data!.chats]);
+      setMoreBefore(result.data.nextBefore);
+    }
+  }, [tenantId, moreBefore, loadingMore]);
+  /*
+   * The search route's own comment puts it best: "the same set of chats
+   * [the sidebar] shows is the set searched." Typing into the box asks for
+   * the whole history, not just the recent window `data` carries — so a
+   * non-empty box swaps in a full, unwindowed fetch (once, cached until the
+   * box empties again) for as long as it stays non-empty.
+   */
+  const [fullChats, setFullChats] = useState<ChatListItem[] | null>(null);
+  const isFiltering = filter.trim().length > 0;
+  useEffect(() => {
+    if (!isFiltering) {
+      setFullChats(null);
+      return;
+    }
+    if (fullChats !== null) return;
+    let cancelled = false;
+    void chatClient.sidebar(tenantId).then((result) => {
+      if (!cancelled && result.data) setFullChats(result.data.chats);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, isFiltering, fullChats]);
+  const allChats = isFiltering && fullChats ? fullChats : windowChats;
   const counts = useMemo(
     () => ({
-      active: data.chats.filter((chat) => !chat.archived).length,
-      archived: data.chats.filter((chat) => chat.archived).length,
+      active: allChats.filter((chat) => !chat.archived).length,
+      archived: allChats.filter((chat) => chat.archived).length,
     }),
-    [data.chats]
+    [allChats]
   );
   const shown = useCallback(
     (chat: ChatListItem) =>
@@ -73,12 +135,12 @@ export function ChatList({
     [states, filter, hits]
   );
   const mine = useMemo(
-    () => data.chats.filter((chat) => chat.via === 'owner' && shown(chat)),
-    [data.chats, shown]
+    () => allChats.filter((chat) => chat.via === 'owner' && shown(chat)),
+    [allChats, shown]
   );
   const shared = useMemo(
-    () => data.chats.filter((chat) => chat.via !== 'owner' && shown(chat)),
-    [data.chats, shown]
+    () => allChats.filter((chat) => chat.via !== 'owner' && shown(chat)),
+    [allChats, shown]
   );
   const groups = useMemo(() => {
     const now = new Date();
@@ -116,7 +178,7 @@ export function ChatList({
               ? searching
                 ? 'Searching…'
                 : 'No chats match.'
-              : data.chats.length === 0
+              : allChats.length === 0 && moreBefore === null
                 ? 'Your chats will appear here.'
                 : !states.active && !states.archived
                   ? 'Nothing to show — pick Active or Archived.'
@@ -125,10 +187,10 @@ export function ChatList({
                     : 'No archived chats.'}
           </p>
         ) : null}
-        {groups.map(([label, chats]) => (
+        {groups.map(([label, dayChats]) => (
           <div key={label} className="mb-3">
             <SectionTitle>{label}</SectionTitle>
-            {chats.map((chat) => (
+            {dayChats.map((chat) => (
               <ChatRow
                 key={chat.id}
                 slug={slug}
@@ -137,6 +199,7 @@ export function ChatList({
                 projects={data.projects}
                 snippet={hits.get(chat.id) ?? null}
                 active={currentPath === `/${slug}/chat/${chat.id}`}
+                onDeleted={removeExtraChat}
               />
             ))}
           </div>
@@ -153,9 +216,20 @@ export function ChatList({
                 projects={data.projects}
                 snippet={hits.get(chat.id) ?? null}
                 active={currentPath === `/${slug}/chat/${chat.id}`}
+                onDeleted={removeExtraChat}
               />
             ))}
           </div>
+        ) : null}
+        {moreBefore && !isFiltering ? (
+          <button
+            type="button"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+            className="w-full rounded-md px-2 py-1.5 text-left text-sm text-gray-500 hover:bg-gray-100 disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-900"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
         ) : null}
       </nav>
     </div>
@@ -321,6 +395,7 @@ function ChatRow({
   projects,
   snippet,
   active,
+  onDeleted,
 }: {
   slug: string;
   tenantId: string;
@@ -329,6 +404,8 @@ function ChatRow({
   /** The line of the chat that matched the search, when one did. */
   snippet: string | null;
   active: boolean;
+  /** A delete that succeeds calls this too — see ChatList's `extraChats` comment. */
+  onDeleted: (chatId: string) => void;
 }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -526,7 +603,10 @@ function ChatRow({
             onConfirm={() =>
               void run(async () => {
                 const result = await chatClient.deleteChat(tenantId, chat.id);
-                if (!result.error && active) router.push(`/${slug}/chat`);
+                if (!result.error) {
+                  onDeleted(chat.id);
+                  if (active) router.push(`/${slug}/chat`);
+                }
                 return result;
               })
             }
