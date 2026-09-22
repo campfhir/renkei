@@ -277,7 +277,7 @@ export default function VoiceForm({
           title={playing ? 'Stop the sample' : `A sentence in ${localeLabel(locale)}`}
           className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
         >
-          {playing ? 'Stop' : `Hear a sample in ${localeLabel(locale)}`}
+          {playing ? 'Stop' : 'Preview'}
         </button>
         {status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
         {status === 'failed' ? (
@@ -288,8 +288,9 @@ export default function VoiceForm({
         ) : null}
       </div>
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        Voices and samples are synthesized by our speech vendor. Pronunciation and accent can vary
-        by language, voice, and dialect, and may not sound the way you expect.
+        Preview plays a sample sentence in {localeLabel(locale)}. Voices and samples are
+        synthesized by our speech vendor, so pronunciation and accent can vary by language, voice,
+        and dialect, and may not sound the way you expect.
       </p>
     </section>
   );
