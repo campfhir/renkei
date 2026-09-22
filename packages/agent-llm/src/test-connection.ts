@@ -1,0 +1,86 @@
+/**
+ * "Does this configuration actually answer?" — one real chat completion
+ * through the same adapters a run uses, spoken directly from a draft
+ * (provider/model/baseUrl/apiKey), never from a saved llm_model_configs row.
+ *
+ * This exists because listAvailableModels (models.ts) only proves the key
+ * can list models — a wrong Azure deployment name, a model the account
+ * can't reach, or a base URL that resolves but 404s the completions
+ * endpoint all still list fine and only fail here, which is exactly the
+ * class of mistake someone wants caught before saving, not after an
+ * agent's first run.
+ */
+
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
+import type { LlmErrorKind } from './contract';
+import { AnthropicProvider } from './anthropic';
+import { OpenAiProvider } from './openai';
+
+/** Interactive: someone clicked a button and is watching a spinner. */
+const REQUEST_TIMEOUT_MS = 20_000;
+const TEST_PROMPT = 'Reply with only the single word: ok';
+const MAX_TOKENS = 16;
+
+export interface TestConnectionConfig {
+  provider: string;
+  apiKey: string;
+  model: string;
+  baseUrl?: string | null;
+  /** Azure surfaces version routes with ?api-version=; null = omit. */
+  apiVersion?: string | null;
+  /** OpenAI-dialect reasoning models' effort dial; null = omit. */
+  reasoningEffort?: string | null;
+}
+
+export interface TestConnectionResult {
+  model: string;
+  /** The model's own reply text, trimmed — empty when it answered with
+   *  something other than text (still a successful call). */
+  reply: string;
+}
+
+export type TestConnectionError = LlmErrorKind | 'unsupported_provider';
+
+export async function testLlmConnection(
+  config: TestConnectionConfig
+): Promise<Result<TestConnectionResult, TestConnectionError>> {
+  const shared = {
+    apiKey: config.apiKey,
+    model: config.model,
+    baseUrl: config.baseUrl ?? null,
+    apiVersion: config.apiVersion ?? null,
+  };
+
+  let provider: AnthropicProvider | OpenAiProvider;
+  switch (config.provider) {
+    case 'anthropic':
+      provider = new AnthropicProvider(shared);
+      break;
+    // The OpenAI-spec dialect covers OpenAI, Azure AI Foundry's v1 surface,
+    // and self-hosted gateways — same as buildProvider() in resolve.ts.
+    case 'openai':
+      provider = new OpenAiProvider({ ...shared, reasoningEffort: config.reasoningEffort ?? null });
+      break;
+    // 'gemini' slots in here alongside resolve.ts's buildProvider().
+    default:
+      return err('unsupported_provider' as const, {
+        message: `No adapter for provider "${config.provider}"`,
+      });
+  }
+
+  const result = await provider.complete({
+    system: '',
+    messages: [{ role: 'user', content: [{ type: 'text', text: TEST_PROMPT }] }],
+    tools: [],
+    maxTokens: MAX_TOKENS,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  });
+  if (!result.ok) return result;
+
+  const reply = result.val.content
+    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+    .join('')
+    .trim();
+  return ok({ model: config.model, reply });
+}
