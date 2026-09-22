@@ -9,8 +9,9 @@
  * Deliberately narrow. No streaming recognition session, no SSML in the
  * request: the immersive voice mode cuts the microphone into utterances in
  * the browser and transcribes each one whole, which every vendor can do
- * with one HTTP call. A vendor-specific extra (styles, pitch) belongs in
- * the vendor file until a second vendor needs it too.
+ * with one HTTP call — told the language, or asked to hear which one it
+ * was. A vendor-specific extra (styles, pitch) belongs in the vendor file
+ * until a second vendor needs it too.
  */
 
 export interface VoiceInfo {
@@ -21,6 +22,14 @@ export interface VoiceInfo {
   /** BCP-47, e.g. `en-US`. */
   locale: string;
   gender: 'female' | 'male' | 'neutral' | null;
+  /**
+   * What the voice is like, in the vendor's words when it has any —
+   * "Warm, friendly · conversation, customer service" — for a picker to
+   * show and search; null when the vendor says nothing.
+   */
+  description: string | null;
+  /** Speaks other languages than its own well, so a language change need not drop it. */
+  multilingual: boolean;
 }
 
 export interface SynthesisRequest {
@@ -51,14 +60,24 @@ export interface TranscriptionRequest {
   audio: ArrayBuffer;
   /** What the browser recorded — the routes accept only 16 kHz mono PCM WAV. */
   contentType: string;
-  /** BCP-47 language to recognise. */
+  /**
+   * BCP-47 language to recognise — or, with `detectLanguage`, the language
+   * to fall back to when the vendor cannot tell which one was spoken.
+   */
   locale: string;
+  /**
+   * Let the vendor hear which language was spoken instead of being told:
+   * the person says something in any language and gets it back as said.
+   */
+  detectLanguage: boolean;
   signal?: AbortSignal;
 }
 
 export interface TranscriptionResult {
   /** Empty when the vendor heard no speech. */
   text: string;
+  /** The language the words were recognised in; null when the vendor did not say. */
+  locale: string | null;
 }
 
 export type VoiceErrorKind =

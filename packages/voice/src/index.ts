@@ -16,6 +16,8 @@ export {
   AZURE_OUTPUT_CONTENT_TYPE,
   buildSsml,
   azureEndpoints,
+  describeAzureVoice,
+  parseAzureDetection,
   parseAzureVoice,
   prosodyRate,
   escapeXml,

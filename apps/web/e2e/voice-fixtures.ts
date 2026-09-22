@@ -12,6 +12,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import type { VoiceInfo } from '@renkei/voice';
 import { E2E_SUBJECT, E2E_TENANT_ID } from './seed';
 
 export const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
@@ -112,7 +113,26 @@ function seal(plaintext: string): string {
   );
 }
 
+/**
+ * The voice fixtures, delete-then-insert like the rest of the seed. Every
+ * voice spec seeds them in its own beforeAll, and Playwright runs spec
+ * files on parallel workers, so the whole seed is one transaction under
+ * an advisory lock: two seeders run one after the other and each finds
+ * the rows the other left, never half of them.
+ */
 export async function seedVoice(client: Client): Promise<void> {
+  await client.query('BEGIN');
+  try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('e2e:voice-seed'))");
+    await seedVoiceRows(client);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+}
+
+async function seedVoiceRows(client: Client): Promise<void> {
   // The org's speech service, as the admin form stores it.
   await client.query('DELETE FROM connector_configs WHERE tenant_id = $1 AND connector = $2', [
     E2E_TENANT_ID,
@@ -149,6 +169,7 @@ export async function seedVoice(client: Client): Promise<void> {
         rate: 1.25,
         autoPlay: false,
         locale: 'en-GB',
+        detectLanguage: true,
         pushToTalk: false,
         accent: 'rainbow',
         userAccent: 'emerald',
@@ -210,27 +231,95 @@ export async function seedVoice(client: Client): Promise<void> {
   }
 }
 
-export const VOICES = [
+export const VOICES: VoiceInfo[] = [
   {
     id: 'en-US-AvaMultilingualNeural',
     name: 'Ava Multilingual',
     locale: 'en-US',
     gender: 'female',
+    description: 'Friendly, positive · conversation, copilot',
+    multilingual: true,
   },
   {
     id: 'en-US-AndrewMultilingualNeural',
     name: 'Andrew Multilingual',
     locale: 'en-US',
     gender: 'male',
+    description: 'Warm, confident · conversation, copilot',
+    multilingual: true,
   },
-  { id: 'en-US-EmmaNeural', name: 'Emma', locale: 'en-US', gender: 'female' },
-  { id: 'en-GB-SoniaNeural', name: 'Sonia', locale: 'en-GB', gender: 'female' },
-  { id: 'en-GB-RyanNeural', name: 'Ryan', locale: 'en-GB', gender: 'male' },
-  { id: 'en-AU-NatashaNeural', name: 'Natasha', locale: 'en-AU', gender: 'female' },
-  { id: 'de-DE-KatjaNeural', name: 'Katja', locale: 'de-DE', gender: 'female' },
-  { id: 'fr-FR-DeniseNeural', name: 'Denise', locale: 'fr-FR', gender: 'female' },
-  { id: 'es-ES-ElviraNeural', name: 'Elvira', locale: 'es-ES', gender: 'female' },
-  { id: 'ja-JP-NanamiNeural', name: 'Nanami (七海)', locale: 'ja-JP', gender: 'female' },
+  {
+    id: 'en-US-EmmaNeural',
+    name: 'Emma',
+    locale: 'en-US',
+    gender: 'female',
+    description: 'Cheerful, clear · conversation, customer service',
+    multilingual: false,
+  },
+  {
+    id: 'en-GB-SoniaNeural',
+    name: 'Sonia',
+    locale: 'en-GB',
+    gender: 'female',
+    description: 'Calm, pleasant · narration, news',
+    multilingual: false,
+  },
+  {
+    id: 'en-GB-RyanNeural',
+    name: 'Ryan',
+    locale: 'en-GB',
+    gender: 'male',
+    description: null,
+    multilingual: false,
+  },
+  {
+    id: 'en-AU-NatashaNeural',
+    name: 'Natasha',
+    locale: 'en-AU',
+    gender: 'female',
+    description: null,
+    multilingual: false,
+  },
+  {
+    id: 'de-DE-KatjaNeural',
+    name: 'Katja',
+    locale: 'de-DE',
+    gender: 'female',
+    description: 'Friendly · conversation',
+    multilingual: false,
+  },
+  {
+    id: 'fr-FR-DeniseNeural',
+    name: 'Denise',
+    locale: 'fr-FR',
+    gender: 'female',
+    description: null,
+    multilingual: false,
+  },
+  {
+    id: 'es-ES-ElviraNeural',
+    name: 'Elvira',
+    locale: 'es-ES',
+    gender: 'female',
+    description: null,
+    multilingual: false,
+  },
+  {
+    id: 'ja-JP-NanamiNeural',
+    name: 'Nanami (七海)',
+    locale: 'ja-JP',
+    gender: 'female',
+    description: 'Warm, gentle · conversation, narration',
+    multilingual: false,
+  },
+  {
+    id: 'zh-CN-XiaoxiaoNeural',
+    name: 'Xiaoxiao (晓晓)',
+    locale: 'zh-CN',
+    gender: 'female',
+    description: 'Lively, warm · news, novel',
+    multilingual: false,
+  },
 ];
 
 function frame(seq: number, event: Record<string, unknown>): string {
@@ -397,6 +486,7 @@ export async function mockVendor(page: Page, options: { asks?: boolean } = {}): 
           rate: 1.25,
           autoPlay: false,
           locale: 'en-GB',
+          detectLanguage: true,
           pushToTalk: false,
           accent: 'rainbow',
           userAccent: 'emerald',

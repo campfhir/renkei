@@ -34,6 +34,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import type { ToolPermissionDecision } from '@/lib/chat/views';
 import { spokenActivity, spokenAsk } from '@/lib/voice/activity';
+import { localeLabel } from '@/lib/voice/catalog';
 import { UtteranceRecorder } from '@/lib/voice/recorder';
 import { spokenDecision } from '@/lib/voice/spoken-decision';
 import { LIVE_REPLY_OWNER } from '@/lib/voice/use-reply-speech';
@@ -68,6 +69,8 @@ type Phase =
 export default function VoiceMode({
   tenantId,
   locale,
+  detectLanguage,
+  onHeard,
   queue,
   queueState,
   running,
@@ -85,8 +88,12 @@ export default function VoiceMode({
   onClose,
 }: {
   tenantId: string;
-  /** The language to listen for. */
+  /** The language to listen for — or, when detecting, the one to fall back to. */
   locale: string;
+  /** Hear which language each utterance is in, rather than assume `locale`. */
+  detectLanguage: boolean;
+  /** The language an utterance was heard in, so the reply can be spoken in it. */
+  onHeard: (locale: string) => void;
   queue: SpeechQueue;
   /** The assistant's wave colour, this person's preference. */
   accent: WaveAccent;
@@ -130,11 +137,13 @@ export default function VoiceMode({
   // through state: a render per reading would redraw the whole overlay.
   const micLevels = useRef(new LevelEmitter());
   const [transcript, setTranscript] = useState<string | null>(null);
+  // The language the last utterance was heard in, when it was not the set one.
+  const [heard, setHeard] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useRef<UtteranceRecorder | null>(null);
   // The latest values, for callbacks the recorder holds across renders.
-  const latest = useRef({ running, queueState, onInterrupt, onSend, permission });
-  latest.current = { running, queueState, onInterrupt, onSend, permission };
+  const latest = useRef({ running, queueState, onInterrupt, onSend, onHeard, permission });
+  latest.current = { running, queueState, onInterrupt, onSend, onHeard, permission };
   // What the assistant is doing, as last announced; and when the voice
   // last had something to say, for the dead-air check.
   const [activityLine, setActivityLine] = useState<string | null>(null);
@@ -203,7 +212,7 @@ export default function VoiceMode({
       onUtterance: (wav) => {
         void (async () => {
           setTranscribing(true);
-          const result = await voiceClient.transcribe(tenantId, wav, locale);
+          const result = await voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
           setTranscribing(false);
           if (result.error) {
             setError(result.error);
@@ -213,6 +222,9 @@ export default function VoiceMode({
           if (!text) return;
           setError(null);
           setTranscript(text);
+          const heardIn = result.data?.locale ?? null;
+          setHeard(heardIn && heardIn !== locale ? heardIn : null);
+          if (heardIn) latest.current.onHeard(heardIn);
           // While an ask is open, what is said is the answer to it.
           if (latest.current.permission) {
             const decision = spokenDecision(text);
@@ -255,7 +267,7 @@ export default function VoiceMode({
       setOpening(false);
     };
     // decide and narrate are stable for the queue's lifetime.
-  }, [tenantId, locale, echoCancellation, microphone, pushToTalk]);
+  }, [tenantId, locale, detectLanguage, echoCancellation, microphone, pushToTalk]);
 
   // The line under the wave says what is being done right now: the
   // model's own sentence about the call when it wrote one (a voice turn
@@ -540,10 +552,15 @@ export default function VoiceMode({
 
         <div className="w-full max-w-xl space-y-3 text-sm">
           {transcript ? (
-            <div className="flex justify-end">
+            <div className="flex flex-col items-end gap-0.5">
               <p className="max-w-[85%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2 text-white">
                 {transcript}
               </p>
+              {heard ? (
+                <span className="text-xs text-gray-500">
+                  Heard in {localeLabel(heard)} — the reply is read in it too.
+                </span>
+              ) : null}
             </div>
           ) : null}
           {spokenReply ? (
