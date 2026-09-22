@@ -18,6 +18,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { pingChatPresence } from '@renkei/notifications';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { resolveChatAccess } from '@/lib/chat/access';
@@ -88,12 +89,25 @@ export async function GET(
   const lastEventId = request.headers.get('last-event-id');
   const fromSeq = lastEventId && /^\d+$/.test(lastEventId) ? Number(lastEventId) : 0;
 
+  // Best-effort and never awaited inline with an event write: a slow
+  // presence upsert must never add latency to a token hitting the
+  // browser. `notifyChatReplyDesktop` (reply-notification.ts) is the only
+  // reader, and a missed touch there just costs a suppression, never a
+  // wrong send.
+  const touchPresence = () => {
+    void pingChatPresence(db, tenantId, session.subject, chatId).catch(() => {});
+  };
+
   const encoder = new TextEncoder();
   let closed = false;
   let cleanup: (() => void) | undefined;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      // The connection existing at all means this exact chat is open in
+      // front of someone — record that before anything else can race it.
+      touchPresence();
+
       const write = (chunk: string) => {
         if (closed) return;
         try {
@@ -117,13 +131,24 @@ export async function GET(
           // Already closed from the other end.
         }
       };
-      const ping = setInterval(() => write(': ping\n\n'), PING_MS);
+      const ping = setInterval(() => {
+        write(': ping\n\n');
+        touchPresence();
+      }, PING_MS);
 
       const channel = getTurnChannel(turnId);
       const unsubscribe = channel
         ? channel.subscribe(fromSeq, ({ seq, event }) => {
             send(seq, event);
-            if (event.type === 'turn_end') close();
+            // Freshest possible signal at the exact moment a reply
+            // finishes: the reply notification this same turn_end fires
+            // (start-turn.ts, on the turn's own completion) reads this
+            // row moments later, and it must not find it stale just
+            // because the last 15s heartbeat happened to land early.
+            if (event.type === 'turn_end') {
+              touchPresence();
+              close();
+            }
           })
         : null;
       if (channel && unsubscribe) {
@@ -136,6 +161,7 @@ export async function GET(
         if (channel.closed || isTurnSettled(turn.status)) {
           const snapshot = await snapshotOf(db, tenantId, chatId, turnId);
           if (snapshot) send(null, snapshot);
+          touchPresence();
           send(null, { type: 'turn_end', turnId, status: turn.status, error: turn.error });
           close();
         }
@@ -159,6 +185,7 @@ export async function GET(
           send(null, snapshot);
         }
         if (isTurnSettled(snapshot.turn.status)) {
+          touchPresence();
           send(null, {
             type: 'turn_end',
             turnId,

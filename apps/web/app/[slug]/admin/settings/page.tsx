@@ -85,6 +85,7 @@ export default async function SettingsPage({
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
+    chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
   };
 
   return (

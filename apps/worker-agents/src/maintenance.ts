@@ -12,8 +12,16 @@ import { getOrgSettings } from '@renkei/settings';
 import { CURRENT_STEPS_VERSION } from '@renkei/agents';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { parseEncryptionKey } from '@renkei/crypto';
-import { sendPush } from '@renkei/notifications';
+import { sendPush, deleteStaleChatPresence } from '@renkei/notifications';
 import { logger } from './logger';
+
+/**
+ * Well past any org's `chatReplyPresenceWindowSeconds` (capped at 300s at
+ * the admin API) — a presence row this old cannot satisfy any org's
+ * window, so there is nothing tenant-specific to decide here, unlike the
+ * sweeps above.
+ */
+const CHAT_PRESENCE_MAX_AGE_MS = 60 * 60_000;
 
 const RETENTION_BATCH = 500;
 
@@ -299,6 +307,25 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
           }
         );
       }
+    }
+  };
+}
+
+/**
+ * Prune `chat_presence` rows a chat's turn stream heartbeat left behind
+ * (@renkei/notifications' presence.ts, touched by chats/[chatId]/turns/
+ * [turnId]/stream/route.ts). Not per-tenant like the sweeps above: this is
+ * hygiene on a table nothing reads past a fixed, generous age, not a
+ * retention policy an org has a reason to tune.
+ */
+export function createChatPresenceSweep(db: Kysely<DB>) {
+  return async function sweep(): Promise<void> {
+    const deleted = await deleteStaleChatPresence(db, CHAT_PRESENCE_MAX_AGE_MS);
+    if (deleted > 0) {
+      logger.info('pruned {count} stale chat presence row(s)', {
+        component: 'worker-agents/chat-presence-sweep',
+        count: deleted,
+      });
     }
   };
 }

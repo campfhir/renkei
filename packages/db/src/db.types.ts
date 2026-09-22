@@ -427,6 +427,13 @@ export interface ChatMessages {
   usage: Json | null;
 }
 
+export interface ChatPresence {
+  chat_id: string;
+  subject: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ChatProjectMemories {
   author_subject: string | null;
   chat_id: string | null;
@@ -1298,6 +1305,7 @@ export interface DB {
   batch_processed_files: BatchProcessedFiles;
   chat_attachments: ChatAttachments;
   chat_messages: ChatMessages;
+  chat_presence: ChatPresence;
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;
   chat_subagent_runs: ChatSubagentRuns;

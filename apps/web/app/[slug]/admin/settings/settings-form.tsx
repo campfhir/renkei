@@ -37,6 +37,7 @@ export interface EditableSettings {
   agentOptimizerWindowDays: number;
   knowledgeKeywordEnrichment: boolean;
   knowledgeKeywordMinChars: number;
+  chatReplyPresenceWindowSeconds: number;
 }
 
 const inputClass =
@@ -263,6 +264,15 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How far back 'Improve' looks when it reads an agent's failures and token spend (default 30). Wider sees more history; narrower judges the agent as it is now after an edit."
         >
           {numberInput('agentOptimizerWindowDays', '1–365')}
+        </Row>
+      </Section>
+
+      <Section title="Notifications">
+        <Row
+          label="Chat reply presence window (seconds)"
+          hint="A reply's desktop notification (feed row and OS banner) is skipped entirely when the owner's browser was connected to that exact chat's live stream within this many seconds — they were already watching it happen. That connection touches this on open, roughly every 15 seconds while it stays open, and again the instant the reply finishes, so a value a little past 15 already covers anyone genuinely watching. 0 turns the check off, so every reply notifies regardless."
+        >
+          {numberInput('chatReplyPresenceWindowSeconds', '0–300')}
         </Row>
       </Section>
 
