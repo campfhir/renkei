@@ -476,8 +476,19 @@ export interface VoicePrefs {
   rate: number;
   /** Read every reply aloud as it arrives, without pressing anything. */
   autoPlay: boolean;
-  /** The language voice mode listens for; null means the org's default. */
+  /**
+   * The language replies are spoken in, and the one voice mode listens for
+   * when it is not detecting; null means the org's default.
+   */
   locale: string | null;
+  /**
+   * Hear which language was spoken rather than assume `locale`: an
+   * utterance in any language comes back as said. On by default, so nobody
+   * has to name their language before they can be understood; off pins
+   * recognition to `locale`, for a vendor or a room where detection
+   * misfires.
+   */
+  detectLanguage: boolean;
   /**
    * Voice mode as a walkie-talkie: a press starts a recording and a press
    * ends it, instead of the microphone deciding from a pause. Off by
@@ -499,6 +510,7 @@ export const DEFAULT_VOICE_PREFS: VoicePrefs = {
   rate: 1,
   autoPlay: false,
   locale: null,
+  detectLanguage: true,
   pushToTalk: false,
   accent: 'rainbow',
   userAccent: 'emerald',
@@ -543,6 +555,7 @@ export function parseVoicePrefs(stored: unknown): VoicePrefs {
     rate: rateOr(raw.rate, DEFAULT_VOICE_PREFS.rate),
     autoPlay: boolOr(raw.autoPlay, DEFAULT_VOICE_PREFS.autoPlay),
     locale: localeOr(raw.locale, DEFAULT_VOICE_PREFS.locale),
+    detectLanguage: boolOr(raw.detectLanguage, DEFAULT_VOICE_PREFS.detectLanguage),
     pushToTalk: boolOr(raw.pushToTalk, DEFAULT_VOICE_PREFS.pushToTalk),
     accent: isVoiceAccent(raw.accent) ? raw.accent : DEFAULT_VOICE_PREFS.accent,
     userAccent: isVoiceAccent(raw.userAccent) ? raw.userAccent : DEFAULT_VOICE_PREFS.userAccent,

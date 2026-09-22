@@ -30,6 +30,26 @@ export const metadata: Metadata = {
   // Every route behind this shell requires a session, and the sign-in
   // landing is nothing anyone should reach from a search result.
   robots: { index: false, follow: false },
+  /**
+   * Without this, "Add to Home Screen" on iOS makes a bookmark that opens
+   * in ordinary Safari, not the standalone app the manifest (app/manifest.ts)
+   * asks for. The distinction is not only chrome: voice mode's microphone
+   * handling (lib/voice/audio-session.ts) depends on iOS actually treating
+   * the page as a standalone web app rather than a Safari tab.
+   */
+  appleWebApp: {
+    title: 'Renkei',
+    statusBarStyle: 'black-translucent',
+  },
+  /**
+   * `appleWebApp` above emits the current `mobile-web-app-capable`, which
+   * iOS only reads from 17.4; this is the older tag it read for every
+   * version before that, still worth sending since it costs nothing on a
+   * version that ignores it.
+   */
+  other: {
+    'apple-mobile-web-app-capable': 'yes',
+  },
 };
 
 /**
@@ -43,6 +63,10 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   interactiveWidget: 'resizes-content',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#0a0a0a' },
+  ],
 };
 
 export default function RootLayout({

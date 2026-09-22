@@ -101,7 +101,10 @@ test('setup: the Voice section under Preferences', async ({ page }, testInfo) =>
   await page.goto(`/${E2E_SLUG}/preferences`);
   const section = page.getByRole('region', { name: 'Voice' });
   await expect(section).toBeVisible();
-  await expect(section.getByLabel(/^Voice/)).toHaveValue('en-GB-SoniaNeural');
+  await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Sonia');
+  await expect(
+    section.getByRole('button', { name: /Hear a sample in British English/ })
+  ).toBeVisible();
   await section.scrollIntoViewIfNeeded();
   await shot(page, testInfo, 'voice-04-preferences', false);
 });
