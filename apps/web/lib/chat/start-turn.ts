@@ -545,6 +545,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         localTools,
         localContext,
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
+        widgetResourceUris: surface.widgetResourceUris,
         discoverableTools: surface.discoverable.map((entry) => entry.def),
         // Every call that acts asks first, unless this person has said
         // "always" for that tool (permission-prefs.ts) — or the chat is in

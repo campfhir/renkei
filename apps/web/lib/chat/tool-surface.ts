@@ -35,8 +35,16 @@ import { logger } from '@/lib/logger';
 import { internalMcpEndpoint } from './internal-origin';
 import { CHAT_ALWAYS_TOOLS, CHAT_CORE_CONNECTORS, type ChatToolConfig } from './tool-config';
 
-/** Tool names the chat never offers, whatever the toolset. */
-const EXCLUDED_SUFFIX = '_preview';
+/**
+ * The suffix a preview tool's name carries. Chat used to exclude every
+ * `_preview` tool outright — offering one meant the model's card payload
+ * rendered as a folded block of raw JSON, worse than the plain write tool
+ * it previews. Now that the thread can render the MCP Apps widget a
+ * preview tool binds to (widget-card.tsx), they are offered like any
+ * other tool; `listChatConnectors`'s per-connector counts still leave them
+ * out; that's a display count, not a gate.
+ */
+const PREVIEW_SUFFIX = '_preview';
 
 /** A tool not offered up front — find_tools searches these by name. */
 export interface DiscoverableTool {
@@ -70,7 +78,6 @@ export function partitionChatTools(
   const discoverable: DiscoverableTool[] = [];
   for (const descriptor of catalog) {
     if (descriptor.appOnly) continue;
-    if (descriptor.name.endsWith(EXCLUDED_SUFFIX)) continue;
     const always = CHAT_ALWAYS_TOOLS.includes(descriptor.name);
     if (!always && (!descriptor.connector || !wanted.has(descriptor.connector))) continue;
     const live = byName.get(descriptor.name);
@@ -100,12 +107,24 @@ export function partitionChatTools(
 
 /**
  * Which of the offered tools only read, by the catalog's word for it
- * (`kind`, from the tool's readOnlyHint). The runner runs those side by
- * side within a round; anything not named here runs alone and in order.
+ * (`kind`, from the tool's readOnlyHint) — plus every preview tool. The
+ * runner runs those side by side within a round and never asks the person
+ * before calling them (turn-runner.ts's `needsPermission`); anything not
+ * named here runs alone, in order, and behind an ask. A preview tool's
+ * `readOnlyHint` is false (its catalog `kind` is 'act', same as the write
+ * it previews — org read-only mode must remove it right alongside), but
+ * calling it writes nothing: it renders a card, and only that card's own
+ * confirm button — an app-only tool the model can never reach — commits
+ * anything. Asking permission to show a card would just be a second,
+ * redundant confirmation in front of the card's own.
  */
 export function readOnlyToolNames(catalog: ToolDescriptor[], tools: LlmToolDef[]): Set<string> {
   const reads = new Set(
-    catalog.filter((descriptor) => descriptor.kind === 'read').map((descriptor) => descriptor.name)
+    catalog
+      .filter(
+        (descriptor) => descriptor.kind === 'read' || descriptor.name.endsWith(PREVIEW_SUFFIX)
+      )
+      .map((descriptor) => descriptor.name)
   );
   return new Set(tools.map((tool) => tool.name).filter((name) => reads.has(name)));
 }
@@ -124,7 +143,7 @@ export async function listChatConnectors(
   const catalog = await listAvailableTools(tenantId, subject);
   const counts = new Map<string, number>();
   for (const descriptor of catalog) {
-    if (descriptor.appOnly || descriptor.name.endsWith(EXCLUDED_SUFFIX)) continue;
+    if (descriptor.appOnly || descriptor.name.endsWith(PREVIEW_SUFFIX)) continue;
     if (!descriptor.connector) continue;
     if (CHAT_ALWAYS_TOOLS.includes(descriptor.name)) continue;
     counts.set(descriptor.connector, (counts.get(descriptor.connector) ?? 0) + 1);
@@ -141,6 +160,14 @@ export interface ChatToolSurface {
   discoverable: DiscoverableTool[];
   /** The subset of `tools` and `discoverable` that only read — see readOnlyToolNames. */
   readOnlyTools: ReadonlySet<string>;
+  /**
+   * The MCP Apps widget each tool's result renders as, by tool name —
+   * from `tools/list`'s `_meta.ui.resourceUri` (widgets.ts's
+   * `previewToolMeta`). The turn runner stamps this onto a matching
+   * call's tool_result block so the thread can render the card instead of
+   * the result's raw text.
+   */
+  widgetResourceUris: ReadonlyMap<string, string>;
   mcp: McpClient | null;
   /** Revokes the turn's token; safe to call more than once. */
   release(): Promise<void>;
@@ -170,7 +197,6 @@ export async function resolveChatToolSurface(
     (descriptor) =>
       !descriptor.appOnly &&
       !excluded.has(descriptor.name) &&
-      !descriptor.name.endsWith(EXCLUDED_SUFFIX) &&
       (CHAT_ALWAYS_TOOLS.includes(descriptor.name) ||
         (descriptor.connector !== null && input.config.connectors.includes(descriptor.connector)))
   );
@@ -179,6 +205,7 @@ export async function resolveChatToolSurface(
       tools: [],
       discoverable: [],
       readOnlyTools: new Set(),
+      widgetResourceUris: new Map(),
       mcp: null,
       release: async () => {},
     };
@@ -210,10 +237,19 @@ export async function resolveChatToolSurface(
       input.eager ?? {}
     );
     const allOffered = [...eager, ...discoverable.map((entry) => entry.def)];
+    const offeredNames = new Set(allOffered.map((tool) => tool.name));
+    const widgetResourceUris = new Map(
+      live.flatMap((tool) =>
+        tool.uiResourceUri && offeredNames.has(tool.name)
+          ? [[tool.name, tool.uiResourceUri] as const]
+          : []
+      )
+    );
     return {
       tools: eager,
       discoverable,
       readOnlyTools: readOnlyToolNames(candidates, allOffered),
+      widgetResourceUris,
       mcp,
       release,
     };
@@ -230,6 +266,7 @@ export async function resolveChatToolSurface(
       tools: [],
       discoverable: [],
       readOnlyTools: new Set(),
+      widgetResourceUris: new Map(),
       mcp: null,
       release: async () => {},
     };

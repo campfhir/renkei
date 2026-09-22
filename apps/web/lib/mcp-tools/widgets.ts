@@ -134,6 +134,18 @@ const TEMPLATES: Array<{
   },
 ];
 
+/**
+ * A template's HTML by its `ui://` URI — what `registerWidgetResources`
+ * would answer a `resources/read` for the same URI, served directly for
+ * Renkei's own chat host instead of round-tripping the MCP endpoint.
+ * Every template is static per build (the hash in the URI is the content
+ * itself), so there is nothing tenant- or caller-specific to gate here;
+ * the route this backs still requires a signed-in session for the tenant.
+ */
+export function widgetHtmlForUri(uri: string): string | null {
+  return TEMPLATES.find((template) => template.uri === uri)?.html ?? null;
+}
+
 export function registerWidgetResources(server: McpServer): void {
   for (const template of TEMPLATES) {
     server.registerResource(

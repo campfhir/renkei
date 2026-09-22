@@ -4,6 +4,7 @@
  * never throws.
  */
 
+import type { McpToolResult } from '@renkei/mcp-client';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { ChatSidebarData } from './sidebar';
 import type {
@@ -234,6 +235,31 @@ export const chatClient = {
   people: (tenantId: string) =>
     getJson<{ people: { subject: string; email: string; displayName: string | null }[] }>(
       `${base(tenantId)}/people`
+    ),
+
+  /** Where a widget card's `ui://` resource HTML is served (widget-card.tsx's iframe src). */
+  widgetResourceUrl: (tenantId: string, resourceUri: string) =>
+    `${base(tenantId)}/widgets?${new URLSearchParams({ uri: resourceUri }).toString()}`,
+
+  /** A card's confirm button, run for real (widget-card.tsx's `tools/call` proxy). */
+  confirmWidgetTool: (
+    tenantId: string,
+    chatId: string,
+    name: string,
+    args: Record<string, unknown>
+  ) =>
+    sendJsonFull<{ result: McpToolResult }>(
+      `${base(tenantId)}/chats/${chatId}/widget/tool-call`,
+      'POST',
+      { name, arguments: args }
+    ),
+
+  /** A card's `ui/update-model-context` — recorded as a note the next turn reads. */
+  appendWidgetModelContext: (tenantId: string, chatId: string, text: string) =>
+    sendJsonFull<{ message: ChatMessageView }>(
+      `${base(tenantId)}/chats/${chatId}/widget/model-context`,
+      'POST',
+      { text }
     ),
 };
 

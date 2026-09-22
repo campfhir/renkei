@@ -14,12 +14,24 @@ export interface McpToolInfo {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * The `ui://` widget resource this tool's result renders as, from
+   * `_meta.ui.resourceUri` (MCP Apps / SEP-1865 — see widgets.ts). Absent
+   * for a tool with no card.
+   */
+  uiResourceUri?: string;
 }
 
 export interface McpToolResult {
   content: { type: string; text?: string }[];
   isError: boolean;
   meta: Record<string, unknown>;
+  /**
+   * The widget's data payload (MCP Apps' `structuredContent`) — present
+   * only for a call whose tool declares a `ui.resourceUri`. Opaque here;
+   * each card template defines its own shape.
+   */
+  structuredContent?: unknown;
 }
 
 export interface McpClient {
@@ -165,13 +177,20 @@ export class HttpMcpClient implements McpClient {
     const tools: unknown[] = Array.isArray(shaped.tools) ? shaped.tools : [];
     return tools.flatMap((entry) => {
       if (typeof entry !== 'object' || entry === null) return [];
-      const tool: { name?: unknown; description?: unknown; inputSchema?: unknown } = entry;
+      const tool: {
+        name?: unknown;
+        description?: unknown;
+        inputSchema?: unknown;
+        _meta?: unknown;
+      } = entry;
       if (typeof tool.name !== 'string') return [];
+      const uiResourceUri = widgetResourceUriOf(tool._meta);
       return [
         {
           name: tool.name,
           description: typeof tool.description === 'string' ? tool.description : '',
           inputSchema: plainObject(tool.inputSchema) ?? { type: 'object' },
+          ...(uiResourceUri ? { uiResourceUri } : {}),
         },
       ];
     });
@@ -183,8 +202,12 @@ export class HttpMcpClient implements McpClient {
     timeoutMs = CALL_TIMEOUT_MS
   ): Promise<McpToolResult> {
     const result = await this.request('tools/call', { name, arguments: args }, timeoutMs);
-    const shaped: { content?: unknown; isError?: unknown; _meta?: unknown } =
-      typeof result === 'object' && result !== null ? result : {};
+    const shaped: {
+      content?: unknown;
+      isError?: unknown;
+      _meta?: unknown;
+      structuredContent?: unknown;
+    } = typeof result === 'object' && result !== null ? result : {};
     const content = Array.isArray(shaped.content)
       ? shaped.content.flatMap((block: unknown) => {
           if (typeof block !== 'object' || block === null) return [];
@@ -195,7 +218,12 @@ export class HttpMcpClient implements McpClient {
           ];
         })
       : [];
-    return { content, isError: shaped.isError === true, meta: plainObject(shaped._meta) ?? {} };
+    return {
+      content,
+      isError: shaped.isError === true,
+      meta: plainObject(shaped._meta) ?? {},
+      ...('structuredContent' in shaped ? { structuredContent: shaped.structuredContent } : {}),
+    };
   }
 }
 
@@ -205,4 +233,11 @@ function plainObject(value: unknown): Record<string, unknown> | null {
   const out: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) out[key] = entry;
   return out;
+}
+
+/** `_meta.ui.resourceUri` off a tool's `tools/list` entry (widgets.ts's `previewToolMeta`). */
+function widgetResourceUriOf(meta: unknown): string | undefined {
+  const top = plainObject(meta);
+  const ui = top ? plainObject(top.ui) : null;
+  return typeof ui?.resourceUri === 'string' ? ui.resourceUri : undefined;
 }

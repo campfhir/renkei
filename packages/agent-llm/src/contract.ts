@@ -48,7 +48,25 @@ export type LlmContentBlock =
    * object that looks like the model called the tool with nothing.
    */
   | { type: 'tool_use'; id: string; name: string; input: unknown; partialJson?: string }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  | {
+      type: 'tool_result';
+      toolUseId: string;
+      content: string;
+      isError?: boolean;
+      /**
+       * MCP Apps (SEP-1865): the `ui://` widget resource this result
+       * renders as, and its data payload — stamped on by the chat's turn
+       * runner when the call's tool declared `_meta.ui.resourceUri` (see
+       * apps/web/lib/mcp-tools/widgets.ts). Neither field reaches the
+       * actual provider request: every `toWire` in this package picks
+       * fixed fields off a tool_result block, so these ride along in the
+       * in-process message history and the encrypted chat row alone,
+       * for the thread's own renderer to key off. `structuredContent` is
+       * opaque here — each widget template defines its own shape.
+       */
+      uiResourceUri?: string;
+      structuredContent?: unknown;
+    }
   /**
    * A file the model should SEE, not read about — a PDF page-rendered by
    * the provider (document) or a picture (image). Bytes ride as base64 in

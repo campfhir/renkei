@@ -267,6 +267,15 @@ export interface TurnRunnerDeps {
    */
   readOnlyTools?: ReadonlySet<string>;
   /**
+   * The MCP Apps widget each tool's result renders as, by tool name
+   * (tool-surface.ts's `ChatToolSurface.widgetResourceUris`). A call whose
+   * name is a key here has its outcome's `structuredContent` and this
+   * resourceUri stamped onto its tool_result block, so the thread renders
+   * the card instead of the result's raw text. Omitted means no tool has
+   * one — every result renders as plain text.
+   */
+  widgetResourceUris?: ReadonlyMap<string, string>;
+  /**
    * Tools the chat has enabled but does not offer up front (tool-surface.ts's
    * `discoverable`). A call the model makes to one of these by name — from
    * memory of an earlier turn, its schema absent from this request — puts the
@@ -569,6 +578,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   let deadline = now() + limits.wallClockMs;
   const { channel, store, llm } = deps;
   const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
+  const widgetResourceUris = deps.widgetResourceUris ?? new Map<string, string>();
   const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
   const denied = deps.permissions?.denied ?? new Set<string>();
   const needsPermission = (name: string) =>
@@ -1058,12 +1068,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         ) {
           break;
         }
-        log('chat turn model call failed before any output; retrying ({attempt} of {max}): {kind}', {
-          attempt: attempt + 1,
-          max: MAX_MODEL_CALL_RETRIES,
-          kind: result.err.type,
-          message: result.err.message ?? '',
-        });
+        log(
+          'chat turn model call failed before any output; retrying ({attempt} of {max}): {kind}',
+          {
+            attempt: attempt + 1,
+            max: MAX_MODEL_CALL_RETRIES,
+            kind: result.err.type,
+            message: result.err.message ?? '',
+          }
+        );
       }
       stage = null;
 
@@ -1368,6 +1381,13 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             taskDone = true;
           }
           const text = textOfResult(outcome);
+          // A call whose tool declared a widget (tools/list's
+          // _meta.ui.resourceUri, carried here as widgetResourceUris) gets
+          // that binding stamped on its result whether or not the call
+          // itself errored — the card template renders its own error
+          // state from `structuredContent`/`isError` (issue-preview.ts and
+          // friends), same as an external MCP Apps host would route it.
+          const resourceUri = widgetResourceUris.get(use.name);
           results.push({
             type: 'tool_result',
             toolUseId: use.id,
@@ -1376,6 +1396,10 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
               limits.toolResultMaxChars
             ),
             ...(outcome.isError ? { isError: true } : {}),
+            ...(resourceUri ? { uiResourceUri: resourceUri } : {}),
+            ...(resourceUri && 'structuredContent' in outcome
+              ? { structuredContent: outcome.structuredContent }
+              : {}),
           });
           attachments.push(...attachmentBlocksOfMeta(outcome.meta, attachmentBudget, limits));
           produced.push(...artifactsOfMeta(outcome.meta, use.name, iterations));
