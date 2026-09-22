@@ -1,8 +1,10 @@
 # Code beside the chat — design
 
 No code yet. Sketches: the "Code Project Editor Sketches" canvas (seven
-artboards: three desktop, four phone). This doc records what the sketches
-decide and what they leave open, so the build can start from it.
+artboards: three desktop, four phone), kept in the repository under
+[`docs/design/code-editor/`](./design/code-editor/README.md) with a link to
+the live canvas. This doc records what the sketches decide and what they
+leave open, so the build can start from it.
 
 ## What is asked
 

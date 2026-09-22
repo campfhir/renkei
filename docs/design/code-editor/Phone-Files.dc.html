@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phone: code tab, file tree</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#ffffff;color:#111827}
+a{color:#2563eb}a:hover{color:#1d4ed8}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; display: flex; flex-direction: column; background: #ffffff; font-size: 14px;">
+  <div style="height: 56px; box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid #e5e7eb;">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#374151" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    <span style="font-weight: 600; font-size: 15px;">Renkei</span>
+    <div style="flex-grow: 1;"></div>
+    <div style="width: 32px; height: 32px; border-radius: 16px; background: #dbeafe; color: #1e40af; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px;">AR</div>
+  </div>
+  <div style="height: 48px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid #e5e7eb;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg>
+    <div style="min-width: 0; flex-grow: 1;">
+      <div style="font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Mask env values in code_run</div>
+      <div class="mono" style="font-size: 11px; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">claude/env-masking</div>
+    </div>
+    <div role="tablist" aria-label="Chat or code" style="display: flex; background: #f3f4f6; border-radius: 8px; padding: 2px;">
+      <a href="Phone-Chat.dc.html" role="tab" aria-selected="false" style="height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; font-size: 13px; color: #6b7280; display: flex; align-items: center; gap: 6px; text-decoration: none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>Chat</a>
+      <button type="button" role="tab" aria-selected="true" style="height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,.12); font-size: 13px; font-weight: 500; color: #111827; display: flex; align-items: center; gap: 6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>Code</button>
+    </div>
+    <button type="button" aria-label="More" style="width: 30px; height: 30px; border: 0; background: transparent; color: #6b7280; display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+  </div>
+
+  <div style="flex-grow: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
+    <!-- Changed files first: the reason to be here on a phone -->
+    <div style="padding: 12px 14px 4px; display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; flex-grow: 1;">Changed · not committed</span>
+      <span class="mono" style="font-size: 12px;"><span style="color: #16a34a;">+42</span> <span style="color: #dc2626;">−3</span></span>
+    </div>
+    <div class="mono" style="display: flex; flex-direction: column; padding: 0 6px; font-size: 13px;">
+      <a href="Phone-Code.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 10px 8px; min-height: 44px; box-sizing: border-box; border-radius: 8px; color: #111827; text-decoration: none;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d97706;"></span><span style="flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">lib/code/turn.ts</span><span style="font-size: 12px;"><span style="color: #16a34a;">+9</span> <span style="color: #dc2626;">−2</span></span></a>
+      <a href="Phone-Code.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 10px 8px; min-height: 44px; box-sizing: border-box; border-radius: 8px; color: #111827; text-decoration: none;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d1d5db;"></span><span style="flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">lib/code/turn.test.ts</span><span style="font-size: 12px;"><span style="color: #16a34a;">+31</span></span></a>
+      <a href="Phone-Code.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 10px 8px; min-height: 44px; box-sizing: border-box; border-radius: 8px; color: #111827; text-decoration: none;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d97706;"></span><span style="flex-grow: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">docs/chat.md</span><span style="font-size: 12px;"><span style="color: #16a34a;">+2</span> <span style="color: #dc2626;">−1</span></span></a>
+    </div>
+
+    <div style="padding: 14px 14px 4px; display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; flex-grow: 1;">Files</span>
+      <span class="mono" style="display: flex; align-items: center; gap: 5px; font-size: 11px; color: #6b7280;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 5"/></svg>claude/env-masking</span>
+    </div>
+    <div class="mono" style="display: flex; flex-direction: column; padding: 0 6px; font-size: 13px; color: #374151;">
+      <button type="button" style="display: flex; align-items: center; gap: 8px; padding: 0 8px; height: 40px; border: 0; background: transparent; text-align: left; font: inherit; color: inherit;"><span style="color: #9ca3af; width: 12px;">▾</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>apps</button>
+      <button type="button" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 24px; height: 40px; border: 0; background: transparent; text-align: left; font: inherit; color: inherit;"><span style="color: #9ca3af; width: 12px;">▾</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>web</button>
+      <button type="button" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 40px; height: 40px; border: 0; background: transparent; text-align: left; font: inherit; color: inherit;"><span style="color: #9ca3af; width: 12px;">▸</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>app</button>
+      <button type="button" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 40px; height: 40px; border: 0; background: transparent; text-align: left; font: inherit; color: inherit;"><span style="color: #9ca3af; width: 12px;">▾</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>lib</button>
+      <button type="button" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 56px; height: 40px; border: 0; background: transparent; text-align: left; font: inherit; color: inherit;"><span style="color: #9ca3af; width: 12px;">▾</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>code</button>
+      <a href="Phone-Code.dc.html" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 72px; height: 40px; color: #6b7280; text-decoration: none;"><span style="width: 12px;"></span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>delegate.ts</a>
+      <a href="Phone-Code.dc.html" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 72px; height: 40px; color: #6b7280; text-decoration: none;"><span style="width: 12px;"></span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>tools.ts</a>
+      <a href="Phone-Code.dc.html" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 72px; height: 40px; color: #111827; text-decoration: none;"><span style="width: 12px;"></span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>turn.ts<span style="margin-left: auto; color: #d97706; font-weight: 600; font-size: 11px;">M</span></a>
+      <a href="Phone-Code.dc.html" style="display: flex; align-items: center; gap: 8px; padding: 0 8px 0 72px; height: 40px; color: #111827; text-decoration: none;"><span style="width: 12px;"></span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>turn.test.ts<span style="margin-left: auto; color: #d97706; font-weight: 600; font-size: 11px;">M</span></a>
+    </div>
+  </div>
+
+  <!-- Bottom action bar: where the composer sits on the Chat tab -->
+  <div style="padding: 10px 14px 14px; border-top: 1px solid #e5e7eb; background: #f9fafb; display: flex; gap: 10px;">
+    <button type="button" style="flex-grow: 1; height: 44px; border: 1px solid #d1d5db; border-radius: 8px; background: #ffffff; color: #374151; font-size: 14px;">Search files</button>
+    <button type="button" style="flex-grow: 1; height: 44px; border: 1px solid #2563eb; border-radius: 8px; background: #2563eb; color: #ffffff; font-size: 14px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 8px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6"/></svg>Commit 3 files</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
