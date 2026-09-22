@@ -184,3 +184,40 @@ export function voiceSpeaks(voice: VoiceInfo, locale: string): boolean {
 export function previewLocale(voice: VoiceInfo, chosenLocale: string): string {
   return voiceSpeaks(voice, chosenLocale) ? chosenLocale : voice.locale;
 }
+
+/**
+ * The voice to say something in `locale` with: the person's own when it
+ * speaks that language, else the org's default when it does, else a
+ * voice of that very locale (the same gender as theirs, where there is
+ * one), else a multilingual voice of the language, else any multilingual
+ * voice — and, when nothing speaks it, the person's own after all, since
+ * a wrong accent beats silence. Null means the vendor's default, as a
+ * request without a voice always has. What lets a reply heard in
+ * Japanese be read in Japanese by someone whose voice is British.
+ */
+export function voiceForLocale(
+  voices: VoiceInfo[],
+  preferred: string | null,
+  defaultVoice: string,
+  locale: string
+): string | null {
+  const own = preferred ? voices.find((voice) => voice.id === preferred) : undefined;
+  if (preferred && (!own || voiceSpeaks(own, locale))) return preferred;
+  const fallback = voices.find((voice) => voice.id === defaultVoice);
+  if (fallback && voiceSpeaks(fallback, locale)) return null;
+  const gender = own?.gender ?? fallback?.gender ?? null;
+  const byName = (a: VoiceInfo, b: VoiceInfo) => a.name.localeCompare(b.name);
+  const natives = voices.filter((voice) => voice.locale === locale).sort(byName);
+  const language = languageOf(locale);
+  const candidates = [
+    natives.filter((voice) => gender !== null && voice.gender === gender),
+    natives,
+    voices.filter((voice) => voice.multilingual && languageOf(voice.locale) === language),
+    voices.filter((voice) => voice.multilingual),
+  ];
+  for (const list of candidates) {
+    const found = list.sort(byName)[0];
+    if (found) return found.id;
+  }
+  return preferred;
+}

@@ -43,6 +43,8 @@ export interface DictationSetup {
   locale: string;
   /** Hear which language each utterance is in, rather than assume `locale`. */
   detectLanguage: boolean;
+  /** The language an utterance was heard in, so a reply read aloud is spoken in it. */
+  onHeard: (locale: string) => void;
   /** The person's own wave colour — the bars while they dictate. */
   accent: WaveAccent;
   /** This device's echo-cancellation choice (lib/voice/device-settings.ts). */
@@ -145,7 +147,14 @@ export default function Composer({
   const startDictation = useCallback(async () => {
     if (!dictation || recorder.current) return;
     setDictationError(null);
-    const { tenantId: tenant, locale, detectLanguage, echoCancellation, microphone } = dictation;
+    const {
+      tenantId: tenant,
+      locale,
+      detectLanguage,
+      onHeard,
+      echoCancellation,
+      microphone,
+    } = dictation;
     const instance = new UtteranceRecorder({
       echoCancellation,
       deviceId: microphone,
@@ -160,6 +169,7 @@ export default function Composer({
           }
           const spoken = result.data?.text.trim() ?? '';
           if (!spoken) return;
+          if (result.data?.locale) onHeard(result.data.locale);
           setText((current) =>
             current.trim() ? `${current.replace(/\s+$/, '')} ${spoken}` : spoken
           );

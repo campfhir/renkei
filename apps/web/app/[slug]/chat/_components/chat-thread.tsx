@@ -223,14 +223,24 @@ export default function ChatThread({
   useEffect(() => {
     speechQueue?.setOutputDevice(audioOutput);
   }, [speechQueue, audioOutput]);
+  // The language the person was last heard speaking, when detection is
+  // on: replies are read in it, in a voice that can, so a turn in Japanese
+  // after one in English is answered aloud in Japanese. It stands until
+  // the next utterance, or until the Language preference is changed.
+  const [heardLocale, setHeardLocale] = useState<string | null>(null);
   useEffect(() => {
-    if (!speechQueue || !voiceDefaultLocale) return;
+    setHeardLocale(null);
+  }, [voicePrefs.locale, voicePrefs.detectLanguage]);
+  const spokenLocale =
+    (voicePrefs.detectLanguage ? heardLocale : null) ?? voicePrefs.locale ?? voiceDefaultLocale;
+  useEffect(() => {
+    if (!speechQueue || !spokenLocale) return;
     speechQueue.configure({
       voice: voicePrefs.voice,
       rate: voicePrefs.rate,
-      locale: voicePrefs.locale ?? voiceDefaultLocale,
+      locale: spokenLocale,
     });
-  }, [speechQueue, voiceDefaultLocale, voicePrefs]);
+  }, [speechQueue, spokenLocale, voicePrefs.voice, voicePrefs.rate]);
   useReplySpeech({
     queue: speechQueue,
     enabled: voice !== null && (voicePrefs.autoPlay || voiceMode),
@@ -851,6 +861,7 @@ export default function ChatThread({
                   tenantId,
                   locale: voicePrefs.locale ?? voice.defaultLocale,
                   detectLanguage: voicePrefs.detectLanguage,
+                  onHeard: setHeardLocale,
                   accent: voicePrefs.userAccent,
                   echoCancellation,
                   microphone,
@@ -886,6 +897,7 @@ export default function ChatThread({
           tenantId={tenantId}
           locale={voicePrefs.locale ?? voice.defaultLocale}
           detectLanguage={voicePrefs.detectLanguage}
+          onHeard={setHeardLocale}
           queue={speechQueue}
           queueState={speech.owner === LIVE_REPLY_OWNER ? speech.state : 'idle'}
           running={running}

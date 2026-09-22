@@ -74,7 +74,11 @@ export const voiceClient = {
     wav: ArrayBuffer,
     hearing: { locale: string | null; detectLanguage: boolean },
     signal?: AbortSignal
-  ): Promise<{ data: { text: string } | null; error: string | null }> => {
+  ): Promise<{
+    /** The words, and the language they were heard in when the vendor said. */
+    data: { text: string; locale: string | null } | null;
+    error: string | null;
+  }> => {
     const params = new URLSearchParams();
     if (hearing.locale) params.set('locale', hearing.locale);
     if (hearing.detectLanguage) params.set('detect', '1');
@@ -91,11 +95,11 @@ export const voiceClient = {
         return { data: null, error: await errorOf(response, 'Transcription failed') };
       }
       const body: unknown = await response.json().catch(() => null);
-      const text =
-        typeof body === 'object' && body !== null && 'text' in body && typeof body.text === 'string'
-          ? body.text
-          : '';
-      return { data: { text }, error: null };
+      const record: Record<string, unknown> =
+        typeof body === 'object' && body !== null ? { ...body } : {};
+      const text = typeof record.text === 'string' ? record.text : '';
+      const locale = typeof record.locale === 'string' && record.locale ? record.locale : null;
+      return { data: { text, locale }, error: null };
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         return { data: null, error: null };

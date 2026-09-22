@@ -8,6 +8,12 @@
  * is billed by the vendor and a runaway page must not be able to spend
  * without limit. The text itself is capped well under any vendor ceiling;
  * the client splits longer replies before asking.
+ *
+ * The voice asked for is the person's; the language is the reply's, which
+ * with language detection on is whatever they were heard speaking. When
+ * their voice cannot speak it, one that can stands in for this piece
+ * (`voiceForLocale`, from the org's cached catalog), so a reply heard in
+ * Japanese is read in Japanese rather than in a British accent.
  */
 
 import type { NextRequest } from 'next/server';
@@ -16,7 +22,8 @@ import { getDatabase } from '@renkei/db';
 import { clampRate, normalizeLocale } from '@renkei/voice';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
-import { resolveVoiceProvider } from '@/lib/voice/config';
+import { voiceForLocale } from '@/lib/voice/catalog';
+import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
 import { encodedDurationMs, recordVoiceUsage } from '@/lib/voice/usage';
 
 /** A vendor ceiling is far higher; this keeps one request to one breath of audio. */
@@ -65,9 +72,14 @@ export async function POST(
       { status: 404 }
     );
   }
-  const voice =
+  const asked =
     typeof body.voice === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(body.voice) ? body.voice : null;
   const locale = normalizeLocale(body.locale) ?? resolved.config.defaultLocale;
+  // A catalog that cannot be read leaves the voice as asked.
+  const catalog = await listVoicesCached(tenantId, resolved);
+  const voice = catalog.ok
+    ? voiceForLocale(catalog.val, asked, resolved.config.defaultVoice, locale)
+    : asked;
 
   const result = await resolved.provider.synthesize({
     text,

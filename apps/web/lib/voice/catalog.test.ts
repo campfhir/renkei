@@ -5,6 +5,7 @@ import {
   localeMatches,
   matchesWords,
   previewLocale,
+  voiceForLocale,
   voiceGroupLabel,
   voiceMatches,
   voiceSpeaks,
@@ -90,6 +91,40 @@ describe('groupVoices', () => {
 
   it('names a group by language and region', () => {
     expect(voiceGroupLabel('en-US')).toBe('English · United States (en-US)');
+  });
+});
+
+describe('voiceForLocale', () => {
+  const ryan = voice('en-GB-RyanNeural', 'en-GB', { gender: 'male' });
+  const nanami = voice('ja-JP-NanamiNeural', 'ja-JP');
+  const keita = voice('ja-JP-KeitaNeural', 'ja-JP', { gender: 'male' });
+  const all = [sonia, ryan, ava, katja, xiaoxiao, nanami, keita];
+
+  it("keeps the person's voice when it speaks the language", () => {
+    expect(voiceForLocale(all, sonia.id, ava.id, 'en-GB')).toBe(sonia.id);
+    expect(voiceForLocale(all, ava.id, sonia.id, 'ja-JP')).toBe(ava.id);
+    // A voice the catalog no longer lists is trusted as it is.
+    expect(voiceForLocale(all, 'en-US-GoneNeural', ava.id, 'ja-JP')).toBe('en-US-GoneNeural');
+  });
+
+  it("falls to the org's default when that speaks it", () => {
+    expect(voiceForLocale(all, sonia.id, ava.id, 'ja-JP')).toBeNull();
+    expect(voiceForLocale(all, null, ava.id, 'de-DE')).toBeNull();
+  });
+
+  it('finds a native voice of the language, the same gender first', () => {
+    expect(voiceForLocale(all, ryan.id, sonia.id, 'ja-JP')).toBe(keita.id);
+    expect(voiceForLocale(all, sonia.id, ryan.id, 'ja-JP')).toBe(nanami.id);
+    expect(voiceForLocale(all, null, sonia.id, 'de-DE')).toBe(katja.id);
+  });
+
+  it('takes a multilingual voice when the language has no native one', () => {
+    expect(voiceForLocale([sonia, ryan, ava, katja], sonia.id, ryan.id, 'fr-FR')).toBe(ava.id);
+  });
+
+  it("keeps the person's own when nothing speaks the language", () => {
+    expect(voiceForLocale([sonia, ryan], sonia.id, ryan.id, 'fr-FR')).toBe(sonia.id);
+    expect(voiceForLocale([sonia, ryan], null, ryan.id, 'fr-FR')).toBeNull();
   });
 });
 
