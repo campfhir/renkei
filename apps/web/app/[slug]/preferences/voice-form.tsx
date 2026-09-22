@@ -2,8 +2,9 @@
 
 /**
  * How the chat sounds to this person: whether replies are read aloud
- * unasked, in which voice, how fast, and which language voice mode
- * listens for. The same preference the chat's own speaker menu edits;
+ * unasked, in which voice, how fast, and whether voice mode hears which
+ * language they speak or listens for a chosen one. The same preference
+ * the chat's own speaker menu edits;
  * this is the long form of it. Rendered only when the org has a voice
  * service — the page leaves it out otherwise, so nobody is offered a
  * setting with nothing behind it.
@@ -137,6 +138,21 @@ export default function VoiceForm({
         <input
           type="checkbox"
           className="mt-0.5"
+          checked={prefs.detectLanguage}
+          onChange={(event) => change({ ...prefs, detectLanguage: event.target.checked })}
+        />
+        <span>
+          <span className="block">Detect the language I speak</span>
+          <span className="block text-xs text-gray-500 dark:text-gray-400">
+            What you say in a voice conversation or dictate is understood in whatever language you
+            said it, without choosing one first. Off, only the language below is listened for.
+          </span>
+        </span>
+      </label>
+      <label className="mt-2 flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
           checked={prefs.pushToTalk}
           onChange={(event) => change({ ...prefs, pushToTalk: event.target.checked })}
         />
@@ -177,7 +193,9 @@ export default function VoiceForm({
             ))}
           </select>
           <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
-            What voice mode listens for, and which voices are offered.
+            {prefs.detectLanguage
+              ? 'Which voices are offered, and what is listened for when your language cannot be told.'
+              : 'What voice mode listens for, and which voices are offered.'}
           </span>
         </label>
         <label className="block text-sm">

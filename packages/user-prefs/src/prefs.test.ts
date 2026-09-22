@@ -364,6 +364,7 @@ describe('parseVoicePrefs', () => {
         rate: 1.25,
         autoPlay: true,
         locale: 'en_gb',
+        detectLanguage: false,
         pushToTalk: true,
         accent: 'violet',
         userAccent: 'amber',
@@ -373,10 +374,18 @@ describe('parseVoicePrefs', () => {
       rate: 1.25,
       autoPlay: true,
       locale: 'en-GB',
+      detectLanguage: false,
       pushToTalk: true,
       accent: 'violet',
       userAccent: 'amber',
     });
+  });
+
+  it('detects the language unless told not to', () => {
+    expect(DEFAULT_VOICE_PREFS.detectLanguage).toBe(true);
+    expect(parseVoicePrefs({ locale: 'fr-FR' }).detectLanguage).toBe(true);
+    expect(parseVoicePrefs({ detectLanguage: false }).detectLanguage).toBe(false);
+    expect(parseVoicePrefs({ detectLanguage: 'no' }).detectLanguage).toBe(true);
   });
 
   it('clamps the pace and drops what it cannot use', () => {

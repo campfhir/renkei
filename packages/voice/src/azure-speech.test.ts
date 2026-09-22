@@ -10,6 +10,7 @@ import {
   AzureSpeechProvider,
   azureEndpoints,
   buildSsml,
+  parseAzureDetection,
   parseAzureVoice,
   prosodyRate,
 } from './azure-speech';
@@ -52,6 +53,8 @@ describe('azureEndpoints', () => {
       speech: 'https://westeurope.tts.speech.microsoft.com/cognitiveservices/v1',
       transcribe:
         'https://westeurope.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1',
+      detect:
+        'https://westeurope.api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version=2024-11-15',
     });
   });
 
@@ -69,6 +72,36 @@ describe('azureEndpoints', () => {
     expect(urls.transcribe).toBe(
       'https://my-speech.cognitiveservices.azure.com/stt/speech/recognition/conversation/cognitiveservices/v1'
     );
+    expect(urls.detect).toBe(
+      'https://my-speech.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe?api-version=2024-11-15'
+    );
+  });
+});
+
+describe('parseAzureDetection', () => {
+  it("joins the combined phrases and names the longest phrase's language", () => {
+    expect(
+      parseAzureDetection({
+        durationMilliseconds: 3200,
+        combinedPhrases: [{ channel: 0, text: ' Réserve la salle. ' }, { text: 'Merci.' }],
+        phrases: [
+          { text: 'Réserve la salle.', locale: 'fr-FR', durationMilliseconds: 2100 },
+          { text: 'Merci.', locale: 'en-US', durationMilliseconds: 400 },
+        ],
+      })
+    ).toEqual({ text: 'Réserve la salle. Merci.', locale: 'fr-FR' });
+  });
+
+  it('reads silence as empty text with no language', () => {
+    expect(parseAzureDetection({ combinedPhrases: [{ text: '' }], phrases: [] })).toEqual({
+      text: '',
+      locale: null,
+    });
+  });
+
+  it('rejects a body without combined phrases', () => {
+    expect(parseAzureDetection({ phrases: [] })).toBeNull();
+    expect(parseAzureDetection('nope')).toBeNull();
   });
 });
 
@@ -204,8 +237,10 @@ describe('AzureSpeechProvider', () => {
       audio: new Uint8Array([0, 0]).buffer,
       contentType: 'audio/wav; codecs=audio/pcm; samplerate=16000',
       locale: 'en-GB',
+      detectLanguage: false,
     });
-    expect(result).toEqual({ ok: true, val: { text: 'Book the room.' } });
+    expect(result).toEqual({ ok: true, val: { text: 'Book the room.', locale: 'en-GB' } });
+    expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe(
       'https://eastus.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-GB&format=simple'
     );
@@ -221,8 +256,80 @@ describe('AzureSpeechProvider', () => {
       audio: new ArrayBuffer(0),
       contentType: 'audio/wav',
       locale: 'en-US',
+      detectLanguage: false,
     });
-    expect(result).toEqual({ ok: true, val: { text: '' } });
+    expect(result).toEqual({ ok: true, val: { text: '', locale: 'en-US' } });
+  });
+
+  it('asks fast transcription which language was spoken when detecting', async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      Response.json({
+        combinedPhrases: [{ text: 'Reserva la sala.' }],
+        phrases: [{ text: 'Reserva la sala.', locale: 'es-ES', durationMilliseconds: 1500 }],
+      })
+    );
+    const provider = new AzureSpeechProvider(config, fetch);
+    const result = await provider.transcribe({
+      audio: new Uint8Array([1, 2, 3]).buffer,
+      contentType: 'audio/wav; codecs=audio/pcm; samplerate=16000',
+      locale: 'en-US',
+      detectLanguage: true,
+    });
+    expect(result).toEqual({ ok: true, val: { text: 'Reserva la sala.', locale: 'es-ES' } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(
+      'https://eastus.api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version=2024-11-15'
+    );
+    expect(headerOf(calls[0].init, 'Ocp-Apim-Subscription-Key')).toBe('secret-key');
+    // The boundary is fetch's to set; a Content-Type here would drop it.
+    expect(headerOf(calls[0].init, 'Content-Type')).toBeUndefined();
+    const form = calls[0].init.body;
+    expect(form).toBeInstanceOf(FormData);
+    if (!(form instanceof FormData)) return;
+    // No locale named: the vendor picks from every language it knows.
+    expect(JSON.parse(String(form.get('definition')))).toEqual({});
+    const audio = form.get('audio');
+    expect(audio).toBeInstanceOf(Blob);
+    if (!(audio instanceof Blob)) return;
+    expect([...new Uint8Array(await audio.arrayBuffer())]).toEqual([1, 2, 3]);
+  });
+
+  it.each([404, 400])(
+    'falls back to the named language when fast transcription answers %s',
+    async (status) => {
+      const { fetch, calls } = fakeFetch((url) =>
+        url.includes('transcriptions:transcribe')
+          ? new Response('no', { status })
+          : Response.json({ RecognitionStatus: 'Success', DisplayText: 'Book the room.' })
+      );
+      const provider = new AzureSpeechProvider(config, fetch);
+      const result = await provider.transcribe({
+        audio: new ArrayBuffer(2),
+        contentType: 'audio/wav',
+        locale: 'en-GB',
+        detectLanguage: true,
+      });
+      expect(result).toEqual({ ok: true, val: { text: 'Book the room.', locale: 'en-GB' } });
+      expect(calls.map((call) => call.url)).toEqual([
+        'https://eastus.api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version=2024-11-15',
+        'https://eastus.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-GB&format=simple',
+      ]);
+    }
+  );
+
+  it('does not fall back on a failure the named language would share', async () => {
+    const { fetch, calls } = fakeFetch(() => new Response('nope', { status: 401 }));
+    const provider = new AzureSpeechProvider(config, fetch);
+    const result = await provider.transcribe({
+      audio: new ArrayBuffer(2),
+      contentType: 'audio/wav',
+      locale: 'en-GB',
+      detectLanguage: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('auth');
+    expect(calls).toHaveLength(1);
   });
 
   it.each([

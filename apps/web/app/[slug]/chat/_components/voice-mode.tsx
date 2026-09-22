@@ -68,6 +68,7 @@ type Phase =
 export default function VoiceMode({
   tenantId,
   locale,
+  detectLanguage,
   queue,
   queueState,
   running,
@@ -85,8 +86,10 @@ export default function VoiceMode({
   onClose,
 }: {
   tenantId: string;
-  /** The language to listen for. */
+  /** The language to listen for — or, when detecting, the one to fall back to. */
   locale: string;
+  /** Hear which language each utterance is in, rather than assume `locale`. */
+  detectLanguage: boolean;
   queue: SpeechQueue;
   /** The assistant's wave colour, this person's preference. */
   accent: WaveAccent;
@@ -203,7 +206,7 @@ export default function VoiceMode({
       onUtterance: (wav) => {
         void (async () => {
           setTranscribing(true);
-          const result = await voiceClient.transcribe(tenantId, wav, locale);
+          const result = await voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
           setTranscribing(false);
           if (result.error) {
             setError(result.error);
@@ -255,7 +258,7 @@ export default function VoiceMode({
       setOpening(false);
     };
     // decide and narrate are stable for the queue's lifetime.
-  }, [tenantId, locale, echoCancellation, microphone, pushToTalk]);
+  }, [tenantId, locale, detectLanguage, echoCancellation, microphone, pushToTalk]);
 
   // The line under the wave says what is being done right now: the
   // model's own sentence about the call when it wrote one (a voice turn

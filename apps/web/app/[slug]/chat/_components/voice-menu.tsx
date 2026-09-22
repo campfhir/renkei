@@ -243,6 +243,27 @@ export default function VoiceMenu({
               ))}
             </select>
           </label>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={prefs.detectLanguage}
+            onClick={() => onChange({ ...prefs, detectLanguage: !prefs.detectLanguage })}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center text-blue-600 dark:text-blue-400">
+              {prefs.detectLanguage ? (
+                <Icon path={ICONS.check} className="h-4 w-4" strokeWidth={2.4} />
+              ) : null}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block">Detect the language I speak</span>
+              <span className="block text-[11px] text-gray-500">
+                {prefs.detectLanguage
+                  ? 'Whatever language you say it in is understood as said.'
+                  : `Only ${localeLabel(locale)} is listened for.`}
+              </span>
+            </span>
+          </button>
           <label className="block px-2 py-1">
             <span className="block text-[11px] font-medium text-gray-500">Voice</span>
             {voices === null ? (

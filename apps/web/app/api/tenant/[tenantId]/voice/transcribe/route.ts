@@ -5,8 +5,10 @@
  * and the browser can produce without a codec — and only as much of it as
  * a minute holds, which is more than any single utterance.
  *
- * Empty text is a normal answer (silence, a cough), not an error; the
- * voice mode simply keeps listening.
+ * `?locale=` names the language; `?detect=1` asks the vendor to hear which
+ * it was instead, with the named one as the fallback. Empty text is a
+ * normal answer (silence, a cough), not an error; the voice mode simply
+ * keeps listening.
  */
 
 import type { NextRequest } from 'next/server';
@@ -71,11 +73,13 @@ export async function POST(
   }
   const locale =
     normalizeLocale(request.nextUrl.searchParams.get('locale')) ?? resolved.config.defaultLocale;
+  const detectLanguage = request.nextUrl.searchParams.get('detect') === '1';
 
   const result = await resolved.provider.transcribe({
     audio,
     contentType: 'audio/wav; codecs=audio/pcm; samplerate=16000',
     locale,
+    detectLanguage,
     signal: request.signal,
   });
   if (!result.ok) {
@@ -92,8 +96,8 @@ export async function POST(
       kind: 'transcription',
       audioMs: wavDurationMs(audio.byteLength),
       provider: resolved.provider.kind,
-      locale,
+      locale: result.val.locale ?? locale,
     });
   }
-  return NextResponse.json({ text: result.val.text });
+  return NextResponse.json({ text: result.val.text, locale: result.val.locale });
 }

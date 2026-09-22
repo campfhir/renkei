@@ -156,6 +156,7 @@ export default function ChatThread({
       rate: 1,
       autoPlay: false,
       locale: null,
+      detectLanguage: true,
       pushToTalk: false,
       accent: 'rainbow',
       userAccent: 'emerald',
@@ -849,6 +850,7 @@ export default function ChatThread({
               ? {
                   tenantId,
                   locale: voicePrefs.locale ?? voice.defaultLocale,
+                  detectLanguage: voicePrefs.detectLanguage,
                   accent: voicePrefs.userAccent,
                   echoCancellation,
                   microphone,
@@ -883,6 +885,7 @@ export default function ChatThread({
         <VoiceMode
           tenantId={tenantId}
           locale={voicePrefs.locale ?? voice.defaultLocale}
+          detectLanguage={voicePrefs.detectLanguage}
           queue={speechQueue}
           queueState={speech.owner === LIVE_REPLY_OWNER ? speech.state : 'idle'}
           running={running}

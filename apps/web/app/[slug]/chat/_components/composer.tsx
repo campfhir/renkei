@@ -39,8 +39,10 @@ import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
  */
 export interface DictationSetup {
   tenantId: string;
-  /** The language to recognise. */
+  /** The language to recognise — or, when detecting, the one to fall back to. */
   locale: string;
+  /** Hear which language each utterance is in, rather than assume `locale`. */
+  detectLanguage: boolean;
   /** The person's own wave colour — the bars while they dictate. */
   accent: WaveAccent;
   /** This device's echo-cancellation choice (lib/voice/device-settings.ts). */
@@ -143,7 +145,7 @@ export default function Composer({
   const startDictation = useCallback(async () => {
     if (!dictation || recorder.current) return;
     setDictationError(null);
-    const { tenantId: tenant, locale, echoCancellation, microphone } = dictation;
+    const { tenantId: tenant, locale, detectLanguage, echoCancellation, microphone } = dictation;
     const instance = new UtteranceRecorder({
       echoCancellation,
       deviceId: microphone,
@@ -151,7 +153,7 @@ export default function Composer({
       onUtterance: (wav) => {
         void (async () => {
           setHearing(false);
-          const result = await voiceClient.transcribe(tenant, wav, locale);
+          const result = await voiceClient.transcribe(tenant, wav, { locale, detectLanguage });
           if (result.error) {
             setDictationError(result.error);
             return;

@@ -64,14 +64,22 @@ export const voiceClient = {
     }
   },
 
-  /** One utterance (16 kHz mono PCM WAV) as text; empty when nothing was said. */
+  /**
+   * One utterance (16 kHz mono PCM WAV) as text; empty when nothing was
+   * said. Told the language, or with `detectLanguage` asked to hear which
+   * one it was, the named language being the fallback.
+   */
   transcribe: async (
     tenantId: string,
     wav: ArrayBuffer,
-    locale: string | null,
+    hearing: { locale: string | null; detectLanguage: boolean },
     signal?: AbortSignal
   ): Promise<{ data: { text: string } | null; error: string | null }> => {
-    const query = locale ? `?${new URLSearchParams({ locale }).toString()}` : '';
+    const params = new URLSearchParams();
+    if (hearing.locale) params.set('locale', hearing.locale);
+    if (hearing.detectLanguage) params.set('detect', '1');
+    const encoded = params.toString();
+    const query = encoded ? `?${encoded}` : '';
     try {
       const response = await fetch(`${base(tenantId)}/transcribe${query}`, {
         method: 'POST',
