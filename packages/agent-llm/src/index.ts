@@ -33,6 +33,12 @@ export {
   type ListModelsError,
 } from './models';
 export {
+  testLlmConnection,
+  type TestConnectionConfig,
+  type TestConnectionResult,
+  type TestConnectionError,
+} from './test-connection';
+export {
   invalidateLlmCache,
   resolveAgentLlm,
   type ResolveLlmError,

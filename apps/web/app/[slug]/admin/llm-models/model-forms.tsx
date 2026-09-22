@@ -132,9 +132,25 @@ export default function ModelForms({ slug }: { slug: string }) {
   const [listing, setListing] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
 
+  /*
+    The "Test connection" result: a real chat completion, so it goes stale
+    on anything that changes what would be sent — the same credential
+    fields that invalidate the model list, plus the model id and reasoning
+    effort (which the list doesn't depend on).
+  */
+  const [testing, setTesting] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [testReply, setTestReply] = useState<string | null>(null);
+
+  const clearTest = () => {
+    setTestError(null);
+    setTestReply(null);
+  };
+
   const clearAvailable = () => {
     setAvailable(null);
     setListError(null);
+    clearTest();
   };
 
   const reload = useCallback(async () => {
@@ -174,6 +190,7 @@ export default function ModelForms({ slug }: { slug: string }) {
     editingId !== 'new' ? (models ?? []).find((row) => row.id === editingId) : undefined;
   const borrowFromId = draft.apiKeyFromId || (editingRow?.hasApiKey ? editingRow.id : '');
   const canList = Boolean(draft.apiKey || borrowFromId);
+  const canTest = canList && Boolean(draft.model.trim());
 
   /** Other configs whose stored key can be reused — the same connection
    *  serving another model row. */
@@ -202,6 +219,34 @@ export default function ModelForms({ slug }: { slug: string }) {
       return;
     }
     setAvailable(result.data.models);
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestError(null);
+    setTestReply(null);
+    const result = await sendJsonFull<{ model: string; reply: string }>(
+      `/api/admin/${slug}/llm-models/test`,
+      'POST',
+      {
+        provider: draft.provider,
+        model: draft.model,
+        baseUrl: draft.baseUrl || null,
+        ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
+        ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
+        // Same rule as listModels: a typed key wins, otherwise the server
+        // lends the borrowed config's stored key without it ever reaching
+        // this page.
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : { modelConfigId: borrowFromId }),
+      }
+    );
+    setTesting(false);
+    if (result.error || !result.data) {
+      setTestReply(null);
+      setTestError(result.error ?? 'Could not reach the provider');
+      return;
+    }
+    setTestReply(result.data.reply || '(no text in the reply)');
   };
 
   const submit = async () => {
@@ -360,6 +405,118 @@ export default function ModelForms({ slug }: { slug: string }) {
             </select>
           </div>
 
+          {/*
+            Connection info first, what to run on it second: Base URL, API
+            key, and API version are exactly what "List available models"
+            and "Test connection" below need to reach the right endpoint —
+            asking a person to click either before entering a base URL (an
+            Azure deployment, a gateway) or a key never worked.
+          */}
+          <div>
+            <label className={labelClass} htmlFor="model-base-url">
+              Base URL <span className="font-normal text-gray-500">(optional)</span>
+            </label>
+            <input
+              id="model-base-url"
+              className={inputClass}
+              value={draft.baseUrl}
+              placeholder={
+                draft.provider === 'openai'
+                  ? 'https://{resource}.openai.azure.com/openai/v1'
+                  : 'https://api.anthropic.com'
+              }
+              onChange={(event) => {
+                setDraft({ ...draft, baseUrl: event.target.value });
+                clearAvailable();
+              }}
+            />
+            <p className={hintClass}>
+              {PROVIDER_HINTS[draft.provider]?.baseUrl ??
+                'Only for a gateway or proxy in front of the provider.'}
+            </p>
+          </div>
+
+          <div>
+            <label className={labelClass} htmlFor="model-key">
+              API key
+            </label>
+            {/*
+              One connection can serve every model row: when sibling configs
+              already hold a key, the field grows a source picker and
+              "reuse" copies the stored key server-side — it never rides
+              through the browser, and nobody retypes it per model.
+            */}
+            {keyedSiblings.length > 0 ? (
+              <select
+                aria-label="API key source"
+                className={`${inputClass} mb-2`}
+                value={draft.apiKeyFromId}
+                onChange={(event) => {
+                  setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
+                  clearAvailable();
+                }}
+              >
+                <option value="">
+                  {editingId === 'new' ? 'Enter a key' : 'Keep the stored key (or enter a new one)'}
+                </option>
+                {keyedSiblings.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    Reuse the key stored on “{row.label}”
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {draft.apiKeyFromId === '' ? (
+              <>
+                <input
+                  id="model-key"
+                  className={inputClass}
+                  type="password"
+                  value={draft.apiKey}
+                  required={editingId === 'new'}
+                  placeholder={
+                    editingId === 'new'
+                      ? draft.provider === 'openai'
+                        ? 'sk-… or an Azure API key'
+                        : 'sk-ant-…'
+                      : 'Leave blank to keep the stored key'
+                  }
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setDraft({ ...draft, apiKey: event.target.value });
+                    clearAvailable();
+                  }}
+                />
+                <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
+              </>
+            ) : (
+              <p className={hintClass}>
+                Saving copies that key onto this model — still encrypted, never shown.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className={labelClass} htmlFor="model-api-version">
+              API version <span className="font-normal text-gray-500">(optional, Azure)</span>
+            </label>
+            <input
+              id="model-api-version"
+              className={inputClass}
+              value={draft.apiVersion}
+              placeholder="e.g. 2024-05-01-preview"
+              onChange={(event) => {
+                setDraft({ ...draft, apiVersion: event.target.value });
+                clearAvailable();
+              }}
+            />
+            <p className={hintClass}>
+              Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
+              required query parameter: api-version&quot; error). Leave blank for Anthropic, OpenAI,
+              and Azure&apos;s /openai/v1 surface.
+            </p>
+          </div>
+
           <div>
             <label className={labelClass} htmlFor="model-id">
               Model id
@@ -375,7 +532,10 @@ export default function ModelForms({ slug }: { slug: string }) {
                   ? 'e.g. gpt-5 or your deployment name'
                   : 'e.g. claude-sonnet-5'
               }
-              onChange={(event) => setDraft({ ...draft, model: event.target.value })}
+              onChange={(event) => {
+                setDraft({ ...draft, model: event.target.value });
+                clearTest();
+              }}
             />
             <datalist id="model-suggestions">
               {/* Live answers replace the hardcoded guesses once fetched. */}
@@ -445,90 +605,6 @@ export default function ModelForms({ slug }: { slug: string }) {
             ) : null}
           </div>
 
-          <div>
-            <label className={labelClass} htmlFor="model-key">
-              API key
-            </label>
-            {/*
-              One connection can serve every model row: when sibling configs
-              already hold a key, the field grows a source picker and
-              "reuse" copies the stored key server-side — it never rides
-              through the browser, and nobody retypes it per model.
-            */}
-            {keyedSiblings.length > 0 ? (
-              <select
-                aria-label="API key source"
-                className={`${inputClass} mb-2`}
-                value={draft.apiKeyFromId}
-                onChange={(event) => {
-                  setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
-                  clearAvailable();
-                }}
-              >
-                <option value="">
-                  {editingId === 'new' ? 'Enter a key' : 'Keep the stored key (or enter a new one)'}
-                </option>
-                {keyedSiblings.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    Reuse the key stored on “{row.label}”
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            {draft.apiKeyFromId === '' ? (
-              <>
-                <input
-                  id="model-key"
-                  className={inputClass}
-                  type="password"
-                  value={draft.apiKey}
-                  required={editingId === 'new'}
-                  placeholder={
-                    editingId === 'new'
-                      ? draft.provider === 'openai'
-                        ? 'sk-… or an Azure API key'
-                        : 'sk-ant-…'
-                      : 'Leave blank to keep the stored key'
-                  }
-                  autoComplete="off"
-                  onChange={(event) => {
-                    setDraft({ ...draft, apiKey: event.target.value });
-                    clearAvailable();
-                  }}
-                />
-                <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
-              </>
-            ) : (
-              <p className={hintClass}>
-                Saving copies that key onto this model — still encrypted, never shown.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className={labelClass} htmlFor="model-base-url">
-              Base URL <span className="font-normal text-gray-500">(optional)</span>
-            </label>
-            <input
-              id="model-base-url"
-              className={inputClass}
-              value={draft.baseUrl}
-              placeholder={
-                draft.provider === 'openai'
-                  ? 'https://{resource}.openai.azure.com/openai/v1'
-                  : 'https://api.anthropic.com'
-              }
-              onChange={(event) => {
-                setDraft({ ...draft, baseUrl: event.target.value });
-                clearAvailable();
-              }}
-            />
-            <p className={hintClass}>
-              {PROVIDER_HINTS[draft.provider]?.baseUrl ??
-                'Only for a gateway or proxy in front of the provider.'}
-            </p>
-          </div>
-
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelClass} htmlFor="model-max-tokens">
@@ -571,7 +647,10 @@ export default function ModelForms({ slug }: { slug: string }) {
                 id="model-reasoning-effort"
                 className={inputClass}
                 value={draft.reasoningEffort}
-                onChange={(event) => setDraft({ ...draft, reasoningEffort: event.target.value })}
+                onChange={(event) => {
+                  setDraft({ ...draft, reasoningEffort: event.target.value });
+                  clearTest();
+                }}
               >
                 <option value="">Model default</option>
                 <option value="minimal">Minimal</option>
@@ -586,25 +665,39 @@ export default function ModelForms({ slug }: { slug: string }) {
             </div>
           ) : null}
 
-          <div>
-            <label className={labelClass} htmlFor="model-api-version">
-              API version <span className="font-normal text-gray-500">(optional, Azure)</span>
-            </label>
-            <input
-              id="model-api-version"
-              className={inputClass}
-              value={draft.apiVersion}
-              placeholder="e.g. 2024-05-01-preview"
-              onChange={(event) => {
-                setDraft({ ...draft, apiVersion: event.target.value });
-                clearAvailable();
-              }}
-            />
+          <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+            {/*
+              Proves the configuration actually answers, before Save commits
+              it: a real chat completion sent with the draft's own settings.
+              Listing models (above) only proves the key is valid — a wrong
+              Azure deployment name or an unreachable model still lists fine
+              and only fails here.
+            */}
+            <button
+              type="button"
+              disabled={!canTest || testing}
+              onClick={() => void testConnection()}
+              className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-blue-400 dark:disabled:text-gray-600"
+            >
+              {testing ? 'Sending a test message…' : 'Test connection'}
+            </button>
+            {!canTest ? (
+              <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                Enter a model id and an API key (or pick one to reuse) first.
+              </span>
+            ) : null}
             <p className={hintClass}>
-              Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
-              required query parameter: api-version&quot; error). Leave blank for Anthropic, OpenAI,
-              and Azure&apos;s /openai/v1 surface.
+              Sends one real chat completion with these settings — the same check an agent run
+              would make.
             </p>
+            {testError ? (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{testError}</p>
+            ) : null}
+            {testReply !== null ? (
+              <p className="mt-1 text-xs text-green-700 dark:text-green-400">
+                ✓ The model responded: “{testReply}”
+              </p>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap gap-4 text-sm">
