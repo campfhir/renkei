@@ -38,6 +38,7 @@ import {
   createRetentionSweep,
   createStaleVersionSweep,
   createStuckRunJanitor,
+  createChatPresenceSweep,
 } from './maintenance';
 import { createMemoryCompactionSweep, MEMORY_COMPACTION_SWEEP_MS } from './memory-compaction';
 import { logger, attachPersistentLogging } from './logger';
@@ -148,6 +149,16 @@ async function main(): Promise<void> {
       'worker-agents/janitor',
       JANITOR_SWEEP_MS,
       createStuckRunJanitor(db)
+    ),
+    // Hygiene on the turn stream's own heartbeat table — fixed age, no
+    // per-tenant policy to read. Idempotent bounded delete like the sweeps
+    // above.
+    schedulePeriodicSweep(
+      logger,
+      'chat presence',
+      'worker-agents/chat-presence-sweep',
+      JANITOR_SWEEP_MS,
+      createChatPresenceSweep(db)
     ),
     // Rescues drafts stranded by a process that died mid-flight, then
     // prunes old ones. Both halves are idempotent.

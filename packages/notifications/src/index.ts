@@ -19,4 +19,4 @@ export {
 
 export { isExternalNotificationUrl, isWebUrl } from './targets';
 
-export { pingPresence, wasRecentlyPresent, deleteStalePresencePings } from './presence';
+export { pingChatPresence, wasRecentlyWatchingChat, deleteStaleChatPresence } from './presence';

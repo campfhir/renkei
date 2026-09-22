@@ -427,6 +427,13 @@ export interface ChatMessages {
   usage: Json | null;
 }
 
+export interface ChatPresence {
+  chat_id: string;
+  subject: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ChatProjectMemories {
   author_subject: string | null;
   chat_id: string | null;
@@ -1001,13 +1008,6 @@ export interface PlatformSettings {
   value: Json;
 }
 
-export interface PresencePings {
-  path: string;
-  subject: string;
-  tenant_id: string;
-  updated_at: Generated<Timestamp>;
-}
-
 export interface PromptLibraries {
   created_at: Generated<Timestamp>;
   description: string | null;
@@ -1305,6 +1305,7 @@ export interface DB {
   batch_processed_files: BatchProcessedFiles;
   chat_attachments: ChatAttachments;
   chat_messages: ChatMessages;
+  chat_presence: ChatPresence;
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;
   chat_subagent_runs: ChatSubagentRuns;
@@ -1347,7 +1348,6 @@ export interface DB {
   pending_oidc_signin: PendingOidcSignin;
   platform_audit_log: PlatformAuditLog;
   platform_settings: PlatformSettings;
-  presence_pings: PresencePings;
   prompt_libraries: PromptLibraries;
   prompts: Prompts;
   provider_grants: ProviderGrants;

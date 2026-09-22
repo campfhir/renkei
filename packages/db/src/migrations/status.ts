@@ -146,7 +146,7 @@ export const EXPECTED_MIGRATIONS = [
   '114-coach-mark-progress',
   '115-code-project-templates',
   '116-actionable-items-full-history-index',
-  '117-presence-pings',
+  '117-chat-presence',
 ];
 
 export interface MigrationStatus {

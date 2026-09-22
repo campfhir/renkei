@@ -233,16 +233,18 @@ export interface OrgSettings {
    */
   knowledgeKeywordMinChars: number;
   /**
-   * How recent a page-presence ping (apps/web/components/
-   * notification-center.tsx, @renkei/notifications' presence.ts) must be,
-   * in seconds, for a chat reply to count as already watched live and skip
-   * its desktop notification entirely — no feed row, no push. 0 turns the
-   * check off: every reply notifies, the behavior before this existed.
-   * Kept short on purpose — this is only meant to catch "the tab is open
-   * on this exact chat right now", not "was here a while ago" — but tuned
-   * per org since it has to clear the ping cadence (~20s while a page is
-   * visible) with room for network jitter, or a genuinely-watching person
-   * would still get notified.
+   * How recent a chat's turn-stream heartbeat (the SSE connection at
+   * chats/[chatId]/turns/[turnId]/stream/route.ts, recorded by
+   * @renkei/notifications' presence.ts) must be, in seconds, for a chat
+   * reply to count as already watched live and skip its desktop
+   * notification entirely — no feed row, no push. 0 turns the check off:
+   * every reply notifies, the behavior before this existed.
+   *
+   * That connection is touched when it opens, on its own ~15s keep-alive,
+   * and again the instant the reply finishes streaming — so a window a
+   * little past 15s already covers someone who was genuinely watching;
+   * this mostly exists as a typo guard and a per-org escape hatch, not a
+   * value that needs careful tuning.
    */
   chatReplyPresenceWindowSeconds: number;
 }

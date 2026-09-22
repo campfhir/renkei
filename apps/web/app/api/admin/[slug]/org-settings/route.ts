@@ -69,8 +69,8 @@ const NUMERIC_BOUNDS = {
   // enrichment into a no-op that looks switched on.
   knowledgeKeywordMinChars: [0, 100_000],
   // 0 = off (every chat reply notifies, no presence check at all). 300 is
-  // the typo guard — past a few minutes "recently pinged" stops meaning
-  // anything the check is for.
+  // the typo guard — past a few minutes "recently streamed to this chat"
+  // stops meaning anything the check is for.
   chatReplyPresenceWindowSeconds: [0, 300],
 } as const;
 

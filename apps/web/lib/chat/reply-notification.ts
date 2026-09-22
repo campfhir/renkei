@@ -13,13 +13,26 @@
  *
  * A click on the banner opens the chat itself (the push's `appPath`), not
  * the notifications page: the reply is read there and nowhere else.
+ *
+ * That `quiet` check only answers "is the chat page open right now, at
+ * the moment the push is DELIVERED" — it says nothing about someone who
+ * watched the whole reply stream in live and then navigated away before
+ * this function even ran. For that person the notification is pure noise:
+ * they already saw it. `wasRecentlyWatchingChat` (@renkei/notifications'
+ * presence.ts) answers that instead, off the turn stream route's own
+ * heartbeat (chats/[chatId]/turns/[turnId]/stream/route.ts) — a
+ * cross-replica-durable "were they connected to this exact chat's stream
+ * a moment ago" — and when it says yes, this skips the notification
+ * entirely: no feed row, no push, nothing to dismiss for something
+ * already seen.
  */
 
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
+import { getOrgSettings } from '@renkei/settings';
 import { parseEncryptionKey } from '@renkei/crypto';
-import { sendPush } from '@renkei/notifications';
+import { sendPush, wasRecentlyWatchingChat } from '@renkei/notifications';
 import { logger } from '@/lib/logger';
 
 export function notifyChatReplyDesktop(input: {
@@ -37,6 +50,21 @@ export function notifyChatReplyDesktop(input: {
 
     const dbResult = getDatabase();
     if (!dbResult.ok) return;
+
+    const settingsResult = await getOrgSettings(input.tenantId);
+    const presenceWindowSeconds = settingsResult.ok
+      ? settingsResult.val.chatReplyPresenceWindowSeconds
+      : 0;
+    if (presenceWindowSeconds > 0) {
+      const watchedLive = await wasRecentlyWatchingChat(
+        dbResult.val,
+        input.tenantId,
+        input.ownerSubject,
+        input.chatId,
+        presenceWindowSeconds
+      );
+      if (watchedLive) return;
+    }
 
     const tenant = await dbResult.val
       .selectFrom('tenants')

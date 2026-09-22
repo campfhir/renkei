@@ -270,7 +270,7 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
       <Section title="Notifications">
         <Row
           label="Chat reply presence window (seconds)"
-          hint="A reply's desktop notification (feed row and OS banner) is skipped entirely when the owner's browser pinged that exact chat page within this many seconds — they were already watching it happen live. 0 turns the check off, so every reply notifies regardless. Keep it above the ~20s the browser pings at while a page is visible, or a person who is genuinely watching can still get notified."
+          hint="A reply's desktop notification (feed row and OS banner) is skipped entirely when the owner's browser was connected to that exact chat's live stream within this many seconds — they were already watching it happen. That connection touches this on open, roughly every 15 seconds while it stays open, and again the instant the reply finishes, so a value a little past 15 already covers anyone genuinely watching. 0 turns the check off, so every reply notifies regardless."
         >
           {numberInput('chatReplyPresenceWindowSeconds', '0–300')}
         </Row>
