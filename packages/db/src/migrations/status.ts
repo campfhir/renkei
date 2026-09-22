@@ -145,6 +145,7 @@ export const EXPECTED_MIGRATIONS = [
   '113-chat-turn-subagent-usage-backfill',
   '114-coach-mark-progress',
   '115-code-project-templates',
+  '116-actionable-items-full-history-index',
 ];
 
 export interface MigrationStatus {
