@@ -47,7 +47,7 @@ export interface PushPayload {
   /**
    * This push repeats something already shown inline on `appPath` — a
    * question or permission ask, say. The service worker skips the OS
-   * banner when that exact page is the one open and focused, rather than
+   * banner when that exact page is the one on screen, rather than
    * whenever any Renkei tab happens to be; every other push (a ticket
    * filed, a run finishing) is news no matter what is on screen, so it
    * defaults to false.
