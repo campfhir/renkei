@@ -83,10 +83,13 @@ const PHRASES: Record<string, string> = {
   ur: 'السلام علیکم۔ آپ کی چیٹ میں جوابات ایسے سنائی دیں گے۔',
   uz: 'Salom. Suhbatlaringizdagi javoblar shunday eshitiladi.',
   vi: 'Xin chào. Đây là cách các câu trả lời sẽ được đọc trong cuộc trò chuyện của bạn.',
+  // Cantonese, not Standard Written Chinese read with a Cantonese accent —
+  // 呢個/嗰陣/嘅/讀出嚟 are colloquial Cantonese, not Mandarin phrasing. `yue`
+  // is Cantonese's own language subtag (the vendor's Mainland voices use
+  // `yue-CN`); `zh-HK`/`zh-MO` are the Hong Kong/Macao ones below.
+  yue: '你好——呢個就係你傾偈嗰陣,回覆讀出嚟嘅聲。',
   zh: '你好——这就是聊天中回复朗读时的声音。',
   'zh-TW': '你好——這就是聊天中回覆朗讀時的聲音。',
-  // Cantonese, not Standard Written Chinese read with a Cantonese accent —
-  // 呢個/嗰陣/嘅/讀出嚟 are colloquial Cantonese, not Mandarin phrasing.
   'zh-HK': '你好——呢個就係你傾偈嗰陣,回覆讀出嚟嘅聲。',
   'zh-MO': '你好——呢個就係你傾偈嗰陣,回覆讀出嚟嘅聲。',
   zu: 'Sawubona. Izimpendulo zizozwakala kanje ezingxoxweni zakho.',
