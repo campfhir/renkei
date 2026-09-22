@@ -14,6 +14,11 @@ describe('samplePhrase', () => {
     expect(samplePhrase('zh-HK')).toContain('回覆');
   });
 
+  it('speaks Cantonese for yue, not English', () => {
+    expect(samplePhrase('yue-CN')).toContain('回覆');
+    expect(samplePhrase('yue')).toContain('回覆');
+  });
+
   it('takes an underscore or odd casing in its stride', () => {
     expect(samplePhrase('ZH_tw')).toBe(samplePhrase('zh-TW'));
     expect(samplePhrase('JA-jp')).toBe(samplePhrase('ja-JP'));

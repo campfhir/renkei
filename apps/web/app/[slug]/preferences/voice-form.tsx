@@ -104,6 +104,15 @@ export default function VoiceForm({
     setStatus('saved');
   }
 
+  // "Saved." and the disclaimer share the line below the buttons; the
+  // confirmation is a moment's acknowledgement, not something to leave
+  // covering the disclaimer indefinitely.
+  useEffect(() => {
+    if (status !== 'saved') return;
+    const timeout = setTimeout(() => setStatus('idle'), 2000);
+    return () => clearTimeout(timeout);
+  }, [status]);
+
   const anchor = useCoachAnchor('prefs-voice');
   return (
     <section
@@ -277,9 +286,8 @@ export default function VoiceForm({
           title={playing ? 'Stop the sample' : `A sentence in ${localeLabel(locale)}`}
           className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
         >
-          {playing ? 'Stop' : `Hear a sample in ${localeLabel(locale)}`}
+          {playing ? 'Stop' : 'Preview'}
         </button>
-        {status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
         {status === 'failed' ? (
           <span className="text-sm text-red-600 dark:text-red-400">Could not save.</span>
         ) : null}
@@ -287,6 +295,15 @@ export default function VoiceForm({
           <span className="text-sm text-red-600 dark:text-red-400">{sample.error}</span>
         ) : null}
       </div>
+      {status === 'saved' ? (
+        <p className="mt-2 text-xs text-green-700 dark:text-green-500">Saved.</p>
+      ) : (
+        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          Preview plays a sample sentence in {localeLabel(locale)}. Voices and samples are
+          synthesized by our speech vendor, so pronunciation and accent can vary by language,
+          voice, and dialect, and may not sound the way you expect.
+        </p>
+      )}
     </section>
   );
 }

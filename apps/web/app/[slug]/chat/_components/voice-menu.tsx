@@ -197,9 +197,23 @@ export default function VoiceMenu({
           // lists open inside it.
           className="absolute bottom-full left-0 z-40 mb-1 w-96 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:mb-0 max-sm:max-h-[calc(100dvh-5rem)] max-sm:w-auto max-sm:overflow-y-auto dark:border-gray-700 dark:bg-gray-900"
         >
-          <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
-            Voice
-          </p>
+          <div className="flex items-center justify-between px-2 pt-1 pb-1.5">
+            <p className="text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
+              Voice
+            </p>
+            {/* An explicit close, not just outside-click/Escape: on a phone this panel
+                covers most of the screen, so tapping past it to dismiss is awkward, and
+                choosing a voice or language should not require reopening the panel just
+                to reach the preview button that was already on screen. */}
+            <button
+              type="button"
+              onClick={close}
+              aria-label="Close voice menu"
+              className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+            >
+              <Icon path={ICONS.close} className="h-4 w-4" />
+            </button>
+          </div>
           <button
             type="button"
             role="menuitemcheckbox"
