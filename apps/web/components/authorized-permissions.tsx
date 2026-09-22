@@ -1,5 +1,3 @@
-'use client';
-
 /**
  * What a connected user granted, and how to change it — on the connected card.
  *

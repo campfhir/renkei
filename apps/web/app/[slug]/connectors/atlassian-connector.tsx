@@ -39,7 +39,12 @@ export default function AtlassianConnector({
 }: {
   tenantId: string;
   /** Absent when the org has not enabled that product. */
-  jira?: { ceiling: string[]; priorScopes: string[] | null };
+  jira?: {
+    connected: boolean;
+    displayName: string | null;
+    ceiling: string[];
+    priorScopes: string[] | null;
+  };
   jsm?: {
     connected: boolean;
     displayName: string | null;
@@ -77,6 +82,8 @@ export default function AtlassianConnector({
           <JiraConnector
             nested
             tenantId={tenantId}
+            connected={jira.connected}
+            displayName={jira.displayName}
             ceiling={jira.ceiling}
             priorScopes={jira.priorScopes}
           />
