@@ -48,6 +48,7 @@ import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
 import ListenButton from './listen-button';
 import Markdown from './markdown';
+import WidgetCard from './widget-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 /**
@@ -157,6 +158,7 @@ export interface ReplySpeech {
 
 export default function MessageList({
   tenantId,
+  chatId,
   messages,
   pendingToolCalls,
   running,
@@ -170,6 +172,7 @@ export default function MessageList({
   subagents = {},
 }: {
   tenantId: string;
+  chatId: string;
   messages: ChatMessageView[];
   pendingToolCalls: string[];
   running: boolean;
@@ -244,6 +247,8 @@ export default function MessageList({
             ))}
             {group.replies.length > 0 ? (
               <Reply
+                tenantId={tenantId}
+                chatId={chatId}
                 messages={group.replies}
                 results={results}
                 pendingToolCalls={pendingToolCalls}
@@ -440,6 +445,8 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function Reply({
+  tenantId,
+  chatId,
   messages,
   results,
   pendingToolCalls,
@@ -450,6 +457,8 @@ function Reply({
   code,
   subagents,
 }: {
+  tenantId: string;
+  chatId: string;
   messages: ChatMessageView[];
   results: Map<string, ToolResult>;
   pendingToolCalls: string[];
@@ -553,6 +562,23 @@ function Reply({
                 code={code}
               />
             );
+          }
+          case 'widget': {
+            // segment() only ever routes a call here once its result has
+            // arrived with a uiResourceUri — never pending, so there is
+            // always a resourceUri to hand the card.
+            const result = part.step.result;
+            const resourceUri = result?.uiResourceUri;
+            return result && resourceUri ? (
+              <WidgetCard
+                key={part.step.block.id}
+                tenantId={tenantId}
+                chatId={chatId}
+                resourceUri={resourceUri}
+                toolInput={part.step.block.input}
+                result={result}
+              />
+            ) : null;
           }
           case 'work':
             return (

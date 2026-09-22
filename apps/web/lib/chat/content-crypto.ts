@@ -73,6 +73,10 @@ export function parseBlock(value: unknown): LlmContentBlock | null {
             toolUseId: block.toolUseId,
             content: block.content,
             ...(block.isError === true ? { isError: true } : {}),
+            ...(typeof block.uiResourceUri === 'string'
+              ? { uiResourceUri: block.uiResourceUri }
+              : {}),
+            ...('structuredContent' in block ? { structuredContent: block.structuredContent } : {}),
           }
         : null;
     case 'document':

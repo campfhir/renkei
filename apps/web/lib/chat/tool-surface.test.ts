@@ -52,12 +52,19 @@ describe('partitionChatTools', () => {
       { connectors: ['knowledge', 'jira'] }
     );
     // knowledge is a core connector (always eager); jira is not, so its
-    // tools are discoverable even though the chat has it turned on.
+    // tools are discoverable even though the chat has it turned on. A
+    // preview tool is offered like any other tool now that the thread can
+    // render the card its result binds to (widget-card.tsx) — only an
+    // app-only tool (card_action) stays excluded.
     expect(eager.map((tool) => tool.name)).toEqual(['search_knowledge', 'whoami']);
-    expect(discoverable.map((entry) => entry.def.name)).toEqual(['jira_search_issues']);
+    expect(discoverable.map((entry) => entry.def.name)).toEqual([
+      'jira_create_issue_preview',
+      'jira_search_issues',
+    ]);
     expect(discoverable[0].connector).toBe('jira');
-    expect(discoverable[0].def.description).toBe('live jira_search_issues');
-    expect(discoverable[0].def.inputSchema).toEqual({ type: 'object' });
+    expect(discoverable[0].def.description).toBe('live jira_create_issue_preview');
+    expect(discoverable[1].def.description).toBe('live jira_search_issues');
+    expect(discoverable[1].def.inputSchema).toEqual({ type: 'object' });
   });
 
   it('offers only whoami for an empty toolset', () => {

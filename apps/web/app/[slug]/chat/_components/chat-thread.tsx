@@ -1045,6 +1045,7 @@ export default function ChatThread({
 
             <MessageList
               tenantId={tenantId}
+              chatId={chat.id}
               messages={state.messages}
               pendingToolCalls={state.pendingToolCalls}
               running={running}

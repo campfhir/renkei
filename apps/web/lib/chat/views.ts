@@ -29,7 +29,15 @@ export type ChatBlock =
   | { type: 'thinking'; thinking: string }
   | { type: 'redacted_thinking' }
   | { type: 'tool_use'; id: string; name: string; input: unknown; partialJson?: string }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  | {
+      type: 'tool_result';
+      toolUseId: string;
+      content: string;
+      isError?: boolean;
+      /** MCP Apps widget binding — see LlmContentBlock's tool_result doc. */
+      uiResourceUri?: string;
+      structuredContent?: unknown;
+    }
   | { type: 'document'; mediaType: string; title?: string; bytes: number }
   | { type: 'image'; mediaType: string; bytes: number };
 
@@ -181,6 +189,8 @@ export function toChatBlock(block: LlmContentBlock): ChatBlock {
         toolUseId: block.toolUseId,
         content: block.content,
         ...(block.isError ? { isError: true } : {}),
+        ...(block.uiResourceUri ? { uiResourceUri: block.uiResourceUri } : {}),
+        ...('structuredContent' in block ? { structuredContent: block.structuredContent } : {}),
       };
     case 'document':
       return {

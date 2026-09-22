@@ -18,6 +18,14 @@ export type Segment =
   | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
   /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
   | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
+  /**
+   * A call whose result is bound to an MCP Apps widget (its tool_result's
+   * `uiResourceUri` — turn-runner.ts stamps it on from the tool's
+   * `_meta.ui.resourceUri`): rendered as the card, never folded. Known
+   * only once the result arrives — a call still pending sits in `work`
+   * like any other, and takes this card's place the moment it resolves.
+   */
+  | { kind: 'widget'; step: Extract<WorkStep, { kind: 'call' }> }
   /** Auto mode's runner-written "carry on", between two of the model's replies. */
   | { kind: 'nudge'; text: string }
   /** What the person did to the checkout from the code pane (lib/code/notes.ts). */
@@ -44,7 +52,7 @@ export function segment(messages: ChatMessageView[], results: Map<string, ToolRe
   // stable start to finish, so a second sighting updates the FIRST card in
   // place instead of opening a second one for what is, underneath, the one
   // call the person is already watching.
-  const cards = new Map<string, Extract<Segment, { kind: 'milestone' | 'subagent' }>>();
+  const cards = new Map<string, Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' }>>();
   for (const message of messages) {
     if (message.role !== 'assistant') {
       if (message.kind === 'nudge' || message.kind === 'note') {
@@ -79,6 +87,10 @@ export function segment(messages: ChatMessageView[], results: Map<string, ToolRe
             cards.set(block.id, card);
           } else if (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL) {
             const card: Extract<Segment, { kind: 'milestone' }> = { kind: 'milestone', step };
+            out.push(card);
+            cards.set(block.id, card);
+          } else if (step.result?.uiResourceUri) {
+            const card: Extract<Segment, { kind: 'widget' }> = { kind: 'widget', step };
             out.push(card);
             cards.set(block.id, card);
           } else {
