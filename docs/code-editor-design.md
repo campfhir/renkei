@@ -1,10 +1,12 @@
 # Code beside the chat — design
 
-No code yet. Sketches: the "Code Project Editor Sketches" canvas (seven
-artboards: three desktop, four phone), kept in the repository under
+Built on the branch this doc sits on; the running description is in
+[`docs/chat.md`](./chat.md#code-projects) under "The code pane". Sketches: the
+"Code Project Editor Sketches" canvas (seven artboards: three desktop, four
+phone), kept in the repository under
 [`docs/design/code-editor/`](./design/code-editor/README.md) with a link to
 the live canvas. This doc records what the sketches decide and what they
-leave open, so the build can start from it.
+leave open; the cuts at the bottom say what is built.
 
 ## What is asked
 
@@ -231,12 +233,14 @@ disk would silently leave them out.
 
 ## Scope, in cuts
 
-1. **Look.** The split and the tabs, the tree with Changed, files opened
-   read-only, tabs remembered, the Bitbucket fallback. No new write path.
-2. **Edit.** Monaco and the textarea, Save with `If-Match`, Discard, the
-   conflict banner, the `edit` note row, reload on turn end.
-3. **Commit.** The dialog, the commit and push routes, the `commit` note
-   row counted by `chat-commits.ts`, the suggested message.
+1. **Look** — built. The split and the tabs, the tree with Changed, files
+   opened read-only, tabs remembered, the Bitbucket fallback.
+2. **Edit** — built. Monaco and the textarea, Save with `If-Match`, Discard,
+   the conflict banner with Compare, the `edit` note row, reload on turn end.
+3. **Commit** — built, but for the suggested message: the dialog, the commit
+   and push routes, the `commit` and `push` note rows counted by
+   `chat-commits.ts`. **Suggest a message from the diff** needs a small
+   model call of its own and is not there yet.
 4. **Later.** Follow the assistant (the editor jumps to the file a turn is
    writing, off when there are unsaved edits); diff markers against HEAD in
    the gutter; find across files (the worker's `grep` verb is there);

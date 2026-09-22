@@ -112,3 +112,26 @@ describe('commitsInTranscript', () => {
     expect(commitsInTranscript(messages)).toEqual([]);
   });
 });
+
+describe('commitsInTranscript with the code pane’s notes', () => {
+  it('counts a commit the person made from the pane, and a push of it', () => {
+    const note = (id: string, seq: number, text: string): ChatMessageView => ({
+      ...row(id, seq, 'user', [{ type: 'text', text }], 't-none'),
+      turnId: null,
+      kind: 'note',
+    });
+    const commits = commitsInTranscript([
+      note('n1', 1, 'Committed on feat/pane: 9f9f9f9 Tidy the tree\nNote from the editor: …'),
+      note('n2', 2, 'Pushed feat/pane to origin/feat/pane.\nNote from the editor: …'),
+    ]);
+    expect(commits).toEqual([
+      expect.objectContaining({
+        sha: '9f9f9f9',
+        branch: 'feat/pane',
+        subject: 'Tidy the tree',
+        toolUseId: 'n1',
+        pushedInChat: true,
+      }),
+    ]);
+  });
+});

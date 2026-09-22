@@ -19,7 +19,9 @@ export type Segment =
   /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
   | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
   /** Auto mode's runner-written "carry on", between two of the model's replies. */
-  | { kind: 'nudge'; text: string };
+  | { kind: 'nudge'; text: string }
+  /** What the person did to the checkout from the code pane (lib/code/notes.ts). */
+  | { kind: 'person'; text: string };
 
 export type WorkStep =
   | { kind: 'thinking'; text: string }
@@ -45,11 +47,11 @@ export function segment(messages: ChatMessageView[], results: Map<string, ToolRe
   const cards = new Map<string, Extract<Segment, { kind: 'milestone' | 'subagent' }>>();
   for (const message of messages) {
     if (message.role !== 'assistant') {
-      if (message.kind === 'nudge') {
+      if (message.kind === 'nudge' || message.kind === 'note') {
         const text = message.blocks
           .flatMap((block) => (block.type === 'text' ? [block.text] : []))
           .join('\n');
-        out.push({ kind: 'nudge', text });
+        out.push({ kind: message.kind === 'nudge' ? 'nudge' : 'person', text });
       }
       continue;
     }
