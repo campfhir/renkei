@@ -1,12 +1,28 @@
 import React from 'react';
 import Link from 'next/link';
-import { getDatabase } from '@renkei/db';
 import { friendlyToolName, parseFormNodes, type FormNode } from '@renkei/agents';
 import { Icon, ICONS } from '@/components/icons';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
 import QuestionActions from './question-actions';
 import ArchiveAction from './archive-action';
+
+/** One row of the feed query (page.tsx) — exactly what a card needs to render. */
+export interface ActionableItemRow {
+  id: string;
+  source: string;
+  kind: string;
+  status: string;
+  title: string;
+  summary: string;
+  evidence: unknown;
+  result: unknown;
+  suggested_action: unknown;
+  run_id: string | null;
+  agent_id: string | null;
+  archived_at: Date | null;
+  agent_name: string | null;
+}
 
 /**
  * The curated-card feed (use case #1's human half): what Renkei suggests,
@@ -23,62 +39,24 @@ import ArchiveAction from './archive-action';
  *
  * A component on the home page, not a page of its own: the cards are the
  * home page's content, everything else there is chrome around them.
+ *
+ * Pure rendering, one page's worth of already-fetched rows — the query
+ * (paged, PAGE_SIZE at a time — see page.tsx) lives in the server page
+ * alongside the pager, which needs the same "is there another page?"
+ * answer the query produces.
  */
-export default async function ActionableCards({
+export default function ActionableCards({
+  items,
   tenantId,
   slug,
-  subject,
   showArchived = false,
 }: {
+  items: ActionableItemRow[];
   tenantId: string;
   /** The tenant's URL slug — approval cards link to their paused run. */
   slug: string;
-  /** The viewer's OIDC subject — what owner-scoped cards are matched on. */
-  subject: string;
   showArchived?: boolean;
-}): Promise<React.ReactNode> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return (
-      <p className="text-sm text-red-700 dark:text-red-300">
-        Unable to connect to the database. Please try again later.
-      </p>
-    );
-  }
-
-  let query = dbResult.val
-    .selectFrom('actionable_items')
-    .leftJoin('agents', 'agents.id', 'actionable_items.created_by_agent_id')
-    .select([
-      'actionable_items.id as id',
-      'actionable_items.source as source',
-      'actionable_items.kind as kind',
-      'actionable_items.status as status',
-      'actionable_items.title as title',
-      'actionable_items.summary as summary',
-      'actionable_items.evidence as evidence',
-      'actionable_items.result as result',
-      'actionable_items.suggested_action as suggested_action',
-      'actionable_items.run_id as run_id',
-      'actionable_items.created_by_agent_id as agent_id',
-      'actionable_items.created_at as created_at',
-      'actionable_items.archived_at as archived_at',
-      'agents.name as agent_name',
-    ])
-    .where('actionable_items.tenant_id', '=', tenantId)
-    .where((eb) =>
-      eb.or([
-        eb('actionable_items.owner_subject', 'is', null),
-        eb('actionable_items.owner_subject', '=', subject),
-      ])
-    )
-    .orderBy('actionable_items.created_at', 'desc')
-    .limit(50);
-  if (!showArchived) {
-    query = query.where('actionable_items.archived_at', 'is', null);
-  }
-  const items = await query.execute();
-
+}): React.ReactNode {
   if (items.length === 0) {
     return (
       <p className="text-sm text-gray-600 dark:text-gray-400">
