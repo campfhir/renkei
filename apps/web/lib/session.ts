@@ -17,6 +17,18 @@ import { logger } from '@/lib/logger';
 
 const COOKIE_PREFIX = 'renkei_session_';
 
+/**
+ * How long a signed-in browser stays signed in. Deliberately independent of
+ * the IdP's access-token `expires_in` (often as little as an hour): the
+ * session cookie names an opaque row in our own `sessions` table, not the
+ * IdP token itself, and nothing here ever uses the access token again after
+ * sign-in. Tying the two together meant every session — this app installed
+ * as a standalone PWA most of all, since it is opened intermittently rather
+ * than kept alive in a tab — silently expired within the hour and looked
+ * like the app "forgot" the sign-in.
+ */
+export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+
 /** Sessions are per-tenant so one browser can hold several without collision. */
 export function sessionCookieName(tenantId: string): string {
   return `${COOKIE_PREFIX}${tenantId}`;

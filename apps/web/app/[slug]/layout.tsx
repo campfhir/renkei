@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { headers } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
@@ -20,6 +21,23 @@ import ThemeScript from '@/components/theme-script';
 import ThemeSync from '@/components/theme-sync';
 import { getVersionInfo } from '@/lib/version-info';
 import AppNav from './nav';
+
+/**
+ * Overrides the root layout's `<link rel="manifest">` (app/manifest.ts,
+ * `start_url: '/'`) with one scoped to this tenant. Installing the PWA from
+ * inside a tenant and launching it from the home screen icon has to land
+ * back on `/[slug]`, not on "/" — "/" is the tenant-less sign-in form and
+ * never checks a session cookie, so landing there always looks signed out
+ * even when this tenant's session is still perfectly valid.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  return { manifest: `/api/manifest/${slug}` };
+}
 
 /**
  * The shell every tenant page shares: top bar, the menu (a column beside

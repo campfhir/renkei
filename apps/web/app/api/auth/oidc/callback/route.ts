@@ -3,7 +3,12 @@ import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
-import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/session';
+import {
+  createSession,
+  sessionCookieName,
+  sessionCookieOptions,
+  SESSION_TTL_SECONDS,
+} from '@/lib/session';
 import { identityClaimsFromIdToken, hasGroupsOverage, upsertIdentity } from '@/lib/identity';
 import { DEFAULT_GROUPS_CLAIM } from '@/lib/tenant-operations';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -316,8 +321,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Create a server-side session. Subject and roles are stored in the database
     // and never sent to the client; the cookie holds only an opaque id. Previously
     // roles rode in a non-httpOnly unsigned cookie, which anyone could rewrite.
-    const ttlSeconds = tokenData.expires_in || 3600;
-    const sessionResult = await createSession(tenantId, subject, Array.from(userRoles), ttlSeconds);
+    //
+    // The session's lifetime is SESSION_TTL_SECONDS, not the IdP access token's
+    // `expires_in` — that token is never used again after this exchange, and
+    // tying our own session to its (often hour-long) lifetime made every
+    // sign-in expire far sooner than anyone signing in expects.
+    const sessionResult = await createSession(
+      tenantId,
+      subject,
+      Array.from(userRoles),
+      SESSION_TTL_SECONDS
+    );
     if (!sessionResult.ok) {
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
@@ -327,7 +341,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     response.cookies.set(
       sessionCookieName(tenantId),
       sessionResult.val.id,
-      sessionCookieOptions(ttlSeconds)
+      sessionCookieOptions(SESSION_TTL_SECONDS)
     );
 
     // Retire the forgeable cookies from the previous scheme.
