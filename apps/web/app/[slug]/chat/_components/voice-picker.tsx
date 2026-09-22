@@ -221,12 +221,18 @@ function Combobox<T>({
                           isActive ? 'bg-blue-600 text-white' : 'text-gray-800 dark:text-gray-200'
                         }`}
                       >
-                        {/* mousedown, not click: the search box keeps focus. */}
+                        {/* mousedown, not click: the search box keeps focus. Stopped
+                            immediately, not just prevented from bubbling further: an
+                            ancestor menu's own dismiss-on-outside-click listener sits on
+                            the same document node React's does (see the Escape handling
+                            above), so a plain stopPropagation still lets it run and close
+                            the menu this picker lives in. */}
                         <button
                           type="button"
                           tabIndex={-1}
                           onMouseDown={(event) => {
                             event.preventDefault();
+                            event.nativeEvent.stopImmediatePropagation();
                             choose(item);
                           }}
                           className="min-w-0 flex-1 px-2 py-1.5 text-left"

@@ -287,6 +287,10 @@ export default function VoiceForm({
           <span className="text-sm text-red-600 dark:text-red-400">{sample.error}</span>
         ) : null}
       </div>
+      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        Voices and samples are synthesized by our speech vendor. Pronunciation and accent can vary
+        by language, voice, and dialect, and may not sound the way you expect.
+      </p>
     </section>
   );
 }
