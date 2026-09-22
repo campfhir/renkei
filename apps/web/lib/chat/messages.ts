@@ -58,7 +58,9 @@ function roleOf(value: string): MessageRole {
 }
 
 function kindOf(value: string): MessageKind {
-  return value === 'assistant' || value === 'tool_results' || value === 'nudge' ? value : 'prompt';
+  return value === 'assistant' || value === 'tool_results' || value === 'nudge' || value === 'note'
+    ? value
+    : 'prompt';
 }
 
 function statusOf(value: string): MessageStatus {

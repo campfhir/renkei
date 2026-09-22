@@ -10,49 +10,16 @@
  * passes through and the message indexes uncleaned — so the editor is the
  * only place a mistake can be made loud.
  *
- * Monaco is SELF-HOSTED. `@monaco-editor/react` fetches from a CDN by
- * default, which would put an admin page behind a third-party request and
- * break entirely in an air-gapped install; `loader.config({ monaco })`
- * points it at the bundled copy instead.
- *
- * Only two workers are loaded — the editor's own and the TypeScript one.
- * Monaco ships six more (JSON, CSS, HTML…) that this page has no use for,
- * and each is a real download.
+ * Monaco is self-hosted and configured once for the app (lib/monaco/setup.ts).
  */
 
-import { useEffect, useState } from 'react';
-import Editor, { loader, type Monaco } from '@monaco-editor/react';
-import * as monacoEditor from 'monaco-editor';
+import Editor, { type Monaco } from '@monaco-editor/react';
 import { CLEANER_TYPES } from '@/lib/email-sanitizer/cleaner-types';
 import { LoadingLine } from '@/components/skeleton';
+import { configureMonacoOnce } from '@/lib/monaco/setup';
+import { useMonacoDark } from '@/lib/monaco/use-dark-theme';
 
-let configured = false;
-
-function configureOnce(): void {
-  if (configured || typeof window === 'undefined') return;
-  configured = true;
-
-  // Turbopack resolves these `new URL(..., import.meta.url)` worker
-  // specifiers at build time; anything else (a string path, a CDN URL)
-  // would resolve to nothing in production.
-  window.MonacoEnvironment = {
-    getWorker(_workerId: string, label: string): Worker {
-      if (label === 'typescript' || label === 'javascript') {
-        return new Worker(
-          new URL('monaco-editor/esm/vs/language/typescript/ts.worker.js', import.meta.url),
-          { type: 'module' }
-        );
-      }
-      return new Worker(new URL('monaco-editor/esm/vs/editor/editor.worker.js', import.meta.url), {
-        type: 'module',
-      });
-    },
-  };
-
-  loader.config({ monaco: monacoEditor });
-}
-
-configureOnce();
+configureMonacoOnce();
 
 export interface ScriptEditorProps {
   value: string;
@@ -68,35 +35,7 @@ export default function ScriptEditor({
   height = 260,
   ariaLabel = 'Cleaner script source',
 }: ScriptEditorProps) {
-  // Driven as a PROP, not by monaco.editor.setTheme: the Editor component
-  // applies its own `theme` at mount (defaulting to light), so an
-  // imperative call made beforehand is overwritten and the editor comes up
-  // white inside a dark page.
-  const [dark, setDark] = useState(false);
-
-  // The page has three theme states — explicit dark, explicit light, and
-  // system — so both the data-theme attribute and the media query matter,
-  // and either can change while the editor is open.
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => {
-      setDark(
-        document.documentElement.dataset.theme === 'dark' ||
-          (document.documentElement.dataset.theme !== 'light' && media.matches)
-      );
-    };
-    apply();
-    media.addEventListener('change', apply);
-    const observer = new MutationObserver(apply);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme'],
-    });
-    return () => {
-      media.removeEventListener('change', apply);
-      observer.disconnect();
-    };
-  }, []);
+  const dark = useMonacoDark();
 
   function handleBeforeMount(monaco: Monaco): void {
     const ts = monaco.languages.typescript;

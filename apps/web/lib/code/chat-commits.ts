@@ -8,8 +8,12 @@
  * Changes panel and the milestone cards derive it here. Pure; the
  * browser runs it over the thread's messages as they stream.
  *
- * The transcript's word is the chat's own, not git's: a push from
- * another chat, or a commit the person made by hand, is not here. The
+ * A commit or push the person made from the code pane counts too: the
+ * pane writes a note row (lib/code/notes.ts) whose first line is the
+ * tool's own sentence, so the same parsers read it.
+ *
+ * The transcript's word is this chat's own, not git's: a push from
+ * another chat, or a commit made outside the app, is not here. The
  * worker's `git-show` verb (`…/diff?commit=`) is what says where a commit
  * stands now — pushed by anyone, on the current branch or not — and the
  * panel asks it per commit.
@@ -70,7 +74,32 @@ export function commitsInTranscript(messages: ChatMessageView[]): ChatCommit[] {
   }
   const commits: ChatCommit[] = [];
   for (const message of ordered) {
-    if (message.role !== 'assistant') continue;
+    if (message.role !== 'assistant') {
+      if (message.kind !== 'note') continue;
+      const text = message.blocks
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n');
+      const committed = parseCommitResult(text);
+      if (committed) {
+        commits.push({
+          sha: committed.sha,
+          branch: committed.branch,
+          subject: committed.subject,
+          toolUseId: message.id,
+          turnId: message.turnId,
+          at: message.createdAt,
+          pushedInChat: false,
+        });
+        continue;
+      }
+      const pushed = parsePushResult(text);
+      if (pushed) {
+        for (const commit of commits) {
+          if (commit.branch === pushed.branch) commit.pushedInChat = true;
+        }
+      }
+      continue;
+    }
     for (const block of message.blocks) {
       if (block.type !== 'tool_use') continue;
       const use: ToolUse = block;

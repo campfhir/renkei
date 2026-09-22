@@ -34,6 +34,7 @@ import type {
   TurnView,
 } from '@/lib/chat/views';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
+import { parseNote } from '@/lib/code/note-text';
 import { parseCommitResult } from '@/lib/code/chat-commits';
 import {
   milestoneKindOf,
@@ -138,6 +139,8 @@ export interface CodeActions {
   onShowCommit: (sha: string) => void;
   /** Open a sub-agent's run — progress, report, transcript — by its delegating call. */
   onShowSubagent: (toolUseId: string) => void;
+  /** Open a file in the code pane — the Open link on a tool result's diff. Absent when the pane is not there. */
+  onOpenFile?: ((path: string) => void) | null;
 }
 
 /** Reading a reply aloud, when the org has a voice service. */
@@ -498,6 +501,10 @@ function Reply({
             );
           case 'nudge':
             return <NudgeNote key={index} text={part.text} />;
+          case 'person':
+            return (
+              <PersonNote key={index} text={part.text} onOpenFile={code?.onOpenFile ?? null} />
+            );
           case 'subagent': {
             const step = part.step;
             const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
@@ -555,6 +562,7 @@ function Reply({
                 pendingToolCalls={pendingToolCalls}
                 live={tail}
                 waitingOn={permission?.pending.toolUseId ?? null}
+                onOpenFile={code?.onOpenFile ?? null}
               />
             );
         }
@@ -607,12 +615,15 @@ function WorkFold({
   pendingToolCalls,
   live,
   waitingOn,
+  onOpenFile = null,
 }: {
   steps: WorkStep[];
   pendingToolCalls: string[];
   live: boolean;
   /** The tool_use id the turn is waiting on permission for, if any. */
   waitingOn: string | null;
+  /** Open a changed file in the code pane, from a result's diff. */
+  onOpenFile?: ((path: string) => void) | null;
 }) {
   const shown = steps.filter((step) => step.kind !== 'thinking' || step.text.trim() !== '');
   const calls = shown.filter((step) => step.kind === 'call');
@@ -673,7 +684,13 @@ function WorkFold({
         {label}
         <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
       </summary>
-      <StepList steps={shown} live={live} isPending={isPending} isWaiting={isWaiting} />
+      <StepList
+        steps={shown}
+        live={live}
+        isPending={isPending}
+        isWaiting={isWaiting}
+        onOpenFile={onOpenFile}
+      />
     </details>
   );
 }
@@ -688,11 +705,14 @@ export function StepList({
   live = false,
   isPending = () => false,
   isWaiting = () => false,
+  onOpenFile = null,
 }: {
   steps: WorkStep[];
   live?: boolean;
   isPending?: (step: Extract<WorkStep, { kind: 'call' }>) => boolean;
   isWaiting?: (step: Extract<WorkStep, { kind: 'call' }>) => boolean;
+  /** Open a changed file in the code pane, from a result's diff. */
+  onOpenFile?: ((path: string) => void) | null;
 }) {
   const shown = steps;
   return (
@@ -767,7 +787,7 @@ export function StepList({
                           <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
                             Diff
                           </p>
-                          <DiffView diff={split.diff} openAll />
+                          <DiffView diff={split.diff} openAll onOpen={onOpenFile} />
                         </div>
                       </>
                     ) : step.result ? (
@@ -897,6 +917,74 @@ function SubagentCard({
  * in the person's place, so it reads as a note in the margin, not as a
  * message of theirs.
  */
+/**
+ * What the person did to the checkout from the code pane — a save, a
+ * commit, a push — read back from the note row's text (lib/code/notes.ts)
+ * and shown as a small line, never as the person's bubble. A commit's
+ * line opens the Changes panel on that commit; a saved file opens in
+ * the pane.
+ */
+function PersonNote({
+  text,
+  onOpenFile,
+}: {
+  text: string;
+  onOpenFile: ((path: string) => void) | null;
+}) {
+  const note = parseNote(text);
+  const linkClass = 'font-mono text-gray-700 hover:underline dark:text-gray-300';
+  return (
+    <p
+      className="my-2 flex items-start gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+      title={text}
+    >
+      <Icon
+        path={
+          note?.type === 'commit'
+            ? ICONS.gitCommit
+            : note?.type === 'push'
+              ? ICONS.gitPush
+              : ICONS.pencil
+        }
+        className="mt-0.5 h-3.5 w-3.5 shrink-0"
+      />
+      <span>
+        {note?.type === 'edit' ? (
+          <>
+            You edited{' '}
+            {note.paths.map((path, index) => (
+              <span key={path}>
+                {index > 0 ? ', ' : ''}
+                {onOpenFile ? (
+                  <button type="button" onClick={() => onOpenFile(path)} className={linkClass}>
+                    {path}
+                  </button>
+                ) : (
+                  <span className="font-mono">{path}</span>
+                )}
+              </span>
+            ))}{' '}
+            and saved to the checkout, not committed.
+          </>
+        ) : note?.type === 'commit' ? (
+          <>
+            You committed <span className="font-mono">{note.sha}</span> on{' '}
+            <span className="font-mono">{note.branch}</span>
+            {note.subject ? <>: {note.subject}</> : null}
+          </>
+        ) : note?.type === 'push' ? (
+          <>
+            You pushed <span className="font-mono">{note.branch}</span> to{' '}
+            <span className="font-mono">origin/{note.remoteBranch}</span>
+          </>
+        ) : (
+          text
+        )}
+      </span>
+    </p>
+  );
+}
+
 function NudgeNote({ text }: { text: string }) {
   return (
     <p

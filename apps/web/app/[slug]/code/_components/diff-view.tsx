@@ -147,12 +147,16 @@ export function FileDiff({
   file,
   open,
   sideBySide,
+  onOpen,
 }: {
   file: DiffFile;
   open: boolean;
   sideBySide: boolean;
+  /** Open the file in the code pane; the summary gets an Open link when given. */
+  onOpen?: ((path: string) => void) | null;
 }) {
   const status = statusWord(file);
+  const openFile = onOpen && file.status !== 'deleted' ? onOpen : null;
   return (
     <details open={open} className="rounded-md border border-gray-200 dark:border-gray-800">
       <summary className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-xs [&::-webkit-details-marker]:hidden">
@@ -160,6 +164,20 @@ export function FileDiff({
         <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
         {status ? <span className="text-[11px] text-gray-500">{status}</span> : null}
         <Counts added={file.added} deleted={file.deleted} />
+        {openFile ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openFile(file.path);
+            }}
+            title="Open in the code pane"
+            className="rounded px-1.5 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+          >
+            Open
+          </button>
+        ) : null}
       </summary>
       <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-800">
         {file.status === 'binary' ? (
@@ -189,11 +207,14 @@ export default function DiffView({
   diff,
   openAll = false,
   layout = 'auto',
+  onOpen = null,
 }: {
   diff: string;
   openAll?: boolean;
   /** 'auto' picks side by side on a wide screen; the others force it. */
   layout?: 'auto' | 'split' | 'stacked';
+  /** Open a file in the code pane, when there is one to open it in. */
+  onOpen?: ((path: string) => void) | null;
 }) {
   const wide = useMediaQuery(WIDE);
   const files = useMemo(() => parseUnifiedDiff(diff), [diff]);
@@ -215,6 +236,7 @@ export default function DiffView({
           file={file}
           open={openAll || index < 3}
           sideBySide={sideBySide}
+          onOpen={onOpen}
         />
       ))}
     </div>

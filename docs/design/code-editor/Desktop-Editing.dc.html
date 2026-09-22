@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desktop: editing a file inline</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#ffffff;color:#111827}
+a{color:#2563eb}a:hover{color:#1d4ed8}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+</helmet>
+<div style="width: 1152px; height: 844px; box-sizing: border-box; display: flex; background: #ffffff; font-size: 14px;">
+
+  <!-- CODE PANE (70%) — a file with unsaved edits -->
+  <div style="width: 806px; box-sizing: border-box; display: flex; flex-direction: column; border-right: 1px solid #e5e7eb;">
+    <div style="height: 48px; box-sizing: border-box; display: flex; align-items: stretch; border-bottom: 1px solid #e5e7eb;">
+      <button type="button" aria-label="Hide file tree" style="width: 44px; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; color: #6b7280;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4zM9 5v14"/></svg></button>
+      <div style="display: flex; align-items: stretch; flex-grow: 1; min-width: 0; overflow: hidden;">
+        <div class="mono" style="display: flex; align-items: center; gap: 8px; padding: 0 14px; font-size: 12px; border-right: 1px solid #e5e7eb; border-bottom: 2px solid #2563eb; color: #111827;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d97706;" title="Unsaved changes"></span>turn.ts<span style="color: #9ca3af;">apps/web/lib/code</span></div>
+        <div class="mono" style="display: flex; align-items: center; gap: 8px; padding: 0 14px; font-size: 12px; border-right: 1px solid #e5e7eb; color: #6b7280;">turn.test.ts</div>
+        <div class="mono" style="display: flex; align-items: center; gap: 8px; padding: 0 14px; font-size: 12px; border-right: 1px solid #e5e7eb; color: #6b7280;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d97706;" title="Unsaved changes"></span>chat.md<span style="color: #9ca3af;">docs</span></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; padding: 0 12px;">
+        <span style="font-size: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 3px 8px;">2 unsaved</span>
+        <button type="button" style="height: 30px; padding: 0 10px; border: 1px solid #e5e7eb; border-radius: 6px; background: #ffffff; color: #374151; font-size: 13px;">Discard</button>
+        <button type="button" style="height: 30px; padding: 0 12px; border: 1px solid #2563eb; border-radius: 6px; background: #2563eb; color: #ffffff; font-size: 13px; font-weight: 500;">Save <span style="opacity: .7; font-weight: 400;">⌘S</span></button>
+        <button type="button" style="height: 30px; padding: 0 10px; border: 1px solid #e5e7eb; border-radius: 6px; background: #ffffff; color: #111827; font-size: 13px; display: flex; align-items: center; gap: 6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6"/></svg>Commit<span style="background: #111827; color: #ffffff; border-radius: 9px; padding: 0 6px; font-size: 11px; line-height: 16px;">3</span></button>
+      </div>
+    </div>
+
+    <!-- The checkout changed under this file: the guard the save carries -->
+    <div style="display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #fffbeb; border-bottom: 1px solid #fde68a; font-size: 12.5px; color: #78350f;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><path d="M12 8v5M12 16v.5M10.3 3.9L2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+      <span style="flex-grow: 1;">The assistant changed this file while you were editing it (the turn wrote 6 lines). Your edits are still here.</span>
+      <a href="#compare" style="text-decoration: none; font-weight: 500;">Compare</a>
+      <a href="#reload" style="text-decoration: none; font-weight: 500;">Reload theirs</a>
+      <a href="#keep" style="text-decoration: none; font-weight: 500;">Keep mine</a>
+    </div>
+
+    <div style="flex-grow: 1; min-height: 0; display: flex;">
+      <div style="width: 220px; box-sizing: border-box; border-right: 1px solid #e5e7eb; padding: 10px 8px; font-size: 12px; overflow: hidden;">
+        <div class="mono" style="display: flex; align-items: center; gap: 6px; color: #6b7280; padding: 0 4px 8px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-12 2-12 5"/></svg>claude/env-masking</div>
+        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; padding: 6px 4px 4px;">Changed</div>
+        <div class="mono" style="display: flex; flex-direction: column; gap: 2px; color: #374151;">
+          <div style="padding: 3px 4px; display: flex; gap: 6px; align-items: center; background: #eff6ff; border-radius: 4px;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d97706;"></span>turn.ts<span style="margin-left: auto; font-size: 11px;"><span style="color: #16a34a;">+9</span> <span style="color: #dc2626;">−2</span></span></div>
+          <div style="padding: 3px 4px; display: flex; gap: 6px; align-items: center;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d1d5db;"></span>turn.test.ts<span style="margin-left: auto; font-size: 11px;"><span style="color: #16a34a;">+31</span></span></div>
+          <div style="padding: 3px 4px; display: flex; gap: 6px; align-items: center;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #d97706;"></span>chat.md<span style="margin-left: auto; font-size: 11px;"><span style="color: #16a34a;">+2</span> <span style="color: #dc2626;">−1</span></span></div>
+        </div>
+        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; padding: 12px 4px 4px;">Files</div>
+        <div class="mono" style="display: flex; flex-direction: column; gap: 2px; color: #374151;">
+          <div style="padding: 3px 4px; display: flex; gap: 5px; align-items: center;"><span style="color: #9ca3af;">▾</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>apps</div>
+          <div style="padding: 3px 4px 3px 16px; display: flex; gap: 5px; align-items: center;"><span style="color: #9ca3af;">▾</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>web</div>
+          <div style="padding: 3px 4px 3px 28px; display: flex; gap: 5px; align-items: center;"><span style="color: #9ca3af;">▾</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>lib</div>
+          <div style="padding: 3px 4px 3px 40px; display: flex; gap: 5px; align-items: center;"><span style="color: #9ca3af;">▾</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>code</div>
+          <div style="padding: 3px 4px 3px 52px; display: flex; gap: 5px; align-items: center; color: #6b7280;"><span style="width: 10px;"></span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>tools.ts</div>
+          <div style="padding: 3px 4px 3px 52px; display: flex; gap: 5px; align-items: center; color: #111827;"><span style="width: 10px;"></span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>turn.ts<span style="margin-left: auto; color: #d97706; font-weight: 600; font-size: 11px;">M</span></div>
+          <div style="padding: 3px 4px 3px 52px; display: flex; gap: 5px; align-items: center; color: #6b7280;"><span style="width: 10px;"></span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>turn.test.ts<span style="margin-left: auto; color: #d97706; font-weight: 600; font-size: 11px;">M</span></div>
+          <div style="padding: 3px 4px; display: flex; gap: 5px; align-items: center;"><span style="color: #9ca3af;">▾</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M3 19V5h6l2 3h10v11z"/></svg>docs</div>
+          <div style="padding: 3px 4px 3px 16px; display: flex; gap: 5px; align-items: center; color: #6b7280;"><span style="width: 10px;"></span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>chat.md<span style="margin-left: auto; color: #d97706; font-weight: 600; font-size: 11px;">M</span></div>
+        </div>
+      </div>
+
+      <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+        <div class="mono" style="flex-grow: 1; padding: 12px 0; font-size: 12.5px; line-height: 20px; color: #24292f; overflow: hidden;">
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">5</span><span><span style="color: #cf222e;">export async function</span> <span style="color: #8250df;">runInCheckout</span>(</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">6</span><span>&nbsp;&nbsp;target: <span style="color: #953800;">SandboxTarget</span>,</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">7</span><span>&nbsp;&nbsp;input: { workspaceId: <span style="color: #953800;">string</span>; command: <span style="color: #953800;">string</span>; timeoutMs?: <span style="color: #953800;">number</span> }</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">8</span><span>) {</span></div>
+          <div style="display: flex; background: #fffbeb;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af; box-shadow: inset 3px 0 #d97706;">9</span><span>&nbsp;&nbsp;<span style="color: #cf222e;">const</span> ran = <span style="color: #cf222e;">await</span> sbWorkspaceExec(target, {</span></div>
+          <div style="display: flex; background: #fffbeb;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af; box-shadow: inset 3px 0 #d97706;">10</span><span>&nbsp;&nbsp;&nbsp;&nbsp;id: input.workspaceId,</span></div>
+          <div style="display: flex; background: #fffbeb;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af; box-shadow: inset 3px 0 #d97706;">11</span><span>&nbsp;&nbsp;&nbsp;&nbsp;command: input.command,</span></div>
+          <div style="display: flex; background: #eff6ff;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af; box-shadow: inset 3px 0 #2563eb;">12</span><span>&nbsp;&nbsp;&nbsp;&nbsp;timeoutMs: input.timeoutMs ?? EXEC_DEFAULT_TIMEOUT_MS,<span style="display: inline-block; width: 2px; height: 16px; background: #111827; vertical-align: middle; margin-left: 1px;"></span></span></div>
+          <div style="display: flex; background: #fffbeb;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af; box-shadow: inset 3px 0 #d97706;">13</span><span>&nbsp;&nbsp;});</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">14</span><span>&nbsp;&nbsp;<span style="color: #cf222e;">if</span> (!ran.ok) <span style="color: #cf222e;">return</span> failed(ran.err);</span></div>
+          <div style="display: flex; background: #eff6ff;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af; box-shadow: inset 3px 0 #2563eb;">15</span><span>&nbsp;&nbsp;<span style="color: #6e7781;">// Mask before anything is rendered, so a truncated result can't leak a tail.</span></span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">16</span><span>&nbsp;&nbsp;<span style="color: #cf222e;">return</span> maskValues(ran.val.output, target.envNames);</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">17</span><span>}</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">18</span><span></span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">19</span><span style="color: #6e7781;">/** What a person's saved edit looks like to the next turn. */</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">20</span><span><span style="color: #cf222e;">export function</span> <span style="color: #8250df;">editedFilesNote</span>(paths: <span style="color: #953800;">string</span>[]): <span style="color: #953800;">string</span> {</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">21</span><span>&nbsp;&nbsp;<span style="color: #cf222e;">if</span> (paths.length === 0) <span style="color: #cf222e;">return</span> <span style="color: #0a3069;">''</span>;</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">22</span><span>&nbsp;&nbsp;<span style="color: #cf222e;">return</span> <span style="color: #0a3069;">`The person edited by hand since your last turn: ${paths.join(', ')}.`</span>;</span></div>
+          <div style="display: flex;"><span style="width: 48px; text-align: right; padding-right: 14px; color: #9ca3af;">23</span><span>}</span></div>
+        </div>
+        <div style="height: 28px; box-sizing: border-box; border-top: 1px solid #e5e7eb; display: flex; align-items: center; gap: 16px; padding: 0 12px; font-size: 11px; color: #6b7280; background: #f9fafb;">
+          <span class="mono">apps/web/lib/code/turn.ts</span>
+          <span>TypeScript</span>
+          <span>Ln 12, Col 52</span>
+          <span style="display: flex; gap: 10px;"><span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #d97706;"></span>changed vs HEAD</span><span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; border-radius: 2px; background: #2563eb;"></span>unsaved</span></span>
+          <div style="flex-grow: 1;"></div>
+          <span style="color: #b45309;">Unsaved edits · Save writes to the checkout, Commit records them</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="width: 0px; position: relative;"><div style="position: absolute; left: -3px; top: 50%; width: 6px; height: 40px; margin-top: -20px; border-radius: 3px; background: #d1d5db;"></div></div>
+
+  <!-- CHAT PANE (30%) — the person's saves and commits show up in the thread -->
+  <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+    <div style="height: 48px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid #e5e7eb;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg>
+      <div style="min-width: 0; flex-grow: 1;">
+        <div style="font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Mask env values in code_run output</div>
+        <div class="mono" style="font-size: 11px; color: #6b7280;">renkei-web · claude/env-masking</div>
+      </div>
+      <button type="button" aria-label="More" style="width: 30px; height: 30px; border: 0; background: transparent; color: #6b7280; display: flex; align-items: center; justify-content: center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+    </div>
+    <div style="flex-grow: 1; min-height: 0; padding: 16px 14px; display: flex; flex-direction: column; gap: 14px; font-size: 13px; line-height: 1.45; overflow: hidden;">
+      <div>Tests pass. Want me to commit this, or would you rather look it over first?</div>
+      <!-- A note row: the person's own save, kept in the transcript like a nudge is -->
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #6b7280; padding: 6px 10px; background: #f9fafb; border-radius: 8px; border: 1px dashed #e5e7eb;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 21V3h8l4 4v14zM14 3v4h4"/></svg>
+        <span>You edited <span class="mono">docs/chat.md</span> and saved it to the checkout.</span>
+      </div>
+      <div style="align-self: flex-end; max-width: 92%; background: #f3f4f6; border-radius: 14px 14px 4px 14px; padding: 8px 12px;">I renamed the constant in the doc to match. Use the same name in turn.ts and add a comment on why we mask before rendering.</div>
+      <div style="color: #6b7280; font-size: 12px; display: flex; align-items: center; gap: 6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>Thought · 2 tool calls</div>
+      <div>Done — <span class="mono">EXEC_DEFAULT_TIMEOUT_MS</span> now matches the doc, and the comment is above the return.</div>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #92400e; padding: 6px 10px; background: #fffbeb; border-radius: 8px; border: 1px solid #fde68a;">
+        <span>That turn wrote <span class="mono">turn.ts</span>, which you have open with unsaved edits. See the editor.</span>
+      </div>
+    </div>
+    <div style="padding: 10px 12px 12px; border-top: 1px solid #e5e7eb; background: #f9fafb;">
+      <div style="border: 1px solid #d1d5db; border-radius: 10px; background: #ffffff; padding: 8px 10px; min-height: 44px; color: #9ca3af;">Message the chat…</div>
+      <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: #6b7280;">
+        <span>Claude Sonnet 5</span>
+        <div style="flex-grow: 1;"></div>
+        <span style="width: 30px; height: 30px; border-radius: 15px; background: #2563eb; display: flex; align-items: center; justify-content: center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1152,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

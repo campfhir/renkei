@@ -41,6 +41,8 @@ const SESSION_GUARDS = [
   'getSessionFromCookies',
   'getSessionFromRequest',
   'chatRequestContext',
+  // lib/code/route-access.ts: chatRequestContext plus the project's access, for the code pane's routes.
+  'codeProjectContext',
 ];
 
 /**
