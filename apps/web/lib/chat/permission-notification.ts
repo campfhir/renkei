@@ -3,11 +3,11 @@
  * gated on a preference: like an agent's approval card, the turn is
  * physically parked behind the answer, so the row always lands and the
  * push always goes out. `quiet: true` has the service worker skip the OS
- * banner specifically when this chat is the page open and focused, where
- * the pop-up pile and the chat itself already show the ask — a Renkei tab
- * in front on some other page still gets the banner. A click on the
- * banner opens the chat, not the notifications page — the ask is answered
- * there and nowhere else.
+ * banner specifically when this chat is the page on screen, where the
+ * pop-up pile and the chat itself already show the ask — a Renkei tab in
+ * front on some other page still gets the banner. A click on the banner
+ * opens the chat, not the notifications page — the ask is answered there
+ * and nowhere else.
  *
  * The row is keyed by the tool call (`ref_id` = the tool_use id) so the
  * decision route can mark it read the moment the person answers, from
@@ -80,7 +80,7 @@ export function notifyChatToolPermission(input: {
           notificationId: id,
           appPath: refUrl,
           // Already visible in the chat itself — skip the banner only when
-          // that exact chat is the page open and focused.
+          // that exact chat is the page on screen.
           quiet: true,
         },
         { log: (message, meta) => logger.warn(message, meta) }

@@ -32,16 +32,24 @@ self.addEventListener('push', (event) => {
       // `quiet` (see @renkei/notifications' PushWirePayload) marks a push
       // that only repeats something already rendered inline on its own
       // page — a question or permission ask. For those, skip the banner
-      // when that EXACT page is the one open and focused: the person is
-      // already looking at it. Everything else (a ticket filed, a run
-      // finishing) is news regardless of what tab is in front, so it
-      // always shows. `WindowClient.focused`/`.visibilityState`/`.url` are
-      // this worker's only way to ask, since a push can arrive with
-      // nothing open at all.
+      // when that EXACT page is the one on screen: the person is already
+      // looking at it. Everything else (a ticket filed, a run finishing)
+      // is news regardless of what tab is in front, so it always shows.
+      // `.visibilityState`/`.url` are this worker's only way to ask, since
+      // a push can arrive with nothing open at all.
+      //
+      // Deliberately not also requiring `client.focused`: on iOS Safari a
+      // PWA window's `WindowClient.focused` does not reliably read `true`
+      // even while that exact window is the one in front and on screen, so
+      // ANDing it in here left the banner firing every single time on iOS
+      // — the bug this comment used to describe. Desktop browsers report
+      // it fine, but `visibilityState` alone already answers the question
+      // this check cares about (is the page on screen right now) without
+      // that platform gap.
       if (data.quiet && data.appUrl) {
         const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
         const alreadyOpen = windows.some((client) => {
-          if (!(client.focused && client.visibilityState === 'visible')) return false;
+          if (client.visibilityState !== 'visible') return false;
           try {
             return new URL(client.url).pathname === data.appUrl;
           } catch {
