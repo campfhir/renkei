@@ -5,9 +5,10 @@
  * whether replies are being read (a dot when the preference is on, a
  * blinking wave while one is being read) and opens a menu with the
  * preference itself, the voice and pace and language this person hears,
- * and the way into the immersive voice conversation. Rendered only when
- * the org has a voice service; a person whose org has none never sees a
- * speaker at all.
+ * and the way into the immersive voice conversation. The wave colours are
+ * Preferences' alone: chosen once, not in the middle of a chat. Rendered
+ * only when the org has a voice service; a person whose org has none
+ * never sees a speaker at all.
  *
  * Voices come from the vendor the first time the menu opens (cached by the
  * server for an hour). Language and voice are searchable pickers
@@ -30,7 +31,7 @@ import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
 import type { LevelSource } from '@/lib/voice/levels';
 import { useVoicePreview } from '@/lib/voice/use-voice-preview';
 import { LanguagePicker, VoicePicker } from './voice-picker';
-import { VoiceWaveIcon, WAVE_ACCENTS } from './voice-wave';
+import { VoiceWaveIcon } from './voice-wave';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
 
@@ -190,10 +191,11 @@ export default function VoiceMenu({
       {open ? (
         <div
           role="menu"
-          // On a phone the menu is taller and wider than the space beside
-          // the speaker button, so it becomes a panel over the thread that
-          // scrolls; the pickers' lists open inside it.
-          className="absolute bottom-full left-0 z-40 mb-1 w-96 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:top-16 max-sm:bottom-3 max-sm:mb-0 max-sm:w-auto max-sm:overflow-y-auto dark:border-gray-700 dark:bg-gray-900"
+          // On a phone the menu is wider than the space beside the speaker
+          // button, so it becomes a panel over the thread, as tall as its
+          // content up to the screen, scrolling past that; the pickers'
+          // lists open inside it.
+          className="absolute bottom-full left-0 z-40 mb-1 w-96 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:mb-0 max-sm:max-h-[calc(100dvh-5rem)] max-sm:w-auto max-sm:overflow-y-auto dark:border-gray-700 dark:bg-gray-900"
         >
           <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
             Voice
@@ -335,40 +337,6 @@ export default function VoiceMenu({
               ))}
             </div>
           </div>
-          {(
-            [
-              { key: 'accent', label: 'Assistant wave' },
-              { key: 'userAccent', label: 'Your wave' },
-            ] as const
-          ).map((row) => (
-            <div key={row.key} className="px-2 py-1">
-              <span className="block text-[11px] font-medium text-gray-500">{row.label}</span>
-              <div className="mt-1 flex gap-1.5" role="radiogroup" aria-label={row.label}>
-                {WAVE_ACCENTS.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={prefs[row.key] === entry.id}
-                    aria-label={entry.label}
-                    title={entry.label}
-                    onClick={() => onChange({ ...prefs, [row.key]: entry.id })}
-                    className={`h-6 w-6 rounded-full border-2 ${
-                      prefs[row.key] === entry.id
-                        ? 'border-gray-900 dark:border-white'
-                        : 'border-transparent hover:border-gray-400'
-                    }`}
-                    style={{
-                      background:
-                        entry.colors.length > 3
-                          ? `conic-gradient(${entry.colors.join(', ')}, ${entry.colors[0]})`
-                          : entry.colors[1],
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
           <div className="my-1 border-t border-gray-200 dark:border-gray-800" />
           <button
             type="button"

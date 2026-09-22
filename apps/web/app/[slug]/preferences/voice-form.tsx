@@ -116,7 +116,7 @@ export default function VoiceForm({
       </h3>
       <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
         How the chat sounds when it reads a reply, and in a voice conversation. The speaker button
-        in any chat changes the same settings.
+        in any chat changes the same settings, except the wave colours, which are chosen here.
       </p>
 
       <label className="mt-3 flex items-center gap-2 text-sm">

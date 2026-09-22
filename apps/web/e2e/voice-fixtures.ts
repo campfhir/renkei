@@ -113,7 +113,26 @@ function seal(plaintext: string): string {
   );
 }
 
+/**
+ * The voice fixtures, delete-then-insert like the rest of the seed. Every
+ * voice spec seeds them in its own beforeAll, and Playwright runs spec
+ * files on parallel workers, so the whole seed is one transaction under
+ * an advisory lock: two seeders run one after the other and each finds
+ * the rows the other left, never half of them.
+ */
 export async function seedVoice(client: Client): Promise<void> {
+  await client.query('BEGIN');
+  try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('e2e:voice-seed'))");
+    await seedVoiceRows(client);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+}
+
+async function seedVoiceRows(client: Client): Promise<void> {
   // The org's speech service, as the admin form stores it.
   await client.query('DELETE FROM connector_configs WHERE tenant_id = $1 AND connector = $2', [
     E2E_TENANT_ID,
