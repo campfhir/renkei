@@ -23,6 +23,7 @@ import {
   localeLabel,
   localeMatches,
   regionLabel,
+  voiceGroupLabel,
   voiceMatches,
 } from '@/lib/voice/catalog';
 
@@ -167,8 +168,11 @@ function Combobox<T>({
                   if (item !== undefined) choose(item);
                 } else if (event.key === 'Escape') {
                   // Only the picker closes; the menu around it stays open.
+                  // Its dismiss listener sits on document, the same node
+                  // React's own do under the app router, so only an
+                  // immediate stop keeps the key from reaching it.
                   event.preventDefault();
-                  event.stopPropagation();
+                  event.nativeEvent.stopImmediatePropagation();
                   setOpen(false);
                 }
               }}
@@ -250,11 +254,6 @@ function Combobox<T>({
   );
 }
 
-/** The label of a language row: "British English (en-GB)". */
-function localeRowLabel(locale: string): string {
-  return `${localeLabel(locale)} (${locale})`;
-}
-
 export function LanguagePicker({
   locales,
   value,
@@ -286,7 +285,7 @@ export function LanguagePicker({
       label="Language"
       display={
         <>
-          {localeRowLabel(value)}
+          {voiceGroupLabel(value)}
           {value === defaultLocale ? <span className="text-gray-500"> · default</span> : null}
         </>
       }
