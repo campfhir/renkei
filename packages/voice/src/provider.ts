@@ -22,6 +22,14 @@ export interface VoiceInfo {
   /** BCP-47, e.g. `en-US`. */
   locale: string;
   gender: 'female' | 'male' | 'neutral' | null;
+  /**
+   * What the voice is like, in the vendor's words when it has any —
+   * "Warm, friendly · conversation, customer service" — for a picker to
+   * show and search; null when the vendor says nothing.
+   */
+  description: string | null;
+  /** Speaks other languages than its own well, so a language change need not drop it. */
+  multilingual: boolean;
 }
 
 export interface SynthesisRequest {

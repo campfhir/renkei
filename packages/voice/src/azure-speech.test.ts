@@ -154,7 +154,41 @@ describe('parseAzureVoice', () => {
         Gender: 'Female',
         Locale: 'en-US',
       })
-    ).toEqual({ id: 'en-US-JennyNeural', name: 'Jenny', locale: 'en-US', gender: 'female' });
+    ).toEqual({
+      id: 'en-US-JennyNeural',
+      name: 'Jenny',
+      locale: 'en-US',
+      gender: 'female',
+      description: null,
+      multilingual: false,
+    });
+  });
+
+  it("describes a voice in the vendor's words and knows a multilingual one", () => {
+    const parsed = parseAzureVoice({
+      ShortName: 'en-US-AvaMultilingualNeural',
+      DisplayName: 'Ava Multilingual',
+      Locale: 'en-US',
+      Gender: 'Female',
+      SecondaryLocaleList: ['de-DE', 'fr-FR'],
+      VoiceTag: {
+        TailoredScenarios: ['Conversation', 'Copilot'],
+        VoicePersonalities: ['Friendly', 'Positive'],
+      },
+    });
+    expect(parsed?.description).toBe('Friendly, positive · conversation, copilot');
+    expect(parsed?.multilingual).toBe(true);
+    expect(
+      parseAzureVoice({
+        ShortName: 'en-GB-SoniaNeural',
+        Locale: 'en-GB',
+        VoiceTag: { TailoredScenarios: ['Narration'] },
+      })
+    ).toMatchObject({ description: 'Narration', multilingual: false });
+    expect(
+      parseAzureVoice({ ShortName: 'fr-FR-VivienneMultilingualNeural', Locale: 'fr-FR' })
+        ?.multilingual
+    ).toBe(true);
   });
 
   it('adds the local name when it differs from the display name', () => {

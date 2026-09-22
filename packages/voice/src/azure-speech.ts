@@ -143,12 +143,41 @@ export function parseAzureDetection(body: unknown): TranscriptionResult | null {
   return { text, locale };
 }
 
+/** A vendor list of words as one lowercase, comma-separated phrase; empty when it is not one. */
+function joinedTags(value: unknown): string {
+  if (!Array.isArray(value)) return '';
+  return value
+    .filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0)
+    .map((tag) => tag.trim().toLowerCase())
+    .join(', ');
+}
+
+/**
+ * The voice's character out of Azure's `VoiceTag`: its personalities
+ * ("Friendly, Warm") and the scenarios it was made for ("Conversation,
+ * Customer service"), each list lowercased and the two joined with a dot.
+ */
+export function describeAzureVoice(row: Record<string, unknown>): string | null {
+  const tag = isRecord(row.VoiceTag) ? row.VoiceTag : {};
+  const personalities = joinedTags(tag.VoicePersonalities);
+  const scenarios = joinedTags(tag.TailoredScenarios);
+  const parts = [personalities, scenarios].filter((part) => part.length > 0);
+  if (parts.length === 0) return null;
+  const text = parts.join(' · ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** Azure's voice row → ours. Rows without a short name are skipped. */
 export function parseAzureVoice(row: unknown): VoiceInfo | null {
   if (!isRecord(row)) return null;
   const id = typeof row.ShortName === 'string' ? row.ShortName.trim() : '';
   const locale = typeof row.Locale === 'string' ? row.Locale.trim() : '';
   if (!id || !locale) return null;
+  // A voice with secondary locales is one Azure trained across languages;
+  // its name says so too, for lists that omit them.
+  const multilingual =
+    (Array.isArray(row.SecondaryLocaleList) && row.SecondaryLocaleList.length > 0) ||
+    /multilingual/i.test(id);
   const display =
     typeof row.DisplayName === 'string' && row.DisplayName.trim()
       ? row.DisplayName.trim()
@@ -165,7 +194,14 @@ export function parseAzureVoice(row: unknown): VoiceInfo | null {
         : row.Gender === 'Neutral'
           ? 'neutral'
           : null;
-  return { id, name: `${display}${localName}`, locale, gender };
+  return {
+    id,
+    name: `${display}${localName}`,
+    locale,
+    gender,
+    description: describeAzureVoice(row),
+    multilingual,
+  };
 }
 
 /**

@@ -10,8 +10,11 @@
  * speaker at all.
  *
  * Voices come from the vendor the first time the menu opens (cached by the
- * server for an hour), grouped by language. Every change here is saved as
- * this person's preference at once, so the next chat sounds the same.
+ * server for an hour). Language and voice are searchable pickers
+ * (voice-picker.tsx), grouped by language and region with this person's
+ * language first, and any voice can be heard saying a sentence in its
+ * language before it is chosen. Every change here is saved as this
+ * person's preference at once, so the next chat sounds the same.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -20,23 +23,16 @@ import type { VoiceInfo } from '@renkei/voice';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
 import { useDismiss } from '@/lib/use-dismiss';
+import { localeLabel, previewLocale, voiceSpeaks } from '@/lib/voice/catalog';
 import { voiceClient } from '@/lib/voice/client';
 import { listAudioDevices, type AudioDevice } from '@/lib/voice/device-settings';
 import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
 import type { LevelSource } from '@/lib/voice/levels';
+import { useVoicePreview } from '@/lib/voice/use-voice-preview';
+import { LanguagePicker, VoicePicker } from './voice-picker';
 import { VoiceWaveIcon, WAVE_ACCENTS } from './voice-wave';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
-
-/** A locale tag as a person reads it, using the browser's own names. */
-export function localeLabel(locale: string): string {
-  try {
-    const names = new Intl.DisplayNames(undefined, { type: 'language' });
-    return names.of(locale) ?? locale;
-  } catch {
-    return locale;
-  }
-}
 
 export default function VoiceMenu({
   tenantId,
@@ -120,20 +116,40 @@ export default function VoiceMenu({
     const set = new Set((voices ?? []).map((voice) => voice.locale));
     set.add(defaults.locale);
     if (prefs.locale) set.add(prefs.locale);
-    return [...set].sort();
+    return [...set];
   }, [voices, defaults.locale, prefs.locale]);
-  // The picker shows the voices of the chosen language; the current voice
-  // stays listed even if it belongs to another, so a choice is never hidden.
-  const shownVoices = useMemo(
-    () =>
-      (voices ?? []).filter(
-        (voice) =>
-          voice.locale === locale ||
-          voice.locale.startsWith(`${locale.split('-')[0]}-`) ||
-          voice.id === prefs.voice
-      ),
-    [voices, locale, prefs.voice]
+  const chosenVoice = useMemo(
+    () => (prefs.voice ? ((voices ?? []).find((voice) => voice.id === prefs.voice) ?? null) : null),
+    [voices, prefs.voice]
   );
+  // A sample plays through its own queue, after the reply's has been silenced.
+  const sample = useVoicePreview(tenantId, {
+    rate: prefs.rate,
+    outputDevice: audioOutput,
+    onBeforePlay: onStopReading,
+  });
+  const chooseLocale = (next: string) =>
+    onChange({
+      ...prefs,
+      locale: next === defaults.locale ? null : next,
+      // A voice that cannot speak the new language is dropped with it; a
+      // multilingual one stays.
+      voice: chosenVoice && voiceSpeaks(chosenVoice, next) ? prefs.voice : null,
+    });
+  const chooseVoice = (voice: VoiceInfo | null) => {
+    if (!voice) {
+      onChange({ ...prefs, voice: null });
+      return;
+    }
+    // A voice of another language brings its language along, since that
+    // is what it will be speaking.
+    const nextLocale = voiceSpeaks(voice, locale) ? locale : voice.locale;
+    onChange({
+      ...prefs,
+      voice: voice.id,
+      locale: nextLocale === defaults.locale ? null : nextLocale,
+    });
+  };
   const reading = queueState !== 'idle';
   const deviceOptions = (list: AudioDevice[], chosen: string | null) =>
     // A chosen device that is not listed now stays listed, so the choice is
@@ -174,7 +190,7 @@ export default function VoiceMenu({
       {open ? (
         <div
           role="menu"
-          className="absolute bottom-full left-0 z-40 mb-1 w-80 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900"
+          className="absolute bottom-full left-0 z-40 mb-1 w-96 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900"
         >
           <p className="px-2 pt-1 pb-1.5 text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
             Voice
@@ -216,33 +232,16 @@ export default function VoiceMenu({
             </button>
           ) : null}
           <div className="my-1 border-t border-gray-200 dark:border-gray-800" />
-          <label className="block px-2 py-1">
+          <div className="px-2 py-1">
             <span className="block text-[11px] font-medium text-gray-500">Language</span>
-            <select
+            <LanguagePicker
+              locales={locales}
               value={locale}
-              onChange={(event) =>
-                onChange({
-                  ...prefs,
-                  locale: event.target.value === defaults.locale ? null : event.target.value,
-                  // A voice of another language is dropped with it.
-                  voice:
-                    prefs.voice &&
-                    voices?.some(
-                      (voice) => voice.id === prefs.voice && voice.locale === event.target.value
-                    )
-                      ? prefs.voice
-                      : null,
-                })
-              }
-              className="mt-0.5 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
-            >
-              {locales.map((tag) => (
-                <option key={tag} value={tag}>
-                  {localeLabel(tag)} ({tag}){tag === defaults.locale ? ' · default' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+              defaultLocale={defaults.locale}
+              onChange={chooseLocale}
+              size="sm"
+            />
+          </div>
           <button
             type="button"
             role="menuitemcheckbox"
@@ -264,32 +263,54 @@ export default function VoiceMenu({
               </span>
             </span>
           </button>
-          <label className="block px-2 py-1">
+          <div className="px-2 py-1">
             <span className="block text-[11px] font-medium text-gray-500">Voice</span>
             {voices === null ? (
               <LoadingLine size="xs" className="mt-1" label="Loading voices…" />
             ) : (
-              <select
-                value={prefs.voice ?? ''}
-                onChange={(event) => onChange({ ...prefs, voice: event.target.value || null })}
-                className="mt-0.5 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
-              >
-                <option value="">Default ({defaults.voice})</option>
-                {shownVoices.map((voice) => (
-                  <option key={voice.id} value={voice.id}>
-                    {voice.name}
-                    {voice.gender ? ` · ${voice.gender}` : ''}
-                    {voice.locale !== locale ? ` · ${voice.locale}` : ''}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-start gap-1.5">
+                <div className="min-w-0 flex-1">
+                  <VoicePicker
+                    voices={voices}
+                    value={prefs.voice}
+                    defaultVoice={defaults.voice}
+                    locale={locale}
+                    onChange={chooseVoice}
+                    previewing={sample.previewing}
+                    onPreview={(voice) => sample.preview(voice.id, previewLocale(voice, locale))}
+                    size="sm"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => sample.preview(prefs.voice, locale)}
+                  aria-pressed={sample.previewing === (prefs.voice ?? '')}
+                  title={
+                    sample.previewing === (prefs.voice ?? '')
+                      ? 'Stop the sample'
+                      : `Hear a sample in ${localeLabel(locale)}`
+                  }
+                  className="mt-0.5 flex shrink-0 items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+                >
+                  <Icon
+                    path={sample.previewing === (prefs.voice ?? '') ? ICONS.stop : ICONS.play}
+                    className="h-3.5 w-3.5"
+                  />
+                  {sample.previewing === (prefs.voice ?? '') ? 'Stop' : 'Hear'}
+                </button>
+              </div>
             )}
             {voicesError ? (
               <span className="mt-1 block text-[11px] text-red-600 dark:text-red-400">
                 {voicesError}
               </span>
             ) : null}
-          </label>
+            {sample.error ? (
+              <span className="mt-1 block text-[11px] text-red-600 dark:text-red-400">
+                {sample.error}
+              </span>
+            ) : null}
+          </div>
           <div className="px-2 py-1">
             <span className="block text-[11px] font-medium text-gray-500">Speed</span>
             <div className="mt-1 flex gap-1" role="radiogroup" aria-label="Speed">
