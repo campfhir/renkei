@@ -41,6 +41,7 @@
 
 import {
   streamOrComplete,
+  wireRequestCauseOf,
   type LlmContentBlock,
   type LlmErrorKind,
   type LlmMessage,
@@ -540,6 +541,17 @@ function clip(text: string, max: number): string {
  * which the log viewer does not decrypt on read, so this keeps it inline.
  */
 const LOG_BODY_MAX_CHARS = 1300;
+
+/**
+ * How much of the actual model request rides on an error log line — the
+ * agents engine's own PROMPT_DETAIL_CHARS scale, not the tight
+ * LOG_BODY_MAX_CHARS above: a tool call's arguments are a few hundred
+ * bytes, but a rejected request is the whole point of the log line, and
+ * clipping it to 1300 chars would cut off the very tool definitions or
+ * settings most likely to be the actual cause. This is exactly the class
+ * of guess this exists to end — see wireRequestCauseOf's doc.
+ */
+const REQUEST_LOG_MAX_CHARS = 40_000;
 
 /**
  * Whether a tool_use block's raw streamed JSON never finished — non-empty
@@ -1088,14 +1100,24 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         if (result.err.type === 'aborted' || cancelRequested) {
           return await finalize('canceled', null, 'canceled');
         }
-        log(
-          'chat turn model error: {kind} {message}',
-          {
-            kind: result.err.type,
-            message: result.err.message ?? '',
-          },
-          'error'
-        );
+        {
+          const cause = wireRequestCauseOf(result.err.cause);
+          log(
+            'chat turn model error: {kind} {message}',
+            {
+              kind: result.err.type,
+              message: result.err.message ?? '',
+              ...(cause
+                ? {
+                    request: secure(
+                      clip(JSON.stringify(cause.request), REQUEST_LOG_MAX_CHARS)
+                    ),
+                  }
+                : {}),
+            },
+            'error'
+          );
+        }
         return await finalize('failed', friendlyLlmError(result.err.type), 'failed');
       }
 

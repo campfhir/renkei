@@ -400,15 +400,17 @@ export class AnthropicProvider implements LlmProvider {
     } catch (error) {
       return err(transportErrorKind(error, callerSignal), {
         message: error instanceof Error ? error.message : String(error),
+        cause: { summary: summarizeWireRequest(`${baseUrl}/v1/messages`, body), request: body },
       });
     }
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       return err(errorKindOf(response.status, text), {
         message: `Anthropic ${response.status}: ${text.slice(0, 500)}`,
-        // The redacted request shape, for "what did we actually send"
-        // troubleshooting — content replaced by lengths.
-        cause: summarizeWireRequest(`${baseUrl}/v1/messages`, body),
+        // The exact request sent, alongside a redacted summary — see
+        // WireRequestCause's doc. `request` can hold real prompt/tool
+        // content; a caller logs it only under secure(), never bare.
+        cause: { summary: summarizeWireRequest(`${baseUrl}/v1/messages`, body), request: body },
       });
     }
     return ok(response);

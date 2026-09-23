@@ -265,3 +265,35 @@ export function transportErrorKind(error: unknown, signal?: AbortSignal): LlmErr
   }
   return 'network';
 }
+
+/**
+ * What every adapter attaches as a request-level failure's `err().cause`:
+ * the exact request body sent, alongside a safe-to-display summary (see
+ * wire-summary.ts) of the same. This exists so a real failure — the whole
+ * reason someone is looking — can be diagnosed from what actually went
+ * out on the wire instead of a guess: this package's own adapters were
+ * built by reasoning about documentation and asking an operator to run
+ * curl by hand, exactly because no request was ever captured anywhere.
+ *
+ * No credential ever lives here — auth rides in HTTP headers, which are
+ * never part of `request` and never logged at all. `request` can still
+ * hold a person's message text or a tool's real arguments, so a caller
+ * MUST mark it `secure()` (or an equivalent encrypt-at-rest wrapper)
+ * before writing it to a log line, never print it to a console or an
+ * admin-facing surface directly, and clip it — the whole prompt history
+ * of a long-running chat is not a reasonable log line.
+ */
+export interface WireRequestCause {
+  summary: string;
+  request: Record<string, unknown>;
+}
+
+/** Narrows an `Err.cause` down to a `WireRequestCause`, for a logging call
+ *  site that does not otherwise know what an adapter put there. */
+export function wireRequestCauseOf(cause: unknown): WireRequestCause | null {
+  if (typeof cause !== 'object' || cause === null) return null;
+  const row: { summary?: unknown; request?: unknown } = cause;
+  if (typeof row.summary !== 'string') return null;
+  if (typeof row.request !== 'object' || row.request === null) return null;
+  return { summary: row.summary, request: { ...row.request } };
+}

@@ -1413,6 +1413,48 @@ describe('runChatTurn logs every tool call attempt', () => {
   });
 });
 
+describe('runChatTurn logs the actual request on a model error', () => {
+  it('attaches the secured, redacted-nowhere request body — not just the error kind/message', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-log-model-error');
+    const logged: { message: string; fields: Record<string, unknown>; level?: string }[] = [];
+    const rejecting: LlmProvider = {
+      async complete() {
+        return err('invalid_request' as const, {
+          message: 'OpenAI-compatible endpoint 400: bad request',
+          cause: {
+            summary: 'POST https://x/y\n{"model":"<redacted>"}',
+            request: { model: 'gpt-6-astra-1', messages: [{ role: 'user', content: 'hi' }] },
+          },
+        });
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(rejecting),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        log: (message, fields, level) => logged.push({ message, fields, level }),
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-log-model-error')
+    );
+    expect(outcome.status).toBe('failed');
+    const errorLog = logged.find((row) => row.message.includes('chat turn model error'));
+    expect(errorLog).toMatchObject({ level: 'error', fields: { kind: 'invalid_request' } });
+    const request = errorLog?.fields.request as { _secure?: boolean; value?: string } | undefined;
+    expect(request?._secure).toBe(true);
+    expect(typeof request?.value).toBe('string');
+    const parsed: { model?: unknown; messages?: unknown } = JSON.parse(request?.value ?? '{}');
+    expect(parsed.model).toBe('gpt-6-astra-1');
+    expect(Array.isArray(parsed.messages)).toBe(true);
+  });
+});
+
 describe('runChatTurn in auto mode', () => {
   const doneTool: LocalTool = {
     def: { name: 'task_complete', description: 'done', inputSchema: { type: 'object' } },

@@ -274,6 +274,10 @@ describe('OpenAiResponsesProvider.stream', () => {
     if (!result.ok) {
       expect(result.err.type).toBe('provider_error');
       expect(result.err.message).toContain('The model failed to produce a response.');
+      const cause: { request?: { model?: unknown; stream?: unknown } } =
+        typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+      expect(cause.request?.model).toBe('gpt-6-astra-1');
+      expect(cause.request?.stream).toBe(true);
     }
   });
 

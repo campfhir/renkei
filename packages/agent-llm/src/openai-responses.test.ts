@@ -231,6 +231,13 @@ describe('OpenAiResponsesProvider.complete', () => {
     if (!result.ok) {
       expect(result.err.type).toBe('provider_error');
       expect(result.err.message).toContain('The model failed to produce a response.');
+      // Even this in-body failure (a 200 HTTP status) carries the exact
+      // request sent — the whole point being no one has to guess what was
+      // sent to a dialect where "ok" and "failed" can share a status code.
+      const cause: { request?: { model?: unknown; input?: unknown } } =
+        typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+      expect(cause.request?.model).toBe('gpt-6-astra-1');
+      expect(Array.isArray(cause.request?.input)).toBe(true);
     }
   });
 
@@ -250,7 +257,12 @@ describe('OpenAiResponsesProvider.complete', () => {
     );
     const result = await provider.complete(request);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.err.type).toBe('invalid_request');
+    if (!result.ok) {
+      expect(result.err.type).toBe('invalid_request');
+      const cause: { request?: { model?: unknown } } =
+        typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+      expect(cause.request?.model).toBe('gpt-6-astra-1');
+    }
   });
 
   it('maps a 401 to auth', async () => {

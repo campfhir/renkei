@@ -154,6 +154,27 @@ describe('OpenAiProvider.complete', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('attaches the exact request body as cause.request on a rejection', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(400, { error: { message: 'bad schema' } }));
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    const cause: { summary?: unknown; request?: { model?: unknown; messages?: unknown } } =
+      typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+    expect(typeof cause.summary).toBe('string');
+    expect(cause.request?.model).toBe('gpt-5');
+    expect(Array.isArray(cause.request?.messages)).toBe(true);
+  });
+
+  it('attaches cause.request on a network failure too', async () => {
+    fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    expect(result.err.type).toBe('network');
+    const cause: { request?: { model?: unknown } } =
+      typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+    expect(cause.request?.model).toBe('gpt-5');
+  });
+
   it('sends reasoning_effort when configured', async () => {
     const reasoning = new OpenAiProvider({
       apiKey: 'sk-test',

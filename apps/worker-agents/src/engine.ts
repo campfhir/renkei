@@ -57,6 +57,7 @@ import {
 } from '@renkei/agents';
 import {
   resolveAgentLlm,
+  wireRequestCauseOf,
   type LlmContentBlock,
   type LlmMessage,
   type LlmToolDef,
@@ -115,7 +116,7 @@ import {
   TOOL_RESULT_CHARS,
   type PromptMessage,
 } from './prompt';
-import { logger } from './logger';
+import { logger, secure } from './logger';
 
 /**
  * Turns a branch or loop condition gets to reach its verdict. Enough for a
@@ -470,6 +471,23 @@ function detailJson(detail: Record<string, unknown>): string {
  * attempt row, and the clip marker is the honest boundary when it bites.
  */
 const PROMPT_DETAIL_CHARS = 40_000;
+
+/**
+ * The `request` field for a model-error log line: the exact body sent to
+ * the provider, marked secure() so it is encrypted at rest and shown as
+ * `[secure]` in plain output, at the same generous PROMPT_DETAIL_CHARS
+ * scale as the rest of this file's prompt logging — a rejected request is
+ * the whole point of the log line, so clipping it small would cut off the
+ * very tool definitions or settings most likely to be the actual cause.
+ * `{}` when the error carries no cause (a codepath that predates it, or a
+ * kind — aborted, timeout — with no specific request to blame).
+ */
+function requestLogFieldOf(cause: unknown): Record<string, unknown> {
+  const parsed = wireRequestCauseOf(cause);
+  return parsed
+    ? { request: secure(clip(JSON.stringify(parsed.request), PROMPT_DETAIL_CHARS)) }
+    : {};
+}
 
 /** The attempt's first user message — the prompt the model was sent. */
 function promptTextOf(messages: PromptMessage[]): string {
@@ -3161,6 +3179,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             branchId: branch.id,
             kind,
             message: completion.err.message ?? '',
+            ...requestLogFieldOf(completion.err.cause),
           });
           if (kind === 'auth') {
             await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
@@ -3459,6 +3478,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             loopId: loop.id,
             kind,
             message: completion.err.message ?? '',
+            ...requestLogFieldOf(completion.err.cause),
           });
           if (kind === 'auth') {
             await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
@@ -3730,6 +3750,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           stepId: step.id,
           kind,
           message: completion.err.message ?? '',
+          ...requestLogFieldOf(completion.err.cause),
         });
         if (kind === 'auth') throw new RunAbort('llm_auth', 'The model rejected the API key.');
         if (kind === 'invalid_request') {

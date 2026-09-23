@@ -19,8 +19,9 @@ export type {
   LlmStreamOptions,
   LlmToolDef,
   LlmUsage,
+  WireRequestCause,
 } from './contract';
-export { transportErrorKind } from './contract';
+export { transportErrorKind, wireRequestCauseOf } from './contract';
 export { readSseEvents, IdleTimeoutError, type SseEvent } from './sse-reader';
 export { createAccumulator, type StreamAccumulator } from './stream-accumulator';
 export { streamOrComplete } from './stream-fallback';
