@@ -24,7 +24,11 @@ reading a field's contexts or a space's schemes already takes
 `manage:jira-configuration`, the same scope that allows changing them.
 Renkei's own rule — every admin change is a proposal a person applies from a
 signed-in Renkei session — is what keeps that power from being used on a
-model's say-so.
+model's say-so: no MCP tool writes to Jira. `jira_admin_propose_option_changes`
+stores a change request, and only the apply route
+(`app/api/tenant/[tenantId]/jira-admin/changes/[changeId]/apply`), on the
+owner's browser session, sends the option writes — and it refuses a grant
+without `manage:jira-configuration` up front rather than failing mid-way.
 
 Only scopes a tool calls are listed; a scope nothing calls only widens the
 consent screen. Later stages add theirs with the tools that need them (see
@@ -42,11 +46,11 @@ read:jira-work
 manage:jira-configuration
 ```
 
-| Scope                       | Endpoints                                                                                                                                                                                                                                                                                                                                       | Tools                                                        |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `read:jira-user`            | `GET /myself`, `GET /user`                                                                                                                                                                                                                                                                                                                      | `jira_admin_check_access`, `jira_admin_get_plan`             |
-| `read:jira-work`            | `GET /mypermissions`, `GET /project/search`, `GET /project/{key}`, `GET /project/{key}/role[/{id}]`, `GET /project/{key}/permissionscheme`, `GET /project/{key}/notificationscheme`, `GET /field/search`, `GET /issuetype`, `GET /plans/plan[/{id}[/team]]`                                                                                     | every `jira_admin_*` tool                                    |
-| `manage:jira-configuration` | `GET /field/{id}/context`, `…/context/projectmapping`, `…/context/issuetypemapping`, `…/context/{id}/option`, `GET /issuetypescheme/project`, `GET /workflowscheme/project`, `GET /workflowscheme/{id}/projectUsages`, `GET /issuetypescreenscheme/project`, `GET /issuetypescreenscheme/{id}/project`, `GET /fieldconfigurationscheme/project` | `jira_admin_get_field`, `jira_admin_get_space_configuration` |
+| Scope                       | Endpoints                                                                                                                                                                                                                                                                                                                                                                                                                                     | Tools                                                                                                                                             |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read:jira-user`            | `GET /myself`, `GET /user`                                                                                                                                                                                                                                                                                                                                                                                                                    | `jira_admin_check_access`, `jira_admin_get_plan`                                                                                                  |
+| `read:jira-work`            | `GET /mypermissions`, `GET /project/search`, `GET /project/{key}`, `GET /project/{key}/role[/{id}]`, `GET /project/{key}/permissionscheme`, `GET /project/{key}/notificationscheme`, `GET /field/search`, `GET /issuetype`, `GET /plans/plan[/{id}[/team]]`                                                                                                                                                                                   | every `jira_admin_*` tool                                                                                                                         |
+| `manage:jira-configuration` | `GET /field/{id}/context`, `…/context/projectmapping`, `…/context/issuetypemapping`, `…/context/{id}/option`, `GET /issuetypescheme/project`, `GET /workflowscheme/project`, `GET /workflowscheme/{id}/projectUsages`, `GET /issuetypescreenscheme/project`, `GET /issuetypescreenscheme/{id}/project`, `GET /fieldconfigurationscheme/project`; applying a change request: `POST`/`PUT /field/{id}/context/{id}/option`, `PUT …/option/move` | `jira_admin_get_field`, `jira_admin_get_space_configuration`, `jira_admin_propose_option_changes`, `jira_admin_list_changes`, and the apply route |
 
 ## Request-time only (not on the Permissions page)
 
@@ -61,7 +65,7 @@ doc and the console together, with the tools that need it; people who
 connected earlier reconnect to pick it up.
 
 - `manage:jira-project` — screens and their tabs, space settings, form
-  templates (stages 1b, 1c and 1e).
+  templates (stages 1c and 1e).
 - `write:jira-work` — Plans writes: creating and updating plans, plan-only
   teams and their capacity (stage 1d).
 
