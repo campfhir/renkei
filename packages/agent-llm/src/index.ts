@@ -26,6 +26,7 @@ export { createAccumulator, type StreamAccumulator } from './stream-accumulator'
 export { streamOrComplete } from './stream-fallback';
 export { AnthropicProvider, type AnthropicConfig } from './anthropic';
 export { OpenAiProvider, type OpenAiConfig } from './openai';
+export { OpenAiResponsesProvider, type OpenAiResponsesConfig } from './openai-responses';
 export {
   listAvailableModels,
   type AvailableModel,

@@ -237,6 +237,22 @@ export function looksLikeCredentialFailure(body: string): boolean {
 }
 
 /**
+ * Whether a base URL's host is an Azure endpoint (`*.azure.com`) — every
+ * OpenAI-compatible adapter and models-listing helper special-cases these
+ * (Azure's gateway fails a request carrying both credential headers, where
+ * every other host tolerates it), so the hostname sniff is shared rather
+ * than copied at each call site. A base URL that fails to parse is simply
+ * not Azure, same as an empty one.
+ */
+export function isAzureHost(baseUrl: string): boolean {
+  try {
+    return /\.azure\.com$/i.test(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The error kind for a thrown fetch/read failure: the caller's own cancel,
  * a deadline, or the network. Shared by both adapters so "the user clicked
  * Stop" is never reported as a timeout.

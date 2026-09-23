@@ -17,7 +17,7 @@
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
-import { looksLikeCredentialFailure } from './contract';
+import { isAzureHost, looksLikeCredentialFailure } from './contract';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmErrorKind } from './contract';
 
@@ -115,17 +115,17 @@ async function listAnthropicModels(
     .replace(/\/+$/, '')
     .replace(/\/v1\/(messages|models)$/, '');
 
-  // The adapter's auth-header rules, verbatim — see anthropic.ts for why
-  // Azure gets Bearer ALONE and Anthropic-direct x-api-key alone. A base
-  // URL that does not parse is caught HERE: the adapter meets it inside
-  // its fetch try-block, but this function reads the hostname first.
-  let isAzure: boolean;
+  // A base URL that does not parse is caught HERE: the adapter meets it
+  // inside its fetch try-block, but this function reads the hostname first.
   try {
-    isAzure = /\.azure\.com$/i.test(new URL(baseUrl).hostname);
+    new URL(baseUrl);
   } catch {
     return err('invalid_request' as const, { message: `Not a valid base URL: ${baseUrl}` });
   }
-  const authHeaders: Record<string, string> = isAzure
+
+  // The adapter's auth-header rules, verbatim — see anthropic.ts for why
+  // Azure gets Bearer ALONE and Anthropic-direct x-api-key alone.
+  const authHeaders: Record<string, string> = isAzureHost(baseUrl)
     ? { authorization: `Bearer ${config.apiKey}` }
     : config.baseUrl
       ? { 'x-api-key': config.apiKey, authorization: `Bearer ${config.apiKey}` }

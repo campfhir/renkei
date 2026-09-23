@@ -20,6 +20,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
+import { OpenAiResponsesProvider } from './openai-responses';
 
 export interface ResolvedLlm {
   provider: LlmProvider;
@@ -78,8 +79,11 @@ function settingsOf(row: ModelRow): { maxOutputTokens: number; temperature?: num
 }
 
 /** The optional string knobs stored in settings jsonb; blank = absent. */
-function settingString(row: ModelRow, key: 'apiVersion' | 'reasoningEffort'): string | null {
-  const settings: { apiVersion?: unknown; reasoningEffort?: unknown } =
+function settingString(
+  row: ModelRow,
+  key: 'apiVersion' | 'reasoningEffort' | 'apiSurface'
+): string | null {
+  const settings: { apiVersion?: unknown; reasoningEffort?: unknown; apiSurface?: unknown } =
     typeof row.settings === 'object' && row.settings !== null && !Array.isArray(row.settings)
       ? row.settings
       : {};
@@ -100,8 +104,17 @@ function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, Resol
       return ok(new AnthropicProvider(shared));
     // The OpenAI-spec dialect covers OpenAI, Azure AI Foundry's v1 surface,
     // and self-hosted gateways — one adapter, distinguished by base_url.
+    // 'responses' opts a config into the Responses API adapter instead —
+    // some reasoning-model deployments (a gpt-6-astra-1 case discovered in
+    // production) cannot do function/tool calling on chat-completions at
+    // ANY reasoning_effort value and require it. Every existing config
+    // predates this setting and keeps the chat-completions default.
     case 'openai':
-      return ok(new OpenAiProvider(shared));
+      return ok(
+        settingString(row, 'apiSurface') === 'responses'
+          ? new OpenAiResponsesProvider(shared)
+          : new OpenAiProvider(shared)
+      );
     // 'gemini' slots in here.
     default:
       return err('UNSUPPORTED_PROVIDER' as const, {

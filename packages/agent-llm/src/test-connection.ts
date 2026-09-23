@@ -27,6 +27,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmErrorKind, LlmToolDef } from './contract';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
+import { OpenAiResponsesProvider } from './openai-responses';
 
 /** Interactive: someone clicked a button and is watching a spinner. */
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -49,6 +50,9 @@ export interface TestConnectionConfig {
   apiVersion?: string | null;
   /** OpenAI-dialect reasoning models' effort dial; null = omit. */
   reasoningEffort?: string | null;
+  /** 'responses' tests against the OpenAI Responses API adapter instead of
+   *  the chat-completions one — see resolve.ts's buildProvider(). */
+  apiSurface?: string | null;
 }
 
 export interface TestConnectionResult {
@@ -70,15 +74,22 @@ export async function testLlmConnection(
     apiVersion: config.apiVersion ?? null,
   };
 
-  let provider: AnthropicProvider | OpenAiProvider;
+  let provider: AnthropicProvider | OpenAiProvider | OpenAiResponsesProvider;
   switch (config.provider) {
     case 'anthropic':
       provider = new AnthropicProvider(shared);
       break;
     // The OpenAI-spec dialect covers OpenAI, Azure AI Foundry's v1 surface,
     // and self-hosted gateways — same as buildProvider() in resolve.ts.
+    // 'responses' picks the Responses API adapter instead, same rule.
     case 'openai':
-      provider = new OpenAiProvider({ ...shared, reasoningEffort: config.reasoningEffort ?? null });
+      provider =
+        config.apiSurface === 'responses'
+          ? new OpenAiResponsesProvider({
+              ...shared,
+              reasoningEffort: config.reasoningEffort ?? null,
+            })
+          : new OpenAiProvider({ ...shared, reasoningEffort: config.reasoningEffort ?? null });
       break;
     // 'gemini' slots in here alongside resolve.ts's buildProvider().
     default:

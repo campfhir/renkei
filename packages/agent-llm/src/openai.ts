@@ -27,7 +27,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
-import { looksLikeCredentialFailure, transportErrorKind } from './contract';
+import { isAzureHost, looksLikeCredentialFailure, transportErrorKind } from './contract';
 import { readSseEvents } from './sse-reader';
 import { createAccumulator } from './stream-accumulator';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -238,16 +238,10 @@ export class OpenAiProvider implements LlmProvider {
   /** See the module docstring: Azure's gateway rejects a request carrying
    *  both credential headers, so an Azure host gets Bearer alone. */
   private headers(baseUrl: string): Record<string, string> {
-    let isAzure: boolean;
-    try {
-      isAzure = /\.azure\.com$/i.test(new URL(baseUrl).hostname);
-    } catch {
-      isAzure = false;
-    }
     return {
       'content-type': 'application/json',
       authorization: `Bearer ${this.config.apiKey}`,
-      ...(isAzure ? {} : { 'api-key': this.config.apiKey }),
+      ...(isAzureHost(baseUrl) ? {} : { 'api-key': this.config.apiKey }),
     };
   }
 

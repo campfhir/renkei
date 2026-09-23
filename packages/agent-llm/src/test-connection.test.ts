@@ -173,6 +173,26 @@ describe('testLlmConnection — openai', () => {
     if (!result.ok) expect(result.err.type).toBe('invalid_request');
   });
 
+  it('apiSurface: "responses" tests against the Responses API adapter instead', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(200, { status: 'completed', output: [] }));
+    const result = await testLlmConnection({
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'gpt-6-astra-1',
+      apiSurface: 'responses',
+    });
+    expect(result.ok).toBe(true);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.openai.com/v1/responses');
+    const body: { input?: unknown; messages?: unknown; tools?: unknown } = JSON.parse(
+      String(init.body)
+    );
+    expect(body.messages).toBeUndefined();
+    expect(Array.isArray(body.input)).toBe(true);
+    // Still carries the tool-presence check the module doc explains.
+    expect((body.tools as unknown[]).length).toBe(1);
+  });
+
   it('sends a tool definition — catches a reasoning model that only fails once tools are present', async () => {
     // The gpt-6-astra-1 case this test exists for: no reasoning_effort was
     // ever configured, yet the deployment 400s the moment ANY tool

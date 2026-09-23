@@ -19,7 +19,7 @@ import { decrypt, parseEncryptionKey } from '@renkei/crypto';
 import { testLlmConnection, type TestConnectionError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
+import { API_SURFACES, SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
 
 /** The taxonomy, translated for the person watching the button spinner. */
 function messageFor(kind: TestConnectionError): { message: string; status: number } {
@@ -66,6 +66,7 @@ export async function POST(
     baseUrl?: unknown;
     apiVersion?: unknown;
     reasoningEffort?: unknown;
+    apiSurface?: unknown;
     apiKey?: unknown;
     modelConfigId?: unknown;
   } = body;
@@ -131,6 +132,11 @@ export async function POST(
     reasoningEffort:
       typeof payload.reasoningEffort === 'string' && payload.reasoningEffort.trim()
         ? payload.reasoningEffort.trim()
+        : null,
+    apiSurface:
+      typeof payload.apiSurface === 'string' &&
+      API_SURFACES.some((surface) => surface === payload.apiSurface)
+        ? payload.apiSurface
         : null,
   });
   if (!result.ok) {

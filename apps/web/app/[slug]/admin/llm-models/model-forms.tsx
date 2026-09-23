@@ -48,6 +48,7 @@ interface ModelRow {
     temperature?: number;
     apiVersion?: string;
     reasoningEffort?: string;
+    apiSurface?: string;
   } | null;
   enabled: boolean;
   isDefault: boolean;
@@ -63,6 +64,8 @@ interface ModelDraft {
   temperature: string;
   apiVersion: string;
   reasoningEffort: string;
+  /** '' = chat-completions (the default); 'responses' = the Responses API. */
+  apiSurface: string;
   apiKey: string;
   /** '' = type/keep a key; a config id = reuse that config's stored key. */
   apiKeyFromId: string;
@@ -79,6 +82,7 @@ const emptyDraft: ModelDraft = {
   temperature: '',
   apiVersion: '',
   reasoningEffort: '',
+  apiSurface: '',
   apiKey: '',
   apiKeyFromId: '',
   enabled: true,
@@ -104,6 +108,7 @@ function draftOf(row: ModelRow): ModelDraft {
     apiVersion: typeof row.settings?.apiVersion === 'string' ? row.settings.apiVersion : '',
     reasoningEffort:
       typeof row.settings?.reasoningEffort === 'string' ? row.settings.reasoningEffort : '',
+    apiSurface: typeof row.settings?.apiSurface === 'string' ? row.settings.apiSurface : '',
     apiKey: '',
     apiKeyFromId: '',
     enabled: row.enabled,
@@ -234,6 +239,7 @@ export default function ModelForms({ slug }: { slug: string }) {
         baseUrl: draft.baseUrl || null,
         ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
         ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
+        ...(draft.apiSurface ? { apiSurface: draft.apiSurface } : {}),
         // Same rule as listModels: a typed key wins, otherwise the server
         // lends the borrowed config's stored key without it ever reaching
         // this page.
@@ -261,6 +267,7 @@ export default function ModelForms({ slug }: { slug: string }) {
       ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
       ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
+      ...(draft.apiSurface ? { apiSurface: draft.apiSurface } : {}),
       ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
       ...(draft.apiKeyFromId && !draft.apiKey ? { apiKeyFromId: draft.apiKeyFromId } : {}),
       enabled: draft.enabled,
@@ -435,6 +442,33 @@ export default function ModelForms({ slug }: { slug: string }) {
                 'Only for a gateway or proxy in front of the provider.'}
             </p>
           </div>
+
+          {draft.provider === 'openai' ? (
+            <div>
+              <label className={labelClass} htmlFor="model-api-surface">
+                API surface
+              </label>
+              <select
+                id="model-api-surface"
+                className={inputClass}
+                value={draft.apiSurface}
+                onChange={(event) => {
+                  setDraft({ ...draft, apiSurface: event.target.value });
+                  clearAvailable();
+                }}
+              >
+                <option value="">Chat completions (default)</option>
+                <option value="responses">Responses API</option>
+              </select>
+              <p className={hintClass}>
+                Some reasoning-model deployments (an Azure gpt-6-astra-1 case is where this setting
+                came from) cannot make tool calls on chat completions at ANY reasoning effort value
+                — their own error names <span className="font-mono">/v1/responses</span> as the
+                only path. Switch this only if &quot;Test connection&quot; with tools fails citing
+                <span className="font-mono"> reasoning_effort</span> no matter what you set it to.
+              </p>
+            </div>
+          ) : null}
 
           <div>
             <label className={labelClass} htmlFor="model-key">
