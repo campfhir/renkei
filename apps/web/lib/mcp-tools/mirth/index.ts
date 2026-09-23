@@ -753,7 +753,8 @@ export function registerMirthTools(
         return textResult(clip(JSON.stringify(one.value, null, 2), DEFAULT_MAX_CHARS));
       }
       const all = await getJson(instanceId, 'read the statistics', '/channels/statistics', {
-        ...(ids.length ? { channelIds: ids } : {}),
+        // Mirth reads the repeatable channel filter from the singular key.
+        ...(ids.length ? { channelId: ids } : {}),
         includeUndeployed: true,
         aggregateStats: true,
       });

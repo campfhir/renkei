@@ -74,6 +74,19 @@ export function toMirthDate(value: string): string | undefined {
 export type BodySpec =
   /** One verbatim document — the XML the Administrator exports, or plain text. */
   | { kind: 'xml' | 'text'; name: string; description: string; required?: boolean }
+  /**
+   * One plain value — a string, or a flat string→string map — that Mirth
+   * reads as a Java String or Map<String,String>. Sent as the XStream XML
+   * the server deserialises (`<string>…</string>`, `<map><entry>…`), so a
+   * model gives the value, never the markup.
+   */
+  | {
+      kind: 'xml-value';
+      name: string;
+      description: string;
+      required?: boolean;
+      shape: 'string' | 'string-map';
+    }
   /** application/x-www-form-urlencoded fields. */
   | { kind: 'form'; fields: ParamSpec[] }
   /** multipart/form-data parts, each an XML document. */
@@ -119,6 +132,14 @@ const xml = (name: string, description: string, required = true): BodySpec => ({
 });
 
 const CHANNEL_ID = id('channelId', 'The channel id (from mirth_list_channels).');
+/** The attribute map the four PHI audit routes record — the request body, a flat map. */
+const AUDIT_ATTRIBUTES: BodySpec = {
+  kind: 'xml-value',
+  shape: 'string-map',
+  name: 'auditMessageAttributesMap',
+  description: 'The attributes to record with the audit event, as key → value.',
+  required: false,
+};
 const MESSAGE_ID: ParamSpec = {
   name: 'messageId',
   in: 'path',
@@ -497,6 +518,13 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
             'RESPONSE',
             'RESPONSE_TRANSFORMED',
             'PROCESSED_RESPONSE',
+            'CONNECTOR_MAP',
+            'CHANNEL_MAP',
+            'RESPONSE_MAP',
+            'PROCESSING_ERROR',
+            'POSTPROCESSOR_ERROR',
+            'RESPONSE_ERROR',
+            'SOURCE_MAP',
           ],
         },
         'Which content to export; omit for the whole message.'
@@ -511,7 +539,11 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       q('archiveFormat', 'string', 'The archive format (zip, tar).'),
       q('compressFormat', 'string', 'The compression format (gz, bz2).'),
       q('password', 'string', 'Archive password.'),
-      q('encryptionType', 'string', 'Archive encryption type.'),
+      q(
+        'encryptionType',
+        { enum: ['STANDARD', 'AES128', 'AES256'] },
+        'Archive encryption type (zip archives only).'
+      ),
     ],
     kind: 'act',
     accept: 'text/plain',
@@ -546,7 +578,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that the user viewed a message containing PHI (POST /channels/_auditAccessedPHIMessage).",
     method: 'POST',
     path: '/channels/_auditAccessedPHIMessage',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   {
@@ -557,7 +590,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that the user queried a message panel containing PHI (POST /channels/_auditQueriedPHIMessage).",
     method: 'POST',
     path: '/channels/_auditQueriedPHIMessage',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   {
@@ -568,7 +602,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that the user exported messages (POST /channels/_auditExportMessages).",
     method: 'POST',
     path: '/channels/_auditExportMessages',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   {
@@ -579,7 +614,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that a message export completed (POST /channels/_auditExportMessagesSuccess).",
     method: 'POST',
     path: '/channels/_auditExportMessagesSuccess',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   // ---------------------------------------------------------------- statistics
@@ -1447,7 +1483,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     path: '/extensions/_uninstall',
     params: [],
     body: {
-      kind: 'text',
+      kind: 'xml-value',
+      shape: 'string',
       name: 'extensionPath',
       description: "The extension's path, as mirth_get_extension reports it.",
       required: true,

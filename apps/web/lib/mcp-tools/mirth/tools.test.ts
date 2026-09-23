@@ -726,3 +726,18 @@ describe('events', () => {
     expect(textOf(result)).toContain('ERROR Deploy channel — FAILURE');
   });
 });
+
+describe('statistics', () => {
+  it("filters channels on Mirth's singular channelId key", async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, { list: { channelStatistics: [] } }));
+    await register().get('mirth_channel_statistics')!({
+      instanceId: INSTANCE_ID,
+      channelIds: ['c1', 'c9'],
+    });
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/channels/statistics',
+      query: { channelId: ['c1', 'c9'], includeUndeployed: true, aggregateStats: true },
+    });
+  });
+});

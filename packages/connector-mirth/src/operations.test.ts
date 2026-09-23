@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isDestructiveRequest } from './api';
 import { MIRTH_OPERATIONS, fillPath, pathParamNames, toMirthDate } from './operations';
-import type { OperationSpec } from './operations';
+import type { OperationSpec, ParamSpec } from './operations';
 import { isMirthPermission } from './permissions';
 
 describe('the operation table', () => {
@@ -115,8 +115,9 @@ describe('toMirthDate', () => {
  * The table against the server's own OpenAPI document for 4.5.2
  * (docs/mirth-connect-client-api-open-api-spec.json): every route exists,
  * every parameter reaches Mirth under a key the route reads, enumerations
- * agree, and every date the spec types as date-time is an `iso-date` here
- * so it gets normalised on the way out.
+ * agree, every date the spec types as date-time is an `iso-date` here so it
+ * gets normalised on the way out, and each body travels as a media type
+ * the route consumes.
  */
 describe('the operation table against the OpenAPI spec', () => {
   interface SpecParam {
@@ -126,6 +127,7 @@ describe('the operation table against the OpenAPI spec', () => {
   }
   interface SpecOperation {
     parameters?: SpecParam[];
+    requestBody?: { content?: Record<string, unknown> };
   }
   interface Spec {
     info: { version: string };
@@ -149,25 +151,35 @@ describe('the operation table against the OpenAPI spec', () => {
   }
   const routeOf = (operation: OperationSpec): SpecOperation | undefined =>
     routes.get(`${operation.method} ${shape(operation.path)}`);
+  const specParamFor = (operation: OperationSpec, param: ParamSpec): SpecParam | undefined =>
+    routeOf(operation)?.parameters?.find(
+      (p) => p.in === param.in && p.name === (param.wire ?? param.name)
+    );
 
   /**
-   * Known departures, each explained. The four audit routes take their
-   * attribute map as a request body in the spec, not as query entries —
-   * a pre-existing shape difference this test records rather than hides.
+   * The document renders an enum through Java's toString(), which for
+   * ContentType is a display name ("Processed Raw"); JAX-RS binds an enum
+   * query parameter through valueOf() (Mirth registers converters only for
+   * Calendar and MetaDataSearch), so the constant name is what the server
+   * parses. A display name folds to its constant here for the comparison.
    */
-  const NOT_IN_SPEC = new Set([
-    'audit_accessed_phi_message:auditMessageAttributesMap',
-    'audit_queried_phi_messages:auditMessageAttributesMap',
-    'audit_export_messages:auditMessageAttributesMap',
-    'audit_export_messages_success:auditMessageAttributesMap',
-  ]);
+  const constantOf = (value: string): string => value.toUpperCase().replace(/ /g, '_');
+
+  /** The media type each body kind is sent as (requestFor in apps/web). */
+  const MEDIA_TYPE: Record<NonNullable<OperationSpec['body']>['kind'], string> = {
+    xml: 'application/xml',
+    'xml-value': 'application/xml',
+    text: 'text/plain',
+    form: 'application/x-www-form-urlencoded',
+    multipart: 'multipart/form-data',
+  };
   /**
-   * The document renders enum values through Java's toString(), which for
-   * ContentType is the display name ("Processed Raw"); JAX-RS binds an enum
-   * query parameter through valueOf(), so the constant names here are what
-   * the server parses.
+   * The servlet declares `@Consumes(TEXT_PLAIN)` on the attachment export
+   * (MessageServletInterface.exportAttachmentServer) while its @RequestBody
+   * annotation, which is what the document renders, says application/xml.
+   * The route reads plain text; text is what is sent.
    */
-  const ENUM_RENDERED_AS_DISPLAY_NAMES = new Set(['export_messages:contentType']);
+  const CONSUMES_TEXT_DESPITE_SPEC = new Set(['export_message_attachment']);
 
   it('is the 4.5.2 document', () => {
     expect(spec.info.version).toBe('4.5.2');
@@ -184,16 +196,13 @@ describe('the operation table against the OpenAPI spec', () => {
 
   it('sends every parameter under a key its route reads', () => {
     for (const operation of MIRTH_OPERATIONS) {
-      const specParams = routeOf(operation)?.parameters ?? [];
       for (const param of operation.params) {
-        if (NOT_IN_SPEC.has(`${operation.tool}:${param.name}`)) continue;
         const wire = param.wire ?? param.name;
-        const match = specParams.find((p) => p.in === param.in && p.name === wire);
         expect({
           tool: operation.tool,
           param: param.name,
           wire,
-          found: match !== undefined,
+          found: specParamFor(operation, param) !== undefined,
         }).toEqual({ tool: operation.tool, param: param.name, wire, found: true });
       }
     }
@@ -201,15 +210,10 @@ describe('the operation table against the OpenAPI spec', () => {
 
   it('agrees with the spec on enumerations and their repeatability', () => {
     for (const operation of MIRTH_OPERATIONS) {
-      const specParams = routeOf(operation)?.parameters ?? [];
       for (const param of operation.params) {
         if (typeof param.type !== 'object') continue;
-        if (ENUM_RENDERED_AS_DISPLAY_NAMES.has(`${operation.tool}:${param.name}`)) continue;
-        const match = specParams.find(
-          (p) => p.in === param.in && p.name === (param.wire ?? param.name)
-        );
-        const schema = match?.schema;
-        const specValues = schema?.enum ?? schema?.items?.enum ?? [];
+        const schema = specParamFor(operation, param)?.schema;
+        const specValues = (schema?.enum ?? schema?.items?.enum ?? []).map(constantOf);
         expect({
           tool: operation.tool,
           param: param.name,
@@ -225,13 +229,24 @@ describe('the operation table against the OpenAPI spec', () => {
     }
   });
 
+  it('enumerates every query parameter the spec enumerates', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      for (const param of operation.params) {
+        const schema = specParamFor(operation, param)?.schema;
+        const enumerated = (schema?.enum ?? schema?.items?.enum) !== undefined;
+        expect({ tool: operation.tool, param: param.name, enumerated }).toEqual({
+          tool: operation.tool,
+          param: param.name,
+          enumerated: typeof param.type === 'object',
+        });
+      }
+    }
+  });
+
   it('types every date-time the spec has as iso-date, and nothing else as one', () => {
     for (const operation of MIRTH_OPERATIONS) {
-      const specParams = routeOf(operation)?.parameters ?? [];
       for (const param of operation.params) {
-        const match = specParams.find(
-          (p) => p.in === param.in && p.name === (param.wire ?? param.name)
-        );
+        const match = specParamFor(operation, param);
         if (!match) continue;
         expect({
           tool: operation.tool,
@@ -243,6 +258,23 @@ describe('the operation table against the OpenAPI spec', () => {
           isoDate: match.schema?.format === 'date-time',
         });
       }
+    }
+  });
+
+  it('sends a body exactly when the route takes one, as a media type it consumes', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      const consumes = Object.keys(routeOf(operation)?.requestBody?.content ?? {});
+      const sent = operation.body ? MEDIA_TYPE[operation.body.kind] : undefined;
+      expect({ tool: operation.tool, hasBody: sent !== undefined }).toEqual({
+        tool: operation.tool,
+        hasBody: consumes.length > 0,
+      });
+      if (!sent || CONSUMES_TEXT_DESPITE_SPEC.has(operation.tool)) continue;
+      expect({ tool: operation.tool, sent, accepted: consumes.includes(sent) }).toEqual({
+        tool: operation.tool,
+        sent,
+        accepted: true,
+      });
     }
   });
 });

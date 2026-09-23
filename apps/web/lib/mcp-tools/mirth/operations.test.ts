@@ -345,3 +345,57 @@ describe('requestFor, on the wire', () => {
     ).toEqual({ ok: false, error: 'endDate must be an ISO 8601 date-time.' });
   });
 });
+
+describe('xml-value bodies', () => {
+  it('sends a string→string map as the XStream map Mirth reads', () => {
+    const built = requestFor(byTool('audit_accessed_phi_message'), {
+      instanceId: INSTANCE_ID,
+      auditMessageAttributesMap: { channel: 'ADT In', patient: 'a<b&c' },
+    });
+    expect(built).toEqual({
+      ok: true,
+      request: {
+        method: 'POST',
+        path: '/channels/_auditAccessedPHIMessage',
+        body:
+          '<map><entry><string>channel</string><string>ADT In</string></entry>' +
+          '<entry><string>patient</string><string>a&lt;b&amp;c</string></entry></map>',
+        contentType: 'application/xml',
+      },
+    });
+  });
+
+  it('sends nothing for an optional map left out, and refuses a required string left out', () => {
+    expect(requestFor(byTool('audit_export_messages'), { instanceId: INSTANCE_ID })).toEqual({
+      ok: true,
+      request: { method: 'POST', path: '/channels/_auditExportMessages' },
+    });
+    expect(requestFor(byTool('uninstall_extension'), { instanceId: INSTANCE_ID })).toEqual({
+      ok: false,
+      error: 'extensionPath is required.',
+    });
+  });
+
+  it('sends a string as the XStream string Mirth reads', () => {
+    const built = requestFor(byTool('uninstall_extension'), {
+      instanceId: INSTANCE_ID,
+      extensionPath: '/opt/mirth/extensions/x',
+    });
+    expect(built).toEqual({
+      ok: true,
+      request: {
+        method: 'POST',
+        path: '/extensions/_uninstall',
+        body: '<string>/opt/mirth/extensions/x</string>',
+        contentType: 'application/xml',
+      },
+    });
+    const schema = inputSchemaFor(byTool('audit_accessed_phi_message'));
+    expect(
+      schema.safeParse({ instanceId: INSTANCE_ID, auditMessageAttributesMap: { a: 'b' } }).success
+    ).toBe(true);
+    expect(
+      schema.safeParse({ instanceId: INSTANCE_ID, auditMessageAttributesMap: ['a=b'] }).success
+    ).toBe(false);
+  });
+});

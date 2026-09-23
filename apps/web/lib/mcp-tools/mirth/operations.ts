@@ -127,6 +127,11 @@ export function inputSchemaFor(
     if (body.kind === 'xml' || body.kind === 'text') {
       const field = z.string().describe(body.description);
       shape[body.name] = body.required === false ? field.optional() : field;
+    } else if (body.kind === 'xml-value') {
+      const field = (
+        body.shape === 'string-map' ? z.record(z.string(), z.string()) : z.string().min(1)
+      ).describe(body.description);
+      shape[body.name] = body.required === false ? field.optional() : field;
     } else if (body.kind === 'form') {
       for (const field of body.fields) shape[field.name] = fieldFor(field);
     } else if (body.kind === 'multipart') {
@@ -150,6 +155,31 @@ function queryValue(value: unknown): string | number | boolean | string[] | unde
     return items.length ? items : undefined;
   }
   return undefined;
+}
+
+const escapeXml = (text: string): string =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * A plain value as the XStream XML Mirth's XML body reader turns back into
+ * a Java String or Map<String,String>. Undefined when nothing was given
+ * (an empty string, an empty map, or not a value of the shape at all).
+ */
+export function xstreamValue(shape: 'string' | 'string-map', value: unknown): string | undefined {
+  if (shape === 'string') {
+    return typeof value === 'string' && value.trim()
+      ? `<string>${escapeXml(value)}</string>`
+      : undefined;
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value).filter(([, v]) => typeof v === 'string');
+  if (!entries.length) return undefined;
+  return `<map>${entries
+    .map(
+      ([k, v]) =>
+        `<entry><string>${escapeXml(k)}</string><string>${escapeXml(String(v))}</string></entry>`
+    )
+    .join('')}</map>`;
 }
 
 /** A multipart/form-data body of XML parts, built by hand — no dependency needed. */
@@ -216,6 +246,14 @@ export function requestFor(
       } else {
         request.body = value;
         request.contentType = body.kind === 'xml' ? 'application/xml' : 'text/plain';
+      }
+    } else if (body.kind === 'xml-value') {
+      const value = xstreamValue(body.shape, args[body.name]);
+      if (value === undefined) {
+        if (body.required !== false) return { ok: false, error: `${body.name} is required.` };
+      } else {
+        request.body = value;
+        request.contentType = 'application/xml';
       }
     } else if (body.kind === 'form') {
       const form = new URLSearchParams();
@@ -313,6 +351,8 @@ function cardFields(
     const value = args[name];
     if (typeof value === 'string' && value.trim())
       fields.push({ label: name, value: clip(value, BODY_PREVIEW_CHARS) });
+    else if (typeof value === 'object' && value !== null && !Array.isArray(value))
+      fields.push({ label: name, value: clip(JSON.stringify(value), BODY_PREVIEW_CHARS) });
     else if (Array.isArray(value))
       fields.push({ label: name, value: value.map(String).join(', ') });
     else if (value !== undefined && value !== null && value !== '')
@@ -440,7 +480,9 @@ export function sampleArgsFor(operation: OperationSpec): Record<string, unknown>
   const body: BodySpec | undefined = operation.body;
   if (body) {
     if (body.kind === 'xml' || body.kind === 'text') args[body.name] = '<x/>';
-    else if (body.kind === 'form') {
+    else if (body.kind === 'xml-value') {
+      args[body.name] = body.shape === 'string-map' ? { key: 'value' } : 'x';
+    } else if (body.kind === 'form') {
       for (const field of body.fields) if (field.required) args[field.name] = sample(field);
     } else if (body.kind === 'multipart') {
       for (const part of body.parts) if (part.required) args[part.name] = '<x/>';
