@@ -88,6 +88,18 @@ export const CHANGELOG: ChangelogRelease[] = [
           'Save how a Jira space is set up — its schemes, default assignee, category and the groups in each role — as a template your Jira admins share, and check any space against one to see where it has drifted. Ask for a new space from a template, or like an existing space, and it is proposed for your review: the page lists every scheme it will run on and labels each access change, and nothing is created in Jira until you apply it. Templates are listed under Space templates, next to the proposed changes on the Jira Administration card.',
       },
       {
+        kind: 'added',
+        title: 'Components and versions for new spaces',
+        detail:
+          'A space template keeps the space’s components too, and a new space from a template — or like another space — gets them, with any more components and the first versions you name for it. Checking a space against its template now covers its components.',
+      },
+      {
+        kind: 'added',
+        title: 'A field on a space’s screens, after you review it',
+        detail:
+          'Ask for a field on a Jira space — a new one, or one you already have — and it is proposed for your review: Renkei uses a field of the same name and type rather than making a second, gives the space options of its own, and puts the field on each screen the space uses. When another space shows one of those screens too, the proposal names that space and waits for your say-so, and the review page says it again. Nothing changes in Jira until you apply it. This and a new space’s components take a new box on the Jira Administration connection, “Space components, versions and screens”: reconnect with it ticked once an organization admin allows it under Connector setup.',
+      },
+      {
         kind: 'fixed',
         title: 'The Connectors page loads for people connected to Jira',
         detail:
