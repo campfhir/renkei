@@ -78,6 +78,7 @@ describe('createSubagentRecorder', () => {
       instructions: null,
       readOnly: false,
       maxSteps: 40,
+      model: { provider: 'anthropic', model: 'claude-x', llmModelId: 'model-1' },
     });
     expect(runId).toBe('run-1');
     await recorder.progress('run-1', {

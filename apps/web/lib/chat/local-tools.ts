@@ -10,6 +10,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { LlmToolDef, LlmUsage, ResolvedLlm } from '@renkei/agent-llm';
+import type { LlmCallModel } from '@renkei/agents/runs';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { SubagentRecorder } from './subagent-runs';
 
@@ -28,8 +29,12 @@ export interface LocalToolContext {
    * of its own (a code project's sub-agent); absent, such tools refuse.
    */
   llm?: ResolvedLlm;
-  /** Where a nested loop's token usage is recorded — the turn's own sink. */
-  recordUsage?: (usage: LlmUsage) => Promise<void>;
+  /**
+   * Where a nested loop's token usage is recorded — the turn's own sink.
+   * `model` is what spent it when that is not the turn's own model (a
+   * sub-agent on a model of its own); absent, the turn's model is stamped.
+   */
+  recordUsage?: (usage: LlmUsage, model?: LlmCallModel | null) => Promise<void>;
   /**
    * Where a tool that runs a long-ish operation of its own (chat_compact)
    * reports live progress — the turn's own channel, already open. Absent

@@ -856,11 +856,15 @@ function SubagentCard({
 }) {
   const input =
     typeof step.block.input === 'object' && step.block.input !== null ? step.block.input : {};
-  const record: { task?: unknown; readOnly?: unknown; instructions?: unknown } = input;
+  const record: { task?: unknown; readOnly?: unknown; instructions?: unknown; model?: unknown } =
+    input;
   const task = typeof record.task === 'string' ? record.task.trim() : '';
   const taskLine = task.split('\n').find((line) => line.trim()) ?? '';
   const instructions = typeof record.instructions === 'string' ? record.instructions.trim() : '';
   const readOnly = record.readOnly === true;
+  // The model the orchestrator picked for this task, when it picked one;
+  // absent, the sub-agent ran on the chat's own (the transcript says which).
+  const model = typeof record.model === 'string' ? record.model.trim() : '';
   const resultText = step.result?.content ?? '';
   const reportLine = step.result ? (resultText.split('\n').find((line) => line.trim()) ?? '') : '';
   const running = state === 'pending' || state === 'waiting';
@@ -892,6 +896,11 @@ function SubagentCard({
         </span>
         {state === 'pending' ? <span className="chat-dots shrink-0" aria-hidden="true" /> : null}
         {readOnly ? <span className="shrink-0 text-gray-400">read-only</span> : null}
+        {model ? (
+          <span className="shrink-0 text-gray-400" data-subagent-model>
+            on {model}
+          </span>
+        ) : null}
         {inline ? <span className="min-w-0 flex-1 truncate text-gray-400">· {inline}</span> : null}
         <Icon path={ICONS.chevron} className="chat-fold-chevron h-3.5 w-3.5 text-gray-400" />
       </summary>

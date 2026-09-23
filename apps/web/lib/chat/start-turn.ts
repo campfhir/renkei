@@ -26,6 +26,7 @@ import {
   type LlmUsage,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
+import type { LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxConfig } from '@renkei/sandbox-client';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
@@ -450,7 +451,8 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       userEmail: person?.email ?? null,
       readOnly,
       llm: input.llm,
-      recordUsage: (usage: LlmUsage) => store.recordUsage(usage),
+      recordUsage: (usage: LlmUsage, model?: LlmCallModel | null) =>
+        store.recordUsage(usage, model),
       emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>
         channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
       // A code chat's sub-agents keep their runs (subagent-runs.ts) and

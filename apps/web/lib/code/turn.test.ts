@@ -20,6 +20,26 @@ jest.mock('@/lib/sandbox/workspace-git', () => ({
   resolveWorkspaceGitCredential: jest.fn(async () => ({ authHeader: 'Basic x' })),
 }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: () => 'https://r.example' }));
+jest.mock('@/lib/chat/models', () => ({
+  listChatModels: jest.fn(async () => [
+    {
+      id: 'm-fast',
+      label: 'Fast',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      isDefault: false,
+      supportsThinking: true,
+    },
+    {
+      id: 'm-best',
+      label: 'Best',
+      provider: 'anthropic',
+      model: 'claude-opus-5-5',
+      isDefault: true,
+      supportsThinking: true,
+    },
+  ]),
+}));
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
@@ -85,6 +105,23 @@ describe('codeProjectContext', () => {
     });
     expect(context?.tools.map((tool) => tool.def.name)).toEqual(['code_ls']);
     expect(clone).not.toHaveBeenCalled();
+    // The org's roster rides into the binding, for a sub-agent's model to be picked from.
+    expect(bound().subagentModels).toEqual([
+      {
+        id: 'm-fast',
+        label: 'Fast',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        isDefault: false,
+      },
+      {
+        id: 'm-best',
+        label: 'Best',
+        provider: 'anthropic',
+        model: 'claude-opus-5-5',
+        isDefault: true,
+      },
+    ]);
   });
 
   it('starts a clone when there is no checkout and hands the turn a step that waits for it', async () => {

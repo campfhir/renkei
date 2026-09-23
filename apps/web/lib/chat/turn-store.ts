@@ -66,7 +66,7 @@ export function createTurnStore(
       await interruptSubagentRunsOfTurn(db, scope.turnId);
       await touchChat(db, scope.chatId, {});
     },
-    async recordUsage(usage) {
+    async recordUsage(usage, model) {
       await recordLlmCall(db, {
         tenantId: scope.tenantId,
         subject: scope.subject,
@@ -80,7 +80,8 @@ export function createTurnStore(
         ...(usage.cacheWriteInputTokens !== undefined
           ? { cacheWriteInputTokens: usage.cacheWriteInputTokens }
           : {}),
-        model: scope.model,
+        // A sub-agent on a model of its own says so; everything else is the turn's.
+        model: model ?? scope.model,
       });
     },
     async requestToolPermission(ask) {

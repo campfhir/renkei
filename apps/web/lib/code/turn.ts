@@ -27,6 +27,7 @@ import {
   type WireWorkspace,
 } from '@renkei/sandbox-client';
 import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
+import { listChatModels } from '@/lib/chat/models';
 import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import type { PreludeStep, TurnLimits } from '@/lib/chat/turn-runner';
 import { resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
@@ -92,7 +93,12 @@ async function recoverCheckout(
   if (!current || current.status === 'failed') {
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
     const credential = await resolveWorkspaceGitCredential(
-      { tenantId: project.tenantId, subject: actor.subject, origin, provider: project.repo.provider },
+      {
+        tenantId: project.tenantId,
+        subject: actor.subject,
+        origin,
+        provider: project.repo.provider,
+      },
       { write: false }
     );
     if (typeof credential === 'string') return { ok: false, message: credential };
@@ -178,7 +184,12 @@ export async function codeProjectContext(
   if (!workspace || workspace.status === 'failed') {
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
     const credential = await resolveWorkspaceGitCredential(
-      { tenantId: project.tenantId, subject: actor.subject, origin, provider: project.repo.provider },
+      {
+        tenantId: project.tenantId,
+        subject: actor.subject,
+        origin,
+        provider: project.repo.provider,
+      },
       { write: false }
     );
     if (typeof credential === 'string') {
@@ -189,7 +200,13 @@ export async function codeProjectContext(
     workspace = cloned.val;
     clonedNow = true;
   }
-  const env = await sbEnvList(target);
+  // The org's roster, read once per turn: the orchestrator picks a
+  // sub-agent's model from it per task (delegate.ts) — the same enabled
+  // rows the composer's own picker offers.
+  const [env, subagentModels] = await Promise.all([
+    sbEnvList(target),
+    listChatModels(db, project.tenantId),
+  ]);
   const envNames = env.ok ? env.val.map((variable) => variable.name) : [];
   const tools = codeTools({
     target,
@@ -198,6 +215,13 @@ export async function codeProjectContext(
     repoProvider: project.repo.provider,
     origin: actor.origin ?? getPublicBaseUrl() ?? '',
     recover: (lostId) => recoverCheckout(db, project, actor, target, lostId),
+    subagentModels: subagentModels.map(({ id, label, provider, model, isDefault }) => ({
+      id,
+      label,
+      provider,
+      model,
+      isDefault,
+    })),
   });
 
   // A clone in flight — this turn's or an earlier one's — is the turn's
