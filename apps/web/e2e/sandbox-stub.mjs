@@ -170,6 +170,250 @@ function setVariable(scope, name, value) {
   return null;
 }
 
+/**
+ * Code project services, stood in for: the organization's image rules
+ * (per tenant, seeded like migration 122 does) and the services a
+ * project "runs" — no engine, a start just reads running at a made-up
+ * address, which is enough to exercise the admin page and the tools'
+ * plumbing.
+ */
+const RULE_SEED = [
+  ['docker.io/library/postgres', 'PostgreSQL (official image)'],
+  ['docker.io/pgvector/pgvector', 'PostgreSQL with the vector extension'],
+  ['docker.io/library/redis', 'Redis (official image)'],
+  ['docker.io/valkey/valkey', 'Valkey, the Redis fork'],
+  ['docker.io/library/mysql', 'MySQL (official image)'],
+  ['docker.io/library/mariadb', 'MariaDB (official image)'],
+  ['docker.io/library/mongo', 'MongoDB (official image)'],
+  ['docker.io/library/rabbitmq', 'RabbitMQ (official image)'],
+  ['mcr.microsoft.com/mssql/server', 'SQL Server on Linux'],
+  ['mcr.microsoft.com/azure-storage/azurite', 'Azurite, the Azure Storage emulator'],
+];
+const rulesByTenant = new Map();
+function rulesOf(tenantId) {
+  let rules = rulesByTenant.get(tenantId);
+  if (!rules) {
+    rules = new Map();
+    for (const [pattern, note] of RULE_SEED) {
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      rules.set(id, { id, pattern, note, registryUsername: null, createdAt: now, updatedAt: now });
+    }
+    rulesByTenant.set(tenantId, rules);
+  }
+  return rules;
+}
+
+/** The worker's normalizeImageRule, in miniature: enough for what the page types. */
+function normalizeRule(raw) {
+  let value = String(raw ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (!value || /\s/.test(value)) return { error: 'A rule is required.' };
+  if (value.includes('*') && !value.endsWith('/*')) {
+    return {
+      error: 'A wildcard is only `/*` at the end of a rule, for everything under a namespace.',
+    };
+  }
+  const wildcard = value.endsWith('/*');
+  if (wildcard) value = value.slice(0, -2);
+  let dropped = null;
+  if (!wildcard) {
+    const at = value.indexOf('@');
+    if (at >= 0) {
+      dropped = 'the digest';
+      value = value.slice(0, at);
+    }
+    const lastSlash = value.lastIndexOf('/');
+    const colon = value.lastIndexOf(':');
+    if (colon > lastSlash && !(lastSlash < 0 && value.includes('.'))) {
+      dropped = `the tag ${value.slice(colon + 1)}`;
+      value = value.slice(0, colon);
+    }
+  }
+  const segments = value.toLowerCase().split('/');
+  let host = 'docker.io';
+  if (
+    segments.length > 1 &&
+    (segments[0].includes('.') || segments[0].includes(':') || segments[0] === 'localhost')
+  ) {
+    host = segments.shift();
+  } else if (
+    segments.length === 1 &&
+    (segments[0].includes('.') || /^localhost(:\d+)?$/.test(segments[0]))
+  ) {
+    if (wildcard)
+      return { error: 'A whole registry is just its host; `/*` belongs after a namespace.' };
+    return { pattern: segments[0], dropped: null };
+  }
+  if (segments.some((segment) => !/^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/.test(segment))) {
+    return {
+      error:
+        'A repository path is lower-case letters, digits and single dots, dashes or underscores between them.',
+    };
+  }
+  if (host === 'docker.io' && segments.length === 1 && !wildcard) segments.unshift('library');
+  return { pattern: `${host}/${segments.join('/')}${wildcard ? '/*' : ''}`, dropped };
+}
+
+function handleRules(op, body, response) {
+  const rules = rulesOf(body.tenantId);
+  switch (op) {
+    case 'list':
+      return json(response, 200, {
+        rules: [...rules.values()].sort((a, b) => a.pattern.localeCompare(b.pattern)),
+      });
+    case 'restore': {
+      let added = 0;
+      for (const [pattern, note] of RULE_SEED) {
+        if ([...rules.values()].some((rule) => rule.pattern === pattern)) continue;
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        rules.set(id, {
+          id,
+          pattern,
+          note,
+          registryUsername: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+        added += 1;
+      }
+      return json(response, 200, { added, rules: [...rules.values()] });
+    }
+    case 'delete': {
+      if (!rules.has(body.id ?? '')) return error(response, 404, 'not_found', 'No such rule.');
+      rules.delete(body.id);
+      return json(response, 200, { deleted: true, id: body.id });
+    }
+    case 'set': {
+      const normalized = normalizeRule(body.pattern);
+      if (normalized.error) return error(response, 400, 'bad_request', normalized.error);
+      const username =
+        typeof body.registryUsername === 'string' ? body.registryUsername.trim() : '';
+      const secret = typeof body.registrySecret === 'string' ? body.registrySecret : '';
+      if ((username && !secret) || (!username && secret)) {
+        return error(
+          response,
+          400,
+          'bad_request',
+          'A registry credential is a username and a secret together.'
+        );
+      }
+      const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null;
+      const duplicate = [...rules.values()].find(
+        (rule) => rule.pattern === normalized.pattern && rule.id !== body.id
+      );
+      if (duplicate)
+        return error(response, 409, 'exists', 'A rule for that pattern already exists.');
+      const now = new Date().toISOString();
+      if (body.id) {
+        const existing = rules.get(body.id);
+        if (!existing) return error(response, 404, 'not_found', 'No such rule.');
+        existing.pattern = normalized.pattern;
+        existing.note = note;
+        existing.updatedAt = now;
+        if (username) existing.registryUsername = username;
+        else if (body.clearCredential === true) existing.registryUsername = null;
+        return json(response, 200, { rule: existing, dropped: normalized.dropped });
+      }
+      const id = randomUUID();
+      const rule = {
+        id,
+        pattern: normalized.pattern,
+        note,
+        registryUsername: username || null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      rules.set(id, rule);
+      return json(response, 201, { rule, dropped: normalized.dropped });
+    }
+    default:
+      return error(response, 404, 'unknown_operation');
+  }
+}
+
+function handleServices(op, body, response) {
+  if (op.startsWith('rules/')) return handleRules(op.slice('rules/'.length), body, response);
+  const scope = scopeOf(body);
+  scope.services ??= new Map();
+  const wireService = (service) => ({ ...service });
+  switch (op) {
+    case 'list':
+      return json(response, 200, { services: [...scope.services.values()].map(wireService) });
+    case 'start': {
+      const name = String(body.name ?? '');
+      if (!/^[a-z][a-z0-9-]{0,31}$/.test(name))
+        return error(
+          response,
+          400,
+          'bad_request',
+          'A service name is lower-case letters, digits and dashes.'
+        );
+      if (scope.services.has(name))
+        return error(response, 409, 'exists', `A service named ${name} is already running.`);
+      const normalized = normalizeRule(String(body.image ?? ''));
+      if (normalized.error) return error(response, 400, 'bad_request', normalized.error);
+      const allowed = [...rulesOf(body.tenantId).values()].some((rule) =>
+        rule.pattern.endsWith('/*')
+          ? normalized.pattern.startsWith(rule.pattern.slice(0, -1))
+          : rule.pattern.includes('/')
+            ? rule.pattern === normalized.pattern
+            : normalized.pattern.startsWith(`${rule.pattern}/`)
+      );
+      if (!allowed)
+        return error(
+          response,
+          403,
+          'not_allowed',
+          `${body.image} is not an image this organization allows.`
+        );
+      const now = new Date().toISOString();
+      const service = {
+        id: randomUUID(),
+        name,
+        image:
+          normalized.pattern +
+          (normalized.dropped?.startsWith('the tag ')
+            ? `:${normalized.dropped.slice(8)}`
+            : ':latest'),
+        status: 'running',
+        error: null,
+        host: `172.20.0.${scope.services.size + 2}`,
+        ports: normalized.pattern.includes('postgres')
+          ? [5432]
+          : normalized.pattern.includes('redis')
+            ? [6379]
+            : [],
+        exportNames: Object.keys(body.exports ?? {}).sort(),
+        createdAt: now,
+        lastUsedAt: now,
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      };
+      scope.services.set(name, service);
+      return json(response, 201, { service: wireService(service) });
+    }
+    case 'stop': {
+      const service = scope.services.get(String(body.name ?? ''));
+      if (!service) return error(response, 404, 'not_found', 'No such service — see the list.');
+      scope.services.delete(service.name);
+      return json(response, 200, { service: { ...service, status: 'stopped', host: null } });
+    }
+    case 'logs': {
+      const service = scope.services.get(String(body.name ?? ''));
+      if (!service) return error(response, 404, 'not_found', 'No such service — see the list.');
+      return json(response, 200, {
+        service: wireService(service),
+        logs: 'database system is ready to accept connections\n',
+        truncated: false,
+      });
+    }
+    default:
+      return error(response, 404, 'unknown_operation');
+  }
+}
+
 function handleWorkspaces(op, body, response) {
   const scope = scopeOf(body);
   switch (op) {
@@ -852,7 +1096,14 @@ const server = createServer((request, response) => {
   }
   const op = url.pathname.startsWith('/v1/') ? url.pathname.slice(4) : '';
   void readBody(request).then((body) => {
+    // The rule verbs are the organization's: a tenant, no subject.
+    if (op.startsWith('services/rules/')) {
+      if (!body.tenantId) return error(response, 400, 'bad_request');
+      return handleServices(op.slice('services/'.length), body, response);
+    }
     if (!body.tenantId || !body.subject) return error(response, 400, 'bad_request');
+    if (op.startsWith('services/'))
+      return handleServices(op.slice('services/'.length), body, response);
     if (op.startsWith('workspaces/'))
       return handleWorkspaces(op.slice('workspaces/'.length), body, response);
     if (op.startsWith('env/')) return handleEnv(op.slice('env/'.length), body, response);

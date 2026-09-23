@@ -89,7 +89,14 @@ function sleep(ms: number): Promise<void> {
 export const CODE_DELEGATE_TOOL = 'code_delegate';
 
 /** Tools a sub-agent never gets: publishing and further delegation stay with the orchestrator. */
-const WITHHELD = new Set(['code_git_push', CODE_DELEGATE_TOOL, 'code_clone']);
+const WITHHELD = new Set([
+  'code_git_push',
+  CODE_DELEGATE_TOOL,
+  'code_clone',
+  // A service outlives the sub-agent's task; what runs beside the checkout is the orchestrator's call.
+  'code_service_start',
+  'code_service_stop',
+]);
 
 const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output. Do not push, do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, and anything you could not do or are unsure of. Be concrete and brief.`;
 

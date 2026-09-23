@@ -14,6 +14,10 @@ jest.mock('@renkei/sandbox-client', () => ({
     message: error.message ?? `failed: ${error.type ?? error.kind}`,
   })),
   sbEnvList: jest.fn(),
+  sbServiceList: jest.fn(),
+  sbServiceLogs: jest.fn(),
+  sbServiceStart: jest.fn(),
+  sbServiceStop: jest.fn(),
   sbWorkspaceEdit: jest.fn(),
   sbWorkspaceExec: jest.fn(),
   sbWorkspaceFind: jest.fn(),
@@ -120,12 +124,10 @@ describe('the set', () => {
 
 describe('a checkout lost mid-turn', () => {
   it('is brought back once and the call runs again in the new checkout, saying so', async () => {
-    client.sbWorkspaceLs
-      .mockResolvedValueOnce(checkoutGone)
-      .mockResolvedValueOnce({
-        ok: true,
-        val: { path: '', entries: [{ path: 'README.md', kind: 'file', sizeBytes: 12 }] },
-      });
+    client.sbWorkspaceLs.mockResolvedValueOnce(checkoutGone).mockResolvedValueOnce({
+      ok: true,
+      val: { path: '', entries: [{ path: 'README.md', kind: 'file', sizeBytes: 12 }] },
+    });
     const recover = jest.fn(async (): Promise<CheckoutRecovery> => ({
       ok: true,
       workspaceId: NEW_WS_ID,
@@ -467,5 +469,101 @@ describe('git', () => {
     const result = await tools().get('code_git_push')!.execute({}, context);
     expect(result.isError).toBe(true);
     expect(client.sbWorkspaceGitPush).not.toHaveBeenCalled();
+  });
+});
+
+describe('services beside the checkout', () => {
+  const running = {
+    id: 's1',
+    name: 'db',
+    image: 'docker.io/library/postgres:16',
+    status: 'running',
+    error: null,
+    host: '172.20.0.3',
+    ports: [5432],
+    exportNames: ['DATABASE_URL'],
+    createdAt: '',
+    lastUsedAt: '',
+    expiresAt: '',
+  };
+
+  it('the code_service_* tools exist only where the deployment offers them', () => {
+    expect(tools().has('code_service_start')).toBe(false);
+    const offered = codeTools({
+      target: TARGET,
+      workspaceId: WS_ID,
+      repoFullName: 'acme/demo',
+      repoProvider: 'atlassian-bitbucket',
+      origin: 'https://r.example',
+      servicesEnabled: true,
+    }).map((tool) => tool.def.name);
+    expect(offered).toEqual(
+      expect.arrayContaining([
+        'code_services',
+        'code_service_start',
+        'code_service_stop',
+        'code_service_logs',
+      ])
+    );
+  });
+
+  it('start hands the worker the name, image, env and exports, and answers the address', async () => {
+    client.sbServiceStart.mockResolvedValue({ ok: true, val: running });
+    const list = codeTools({
+      target: TARGET,
+      workspaceId: WS_ID,
+      repoFullName: 'acme/demo',
+      repoProvider: 'atlassian-bitbucket',
+      origin: 'https://r.example',
+      servicesEnabled: true,
+    });
+    const byName = new Map(list.map((tool) => [tool.def.name, tool]));
+    const result = await byName.get('code_service_start')!.execute(
+      {
+        name: 'db',
+        image: 'postgres:16',
+        env: { POSTGRES_PASSWORD: 'pw' },
+        exports: { DATABASE_URL: 'postgres://postgres:pw@{host}:{port}/app' },
+      },
+      context
+    );
+    expect(client.sbServiceStart).toHaveBeenCalledWith(TARGET, {
+      name: 'db',
+      image: 'postgres:16',
+      env: { POSTGRES_PASSWORD: 'pw' },
+      exports: { DATABASE_URL: 'postgres://postgres:pw@{host}:{port}/app' },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]?.text).toContain('172.20.0.3:5432');
+    expect(result.content[0]?.text).toContain('SERVICE_DB_HOST');
+    expect(result.content[0]?.text).toContain('DATABASE_URL');
+    expect(byName.get('code_services')?.readOnly).toBe(true);
+    expect(byName.get('code_service_logs')?.readOnly).toBe(true);
+    expect(byName.get('code_service_start')?.readOnly).toBeUndefined();
+  });
+
+  it('a refusal from the worker (an image outside the rules) is a clean error', async () => {
+    client.sbServiceStart.mockResolvedValue({
+      ok: false,
+      err: {
+        kind: 'op',
+        type: 'not_allowed',
+        status: 403,
+        message: 'redis is not allowed. Allowed: docker.io/library/postgres.',
+      },
+    });
+    const list = codeTools({
+      target: TARGET,
+      workspaceId: WS_ID,
+      repoFullName: 'acme/demo',
+      repoProvider: 'atlassian-bitbucket',
+      origin: 'https://r.example',
+      servicesEnabled: true,
+    });
+    const start = list.find((tool) => tool.def.name === 'code_service_start')!;
+    const result = await start.execute({ name: 'cache', image: 'redis' }, context);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('Allowed: docker.io/library/postgres');
+    expect(result.meta).toEqual({});
   });
 });

@@ -31,12 +31,22 @@ import {
   READ_DEFAULT_CHARS,
   READ_MAX_CHARS,
   WRITE_MAX_CHARS,
+  SERVICE_ENV_MAX,
+  SERVICE_EXPORT_MAX,
+  SERVICE_LOGS_DEFAULT_LINES,
+  SERVICE_LOGS_MAX_LINES,
+  SERVICE_MAX_PER_SUBJECT,
   clipOutput,
+  serviceEnvPrefix,
 } from '@renkei/connector-sandbox';
 import {
   clientFailure,
   type SandboxClientError,
   sbEnvList,
+  sbServiceList,
+  sbServiceLogs,
+  sbServiceStart,
+  sbServiceStop,
   sbWorkspaceEdit,
   sbWorkspaceExec,
   sbWorkspaceFind,
@@ -88,6 +98,12 @@ export interface CodeToolBinding {
    * turn's own model.
    */
   subagentModels?: SubagentModelChoice[];
+  /**
+   * Whether the deployment lets a project start services — containers
+   * beside the checkout (SANDBOX_SERVICES_ENABLED on both sides). Off,
+   * the code_service_* tools do not exist in the turn.
+   */
+  servicesEnabled?: boolean;
 }
 
 /**
@@ -252,6 +268,183 @@ const pathProperty = (description: string) => ({
   maxLength: 1024,
   description,
 });
+
+/** How a service reads to the model: one line each, its address and what it exports. */
+export function renderService(service: {
+  name: string;
+  image: string;
+  status: string;
+  host: string | null;
+  ports: number[];
+  exportNames: string[];
+  error: string | null;
+}): string {
+  const prefix = serviceEnvPrefix(service.name);
+  const where =
+    service.status === 'running' && service.host
+      ? `at ${service.host}${service.ports.length ? `:${service.ports.join(',')}` : ''} — ${prefix}_HOST${service.ports.length ? `, ${prefix}_PORT` : ''}${service.exportNames.length ? `, ${service.exportNames.join(', ')}` : ''} set for every command`
+      : service.error
+        ? `— ${service.error}`
+        : '';
+  return `${service.name} (${service.image}): ${service.status} ${where}`.trim();
+}
+
+/**
+ * The code_service_* tools: containers beside the checkout, from the
+ * images the organization allows. The worker decides what may run; here
+ * the shape is the model's — a name, an image, the container's own
+ * variables, and what to export into the project's commands.
+ */
+function serviceTools(
+  target: SandboxTarget,
+  failed: (error: SandboxClientError) => McpToolResult
+): LocalTool[] {
+  const envProperty = (description: string, max: number) => ({
+    type: 'object',
+    description,
+    maxProperties: max,
+    additionalProperties: { type: 'string' },
+  });
+  return [
+    {
+      def: {
+        name: 'code_services',
+        description:
+          'The services (containers) running beside this project’s checkout — a database, a cache, ' +
+          'a broker started with code_service_start — with their status, address and the variables ' +
+          'they set for every code_run command. Nothing running answers so.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      readOnly: true,
+      async execute() {
+        const listed = await sbServiceList(target);
+        if (!listed.ok) return failed(listed.err);
+        if (listed.val.length === 0) {
+          return textResult(
+            'No services are running for this project. code_service_start starts one from an image the organization allows.'
+          );
+        }
+        return textResult(listed.val.map(renderService).join('\n'));
+      },
+    },
+    {
+      def: {
+        name: 'code_service_start',
+        description:
+          'Start a service container beside the checkout for the project’s tests to use — Postgres, ' +
+          'Redis, a broker — from an image the organization allows (a refusal names what is allowed). ' +
+          'It is pulled and started on a private network, then reachable from every code_run command: ' +
+          'SERVICE_<NAME>_HOST and SERVICE_<NAME>_PORT (the image’s declared port) are set, plus ' +
+          'whatever `exports` names, rendered with {host} and {port} — e.g. ' +
+          '{"DATABASE_URL": "postgres://postgres:pw@{host}:{port}/app"} — and these win over the ' +
+          'project’s own .env for the commands you run. `env` configures the container itself ' +
+          '(POSTGRES_PASSWORD, POSTGRES_DB, …); choose a throwaway password, it is a test database. ' +
+          `A project runs at most ${SERVICE_MAX_PER_SUBJECT} services; a name in use must be stopped first. ` +
+          'Give the service a moment after it starts (its own readiness, e.g. pg_isready) before running tests. ' +
+          'The service is stopped and its data removed when the project is idle for a day, or with code_service_stop.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              pattern: '^[a-z][a-z0-9-]{0,31}$',
+              description: 'A short name — db, cache, queue — which names the SERVICE_* variables.',
+            },
+            image: {
+              type: 'string',
+              maxLength: 512,
+              description:
+                'The image, as docker pull would take it: postgres:16, redis:7, myorg.azurecr.io/team/api:1.2.',
+            },
+            env: envProperty('The container’s own environment variables.', SERVICE_ENV_MAX),
+            exports: envProperty(
+              'Variables to set for every code_run command while the service runs, as templates over {host} and {port}.',
+              SERVICE_EXPORT_MAX
+            ),
+          },
+          required: ['name', 'image'],
+        },
+      },
+      async execute(input, context) {
+        if (context.readOnly) return errorResult('The organization is in read-only mode.');
+        const started = await sbServiceStart(target, {
+          name: str(input.name),
+          image: str(input.image),
+          ...(isRecord(input.env) ? { env: stringRecord(input.env) } : {}),
+          ...(isRecord(input.exports) ? { exports: stringRecord(input.exports) } : {}),
+        });
+        if (!started.ok) return failed(started.err);
+        return textResult(`Started ${renderService(started.val)}`);
+      },
+    },
+    {
+      def: {
+        name: 'code_service_stop',
+        description:
+          'Stop a service started with code_service_start: its container is stopped and removed with ' +
+          'its data, its variables leave the commands’ environment, and its name is free again.',
+        inputSchema: {
+          type: 'object',
+          properties: { name: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' } },
+          required: ['name'],
+        },
+      },
+      async execute(input, context) {
+        if (context.readOnly) return errorResult('The organization is in read-only mode.');
+        const stopped = await sbServiceStop(target, str(input.name));
+        if (!stopped.ok) return failed(stopped.err);
+        return textResult(`Stopped and removed ${stopped.val.name} (${stopped.val.image}).`);
+      },
+    },
+    {
+      def: {
+        name: 'code_service_logs',
+        description:
+          'The last lines a service wrote (both streams) — to see whether it is ready, or why it ' +
+          `stopped. Default ${SERVICE_LOGS_DEFAULT_LINES} lines, at most ${SERVICE_LOGS_MAX_LINES}.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+            lines: { type: 'integer', minimum: 1, maximum: SERVICE_LOGS_MAX_LINES },
+          },
+          required: ['name'],
+        },
+      },
+      readOnly: true,
+      async execute(input) {
+        const lines = num(input.lines);
+        const got = await sbServiceLogs(target, {
+          name: str(input.name),
+          ...(lines !== undefined ? { lines } : {}),
+        });
+        if (!got.ok) return failed(got.err);
+        const head = renderService(got.val.service);
+        const body = got.val.logs.trim() ? got.val.logs.replace(/\s+$/, '') : '(no output yet)';
+        return textResult(
+          `${head}\n${got.val.truncated ? '[the start was cut]\n' : ''}--- logs ---\n${body}`
+        );
+      },
+    },
+  ];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringRecord(value: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    out[key] =
+      typeof entry === 'string'
+        ? entry
+        : entry === undefined || entry === null
+          ? ''
+          : String(entry);
+  }
+  return out;
+}
 
 export function codeTools(binding: CodeToolBinding): LocalTool[] {
   const { target } = binding;
@@ -757,6 +950,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       },
     },
   ];
+  if (binding.servicesEnabled) tools.push(...serviceTools(target, failed));
   // One recovery state for the whole turn: the tools share the clone
   // that brings the checkout back, the count of times it was lost, and
   // the refusal once that count is spent.

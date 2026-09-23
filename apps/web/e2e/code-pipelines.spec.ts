@@ -60,7 +60,7 @@ async function db(): Promise<Client> {
 }
 
 /**
- * What migration 121 seeds for a real tenant, in short: global-setup
+ * What migration 122 seeds for a real tenant, in short: global-setup
  * deletes and reinserts the e2e tenant on every run, and tenant_id
  * cascades — which drops the seeded rows. Patched in the way
  * project-templates.spec.ts patches its own catalog.

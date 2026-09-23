@@ -90,6 +90,12 @@ function adminSections(slug: string): AdminSection[] {
           detail:
             'The starting pipeline files offered on a code project’s Pipelines page when its repository has none.',
         },
+        {
+          href: `${admin}/code-services`,
+          label: 'Code services',
+          detail:
+            'The container images a code project may start beside its checkout — your own registry, or the public ones by name.',
+        },
       ],
     },
     {

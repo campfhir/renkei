@@ -98,6 +98,14 @@ export interface WorkspaceHandlerDeps {
   db: Kysely<DB>;
   /** Whether workspaces are enabled on this worker at all (SANDBOX_WORKSPACES_ENABLED). */
   enabled: boolean;
+  /**
+   * The variables the caller's running services add to a command
+   * (services.ts): SERVICE_<NAME>_HOST and friends, and each service's
+   * exports. Set on top of the caller's own `.env`, so a service started
+   * to be what the tests talk to is what they talk to. Absent when
+   * services are off.
+   */
+  serviceEnv?: (target: store.WorkspaceTarget) => Promise<Record<string, string>>;
 }
 
 type Body = Record<string, unknown>;
@@ -640,7 +648,13 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       );
     }
     const timeoutMs = execTimeoutMs(body.timeoutMs);
-    const result = await runShell(runInputFor(workspace, env, timeoutMs), command.command);
+    // The running services' addresses and exports, over the `.env`. Not
+    // secrets — the address is the point — so they are not scrubbed.
+    const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(workspace) : {};
+    const result = await runShell(
+      runInputFor(workspace, env, timeoutMs, { extraEnv: serviceEnv }),
+      command.command
+    );
     await markEnvUsed(db, env);
     const sizeBytes = await refreshSize(workspace);
     sendJson(response, 200, {

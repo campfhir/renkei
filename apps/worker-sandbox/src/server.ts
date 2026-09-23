@@ -70,6 +70,8 @@ import { SecretVault } from './secret-vault';
 import { secretSummary } from './secrets';
 import { orphanedByNow } from './workspaces';
 import { createWorkspaceHandlers } from './workspace-endpoints';
+import { createServiceHandlers } from './service-endpoints';
+import type { ServiceManager } from './services';
 import { logger } from './logger';
 
 /**
@@ -119,6 +121,13 @@ export interface SandboxServerDeps {
   vault?: SecretVault;
   /** Code workspaces (SANDBOX_WORKSPACES_ENABLED); off answers every workspace and env verb 503. */
   workspaces?: boolean;
+  /**
+   * Code project services (SANDBOX_SERVICES_ENABLED): the manager over the
+   * Docker engine, or null, which answers every service verb 503. A
+   * running service's variables join the environment of every command a
+   * project runs (workspace-endpoints.ts).
+   */
+  services?: ServiceManager | null;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -277,7 +286,13 @@ function expiryFromNow(batchId: string | null): Date {
 export function createSandboxServer(deps: SandboxServerDeps): Server {
   const maxFileBytes = deps.maxFileBytes ?? orgMaxFileBytes;
   const vault = deps.vault ?? new SecretVault();
-  const workspaces = createWorkspaceHandlers({ db: deps.db, enabled: deps.workspaces === true });
+  const services = createServiceHandlers({ db: deps.db, manager: deps.services ?? null });
+  const workspaces = createWorkspaceHandlers({
+    db: deps.db,
+    enabled: deps.workspaces === true,
+    // A running service's variables join every command's environment.
+    ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
+  });
 
   async function handleFetch(
     body: Record<string, unknown>,
@@ -817,8 +832,13 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     const secretsOp = op.startsWith('secrets/') ? op.slice('secrets/'.length) : null;
     const workspacesOp = op.startsWith('workspaces/') ? op.slice('workspaces/'.length) : null;
     const envOp = op.startsWith('env/') ? op.slice('env/'.length) : null;
+    const servicesOp = op.startsWith('services/') ? op.slice('services/'.length) : null;
     const prefixed =
-      browserOp !== null || secretsOp !== null || workspacesOp !== null || envOp !== null;
+      browserOp !== null ||
+      secretsOp !== null ||
+      workspacesOp !== null ||
+      envOp !== null ||
+      servicesOp !== null;
     const jsonHandler = prefixed ? null : jsonHandlers[op];
     if (!prefixed && !jsonHandler) {
       return sendError(response, 404, 'unknown_operation');
@@ -837,6 +857,7 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     if (workspacesOp !== null)
       return workspaces.handleWorkspaces(workspacesOp, parsedBody, response);
     if (envOp !== null) return workspaces.handleEnv(envOp, parsedBody, response);
+    if (servicesOp !== null) return services.handleServices(servicesOp, parsedBody, response);
     await jsonHandler!(parsedBody, response);
   }
 
@@ -881,6 +902,9 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       }
       // Workspaces past their lifetime: the checkout, then the row.
       await workspaces.sweep(SWEEP_BATCH);
+      // Services past theirs: the container, then the row; and any
+      // container of ours that no row claims.
+      if (deps.services) await deps.services.sweep(SWEEP_BATCH);
       // Secrets past their lifetime: the key first, then the row; and
       // held keys past their window, wherever they are kept.
       await vault.sweepExpired();

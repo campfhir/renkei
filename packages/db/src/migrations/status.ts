@@ -151,6 +151,7 @@ export const EXPECTED_MIGRATIONS = [
   '119-code-project-active-chat',
   '120-jira-admin-change-requests',
   '121-pipeline-templates',
+  '122-code-project-services',
 ];
 
 export interface MigrationStatus {

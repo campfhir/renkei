@@ -33,6 +33,8 @@ export interface SystemPromptInput {
       envNames: string[];
       /** The checkout is being cloned as this turn's first step. */
       clonedNow?: boolean;
+      /** The code_service_* tools are in the turn: containers may be started beside the checkout. */
+      servicesEnabled?: boolean;
     } | null;
   } | null;
   /** Memory carried across every chat this person owns; null inside a project. */
@@ -160,6 +162,14 @@ You are the orchestrator of this conversation, and its context is for coordinati
 Commands run with the project's environment variables (code_env_names lists the names; values are never shown): never ask for a secret's value, never put one in a command or a file, and if one is missing ask the person to add it to the project's .env. Say what you changed and what you ran.`;
 
 /**
+ * Services: a project whose tests need a database or a cache gets one
+ * beside the checkout, from the organization's allowed images — said
+ * only when the deployment offers the tools, so a model never reaches
+ * for a verb it does not have.
+ */
+const SERVICES_BRIEF = `When the project's tests or commands need a service — a database, a cache, a message broker — start one beside the checkout with code_service_start from an image the organization allows (a refusal names what is allowed; do not work around it, tell the person). Set the container's own variables in env with a throwaway password, and export what the project expects (DATABASE_URL, REDIS_URL) as templates over {host} and {port}; those variables are then set for every code_run command, over the project's .env. Wait for the service to be ready (its logs, or a readiness command such as pg_isready) before running tests against it, and stop it with code_service_stop when the work is done. code_services lists what is running.`;
+
+/**
  * A voice conversation has no transcript to glance at while the reply is
  * worked out: what the model writes is read aloud as it streams, and a
  * tool call is silence. So the model narrates — one plain sentence before
@@ -210,7 +220,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         `This is a code project on the repository ${code.repoFullName}` +
           (code.branch ? ` (branch ${code.branch})` : '') +
           (code.ready
-            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}`
+            ? `.${code.clonedNow ? ' It is being cloned into the sandbox as this turn’s first step; that step’s result says whether the checkout is usable.' : ''}${code.envNames.length ? ` Its environment sets: ${code.envNames.join(', ')}.` : ' It has no environment variables.'}\n\n${CODE_BRIEF}${code.servicesEnabled ? `\n\n${SERVICES_BRIEF}` : ''}`
             : `. Its checkout is not usable right now (${code.notReady ?? 'not ready'}), so the code_* tools are not available in this turn; say so if the person asks for work in the repository.`)
       );
     }
