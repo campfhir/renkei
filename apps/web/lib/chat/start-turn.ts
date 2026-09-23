@@ -329,7 +329,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
   const log = (
     message: string,
     fields: Record<string, unknown>,
-    level: 'debug' | 'warn' = 'warn'
+    level: 'debug' | 'warn' | 'error' = 'warn'
   ) =>
     logger[level](message, {
       component: 'chat/turn',

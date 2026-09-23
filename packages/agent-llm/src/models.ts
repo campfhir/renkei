@@ -161,11 +161,18 @@ async function listOpenAiModels(
   const url = withQuery(`${baseUrl}/models`, {
     ...(config.apiVersion ? { 'api-version': config.apiVersion } : {}),
   });
-  // Both headers, same as the adapter: OpenAI reads the Bearer, classic
-  // Azure surfaces read api-key, each ignores the other.
+  // Same rule as the adapter (openai.ts): both headers everywhere except
+  // Azure, whose gateway fails a request carrying both with "credential
+  // validation failed" even though one of them is right.
+  let isAzure: boolean;
+  try {
+    isAzure = /\.azure\.com$/i.test(new URL(baseUrl).hostname);
+  } catch {
+    isAzure = false;
+  }
   const result = await getJson(url, {
     authorization: `Bearer ${config.apiKey}`,
-    'api-key': config.apiKey,
+    ...(isAzure ? {} : { 'api-key': config.apiKey }),
   });
   if (!result.ok) return result;
   // This dialect's list is one unpaginated jumble in no useful order;

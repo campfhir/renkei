@@ -166,6 +166,22 @@ describe('OpenAiProvider.complete', () => {
     expect(body.reasoning_effort).toBe('medium');
   });
 
+  it('sends Bearer alone on an Azure host — a pile of headers fails Azure\'s gateway', async () => {
+    const azure = new OpenAiProvider({
+      apiKey: 'azure-key',
+      model: 'gpt-6-astra-1',
+      baseUrl: 'https://myresource.services.ai.azure.com/openai/v1',
+    });
+    fetchSpy.mockResolvedValue(jsonResponse(200, okBody));
+    await azure.complete(request);
+    const headers = (fetchSpy.mock.calls[0] as [string, RequestInit])[1].headers as Record<
+      string,
+      string
+    >;
+    expect(headers.authorization).toBe('Bearer azure-key');
+    expect(headers['api-key']).toBeUndefined();
+  });
+
   it('appends api-version when configured — the Azure route-versioning shape', async () => {
     const versioned = new OpenAiProvider({
       apiKey: 'azure-key',

@@ -297,7 +297,11 @@ export interface TurnRunnerDeps {
    * evidence of what the chat actually did, kept for whoever turns the
    * log level down to answer "did it even try?" after the fact.
    */
-  log?: (message: string, fields: Record<string, unknown>, level?: 'debug' | 'warn') => void;
+  log?: (
+    message: string,
+    fields: Record<string, unknown>,
+    level?: 'debug' | 'warn' | 'error'
+  ) => void;
 }
 
 /**
@@ -1084,10 +1088,14 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         if (result.err.type === 'aborted' || cancelRequested) {
           return await finalize('canceled', null, 'canceled');
         }
-        log('chat turn model error: {kind} {message}', {
-          kind: result.err.type,
-          message: result.err.message ?? '',
-        });
+        log(
+          'chat turn model error: {kind} {message}',
+          {
+            kind: result.err.type,
+            message: result.err.message ?? '',
+          },
+          'error'
+        );
         return await finalize('failed', friendlyLlmError(result.err.type), 'failed');
       }
 

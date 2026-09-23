@@ -5,9 +5,14 @@
  *
  * Azure AI Foundry: set base_url to the resource's v1 surface
  * (https://{resource}.openai.azure.com/openai/v1) and `model` to the
- * DEPLOYMENT name. The key is sent as BOTH `Authorization: Bearer` and
- * `api-key` — OpenAI reads the first, classic Azure surfaces the second,
- * and each ignores the header it doesn't use.
+ * DEPLOYMENT name. Off Azure, the key rides as BOTH `Authorization: Bearer`
+ * and `api-key` — OpenAI reads the first, other OpenAI-compatible gateways
+ * sometimes only know the second, and each ignores the header it doesn't
+ * use. Azure's own gateway does NOT ignore the one it doesn't use: seeing
+ * both fails the call with "credential validation failed" even though one
+ * of them is right (the same failure mode anthropic.ts guards against), so
+ * an Azure host gets EXACTLY the header Foundry's own sample curl sends —
+ * Bearer alone.
  *
  * Translation notes (the contract's blocks are Anthropic-shaped):
  *   - tool_use → assistant `tool_calls` entries (arguments JSON-encoded);
@@ -230,6 +235,22 @@ export class OpenAiProvider implements LlmProvider {
     return { baseUrl, url: `${baseUrl}/chat/completions${version}` };
   }
 
+  /** See the module docstring: Azure's gateway rejects a request carrying
+   *  both credential headers, so an Azure host gets Bearer alone. */
+  private headers(baseUrl: string): Record<string, string> {
+    let isAzure: boolean;
+    try {
+      isAzure = /\.azure\.com$/i.test(new URL(baseUrl).hostname);
+    } catch {
+      isAzure = false;
+    }
+    return {
+      'content-type': 'application/json',
+      authorization: `Bearer ${this.config.apiKey}`,
+      ...(isAzure ? {} : { 'api-key': this.config.apiKey }),
+    };
+  }
+
   private baseBody(request: LlmRequest, stream: boolean): Record<string, unknown> {
     return {
       model: this.config.model,
@@ -280,11 +301,7 @@ export class OpenAiProvider implements LlmProvider {
       try {
         response = await fetch(url, {
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${this.config.apiKey}`,
-            'api-key': this.config.apiKey,
-          },
+          headers: this.headers(baseUrl),
           body: JSON.stringify(body),
           signal,
         });
