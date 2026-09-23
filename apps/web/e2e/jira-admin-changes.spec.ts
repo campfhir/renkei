@@ -309,10 +309,14 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
   const card = page.locator('[data-coach="card-jira-admin"]');
   const waiting = card.getByTestId('jira-admin-changes-link');
   await expect(waiting).toHaveText('1 proposed change waiting for your review');
+  // Client-side navigations: on a cold `next dev` a route compiles on its
+  // first visit (the review page took ~5s), past the default 5s wait.
   await waiting.click();
-  await expect(page).toHaveURL(new RegExp(`/${fixture.slug}/jira-admin/changes$`));
+  await expect(page).toHaveURL(new RegExp(`/${fixture.slug}/jira-admin/changes$`), {
+    timeout: 30_000,
+  });
   await page.getByRole('link', { name: new RegExp('Source \\(Ops context\\)') }).click();
-  await expect(page).toHaveURL(new RegExp(`/jira-admin/changes/${id}$`));
+  await expect(page).toHaveURL(new RegExp(`/jira-admin/changes/${id}$`), { timeout: 30_000 });
 
   // --- The review page: every operation, where, why. ---
   await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toBeVisible();
