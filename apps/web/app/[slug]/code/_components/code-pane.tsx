@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
@@ -58,6 +59,7 @@ export default function CodePane({
   chatPaths,
   personName,
   refreshKey,
+  backHref = null,
   onNote,
   onAsk,
   onClose,
@@ -76,6 +78,12 @@ export default function CodePane({
   personName: string | null;
   /** Bumped when a turn ends; the tree reads its open folders again. */
   refreshKey: number;
+  /**
+   * The way back to the project, when the pane is the page's left edge
+   * (beside the chat): the arrow belongs at the far left of the page,
+   * not in the middle of it, so the chat's title bar hands it over.
+   */
+  backHref?: string | null;
   onNote: (note: ChatNote) => void;
   onAsk: ((text: string) => Promise<boolean>) | null;
   /** Close the pane (beside the chat only). */
@@ -351,6 +359,16 @@ export default function CodePane({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-12 shrink-0 items-stretch border-b border-gray-200 dark:border-gray-800">
+        {backHref ? (
+          <Link
+            href={backHref}
+            aria-label="Back to project"
+            title="Back to the project"
+            className="flex w-10 shrink-0 items-center justify-center border-r border-gray-200 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:border-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.chevronLeft} className="h-5 w-5" />
+          </Link>
+        ) : null}
         <button
           type="button"
           onClick={toggleTree}
@@ -470,7 +488,8 @@ function statusWord(file: CodePaneFile, dirty: boolean, canEdit: boolean): strin
   if (file.conflict) return 'Changed in the checkout while you were editing';
   if (dirty) return 'Unsaved edits · Save writes to the checkout';
   if (file.binary) return 'Binary file';
-  if (file.source !== 'checkout') return `From ${fileHostLabel(file.source)} · nothing is cloned yet`;
+  if (file.source !== 'checkout')
+    return `From ${fileHostLabel(file.source)} · nothing is cloned yet`;
   if (!canEdit) return 'Read-only · only the chat’s owner edits here';
   if (!file.editable) return file.truncated ? 'Too long to edit here' : 'Read-only';
   return 'Saved to the checkout · not committed until you commit';

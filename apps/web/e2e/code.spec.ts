@@ -380,12 +380,17 @@ test.describe('code projects', () => {
     //    that), the repository fixed — no clone or change buttons — and
     //    the README from Bitbucket in place of a description ──
     await seededRow.click();
-    await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
+    // First hit on a project page in this test: dev-mode's on-demand
+    // compile can outrun the default assertion timeout.
+    await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByText('Your code project')).toBeVisible();
-    // A code project keeps no files of its own, picks its tools per chat,
-    // and describes itself through its README; its chats are listed here.
+    // A code project keeps no files of its own, has a toolset of its own
+    // (the picker in its header, which its chats start from), and
+    // describes itself through its README; its chats are listed here.
     await expect(main.getByRole('button', { name: 'Add files' })).toHaveCount(0);
-    await expect(main.getByRole('button', { name: 'Tools' })).toHaveCount(0);
+    await expect(main.getByRole('button', { name: 'Tools' })).toBeVisible();
     await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
@@ -503,15 +508,26 @@ test.describe('code projects', () => {
     // ── A chat started in the project: its title bar names the project,
     //    links back to it, and carries the code buttons ──
     await main.getByRole('link', { name: 'New chat' }).click();
-    await expect(
-      page.getByRole('heading', { name: `New chat in ${ids.seededName}` })
-    ).toBeVisible();
+    // First hit on the chat page in this test — and, beside it, the code
+    // pane's own bundle: dev-mode's on-demand compile can outrun the
+    // default assertion timeout.
+    await expect(page.getByRole('heading', { name: `New chat in ${ids.seededName}` })).toBeVisible({
+      timeout: 30_000,
+    });
     const crumb = main.getByRole('link', { name: ids.seededName });
     await expect(crumb).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
     await expect(main.getByRole('link', { name: 'Back to project' })).toHaveAttribute(
       'href',
       `/${E2E_SLUG}/code/${ids.seededProjectId}`
     );
+    // The code pane opens beside a code chat on a wide screen (its own
+    // test below) and narrows the chat's column into its compact title
+    // bar; these steps are about that bar's own buttons, so the pane is
+    // put away first.
+    if (!mobile) {
+      await main.getByRole('button', { name: 'Hide the code' }).click();
+      await expect(main.getByRole('tablist', { name: 'Open files' })).toHaveCount(0);
+    }
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-new.png');
 
@@ -568,21 +584,24 @@ test.describe('code projects', () => {
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
 
     // ── A finished turn in the project's chat: the clone step reads as a
-    //    sentence after the prompt, the commit by its own name, each with
-    //    its git glyph, both opening to their input and result ──
+    //    sentence inside the work fold after the prompt; the commit is
+    //    lifted out of the fold as a milestone card of its own, with its
+    //    git glyph and the result on its line ──
     await seedTranscript(ids);
     await main.getByRole('link', { name: ids.seededChatTitle }).click();
     await expect(main.getByText('Why does the invoice job retry forever?')).toBeVisible();
-    const work = main.locator('details.chat-fold').first();
-    await expect(work).toContainText('2 tool calls');
+    const work = main.locator('details.chat-fold:not([data-milestone])').first();
+    await expect(work).toContainText('1 tool call');
     await work.locator('> summary').click();
     const steps = work.locator('ol > li > details.chat-fold');
     const cloneStep = steps.filter({ hasText: 'Cloned the repository' });
     await expect(cloneStep).toBeVisible();
     await cloneStep.locator('> summary').click();
     await expect(cloneStep.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
-    const commitStep = steps.filter({ hasText: 'Called Commit' });
-    await expect(commitStep).toBeVisible();
+    const commitCard = main.locator('details[data-milestone="code_git_commit"]');
+    await expect(commitCard).toBeVisible();
+    await expect(commitCard).toContainText('Committed');
+    await expect(commitCard).toContainText('3f2a9c1');
     await expect(main.getByText('Calling', { exact: false })).toHaveCount(0);
     await shot('code-chat-transcript.png');
     await main.getByRole('link', { name: 'Back to project' }).click();
@@ -637,6 +656,170 @@ test.describe('code projects', () => {
     await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/code$`));
     await expect(main.getByRole('link', { name: ids.newName })).toHaveCount(0);
     await expect(main.getByRole('link', { name: ids.seededName })).toBeVisible();
+  });
+
+  test('the code pane: read, edit, save, commit and push beside the chat', async ({
+    page,
+  }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const mobile = testInfo.project.name === 'mobile';
+    const shot = (name: string) =>
+      page.screenshot({
+        path: path.join(
+          import.meta.dirname,
+          '..',
+          'test-results',
+          'screens',
+          testInfo.project.name,
+          name
+        ),
+        fullPage: false,
+      });
+    const main = page.getByRole('main');
+    await seedCheckout(ids);
+    await page.goto(`/${E2E_SLUG}/chat/${ids.seededChatId}`);
+    await expect(page.getByRole('heading', { name: ids.seededChatTitle })).toBeVisible();
+
+    if (mobile) {
+      // ── A phone: the pane is the Code tab of a switch in the title bar.
+      //    It opens on the working tree's changed files, then the tree,
+      //    with Commit along the bottom ──
+      const tabs = main.getByRole('tablist', { name: 'Chat or code' });
+      await expect(tabs.getByRole('tab', { name: /Chat/ })).toHaveAttribute(
+        'aria-selected',
+        'true'
+      );
+      await tabs.getByRole('tab', { name: /Code/ }).click();
+      await expect(main.getByText('Changed · not committed')).toBeVisible({ timeout: 20_000 });
+      await expect(main.getByRole('button', { name: /src\/billing\.ts/ }).first()).toBeVisible();
+      await expect(main.getByRole('tree', { name: 'Files' })).toBeVisible();
+      await expect(main.getByRole('button', { name: /^Commit/ })).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+      await shot('code-pane-mobile-files.png');
+
+      // ── A file opens over the list, in a plain text area with accessory
+      //    keys, Save above the keyboard ──
+      await main
+        .getByRole('button', { name: /src\/billing\.ts/ })
+        .first()
+        .click();
+      const area = main.getByLabel('Contents of src/billing.ts');
+      await expect(area).toBeVisible();
+      await expect(area).toHaveValue(/MAX_ATTEMPTS/);
+      await expect(main.getByRole('toolbar', { name: 'Keys' })).toBeVisible();
+      const save = main.getByRole('button', { name: 'Save to checkout' });
+      await expect(save).toBeDisabled();
+      await area.focus();
+      await page.keyboard.press('Control+End');
+      await page.keyboard.type('\n// reviewed by hand\n');
+      await expect(save).toBeEnabled();
+      await expect(tabs.getByRole('tab', { name: /Code/ })).toContainText('1');
+      await expectNoHorizontalOverflow(page);
+      await shot('code-pane-mobile-editing.png');
+      await save.click();
+      await expect(save).toBeDisabled();
+
+      // ── Commit from the list, as a dialog; then the Chat tab shows what
+      //    was done ──
+      await main.getByRole('button', { name: 'Back to files' }).click();
+      await main.getByRole('button', { name: /^Commit/ }).click();
+      const dialog = page.getByRole('dialog', { name: 'Commit changes' });
+      await expect(dialog.getByText('src/billing.ts')).toBeVisible();
+      await expect(dialog.getByText('edited here')).toBeVisible();
+      await dialog.getByLabel('Message').fill('Note the manual review');
+      await shot('code-pane-mobile-commit.png');
+      await dialog.getByRole('button', { name: /^Commit 1 file/ }).click();
+      const done = page.getByRole('dialog', { name: 'Committed' });
+      await expect(done.getByText(/Committed c0ffee/)).toBeVisible();
+      await done.getByRole('button', { name: 'Done' }).click();
+      await tabs.getByRole('tab', { name: /Chat/ }).click();
+      await expect(main.getByText(/You edited/)).toBeVisible();
+      await expect(main.getByText(/You committed c0ffee/)).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+      await shot('code-pane-mobile-chat-notes.png');
+      return;
+    }
+
+    // ── A wide screen: the pane beside the chat, open at first, with the
+    //    back arrow at the page's left edge, the changed files above the
+    //    tree, and the chat in its compact form on the right ──
+    const openFiles = main.getByRole('tablist', { name: 'Open files' });
+    await expect(openFiles).toBeVisible();
+    // First hits on the tree and diff routes in this test: dev-mode's
+    // on-demand compile can outrun the default assertion timeout.
+    const tree = main.getByRole('tree', { name: 'Files' });
+    await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
+    await expect(main.getByText('Changed · not committed')).toBeVisible({ timeout: 20_000 });
+    const back = main.getByRole('link', { name: 'Back to project' });
+    await expect(back).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
+    expect((await back.boundingBox())!.x).toBeLessThan((await tree.boundingBox())!.x);
+    expect((await back.boundingBox())!.x).toBeLessThan((await openFiles.boundingBox())!.x);
+    // The chat column is narrow beside the pane: its title bar folds.
+    await expect(main.getByRole('button', { name: 'More' })).toBeVisible();
+    await expect(main.getByRole('button', { name: 'Changes' })).toHaveCount(0);
+
+    // ── A file from the tree opens in Monaco, read as the checkout has it ──
+    await tree.getByRole('button', { name: 'src' }).click();
+    await tree.getByRole('button', { name: /billing\.ts/ }).click();
+    await expect(openFiles.getByRole('tab', { name: /billing\.ts/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    const editor = main.locator('.monaco-editor');
+    await expect(editor).toBeVisible({ timeout: 20_000 });
+    await expect(editor.getByText('MAX_ATTEMPTS').first()).toBeVisible();
+    await expect(
+      main.getByText('Saved to the checkout · not committed until you commit')
+    ).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await shot('code-pane-desktop.png');
+
+    // ── Typing marks the tab and counts as unsaved; Save writes it to the
+    //    checkout and the chat notes what was done ──
+    const saveButton = main.getByRole('button', { name: /^Save/ });
+    await expect(saveButton).toBeDisabled();
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('\n// reviewed by hand\n');
+    await expect(main.getByText('1 unsaved')).toBeVisible();
+    await expect(saveButton).toBeEnabled();
+    await expect(main.getByText('Unsaved edits · Save writes to the checkout')).toBeVisible();
+    await shot('code-pane-desktop-editing.png');
+    await saveButton.click();
+    await expect(main.getByText('1 unsaved')).toHaveCount(0);
+    await expect(main.getByText(/You edited/)).toBeVisible();
+    await expect(main.getByRole('button', { name: 'src/billing.ts', exact: true })).toBeVisible();
+
+    // ── Commit: the changed files with who-changed-what tags, a message,
+    //    then the hash and a push ──
+    await main.getByRole('button', { name: /^Commit/ }).click();
+    const dialog = page.getByRole('dialog', { name: 'Commit changes' });
+    await expect(dialog.getByText('src/billing.ts')).toBeVisible();
+    await expect(dialog.getByText('edited here')).toBeVisible();
+    await expect(dialog.getByText(/Nothing leaves the sandbox until you push/)).toBeVisible();
+    await dialog.getByLabel('Message').fill('Note the manual review');
+    await dialog.getByLabel('Description').fill('A comment for the next reader.');
+    await shot('code-pane-desktop-commit.png');
+    await dialog.getByRole('button', { name: /^Commit 1 file/ }).click();
+    const done = page.getByRole('dialog', { name: 'Committed' });
+    await expect(done.getByText(/Committed c0ffee/)).toBeVisible();
+    await expect(done.getByText('not pushed')).toBeVisible();
+    await done.getByRole('button', { name: 'Push branch' }).click();
+    await expect(done.getByText(/pushed to origin\/main/)).toBeVisible();
+    await shot('code-pane-desktop-pushed.png');
+    await done.getByRole('button', { name: 'Done' }).click();
+    await expect(main.getByText(/You committed c0ffee/)).toBeVisible();
+    await expect(main.getByText(/You pushed main/)).toBeVisible();
+
+    // ── Hidden, the chat takes the whole column back and the back arrow
+    //    returns to its title bar; shown again, it comes back with its tabs ──
+    await main.getByRole('button', { name: 'Hide the code' }).click();
+    await expect(openFiles).toHaveCount(0);
+    await expect(main.getByRole('button', { name: 'Changes' })).toBeVisible();
+    await expect(main.getByRole('link', { name: 'Back to project' })).toBeVisible();
+    await shot('code-pane-desktop-hidden.png');
+    await main.getByRole('button', { name: 'Show the code' }).click();
+    await expect(openFiles.getByRole('tab', { name: /billing\.ts/ })).toBeVisible();
   });
 
   test('new project via a freshly created Bitbucket repository', async ({ page }, testInfo) => {
