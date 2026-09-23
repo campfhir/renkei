@@ -234,8 +234,13 @@ describe('OpenAiResponsesProvider.complete', () => {
       // Even this in-body failure (a 200 HTTP status) carries the exact
       // request sent — the whole point being no one has to guess what was
       // sent to a dialect where "ok" and "failed" can share a status code.
-      const cause: { request?: { model?: unknown; input?: unknown } } =
-        typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+      const cause: {
+        url?: unknown;
+        headers?: { authorization?: unknown };
+        request?: { model?: unknown; input?: unknown };
+      } = typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+      expect(cause.url).toBe('https://api.openai.com/v1/responses');
+      expect(cause.headers?.authorization).toBe('Bearer sk-test');
       expect(cause.request?.model).toBe('gpt-6-astra-1');
       expect(Array.isArray(cause.request?.input)).toBe(true);
     }

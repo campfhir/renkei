@@ -284,6 +284,7 @@ export class OpenAiProvider implements LlmProvider {
   ): Promise<Result<Response, LlmErrorKind>> {
     const { baseUrl, url } = this.endpoint();
     const baseBody = this.baseBody(request, stream);
+    const headers = this.headers(baseUrl);
     for (;;) {
       const body = {
         ...baseBody,
@@ -295,17 +296,14 @@ export class OpenAiProvider implements LlmProvider {
       try {
         response = await fetch(url, {
           method: 'POST',
-          headers: this.headers(baseUrl),
+          headers,
           body: JSON.stringify(body),
           signal,
         });
       } catch (error) {
         return err(transportErrorKind(error, callerSignal), {
           message: error instanceof Error ? error.message : String(error),
-          cause: {
-            summary: summarizeWireRequest(`${baseUrl}/chat/completions`, body),
-            request: body,
-          },
+          cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
         });
       }
 
@@ -321,13 +319,11 @@ export class OpenAiProvider implements LlmProvider {
         }
         return err(errorKindOf(response.status, text), {
           message: `OpenAI-compatible endpoint ${response.status}: ${text.slice(0, 500)}`,
-          // The exact request sent, alongside a redacted summary — see
-          // WireRequestCause's doc. `request` can hold real prompt/tool
-          // content; a caller logs it only under secure(), never bare.
-          cause: {
-            summary: summarizeWireRequest(`${baseUrl}/chat/completions`, body),
-            request: body,
-          },
+          // The full request — URL (query params included), headers, and
+          // body — alongside a redacted summary of the body; see
+          // WireRequestCause's doc for why the credential in `headers`
+          // is the one part a caller must mask before logging this.
+          cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
         });
       }
       return ok(response);

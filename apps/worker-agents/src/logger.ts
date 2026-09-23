@@ -1,4 +1,5 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
+export { secure, redact } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';

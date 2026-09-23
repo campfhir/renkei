@@ -1424,6 +1424,8 @@ describe('runChatTurn logs the actual request on a model error', () => {
           message: 'OpenAI-compatible endpoint 400: bad request',
           cause: {
             summary: 'POST https://x/y\n{"model":"<redacted>"}',
+            url: 'https://api.openai.com/v1/chat/completions',
+            headers: { authorization: 'Bearer sk-real-secret', 'content-type': 'application/json' },
             request: { model: 'gpt-6-astra-1', messages: [{ role: 'user', content: 'hi' }] },
           },
         });
@@ -1455,6 +1457,16 @@ describe('runChatTurn logs the actual request on a model error', () => {
     );
     expect(parsed.model).toBe('gpt-6-astra-1');
     expect(Array.isArray(parsed.messages)).toBe(true);
+
+    // The URL rides plain; the credential-bearing header is masked, every
+    // other header is plain.
+    expect(errorLog?.fields.url).toBe('https://api.openai.com/v1/chat/completions');
+    const headers = errorLog?.fields.headers as
+      | { authorization?: { _secure?: boolean; value?: string }; 'content-type'?: unknown }
+      | undefined;
+    expect(headers?.authorization?._secure).toBe(true);
+    expect(headers?.authorization?.value).toBe('Bearer sk-real-secret');
+    expect(headers?.['content-type']).toBe('application/json');
   });
 });
 

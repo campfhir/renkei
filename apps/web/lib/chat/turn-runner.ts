@@ -41,6 +41,7 @@
 
 import {
   streamOrComplete,
+  maskCredentialHeaders,
   wireRequestCauseOf,
   type LlmContentBlock,
   type LlmErrorKind,
@@ -533,28 +534,6 @@ function clip(text: string, max: number): string {
     ? `${text.slice(0, max)}\n…[${text.length - max} more characters clipped]`
     : text;
 }
-
-/**
- * How much of a tool call's arguments or result rides on a debug log line —
- * matches the connectors' own request/response logging (mcp-tools/common.ts):
- * a secure()-marked value past ~2KB of ciphertext falls into blob storage,
- * which the log viewer does not decrypt on read, so this keeps it inline.
- */
-const LOG_BODY_MAX_CHARS = 1300;
-
-/**
- * How much of the actual model request rides on an error log line — the
- * agents engine's own PROMPT_DETAIL_CHARS scale, not the tight
- * LOG_BODY_MAX_CHARS above: a tool call's arguments are a few hundred
- * bytes, but a rejected request is the whole point of the log line, and
- * clipping it to 1300 chars would cut off the very tool definitions or
- * settings most likely to be the actual cause. This is exactly the class
- * of guess this exists to end — see wireRequestCauseOf's doc. Logged as
- * plain text, not secure(): it holds no credential (those never leave the
- * request's headers, never logged at all), so there is nothing here the
- * encrypt-at-rest path protects — only inflates the record.
- */
-const REQUEST_LOG_MAX_CHARS = 40_000;
 
 /**
  * Whether a tool_use block's raw streamed JSON never finished — non-empty
@@ -1110,10 +1089,17 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             {
               kind: result.err.type,
               message: result.err.message ?? '',
-              // Plain text, not secure(): no credential ever lives in a
-              // request body — see REQUEST_LOG_MAX_CHARS's doc.
+              // Plain text, unclipped — see wireRequestCauseOf's doc: no
+              // credential lives in the URL or body, and the logging
+              // pipeline already handles an oversized value. `headers`
+              // alone is masked, since it's the one part of this that
+              // does carry one (authorization / api-key).
               ...(cause
-                ? { request: clip(JSON.stringify(cause.request), REQUEST_LOG_MAX_CHARS) }
+                ? {
+                    url: cause.url,
+                    headers: maskCredentialHeaders(cause.headers, secure),
+                    request: JSON.stringify(cause.request),
+                  }
                 : {}),
             },
             'error'
@@ -1299,7 +1285,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             tool: use.name,
             toolUseId: use.id,
             local: deps.localTools.has(use.name),
-            input: secure(clip(JSON.stringify(use.input ?? {}), LOG_BODY_MAX_CHARS)),
+            input: JSON.stringify(use.input ?? {}),
           },
           'debug'
         );
@@ -1310,7 +1296,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
               tool: use.name,
               toolUseId: use.id,
               isError: outcome.isError === true,
-              result: secure(clip(textOfResult(outcome), LOG_BODY_MAX_CHARS)),
+              result: textOfResult(outcome),
             },
             'debug'
           );

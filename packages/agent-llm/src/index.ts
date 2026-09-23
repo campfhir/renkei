@@ -21,7 +21,12 @@ export type {
   LlmUsage,
   WireRequestCause,
 } from './contract';
-export { transportErrorKind, wireRequestCauseOf } from './contract';
+export {
+  transportErrorKind,
+  wireRequestCauseOf,
+  maskCredentialHeaders,
+  CREDENTIAL_HEADER_NAMES,
+} from './contract';
 export { readSseEvents, IdleTimeoutError, type SseEvent } from './sse-reader';
 export { createAccumulator, type StreamAccumulator } from './stream-accumulator';
 export { streamOrComplete } from './stream-fallback';

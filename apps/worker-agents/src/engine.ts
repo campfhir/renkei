@@ -57,6 +57,7 @@ import {
 } from '@renkei/agents';
 import {
   resolveAgentLlm,
+  maskCredentialHeaders,
   wireRequestCauseOf,
   type LlmContentBlock,
   type LlmMessage,
@@ -116,7 +117,7 @@ import {
   TOOL_RESULT_CHARS,
   type PromptMessage,
 } from './prompt';
-import { logger } from './logger';
+import { logger, secure } from './logger';
 
 /**
  * Turns a branch or loop condition gets to reach its verdict. Enough for a
@@ -473,21 +474,25 @@ function detailJson(detail: Record<string, unknown>): string {
 const PROMPT_DETAIL_CHARS = 40_000;
 
 /**
- * The `request` field for a model-error log line: the exact body sent to
- * the provider, as plain text — no credential ever lives in it (auth
- * rides in headers, never part of this body and never logged at all), so
- * there is nothing here the secure()/encrypt-at-rest path protects; it
- * would only inflate the record. Logged at the same generous
- * PROMPT_DETAIL_CHARS scale as the rest of this file's prompt logging — a
- * rejected request is the whole point of the log line, so clipping it
- * small would cut off the very tool definitions or settings most likely
- * to be the actual cause. `{}` when the error carries no cause (a
- * codepath that predates it, or a kind — aborted, timeout — with no
- * specific request to blame).
+ * The `url`/`headers`/`request` fields for a model-error log line: the
+ * whole outgoing request, unclipped — the logging pipeline already
+ * handles an oversized value, and a rejected request is the whole point
+ * of the log line, so clipping it would risk cutting off the very tool
+ * definitions or settings most likely to be the actual cause. Plain text
+ * throughout except the credential-bearing header (authorization /
+ * api-key), which is the one thing here actually worth secure()'s
+ * encrypt-at-rest treatment — see wireRequestCauseOf's doc. `{}` when the
+ * error carries no cause (a codepath that predates it, or a kind —
+ * aborted, timeout — with no specific request to blame).
  */
 function requestLogFieldOf(cause: unknown): Record<string, unknown> {
   const parsed = wireRequestCauseOf(cause);
-  return parsed ? { request: clip(JSON.stringify(parsed.request), PROMPT_DETAIL_CHARS) } : {};
+  if (!parsed) return {};
+  return {
+    url: parsed.url,
+    headers: maskCredentialHeaders(parsed.headers, secure),
+    request: JSON.stringify(parsed.request),
+  };
 }
 
 /** The attempt's first user message — the prompt the model was sent. */

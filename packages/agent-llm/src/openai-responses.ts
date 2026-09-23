@@ -306,14 +306,15 @@ export class OpenAiResponsesProvider implements LlmProvider {
     };
   }
 
-  /** `body` is built by the caller (complete()/stream()) rather than here,
-   *  unlike openai.ts's version of this method — both need it again after
-   *  a successful fetch (this dialect's own `status: "failed"` and
-   *  `response.failed` cases arrive inside an otherwise-2xx/ok response,
-   *  see below), and it doubles as the `cause` attached to every error. */
+  /** `body`/`headers` are built by the caller (complete()/stream()) rather
+   *  than here, unlike openai.ts's version of this method — both need them
+   *  again after a successful fetch (this dialect's own `status: "failed"`
+   *  and `response.failed` cases arrive inside an otherwise-2xx/ok
+   *  response, see below), and they double as the `cause` attached to
+   *  every error. */
   private async post(
     url: string,
-    baseUrl: string,
+    headers: Record<string, string>,
     body: Record<string, unknown>,
     signal: AbortSignal,
     callerSignal?: AbortSignal
@@ -322,24 +323,25 @@ export class OpenAiResponsesProvider implements LlmProvider {
     try {
       response = await fetch(url, {
         method: 'POST',
-        headers: this.headers(baseUrl),
+        headers,
         body: JSON.stringify(body),
         signal,
       });
     } catch (error) {
       return err(transportErrorKind(error, callerSignal), {
         message: error instanceof Error ? error.message : String(error),
-        cause: { summary: summarizeWireRequest(url, body), request: body },
+        cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
       });
     }
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       return err(errorKindOf(response.status, text), {
         message: `OpenAI Responses endpoint ${response.status}: ${text.slice(0, 500)}`,
-        // The exact request sent, alongside a redacted summary — see
-        // WireRequestCause's doc. `request` can hold real prompt/tool
-        // content; a caller logs it only under secure(), never bare.
-        cause: { summary: summarizeWireRequest(url, body), request: body },
+        // The full request — URL (query params included), headers, and
+        // body — alongside a redacted summary of the body; see
+        // WireRequestCause's doc for why the credential in `headers`
+        // is the one part a caller must mask before logging this.
+        cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
       });
     }
     return ok(response);
@@ -348,9 +350,10 @@ export class OpenAiResponsesProvider implements LlmProvider {
   async complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>> {
     const { baseUrl, url } = this.endpoint();
     const body = this.body(request, false);
+    const headers = this.headers(baseUrl);
     const posted = await this.post(
       url,
-      baseUrl,
+      headers,
       body,
       AbortSignal.timeout(request.timeoutMs ?? REQUEST_TIMEOUT_MS)
     );
@@ -367,7 +370,7 @@ export class OpenAiResponsesProvider implements LlmProvider {
       const message = responseErrorMessage(payload.error) ?? 'The response failed.';
       return err(looksLikeCredentialFailure(message) ? 'auth' : 'provider_error', {
         message: `OpenAI Responses failed: ${message}`,
-        cause: { summary: summarizeWireRequest(url, body), request: body },
+        cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
       });
     }
 
@@ -391,7 +394,8 @@ export class OpenAiResponsesProvider implements LlmProvider {
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
     const { baseUrl, url } = this.endpoint();
     const body = this.body(request, true);
-    const posted = await this.post(url, baseUrl, body, signal, options.signal);
+    const headers = this.headers(baseUrl);
+    const posted = await this.post(url, headers, body, signal, options.signal);
     if (!posted.ok) return posted;
     if (!posted.val.body) {
       return err('provider_error' as const, { message: 'The endpoint returned no stream body.' });
@@ -496,7 +500,7 @@ export class OpenAiResponsesProvider implements LlmProvider {
               (typeof frame.message === 'string' ? frame.message : 'The response failed.');
             return err(looksLikeCredentialFailure(message) ? 'auth' : 'provider_error', {
               message: `OpenAI Responses stream error: ${message.slice(0, 500)}`,
-              cause: { summary: summarizeWireRequest(url, body), request: body },
+              cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
             });
           }
           default:
