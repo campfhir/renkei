@@ -848,6 +848,112 @@ test.describe('code projects', () => {
     await expect(openFiles.getByRole('tab', { name: /billing\.ts/ })).toBeVisible();
   });
 
+  test('the code pane: a language server behind the editor', async ({ page }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const mobile = testInfo.project.name === 'mobile';
+    const shot = (name: string) =>
+      page.screenshot({
+        path: path.join(
+          import.meta.dirname,
+          '..',
+          'test-results',
+          'screens',
+          testInfo.project.name,
+          name
+        ),
+        fullPage: false,
+      });
+    const main = page.getByRole('main');
+    await seedCheckout(ids);
+    await page.goto(`/${E2E_SLUG}/chat/${ids.seededChatId}`);
+    await expect(page.getByRole('heading', { name: ids.seededChatTitle })).toBeVisible();
+
+    if (mobile) {
+      // A phone has the text area, which has no language server: the
+      // file opens and colours as before, and nothing claims a server.
+      const tabs = main.getByRole('tablist', { name: 'Chat or code' });
+      await tabs.getByRole('tab', { name: /Code/ }).click();
+      await main
+        .getByRole('button', { name: /src\/billing\.ts/ })
+        .first()
+        .click({ timeout: 20_000 });
+      await expect(main.getByLabel('Contents of src/billing.ts')).toHaveValue(/MAX_ATTEMPTS/);
+      await expect(main.getByText(/language server/)).toHaveCount(0);
+      return;
+    }
+
+    // ── The file opens; the stub worker has a TypeScript server, which the
+    //    pane starts and names in the status line ──
+    const tree = main.getByRole('tree', { name: 'Files' });
+    await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
+    await tree.getByRole('button', { name: 'src' }).click();
+    await tree.getByRole('button', { name: /billing\.ts/ }).click();
+    const editor = main.locator('.monaco-editor');
+    await expect(editor).toBeVisible({ timeout: 20_000 });
+    await expect(editor.getByText('MAX_ATTEMPTS').first()).toBeVisible();
+    await expect(
+      main.getByRole('status').filter({ hasText: 'TypeScript language server' })
+    ).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // ── The server's diagnostic is a marker on the declaration it names ──
+    await expect(editor.locator('.squiggly-warning').first()).toBeVisible({ timeout: 20_000 });
+
+    // ── Hover asks the server; its answer is the hover card ──
+    await editor.getByText('MAX_ATTEMPTS').first().hover();
+    // Monaco keeps two hover widgets (the text's and the glyph margin's);
+    // the one that shows is the text's.
+    const hover = page.locator('.monaco-hover:not(.hidden)');
+    await expect(hover).toBeVisible({ timeout: 20_000 });
+    await expect(hover).toContainText('From the stub language server');
+    await shot('code-pane-lsp-hover.png');
+
+    // ── Completion comes from the server too ──
+    await page.keyboard.press('Escape');
+    await editor.locator('.view-lines').click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('ret');
+    const suggest = page.locator('.suggest-widget');
+    try {
+      await expect(suggest).toBeVisible({ timeout: 5_000 });
+    } catch {
+      // Quick suggestions did not open it; ask outright.
+      await page.keyboard.press('Control+Space');
+    }
+    await expect(suggest).toBeVisible({ timeout: 20_000 });
+    // The label and its detail line both carry the name; the label is first.
+    await expect(suggest.getByText('retryInvoice', { exact: true }).first()).toBeVisible({
+      timeout: 20_000,
+    });
+    await shot('code-pane-lsp-completion.png');
+    await page.keyboard.press('Escape');
+
+    // ── Go to definition lands in another file: it opens as a tab of the
+    //    pane, its model loaded, the range revealed ──
+    await page.keyboard.press('Control+Home');
+    await page.keyboard.press('F12');
+    const openFiles = main.getByRole('tablist', { name: 'Open files' });
+    await expect(openFiles.getByRole('tab', { name: /index\.ts/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+      { timeout: 20_000 }
+    );
+    await expect(editor.getByText('retryInvoice').first()).toBeVisible();
+    await shot('code-pane-lsp-definition.png');
+
+    // Back on the first tab the server is still attached (one per language, not per file).
+    await openFiles
+      .getByRole('tab', { name: /billing\.ts/ })
+      .getByRole('button')
+      .first()
+      .click();
+    await expect(
+      main.getByRole('status').filter({ hasText: 'TypeScript language server' })
+    ).toBeVisible();
+  });
+
   test('new project via a freshly created Bitbucket repository', async ({ page }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const shot = (name: string) =>

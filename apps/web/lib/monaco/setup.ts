@@ -10,7 +10,11 @@
  * Only two workers are loaded — the editor's own and the TypeScript one
  * (the admin script editor's language service). Monaco ships six more
  * (JSON, CSS, HTML…) that nothing here has a use for, and each is a real
- * download. The code pane colours every file with the tokenizers alone.
+ * download. The code pane colours every file with the tokenizers, and
+ * gets its language intelligence from a language server on the sandbox
+ * worker (lib/lsp) rather than from Monaco's own worker, which knows
+ * one file at a time; `PANE_LANGUAGE_ALIASES` keeps that worker off the
+ * pane's models altogether.
  *
  * Two themes are defined here, `renkei-light` and `renkei-dark`: Monaco's
  * own `vs` and `vs-dark` with the token colours of the chat's code blocks
@@ -21,6 +25,15 @@
 
 import { loader } from '@monaco-editor/react';
 import * as monacoEditor from 'monaco-editor';
+import { PANE_LANGUAGE_ALIASES } from './pane-languages';
+import {
+  conf as typescriptConf,
+  language as typescriptLanguage,
+} from 'monaco-editor/esm/vs/basic-languages/typescript/typescript.js';
+import {
+  conf as javascriptConf,
+  language as javascriptLanguage,
+} from 'monaco-editor/esm/vs/basic-languages/javascript/javascript.js';
 
 export const MONACO_THEME = { light: 'renkei-light', dark: 'renkei-dark' } as const;
 
@@ -90,6 +103,24 @@ function themeRules(scheme: keyof typeof PALETTE): monacoEditor.editor.ITokenThe
     { token: 'invalid', foreground: c.invalid },
     { token: 'strong', fontStyle: 'bold' },
     { token: 'emphasis', fontStyle: 'italic' },
+    // Semantic tokens, when a language server supplies them (lib/lsp):
+    // Monaco matches `<type>.<modifiers…>` against these, so a prefix
+    // covers every modifier. Named things fall into the same few
+    // colours as the tokenizer's, so a file reads the same before and
+    // after its server has spoken.
+    { token: 'function', foreground: c.title },
+    { token: 'method', foreground: c.title },
+    { token: 'class', foreground: c.type },
+    { token: 'interface', foreground: c.type },
+    { token: 'enum', foreground: c.type },
+    { token: 'struct', foreground: c.type },
+    { token: 'typeParameter', foreground: c.type },
+    { token: 'property', foreground: c.key },
+    { token: 'enumMember', foreground: c.number },
+    { token: 'variable.readonly', foreground: c.number },
+    { token: 'parameter', foreground: c.variable },
+    { token: 'macro', foreground: c.keyword },
+    { token: 'decorator', foreground: c.key },
   ];
 }
 
@@ -108,6 +139,27 @@ function defineThemes(): void {
 }
 
 let configured = false;
+
+/**
+ * The pane's TypeScript and JavaScript (pane-languages.ts): Monaco's own
+ * grammars and configuration for the two, under ids the TypeScript worker
+ * never attaches to.
+ */
+function registerPaneLanguages(): void {
+  const aliases: [
+    string,
+    monacoEditor.languages.IMonarchLanguage,
+    monacoEditor.languages.LanguageConfiguration,
+  ][] = [
+    [PANE_LANGUAGE_ALIASES.typescript, typescriptLanguage, typescriptConf],
+    [PANE_LANGUAGE_ALIASES.javascript, javascriptLanguage, javascriptConf],
+  ];
+  for (const [id, language, conf] of aliases) {
+    monacoEditor.languages.register({ id });
+    monacoEditor.languages.setMonarchTokensProvider(id, language);
+    monacoEditor.languages.setLanguageConfiguration(id, conf);
+  }
+}
 
 export function configureMonacoOnce(): void {
   if (configured || typeof window === 'undefined') return;
@@ -131,5 +183,6 @@ export function configureMonacoOnce(): void {
   };
 
   defineThemes();
+  registerPaneLanguages();
   loader.config({ monaco: monacoEditor });
 }

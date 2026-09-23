@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getJson } from '@/lib/fetch-json';
 import type { ChatNote } from '@/lib/code/note-text';
+import { useLanguageServers, type LanguageServersHandle } from './use-language-servers';
 
 export interface CodePaneFile {
   path: string;
@@ -86,6 +87,8 @@ export interface CodePaneHandle {
   reloadTheirs: (path: string) => void;
   /** Read the changed files and every open file again. */
   refresh: () => void;
+  /** The language servers behind the editor (use-language-servers.ts). */
+  lsp: LanguageServersHandle;
 }
 
 const FRESH: Omit<CodePaneFile, 'path'> = {
@@ -252,6 +255,17 @@ export function useCodePane({
     [read]
   );
 
+  // One language server per language the worker has, started as files
+  // of it are shown; a definition elsewhere opens that file here.
+  const openRef = useRef(open);
+  openRef.current = open;
+  const lsp = useLanguageServers({
+    base,
+    enabled: enabled && projectId !== null,
+    checkoutReady: available,
+    openFile: (path) => openRef.current(path),
+  });
+
   // Restored tabs need their files read once the pane is on screen.
   useEffect(() => {
     if (!enabled) return;
@@ -263,20 +277,24 @@ export function useCodePane({
     }
   }, [enabled, tabs, read]);
 
-  const close = useCallback((path: string) => {
-    const current = tabsRef.current;
-    const index = current.indexOf(path);
-    const next = current.filter((tab) => tab !== path);
-    setTabs(next);
-    setActive((active) =>
-      active === path ? (next[Math.min(index, next.length - 1)] ?? null) : active
-    );
-    setFiles((current) => {
-      const next = { ...current };
-      delete next[path];
-      return next;
-    });
-  }, []);
+  const close = useCallback(
+    (path: string) => {
+      lsp.closed(path);
+      const current = tabsRef.current;
+      const index = current.indexOf(path);
+      const next = current.filter((tab) => tab !== path);
+      setTabs(next);
+      setActive((active) =>
+        active === path ? (next[Math.min(index, next.length - 1)] ?? null) : active
+      );
+      setFiles((current) => {
+        const next = { ...current };
+        delete next[path];
+        return next;
+      });
+    },
+    [lsp]
+  );
 
   const setText = useCallback(
     (path: string, text: string) => patch(path, (file) => ({ ...file, text })),
@@ -329,11 +347,12 @@ export function useCodePane({
         conflict: null,
       }));
       setEditedHere((current) => new Set(current).add(path));
+      lsp.saved(path);
       onNote({ type: 'edit', paths: [path] });
       void refreshChanged();
       return true;
     },
-    [base, onNote, patch, refreshChanged]
+    [base, lsp, onNote, patch, refreshChanged]
   );
 
   const dirtyPaths = useMemo(
@@ -425,5 +444,6 @@ export function useCodePane({
     discard,
     reloadTheirs,
     refresh,
+    lsp,
   };
 }

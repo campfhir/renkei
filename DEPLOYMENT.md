@@ -244,6 +244,26 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   Bitbucket or GitHub repositories, paste its `.env`, and have the
   project's chats work in it: read, edit, run the project's own
   commands, commit, push.
+  **Language servers for the code pane** (`docs/code-editor-design.md`
+  § Language servers): the sandbox image also carries a language server
+  per common language — TypeScript/JavaScript (typescript-language-server),
+  Python (Pyright), Java (Eclipse JDT on a Temurin JDK 21), SQL, C/C++
+  (clangd), Go (gopls, with a Go toolchain), Rust (rust-analyzer, with a
+  Rust toolchain) and R — which the worker starts on demand inside a
+  project's checkout, as the project's own uid, when someone opens a
+  file of that language in the pane; the browser's Monaco is the client,
+  relayed through the web app (`…/code/projects/[id]/lsp`). Nothing to
+  configure: the worker probes its PATH at boot and logs which servers
+  it found, and a language whose server is missing gets syntax colouring
+  alone. The toolchains are the bulk of the image (Rust and the JDK
+  especially); `docker/Dockerfile` installs each in its own layer with
+  pinned versions, so a deployment that wants a smaller sandbox can drop
+  one and lose only that language. Each server is one more process in
+  the sandbox container, sized by its language (tsserver and jdtls can
+  each take a gigabyte on a large tree): raise `SANDBOX_WORKER_MEMORY`
+  accordingly for a deployment with many code projects open at once. A
+  server idle for ten minutes — no editor listening, nothing sent — is
+  shut down; at most six run per checkout and forty-eight per worker.
   Checkouts live on a second named volume
   (`renkei-sandbox-workspaces` / `sandbox_workspaces`) at
   `SANDBOX_WORKSPACES_DIR` (default `/workspaces`), a week since last use.

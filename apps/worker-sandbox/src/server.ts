@@ -43,6 +43,7 @@ import {
   DEFAULT_BATCH_MAX_FILE_BYTES,
   DEFAULT_BATCH_QUOTA_BYTES,
   MAX_FILES_PER_BATCH,
+  LSP_MESSAGE_MAX_BYTES,
   UPLOAD_MAX_BYTES,
   validateFilename,
   type SandboxFileSummary,
@@ -72,6 +73,7 @@ import { orphanedByNow } from './workspaces';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import { createServiceHandlers } from './service-endpoints';
 import type { ServiceManager } from './services';
+import type { LspSessions } from './lsp-sessions';
 import { logger } from './logger';
 
 /**
@@ -128,6 +130,8 @@ export interface SandboxServerDeps {
    * project runs (workspace-endpoints.ts).
    */
   services?: ServiceManager | null;
+  /** The language server sessions behind `workspaces/lsp/*`; made here when not given (tests script one). */
+  lsp?: LspSessions;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -292,6 +296,7 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     enabled: deps.workspaces === true,
     // A running service's variables join every command's environment.
     ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
+    lsp: deps.lsp,
   });
 
   async function handleFetch(
@@ -843,7 +848,12 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     if (!prefixed && !jsonHandler) {
       return sendError(response, 404, 'unknown_operation');
     }
-    const raw = await readBody(request, MAX_JSON_BYTES);
+    // An editor's message to a language server carries a whole file on
+    // open and on every change, so that one verb takes a larger body.
+    const raw = await readBody(
+      request,
+      workspacesOp === 'lsp/send' ? LSP_MESSAGE_MAX_BYTES : MAX_JSON_BYTES
+    );
     if (raw === null) return sendError(response, 413, 'too_large');
     let parsedBody: unknown;
     try {
@@ -927,6 +937,8 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
   server.on('close', () => {
     clearInterval(sweep);
     if (!deps.vault) vault.close();
+    // Language servers are this process's children; none outlives it.
+    void workspaces.lsp.closeAll();
   });
 
   return server;

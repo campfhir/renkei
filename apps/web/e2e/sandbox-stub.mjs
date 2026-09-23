@@ -441,7 +441,169 @@ function handleServices(op, body, response) {
   }
 }
 
+
+/**
+ * A language server, scripted: `lsp/languages` says the worker has a
+ * TypeScript one; `lsp/open` starts a session for a ready workspace;
+ * messages sent to it get the answers below on the session's events
+ * stream (a diagnostic on open, a hover, a completion list, a definition
+ * in another file), the way the real worker relays a real server's.
+ */
+const lspSessions = new Map();
+
+function lspEmit(session, message) {
+  const text = JSON.stringify(message);
+  if (session.stream) session.stream.write(`data: ${text}\n\n`);
+  else session.backlog.push(text);
+}
+
+function lspAnswer(session, message, rootUri) {
+  const { id, method, params } = message;
+  switch (method) {
+    case 'textDocument/didOpen':
+      lspEmit(session, {
+        jsonrpc: '2.0',
+        method: 'textDocument/publishDiagnostics',
+        params: {
+          uri: params.textDocument.uri,
+          diagnostics: [
+            {
+              range: { start: { line: 2, character: 6 }, end: { line: 2, character: 18 } },
+              severity: 2,
+              source: 'stub-ls',
+              message: "'MAX_ATTEMPTS' is declared but its value is never read.",
+            },
+          ],
+        },
+      });
+      return;
+    case 'textDocument/hover':
+      lspEmit(session, {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          contents: {
+            kind: 'markdown',
+            value: '```typescript\nconst MAX_ATTEMPTS: 5\n```\n\nFrom the stub language server.',
+          },
+        },
+      });
+      return;
+    case 'textDocument/completion':
+      lspEmit(session, {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          isIncomplete: false,
+          items: [
+            {
+              label: 'retryInvoice',
+              kind: 3,
+              detail: 'function retryInvoice(job: InvoiceJob): Promise<void>',
+              sortText: '0',
+            },
+            { label: 'retries', kind: 6, detail: 'let retries: number', sortText: '1' },
+          ],
+        },
+      });
+      return;
+    case 'textDocument/definition':
+      lspEmit(session, {
+        jsonrpc: '2.0',
+        id,
+        result: [
+          {
+            uri: `${rootUri}/src/index.ts`,
+            range: { start: { line: 0, character: 9 }, end: { line: 0, character: 21 } },
+          },
+        ],
+      });
+      return;
+    default:
+      if (id !== undefined && id !== null) {
+        lspEmit(session, {
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32601, message: `The stub server has no ${method}.` },
+        });
+      }
+  }
+}
+
+function handleLsp(op, body, response) {
+  const scope = scopeOf(body);
+  if (op === 'languages') return json(response, 200, { languages: ['typescript'] });
+  if (op === 'open') {
+    const workspace = scope.workspaces.get(body.id ?? '');
+    if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+    if (workspace.status !== 'ready')
+      return error(response, 409, 'not_ready', 'That workspace is still cloning.');
+    if (body.server !== 'typescript')
+      return error(response, 404, 'server_unavailable', 'This worker has no such language server.');
+    const rootUri = `file:///workspaces/stub/${workspace.id}`;
+    const existing = [...lspSessions.values()].find(
+      (session) => session.workspaceId === workspace.id && session.clientId === body.clientId
+    );
+    const session = existing ?? {
+      id: randomUUID(),
+      workspaceId: workspace.id,
+      clientId: body.clientId,
+      rootUri,
+      backlog: [],
+      stream: null,
+    };
+    lspSessions.set(session.id, session);
+    return json(response, 200, {
+      id: session.id,
+      server: 'typescript',
+      workspaceId: workspace.id,
+      rootUri,
+      capabilities: {
+        textDocumentSync: 1,
+        hoverProvider: true,
+        completionProvider: { triggerCharacters: ['.'], resolveProvider: false },
+        definitionProvider: true,
+      },
+      serverInfo: { name: 'stub-ls', version: '0' },
+      reused: Boolean(existing),
+    });
+  }
+  const session = lspSessions.get(body.session ?? '');
+  if (!session) return error(response, 404, 'not_found', 'No such language server session.');
+  switch (op) {
+    case 'send': {
+      const message = body.message;
+      if (!message || message.jsonrpc !== '2.0')
+        return error(response, 400, 'bad_message', 'A message is a JSON-RPC 2.0 object.');
+      if (['initialize', 'initialized', 'shutdown', 'exit'].includes(message.method))
+        return error(response, 400, 'bad_message', `${message.method} is the worker’s to send.`);
+      lspAnswer(session, message, session.rootUri);
+      return json(response, 202, { sent: true });
+    }
+    case 'events': {
+      response.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+      });
+      response.write(': open\n\n');
+      session.stream = response;
+      for (const text of session.backlog.splice(0)) response.write(`data: ${text}\n\n`);
+      response.on('close', () => {
+        if (session.stream === response) session.stream = null;
+      });
+      return;
+    }
+    case 'close':
+      lspSessions.delete(session.id);
+      return json(response, 200, { closed: true });
+    default:
+      return error(response, 404, 'unknown_operation');
+  }
+}
+
 function handleWorkspaces(op, body, response) {
+  if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), body, response);
   const scope = scopeOf(body);
   switch (op) {
     case 'clone': {

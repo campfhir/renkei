@@ -377,6 +377,87 @@ RUN apt-get update && \
     npm install -g pnpm@${PNPM_VERSION} && \
     setpriv --version >/dev/null
 
+# Language servers for the code pane's editor (apps/worker-sandbox/src/
+# lsp-sessions.ts; the registry of what each language runs is
+# packages/connector-sandbox/src/lsp.ts). Each lands somewhere every
+# caller's uid can read and execute, on the PATH a caller's process gets
+# (workspaces.ts' SYSTEM_PATH: /usr/local/bin plus /usr/local/go/bin and
+# /usr/local/cargo/bin), and writes its own state under the caller's HOME
+# at run time, never here. One RUN per toolchain so a failed download
+# names its toolchain, and so a version bump rebuilds one layer. The
+# worker probes for each at boot and logs which it found; a language
+# whose server is missing simply gets the tokenizer alone in the pane.
+#
+# Sizes are real (Rust and the JDK are the large ones — together these
+# layers roughly double the image); an installation that wants a smaller
+# sandbox can drop a RUN and lose only that language's server.
+ARG TS_LANGUAGE_SERVER_VERSION=6.0.0
+ARG TYPESCRIPT_VERSION=5.9.3
+ARG PYRIGHT_VERSION=1.1.414
+ARG SQL_LANGUAGE_SERVER_VERSION=1.7.1
+ARG GO_VERSION=1.27.1
+ARG GOPLS_VERSION=v0.23.0
+ARG RUST_TOOLCHAIN=stable
+ARG JDTLS_VERSION=1.50.0
+
+# TypeScript/JavaScript, Python and SQL: Node-based, beside the worker's own Node.
+RUN npm install -g \
+      typescript-language-server@${TS_LANGUAGE_SERVER_VERSION} \
+      typescript@${TYPESCRIPT_VERSION} \
+      pyright@${PYRIGHT_VERSION} \
+      sql-language-server@${SQL_LANGUAGE_SERVER_VERSION} && \
+    rm -rf /root/.npm && \
+    typescript-language-server --version && pyright --version
+
+# C and C++: Debian's clangd. R: Debian's R with the languageserver package
+# from CRAN, its heavier dependencies from Debian so nothing compiles ICU.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      clangd \
+      r-base-core r-cran-jsonlite r-cran-r6 r-cran-callr r-cran-collections \
+      r-cran-fs r-cran-lintr r-cran-repr r-cran-roxygen2 r-cran-stringi \
+      r-cran-styler r-cran-xml2 r-cran-xmlparsedata && \
+    rm -rf /var/lib/apt/lists/* && \
+    R --slave -e 'install.packages("languageserver", repos = "https://cloud.r-project.org", quiet = TRUE); stopifnot(requireNamespace("languageserver"))' && \
+    clangd --version
+
+# Go and gopls: the toolchain under /usr/local/go (on every caller's PATH),
+# gopls built with it into /usr/local/bin; the build caches go with the layer.
+RUN ARCH="$(dpkg --print-architecture)" && \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz && \
+    GOPATH=/tmp/gopath GOCACHE=/tmp/gocache GOBIN=/usr/local/bin GOFLAGS=-mod=mod \
+      /usr/local/go/bin/go install golang.org/x/tools/gopls@${GOPLS_VERSION} && \
+    rm -rf /tmp/gopath /tmp/gocache && \
+    /usr/local/go/bin/go version && gopls version
+
+# Rust and rust-analyzer: rustup's toolchain under /usr/local/rustup, shared
+# read-only (workspaces.ts sets RUSTUP_HOME to it and CARGO_HOME under each
+# caller's HOME), its proxies in /usr/local/cargo/bin on every caller's PATH.
+RUN curl -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh && \
+    RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
+      sh /tmp/rustup-init.sh -y --no-modify-path --profile minimal \
+        --default-toolchain "${RUST_TOOLCHAIN}" --component rust-analyzer --component rust-src && \
+    rm /tmp/rustup-init.sh && \
+    chmod -R a+rX /usr/local/rustup /usr/local/cargo && \
+    RUSTUP_HOME=/usr/local/rustup /usr/local/cargo/bin/rust-analyzer --version
+
+# Java: Eclipse JDT Language Server on a Temurin JDK 21 (jdtls needs 21;
+# Debian bookworm ships 17). The launcher, `jdtls`, is a Python script
+# that copies its configuration under the caller's cache when the
+# install is read-only, as it is here.
+RUN ARCH="$(dpkg --print-architecture)" && \
+    case "$ARCH" in amd64) JDK_ARCH=x64 ;; arm64) JDK_ARCH=aarch64 ;; *) JDK_ARCH="$ARCH" ;; esac && \
+    mkdir -p /usr/local/java /usr/local/jdtls && \
+    curl -fsSL "https://api.adoptium.net/v3/binary/latest/21/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse" \
+      | tar -C /usr/local/java --strip-components=1 -xz && \
+    JDTLS_FILE="$(curl -fsSL "https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}/latest.txt" | tr -d '[:space:]')" && \
+    curl -fsSL "https://download.eclipse.org/jdtls/milestones/${JDTLS_VERSION}/${JDTLS_FILE}" \
+      | tar -C /usr/local/jdtls -xz && \
+    ln -s /usr/local/java/bin/java /usr/local/bin/java && \
+    ln -s /usr/local/jdtls/bin/jdtls /usr/local/bin/jdtls && \
+    chmod -R a+rX /usr/local/java /usr/local/jdtls && \
+    java -version && test -x /usr/local/jdtls/bin/jdtls
+
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.
 RUN groupadd -g 1001 nodejs && \

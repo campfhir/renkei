@@ -28,6 +28,9 @@ import type { DB } from '@renkei/db';
 import {
   CLONE_DEFAULT_DEPTH,
   COMMIT_MESSAGE_MAX_CHARS,
+  LSP_CLIENT_ID_PATTERN,
+  isLanguageServerId,
+  validateClientMessage,
   DIFF_DEFAULT_CONTEXT,
   DIFF_MAX_CHARS,
   DIFF_MAX_CONTEXT,
@@ -92,6 +95,7 @@ import {
   type RunInput,
   type RunResult,
 } from './workspaces';
+import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import { logger } from './logger';
 
 export interface WorkspaceHandlerDeps {
@@ -106,7 +110,12 @@ export interface WorkspaceHandlerDeps {
    * services are off.
    */
   serviceEnv?: (target: store.WorkspaceTarget) => Promise<Record<string, string>>;
+  /** The language server sessions; the handlers make their own when not given (tests share one). */
+  lsp?: LspSessions;
 }
+
+const SSE_PING_MS = 15_000;
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Body = Record<string, unknown>;
 
@@ -177,6 +186,7 @@ function gitText(result: RunResult): string {
 
 export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   const { db } = deps;
+  const lsp = deps.lsp ?? new LspSessions();
 
   /** The caller's workspace, ready to work in, or the refusal already sent. */
   async function loadReady(
@@ -1211,6 +1221,110 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
   }
 
+  // ─── Language servers ──────────────────────────────────────────────────
+
+  /**
+   * `lsp/languages`: which servers this worker can start. `lsp/open`:
+   * a server for the caller's ready checkout, its capabilities in the
+   * answer. `lsp/send`: one message from the editor to it. `lsp/events`:
+   * the server's messages to the editor, as a text/event-stream held
+   * open. `lsp/close`: the end. A session is the caller's own: another
+   * caller's id is no session at all.
+   */
+  async function handleLsp(
+    op: string,
+    target: store.WorkspaceTarget,
+    body: Body,
+    response: ServerResponse
+  ): Promise<void> {
+    if (op === 'languages') {
+      return sendJson(response, 200, { languages: await probeLanguageServers() });
+    }
+    if (op === 'open') {
+      if (!isLanguageServerId(body.server)) {
+        return sendError(response, 400, 'bad_request', 'Unknown language server.');
+      }
+      const clientId = str(body.clientId);
+      if (!LSP_CLIENT_ID_PATTERN.test(clientId)) {
+        return sendError(response, 400, 'bad_request', 'A client id is required.');
+      }
+      const workspace = await loadReady(target, body, response);
+      if (!workspace) return;
+      const opened = await lsp.open({
+        owner: target,
+        workspaceId: workspace.id,
+        rootDir: workspaceDir(workspace.storageKey),
+        home: homeDir(workspace.storageKey),
+        identity: identityFor(workspace),
+        server: body.server,
+        clientId,
+      });
+      if (!opened.ok) return sendError(response, opened.status, opened.type, opened.message);
+      await store.touchWorkspace(db, workspace.id);
+      return sendJson(response, 200, { ...opened.session, reused: opened.reused });
+    }
+    const session = str(body.session);
+    if (!SESSION_ID.test(session)) {
+      return sendError(response, 404, 'not_found', 'No such language server session.');
+    }
+    switch (op) {
+      case 'send': {
+        const rootUri = lsp.rootUriOf(session, target);
+        if (!rootUri)
+          return sendError(response, 404, 'not_found', 'No such language server session.');
+        const checked = validateClientMessage(body.message, rootUri);
+        if (!checked.ok) return sendError(response, 400, 'bad_message', checked.message);
+        const sent = lsp.send(session, target, checked.message);
+        if (!sent.ok) return sendError(response, sent.status, sent.type, sent.message);
+        return sendJson(response, 202, { sent: true });
+      }
+      case 'events': {
+        if (!lsp.rootUriOf(session, target)) {
+          return sendError(response, 404, 'not_found', 'No such language server session.');
+        }
+        // Headers before the first message: attaching delivers the
+        // backlog at once, and a write ahead of writeHead would send
+        // the headers without the content type.
+        response.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+        });
+        response.write(': open\n\n');
+        // What a server says reaches the editor scrubbed of the caller's
+        // environment values, the rule every other text out keeps —
+        // opened once per stream, applied to every message.
+        const env = envSecretsEnabled() ? await openCallerEnv(db, target) : EMPTY_ENV;
+        const subscribed = lsp.subscribe(
+          session,
+          target,
+          (text) => {
+            // One message per event; a message never contains a bare
+            // newline once serialised, so one data line carries it whole.
+            response.write(`data: ${text}\n\n`);
+          },
+          (text) => scrubEnv(text, env)
+        );
+        if (!subscribed.ok) {
+          response.end();
+          return;
+        }
+        const ping = setInterval(() => response.write(': ping\n\n'), SSE_PING_MS);
+        response.on('close', () => {
+          clearInterval(ping);
+          subscribed.detach();
+        });
+        return;
+      }
+      case 'close': {
+        const closed = await lsp.close(session, target);
+        return sendJson(response, 200, { closed });
+      }
+      default:
+        return sendError(response, 404, 'unknown_operation');
+    }
+  }
+
   async function handleWorkspaces(op: string, body: Body, response: ServerResponse): Promise<void> {
     if (!deps.enabled)
       return sendError(
@@ -1221,6 +1335,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       );
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
+    if (op.startsWith('lsp/')) return handleLsp(op.slice('lsp/'.length), target, body, response);
     switch (op) {
       case 'clone':
         return clone(target, body, response);
@@ -1276,7 +1391,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
   }
 
-  return { handleWorkspaces, handleUpload, handleEnv, sweep };
+  return { handleWorkspaces, handleUpload, handleEnv, sweep, lsp };
 }
 
 /** Exposed for tests: the contained-path check the file verbs rely on. */

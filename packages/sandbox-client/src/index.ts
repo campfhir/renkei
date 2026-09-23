@@ -1611,3 +1611,101 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
       return { status: error.status, message: error.message ?? error.type };
   }
 }
+
+// ─── Language servers (the code pane's editor) ──────────────────────────────
+
+/** A language server session the worker runs for one editor in one checkout. */
+export interface WireLspSession {
+  id: string;
+  server: string;
+  workspaceId: string;
+  /** The checkout as the server names it; every document URI is under it. */
+  rootUri: string;
+  /** The server's `initialize` capabilities, verbatim, for the editor to register from. */
+  capabilities: unknown;
+  serverInfo: unknown;
+  /** The editor already had this server and got it back rather than a new one. */
+  reused: boolean;
+}
+
+/** Which language servers the worker can start (the registry's ids). */
+export async function sbLspLanguages(target: SandboxTarget): Promise<ClientResult<string[]>> {
+  const called = await callJson('workspaces/lsp/languages', target);
+  if (!called.ok) return called;
+  const value = called.val;
+  if (!isRecord(value) || !Array.isArray(value.languages)) return malformed();
+  return {
+    ok: true,
+    val: value.languages.filter((entry): entry is string => typeof entry === 'string'),
+  };
+}
+
+export async function sbLspOpen(
+  target: SandboxTarget,
+  input: { id: string; server: string; clientId: string }
+): Promise<ClientResult<WireLspSession>> {
+  const called = await callJson('workspaces/lsp/open', { ...target, ...input });
+  if (!called.ok) return called;
+  const value = called.val;
+  if (!isRecord(value) || !str(value.id) || !str(value.rootUri)) return malformed();
+  return {
+    ok: true,
+    val: {
+      id: str(value.id),
+      server: str(value.server),
+      workspaceId: str(value.workspaceId),
+      rootUri: str(value.rootUri),
+      capabilities: value.capabilities ?? {},
+      serverInfo: value.serverInfo ?? null,
+      reused: value.reused === true,
+    },
+  };
+}
+
+/** One message from the editor to its server; the worker checks it and answers 202. */
+export async function sbLspSend(
+  target: SandboxTarget,
+  input: { session: string; message: unknown }
+): Promise<ClientResult<void>> {
+  const called = await callOp('workspaces/lsp/send', { ...target, ...input });
+  if (!called.ok) return called;
+  return { ok: true, val: undefined };
+}
+
+export async function sbLspClose(
+  target: SandboxTarget,
+  input: { session: string }
+): Promise<ClientResult<boolean>> {
+  const called = await callJson('workspaces/lsp/close', { ...target, ...input });
+  if (!called.ok) return called;
+  return { ok: true, val: isRecord(called.val) && called.val.closed === true };
+}
+
+/**
+ * The server's messages to the editor: the worker's text/event-stream,
+ * handed over as the bytes arrive for the route to relay. No timeout —
+ * the stream lives as long as the editor is open — but `signal` ends it
+ * the moment the browser goes.
+ */
+export async function sbLspEvents(
+  target: SandboxTarget,
+  input: { session: string },
+  signal: AbortSignal
+): Promise<ClientResult<ReadableStream<Uint8Array>>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  let response: Response;
+  try {
+    response = await fetch(`${cfg.url}/v1/workspaces/lsp/events`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...target, ...input }),
+      signal,
+    });
+  } catch (error) {
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) return opFailure(response);
+  if (!response.body) return unreachable('The sandbox service answered without a stream.');
+  return { ok: true, val: response.body };
+}

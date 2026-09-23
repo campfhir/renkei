@@ -526,3 +526,164 @@ describe('env verbs', () => {
     expect(workspaceStore.insertWorkspace).not.toHaveBeenCalled();
   });
 });
+
+describe('language servers over the wire', () => {
+  // Its own server, with the sessions scripted: the fake speaks the
+  // protocol over stdio exactly as a real one would.
+  const { spawn: spawnChild } =
+    jest.requireActual<typeof import('node:child_process')>('node:child_process');
+  const { LspSessions } = jest.requireActual<typeof import('./lsp-sessions')>('./lsp-sessions');
+  let lspServer: Server;
+  let lspBase: string;
+  let sessions: InstanceType<typeof LspSessions>;
+
+  beforeAll(async () => {
+    sessions = new LspSessions({
+      spawnServer: () =>
+        spawnChild(
+          process.execPath,
+          [join(__dirname, 'test-support', 'fake-language-server.mjs')],
+          {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: true,
+          }
+        ),
+    });
+    lspServer = createSandboxServer({
+      db: {} as Kysely<DB>,
+      apiKeys: [API_KEY],
+      workspaces: true,
+      lsp: sessions,
+    });
+    lspBase = await listen(lspServer);
+  });
+
+  afterAll(async () => {
+    await sessions.closeAll();
+    await new Promise((resolve) => lspServer.close(resolve));
+  });
+
+  it('says which servers this worker has (none on a bare test box, as a list)', async () => {
+    const languages = await post(lspBase, 'workspaces/lsp/languages', TARGET);
+    expect(languages.status).toBe(200);
+    expect(Array.isArray(languages.json.languages)).toBe(true);
+  });
+
+  it('opens a server for a ready checkout, relays messages both ways, scrubs, and closes', async () => {
+    // The fake's hover says "token=hunter2"; make that a value of the caller's environment.
+    envStore.listSealedEnv.mockResolvedValue([
+      { id: 'e2', name: 'API_TOKEN', sealed: sealEnvValue('hunter2', envSecretsKey()!) },
+    ]);
+    const bad = await post(lspBase, 'workspaces/lsp/open', {
+      ...TARGET,
+      id: 'ws-1',
+      server: 'cobol',
+      clientId: 'ed',
+    });
+    expect(bad.status).toBe(400);
+    const noClient = await post(lspBase, 'workspaces/lsp/open', {
+      ...TARGET,
+      id: 'ws-1',
+      server: 'typescript',
+    });
+    expect(noClient.status).toBe(400);
+    const notMine = await post(lspBase, 'workspaces/lsp/open', {
+      tenantId: 'tenant-1',
+      subject: 'bob',
+      id: 'ws-1',
+      server: 'typescript',
+      clientId: 'ed',
+    });
+    expect(notMine.status).toBe(404);
+
+    const opened = await post(lspBase, 'workspaces/lsp/open', {
+      ...TARGET,
+      id: 'ws-1',
+      server: 'typescript',
+      clientId: 'ed',
+    });
+    expect(opened.status).toBe(200);
+    expect(opened.json.rootUri).toBe(`file://${workspaceDir(STORAGE_KEY)}`);
+    expect(opened.json.capabilities.hoverProvider).toBe(true);
+    const session: string = opened.json.id;
+
+    // A message naming a file outside the checkout never reaches the server.
+    const outside = await post(lspBase, 'workspaces/lsp/send', {
+      ...TARGET,
+      session,
+      message: {
+        jsonrpc: '2.0',
+        method: 'textDocument/didOpen',
+        params: { textDocument: { uri: 'file:///etc/passwd' } },
+      },
+    });
+    expect(outside.status).toBe(400);
+    expect(outside.json.error.type).toBe('bad_message');
+    const lifecycle = await post(lspBase, 'workspaces/lsp/send', {
+      ...TARGET,
+      session,
+      message: { jsonrpc: '2.0', id: 1, method: 'shutdown' },
+    });
+    expect(lifecycle.status).toBe(400);
+    const someoneElse = await post(lspBase, 'workspaces/lsp/send', {
+      tenantId: 'tenant-1',
+      subject: 'bob',
+      session,
+      message: { jsonrpc: '2.0', id: 1, method: 'textDocument/hover', params: {} },
+    });
+    expect(someoneElse.status).toBe(404);
+
+    const uri = `${opened.json.rootUri}/src/config.ts`;
+    const sent = await post(lspBase, 'workspaces/lsp/send', {
+      ...TARGET,
+      session,
+      message: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'textDocument/hover',
+        params: { textDocument: { uri }, position: { line: 0, character: 0 } },
+      },
+    });
+    expect(sent.status).toBe(202);
+
+    // The events stream: what the server said, one message per event, scrubbed.
+    const controller = new AbortController();
+    const events = await fetch(`${lspBase}/v1/workspaces/lsp/events`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...TARGET, session }),
+      signal: controller.signal,
+    });
+    expect(events.status).toBe(200);
+    expect(events.headers.get('content-type')).toBe('text/event-stream');
+    const reader = events.body!.getReader();
+    let text = '';
+    while (!text.includes('window/showDocument')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += Buffer.from(value).toString('utf8');
+    }
+    controller.abort();
+    const data = text
+      .split('\n')
+      .filter((line) => line.startsWith('data: '))
+      .map((line) => JSON.parse(line.slice(6)));
+    expect(data[0]).toMatchObject({ id: 1 });
+    expect(data[0].result.contents.value).toContain('token=••••••');
+    expect(text).not.toContain('hunter2');
+    expect(data[1]).toMatchObject({ method: 'window/showDocument' });
+
+    const closed = await post(lspBase, 'workspaces/lsp/close', { ...TARGET, session });
+    expect(closed.json).toEqual({ closed: true });
+    const gone = await post(lspBase, 'workspaces/lsp/send', {
+      ...TARGET,
+      session,
+      message: {
+        jsonrpc: '2.0',
+        method: 'textDocument/didClose',
+        params: { textDocument: { uri } },
+      },
+    });
+    expect(gone.status).toBe(404);
+  });
+});

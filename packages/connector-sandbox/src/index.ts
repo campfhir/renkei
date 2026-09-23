@@ -222,3 +222,26 @@ export {
   type ImageReference,
   type ImageRule,
 } from './services';
+
+export {
+  LANGUAGE_SERVER_IDS,
+  LANGUAGE_SERVERS,
+  LSP_MAX_SESSIONS_PER_WORKSPACE,
+  LSP_MAX_SESSIONS,
+  LSP_IDLE_MS,
+  LSP_INIT_TIMEOUT_MS,
+  LSP_MESSAGE_MAX_BYTES,
+  LSP_BUFFER_MAX_MESSAGES,
+  LSP_CLIENT_ID_PATTERN,
+  isLanguageServerId,
+  languageServerSpec,
+  languageServerFor,
+  lspLanguageIdFor,
+  serverArgs,
+  fileUrisIn,
+  uriInsideRoot,
+  validateClientMessage,
+  type LanguageServerId,
+  type LanguageServerSpec,
+  type JsonRpcMessage,
+} from './lsp';

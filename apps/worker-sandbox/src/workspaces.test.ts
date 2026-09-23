@@ -107,6 +107,12 @@ describe('wrapCommand', () => {
     });
     expect(env.NPM_TOKEN).toBe('abc');
     expect(env.HOME).toBe('/h');
+    // The image's toolchains are on the PATH; their caches live under HOME.
+    expect(env.PATH).toContain('/usr/local/go/bin');
+    expect(env.PATH).toContain('/usr/local/cargo/bin');
+    expect(env.GOPATH).toBe('/h/go');
+    expect(env.CARGO_HOME).toBe('/h/.cargo');
+    expect(env.XDG_CACHE_HOME).toBe('/h/.cache');
     expect(env.DATABASE_URL).toBeUndefined();
     expect(env.SANDBOX_WORKER_API_KEY).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
