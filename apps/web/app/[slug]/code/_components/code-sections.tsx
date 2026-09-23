@@ -8,14 +8,15 @@
  * environment: the names of the variables the project's commands run
  * with, replaced by pasting a `.env` again. Values are never shown; the
  * worker sealed them and only a command ever sees them. A Bitbucket
- * project gets a third, its Pipelines setup (pipelines-section.tsx).
+ * project gets a third: a card summarizing its Pipelines, which opens
+ * the project's Pipelines page (pipelines-summary.tsx, pipelines-page.tsx).
  */
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
-import PipelinesSection from './pipelines-section';
+import PipelinesSummary from './pipelines-summary';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -33,12 +34,14 @@ function bytes(value: number): string {
 }
 
 export default function CodeSections({
+  slug,
   tenantId,
   projectId,
   code,
   canEdit,
   envProblems,
 }: {
+  slug: string;
   tenantId: string;
   projectId: string;
   code: CodeProjectView['code'];
@@ -258,12 +261,11 @@ export default function CodeSections({
         </p>
       ) : null}
       {!isGitHub ? (
-        <PipelinesSection
+        <PipelinesSummary
+          href={`/${slug}/code/${projectId}/pipelines`}
           tenantId={tenantId}
           projectId={projectId}
-          repoFullName={code.repoFullName}
           branch={code.branch}
-          canEdit={canEdit}
         />
       ) : null}
     </>

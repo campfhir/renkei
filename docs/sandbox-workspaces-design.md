@@ -21,9 +21,9 @@ repository on it, kept apart from ordinary chats:
 - **The project page** shows the repository and its checkout (clone
   again, change repository), the environment as names (replace by
   pasting a `.env` again, remove one), a Bitbucket project's Pipelines
-  setup (below), and everything a chat project's page has: instructions,
-  files, memory, toolset, the chats inside it, sharing. Values are never
-  shown again, to anyone.
+  at a glance (a card opening its Pipelines page, below), and everything
+  a chat project's page has: instructions, files, memory, toolset, the
+  chats inside it, sharing. Values are never shown again, to anyone.
 - **New chat** starts a chat in the project. Its chats are listed on the
   project's page, right under its environment, and among the person's
   chats in the app menu — marked with the Code glyph and naming the
@@ -193,18 +193,27 @@ a transcript. So, as with browser secrets, values go around the model:
 What a command does with a value it was given — sends it to the service
 it is for — is, of course, the point.
 
-## Pipelines: set up on the page, never from a chat
+## Pipelines: a page of their own, never a chat tool
 
-A Bitbucket code project's page carries a **Pipelines** section
-(`apps/web/app/[slug]/code/_components/pipelines-section.tsx`, over
+A Bitbucket code project has a **Pipelines page**
+(`/[slug]/code/[projectId]/pipelines`,
+`apps/web/app/[slug]/code/_components/pipelines-page.tsx`, over
 `/api/tenant/[tenantId]/code/projects/[projectId]/pipelines` and
-`apps/web/lib/code/bitbucket-pipelines.ts`): whether Bitbucket runs
-pipelines for the repository at all, whether a `bitbucket-pipelines.yml`
-is on the project's branch, and the variables the runs get — the
-repository's own and each deployment environment's, secured or plain.
-It exists to make CI/CD the path of least resistance: the page says what
-is missing and what to do about it (turn it on here; ask a chat to write
-the file), and the variables are set where the person already is.
+`apps/web/lib/code/bitbucket-pipelines.ts`): the recent runs (state,
+ref, who, when, how long — each opening on Bitbucket, where the steps
+and logs are), whether Bitbucket runs pipelines for the repository at
+all, whether a `bitbucket-pipelines.yml` is on the project's branch, and
+the variables the runs get — the repository's own and each deployment
+environment's, secured or plain. The project page carries only a card
+(`pipelines-summary.tsx`, the route's `?view=summary`: on/off, the file,
+counts, the last run — no names or values) so it stays a summary, and
+the page has the room for a runs table beside the setup. It exists to
+make CI/CD the path of least resistance: the page says what is missing
+and what to do about it (turn it on here; ask a chat to write the file),
+and the variables are set where the person already is. The page is
+framed provider-neutrally — runs, setup, variables — so a GitHub Actions
+variant can fill the same frame from its own reader; today the page and
+the card render for Bitbucket projects only.
 
 The split follows the `.env`'s rule. The **YAML is a file**: a chat can
 write and commit it with the code tools, and a chat can run, watch and

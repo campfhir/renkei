@@ -1,9 +1,10 @@
 /**
- * A code project's Bitbucket Pipelines setup, for the project page:
- * whether Pipelines is switched on for the repository, whether a
- * `bitbucket-pipelines.yml` sits on the project's branch, and the
- * variables the runs get — the repository's own, and each deployment
- * environment's. Read and written with the signed-in person's own grant.
+ * A code project's Bitbucket Pipelines, for its Pipelines page and the
+ * summary card on the project page: whether Pipelines is switched on for
+ * the repository, whether a `bitbucket-pipelines.yml` sits on the
+ * project's branch, the recent runs, and the variables the runs get —
+ * the repository's own, and each deployment environment's. Read and
+ * written with the signed-in person's own grant.
  *
  * Deliberately NOT MCP tools, and never to be: a pipeline variable is
  * where a deploy key or a registry token lives, and a value the model
@@ -19,6 +20,7 @@ import {
   bbJson,
   bbRawText,
   describeBitbucketFailure,
+  pipelineUrl,
   rec,
   str,
   values,
@@ -30,6 +32,9 @@ export const PIPELINES_VARIABLE_SCOPE = 'pipeline:variable';
 export const PIPELINES_READ_SCOPE = 'pipeline';
 
 export const PIPELINES_CONFIG_FILE = 'bitbucket-pipelines.yml';
+
+/** How many runs the page lists; the card shows the newest of them. */
+export const RUNS_ON_PAGE = 20;
 
 /** Bitbucket's own rule for a variable name; the same shape as a shell's. */
 const VARIABLE_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
@@ -53,16 +58,47 @@ export interface DeploymentEnvironment {
   error: string | null;
 }
 
+/** One pipeline run, as the page lists it. */
+export interface PipelineRun {
+  uuid: string;
+  buildNumber: number;
+  /** Bitbucket's result or stage name: SUCCESSFUL, FAILED, IN_PROGRESS, STOPPED, PENDING… */
+  state: string;
+  /** The branch or tag it ran on, else the commit's short hash. */
+  ref: string;
+  /** Who started it; empty for a scheduled or push-triggered run without a person. */
+  startedBy: string;
+  createdOn: string;
+  durationSeconds: number | null;
+  /** The run on bitbucket.org. */
+  url: string;
+}
+
 export interface PipelineSetup {
   /** Null when the switch could not be read (the grant lacks repository:admin, or Bitbucket refused). */
   enabled: boolean | null;
   enabledError: string | null;
   /** Whether the YAML is on the project's branch; unknown when the branch could not be read. */
   configFile: 'present' | 'absent' | 'unknown';
+  /** Newest first. */
+  runs: PipelineRun[];
+  runsError: string | null;
   variables: PipelineVariable[];
   variablesError: string | null;
   environments: DeploymentEnvironment[];
   environmentsError: string | null;
+}
+
+/** What the project page's card shows: the setup at a glance, and the last run. */
+export interface PipelineSummary {
+  enabled: boolean | null;
+  enabledError: string | null;
+  configFile: PipelineSetup['configFile'];
+  /** The repository's variables plus every environment's; null when they could not be read. */
+  variableCount: number | null;
+  environmentCount: number;
+  lastRun: PipelineRun | null;
+  runsError: string | null;
 }
 
 export interface VariableInput {
@@ -153,6 +189,46 @@ async function readConfigFile(
   return /\b404\b/.test(file.error) ? 'absent' : 'unknown';
 }
 
+/** A run's state: its result when finished, else the stage it is in. */
+function runState(raw: Record<string, unknown>): string {
+  const state = rec(raw.state);
+  return str(rec(state.result).name) || str(rec(state.stage).name) || str(state.name);
+}
+
+/** The newest runs — what the page lists, and the card's last run. */
+async function listRuns(
+  auth: BitbucketAuth,
+  fullName: string,
+  base: string,
+  max: number
+): Promise<{ ok: true; runs: PipelineRun[] } | { ok: false; error: string }> {
+  const listed = await bbJson(
+    auth,
+    [PIPELINES_READ_SCOPE],
+    `${base}/pipelines?pagelen=${max}&sort=-created_on`
+  );
+  if (!listed.ok) return listed;
+  const [workspace, slug] = fullName.split('/');
+  const runs: PipelineRun[] = [];
+  for (const raw of values(listed.body)) {
+    const uuid = str(raw.uuid);
+    const buildNumber = typeof raw.build_number === 'number' ? raw.build_number : null;
+    if (!uuid || buildNumber === null) continue;
+    const target = rec(raw.target);
+    runs.push({
+      uuid,
+      buildNumber,
+      state: runState(raw),
+      ref: str(target.ref_name) || str(rec(target.commit).hash).slice(0, 12),
+      startedBy: str(rec(raw.creator).display_name),
+      createdOn: str(raw.created_on),
+      durationSeconds: typeof raw.duration_in_seconds === 'number' ? raw.duration_in_seconds : null,
+      url: pipelineUrl(workspace ?? '', slug ?? '', buildNumber),
+    });
+  }
+  return { ok: true, runs };
+}
+
 /** The deployment environments, each with its variables. */
 async function readEnvironments(
   auth: BitbucketAuth,
@@ -189,13 +265,14 @@ export async function readPipelineSetup(
   auth: BitbucketAuth,
   fullName: string,
   branch: string,
-  options: { readSwitch: boolean }
+  options: { readSwitch: boolean; runs?: number }
 ): Promise<{ ok: true; setup: PipelineSetup } | { ok: false; error: string }> {
   const base = repoBase(fullName);
   if (!base) return { ok: false, error: 'The repository name is not usable.' };
-  const [switchState, configFile, variables, environments] = await Promise.all([
+  const [switchState, configFile, runs, variables, environments] = await Promise.all([
     options.readSwitch ? readEnabled(auth, base) : { enabled: null, error: null },
     readConfigFile(auth, base, branch),
+    listRuns(auth, fullName, base, options.runs ?? RUNS_ON_PAGE),
     listVariables(auth, variablesPath(base, undefined)),
     readEnvironments(auth, base),
   ]);
@@ -205,11 +282,30 @@ export async function readPipelineSetup(
       enabled: switchState.enabled,
       enabledError: switchState.error,
       configFile,
+      runs: runs.ok ? runs.runs : [],
+      runsError: runs.ok ? null : runs.error,
       variables: variables.ok ? variables.variables : [],
       variablesError: variables.ok ? null : variables.error,
       environments: environments.environments,
       environmentsError: environments.error,
     },
+  };
+}
+
+/** The card's view of a setup: counts and the last run, no names or values. */
+export function summarize(setup: PipelineSetup): PipelineSummary {
+  const environmentVariables = setup.environments.reduce(
+    (count, environment) => count + environment.variables.length,
+    0
+  );
+  return {
+    enabled: setup.enabled,
+    enabledError: setup.enabledError,
+    configFile: setup.configFile,
+    variableCount: setup.variablesError ? null : setup.variables.length + environmentVariables,
+    environmentCount: setup.environments.length,
+    lastRun: setup.runs[0] ?? null,
+    runsError: setup.runsError,
   };
 }
 

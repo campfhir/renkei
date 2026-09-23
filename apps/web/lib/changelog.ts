@@ -47,9 +47,9 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
-        title: 'Set up Bitbucket Pipelines from a code project’s page',
+        title: 'A Pipelines page for each Bitbucket code project',
         detail:
-          'A Bitbucket code project’s page gains a Pipelines section: turn Pipelines on for the repository, see whether a bitbucket-pipelines.yml is on the branch (and ask a chat to write one when it is not), and add, change or remove the repository’s pipeline variables and each deployment environment’s — secured or plain. None of this is a chat tool: a chat can commit the YAML, but the switch and the variables are set here, by a person, and a secured value is never shown again. The Bitbucket connector gains a “Set pipeline variables” checkbox for it.',
+          'A Bitbucket code project’s page now carries a Pipelines card — on or off, whether a bitbucket-pipelines.yml is on the branch, how many variables, and the last run — that opens the project’s own Pipelines page: the recent runs with their state, ref and timing, the switch to turn Pipelines on for the repository, a nudge to ask a chat for the pipeline file when there is none, and the repository’s pipeline variables and each deployment environment’s, secured or plain, added, changed and removed there. None of this is a chat tool: a chat can commit the YAML and start or stop runs, but the switch and the variables are set on the page, by a person, and a secured value is never shown again. The Bitbucket connector gains a “Set pipeline variables” checkbox for it.',
       },
       {
         kind: 'changed',

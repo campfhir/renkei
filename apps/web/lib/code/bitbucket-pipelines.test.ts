@@ -19,6 +19,7 @@ import {
   deletePipelineVariable,
   readPipelineSetup,
   setPipelinesEnabled,
+  summarize,
   updatePipelineVariable,
   validateVariableInput,
 } from './bitbucket-pipelines';
@@ -80,6 +81,30 @@ describe('readPipelineSetup', () => {
       { match: `${REPO}/pipelines_config`, body: { enabled: true } },
       { match: `${REPO}/src/main/bitbucket-pipelines.yml`, text: 'pipelines:\n  default: []\n' },
       {
+        match: `${REPO}/pipelines?`,
+        body: {
+          values: [
+            {
+              uuid: '{r2}',
+              build_number: 2,
+              state: { name: 'IN_PROGRESS', stage: { name: 'RUNNING' } },
+              target: { ref_name: 'main' },
+              creator: { display_name: 'Dev' },
+              created_on: '2026-09-22T10:00:00Z',
+            },
+            {
+              uuid: '{r1}',
+              build_number: 1,
+              state: { name: 'COMPLETED', result: { name: 'SUCCESSFUL' } },
+              target: { commit: { hash: '0123456789abcdef' } },
+              creator: {},
+              created_on: '2026-09-21T10:00:00Z',
+              duration_in_seconds: 80,
+            },
+          ],
+        },
+      },
+      {
         match: `${REPO}/environments`,
         body: {
           values: [
@@ -109,6 +134,29 @@ describe('readPipelineSetup', () => {
         enabled: true,
         enabledError: null,
         configFile: 'present',
+        runs: [
+          {
+            uuid: '{r2}',
+            buildNumber: 2,
+            state: 'RUNNING',
+            ref: 'main',
+            startedBy: 'Dev',
+            createdOn: '2026-09-22T10:00:00Z',
+            durationSeconds: null,
+            url: 'https://bitbucket.org/acme/billing-service/pipelines/results/2',
+          },
+          {
+            uuid: '{r1}',
+            buildNumber: 1,
+            state: 'SUCCESSFUL',
+            ref: '0123456789ab',
+            startedBy: '',
+            createdOn: '2026-09-21T10:00:00Z',
+            durationSeconds: 80,
+            url: 'https://bitbucket.org/acme/billing-service/pipelines/results/1',
+          },
+        ],
+        runsError: null,
         variables: [
           { uuid: '{v1}', key: 'API_BASE_URL', secured: false, value: 'https://api.example.test' },
           // Secured: null whatever Bitbucket put in the field.
@@ -130,6 +178,20 @@ describe('readPipelineSetup', () => {
     });
     const config = calls.find((call) => call.path === `${REPO}/pipelines_config`);
     expect(config?.scopes).toEqual(['repository:admin']);
+    const runs = calls.find((call) => call.path.startsWith(`${REPO}/pipelines?`));
+    expect(runs?.path).toBe(`${REPO}/pipelines?pagelen=20&sort=-created_on`);
+    expect(runs?.scopes).toEqual(['pipeline']);
+
+    // The card's view: counts and the newest run, no names or values.
+    expect(read.ok && summarize(read.setup)).toEqual({
+      enabled: true,
+      enabledError: null,
+      configFile: 'present',
+      variableCount: 3,
+      environmentCount: 2,
+      lastRun: read.ok ? read.setup.runs[0] : null,
+      runsError: null,
+    });
   });
 
   it('leaves the switch unread when told the connection cannot, and reports an absent file', async () => {
@@ -145,6 +207,10 @@ describe('readPipelineSetup', () => {
     expect(read.ok && read.setup.enabledError).toBeNull();
     expect(read.ok && read.setup.configFile).toBe('absent');
     expect(calls.some((call) => call.path === `${REPO}/pipelines_config`)).toBe(false);
+    // The runs listing was refused (no route): said, not swallowed.
+    expect(read.ok && read.setup.runsError).toMatch(/404/);
+    expect(read.ok && summarize(read.setup).variableCount).toBe(0);
+    expect(read.ok && summarize(read.setup).lastRun).toBeNull();
   });
 
   it('resolves the repository’s main branch when the project names none', async () => {

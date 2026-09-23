@@ -1,9 +1,12 @@
 /**
- * A code project's Bitbucket Pipelines setup — the switch, the YAML's
- * presence, the repository's variables and each deployment environment's
- * — read and written with the signed-in person's own Bitbucket grant.
- * GET reads it all (any member). PUT flips the switch, POST adds a
- * variable, PATCH replaces one, DELETE removes one (editors).
+ * A code project's Bitbucket Pipelines — the switch, the YAML's presence,
+ * the recent runs, the repository's variables and each deployment
+ * environment's — read and written with the signed-in person's own
+ * Bitbucket grant. GET reads it all for the project's Pipelines page, or
+ * with `?view=summary` just what the project page's card shows: counts
+ * and the last run, no variable names or values (any member). PUT flips
+ * the switch, POST adds a variable, PATCH replaces one, DELETE removes
+ * one (editors).
  *
  * Deliberately NOT MCP tools: a pipeline variable is where a deploy key
  * or a registry token lives. A chat can commit the YAML; the switch and
@@ -27,6 +30,7 @@ import {
   deletePipelineVariable,
   readPipelineSetup,
   setPipelinesEnabled,
+  summarize,
   updatePipelineVariable,
   validateVariableInput,
 } from '@/lib/code/bitbucket-pipelines';
@@ -103,11 +107,12 @@ export async function GET(
     readSwitch: configureNeeds === null,
   });
   if (!read.ok) return jsonError(502, 'bitbucket', read.error);
-  return NextResponse.json({
-    ...read.setup,
-    ...(configureNeeds ? { enabledError: configureNeeds } : {}),
-    access: { configureNeeds, variablesNeeds },
-  });
+  const setup = configureNeeds ? { ...read.setup, enabledError: configureNeeds } : read.setup;
+  const access = { configureNeeds, variablesNeeds };
+  if (request.nextUrl.searchParams.get('view') === 'summary') {
+    return NextResponse.json({ ...summarize(setup), access });
+  }
+  return NextResponse.json({ ...setup, access });
 }
 
 export async function PUT(

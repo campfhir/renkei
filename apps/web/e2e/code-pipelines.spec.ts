@@ -1,12 +1,14 @@
 /**
- * A Bitbucket code project's Pipelines section: the switch turned on,
- * the missing pipeline file named, a secured and a plain repository
- * variable added (the secured value never rendered), a plain one edited
- * and removed, and a deployment environment's variable added — then the
- * same section at phone width. Bitbucket is the stub in sandbox-stub.mjs
- * (the app is pointed at it with BITBUCKET_API_BASE_URL), which keeps
- * one pipelines row per repository; each Playwright project seeds a
- * project on a repository of its own, so the three never share state.
+ * A Bitbucket code project's Pipelines: the card on the project page
+ * (off, no file, the last run) opening the project's Pipelines page,
+ * where the recent runs are listed, the switch turned on, the missing
+ * pipeline file named, a secured and a plain repository variable added
+ * (the secured value never rendered), a plain one edited and removed,
+ * and a deployment environment's variable added — then the page at
+ * phone width. Bitbucket is the stub in sandbox-stub.mjs (the app is
+ * pointed at it with BITBUCKET_API_BASE_URL), which keeps one pipelines
+ * row per repository; each Playwright project seeds a project on a
+ * repository of its own, so the three never share state.
  */
 
 import { createCipheriv, randomBytes } from 'node:crypto';
@@ -61,7 +63,7 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     // The person's Bitbucket grant, carrying the two checkboxes the
-    // section stands on beyond a code project's own three: the admin
+    // page stands on beyond a code project's own three: the admin
     // bundle (the switch) and the pipeline-variable one. code.spec.ts
     // seeds the same row without them, so this upsert sets the scopes too.
     await client.query(
@@ -118,10 +120,20 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   }
 }
 
+/**
+ * Nothing scrolls sideways — the document, and the frame's own scroll
+ * container inside it (a wide table there would not show on the document,
+ * but focusing a field beside it would drag the whole page's content off
+ * the left edge).
+ */
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
-  );
+  const overflow = await page.evaluate(() => {
+    const frame = document.querySelector('main .overflow-y-auto');
+    return Math.max(
+      document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      frame ? frame.scrollWidth - frame.clientWidth : 0
+    );
+  });
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
@@ -135,7 +147,9 @@ test.describe('Code project pipelines', () => {
     await cleanFixtures(idsFor(testInfo.project.name));
   });
 
-  test('switch, file, variables, environment, phone width', async ({ page }, testInfo) => {
+  test('card, page, runs, switch, variables, environment, phone width', async ({
+    page,
+  }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const shot = (name: string) =>
       page.screenshot({
@@ -150,40 +164,72 @@ test.describe('Code project pipelines', () => {
         fullPage: false,
       });
     const main = page.getByRole('main');
-    const pipelines = main.locator('section', {
-      has: page.getByRole('heading', { level: 2, name: 'Pipelines' }),
-    });
-    const repositoryVariables = pipelines.getByRole('group', { name: 'Repository variables' });
-    const production = pipelines.getByRole('group', { name: 'Production' });
+    const pagePath = `/${E2E_SLUG}/code/${ids.projectId}/pipelines`;
 
+    // ── The project page: a card, after the environment and before the
+    //    chats, summarizing what Bitbucket says — off, no file, no
+    //    variables, the last run — and nothing to edit inline ──
     await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
     });
-
-    // ── The section sits after the environment, before the chats, and
-    //    reads from Bitbucket: off, no file, no variables ──
+    const card = main.locator('section', {
+      has: page.getByRole('heading', { level: 2, name: 'Pipelines' }),
+    });
     const headings = await main.getByRole('heading', { level: 2 }).allTextContents();
     const at = (name: string) => headings.findIndex((text) => text.startsWith(name));
     expect(at('Pipelines')).toBeGreaterThan(at('Environment'));
     expect(at('Chats in this project')).toBeGreaterThan(at('Pipelines'));
-    await expect(pipelines.getByRole('link', { name: 'Open on Bitbucket' })).toHaveAttribute(
+    await expect(
+      card.getByText(/^Off · no bitbucket-pipelines\.yml on main yet · 0 variables/)
+    ).toBeVisible();
+    await expect(card.getByText('Last run')).toBeVisible();
+    await expect(card.getByRole('link', { name: '#2' })).toHaveAttribute(
+      'href',
+      `https://bitbucket.org/${ids.repo}/pipelines/results/2`
+    );
+    await expect(card.getByText('Failed')).toBeVisible();
+    await expect(card.getByRole('button')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+    await shot('code-pipelines-card.png');
+
+    // ── Into the page: the runs table, the setup, the empty variable sets ──
+    await card.getByRole('link', { name: /Runs, setup & variables/ }).click();
+    await expect(page).toHaveURL(new RegExp(`${pagePath}$`));
+    await expect(page.getByRole('heading', { level: 1, name: /^Pipelines/ })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(main.getByText(ids.repo)).toBeVisible();
+    await expect(main.getByRole('link', { name: 'Open on Bitbucket' })).toHaveAttribute(
       'href',
       `https://bitbucket.org/${ids.repo}/pipelines`
     );
-    // The state is said twice, as a pill by the heading and in the row.
-    await expect(pipelines.locator('dl').getByText('Off', { exact: true })).toBeVisible();
-    await expect(pipelines.getByText(/Not on main yet — ask a chat in this project/)).toBeVisible();
+    const runs = main.getByRole('region', { name: 'Recent runs' });
+    const rows = runs.getByRole('row');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(1)).toContainText('#2');
+    await expect(rows.nth(1)).toContainText('Failed');
+    await expect(rows.nth(1)).toContainText('feature/retry-invoices');
+    await expect(rows.nth(1)).toContainText('E2E Dev');
+    await expect(rows.nth(1)).toContainText('5m 12s');
+    await expect(rows.nth(2)).toContainText('#1');
+    await expect(rows.nth(2)).toContainText('Successful');
+    await expect(rows.nth(2)).toContainText('main');
+    const setup = main.getByRole('region', { name: 'Setup' });
+    await expect(setup.getByText('Off', { exact: true })).toBeVisible();
+    await expect(setup.getByText(/Not on main yet — ask a chat in this project/)).toBeVisible();
+    const repositoryVariables = main.getByRole('region', { name: 'Repository variables' });
+    const production = main.getByRole('region', { name: 'Production' });
     await expect(repositoryVariables.getByText('No variables.')).toBeVisible();
     await expect(production.getByText('No variables.')).toBeVisible();
     await expect(production.getByText(/deploying to this production environment/)).toBeVisible();
     await expectNoHorizontalOverflow(page);
-    await shot('code-pipelines-off.png');
+    await shot('code-pipelines-page.png');
 
     // ── Turn it on ──
-    await pipelines.getByRole('button', { name: 'Turn on' }).click();
-    await expect(pipelines.locator('dl').getByText('On', { exact: true })).toBeVisible();
-    await expect(pipelines.getByRole('button', { name: 'Turn off' })).toBeVisible();
+    await setup.getByRole('button', { name: 'Turn on' }).click();
+    await expect(setup.getByText('On', { exact: true })).toBeVisible();
+    await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
 
     // ── A secured variable: listed as Secured, its value never on the page ──
     await repositoryVariables.getByRole('button', { name: 'Add variable' }).click();
@@ -248,15 +294,25 @@ test.describe('Code project pipelines', () => {
 
     // ── It all survives a reload: the stub is the truth, not the page ──
     await page.reload();
-    await expect(pipelines.getByRole('button', { name: 'Turn off' })).toBeVisible();
+    await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
     await expect(repositoryVariables.getByText('NPM_TOKEN_RO')).toBeVisible();
     await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
     await shot('code-pipelines-set.png');
 
-    // ── Phone width: the same section, nothing sideways ──
+    // ── Back on the project page, the card reflects it: on, two variables ──
+    await main.getByRole('link', { name: ids.name, exact: true }).click();
+    await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible();
+    await expect(
+      card.getByText(
+        /^On · no bitbucket-pipelines\.yml on main yet · 2 variables across the repository and 1 environment/
+      )
+    ).toBeVisible();
+
+    // ── Phone width: the page again, one column, nothing sideways ──
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.reload();
-    await expect(pipelines.getByRole('button', { name: 'Turn off' })).toBeVisible();
+    await page.goto(pagePath);
+    await expect(page.getByRole('heading', { level: 1, name: /^Pipelines/ })).toBeVisible();
+    await expect(rows.nth(1)).toContainText('Failed');
     await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
     await production.getByRole('button', { name: 'Add variable' }).click();
     await expect(productionForm.getByLabel('Name', { exact: true })).toBeVisible();

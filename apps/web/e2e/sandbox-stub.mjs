@@ -429,6 +429,28 @@ function pipelinesOf(fullName) {
   if (!PIPELINES.has(fullName)) {
     PIPELINES.set(fullName, {
       enabled: false,
+      // Two runs, as Bitbucket lists them newest first: the latest failed
+      // on a branch, the one before passed on main.
+      runs: [
+        {
+          uuid: '{run-0002}',
+          build_number: 2,
+          state: { name: 'COMPLETED', result: { name: 'FAILED' } },
+          target: { ref_name: 'feature/retry-invoices', commit: { hash: 'abc123def456' } },
+          creator: { display_name: 'E2E Dev' },
+          created_on: '2026-09-22T14:05:00Z',
+          duration_in_seconds: 312,
+        },
+        {
+          uuid: '{run-0001}',
+          build_number: 1,
+          state: { name: 'COMPLETED', result: { name: 'SUCCESSFUL' } },
+          target: { ref_name: 'main', commit: { hash: '0123456789ab' } },
+          creator: {},
+          created_on: '2026-09-21T09:30:00Z',
+          duration_in_seconds: 95,
+        },
+      ],
       variables: [],
       environments: [
         {
@@ -510,6 +532,11 @@ function handleBitbucket(request, url, response) {
       return;
     }
     return json(response, 200, { enabled: state.enabled });
+  }
+  const runs = /^\/repositories\/([^/]+)\/([^/]+)\/pipelines$/.exec(path);
+  if (runs) {
+    const state = pipelinesOf(`${runs[1]}/${runs[2]}`);
+    return json(response, 200, { values: state.runs });
   }
   const repoVariables =
     /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config\/variables(?:\/([^/]+))?$/.exec(path);
