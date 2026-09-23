@@ -19,6 +19,7 @@ import {
   sampleArgsFor,
   type OperationRuntime,
 } from './operations';
+import { PLAIN_ID_ARGS, REF_ARGS } from './resolve';
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: { text: string }[];
@@ -306,5 +307,133 @@ describe('registerOperationTools', () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('Mirth answered 403');
+  });
+});
+
+describe('requestFor, on the wire', () => {
+  it("sends a parameter under its wire name and dates in Mirth's Calendar form", () => {
+    const built = requestFor(byTool('count_events'), {
+      instanceId: INSTANCE_ID,
+      levels: ['ERROR', 'WARNING'],
+      startDate: '2026-09-01T00:00:00Z',
+      endDate: '2026-09-02',
+    });
+    expect(built).toEqual({
+      ok: true,
+      request: {
+        method: 'GET',
+        path: '/events/count',
+        query: {
+          level: ['ERROR', 'WARNING'],
+          startDate: '2026-09-01T00:00:00.000+0000',
+          endDate: '2026-09-02T00:00:00.000+0000',
+        },
+        accept: 'text/plain',
+      },
+    });
+  });
+
+  it('refuses a date it cannot read, in the schema and in the request', () => {
+    const schema = inputSchemaFor(byTool('count_events'));
+    expect(schema.safeParse({ instanceId: INSTANCE_ID, startDate: 'last tuesday' }).success).toBe(
+      false
+    );
+    expect(schema.safeParse({ instanceId: INSTANCE_ID, startDate: '2026-09-01' }).success).toBe(
+      true
+    );
+    expect(
+      requestFor(byTool('count_events'), { instanceId: INSTANCE_ID, endDate: 'soon' })
+    ).toEqual({ ok: false, error: 'endDate must be an ISO 8601 date-time.' });
+  });
+});
+
+describe('xml-value bodies', () => {
+  it('sends a string→string map as the XStream map Mirth reads', () => {
+    const built = requestFor(byTool('audit_accessed_phi_message'), {
+      instanceId: INSTANCE_ID,
+      auditMessageAttributesMap: { channel: 'ADT In', patient: 'a<b&c' },
+    });
+    expect(built).toEqual({
+      ok: true,
+      request: {
+        method: 'POST',
+        path: '/channels/_auditAccessedPHIMessage',
+        body:
+          '<map><entry><string>channel</string><string>ADT In</string></entry>' +
+          '<entry><string>patient</string><string>a&lt;b&amp;c</string></entry></map>',
+        contentType: 'application/xml',
+      },
+    });
+  });
+
+  it('sends nothing for an optional map left out, and refuses a required string left out', () => {
+    expect(requestFor(byTool('audit_export_messages'), { instanceId: INSTANCE_ID })).toEqual({
+      ok: true,
+      request: { method: 'POST', path: '/channels/_auditExportMessages' },
+    });
+    expect(requestFor(byTool('uninstall_extension'), { instanceId: INSTANCE_ID })).toEqual({
+      ok: false,
+      error: 'extensionPath is required.',
+    });
+  });
+
+  it('sends a string as the XStream string Mirth reads', () => {
+    const built = requestFor(byTool('uninstall_extension'), {
+      instanceId: INSTANCE_ID,
+      extensionPath: '/opt/mirth/extensions/x',
+    });
+    expect(built).toEqual({
+      ok: true,
+      request: {
+        method: 'POST',
+        path: '/extensions/_uninstall',
+        body: '<string>/opt/mirth/extensions/x</string>',
+        contentType: 'application/xml',
+      },
+    });
+    const schema = inputSchemaFor(byTool('audit_accessed_phi_message'));
+    expect(
+      schema.safeParse({ instanceId: INSTANCE_ID, auditMessageAttributesMap: { a: 'b' } }).success
+    ).toBe(true);
+    expect(
+      schema.safeParse({ instanceId: INSTANCE_ID, auditMessageAttributesMap: ['a=b'] }).success
+    ).toBe(false);
+  });
+});
+
+describe('reference arguments in the operation table', () => {
+  it('lists every id-shaped parameter as a reference or as a plain identifier', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      const names = [
+        ...operation.params.map((param) => param.name),
+        ...(operation.body?.kind === 'form' ? operation.body.fields.map((f) => f.name) : []),
+        ...(operation.body?.kind === 'multipart' ? operation.body.parts.map((p) => p.name) : []),
+      ];
+      for (const name of names) {
+        if (!/Ids?$/.test(name)) continue;
+        expect({
+          tool: operation.tool,
+          name,
+          known: name in REF_ARGS || PLAIN_ID_ARGS.has(name),
+        }).toEqual({ tool: operation.tool, name, known: true });
+      }
+    }
+  });
+
+  it('lets every reference parameter be a name in the generated schema', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      const schema = inputSchemaFor(operation);
+      for (const param of operation.params) {
+        if (!(param.name in REF_ARGS)) continue;
+        const field = schema.shape[param.name];
+        const accepts =
+          field.safeParse('Some Name').success || field.safeParse(['Some Name']).success;
+        expect({ tool: operation.tool, param: param.name, accepts }).toEqual({
+          tool: operation.tool,
+          param: param.name,
+          accepts: true,
+        });
+      }
+    }
   });
 });

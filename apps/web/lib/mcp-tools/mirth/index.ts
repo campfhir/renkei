@@ -34,7 +34,14 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { isRecord, mirthPermission, textOf, unwrapList, unwrapMap } from '@renkei/connector-mirth';
+import {
+  isRecord,
+  mirthPermission,
+  textOf,
+  toMirthDate,
+  unwrapList,
+  unwrapMap,
+} from '@renkei/connector-mirth';
 import type { ConnectedInstance, MirthPermission } from '@renkei/connector-mirth';
 import type { MCPToolContext } from '../common';
 import { mirthApi } from '@/lib/mirth/service-client';
@@ -248,24 +255,35 @@ const connectorField = z
   .union([z.number().int().nonnegative(), z.string().min(1)])
   .describe('A connector metaDataId (0 = source, 1.. = destinations) or its name.');
 
+/**
+ * A date argument: any ISO 8601 date-time a model writes, checked here and
+ * sent to Mirth in the one Calendar form it parses (toMirthDate).
+ */
+const dateField = (description: string) =>
+  z
+    .string()
+    .refine((value) => toMirthDate(value) !== undefined, 'Expected an ISO 8601 date-time.')
+    .optional()
+    .describe(`${description} ISO 8601 date-time (e.g. 2026-09-01T00:00:00Z).`);
+/** The Mirth form of a validated date argument, or undefined when it was not given. */
+const dateArg = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? toMirthDate(value) : undefined;
+
 /** The message search filters Mirth's GET /channels/{id}/messages accepts, as a model sees them. */
 const messageFilterFields = {
   minMessageId: z.number().int().optional(),
   maxMessageId: z.number().int().optional(),
-  startDate: z
-    .string()
-    .optional()
-    .describe('ISO 8601 (e.g. 2026-09-01T00:00:00Z); received on or after.'),
-  endDate: z.string().optional().describe('ISO 8601; received on or before.'),
+  startDate: dateField('Received on or after.'),
+  endDate: dateField('Received on or before.'),
   status: z
     .array(z.enum(['RECEIVED', 'FILTERED', 'TRANSFORMED', 'SENT', 'QUEUED', 'ERROR', 'PENDING']))
     .optional()
     .describe('Connector-message statuses to match.'),
   textSearch: z.string().optional().describe('Free text searched across message content.'),
   includedMetaDataId: z
-    .array(z.number().int())
+    .array(connectorField)
     .optional()
-    .describe('Connector metadata ids to include (0 = source, 1.. = destinations).'),
+    .describe('Only these connectors (0 = source, 1.. = destinations), by metaDataId or name.'),
   error: z.boolean().optional().describe('Only messages with an error.'),
 };
 
@@ -275,8 +293,8 @@ function messageQuery(
   return queryOf({
     minMessageId: typeof args.minMessageId === 'number' ? args.minMessageId : undefined,
     maxMessageId: typeof args.maxMessageId === 'number' ? args.maxMessageId : undefined,
-    startDate: str(args.startDate) || undefined,
-    endDate: str(args.endDate) || undefined,
+    startDate: dateArg(args.startDate),
+    endDate: dateArg(args.endDate),
     status: Array.isArray(args.status) ? args.status.map(String) : undefined,
     textSearch: str(args.textSearch) || undefined,
     includedMetaDataId: Array.isArray(args.includedMetaDataId)
@@ -735,7 +753,8 @@ export function registerMirthTools(
         return textResult(clip(JSON.stringify(one.value, null, 2), DEFAULT_MAX_CHARS));
       }
       const all = await getJson(instanceId, 'read the statistics', '/channels/statistics', {
-        ...(ids.length ? { channelIds: ids } : {}),
+        // Mirth reads the repeatable channel filter from the singular key.
+        ...(ids.length ? { channelId: ids } : {}),
         includeUndeployed: true,
         aggregateStats: true,
       });
@@ -954,9 +973,12 @@ export function registerMirthTools(
         levels: z.array(z.enum(['INFORMATION', 'WARNING', 'ERROR'])).optional(),
         name: z.string().optional().describe('Event name fragment (e.g. "Deploy").'),
         outcome: z.enum(['SUCCESS', 'FAILURE']).optional(),
-        userId: z.number().int().optional(),
-        startDate: z.string().optional().describe('ISO 8601.'),
-        endDate: z.string().optional().describe('ISO 8601.'),
+        userId: z
+          .union([z.number().int(), z.string().min(1)])
+          .optional()
+          .describe('The acting user, by id or username.'),
+        startDate: dateField('On or after.'),
+        endDate: dateField('On or before.'),
         minEventId: z.number().int().optional(),
         maxEventId: z.number().int().optional(),
         limit: z.number().int().positive().max(500).optional().describe('Default 50.'),
@@ -966,12 +988,13 @@ export function registerMirthTools(
     async (args: Record<string, unknown>) => {
       const found = await getJson(str(args.instanceId), 'read the events', '/events', {
         ...queryOf({
-          levels: Array.isArray(args.levels) ? args.levels.map(String) : undefined,
+          // Mirth reads the repeatable level filter from the singular key.
+          level: Array.isArray(args.levels) ? args.levels.map(String) : undefined,
           name: str(args.name) || undefined,
           outcome: str(args.outcome) || undefined,
           userId: typeof args.userId === 'number' ? args.userId : undefined,
-          startDate: str(args.startDate) || undefined,
-          endDate: str(args.endDate) || undefined,
+          startDate: dateArg(args.startDate),
+          endDate: dateArg(args.endDate),
           minEventId: typeof args.minEventId === 'number' ? args.minEventId : undefined,
           maxEventId: typeof args.maxEventId === 'number' ? args.maxEventId : undefined,
           offset: typeof args.offset === 'number' ? args.offset : undefined,

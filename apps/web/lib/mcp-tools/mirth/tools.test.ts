@@ -15,6 +15,7 @@ jest.mock('@/lib/mirth/service-client', () => ({
   mirthApi: jest.fn(),
 }));
 
+import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { MIRTH_PERMISSION_IDS } from '@renkei/connector-mirth';
 import type {
@@ -25,7 +26,7 @@ import type {
 import { registerMirthTools, type MirthToolExposure } from './index';
 import { NO_SUCH_INSTANCE } from './mirth-auth';
 import type { MirthAuth } from './mirth-auth';
-import type { Directory } from './resolve';
+import { PLAIN_ID_ARGS, REF_ARGS, type Directory } from './resolve';
 import type { MCPToolContext } from '../common';
 
 const { mirthApi } = jest.requireMock<{ mirthApi: jest.Mock }>('@/lib/mirth/service-client');
@@ -97,6 +98,8 @@ const directory: Directory = {
           { id: '0', name: 'sourceConnector' },
           { id: '1', name: 'To Lab' },
         ];
+      case 'user':
+        return [{ id: '7', name: 'alice' }];
       default:
         return [];
     }
@@ -552,7 +555,7 @@ describe('messages', () => {
       path: '/channels/c1/messages',
       query: {
         status: ['ERROR'],
-        startDate: '2026-09-01T00:00:00Z',
+        startDate: '2026-09-01T00:00:00.000+0000',
         textSearch: 'PID',
         includeContent: false,
         limit: 5,
@@ -681,6 +684,133 @@ describe('destructive cards', () => {
       method: 'DELETE',
       path: '/channels/c1/messages',
       query: { status: ['ERROR'] },
+    });
+  });
+});
+
+describe('events', () => {
+  it("filters on Mirth's singular level key and sends dates in its Calendar form", async () => {
+    mirthApi.mockResolvedValueOnce(
+      answer(200, {
+        list: {
+          serverEvent: [
+            {
+              id: 41,
+              eventTime: { time: 1756684800000, timezone: 'UTC' },
+              level: 'ERROR',
+              name: 'Deploy channel',
+              outcome: 'FAILURE',
+              userId: 1,
+              ipAddress: '10.0.0.5',
+              attributes: { entry: [{ string: ['channel', 'ADT In'] }] },
+            },
+          ],
+        },
+      })
+    );
+    const result = await register().get('mirth_list_events')!({
+      instanceId: INSTANCE_ID,
+      levels: ['ERROR'],
+      startDate: '2026-09-01T00:00:00Z',
+      endDate: '2026-09-02T00:00:00+02:00',
+      limit: 10,
+    });
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/events',
+      query: {
+        level: ['ERROR'],
+        startDate: '2026-09-01T00:00:00.000+0000',
+        endDate: '2026-09-01T22:00:00.000+0000',
+        limit: 10,
+      },
+    });
+    expect(textOf(result)).toContain('#41');
+    expect(textOf(result)).toContain('ERROR Deploy channel — FAILURE');
+  });
+});
+
+describe('statistics', () => {
+  it("filters channels on Mirth's singular channelId key", async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, { list: { channelStatistics: [] } }));
+    await register().get('mirth_channel_statistics')!({
+      instanceId: INSTANCE_ID,
+      channelIds: ['c1', 'c9'],
+    });
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/channels/statistics',
+      query: { channelId: ['c1', 'c9'], includeUndeployed: true, aggregateStats: true },
+    });
+  });
+});
+
+describe('names in place of ids', () => {
+  /** Every registered tool's input schema, by tool name. */
+  function schemas(): Map<string, z.ZodObject<Record<string, z.ZodTypeAny>>> {
+    const found = new Map<string, z.ZodObject<Record<string, z.ZodTypeAny>>>();
+    const server = {
+      registerTool: (name: string, config: { inputSchema?: unknown }) => {
+        if (config.inputSchema instanceof z.ZodObject) found.set(name, config.inputSchema);
+      },
+    } as unknown as McpServer;
+    registerMirthTools(
+      server,
+      contextOf(),
+      authOf(connectionOf()),
+      { permissions: ALL },
+      { directory }
+    );
+    return found;
+  }
+
+  it('lists every id-shaped argument as a reference or as a plain identifier', () => {
+    for (const [tool, schema] of schemas()) {
+      for (const field of Object.keys(schema.shape)) {
+        if (!/Ids?$/.test(field)) continue;
+        expect({ tool, field, known: field in REF_ARGS || PLAIN_ID_ARGS.has(field) }).toEqual({
+          tool,
+          field,
+          known: true,
+        });
+      }
+    }
+  });
+
+  it('lets every reference argument be a name, so resolution can run at all', () => {
+    for (const [tool, schema] of schemas()) {
+      for (const [field, fieldSchema] of Object.entries(schema.shape)) {
+        if (!(field in REF_ARGS)) continue;
+        const asName = fieldSchema.safeParse('Some Name').success;
+        const asNames = fieldSchema.safeParse(['Some Name']).success;
+        expect({ tool, field, acceptsName: asName || asNames }).toEqual({
+          tool,
+          field,
+          acceptsName: true,
+        });
+      }
+    }
+  });
+
+  it('resolves a username on the events filter and connector names on the message filter', async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, { list: '' }));
+    await register().get('mirth_list_events')!({ instanceId: INSTANCE_ID, userId: 'alice' });
+    expect(mirthApi).toHaveBeenLastCalledWith(TARGET, {
+      method: 'GET',
+      path: '/events',
+      query: { userId: 7, limit: 50 },
+    });
+
+    mirthApi.mockResolvedValueOnce(answer(200, { list: '' }));
+    await register().get('mirth_search_messages')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'ADT In',
+      includedMetaDataId: ['To Lab', 0],
+    });
+    expect(mirthApi).toHaveBeenLastCalledWith(TARGET, {
+      method: 'GET',
+      path: '/channels/c1/messages',
+      query: { includedMetaDataId: ['1', '0'], includeContent: false, limit: 20 },
     });
   });
 });

@@ -43,6 +43,7 @@ export {
   MIRTH_OPERATIONS,
   fillPath,
   pathParamNames,
+  toMirthDate,
   type BodySpec,
   type OperationKind,
   type OperationSpec,

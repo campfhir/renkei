@@ -7,9 +7,12 @@
  * than a generic "issue a request" escape hatch.
  *
  * Transcribed from the 4.5.2 servlet interfaces
- * (`com.mirth.connect.client.core.api.servlets.*ServletInterface`). Paths
- * are relative to `/api`; `{name}` marks a path parameter and must have a
- * matching `params` entry with `in: 'path'`.
+ * (`com.mirth.connect.client.core.api.servlets.*ServletInterface`); the
+ * server's own OpenAPI document for that version is checked in at
+ * docs/mirth-connect-client-api-open-api-spec.json and operations.test.ts
+ * holds every entry here against it. Paths are relative to `/api`;
+ * `{name}` marks a path parameter and must have a matching `params` entry
+ * with `in: 'path'`.
  *
  * Left out on purpose:
  *   - the `POST … _getX` / `_search` / `_removeAllMessagesPost` variants
@@ -44,16 +47,46 @@ export type ParamType =
   | { enum: readonly [string, ...string[]]; multiple?: boolean };
 
 export interface ParamSpec {
+  /** The argument name a model sees. */
   name: string;
   in: 'path' | 'query';
   type: ParamType;
   required?: boolean;
   description: string;
+  /** The query key Mirth reads, where it differs from `name` (`levels` rides as `level`). */
+  wire?: string;
+}
+
+/**
+ * The one date form Mirth's Calendar query parameters parse:
+ * `yyyy-MM-dd'T'HH:mm:ss.SSSZ` with an RFC 822 zone (`2015-10-21T07:28:00.000-0700`,
+ * the spec's own example). Plain ISO 8601 — a trailing `Z`, a `+00:00`
+ * zone, no milliseconds, a bare date — is rejected upstream, so every
+ * date a model gives is normalised here, in UTC. Undefined when the value
+ * is not a date at all.
+ */
+export function toMirthDate(value: string): string | undefined {
+  const parsed = new Date(value.trim());
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString().replace(/Z$/, '+0000');
 }
 
 export type BodySpec =
   /** One verbatim document — the XML the Administrator exports, or plain text. */
   | { kind: 'xml' | 'text'; name: string; description: string; required?: boolean }
+  /**
+   * One plain value — a string, or a flat string→string map — that Mirth
+   * reads as a Java String or Map<String,String>. Sent as the XStream XML
+   * the server deserialises (`<string>…</string>`, `<map><entry>…`), so a
+   * model gives the value, never the markup.
+   */
+  | {
+      kind: 'xml-value';
+      name: string;
+      description: string;
+      required?: boolean;
+      shape: 'string' | 'string-map';
+    }
   /** application/x-www-form-urlencoded fields. */
   | { kind: 'form'; fields: ParamSpec[] }
   /** multipart/form-data parts, each an XML document. */
@@ -99,6 +132,14 @@ const xml = (name: string, description: string, required = true): BodySpec => ({
 });
 
 const CHANNEL_ID = id('channelId', 'The channel id (from mirth_list_channels).');
+/** The attribute map the four PHI audit routes record — the request body, a flat map. */
+const AUDIT_ATTRIBUTES: BodySpec = {
+  kind: 'xml-value',
+  shape: 'string-map',
+  name: 'auditMessageAttributesMap',
+  description: 'The attributes to record with the audit event, as key → value.',
+  required: false,
+};
 const MESSAGE_ID: ParamSpec = {
   name: 'messageId',
   in: 'path',
@@ -157,11 +198,14 @@ const MESSAGE_FILTER: ParamSpec[] = [
 const EVENT_FILTER: ParamSpec[] = [
   q('maxEventId', 'int', 'Highest event id to match.'),
   q('minEventId', 'int', 'Lowest event id to match.'),
-  q(
-    'levels',
-    { enum: ['INFORMATION', 'WARNING', 'ERROR'], multiple: true },
-    'Event levels to match.'
-  ),
+  {
+    ...q(
+      'levels',
+      { enum: ['INFORMATION', 'WARNING', 'ERROR'], multiple: true },
+      'Event levels to match.'
+    ),
+    wire: 'level',
+  },
   q('startDate', 'iso-date', 'On or after (ISO 8601).'),
   q('endDate', 'iso-date', 'On or before (ISO 8601).'),
   q('name', 'string', 'Event name fragment.'),
@@ -474,6 +518,13 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
             'RESPONSE',
             'RESPONSE_TRANSFORMED',
             'PROCESSED_RESPONSE',
+            'CONNECTOR_MAP',
+            'CHANNEL_MAP',
+            'RESPONSE_MAP',
+            'PROCESSING_ERROR',
+            'POSTPROCESSOR_ERROR',
+            'RESPONSE_ERROR',
+            'SOURCE_MAP',
           ],
         },
         'Which content to export; omit for the whole message.'
@@ -488,7 +539,11 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       q('archiveFormat', 'string', 'The archive format (zip, tar).'),
       q('compressFormat', 'string', 'The compression format (gz, bz2).'),
       q('password', 'string', 'Archive password.'),
-      q('encryptionType', 'string', 'Archive encryption type.'),
+      q(
+        'encryptionType',
+        { enum: ['STANDARD', 'AES128', 'AES256'] },
+        'Archive encryption type (zip archives only).'
+      ),
     ],
     kind: 'act',
     accept: 'text/plain',
@@ -523,7 +578,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that the user viewed a message containing PHI (POST /channels/_auditAccessedPHIMessage).",
     method: 'POST',
     path: '/channels/_auditAccessedPHIMessage',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   {
@@ -534,7 +590,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that the user queried a message panel containing PHI (POST /channels/_auditQueriedPHIMessage).",
     method: 'POST',
     path: '/channels/_auditQueriedPHIMessage',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   {
@@ -545,7 +602,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that the user exported messages (POST /channels/_auditExportMessages).",
     method: 'POST',
     path: '/channels/_auditExportMessages',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   {
@@ -556,7 +614,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       "Record in Mirth's event log that a message export completed (POST /channels/_auditExportMessagesSuccess).",
     method: 'POST',
     path: '/channels/_auditExportMessagesSuccess',
-    params: [q('auditMessageAttributesMap', 'string[]', 'Attribute entries as "key=value".')],
+    params: [],
+    body: AUDIT_ATTRIBUTES,
     kind: 'act',
   },
   // ---------------------------------------------------------------- statistics
@@ -1424,7 +1483,8 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     path: '/extensions/_uninstall',
     params: [],
     body: {
-      kind: 'text',
+      kind: 'xml-value',
+      shape: 'string',
       name: 'extensionPath',
       description: "The extension's path, as mirth_get_extension reports it.",
       required: true,
