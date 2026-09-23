@@ -249,7 +249,8 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   per common language — TypeScript/JavaScript (typescript-language-server),
   Python (Pyright), Java (Eclipse JDT on a Temurin JDK 21), SQL, C/C++
   (clangd), Go (gopls, with a Go toolchain), Rust (rust-analyzer, with a
-  Rust toolchain) and R — which the worker starts on demand inside a
+  Rust toolchain), R and shell (bash-language-server with shellcheck) —
+  which the worker starts on demand inside a
   project's checkout, as the project's own uid, when someone opens a
   file of that language in the pane; the browser's Monaco is the client,
   relayed through the web app (`…/code/projects/[id]/lsp`). Nothing to
@@ -264,6 +265,11 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   accordingly for a deployment with many code projects open at once. A
   server idle for ten minutes — no editor listening, nothing sent — is
   shut down; at most six run per checkout and forty-eight per worker.
+  Files opened in the pane whose language has no server are counted in
+  the `code_language_gaps` table (extension, language, whether the
+  registry has no server or the worker lacks it, opens, last path) —
+  there is no UI; `SELECT * FROM code_language_gaps ORDER BY open_count
+  DESC` says which server to add next.
   Checkouts live on a second named volume
   (`renkei-sandbox-workspaces` / `sandbox_workspaces`) at
   `SANDBOX_WORKSPACES_DIR` (default `/workspaces`), a week since last use.

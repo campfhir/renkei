@@ -395,17 +395,21 @@ ARG TS_LANGUAGE_SERVER_VERSION=6.0.0
 ARG TYPESCRIPT_VERSION=5.9.3
 ARG PYRIGHT_VERSION=1.1.414
 ARG SQL_LANGUAGE_SERVER_VERSION=1.7.1
+ARG BASH_LANGUAGE_SERVER_VERSION=5.8.1
 ARG GO_VERSION=1.27.1
 ARG GOPLS_VERSION=v0.23.0
 ARG RUST_TOOLCHAIN=stable
 ARG JDTLS_VERSION=1.50.0
 
-# TypeScript/JavaScript, Python and SQL: Node-based, beside the worker's own Node.
+# TypeScript/JavaScript, Python, SQL and shell: Node-based, beside the
+# worker's own Node. The shell server lints through shellcheck when it
+# finds one, so Debian's is installed with clangd below.
 RUN npm install -g \
       typescript-language-server@${TS_LANGUAGE_SERVER_VERSION} \
       typescript@${TYPESCRIPT_VERSION} \
       pyright@${PYRIGHT_VERSION} \
-      sql-language-server@${SQL_LANGUAGE_SERVER_VERSION} && \
+      sql-language-server@${SQL_LANGUAGE_SERVER_VERSION} \
+      bash-language-server@${BASH_LANGUAGE_SERVER_VERSION} && \
     rm -rf /root/.npm && \
     typescript-language-server --version && pyright --version
 
@@ -413,7 +417,7 @@ RUN npm install -g \
 # from CRAN, its heavier dependencies from Debian so nothing compiles ICU.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      clangd \
+      clangd shellcheck \
       r-base-core r-cran-jsonlite r-cran-r6 r-cran-callr r-cran-collections \
       r-cran-fs r-cran-lintr r-cran-repr r-cran-roxygen2 r-cran-stringi \
       r-cran-styler r-cran-xml2 r-cran-xmlparsedata && \

@@ -40,6 +40,7 @@ export const LANGUAGE_SERVER_IDS = [
   'go',
   'rust',
   'r',
+  'bash',
 ] as const;
 
 export type LanguageServerId = (typeof LANGUAGE_SERVER_IDS)[number];
@@ -90,6 +91,13 @@ export const LANGUAGE_SERVERS: readonly LanguageServerSpec[] = [
     languages: ['r'],
     command: 'R',
     args: ['--slave', '-e', 'languageserver::run()'],
+  },
+  {
+    id: 'bash',
+    label: 'Bash',
+    languages: ['shell'],
+    command: 'bash-language-server',
+    args: ['start'],
   },
 ];
 

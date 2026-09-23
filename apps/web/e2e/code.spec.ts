@@ -952,6 +952,32 @@ test.describe('code projects', () => {
     await expect(
       main.getByRole('status').filter({ hasText: 'TypeScript language server' })
     ).toBeVisible();
+
+    // ── A file whose language has no server is counted in
+    //    code_language_gaps (no UI; an operator's query) ──
+    await tree.getByRole('button', { name: /package\.json/ }).click();
+    await expect(openFiles.getByRole('tab', { name: /package\.json/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    await expect
+      .poll(
+        async () => {
+          const client = await db();
+          try {
+            const rows = await client.query(
+              `SELECT reason, sample_path FROM code_language_gaps
+                WHERE tenant_id = $1 AND extension = 'json' AND language = 'json'`,
+              [E2E_TENANT_ID]
+            );
+            return rows.rows[0] ?? null;
+          } finally {
+            await client.end();
+          }
+        },
+        { timeout: 10_000 }
+      )
+      .toMatchObject({ reason: 'no_server', sample_path: 'package.json' });
   });
 
   test('new project via a freshly created Bitbucket repository', async ({ page }, testInfo) => {

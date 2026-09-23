@@ -32,6 +32,7 @@ describe('the registry', () => {
     expect(languageServerFor('javascript')?.id).toBe('typescript');
     expect(languageServerFor('cpp')?.id).toBe('clangd');
     expect(languageServerFor('pgsql')?.id).toBe('sql');
+    expect(languageServerFor('shell')?.id).toBe('bash');
     expect(languageServerFor('markdown')).toBeNull();
   });
 

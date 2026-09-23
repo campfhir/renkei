@@ -34,10 +34,14 @@ import {
 } from '@renkei/sandbox-client';
 import { GITHUB } from '@renkei/provider-grants';
 import { jsonError } from '@/lib/chat/route-support';
-import { bitbucketAuthFor, readSourceFile as readBitbucketSourceFile } from '@/lib/code/bitbucket-browse';
+import {
+  bitbucketAuthFor,
+  readSourceFile as readBitbucketSourceFile,
+} from '@/lib/code/bitbucket-browse';
 import { githubAuthFor, readSourceFile as readGitHubSourceFile } from '@/lib/code/github-browse';
 import { etagOf } from '@/lib/code/etag';
 import { languageForPath } from '@/lib/code/language';
+import { noteLanguageGap } from '@/lib/code/language-gaps';
 import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
@@ -50,11 +54,19 @@ export async function GET(
   const { tenantId, projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
-  const { session, access, project } = ready.context;
+  const { db, session, access, project } = ready.context;
   const path = validateWorkspacePath(new URL(request.url).searchParams.get('path'));
   if (!path.ok || !path.path)
     return jsonError(400, 'invalid', path.ok ? 'Say which file.' : path.message);
   const language = languageForPath(path.path);
+  // A file the pane opens without a language server is counted (never
+  // shown): which language to add next is a query on that table.
+  noteLanguageGap(db, {
+    tenantId,
+    target: codeProjectTarget(tenantId, projectId),
+    path: path.path,
+    language,
+  });
 
   const workspace = sandboxWorkspacesEnabled() ? await projectWorkspace(project) : null;
   if (workspace?.status === 'ready' && project.workspaceId) {

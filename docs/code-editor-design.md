@@ -149,7 +149,8 @@ the file's language, and a coloured text box otherwise. The shape:
   `packages/connector-sandbox/src/lsp.ts` is the registry — TypeScript
   and JavaScript (typescript-language-server), Python (Pyright), Java
   (Eclipse JDT), SQL, C and C++ (clangd), Go (gopls), Rust
-  (rust-analyzer), R — each with its command, and the sandbox image
+  (rust-analyzer), R, shell (bash-language-server, linting through
+  shellcheck) — each with its command, and the sandbox image
   installs them (`docker/Dockerfile`, one layer each). The worker probes
   its PATH at boot and `lsp/languages` says which it found, so a
   deployment that drops a toolchain loses only that language's server.
@@ -202,6 +203,19 @@ the file's language, and a coloured text box otherwise. The shape:
 - **The status line says which.** Beside the language: _Starting
   TypeScript…_, _TypeScript language server_, _No Pyright server_ (the
   worker lacks it; colouring only), or _clangd exited · Retry_.
+- **A file is chosen a server by its extension, one file at a time.** A
+  repository mixing TypeScript, Python and shell has three servers
+  running in its checkout, each seeing its own files; a language with
+  no server in the registry gets the tokenizer alone.
+- **What has no server is counted.** Every file the pane opens whose
+  language has no server — none in the registry (`no_server`), or one
+  the worker lacks (`not_installed`) — is counted in
+  `code_language_gaps` (migration 123, `lib/code/language-gaps.ts`): one
+  row per tenant, extension, language and reason, with how many opens,
+  when, and the last path. Nothing in the app reads it; it is the
+  operator's `SELECT extension, language, reason, open_count FROM
+  code_language_gaps ORDER BY open_count DESC` for deciding which
+  server to add next.
 - **Not in this cut.** Rename and workspace-wide edits (an edit to a file
   the pane has not loaded would be silently dropped, so they are not
   offered), commands a server wants the client to run, inlay hints,
