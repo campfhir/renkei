@@ -20,7 +20,9 @@ import {
   readPipelineSetup,
   setPipelinesEnabled,
   summarize,
+  triggerPipeline,
   updatePipelineVariable,
+  validateRunInput,
   validateVariableInput,
 } from './bitbucket-pipelines';
 
@@ -382,6 +384,84 @@ describe('variable writes', () => {
     expect(calls.map((call) => call.path)).toEqual([
       `${REPO}/pipelines_config/variables/%7Bv1%7D`,
       `${REPO}/deployments_config/environments/%7Bprod%7D/variables/%7Bd1%7D`,
+    ]);
+  });
+});
+
+describe('starting a run', () => {
+  it('validates the ref and defaults the type to branch', () => {
+    expect(validateRunInput({ ref: ' main ', pattern: '' })).toEqual({
+      ok: true,
+      input: { ref: 'main', refType: 'branch', pattern: '' },
+    });
+    expect(validateRunInput({ ref: 'v1.2.0', refType: 'tag', pattern: ' deploy ' })).toEqual({
+      ok: true,
+      input: { ref: 'v1.2.0', refType: 'tag', pattern: 'deploy' },
+    });
+    expect(validateRunInput({ ref: '' }).ok).toBe(false);
+    expect(validateRunInput({ ref: 'two words' }).ok).toBe(false);
+  });
+
+  it('POSTs a ref target on pipeline:write, with a custom selector only when named', async () => {
+    routes = [
+      {
+        match: `${REPO}/pipelines`,
+        method: 'POST',
+        body: {
+          uuid: '{r3}',
+          build_number: 3,
+          state: { name: 'PENDING', stage: { name: 'PENDING' } },
+          target: { ref_name: 'main' },
+          creator: { display_name: 'Dev' },
+          created_on: '2026-09-23T10:00:00Z',
+        },
+      },
+    ];
+    const plain = await triggerPipeline(stubAuth, 'acme/billing-service', {
+      ref: 'main',
+      refType: 'branch',
+      pattern: '',
+    });
+    const custom = await triggerPipeline(stubAuth, 'acme/billing-service', {
+      ref: 'v1',
+      refType: 'tag',
+      pattern: 'deploy',
+    });
+
+    expect(plain).toEqual({
+      ok: true,
+      run: {
+        uuid: '{r3}',
+        buildNumber: 3,
+        state: 'PENDING',
+        ref: 'main',
+        startedBy: 'Dev',
+        createdOn: '2026-09-23T10:00:00Z',
+        durationSeconds: null,
+        url: 'https://bitbucket.org/acme/billing-service/pipelines/results/3',
+      },
+    });
+    expect(custom.ok).toBe(true);
+    expect(calls.map((call) => [call.method, call.path, call.scopes, call.json])).toEqual([
+      [
+        'POST',
+        `${REPO}/pipelines`,
+        ['pipeline:write'],
+        { target: { type: 'pipeline_ref_target', ref_type: 'branch', ref_name: 'main' } },
+      ],
+      [
+        'POST',
+        `${REPO}/pipelines`,
+        ['pipeline:write'],
+        {
+          target: {
+            type: 'pipeline_ref_target',
+            ref_type: 'tag',
+            ref_name: 'v1',
+            selector: { type: 'custom', pattern: 'deploy' },
+          },
+        },
+      ],
     ]);
   });
 });

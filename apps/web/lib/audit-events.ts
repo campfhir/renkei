@@ -66,6 +66,8 @@ export type AuditAction =
   | 'code.pipelines.disabled'
   | 'code.pipelines.variable.set'
   | 'code.pipelines.variable.deleted'
+  /** A pipeline run started from a code project's Pipelines page. */
+  | 'code.pipelines.run'
   | 'code.files.uploaded'
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'

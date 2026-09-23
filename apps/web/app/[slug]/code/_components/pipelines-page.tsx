@@ -9,10 +9,11 @@
  * own Bitbucket grant. Its summary card on the project page is
  * pipelines-summary.tsx.
  *
- * None of this is a chat tool, on purpose: a chat can write the YAML
- * (a file, committed like any other) and run or stop a pipeline, but the
- * switch and the variables — where deploy keys and registry tokens live
- * — are set here by a person. A secured value goes to Bitbucket once and
+ * A run can be started from here too, on the scope the chat's trigger
+ * tool stands on. The switch and the variables, though, are no chat
+ * tool, on purpose: a chat can write the YAML (a file, committed like
+ * any other) and run or stop a pipeline, but where deploy keys and
+ * registry tokens live is set here by a person. A secured value goes to Bitbucket once and
  * is never shown again; Bitbucket itself never sends one back.
  *
  * The layout is one column of cards on a phone (where the runs are
@@ -53,6 +54,13 @@ interface Draft extends Scope {
   secured: boolean;
 }
 
+/** The "Run pipeline" form: where, and which pipeline. */
+interface RunDraft {
+  ref: string;
+  refType: 'branch' | 'tag';
+  pattern: string;
+}
+
 export default function PipelinesPage({
   slug,
   tenantId,
@@ -77,6 +85,9 @@ export default function PipelinesPage({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [runDraft, setRunDraft] = useState<RunDraft | null>(null);
+  /** The run just started from here, named until the next change. */
+  const [started, setStarted] = useState<PipelineRun | null>(null);
 
   const reload = useCallback(async () => {
     const result = await getJson<Setup>(url);
@@ -116,6 +127,25 @@ export default function PipelinesPage({
         : sendJsonFull(url, 'POST', body)
     );
     if (saved) setDraft(null);
+  };
+
+  const startRun = async () => {
+    if (!runDraft) return;
+    setStarted(null);
+    let run: PipelineRun | null = null;
+    const ok = await act(async () => {
+      const result = await sendJsonFull<{ run: PipelineRun }>(`${url}/runs`, 'POST', {
+        ref: runDraft.ref.trim(),
+        refType: runDraft.refType,
+        pattern: runDraft.pattern.trim(),
+      });
+      run = result.data?.run ?? null;
+      return result;
+    });
+    if (ok) {
+      setRunDraft(null);
+      setStarted(run);
+    }
   };
 
   const remove = (variable: PipelineVariable, scope: Scope) => {
@@ -195,7 +225,17 @@ export default function PipelinesPage({
             className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start"
           >
             <div className="space-y-4">
-              <RunsCard runs={setup.runs} error={setup.runsError} />
+              <RunsCard
+                runs={setup.runs}
+                error={setup.runsError}
+                canRun={canEdit && setup.enabled !== false}
+                busy={busy}
+                draft={runDraft}
+                setDraft={setRunDraft}
+                defaultRef={branch || 'main'}
+                onStart={startRun}
+                started={started}
+              />
             </div>
             <div className="space-y-4">
               <section className={cardClass} aria-labelledby="pipelines-setup">
@@ -291,15 +331,125 @@ export default function PipelinesPage({
   );
 }
 
-function RunsCard({ runs, error }: { runs: PipelineRun[]; error: string | null }) {
+function RunsCard({
+  runs,
+  error,
+  canRun,
+  busy,
+  draft,
+  setDraft,
+  defaultRef,
+  onStart,
+  started,
+}: {
+  runs: PipelineRun[];
+  error: string | null;
+  /** An editor, with Pipelines not known to be off. */
+  canRun: boolean;
+  busy: boolean;
+  draft: RunDraft | null;
+  setDraft: (draft: RunDraft | null) => void;
+  /** What the form starts with: the project's branch. */
+  defaultRef: string;
+  onStart: () => Promise<void>;
+  /** The run just started from here, if any. */
+  started: PipelineRun | null;
+}) {
   return (
     <section className={cardClass} aria-labelledby="pipelines-runs">
-      <h2 id="pipelines-runs" className="text-sm font-semibold">
-        Recent runs
-      </h2>
+      <div className="flex items-center gap-2">
+        <h2 id="pipelines-runs" className="text-sm font-semibold">
+          Recent runs
+        </h2>
+        {canRun ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setDraft({ ref: defaultRef, refType: 'branch', pattern: '' })}
+            className={`ml-auto ${linkButtonClass}`}
+          >
+            Run pipeline
+          </button>
+        ) : null}
+      </div>
       <p className="text-xs text-gray-500">
         The newest first. Each opens on Bitbucket, where its steps and logs are.
       </p>
+      {draft ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onStart();
+          }}
+          aria-label="Run pipeline"
+          className="mt-3 space-y-2 rounded-md border border-gray-200 p-3 dark:border-gray-800"
+        >
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <label className="block text-xs">
+              <span className="text-gray-500">Branch or tag</span>
+              <input
+                value={draft.ref}
+                onChange={(event) => setDraft({ ...draft, ref: event.target.value })}
+                spellCheck={false}
+                autoComplete="off"
+                className={`mt-0.5 font-mono ${inputClass}`}
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="text-gray-500">Type</span>
+              <select
+                value={draft.refType}
+                onChange={(event) =>
+                  setDraft({ ...draft, refType: event.target.value === 'tag' ? 'tag' : 'branch' })
+                }
+                className={`mt-0.5 ${inputClass}`}
+              >
+                <option value="branch">Branch</option>
+                <option value="tag">Tag</option>
+              </select>
+            </label>
+            <label className="block text-xs">
+              <span className="text-gray-500">Custom pipeline (optional)</span>
+              <input
+                value={draft.pattern}
+                onChange={(event) => setDraft({ ...draft, pattern: event.target.value })}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="the ref’s default"
+                className={`mt-0.5 font-mono ${inputClass}`}
+              />
+            </label>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <p className="mr-auto text-xs text-gray-500">
+              A run spends build minutes and can deploy. A custom pipeline is one named under{' '}
+              <span className="font-mono">custom:</span> in the YAML.
+            </p>
+            <button
+              type="button"
+              onClick={() => setDraft(null)}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy || !draft.ref.trim()}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {busy ? 'Starting…' : 'Start run'}
+            </button>
+          </div>
+        </form>
+      ) : null}
+      {started ? (
+        <p role="status" className="mt-2 text-sm text-green-700 dark:text-green-400">
+          Run #{started.buildNumber} started on {started.ref}.{' '}
+          <a href={started.url} target="_blank" rel="noopener noreferrer" className="underline">
+            Open on Bitbucket
+          </a>
+        </p>
+      ) : null}
       {error ? (
         <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">{error}</p>
       ) : runs.length === 0 ? (

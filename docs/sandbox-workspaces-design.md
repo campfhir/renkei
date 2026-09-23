@@ -201,7 +201,9 @@ A Bitbucket code project has a **Pipelines page**
 `/api/tenant/[tenantId]/code/projects/[projectId]/pipelines` and
 `apps/web/lib/code/bitbucket-pipelines.ts`): the recent runs (state,
 ref, who, when, how long — each opening on Bitbucket, where the steps
-and logs are), whether Bitbucket runs pipelines for the repository at
+and logs are), a way to start one (a branch or tag, optionally a named
+custom pipeline; `runs/route.ts`, on `pipeline:write` exactly as the
+chat's `bitbucket_trigger_pipeline` is), whether Bitbucket runs pipelines for the repository at
 all, whether a `bitbucket-pipelines.yml` is on the project's branch, and
 the variables the runs get — the repository's own and each deployment
 environment's, secured or plain. The project page carries only a card

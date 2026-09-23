@@ -2,9 +2,9 @@
  * A code project's Bitbucket Pipelines, for its Pipelines page and the
  * summary card on the project page: whether Pipelines is switched on for
  * the repository, whether a `bitbucket-pipelines.yml` sits on the
- * project's branch, the recent runs, and the variables the runs get —
- * the repository's own, and each deployment environment's. Read and
- * written with the signed-in person's own grant.
+ * project's branch, the recent runs (and starting one), and the
+ * variables the runs get — the repository's own, and each deployment
+ * environment's. Read and written with the signed-in person's own grant.
  *
  * Deliberately NOT MCP tools, and never to be: a pipeline variable is
  * where a deploy key or a registry token lives, and a value the model
@@ -30,6 +30,13 @@ import {
 export const PIPELINES_CONFIG_SCOPE = 'repository:admin';
 export const PIPELINES_VARIABLE_SCOPE = 'pipeline:variable';
 export const PIPELINES_READ_SCOPE = 'pipeline';
+/**
+ * Starting a run: Bitbucket asks only `pipeline`, but the connector's
+ * "Run & stop pipelines" checkbox is `pipeline:write` (see
+ * mcp-tools/bitbucket/scopes.ts), and a grant narrowed to reading stays
+ * read-only here as it does for the chat tool.
+ */
+export const PIPELINES_RUN_SCOPE = 'pipeline:write';
 
 export const PIPELINES_CONFIG_FILE = 'bitbucket-pipelines.yml';
 
@@ -208,25 +215,31 @@ async function listRuns(
     `${base}/pipelines?pagelen=${max}&sort=-created_on`
   );
   if (!listed.ok) return listed;
-  const [workspace, slug] = fullName.split('/');
   const runs: PipelineRun[] = [];
   for (const raw of values(listed.body)) {
-    const uuid = str(raw.uuid);
-    const buildNumber = typeof raw.build_number === 'number' ? raw.build_number : null;
-    if (!uuid || buildNumber === null) continue;
-    const target = rec(raw.target);
-    runs.push({
-      uuid,
-      buildNumber,
-      state: runState(raw),
-      ref: str(target.ref_name) || str(rec(target.commit).hash).slice(0, 12),
-      startedBy: str(rec(raw.creator).display_name),
-      createdOn: str(raw.created_on),
-      durationSeconds: typeof raw.duration_in_seconds === 'number' ? raw.duration_in_seconds : null,
-      url: pipelineUrl(workspace ?? '', slug ?? '', buildNumber),
-    });
+    const run = runOf(fullName, raw);
+    if (run) runs.push(run);
   }
   return { ok: true, runs };
+}
+
+/** One run as Bitbucket sends it, listed or just started; null without an id. */
+function runOf(fullName: string, raw: Record<string, unknown>): PipelineRun | null {
+  const uuid = str(raw.uuid);
+  const buildNumber = typeof raw.build_number === 'number' ? raw.build_number : null;
+  if (!uuid || buildNumber === null) return null;
+  const [workspace, slug] = fullName.split('/');
+  const target = rec(raw.target);
+  return {
+    uuid,
+    buildNumber,
+    state: runState(raw),
+    ref: str(target.ref_name) || str(rec(target.commit).hash).slice(0, 12),
+    startedBy: str(rec(raw.creator).display_name),
+    createdOn: str(raw.created_on),
+    durationSeconds: typeof raw.duration_in_seconds === 'number' ? raw.duration_in_seconds : null,
+    url: pipelineUrl(workspace ?? '', slug ?? '', buildNumber),
+  };
 }
 
 /** The deployment environments, each with its variables. */
@@ -290,6 +303,54 @@ export async function readPipelineSetup(
       environmentsError: environments.error,
     },
   };
+}
+
+export interface RunInput {
+  /** The branch or tag to run on. */
+  ref: string;
+  refType: 'branch' | 'tag';
+  /** A custom pipeline's name (under `custom:` in the YAML); empty runs the ref's default. */
+  pattern: string;
+}
+
+const REF_MAX_CHARS = 250;
+
+export function validateRunInput(
+  input: unknown
+): { ok: true; input: RunInput } | { ok: false; message: string } {
+  const body = rec(input);
+  const ref = str(body.ref).trim();
+  if (!ref || ref.length > REF_MAX_CHARS || /[\s]/.test(ref)) {
+    return { ok: false, message: 'Name the branch or tag to run on.' };
+  }
+  const refType = body.refType === 'tag' ? 'tag' : 'branch';
+  const pattern = str(body.pattern).trim();
+  if (pattern.length > REF_MAX_CHARS)
+    return { ok: false, message: 'That pipeline name is too long.' };
+  return { ok: true, input: { ref, refType, pattern } };
+}
+
+/** Start a run on a branch or tag — the ref's default pipeline, or a named custom one. */
+export async function triggerPipeline(
+  auth: BitbucketAuth,
+  fullName: string,
+  input: RunInput
+): Promise<{ ok: true; run: PipelineRun } | { ok: false; error: string }> {
+  const base = repoBase(fullName);
+  if (!base) return { ok: false, error: 'The repository name is not usable.' };
+  const target: Record<string, unknown> = {
+    type: 'pipeline_ref_target',
+    ref_type: input.refType,
+    ref_name: input.ref,
+    ...(input.pattern ? { selector: { type: 'custom', pattern: input.pattern } } : {}),
+  };
+  const started = await bbJson(auth, [PIPELINES_RUN_SCOPE], `${base}/pipelines`, {
+    method: 'POST',
+    json: { target },
+  });
+  if (!started.ok) return started;
+  const run = runOf(fullName, started.body);
+  return run ? { ok: true, run } : { ok: false, error: 'Bitbucket did not send the run back.' };
 }
 
 /** The card's view of a setup: counts and the last run, no names or values. */

@@ -536,6 +536,27 @@ function handleBitbucket(request, url, response) {
   const runs = /^\/repositories\/([^/]+)\/([^/]+)\/pipelines$/.exec(path);
   if (runs) {
     const state = pipelinesOf(`${runs[1]}/${runs[2]}`);
+    if (request.method === 'POST') {
+      // A run started from the page: pending, newest, by the person.
+      void readBody(request).then((body) => {
+        const target = body.target ?? {};
+        const run = {
+          uuid: `{run-${String(state.runs.length + 1).padStart(4, '0')}}`,
+          build_number: state.runs.length + 1,
+          state: { name: 'PENDING', stage: { name: 'PENDING' } },
+          target: {
+            ref_type: target.ref_type ?? 'branch',
+            ref_name: target.ref_name ?? 'main',
+            ...(target.selector ? { selector: target.selector } : {}),
+          },
+          creator: { display_name: 'E2E Dev' },
+          created_on: new Date().toISOString(),
+        };
+        state.runs.unshift(run);
+        json(response, 201, run);
+      });
+      return;
+    }
     return json(response, 200, { values: state.runs });
   }
   const repoVariables =

@@ -6,7 +6,7 @@
  * with `?view=summary` just what the project page's card shows: counts
  * and the last run, no variable names or values (any member). PUT flips
  * the switch, POST adds a variable, PATCH replaces one, DELETE removes
- * one (editors).
+ * one (editors). Starting a run is runs/route.ts beside this.
  *
  * Deliberately NOT MCP tools: a pipeline variable is where a deploy key
  * or a registry token lives. A chat can commit the YAML; the switch and
@@ -36,14 +36,14 @@ import {
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
 
-interface Found {
+export interface Found {
   project: ProjectRow & { repo: NonNullable<ProjectRow['repo']> };
   subject: string;
   /** What the person's Bitbucket connection carries; null when not connected. */
   scopes: string[] | null;
 }
 
-async function projectFor(
+export async function projectFor(
   request: NextRequest,
   tenantId: string,
   projectId: string,
@@ -85,7 +85,7 @@ async function projectFor(
 }
 
 /** What the connection lacks for a scope, said as the Connectors page says it; null when it carries it. */
-function missing(scopes: string[] | null, scope: string): string | null {
+export function missing(scopes: string[] | null, scope: string): string | null {
   if (!scopes) return 'Connect Bitbucket on the Connectors page first.';
   if (scopes.includes(scope)) return null;
   const labels = scopeOptionLabels([scope], ATLASSIAN_BITBUCKET);

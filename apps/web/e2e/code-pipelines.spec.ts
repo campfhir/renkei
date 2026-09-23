@@ -1,8 +1,8 @@
 /**
  * A Bitbucket code project's Pipelines: the card on the project page
  * (off, no file, the last run) opening the project's Pipelines page,
- * where the recent runs are listed, the switch turned on, the missing
- * pipeline file named, a secured and a plain repository variable added
+ * where the recent runs are listed, the switch turned on, a run started,
+ * the missing pipeline file named, a secured and a plain repository variable added
  * (the secured value never rendered), a plain one edited and removed,
  * and a deployment environment's variable added — then the page at
  * phone width. Bitbucket is the stub in sandbox-stub.mjs (the app is
@@ -184,7 +184,7 @@ test.describe('Code project pipelines', () => {
       card.getByText(/^Off · no bitbucket-pipelines\.yml on main yet · 0 variables/)
     ).toBeVisible();
     await expect(card.getByText('Last run')).toBeVisible();
-    await expect(card.getByRole('link', { name: '#2' })).toHaveAttribute(
+    await expect(card.getByRole('link', { name: '#2', exact: true })).toHaveAttribute(
       'href',
       `https://bitbucket.org/${ids.repo}/pipelines/results/2`
     );
@@ -231,6 +231,21 @@ test.describe('Code project pipelines', () => {
     await setup.getByRole('button', { name: 'Turn on' }).click();
     await expect(setup.getByText('On', { exact: true })).toBeVisible();
     await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
+
+    // ── Start a run: the project's branch is offered, a custom pipeline
+    //    is optional; the run is named and heads the list ──
+    await runs.getByRole('button', { name: 'Run pipeline' }).click();
+    const runForm = runs.getByRole('form', { name: 'Run pipeline' });
+    await expect(runForm.getByLabel('Branch or tag')).toHaveValue('main');
+    await runForm.getByLabel('Custom pipeline (optional)').fill('deploy');
+    await runForm.getByRole('button', { name: 'Start run' }).click();
+    await expect(runs.getByRole('status')).toContainText('Run #3 started on main');
+    await expect(runForm).toHaveCount(0);
+    await expect(rows).toHaveCount(4);
+    await expect(rows.nth(1)).toContainText('#3');
+    await expect(rows.nth(1)).toContainText('Pending');
+    await expect(rows.nth(1)).toContainText('E2E Dev');
+    await shot('code-pipelines-run-started.png');
 
     // ── A secured variable: listed as Secured, its value never on the page ──
     await repositoryVariables.getByRole('button', { name: 'Add variable' }).click();
@@ -316,13 +331,19 @@ test.describe('Code project pipelines', () => {
     await expect(page.getByRole('heading', { level: 1, name: /^Pipelines/ })).toBeVisible();
     await expect(runs.getByRole('table')).toBeHidden();
     const runCards = runs.getByRole('listitem');
-    await expect(runCards).toHaveCount(2);
-    await expect(runCards.nth(0)).toContainText('#2');
-    await expect(runCards.nth(0)).toContainText('Failed');
-    await expect(runCards.nth(0)).toContainText('feature/retry-invoices');
-    await expect(runCards.nth(0)).toContainText('E2E Dev');
-    await expect(runCards.nth(0)).toContainText('5m 12s');
-    await expect(runCards.nth(1)).toContainText('Successful');
+    await expect(runCards).toHaveCount(3);
+    await expect(runCards.nth(0)).toContainText('#3');
+    await expect(runCards.nth(0)).toContainText('Pending');
+    await expect(runCards.nth(1)).toContainText('#2');
+    await expect(runCards.nth(1)).toContainText('Failed');
+    await expect(runCards.nth(1)).toContainText('feature/retry-invoices');
+    await expect(runCards.nth(1)).toContainText('E2E Dev');
+    await expect(runCards.nth(1)).toContainText('5m 12s');
+    await expect(runCards.nth(2)).toContainText('Successful');
+    // The form fits the phone too.
+    await runs.getByRole('button', { name: 'Run pipeline' }).click();
+    await expect(runs.getByRole('form', { name: 'Run pipeline' })).toBeVisible();
+    await runs.getByRole('button', { name: 'Cancel' }).click();
     await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
     await production.getByRole('button', { name: 'Add variable' }).click();
     await expect(productionForm.getByLabel('Name', { exact: true })).toBeVisible();
