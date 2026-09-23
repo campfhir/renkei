@@ -886,6 +886,7 @@ export default function ChatThread({
       chatPaths={chatPaths}
       personName={null}
       refreshKey={checkoutVersion}
+      backHref={paneMode === 'split' ? backHref : null}
       onNote={(note) => void postNote(note)}
       onAsk={isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null}
       onClose={togglePane}
@@ -918,7 +919,7 @@ export default function ChatThread({
       ) : null}
       <div ref={chatColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
-          {backHref ? (
+          {backHref && !(codePane && paneMode === 'split' && paneOpen) ? (
             <Link
               href={backHref}
               aria-label="Back to project"
