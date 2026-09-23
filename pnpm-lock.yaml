@@ -166,12 +166,18 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
+      highlight.js:
+        specifier: ^11.11.2
+        version: 11.11.2
       jose:
         specifier: ^6.2.5
         version: 6.2.5
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
+      lowlight:
+        specifier: ^3.3.0
+        version: 3.3.0
       marked:
         specifier: 14.0.0
         version: 14.0.0

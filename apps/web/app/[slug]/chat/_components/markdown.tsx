@@ -10,13 +10,23 @@
  * narrow screens the stylesheet can stack a row into a "Header: value" card
  * instead of squeezing every column into a few characters' width. Copying
  * a selection that spans a table writes it back out as a Markdown table.
+ *
+ * A fenced code block is coloured by the grammar its fence names —
+ * lowlight's common set plus the extras in lib/chat/code-grammars.ts,
+ * under the aliases in lib/chat/code-languages.ts, so `postgres`, `ts`,
+ * `yml` and `env` all colour — and shown as a card: a header naming the
+ * language beside a Copy button that is always there (a hover-only
+ * button is no button on a phone), the code beneath. Untagged fences are
+ * never guessed at; a listing coloured as the wrong language misleads.
  * Token colors live in globals.css under `.chat-markdown` for both schemes.
  */
 
-import { useState, type ReactNode } from 'react';
+import { isValidElement, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { CODE_GRAMMARS } from '@/lib/chat/code-grammars';
+import { CODE_ALIASES, languageFromClassName, languageLabel } from '@/lib/chat/code-languages';
 import { copySelectionWithMarkdownTables } from './copy-tables-as-markdown';
 
 /** The slice of a hast node this file walks; hast's own types aren't a direct dependency. */
@@ -72,23 +82,40 @@ function rehypeTableLabels() {
 function CodeBlock({ children }: { children?: ReactNode }) {
   const [copied, setCopied] = useState(false);
   const text = textOf(children);
+  const label = languageLabel(languageOf(children));
   return (
-    <div className="group relative">
+    <div className="chat-code">
+      <div className="chat-code-head">
+        <span className="chat-code-lang">{label ?? ''}</span>
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(text).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            });
+          }}
+          className="chat-code-copy"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
       <pre>{children}</pre>
-      <button
-        type="button"
-        onClick={() => {
-          void navigator.clipboard?.writeText(text).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-        className="absolute top-1.5 right-1.5 rounded border border-gray-300 bg-white/90 px-1.5 py-0.5 text-[11px] text-gray-600 opacity-0 transition group-hover:opacity-100 focus:opacity-100 dark:border-gray-700 dark:bg-gray-900/90 dark:text-gray-300"
-      >
-        {copied ? 'Copied' : 'Copy'}
-      </button>
     </div>
   );
+}
+
+/** The fence's language word, from the `language-…` class on the <code> inside a <pre>. */
+function languageOf(node: ReactNode): string | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = languageOf(child);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!isValidElement<{ className?: string; children?: ReactNode }>(node)) return undefined;
+  return languageFromClassName(node.props.className) ?? languageOf(node.props.children);
 }
 
 /** The text inside a highlighted <code> tree, for the copy button. */
@@ -115,7 +142,7 @@ export default function Markdown({ text }: { text: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[
-          [rehypeHighlight, { detect: false, ignoreMissing: true }],
+          [rehypeHighlight, { detect: false, languages: CODE_GRAMMARS, aliases: CODE_ALIASES }],
           rehypeTableLabels,
         ]}
         skipHtml

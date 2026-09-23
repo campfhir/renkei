@@ -46,6 +46,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'changed',
+        title: 'Code in a reply is easier to read',
+        detail:
+          'A code block in a chat now names its language in a header, with Copy always beside it, and colours more of the code: keys apart from values in JSON and YAML, types apart from keywords in SQL and TypeScript, operators and punctuation set back. Blocks fenced as postgres, psql, mysql, env, ps1 or a Dockerfile colour too, where they were plain before, and a tool call’s input and its JSON result are coloured the same way.',
+      },
+      {
         kind: 'added',
         title: 'Jira Administration, for Jira admins',
         detail:

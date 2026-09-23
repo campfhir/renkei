@@ -942,52 +942,140 @@ input[type='number']::-webkit-inner-spin-button {
 .chat-markdown img {
   max-width: 100%;
 }
-.chat-markdown .hljs-comment,
-.chat-markdown .hljs-quote {
+/*
+ * A fenced code block is a card: a header naming the language, with Copy
+ * at its end, and the code beneath. The header is what makes Copy usable
+ * on a phone — a button that appears on hover never appears there.
+ */
+.chat-markdown .chat-code {
+  background: var(--color-gray-100);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.chat-markdown .chat-code pre {
+  border-radius: 0;
+}
+.chat-markdown .chat-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0.2rem 0.5rem 0.2rem 0.75rem;
+  border-bottom: 1px solid var(--color-gray-200);
+  font-family: var(--font-geist-sans), ui-sans-serif, sans-serif;
+  font-size: 0.6875rem;
+  line-height: 1.2;
   color: var(--color-gray-500);
+}
+.chat-markdown .chat-code-lang {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chat-markdown .chat-code-copy {
+  border-radius: 0.25rem;
+  padding: 0.15rem 0.4rem;
+  color: var(--color-gray-600);
+  transition: color 0.15s;
+}
+.chat-markdown .chat-code-copy:hover,
+.chat-markdown .chat-code-copy:focus-visible {
+  color: var(--color-gray-900);
+  background: var(--color-gray-200);
+}
+
+/*
+ * Code colours — one palette, named here once and swapped for the dark
+ * scheme in the two dark blocks below. The chat's Markdown blocks and
+ * the tool-call panes (.chat-pre) both carry the highlighter's `hljs-…`
+ * classes and share it.
+ */
+.chat-markdown,
+.chat-pre {
+  --hl-comment: var(--color-gray-500);
+  --hl-keyword: var(--color-purple-700);
+  --hl-type: var(--color-teal-700);
+  --hl-string: var(--color-emerald-700);
+  --hl-key: var(--color-sky-700);
+  --hl-number: var(--color-amber-700);
+  --hl-title: var(--color-blue-700);
+  --hl-variable: var(--color-rose-700);
+  --hl-punctuation: var(--color-gray-500);
+  --hl-deletion: var(--color-red-700);
+  --hl-addition: var(--color-emerald-700);
+}
+:is(.chat-markdown, .chat-pre) :is(.hljs-comment, .hljs-quote) {
+  color: var(--hl-comment);
   font-style: italic;
 }
-.chat-markdown .hljs-keyword,
-.chat-markdown .hljs-selector-tag,
-.chat-markdown .hljs-built_in,
-.chat-markdown .hljs-type {
-  color: var(--color-purple-700);
+:is(.chat-markdown, .chat-pre) .hljs-doctag {
+  color: var(--hl-comment);
+  font-weight: 600;
 }
-.chat-markdown .hljs-string,
-.chat-markdown .hljs-attr,
-.chat-markdown .hljs-template-variable,
-.chat-markdown .hljs-regexp {
-  color: var(--color-emerald-700);
+:is(.chat-markdown, .chat-pre) :is(.hljs-keyword, .hljs-selector-tag, .hljs-meta) {
+  color: var(--hl-keyword);
 }
-.chat-markdown .hljs-number,
-.chat-markdown .hljs-literal {
-  color: var(--color-amber-700);
+/* Types and built-ins, plus a class's name where the grammar marks one. */
+:is(.chat-markdown, .chat-pre) :is(.hljs-type, .hljs-built_in, .hljs-title.class_) {
+  color: var(--hl-type);
 }
-.chat-markdown .hljs-title,
-.chat-markdown .hljs-function,
-.chat-markdown .hljs-section,
-.chat-markdown .hljs-name {
-  color: var(--color-blue-700);
+:is(.chat-markdown, .chat-pre) :is(.hljs-string, .hljs-regexp, .hljs-template-tag) {
+  color: var(--hl-string);
 }
-.chat-markdown .hljs-variable,
-.chat-markdown .hljs-property,
-.chat-markdown .hljs-symbol {
-  color: var(--color-rose-700);
+:is(.chat-markdown, .chat-pre) :is(.hljs-char.escape_) {
+  color: var(--hl-number);
 }
-.chat-markdown .hljs-meta,
-.chat-markdown .hljs-tag {
-  color: var(--color-sky-700);
+/* A key — JSON and YAML keys, an HTML attribute, a CSS or HTTP header — is
+ * not a string: the two read apart. */
+:is(.chat-markdown, .chat-pre) :is(.hljs-attr, .hljs-attribute, .hljs-property) {
+  color: var(--hl-key);
 }
-.chat-markdown .hljs-deletion {
+:is(.chat-markdown, .chat-pre) :is(.hljs-number, .hljs-literal) {
+  color: var(--hl-number);
+}
+/* JSON's true/false/null come as a keyword inside the literal; they stay a literal. */
+:is(.chat-markdown, .chat-pre) .hljs-literal .hljs-keyword {
+  color: inherit;
+}
+:is(.chat-markdown, .chat-pre)
+  :is(
+    .hljs-title,
+    .hljs-function,
+    .hljs-section,
+    .hljs-name,
+    .hljs-selector-class,
+    .hljs-selector-id,
+    .hljs-selector-attr,
+    .hljs-selector-pseudo
+  ) {
+  color: var(--hl-title);
+}
+:is(.chat-markdown, .chat-pre) :is(.hljs-variable, .hljs-template-variable, .hljs-symbol) {
+  color: var(--hl-variable);
+}
+:is(.chat-markdown, .chat-pre) :is(.hljs-punctuation, .hljs-operator, .hljs-tag, .hljs-bullet) {
+  color: var(--hl-punctuation);
+}
+/* The code inside a template literal's `${…}` is code again, not string. */
+:is(.chat-markdown, .chat-pre) :is(.hljs-subst, .hljs-params) {
+  color: var(--foreground);
+}
+:is(.chat-markdown, .chat-pre) .hljs-link {
+  color: var(--hl-key);
+  text-decoration: underline;
+}
+:is(.chat-markdown, .chat-pre) .hljs-deletion {
+  color: var(--hl-deletion);
   background: color-mix(in oklab, var(--color-red-500) 15%, transparent);
 }
-.chat-markdown .hljs-addition {
+:is(.chat-markdown, .chat-pre) .hljs-addition {
+  color: var(--hl-addition);
   background: color-mix(in oklab, var(--color-emerald-500) 15%, transparent);
 }
-.chat-markdown .hljs-emphasis {
+:is(.chat-markdown, .chat-pre) .hljs-emphasis {
   font-style: italic;
 }
-.chat-markdown .hljs-strong {
+:is(.chat-markdown, .chat-pre) .hljs-strong {
   font-weight: 600;
 }
 
@@ -1020,40 +1108,33 @@ input[type='number']::-webkit-inner-spin-button {
   :root:not([data-theme='light']) .chat-markdown hr {
     border-color: var(--color-gray-800);
   }
-  :root:not([data-theme='light']) .chat-markdown .hljs-comment,
-  :root:not([data-theme='light']) .chat-markdown .hljs-quote {
-    color: var(--color-gray-500);
+  :root:not([data-theme='light']) .chat-markdown .chat-code {
+    background: var(--color-gray-900);
   }
-  :root:not([data-theme='light']) .chat-markdown .hljs-keyword,
-  :root:not([data-theme='light']) .chat-markdown .hljs-selector-tag,
-  :root:not([data-theme='light']) .chat-markdown .hljs-built_in,
-  :root:not([data-theme='light']) .chat-markdown .hljs-type {
-    color: var(--color-purple-300);
+  :root:not([data-theme='light']) .chat-markdown .chat-code-head {
+    border-color: var(--color-gray-800);
+    color: var(--color-gray-400);
   }
-  :root:not([data-theme='light']) .chat-markdown .hljs-string,
-  :root:not([data-theme='light']) .chat-markdown .hljs-attr,
-  :root:not([data-theme='light']) .chat-markdown .hljs-template-variable,
-  :root:not([data-theme='light']) .chat-markdown .hljs-regexp {
-    color: var(--color-emerald-300);
+  :root:not([data-theme='light']) .chat-markdown .chat-code-copy {
+    color: var(--color-gray-400);
   }
-  :root:not([data-theme='light']) .chat-markdown .hljs-number,
-  :root:not([data-theme='light']) .chat-markdown .hljs-literal {
-    color: var(--color-amber-300);
+  :root:not([data-theme='light']) .chat-markdown .chat-code-copy:hover,
+  :root:not([data-theme='light']) .chat-markdown .chat-code-copy:focus-visible {
+    color: var(--color-gray-100);
+    background: var(--color-gray-800);
   }
-  :root:not([data-theme='light']) .chat-markdown .hljs-title,
-  :root:not([data-theme='light']) .chat-markdown .hljs-function,
-  :root:not([data-theme='light']) .chat-markdown .hljs-section,
-  :root:not([data-theme='light']) .chat-markdown .hljs-name {
-    color: var(--color-blue-300);
-  }
-  :root:not([data-theme='light']) .chat-markdown .hljs-variable,
-  :root:not([data-theme='light']) .chat-markdown .hljs-property,
-  :root:not([data-theme='light']) .chat-markdown .hljs-symbol {
-    color: var(--color-rose-300);
-  }
-  :root:not([data-theme='light']) .chat-markdown .hljs-meta,
-  :root:not([data-theme='light']) .chat-markdown .hljs-tag {
-    color: var(--color-sky-300);
+  :root:not([data-theme='light']) :is(.chat-markdown, .chat-pre) {
+    --hl-comment: var(--color-gray-400);
+    --hl-keyword: var(--color-purple-300);
+    --hl-type: var(--color-teal-300);
+    --hl-string: var(--color-emerald-300);
+    --hl-key: var(--color-sky-300);
+    --hl-number: var(--color-amber-300);
+    --hl-title: var(--color-blue-300);
+    --hl-variable: var(--color-rose-300);
+    --hl-punctuation: var(--color-gray-400);
+    --hl-deletion: var(--color-red-300);
+    --hl-addition: var(--color-emerald-300);
   }
 }
 
@@ -1085,40 +1166,33 @@ input[type='number']::-webkit-inner-spin-button {
 :root[data-theme='dark'] .chat-markdown hr {
   border-color: var(--color-gray-800);
 }
-:root[data-theme='dark'] .chat-markdown .hljs-comment,
-:root[data-theme='dark'] .chat-markdown .hljs-quote {
-  color: var(--color-gray-500);
+:root[data-theme='dark'] .chat-markdown .chat-code {
+  background: var(--color-gray-900);
 }
-:root[data-theme='dark'] .chat-markdown .hljs-keyword,
-:root[data-theme='dark'] .chat-markdown .hljs-selector-tag,
-:root[data-theme='dark'] .chat-markdown .hljs-built_in,
-:root[data-theme='dark'] .chat-markdown .hljs-type {
-  color: var(--color-purple-300);
+:root[data-theme='dark'] .chat-markdown .chat-code-head {
+  border-color: var(--color-gray-800);
+  color: var(--color-gray-400);
 }
-:root[data-theme='dark'] .chat-markdown .hljs-string,
-:root[data-theme='dark'] .chat-markdown .hljs-attr,
-:root[data-theme='dark'] .chat-markdown .hljs-template-variable,
-:root[data-theme='dark'] .chat-markdown .hljs-regexp {
-  color: var(--color-emerald-300);
+:root[data-theme='dark'] .chat-markdown .chat-code-copy {
+  color: var(--color-gray-400);
 }
-:root[data-theme='dark'] .chat-markdown .hljs-number,
-:root[data-theme='dark'] .chat-markdown .hljs-literal {
-  color: var(--color-amber-300);
+:root[data-theme='dark'] .chat-markdown .chat-code-copy:hover,
+:root[data-theme='dark'] .chat-markdown .chat-code-copy:focus-visible {
+  color: var(--color-gray-100);
+  background: var(--color-gray-800);
 }
-:root[data-theme='dark'] .chat-markdown .hljs-title,
-:root[data-theme='dark'] .chat-markdown .hljs-function,
-:root[data-theme='dark'] .chat-markdown .hljs-section,
-:root[data-theme='dark'] .chat-markdown .hljs-name {
-  color: var(--color-blue-300);
-}
-:root[data-theme='dark'] .chat-markdown .hljs-variable,
-:root[data-theme='dark'] .chat-markdown .hljs-property,
-:root[data-theme='dark'] .chat-markdown .hljs-symbol {
-  color: var(--color-rose-300);
-}
-:root[data-theme='dark'] .chat-markdown .hljs-meta,
-:root[data-theme='dark'] .chat-markdown .hljs-tag {
-  color: var(--color-sky-300);
+:root[data-theme='dark'] :is(.chat-markdown, .chat-pre) {
+  --hl-comment: var(--color-gray-400);
+  --hl-keyword: var(--color-purple-300);
+  --hl-type: var(--color-teal-300);
+  --hl-string: var(--color-emerald-300);
+  --hl-key: var(--color-sky-300);
+  --hl-number: var(--color-amber-300);
+  --hl-title: var(--color-blue-300);
+  --hl-variable: var(--color-rose-300);
+  --hl-punctuation: var(--color-gray-400);
+  --hl-deletion: var(--color-red-300);
+  --hl-addition: var(--color-emerald-300);
 }
 
 /* A folded block — thinking, a tool call — with its result inside. No

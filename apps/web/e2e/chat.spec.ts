@@ -98,6 +98,18 @@ const REPLY_MARKDOWN = [
   'project = OPS AND sprint in closedSprints() AND status != Done ORDER BY updated DESC',
   '```',
   '',
+  'To carry them over, the board script would be:',
+  '',
+  '```ts',
+  "const carried = issues.filter((issue) => issue.status !== 'Done');",
+  '```',
+  '',
+  '```yml',
+  'sprint:',
+  '  name: OPS Sprint 12',
+  '  carry_over: true',
+  '```',
+  '',
   'Want me to **move them** into the next sprint?',
 ].join('\n');
 
@@ -369,13 +381,55 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(call.getByText('Input')).toBeVisible();
     await expect(call.getByText('Result')).toBeVisible();
     await expect(call.getByText(/OPS-44/)).toBeVisible();
+    // The call's JSON input, and a result that is JSON, are coloured as JSON.
+    await expect(call.locator('.chat-pre .hljs-attr', { hasText: 'issues' })).toBeVisible();
+    await expect(call.locator('.chat-pre .hljs-string', { hasText: 'OPS-44' })).toBeVisible();
     await shot(page, testInfo, 'chat-work-open.png');
     await work.locator('> summary').click();
 
     const markdown = page.locator('.chat-markdown').last();
     await expect(markdown.getByRole('table')).toBeVisible();
-    await expect(markdown.locator('pre code')).toContainText('closedSprints()');
+    await expect(markdown.locator('pre code').first()).toContainText('closedSprints()');
     await expect(markdown.locator('strong', { hasText: 'move them' })).toBeVisible();
+
+    // Each fenced block is a card: the language named in its header, the
+    // code coloured by that language's grammar — the fence's own word
+    // (`yml`) resolved to the grammar and to a proper name (YAML) — and a
+    // Copy button that is always there, not only under a pointer.
+    const sqlBlock = markdown.locator('.chat-code', { hasText: 'closedSprints()' });
+    await expect(sqlBlock.locator('.chat-code-lang')).toHaveText('SQL');
+    await expect(sqlBlock.locator('.hljs-keyword', { hasText: 'ORDER' })).toBeVisible();
+    const tsBlock = markdown.locator('.chat-code', { hasText: 'issues.filter' });
+    await expect(tsBlock.locator('.chat-code-lang')).toHaveText('TypeScript');
+    await expect(tsBlock.locator('.hljs-keyword', { hasText: 'const' })).toBeVisible();
+    await expect(tsBlock.locator('.hljs-string', { hasText: "'Done'" })).toBeVisible();
+    const yamlBlock = markdown.locator('.chat-code', { hasText: 'carry_over' });
+    await expect(yamlBlock.locator('.chat-code-lang')).toHaveText('YAML');
+    await expect(yamlBlock.locator('.hljs-attr', { hasText: 'sprint' }).first()).toBeVisible();
+    await expect(yamlBlock.locator('.hljs-literal', { hasText: 'true' })).toBeVisible();
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    const copy = tsBlock.getByRole('button', { name: 'Copy' });
+    await expect(copy).toBeVisible();
+    await copy.click();
+    await expect(tsBlock.getByRole('button', { name: 'Copied' })).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
+    );
+    await shot(page, testInfo, 'chat-code-blocks.png');
+    // At phone width the header, and Copy in it, are still there — no hover
+    // to bring a button out — and the block scrolls rather than the page.
+    if (!mobile) {
+      const wide = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(tsBlock.locator('.chat-code-lang')).toHaveText('TypeScript');
+      await expect(tsBlock.getByRole('button', { name: 'Copy' })).toBeVisible();
+      await expect(tsBlock.locator('pre')).toBeVisible();
+      expect(await tsBlock.locator('pre').evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+        true
+      );
+      await shot(page, testInfo, 'chat-code-blocks-phone.png');
+      if (wide) await page.setViewportSize(wide);
+    }
 
     // The owner renames the chat: in place with the title bar's pencil on a
     // wide screen, or — the pencil is dropped there — from the title bar's
