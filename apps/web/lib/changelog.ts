@@ -43,6 +43,35 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    entries: [
+      {
+        kind: 'added',
+        title: 'Jira Administration, for Jira admins',
+        detail:
+          'A new connection on the Connectors page, separate from Jira. Once connected, the assistant can say what you can administer, list custom fields and show a field’s contexts and options, lay out how a space is configured — its schemes, which of them other spaces share, and who holds each role — and read your Plans. It only reads, for now. An organization admin sets it up under Connector setup and can limit it to Jira admins.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The Connectors page loads for people connected to Jira',
+        detail:
+          'Anyone with Jira connected got “This page couldn’t load” on Connectors. The page shows again, Disconnect Jira included.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Creating a Jira version or component',
+        detail:
+          'Asking for a new release version or component in a Jira project now goes to the addresses Jira documents for creating them. A version can be marked released as it is made, and a component lead can be named by email.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The sprint summary includes unassigned work',
+        detail:
+          'Issues in the current sprint that nobody had picked up were missing from the sprint and daily summaries. They are listed now, marked unassigned.',
+      },
+    ],
+  },
+  {
     date: '2026-09-19',
     heading: 'Voice conversations: speak and listen',
     entries: [
