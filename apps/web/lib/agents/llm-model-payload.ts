@@ -71,8 +71,14 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
       ...(typeof payload.apiVersion === 'string' && payload.apiVersion.trim()
         ? { apiVersion: payload.apiVersion.trim() }
         : {}),
+      // 'none' is a real, distinct setting — not the same as omitting the
+      // field: some reasoning models (e.g. an Azure gpt-6-astra-1
+      // deployment) reject any request carrying tool definitions unless
+      // reasoning_effort is explicitly "none", and their own model default
+      // is NOT "none". Dropping it here would silently undo the admin's
+      // choice on every save.
       ...(typeof payload.reasoningEffort === 'string' &&
-      ['minimal', 'low', 'medium', 'high'].includes(payload.reasoningEffort)
+      ['none', 'minimal', 'low', 'medium', 'high'].includes(payload.reasoningEffort)
         ? { reasoningEffort: payload.reasoningEffort }
         : {}),
     },

@@ -653,14 +653,20 @@ export default function ModelForms({ slug }: { slug: string }) {
                 }}
               >
                 <option value="">Model default</option>
+                <option value="none">None</option>
                 <option value="minimal">Minimal</option>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
               </select>
               <p className={hintClass}>
-                Reasoning models only (GPT-5 family). Leave temperature blank for these — they
-                reject it.
+                Reasoning models only (GPT-5 family and newer). Leave temperature blank for these
+                — they reject it. Some reasoning models reject tool calls entirely unless this is
+                set to &quot;None&quot; (their error names <span className="font-mono">
+                  reasoning_effort
+                </span>{' '}
+                and says to set it to &quot;none&quot;) — &quot;Model default&quot; is not the same
+                thing and will keep failing.
               </p>
             </div>
           ) : null}

@@ -222,3 +222,39 @@ test('admin: the model roster, listing, testing, and saving', async ({ page }, t
   await expect(page.getByText('Edit model', { exact: true })).toBeVisible();
   await shot(page, testInfo, 'llm-models-08-mobile-edit');
 });
+
+test('admin: reasoning effort offers a None option, and it round-trips through save', async ({
+  page,
+}, testInfo) => {
+  // Its own tenant (AGENTS.md's rule for a spec that writes data): this
+  // test saves its own row and must see it as the only one.
+  const fixture = fixtureFor(`${testInfo.project.name}-reasoning`);
+  await seedTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.getByRole('button', { name: '+ Add a model' }).click();
+  await page.getByLabel('Display name').fill('Astra Reasoning');
+  await page.getByLabel('Provider').selectOption('openai');
+  await page.getByLabel('Model id').fill('gpt-6-astra-1');
+  await page.getByLabel('API key').fill('sk-e2e-fake-key');
+
+  // Some reasoning models (e.g. an Azure AI Foundry gpt-6-astra-1
+  // deployment) reject any request carrying tool definitions unless
+  // reasoning_effort is explicitly "none" — leaving it on "Model default"
+  // silently keeps the model's own non-none default, so chat's tool calls
+  // 400 with no way for an admin to fix it from this form. The dropdown
+  // must offer that exact value, distinct from "Model default".
+  const reasoningEffort = page.getByLabel('Reasoning effort');
+  await expect(page.locator('#model-reasoning-effort option', { hasText: 'None' })).toHaveCount(1);
+  await reasoningEffort.selectOption('none');
+  await shot(page, testInfo, 'llm-models-reasoning-effort-none-selected');
+
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Astra Reasoning')).toBeVisible();
+
+  // Round-trips through the real save route and DB: reopening the row
+  // shows "None" still selected, not back to the blank "Model default".
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Reasoning effort')).toHaveValue('none');
+});
