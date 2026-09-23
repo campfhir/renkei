@@ -166,6 +166,31 @@ export function granularJiraScopes(toolName: string, readOnly: boolean): string[
       'read:project.property:jira',
     ];
   }
+  // Versions and components are project configuration, not work items:
+  // POST /version and POST /component document their own granular sets
+  // (docs/jira-cloud-rest-api-open-api-spec.json), on top of the project
+  // search that resolves the key (jira_list_work_types' set, above). All of
+  // it rides the jira-read/jira-write bundles, so gating on the full set
+  // hides the tools only from grants that would 401 anyway (the
+  // jira_list_projects rule). Releasing a version is a PUT on the same
+  // version scopes.
+  if (toolName === 'jira_create_version') {
+    return [
+      ...granularJiraScopes('jira_list_work_types', true),
+      'read:project-version:jira',
+      'write:project-version:jira',
+    ];
+  }
+  if (toolName === 'jira_create_component') {
+    return [
+      ...granularJiraScopes('jira_list_work_types', true),
+      'read:application-role:jira',
+      'read:group:jira',
+      'read:project.component:jira',
+      'read:user:jira',
+      'write:project.component:jira',
+    ];
+  }
   // Moving issues between projects reads the target's work types through
   // /issuetype/project (jira_list_work_types' set, above) and resolves the
   // project through /project/search, on top of the issue read and write
