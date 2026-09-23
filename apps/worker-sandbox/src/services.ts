@@ -41,6 +41,9 @@ import type { DB } from '@renkei/db';
 import {
   SERVICE_MAX_PER_SUBJECT,
   SERVICE_START_TIMEOUT_MS,
+  mergeLogEntries,
+  parseStampedLogs,
+  type ServiceLogEntry,
   matchImageRule,
   imageRuleHost,
   parseImageReference,
@@ -385,6 +388,37 @@ export class ServiceManager {
       if (error instanceof DockerError && error.status === 404) return { service, logs: '' };
       throw new ServiceOpError('engine', `The logs could not be read: ${engineMessage(error)}`);
     }
+  }
+
+  /**
+   * Every service's recent lines in one time-ordered stream, for the
+   * project's Services page: `lines` from each container (the running
+   * and the stopped alike, while the container is there), stamped by
+   * the engine so they interleave, and only those after `since` when
+   * the page is following. A service whose logs cannot be read is
+   * named rather than failing the rest.
+   */
+  async tail(
+    target: store.ServiceTarget,
+    input: { lines: number; since: string | null }
+  ): Promise<{ entries: ServiceLogEntry[]; truncated: boolean; unreadable: string[] }> {
+    const rows = await store.listServices(this.db, target);
+    const perService: ServiceLogEntry[][] = [];
+    const unreadable: string[] = [];
+    for (const row of rows) {
+      const service = await this.reconcile(row);
+      if (!service.containerId || service.status === 'gone') continue;
+      try {
+        const text = await this.engine.containerLogs(service.containerId, input.lines, {
+          timestamps: true,
+          ...(input.since ? { since: input.since } : {}),
+        });
+        perService.push(parseStampedLogs(service.name, text));
+      } catch (error) {
+        if (!(error instanceof DockerError && error.status === 404)) unreadable.push(service.name);
+      }
+    }
+    return { ...mergeLogEntries(perService), unreadable };
   }
 
   /** Stop the container, remove it with its volumes, forget the row. */

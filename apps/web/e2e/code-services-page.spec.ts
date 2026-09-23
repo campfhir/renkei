@@ -3,7 +3,8 @@
  * project page (none yet, how many images are allowed) opening the
  * project's Services page, where a Postgres is started from the form
  * with its container variables and an export, listed running with its
- * address and the variables it sets, its logs read, then stopped —
+ * address and the variables it sets, its lines in the combined tail
+ * that follows as it writes, then stopped —
  * and the page at phone width. The sandbox worker is the stub in
  * sandbox-stub.mjs (no engine: a start reads running at a made-up
  * address at once), which seeds the same allowed images migration 121
@@ -126,7 +127,7 @@ test.describe('Code project services', () => {
     await cleanFixtures(idsFor(testInfo.project.name));
   });
 
-  test('card, page, start, logs, stop, phone width', async ({ page }, testInfo) => {
+  test('card, page, start, tail, stop, phone width', async ({ page }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const shot = (name: string) =>
       page.screenshot({
@@ -218,12 +219,24 @@ test.describe('Code project services', () => {
     );
     await running.getByRole('button', { name: 'Cancel' }).click();
 
-    // ── Logs: the container's tail, opened in place ──
-    await dbRow.getByRole('button', { name: 'Logs' }).click();
-    await expect(dbRow.getByLabel('db logs')).toContainText('ready to accept connections');
+    // ── The combined tail: the service's lines, named and stamped, and
+    //    while Follow is on a line written later arrives on its own ──
+    const logsCard = main.getByRole('region', { name: 'Logs' });
+    const tail = logsCard.getByLabel('Combined logs');
+    await expect(logsCard.getByLabel('Follow')).toBeChecked();
+    await expect(tail).toContainText('db');
+    await expect(tail).toContainText('database system is ready to accept connections');
+    await expect(tail).toContainText('checkpoint 1', { timeout: 15_000 });
     await shot('code-services-logs.png');
-    await dbRow.getByRole('button', { name: 'Hide logs' }).click();
-    await expect(dbRow.getByLabel('db logs')).toHaveCount(0);
+    // Filtered to one service, its name drops out of every line; paused, nothing new comes.
+    await logsCard.getByLabel('Show logs of').selectOption('db');
+    await expect(tail).toContainText('ready to accept');
+    await logsCard.getByLabel('Follow').uncheck();
+    await logsCard.getByRole('button', { name: 'Clear' }).click();
+    await expect(tail).toContainText('(nothing from db yet)');
+    await logsCard.getByLabel('Show logs of').selectOption('');
+    await logsCard.getByLabel('Follow').check();
+    await expect(tail).toContainText('checkpoint', { timeout: 15_000 });
 
     // ── Back on the project page, the card reflects it ──
     await main.getByRole('link', { name: ids.name, exact: true }).click();
@@ -244,6 +257,7 @@ test.describe('Code project services', () => {
     });
     await dbRow.getByRole('button', { name: 'Stop' }).click();
     await expect(running.getByText(/^No services\./)).toBeVisible();
+    await expect(tail).toContainText('(no services)');
     await expect(page.getByRole('heading', { level: 1, name: /^Services/ })).toContainText(
       'None running'
     );

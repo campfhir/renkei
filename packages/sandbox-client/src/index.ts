@@ -1340,6 +1340,46 @@ export async function sbServiceLogs(
   };
 }
 
+export interface WireServiceLogEntry {
+  service: string;
+  /** RFC 3339 with nanoseconds, as the engine stamps it; the cursor for the next tail. */
+  at: string;
+  line: string;
+}
+
+/**
+ * Every service's recent lines in one time-ordered stream; with `since`
+ * (the `at` of the last entry already shown) only what came after it.
+ */
+export async function sbServicesTail(
+  target: SandboxTarget,
+  input: { lines?: number; since?: string } = {}
+): Promise<
+  ClientResult<{ entries: WireServiceLogEntry[]; truncated: boolean; unreadable: string[] }>
+> {
+  const result = await callJson('services/tail', { ...target, ...input });
+  if (!result.ok) return result;
+  if (!isRecord(result.val) || !Array.isArray(result.val.entries)) return malformed();
+  const entries: WireServiceLogEntry[] = [];
+  for (const raw of result.val.entries) {
+    if (!isRecord(raw)) return malformed();
+    const service = str(raw.service);
+    const at = str(raw.at);
+    if (!service || !at || typeof raw.line !== 'string') return malformed();
+    entries.push({ service, at, line: raw.line });
+  }
+  return {
+    ok: true,
+    val: {
+      entries,
+      truncated: result.val.truncated === true,
+      unreadable: Array.isArray(result.val.unreadable)
+        ? result.val.unreadable.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+    },
+  };
+}
+
 // ─── The organization's image rules ─────────────────────────────────────────
 
 export interface WireImageRule {

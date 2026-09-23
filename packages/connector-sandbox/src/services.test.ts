@@ -6,6 +6,10 @@
  */
 
 import {
+  mergeLogEntries,
+  normalizeStamp,
+  parseStampedLogs,
+  sinceAfter,
   imageRuleMatches,
   matchImageRule,
   normalizeImageRule,
@@ -196,5 +200,39 @@ describe('what a service is called and handed', () => {
       SERVICE_BROKER_PORTS: '5672,15672',
       SERVICE_PLAIN_HOST: '172.20.0.5',
     });
+  });
+});
+
+describe('a combined tail', () => {
+  it('reads stamped lines, pads the stamp, and carries a bare line on the last stamp', () => {
+    const text = '2026-09-23T15:27:56.4718Z ready\n2026-09-23T15:27:57Z second line\ncontinued\n';
+    expect(parseStampedLogs('db', text)).toEqual([
+      { service: 'db', at: '2026-09-23T15:27:56.471800000Z', line: 'ready' },
+      { service: 'db', at: '2026-09-23T15:27:57.000000000Z', line: 'second line' },
+      { service: 'db', at: '2026-09-23T15:27:57.000000000Z', line: 'continued' },
+    ]);
+    expect(normalizeStamp('2026-01-01T00:00:00Z')).toBe('2026-01-01T00:00:00.000000000Z');
+  });
+
+  it('merges services in time order and keeps the newest past the cap', () => {
+    const db = parseStampedLogs('db', '2026-09-23T10:00:01Z a\n2026-09-23T10:00:03Z c\n');
+    const cache = parseStampedLogs('cache', '2026-09-23T10:00:02Z b\n2026-09-23T10:00:04Z d\n');
+    expect(mergeLogEntries([db, cache]).entries.map((entry) => entry.line)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+    const capped = mergeLogEntries([db, cache], 2);
+    expect(capped.truncated).toBe(true);
+    expect(capped.entries.map((entry) => entry.line)).toEqual(['c', 'd']);
+  });
+
+  it('turns a stamp into the engine’s since, one nanosecond on', () => {
+    expect(sinceAfter('2026-09-23T15:27:56.471800000Z')).toBe('1790177276.471800001');
+    expect(sinceAfter('2026-09-23T15:27:56.999999999Z')).toBe('1790177277.000000000');
+    expect(sinceAfter('2026-09-23T15:27:56Z')).toBe('1790177276.000000001');
+    expect(sinceAfter('yesterday')).toBeNull();
+    expect(sinceAfter(5)).toBeNull();
   });
 });

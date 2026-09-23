@@ -6,6 +6,7 @@
  *   services/start   { tenantId, subject, name, image, env?, exports? }
  *   services/list    { tenantId, subject }
  *   services/logs    { tenantId, subject, name, lines? }
+ *   services/tail    { tenantId, subject, lines?, since? }   every service, one stream
  *   services/stop    { tenantId, subject, name }
  *   services/rules/list     { tenantId }
  *   services/rules/set      { tenantId, id?, pattern, note?, registryUsername?, registrySecret?, clearCredential? }
@@ -28,7 +29,9 @@ import {
   IMAGE_RULE_SECRET_MAX_CHARS,
   IMAGE_RULE_USERNAME_MAX_CHARS,
   SERVICE_LOGS_MAX_CHARS,
+  SERVICE_TAIL_DEFAULT_LINES,
   clipOutput,
+  sinceAfter,
   normalizeImageRule,
   serviceLogLines,
   validateServiceEnv,
@@ -287,6 +290,22 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
             logs: clipped.text,
             truncated: clipped.clipped,
           });
+        }
+        case 'tail': {
+          if (body.since !== undefined && body.since !== null && sinceAfter(body.since) === null) {
+            return sendError(
+              response,
+              400,
+              'bad_request',
+              'since is a stamp from an earlier tail.'
+            );
+          }
+          const tailed = await manager.tail(target, {
+            lines:
+              body.lines === undefined ? SERVICE_TAIL_DEFAULT_LINES : serviceLogLines(body.lines),
+            since: sinceAfter(body.since),
+          });
+          return sendJson(response, 200, tailed);
         }
         default:
           return sendError(response, 404, 'unknown_operation');

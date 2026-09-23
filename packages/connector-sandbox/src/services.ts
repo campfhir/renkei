@@ -488,3 +488,85 @@ export function serviceLogLines(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return SERVICE_LOGS_DEFAULT_LINES;
   return Math.max(1, Math.min(SERVICE_LOGS_MAX_LINES, Math.floor(value)));
 }
+
+// ─── A combined tail ────────────────────────────────────────────────────────
+
+/** Entries the tail keeps across every service; the oldest go first when there are more. */
+export const SERVICE_TAIL_MAX_ENTRIES = 2_000;
+/** Lines asked of each service on one tail read. */
+export const SERVICE_TAIL_DEFAULT_LINES = 200;
+
+export interface ServiceLogEntry {
+  /** The service's name. */
+  service: string;
+  /** RFC 3339 with nanoseconds, as the engine stamps it — sorts as text. */
+  at: string;
+  line: string;
+}
+
+const STAMPED_LINE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z) ?(.*)$/;
+
+/**
+ * The engine's log text with timestamps on into entries: one per line,
+ * each stamped as the engine stamped it. A line without a stamp (a
+ * continuation the engine did not split) rides on the previous entry's
+ * time, or the epoch when it is the first.
+ */
+export function parseStampedLogs(service: string, text: string): ServiceLogEntry[] {
+  const entries: ServiceLogEntry[] = [];
+  let last = '1970-01-01T00:00:00.000000000Z';
+  for (const raw of text.split('\n')) {
+    if (!raw) continue;
+    const match = STAMPED_LINE.exec(raw);
+    if (match) {
+      last = normalizeStamp(match[1]!);
+      entries.push({ service, at: last, line: match[2] ?? '' });
+    } else {
+      entries.push({ service, at: last, line: raw });
+    }
+  }
+  return entries;
+}
+
+/** A stamp padded to nine fraction digits, so two stamps compare as text. */
+export function normalizeStamp(stamp: string): string {
+  const dot = stamp.indexOf('.');
+  if (dot < 0) return `${stamp.slice(0, -1)}.000000000Z`;
+  const fraction = stamp.slice(dot + 1, -1);
+  return `${stamp.slice(0, dot)}.${fraction.padEnd(9, '0').slice(0, 9)}Z`;
+}
+
+/**
+ * Every service's entries in time order, the newest `max` kept. Ties
+ * keep their arrival order, which within one service is the engine's.
+ */
+export function mergeLogEntries(
+  perService: ServiceLogEntry[][],
+  max = SERVICE_TAIL_MAX_ENTRIES
+): { entries: ServiceLogEntry[]; truncated: boolean } {
+  const all = perService.flat().sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return all.length > max
+    ? { entries: all.slice(all.length - max), truncated: true }
+    : { entries: all, truncated: false };
+}
+
+/**
+ * The engine's `since` for "everything after this stamp": the stamp as
+ * seconds and nanoseconds since the epoch, one nanosecond on, so the
+ * entry the page already has is not read again. Null for a stamp that
+ * is not one.
+ */
+export function sinceAfter(stamp: unknown): string | null {
+  if (typeof stamp !== 'string') return null;
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(stamp.trim());
+  if (!match) return null;
+  const seconds = Math.floor(Date.parse(`${match[1]}Z`) / 1000);
+  if (!Number.isFinite(seconds)) return null;
+  let nanos = Number((match[2] ?? '').padEnd(9, '0')) + 1;
+  let whole = seconds;
+  if (nanos >= 1_000_000_000) {
+    nanos -= 1_000_000_000;
+    whole += 1;
+  }
+  return `${whole}.${String(nanos).padStart(9, '0')}`;
+}

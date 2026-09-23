@@ -190,8 +190,18 @@ function scriptedEngine() {
         ip: container.running && network === NETWORK ? `172.20.0.${id.slice(1)}` : null,
       };
     },
-    async containerLogs(id, tail) {
-      calls.push({ op: 'logs', args: [id, tail] });
+    async containerLogs(id, tail, options) {
+      calls.push({ op: 'logs', args: [id, tail, ...(options ? [options] : [])] });
+      if (options?.timestamps) {
+        const name = containers.get(id)?.spec.labels['renkei.sandbox.name'] ?? id;
+        const base = name === 'db' ? 0 : 1;
+        return [
+          `2026-09-23T10:00:0${base}.000000000Z ${name} starting`,
+          `2026-09-23T10:00:0${base + 2}.500000000Z ${name} ready`,
+        ]
+          .filter((line) => !options.since || line > `${options.since}`)
+          .join('\n');
+      }
       return engine.logs;
     },
     async stopContainer(id, timeout) {
@@ -576,6 +586,35 @@ describe('a running service and the project’s commands', () => {
       subject: 'code-project:p2',
     });
     expect(other.json.services).toEqual([]);
+  });
+});
+
+describe('tail', () => {
+  it('interleaves every service’s stamped lines, and follows from a stamp', async () => {
+    await post(enabledBase, 'services/start', { ...TARGET, name: 'db', image: 'postgres' });
+    await post(enabledBase, 'services/start', { ...TARGET, name: 'cache', image: 'postgres' });
+    const all = await post(enabledBase, 'services/tail', { ...TARGET });
+    expect(all.status).toBe(200);
+    expect(
+      all.json.entries.map(
+        (entry: { service: string; line: string }) => `${entry.service}: ${entry.line}`
+      )
+    ).toEqual(['db: db starting', 'cache: cache starting', 'db: db ready', 'cache: cache ready']);
+    expect(all.json.truncated).toBe(false);
+    expect(all.json.unreadable).toEqual([]);
+    // Following: the engine is asked for lines after the last stamp, one nanosecond on.
+    const since = all.json.entries.at(-1).at;
+    await post(enabledBase, 'services/tail', { ...TARGET, since });
+    const asked = engine.calls.filter((call) => call.op === 'logs').slice(-2);
+    expect(
+      asked.every(
+        (call) =>
+          call.args[2] && (call.args[2] as { since?: string }).since === '1790157603.500000001'
+      )
+    ).toBe(true);
+    expect((await post(enabledBase, 'services/tail', { ...TARGET, since: 'nope' })).status).toBe(
+      400
+    );
   });
 });
 

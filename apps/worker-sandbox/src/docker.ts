@@ -60,6 +60,11 @@ export interface ContainerSpec {
   pidsLimit: number;
 }
 
+export interface LogOptions {
+  since?: string;
+  timestamps?: boolean;
+}
+
 export interface ContainerState {
   id: string;
   running: boolean;
@@ -89,8 +94,12 @@ export interface DockerEngine {
   createContainer(spec: ContainerSpec): Promise<string>;
   startContainer(id: string): Promise<void>;
   inspectContainer(id: string, network: string): Promise<ContainerState | null>;
-  /** The last `tail` lines of both streams, demultiplexed, oldest first. */
-  containerLogs(id: string, tail: number): Promise<string>;
+  /**
+   * The last `tail` lines of both streams, demultiplexed, oldest first;
+   * with `since` (seconds[.nanoseconds] since the epoch) only lines after
+   * it, with `timestamps` each line stamped as the engine stamps it.
+   */
+  containerLogs(id: string, tail: number, options?: LogOptions): Promise<string>;
   stopContainer(id: string, timeoutSeconds: number): Promise<void>;
   /** Remove with its anonymous volumes; already gone is fine. */
   removeContainer(id: string): Promise<void>;
@@ -359,8 +368,14 @@ export class DockerClient implements DockerEngine {
     };
   }
 
-  async containerLogs(id: string, tail: number): Promise<string> {
-    const query = new URLSearchParams({ stdout: '1', stderr: '1', tail: String(tail) });
+  async containerLogs(id: string, tail: number, options: LogOptions = {}): Promise<string> {
+    const query = new URLSearchParams({
+      stdout: '1',
+      stderr: '1',
+      tail: String(tail),
+      ...(options.since ? { since: options.since } : {}),
+      ...(options.timestamps ? { timestamps: '1' } : {}),
+    });
     const response = await this.call(
       'GET',
       `/containers/${encodeURIComponent(id)}/logs?${query.toString()}`

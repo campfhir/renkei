@@ -353,7 +353,11 @@ A person has the same verbs on the project's **Services page**
 `apps/web/app/[slug]/code/_components/services-page.tsx`, over
 `/api/tenant/[tenantId]/code/projects/[projectId]/services`): what is
 running with its address, the variables it sets and when it expires,
-its last log lines, a Stop, and a form to start one — name, image, the
+every service's log lines in one time-ordered tail that follows as
+they write (the worker reads each container's lines stamped by the
+engine and merges them; the page asks every few seconds for what came
+after its last line, filtered to one service when wanted), a Stop, and
+a form to start one — name, image, the
 container's variables and the exports as text, `KEY=value` a line — with
 the organization's allowed images listed beside it so the image field is
 not a guess. The project page carries only a card (`services-summary.tsx`,

@@ -409,6 +409,28 @@ function handleServices(op, body, response) {
         truncated: false,
       });
     }
+    case 'tail': {
+      // Two stamped lines per service, and one more each time the page
+      // follows, so a tail that asks for what came after its last stamp
+      // sees the stream move.
+      const entries = [];
+      for (const service of scope.services.values()) {
+        service.tailTicks = (service.tailTicks ?? 0) + 1;
+        const base = Date.parse(service.createdAt);
+        const lines = ['starting up', 'database system is ready to accept connections'];
+        for (let tick = 3; tick <= service.tailTicks + 1; tick += 1)
+          lines.push(`checkpoint ${tick - 2}`);
+        lines.forEach((line, index) => {
+          const at = new Date(base + index * 1000).toISOString().replace('Z', '000000Z');
+          entries.push({ service: service.name, at, line });
+        });
+      }
+      const since = typeof body.since === 'string' ? body.since : null;
+      const kept = entries
+        .filter((entry) => !since || entry.at > since)
+        .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+      return json(response, 200, { entries: kept, truncated: false, unreadable: [] });
+    }
     default:
       return error(response, 404, 'unknown_operation');
   }
