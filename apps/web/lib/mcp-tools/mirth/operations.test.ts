@@ -308,3 +308,40 @@ describe('registerOperationTools', () => {
     expect(result.content[0].text).toBe('Mirth answered 403');
   });
 });
+
+describe('requestFor, on the wire', () => {
+  it("sends a parameter under its wire name and dates in Mirth's Calendar form", () => {
+    const built = requestFor(byTool('count_events'), {
+      instanceId: INSTANCE_ID,
+      levels: ['ERROR', 'WARNING'],
+      startDate: '2026-09-01T00:00:00Z',
+      endDate: '2026-09-02',
+    });
+    expect(built).toEqual({
+      ok: true,
+      request: {
+        method: 'GET',
+        path: '/events/count',
+        query: {
+          level: ['ERROR', 'WARNING'],
+          startDate: '2026-09-01T00:00:00.000+0000',
+          endDate: '2026-09-02T00:00:00.000+0000',
+        },
+        accept: 'text/plain',
+      },
+    });
+  });
+
+  it('refuses a date it cannot read, in the schema and in the request', () => {
+    const schema = inputSchemaFor(byTool('count_events'));
+    expect(schema.safeParse({ instanceId: INSTANCE_ID, startDate: 'last tuesday' }).success).toBe(
+      false
+    );
+    expect(schema.safeParse({ instanceId: INSTANCE_ID, startDate: '2026-09-01' }).success).toBe(
+      true
+    );
+    expect(
+      requestFor(byTool('count_events'), { instanceId: INSTANCE_ID, endDate: 'soon' })
+    ).toEqual({ ok: false, error: 'endDate must be an ISO 8601 date-time.' });
+  });
+});

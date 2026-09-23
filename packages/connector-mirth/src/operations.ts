@@ -7,9 +7,12 @@
  * than a generic "issue a request" escape hatch.
  *
  * Transcribed from the 4.5.2 servlet interfaces
- * (`com.mirth.connect.client.core.api.servlets.*ServletInterface`). Paths
- * are relative to `/api`; `{name}` marks a path parameter and must have a
- * matching `params` entry with `in: 'path'`.
+ * (`com.mirth.connect.client.core.api.servlets.*ServletInterface`); the
+ * server's own OpenAPI document for that version is checked in at
+ * docs/mirth-connect-client-api-open-api-spec.json and operations.test.ts
+ * holds every entry here against it. Paths are relative to `/api`;
+ * `{name}` marks a path parameter and must have a matching `params` entry
+ * with `in: 'path'`.
  *
  * Left out on purpose:
  *   - the `POST … _getX` / `_search` / `_removeAllMessagesPost` variants
@@ -44,11 +47,28 @@ export type ParamType =
   | { enum: readonly [string, ...string[]]; multiple?: boolean };
 
 export interface ParamSpec {
+  /** The argument name a model sees. */
   name: string;
   in: 'path' | 'query';
   type: ParamType;
   required?: boolean;
   description: string;
+  /** The query key Mirth reads, where it differs from `name` (`levels` rides as `level`). */
+  wire?: string;
+}
+
+/**
+ * The one date form Mirth's Calendar query parameters parse:
+ * `yyyy-MM-dd'T'HH:mm:ss.SSSZ` with an RFC 822 zone (`2015-10-21T07:28:00.000-0700`,
+ * the spec's own example). Plain ISO 8601 — a trailing `Z`, a `+00:00`
+ * zone, no milliseconds, a bare date — is rejected upstream, so every
+ * date a model gives is normalised here, in UTC. Undefined when the value
+ * is not a date at all.
+ */
+export function toMirthDate(value: string): string | undefined {
+  const parsed = new Date(value.trim());
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString().replace(/Z$/, '+0000');
 }
 
 export type BodySpec =
@@ -157,11 +177,14 @@ const MESSAGE_FILTER: ParamSpec[] = [
 const EVENT_FILTER: ParamSpec[] = [
   q('maxEventId', 'int', 'Highest event id to match.'),
   q('minEventId', 'int', 'Lowest event id to match.'),
-  q(
-    'levels',
-    { enum: ['INFORMATION', 'WARNING', 'ERROR'], multiple: true },
-    'Event levels to match.'
-  ),
+  {
+    ...q(
+      'levels',
+      { enum: ['INFORMATION', 'WARNING', 'ERROR'], multiple: true },
+      'Event levels to match.'
+    ),
+    wire: 'level',
+  },
   q('startDate', 'iso-date', 'On or after (ISO 8601).'),
   q('endDate', 'iso-date', 'On or before (ISO 8601).'),
   q('name', 'string', 'Event name fragment.'),

@@ -18,7 +18,13 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { MIRTH_OPERATIONS, fillPath, mirthPermission, textOf } from '@renkei/connector-mirth';
+import {
+  MIRTH_OPERATIONS,
+  fillPath,
+  mirthPermission,
+  textOf,
+  toMirthDate,
+} from '@renkei/connector-mirth';
 import type {
   BodySpec,
   MirthPermission,
@@ -82,7 +88,10 @@ function schemaFor(type: ParamType): z.ZodTypeAny {
     case 'int[]':
       return z.array(z.number().int());
     case 'iso-date':
-      return z.string().min(1);
+      return z
+        .string()
+        .min(1)
+        .refine((value) => toMirthDate(value) !== undefined, 'Expected an ISO 8601 date-time.');
   }
 }
 
@@ -182,7 +191,13 @@ export function requestFor(
       if (param.required) return { ok: false, error: `${param.name} is required.` };
       continue;
     }
-    query[param.name] = forwarded;
+    if (param.type === 'iso-date') {
+      const date = typeof forwarded === 'string' ? toMirthDate(forwarded) : undefined;
+      if (!date) return { ok: false, error: `${param.name} must be an ISO 8601 date-time.` };
+      query[param.wire ?? param.name] = date;
+      continue;
+    }
+    query[param.wire ?? param.name] = forwarded;
   }
 
   const request: MirthApiRequest = {

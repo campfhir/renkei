@@ -552,7 +552,7 @@ describe('messages', () => {
       path: '/channels/c1/messages',
       query: {
         status: ['ERROR'],
-        startDate: '2026-09-01T00:00:00Z',
+        startDate: '2026-09-01T00:00:00.000+0000',
         textSearch: 'PID',
         includeContent: false,
         limit: 5,
@@ -682,5 +682,47 @@ describe('destructive cards', () => {
       path: '/channels/c1/messages',
       query: { status: ['ERROR'] },
     });
+  });
+});
+
+describe('events', () => {
+  it("filters on Mirth's singular level key and sends dates in its Calendar form", async () => {
+    mirthApi.mockResolvedValueOnce(
+      answer(200, {
+        list: {
+          serverEvent: [
+            {
+              id: 41,
+              eventTime: { time: 1756684800000, timezone: 'UTC' },
+              level: 'ERROR',
+              name: 'Deploy channel',
+              outcome: 'FAILURE',
+              userId: 1,
+              ipAddress: '10.0.0.5',
+              attributes: { entry: [{ string: ['channel', 'ADT In'] }] },
+            },
+          ],
+        },
+      })
+    );
+    const result = await register().get('mirth_list_events')!({
+      instanceId: INSTANCE_ID,
+      levels: ['ERROR'],
+      startDate: '2026-09-01T00:00:00Z',
+      endDate: '2026-09-02T00:00:00+02:00',
+      limit: 10,
+    });
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/events',
+      query: {
+        level: ['ERROR'],
+        startDate: '2026-09-01T00:00:00.000+0000',
+        endDate: '2026-09-01T22:00:00.000+0000',
+        limit: 10,
+      },
+    });
+    expect(textOf(result)).toContain('#41');
+    expect(textOf(result)).toContain('ERROR Deploy channel — FAILURE');
   });
 });
