@@ -52,6 +52,12 @@ export const CHANGELOG: ChangelogRelease[] = [
           'A Bitbucket code project’s page now carries a Pipelines card — on or off, whether a bitbucket-pipelines.yml is on the branch, how many variables, and the last run — that opens the project’s own Pipelines page: the recent runs with their state, ref and timing, a Run pipeline button to start one on a branch or tag, the switch to turn Pipelines on for the repository, a way to start the pipeline file from one of the org’s pipeline templates (a new admin catalog, seeded with Node, Python and a bare skeleton, editable like project templates) and commit it to the branch — or edit the one there — without a chat, and the repository’s pipeline variables and each deployment environment’s, each set edited as one text box — KEY=value a line, as a .env, with “secret” in front of a secured one — and applied as the difference. None of this is a chat tool: a chat can commit the YAML and start or stop runs, but the switch and the variables are set on the page, by a person, and a secured value is never shown again. The Bitbucket connector gains a “Set pipeline variables” checkbox for it.',
       },
       {
+        kind: 'added',
+        title: 'A code project can run services beside its checkout',
+        detail:
+          'A chat in a code project can start a container — Postgres, Redis, a message broker — beside the checkout for the project’s tests, from the images the organization allows, and every command it runs then gets the service’s address and whatever it exports (a DATABASE_URL, say), over the project’s .env. The project page carries a Services card that opens the project’s own Services page: what is running, its address, every service’s logs in one tail that follows as they write, a Stop, and a form to start one yourself. Which images may run is the organization’s list, under Organization → Code services: a whole private registry, a namespace on one, or single public images by name, with the credential a private registry is pulled with sealed on the sandbox worker. Off unless the deployment turns it on.',
+      },
+      {
         kind: 'changed',
         title: 'Files in the code pane are coloured the same way',
         detail:

@@ -252,9 +252,28 @@ services:
       # own process can never be what pushes the container over it — the
       # browser gets the rest.
       NODE_OPTIONS: --max-old-space-size=1024
+      # This container's own name, for joining the services network when
+      # code project services are on (the socket below).
+      SANDBOX_CONTAINER_ID: renkei-worker-sandbox
     volumes:
       - renkei-sandbox-data:/data
       - renkei-sandbox-workspaces:/workspaces
+      # Code project services (SANDBOX_SERVICES_ENABLED=true in .env, read
+      # by this service AND renkei): the worker starts containers —
+      # Postgres, Redis — beside a project's checkout, from the images the
+      # organization allows, through the host's Docker engine. Uncomment
+      # the socket to turn that on. It is root's inside the container
+      # (a project's own commands, dropped to their own uids, cannot open
+      # it), but it is the engine, so it is this worker's process that is
+      # trusted with it: prefer a socket proxy (docker-socket-proxy with
+      # CONTAINERS, IMAGES, NETWORKS and POST allowed, nothing else) and
+      # SANDBOX_DOCKER_HOST=tcp://proxy:2375 instead of the raw socket
+      # where that is available. Services are created on the internal
+      # network SANDBOX_SERVICES_NETWORK (default renkei-sandbox-services),
+      # which this container joins at boot; SANDBOX_CONTAINER_ID names
+      # this container for that join (the hostname works when compose is
+      # left to set it).
+      # - /var/run/docker.sock:/var/run/docker.sock
     # The browser is the memory hog in this stack: a busy session runs
     # 300-500MB, up to eight at once. The reservation asks the host to keep
     # that much for it; the limit stops a runaway page from taking the box
@@ -296,7 +315,9 @@ services:
       # service AND worker-sandbox) additionally registers the
       # sandbox_browser_* tools; unset, they don't exist. Likewise
       # SANDBOX_WORKSPACES_ENABLED=true for the Code section — code
-      # projects, each a repository a chat works in with the code_* tools.
+      # projects, each a repository a chat works in with the code_* tools
+      # — and SANDBOX_SERVICES_ENABLED=true on top for the code_service_*
+      # tools (containers beside a checkout; see worker-sandbox's socket).
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.

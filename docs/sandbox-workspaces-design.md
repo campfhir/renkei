@@ -85,6 +85,7 @@ when the project's checkout is ready (`lib/code/turn.ts`):
 | `code_git_push`   | Act  | Push the current branch to origin with the person's grant; never force.                     |
 | `code_git_pull`   | Act  | Fast-forward from origin, or fetch and switch to another remote branch.                     |
 | `code_env_names`  | Read | The names of the project's environment variables — never a value.                           |
+| `code_service_*`  |      | Containers beside the checkout, where the deployment offers them — see "Services" below.    |
 
 A pull request is `bitbucket_create_pull_request`, as before. The worker
 verbs behind these (`/v1/workspaces/*`, `/v1/env/*` on
@@ -206,7 +207,7 @@ custom pipeline; `runs/route.ts`, on `pipeline:write` exactly as the
 chat's `bitbucket_trigger_pipeline` is), whether Bitbucket runs pipelines for the repository at
 all, whether a `bitbucket-pipelines.yml` is on the project's branch —
 and when there is none, an editor that starts one from the org's
-**pipeline templates** (`pipeline_templates`, migration 121, seeded with
+**pipeline templates** (`pipeline_templates`, migration 122, seeded with
 Node/pnpm, Node/npm, Python and a bare skeleton; operators rename,
 rewrite or delete them at `/admin/pipeline-templates`, the
 project-templates idiom) and commits it to the branch with the person's
@@ -326,12 +327,93 @@ keeps a soft reference to its checkout; when the worker no longer has
 it, the project page says so and offers to clone again, and the chat's
 prompt says the tools are not available until it is.
 
+## Services: a container beside the checkout
+
+A project's tests usually need something running — a database, a
+cache, a broker — and a checkout on its own has none. So a project may
+start **services**: containers the sandbox worker runs beside the
+checkout, from images the organization allows, reachable from every
+command the project runs. `SANDBOX_SERVICES_ENABLED=true` on the web
+app and the worker (with workspaces on, and the worker given a Docker
+engine — DEPLOYMENT.md) puts four tools in a project's chat:
+
+| Tool                 | Kind | What it does                                                                 |
+| -------------------- | ---- | ---------------------------------------------------------------------------- |
+| `code_services`      | Read | What is running: name, image, status, address, the variables it sets.        |
+| `code_service_start` | Act  | Pull an allowed image, start it on the services network, answer its address. |
+| `code_service_logs`  | Read | The container's last lines — is it ready, why did it stop.                   |
+| `code_service_stop`  | Act  | Stop and remove the container with its data; the name is free again.         |
+
+The model names the service (`db`), the image (`postgres:16`), the
+container's own variables (`env`: `POSTGRES_PASSWORD`, a throwaway) and
+what to export into the project's commands (`exports`: templates over
+`{host}` and `{port}` — `DATABASE_URL: postgres://postgres:pw@{host}:{port}/app`).
+A person has the same verbs on the project's **Services page**
+(`/[slug]/code/[projectId]/services`,
+`apps/web/app/[slug]/code/_components/services-page.tsx`, over
+`/api/tenant/[tenantId]/code/projects/[projectId]/services`): what is
+running with its address, the variables it sets and when it expires,
+every service's log lines in one time-ordered tail that follows as
+they write (the worker reads each container's lines stamped by the
+engine and merges them; the page asks every few seconds for what came
+after its last line, filtered to one service when wanted), a Stop, and
+a form to start one — name, image, the
+container's variables and the exports as text, `KEY=value` a line — with
+the organization's allowed images listed beside it so the image field is
+not a guess. The project page carries only a card (`services-summary.tsx`,
+the route's `?view=summary`: how many running, their names, how many
+images are allowed) that opens the page, the Pipelines arrangement, so
+the project page stays a summary; a start or stop from the page is an
+audit event (`code.services.started`, `code.services.stopped`).
+While the service runs, every `code_run` command gets
+`SERVICE_<NAME>_HOST`, `SERVICE_<NAME>_PORT` (the lowest port the image
+declares) and `SERVICE_<NAME>_PORTS`, plus the exports rendered — set
+over the project's `.env`, because a service is started to be what the
+tests talk to. A sub-agent can list and read logs but not start or stop
+one: what runs beside the checkout is the orchestrator's call.
+
+**The image is the boundary.** The organization keeps an allow-list
+(`code_service_image_rules`, migration 122; Organization → Code services
+in the admin console) of rules in one of three shapes, each normalized
+to `host[/path]`: a whole registry (`myorg.azurecr.io`), a namespace on
+one (`myorg.azurecr.io/platform/*`), or a single repository at any tag
+(`docker.io/library/postgres` — typed as `postgres`, `postgres:16` or
+`index.docker.io/library/postgres`, all one repository to the rules).
+Every tenant is seeded with a handful of public images and an operator
+adds their own registry, so a private Azure Container Registry can be
+allowed wholesale while Docker Hub is allowed only by name. A reference
+the model gives is parsed the way `docker pull` reads it and matched
+against the rules; the most specific rule wins, and a refusal names what
+is allowed. A rule may carry the credential its registry is pulled with
+(a service principal, a pull token): the worker seals the secret under
+its own key — the environment secrets' key, a `reg1.` envelope — the
+listing shows the username only, and the credential rides the one pull
+request that needs it.
+
+**Containment.** The engine answers to the worker process — its socket
+(or the proxy in front of it) is root's, and a project's commands, dropped
+to their own uids, cannot open it; what may run is decided by the worker
+against the rules, never by anything a command can do. A service is a
+plain container: no privileges, `no-new-privileges`, a memory and a pids
+ceiling, no restart policy, no published ports, on an INTERNAL Docker
+network with no route out, so an image that turns out to be more than a
+database reaches neither the internet nor the other compose services from
+there. It is reached by address from the worker's own container, joined
+to that network at boot — where every project's commands run — so, as
+with the checkouts' shared network, one project can reach another's
+service if it knows the address and the password; the password is the
+project's own. A service lives a day past the project's last command
+(`sandbox_services`, the same expiry-on-use as a checkout); the worker's
+sweep stops and removes it with its anonymous volumes, and removes any
+container carrying its label that no row claims.
+
 ## What it deliberately is not
 
-Not a general container the model controls — no `docker`, no root, no
-network isolation to promise beyond placement — and not a way past the
-sandbox's other rules: staged files and the browser are unchanged, the
-knowledge index never sees a checkout, and a workspace is working state
-with a lifetime, not a source of truth. Bitbucket is the one provider;
-the vocabulary (`provider` on the row and the clone verb) leaves room
-for another.
+Not a general container the model controls — no `docker` in a command,
+no root, no image outside the organization's rules, no network isolation
+to promise beyond placement — and not a way past the sandbox's other
+rules: staged files and the browser are unchanged, the knowledge index
+never sees a checkout, and a workspace (and a service beside it) is
+working state with a lifetime, not a source of truth. Bitbucket is the
+one provider; the vocabulary (`provider` on the row and the clone verb)
+leaves room for another.

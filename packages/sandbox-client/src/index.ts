@@ -88,6 +88,17 @@ export function sandboxWorkspacesEnabled(): boolean {
   return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_WORKSPACES_ENABLED ?? '').trim());
 }
 
+/**
+ * Whether this deployment offers code project services — containers
+ * started beside a checkout: workspaces must be on AND
+ * SANDBOX_SERVICES_ENABLED set (the same flag the worker reads to talk
+ * to its Docker engine). Off unless said otherwise — closed, never open.
+ */
+export function sandboxServicesEnabled(): boolean {
+  if (!sandboxWorkspacesEnabled()) return false;
+  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SERVICES_ENABLED ?? '').trim());
+}
+
 function unreachable(message: string): { ok: false; err: SandboxClientError } {
   return { ok: false, err: { kind: 'unreachable', message } };
 }
@@ -1191,6 +1202,301 @@ export async function sbEnvDelete(
   return { ok: true, val: { name: str(result.val.name) } };
 }
 
+// ─── Code project services ──────────────────────────────────────────────────
+
+export type WireServiceStatus = 'starting' | 'running' | 'stopped' | 'failed' | 'gone';
+
+export interface WireService {
+  id: string;
+  name: string;
+  image: string;
+  status: WireServiceStatus;
+  error: string | null;
+  host: string | null;
+  ports: number[];
+  exportNames: string[];
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+}
+
+function serviceStatusOf(value: unknown): WireServiceStatus {
+  switch (value) {
+    case 'starting':
+    case 'running':
+    case 'stopped':
+    case 'gone':
+      return value;
+    default:
+      return 'failed';
+  }
+}
+
+function serviceOf(value: unknown): WireService | null {
+  if (!isRecord(value)) return null;
+  const id = str(value.id);
+  const name = str(value.name);
+  const status = str(value.status);
+  if (!id || !name || !status) return null;
+  return {
+    id,
+    name,
+    image: str(value.image),
+    status: serviceStatusOf(status),
+    error: optStr(value.error) ?? null,
+    host: optStr(value.host) ?? null,
+    ports: Array.isArray(value.ports)
+      ? value.ports.filter((port): port is number => typeof port === 'number')
+      : [],
+    exportNames: Array.isArray(value.exportNames)
+      ? value.exportNames.filter((entry): entry is string => typeof entry === 'string')
+      : [],
+    createdAt: str(value.createdAt),
+    lastUsedAt: str(value.lastUsedAt),
+    expiresAt: str(value.expiresAt),
+  };
+}
+
+function servicesOf(value: unknown): WireService[] | null {
+  if (!isRecord(value) || !Array.isArray(value.services)) return null;
+  const services: WireService[] = [];
+  for (const raw of value.services) {
+    const service = serviceOf(raw);
+    if (!service) return null;
+    services.push(service);
+  }
+  return services;
+}
+
+/** The project's services, each checked against the engine as it is listed. */
+export async function sbServiceList(target: SandboxTarget): Promise<ClientResult<WireService[]>> {
+  const result = await callJson('services/list', { ...target });
+  if (!result.ok) return result;
+  const services = servicesOf(result.val);
+  return services ? { ok: true, val: services } : malformed();
+}
+
+/**
+ * Start a service: pull the image (against the organization's rules),
+ * run it beside the checkout, answer where it is. A pull can take
+ * minutes, so this waits well past the ordinary request timeout.
+ */
+export async function sbServiceStart(
+  target: SandboxTarget,
+  input: {
+    name: string;
+    image: string;
+    env?: Record<string, string>;
+    exports?: Record<string, string>;
+  }
+): Promise<ClientResult<WireService>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  let response: Response;
+  try {
+    response = await fetch(`${cfg.url}/v1/services/start`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...target, ...input }),
+      signal: AbortSignal.timeout(6 * 60_000),
+    });
+  } catch (error) {
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) return opFailure(response);
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    return unreachable('The sandbox service answered an unreadable response.');
+  }
+  const service = isRecord(value) ? serviceOf(value.service) : null;
+  return service ? { ok: true, val: service } : malformed();
+}
+
+/** Stop a service: the container is stopped and removed with its data; the name is free again. */
+export async function sbServiceStop(
+  target: SandboxTarget,
+  name: string
+): Promise<ClientResult<WireService>> {
+  const result = await callJson('services/stop', { ...target, name });
+  if (!result.ok) return result;
+  const service = isRecord(result.val) ? serviceOf(result.val.service) : null;
+  return service ? { ok: true, val: service } : malformed();
+}
+
+/**
+ * One service's recent lines, each stamped by the engine (the stamp is
+ * what to pass as `since` next time). `since` is such a stamp or a
+ * duration back from now (`5m`); `match` keeps only lines a word or a
+ * regular expression matches, case-insensitively.
+ */
+export async function sbServiceLogs(
+  target: SandboxTarget,
+  input: { name: string; lines?: number; since?: string; match?: string }
+): Promise<
+  ClientResult<{
+    service: WireService;
+    logs: string;
+    truncated: boolean;
+    count: number;
+    lastAt: string | null;
+  }>
+> {
+  const result = await callJson('services/logs', { ...target, ...input });
+  if (!result.ok) return result;
+  if (!isRecord(result.val) || typeof result.val.logs !== 'string') return malformed();
+  const service = serviceOf(result.val.service);
+  if (!service) return malformed();
+  return {
+    ok: true,
+    val: {
+      service,
+      logs: result.val.logs,
+      truncated: result.val.truncated === true,
+      count: typeof result.val.count === 'number' ? result.val.count : 0,
+      lastAt: optStr(result.val.lastAt) ?? null,
+    },
+  };
+}
+
+export interface WireServiceLogEntry {
+  service: string;
+  /** RFC 3339 with nanoseconds, as the engine stamps it; the cursor for the next tail. */
+  at: string;
+  line: string;
+}
+
+/**
+ * Every service's recent lines in one time-ordered stream; with `since`
+ * (the `at` of the last entry already shown, or a duration such as `5m`)
+ * only what came after it, with `match` only the lines it keeps.
+ */
+export async function sbServicesTail(
+  target: SandboxTarget,
+  input: { lines?: number; since?: string; match?: string } = {}
+): Promise<
+  ClientResult<{ entries: WireServiceLogEntry[]; truncated: boolean; unreadable: string[] }>
+> {
+  const result = await callJson('services/tail', { ...target, ...input });
+  if (!result.ok) return result;
+  if (!isRecord(result.val) || !Array.isArray(result.val.entries)) return malformed();
+  const entries: WireServiceLogEntry[] = [];
+  for (const raw of result.val.entries) {
+    if (!isRecord(raw)) return malformed();
+    const service = str(raw.service);
+    const at = str(raw.at);
+    if (!service || !at || typeof raw.line !== 'string') return malformed();
+    entries.push({ service, at, line: raw.line });
+  }
+  return {
+    ok: true,
+    val: {
+      entries,
+      truncated: result.val.truncated === true,
+      unreadable: Array.isArray(result.val.unreadable)
+        ? result.val.unreadable.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+    },
+  };
+}
+
+// ─── The organization's image rules ─────────────────────────────────────────
+
+export interface WireImageRule {
+  id: string;
+  pattern: string;
+  note: string | null;
+  registryUsername: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function imageRuleOf(value: unknown): WireImageRule | null {
+  if (!isRecord(value)) return null;
+  const id = str(value.id);
+  const pattern = str(value.pattern);
+  if (!id || !pattern) return null;
+  return {
+    id,
+    pattern,
+    note: optStr(value.note) ?? null,
+    registryUsername: optStr(value.registryUsername) ?? null,
+    createdAt: str(value.createdAt),
+    updatedAt: str(value.updatedAt),
+  };
+}
+
+function imageRulesOf(value: unknown): WireImageRule[] | null {
+  if (!isRecord(value) || !Array.isArray(value.rules)) return null;
+  const rules: WireImageRule[] = [];
+  for (const raw of value.rules) {
+    const rule = imageRuleOf(raw);
+    if (!rule) return null;
+    rules.push(rule);
+  }
+  return rules;
+}
+
+export async function sbImageRulesList(tenantId: string): Promise<ClientResult<WireImageRule[]>> {
+  const result = await callJson('services/rules/list', { tenantId });
+  if (!result.ok) return result;
+  const rules = imageRulesOf(result.val);
+  return rules ? { ok: true, val: rules } : malformed();
+}
+
+/**
+ * Add a rule (no id) or change one (with its id). A registry credential
+ * travels to the worker over the internal seam and nowhere else; on a
+ * change, an absent credential leaves the stored one alone and
+ * `clearCredential` removes it. `dropped` says what the worker took off
+ * the pattern (a tag, a digest) to make a rule of it.
+ */
+export async function sbImageRuleSet(
+  tenantId: string,
+  input: {
+    id?: string;
+    pattern: string;
+    note?: string | null;
+    registryUsername?: string;
+    registrySecret?: string;
+    clearCredential?: boolean;
+  }
+): Promise<ClientResult<{ rule: WireImageRule; dropped: string | null }>> {
+  const result = await callJson('services/rules/set', { tenantId, ...input });
+  if (!result.ok) return result;
+  const rule = isRecord(result.val) ? imageRuleOf(result.val.rule) : null;
+  if (!rule) return malformed();
+  return {
+    ok: true,
+    val: { rule, dropped: isRecord(result.val) ? (optStr(result.val.dropped) ?? null) : null },
+  };
+}
+
+export async function sbImageRuleDelete(
+  tenantId: string,
+  id: string
+): Promise<ClientResult<{ id: string }>> {
+  const result = await callJson('services/rules/delete', { tenantId, id });
+  if (!result.ok) return result;
+  if (!isRecord(result.val) || !result.val.deleted) return malformed();
+  return { ok: true, val: { id: str(result.val.id) } };
+}
+
+/** Put the seeded public images back, leaving what the organization added or kept. */
+export async function sbImageRulesRestore(
+  tenantId: string
+): Promise<ClientResult<{ added: number; rules: WireImageRule[] }>> {
+  const result = await callJson('services/rules/restore', { tenantId });
+  if (!result.ok) return result;
+  const rules = imageRulesOf(result.val);
+  if (!rules || !isRecord(result.val)) return malformed();
+  return {
+    ok: true,
+    val: { added: typeof result.val.added === 'number' ? result.val.added : 0, rules },
+  };
+}
+
 /**
  * One shared mapping from a client error to a model-facing refusal, so
  * every sandbox_* tool and every batch-pipeline caller phrases the same
@@ -1222,6 +1528,22 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
         status: 503,
         message: error.message ?? 'Environment secrets are not enabled on this deployment.',
       };
+    case 'services_unavailable':
+      return {
+        status: 503,
+        message: error.message ?? 'Code project services are not enabled on this deployment.',
+      };
+    case 'secrets_unavailable':
+      return {
+        status: 503,
+        message: error.message ?? 'The worker has no key to seal a registry credential.',
+      };
+    case 'not_allowed':
+      return { status: 403, message: error.message ?? 'That image is not allowed.' };
+    case 'exists':
+      return { status: 409, message: error.message ?? 'That name is taken.' };
+    case 'engine':
+      return { status: 502, message: error.message ?? 'The container engine refused.' };
     case 'not_ready':
       return { status: 409, message: error.message ?? 'That workspace is not ready yet.' };
     case 'bad_path':

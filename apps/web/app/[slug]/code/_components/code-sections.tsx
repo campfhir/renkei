@@ -9,7 +9,10 @@
  * with, replaced by pasting a `.env` again. Values are never shown; the
  * worker sealed them and only a command ever sees them. A Bitbucket
  * project gets a third: a card summarizing its Pipelines, which opens
- * the project's Pipelines page (pipelines-summary.tsx, pipelines-page.tsx).
+ * the project's Pipelines page (pipelines-summary.tsx, pipelines-page.tsx);
+ * and every project a card summarizing its services — the containers
+ * beside the checkout — opening its Services page
+ * (services-summary.tsx, services-page.tsx).
  */
 
 import { useEffect, useState } from 'react';
@@ -17,6 +20,7 @@ import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
 import PipelinesSummary from './pipelines-summary';
+import ServicesSummaryCard from './services-summary';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -266,6 +270,13 @@ export default function CodeSections({
           tenantId={tenantId}
           projectId={projectId}
           branch={code.branch}
+        />
+      ) : null}
+      {code.enabled ? (
+        <ServicesSummaryCard
+          href={`/${slug}/code/${projectId}/services`}
+          tenantId={tenantId}
+          projectId={projectId}
         />
       ) : null}
     </>

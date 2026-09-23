@@ -2,7 +2,7 @@
  * The catalog behind the Pipelines page's "start from a template"
  * picker (pipeline_templates, admin-managed at /admin/pipeline-templates)
  * — the project-templates idiom (project-templates.ts) for pipeline
- * files. Every tenant starts with a few seeded rows (migration 121) and
+ * files. Every tenant starts with a few seeded rows (migration 122) and
  * an operator can add, rewrite or delete any of them; there is no
  * separate "built-in" concept once seeded. Picking one only fills the
  * editor — the text is committed as the person leaves it — so a template

@@ -580,6 +580,17 @@ export interface CodeProjectTemplates {
   updated_at: Generated<Timestamp>;
 }
 
+export interface CodeServiceImageRules {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  note: string | null;
+  pattern: string;
+  registry_sealed: string | null;
+  registry_username: string | null;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ConnectorConfigs {
   connector: string;
   created_at: Generated<Timestamp>;
@@ -1152,6 +1163,23 @@ export interface SandboxSecrets {
   tenant_id: string;
 }
 
+export interface SandboxServices {
+  container_id: string | null;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  expires_at: Timestamp;
+  exports: Generated<Json>;
+  host: string | null;
+  id: string;
+  image: string;
+  last_used_at: Generated<Timestamp>;
+  name: string;
+  ports: Generated<Json>;
+  status: Generated<string>;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface SandboxWorkspaces {
   branch: string;
   created_at: Generated<Timestamp>;
@@ -1351,6 +1379,7 @@ export interface DB {
   chats: Chats;
   coach_mark_progress: CoachMarkProgress;
   code_project_templates: CodeProjectTemplates;
+  code_service_image_rules: CodeServiceImageRules;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
   email_classification_log: EmailClassificationLog;
@@ -1395,6 +1424,7 @@ export interface DB {
   sandbox_env_secrets: SandboxEnvSecrets;
   sandbox_files: SandboxFiles;
   sandbox_secrets: SandboxSecrets;
+  sandbox_services: SandboxServices;
   sandbox_workspaces: SandboxWorkspaces;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;

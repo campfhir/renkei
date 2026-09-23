@@ -283,6 +283,43 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   on separate disks do not — see "More than one sandbox replica" below.
   Entrypoint: `pnpm --filter @renkei/worker-sandbox start`.
 
+**Code project services** (`docs/sandbox-workspaces-design.md`,
+"Services"): with workspaces on, `SANDBOX_SERVICES_ENABLED=true` in
+`.env` — read by BOTH the web app (the `code_service_*` tools a project's
+chats get, and the Organization → Code services page) and this worker —
+lets a project's chat start a container beside its checkout (Postgres,
+Redis, a broker) for the project's tests, from the images the
+organization allows. The worker needs a Docker engine for that:
+uncomment the `/var/run/docker.sock` mount on `worker-sandbox` in
+`docker-compose.yaml`, or run a socket proxy (docker-socket-proxy with
+`CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing else)
+and point `SANDBOX_DOCKER_HOST=tcp://<proxy>:2375` at it — the proxy is
+the recommendation where it can be had, since the raw socket is the
+engine itself. Either way the socket is root's inside the container: a
+project's own commands run as other uids (above) and cannot open it;
+what may run is decided by this worker against the organization's
+rules, never by a command. The worker refuses to start with the flag
+set and no engine answering, saying so. Services are created on an
+internal Docker network (`SANDBOX_SERVICES_NETWORK`, default
+`renkei-sandbox-services`; no route out of it), which this container
+joins at boot so a project's commands reach a service by address —
+`SANDBOX_CONTAINER_ID` names this container for that join (compose sets
+it to `renkei-worker-sandbox`; the hostname works when compose is left
+to set it). Each service is a plain container: no privileges,
+`no-new-privileges`, a memory ceiling (`SANDBOX_SERVICE_MEMORY`, default
+`1g`) and a process ceiling (`SANDBOX_SERVICE_PIDS`, default 512), no
+restart policy, no published ports; it is stopped and removed with its
+data a day after the project last ran a command, or when the chat
+stops it. **The allow-list** is the organization's, at Organization →
+Code services: every tenant starts with a handful of public images
+(Postgres, pgvector, Redis, Valkey, MySQL, MariaDB, MongoDB, RabbitMQ,
+SQL Server, Azurite) and an operator adds a whole private registry
+(`myorg.azurecr.io`), a namespace on one (`myorg.azurecr.io/platform/*`)
+or a single repository, with the credential a private registry is
+pulled as (a service principal, a pull token): the secret is sealed by
+this worker under `SANDBOX_ENV_SECRETS_KEY` (else `TOKEN_ENCRYPTION_KEY`),
+the same key as the environment secrets, and never shown again.
+
 **More than one sandbox replica:** fine on one host, because Compose
 replicas of a service share its named volumes — and the sandbox worker
 keeps nothing about checkouts or staged files in memory; every verb loads

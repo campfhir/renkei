@@ -21,6 +21,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import {
+  sandboxServicesEnabled,
   sandboxWorkspacesEnabled,
   sbEnvList,
   sbWorkspaceGet,
@@ -141,6 +142,8 @@ export interface CodeTurnContext {
     envNames: string[];
     /** The checkout is being cloned as this turn's first step. */
     clonedNow: boolean;
+    /** The code_service_* tools are in the turn: containers may be started beside the checkout. */
+    servicesEnabled: boolean;
   };
   /** The clone to run before the model speaks; null when the checkout is already usable. */
   prelude: PreludeStep | null;
@@ -158,11 +161,13 @@ export async function codeProjectContext(
   if (project.kind !== 'code' || !project.repo) return null;
   const target = codeProjectTarget(project.tenantId, project.id);
   const envNamesNone: string[] = [];
+  const servicesEnabled = sandboxServicesEnabled();
   const base = {
     repoFullName: project.repo.fullName,
     branch: project.repo.branch,
     envNames: envNamesNone,
     clonedNow: false,
+    servicesEnabled,
   };
   const unavailable = (notReady: string, extra: Partial<typeof base> = {}) => ({
     tools: [],
@@ -215,6 +220,7 @@ export async function codeProjectContext(
     repoProvider: project.repo.provider,
     origin: actor.origin ?? getPublicBaseUrl() ?? '',
     recover: (lostId) => recoverCheckout(db, project, actor, target, lostId),
+    servicesEnabled,
     subagentModels: subagentModels.map(({ id, label, provider, model, isDefault }) => ({
       id,
       label,

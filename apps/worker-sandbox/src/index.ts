@@ -31,6 +31,22 @@
  *   SANDBOX_ENV_SECRETS_KEY — seals workspace environment secrets; falls
  *     back to TOKEN_ENCRYPTION_KEY, and without either the env verbs are
  *     closed.
+ *   SANDBOX_SERVICES_ENABLED — `true` to let a code project start
+ *     containers (Postgres, Redis, ...) beside its checkout from the
+ *     images the organization allows (services.ts); needs workspaces on
+ *     and a Docker engine to talk to. Unset answers every service verb
+ *     "not enabled".
+ *   SANDBOX_DOCKER_HOST — where that engine is: `unix:///var/run/docker.sock`
+ *     (the default; compose mounts it) or `tcp://host:port` for a socket
+ *     proxy in front of it.
+ *   SANDBOX_SERVICES_NETWORK — the internal Docker network services are
+ *     created on and this worker joins, default `renkei-sandbox-services`.
+ *   SANDBOX_CONTAINER_ID — this worker's own container, for joining that
+ *     network; defaults to the hostname, which Docker sets to the
+ *     container id. Unset and not a container (a developer's checkout),
+ *     services are reached at their bridge address directly.
+ *   SANDBOX_SERVICE_MEMORY — each service container's memory ceiling,
+ *     default 1g; SANDBOX_SERVICE_PIDS its process ceiling, default 512.
  */
 
 import { closeDatabase, getDatabase } from '@renkei/db';
@@ -40,6 +56,8 @@ import { createSecretKeyStore } from './secret-key-store';
 import { canIsolateByUid, ensureWorkspacesRoot, verifyUidIsolation } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
 import { createSandboxServer } from './server';
+import { DockerClient, parseDockerHost, parseMemoryBytes } from './docker';
+import { ServiceManager } from './services';
 import { BrowserSessions } from './browser';
 import { SecretVault } from './secret-vault';
 import { createSecretResolver } from './secrets';
@@ -53,6 +71,30 @@ function envFlag(name: string): boolean {
 function fatal(message: string): never {
   console.error(`FATAL [worker-sandbox]: ${message}`);
   process.exit(1);
+}
+
+/**
+ * This worker's own container, as the engine knows it — the one to put
+ * on the services network so every project's commands (which run in it)
+ * can reach a service by address. SANDBOX_CONTAINER_ID when set (compose
+ * can name the container); else the hostname, which Docker sets to the
+ * container id unless told otherwise, checked against the engine. Null
+ * when neither is a container the engine knows: a developer running the
+ * worker on the host, where a bridge address is reachable directly.
+ */
+async function ownContainer(engine: DockerClient): Promise<string | null> {
+  const candidates = [process.env.SANDBOX_CONTAINER_ID, process.env.HOSTNAME]
+    .map((value) => (value ?? '').trim())
+    .filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      const found = await engine.inspectContainer(candidate, '');
+      if (found) return found.id;
+    } catch {
+      // The engine is checked properly by prepare(); here a miss is a miss.
+    }
+  }
+  return null;
 }
 
 async function main(): Promise<void> {
@@ -127,6 +169,61 @@ async function main(): Promise<void> {
     }
   }
 
+  // Code project services: containers beside a checkout, from the
+  // organization's allowed images. Only with workspaces (there is no
+  // checkout to serve otherwise), and only when the engine answers now
+  // — a socket that is not mounted would otherwise show up as a failed
+  // start on the first service anyone asks for.
+  let services: ServiceManager | null = null;
+  if (envFlag('SANDBOX_SERVICES_ENABLED')) {
+    if (!workspacesEnabled) {
+      fatal(
+        'SANDBOX_SERVICES_ENABLED needs SANDBOX_WORKSPACES_ENABLED: services run beside a code project’s checkout.'
+      );
+    }
+    let engine: DockerClient;
+    let memoryBytes: number;
+    try {
+      engine = new DockerClient(parseDockerHost(process.env.SANDBOX_DOCKER_HOST));
+      memoryBytes = parseMemoryBytes(process.env.SANDBOX_SERVICE_MEMORY, 1_073_741_824);
+    } catch (error) {
+      fatal(error instanceof Error ? error.message : String(error));
+    }
+    const pidsLimit = Number(process.env.SANDBOX_SERVICE_PIDS ?? '512');
+    if (!Number.isInteger(pidsLimit) || pidsLimit <= 0) {
+      fatal(`SANDBOX_SERVICE_PIDS is not a usable count: ${process.env.SANDBOX_SERVICE_PIDS}`);
+    }
+    const selfContainer = await ownContainer(engine);
+    const manager = new ServiceManager({
+      db: dbResult.val,
+      engine,
+      network: (process.env.SANDBOX_SERVICES_NETWORK ?? '').trim() || 'renkei-sandbox-services',
+      selfContainer,
+      memoryBytes,
+      pidsLimit,
+    });
+    try {
+      const version = await manager.prepare();
+      logger.info(
+        'services enabled: Docker engine {version} (API {apiVersion}), this worker {placement}',
+        {
+          component: 'worker-sandbox/services',
+          version: version.version,
+          apiVersion: version.apiVersion,
+          placement: selfContainer
+            ? `is container ${selfContainer}`
+            : 'is not a container (services reached by bridge address)',
+        }
+      );
+    } catch (error) {
+      fatal(
+        `services are enabled but the Docker engine could not be prepared: ${error instanceof Error ? error.message : String(error)}. ` +
+          'Mount the engine socket into this container (docker-compose.yaml, worker-sandbox) or point SANDBOX_DOCKER_HOST at a socket proxy.'
+      );
+    }
+    services = manager;
+  }
+
   const port = Number(process.env.SANDBOX_WORKER_PORT ?? '8092');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     fatal(`SANDBOX_WORKER_PORT is not a usable port: ${process.env.SANDBOX_WORKER_PORT}`);
@@ -166,10 +263,11 @@ async function main(): Promise<void> {
     browser,
     vault,
     workspaces: workspacesEnabled,
+    services,
   });
   server.listen(port, '0.0.0.0', () => {
     logger.info(
-      'started {application} {version} on port {port} (browser {browser}, workspaces {workspaces})',
+      'started {application} {version} on port {port} (browser {browser}, workspaces {workspaces}, services {services})',
       {
         component: 'worker-sandbox/server',
         port,
@@ -179,6 +277,7 @@ async function main(): Promise<void> {
             ? 'enabled, per-caller uids'
             : 'enabled, UNISOLATED'
           : 'disabled',
+        services: services ? 'enabled' : 'disabled',
       }
     );
   });

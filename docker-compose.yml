@@ -45,6 +45,7 @@ services:
       # match worker-sandbox's setting below. Same for the code workspaces.
       SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
       SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
+      SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-false}
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.
       RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000
@@ -285,11 +286,22 @@ services:
       # defaults to the dev TOKEN_ENCRYPTION_KEY fallback inside the worker.
       SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
       SANDBOX_ENV_SECRETS_KEY: ${SANDBOX_ENV_SECRETS_KEY:-}
+      # Code project services — containers beside a checkout from the
+      # org's allowed images — need the engine socket below; off unless
+      # SANDBOX_SERVICES_ENABLED=true is exported (same variable on the
+      # app service). SANDBOX_CONTAINER_ID is this container's own name,
+      # so the worker can join the services network it creates.
+      SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-false}
+      SANDBOX_CONTAINER_ID: renkei-worker-sandbox
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=1024
     volumes:
       - sandbox_data:/data
       - sandbox_workspaces:/workspaces
+      # The host's Docker engine, for code project services (above). Root
+      # inside the container; a project's own commands run as other uids
+      # and cannot open it.
+      - /var/run/docker.sock:/var/run/docker.sock
     # Same sizing as the deploy stack (docker-compose.yaml): the browser
     # needs headroom and a real /dev/shm, and should be the last thing the
     # kernel kills. Export SANDBOX_WORKER_MEMORY to raise the cap.
