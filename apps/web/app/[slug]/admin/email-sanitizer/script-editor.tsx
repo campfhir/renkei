@@ -16,7 +16,7 @@
 import Editor, { type Monaco } from '@monaco-editor/react';
 import { CLEANER_TYPES } from '@/lib/email-sanitizer/cleaner-types';
 import { LoadingLine } from '@/components/skeleton';
-import { configureMonacoOnce } from '@/lib/monaco/setup';
+import { configureMonacoOnce, MONACO_THEME } from '@/lib/monaco/setup';
 import { useMonacoDark } from '@/lib/monaco/use-dark-theme';
 
 configureMonacoOnce();
@@ -70,7 +70,7 @@ export default function ScriptEditor({
     >
       <Editor
         height={height}
-        theme={dark ? 'vs-dark' : 'vs'}
+        theme={dark ? MONACO_THEME.dark : MONACO_THEME.light}
         // `language`, not `defaultLanguage`: the latter only applies when
         // the model is first created, and the model here was coming up as
         // JavaScript — which parses a type annotation as a value and turns

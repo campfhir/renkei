@@ -46,6 +46,7 @@ import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
 import { parseTaskCompletion, TASK_COMPLETE_TOOL } from '@/lib/chat/auto-mode';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
+import CodePane from './code-pane';
 import ListenButton from './listen-button';
 import Markdown from './markdown';
 import WidgetCard from './widget-card';
@@ -799,7 +800,7 @@ export function StepList({
                       <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
                         Input
                       </p>
-                      <pre className="chat-pre">{args}</pre>
+                      <CodePane text={args} language="json" />
                     </div>
                     {step.result && split?.diff ? (
                       <>
@@ -807,7 +808,7 @@ export function StepList({
                           <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
                             Result
                           </p>
-                          <pre className="chat-pre">{split.text}</pre>
+                          <CodePane text={split.text} />
                         </div>
                         <div>
                           <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
@@ -821,7 +822,7 @@ export function StepList({
                         <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
                           {step.result.isError ? 'Error' : 'Result'}
                         </p>
-                        <pre className="chat-pre">{step.result.content}</pre>
+                        <CodePane text={step.result.content} />
                       </div>
                     ) : null}
                   </div>
@@ -929,7 +930,7 @@ function SubagentCard({
             <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
               {step.result.isError ? 'Error' : 'Report'}
             </p>
-            <pre className="chat-pre">{step.result.content}</pre>
+            <CodePane text={step.result.content} />
           </div>
         ) : null}
         {code ? (
@@ -1143,14 +1144,14 @@ function MilestoneCard({
         ) : null}
         <div>
           <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">Input</p>
-          <pre className="chat-pre">{args}</pre>
+          <CodePane text={args} language="json" />
         </div>
         {step.result ? (
           <div>
             <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
               {step.result.isError ? 'Error' : 'Result'}
             </p>
-            <pre className="chat-pre">{step.result.content}</pre>
+            <CodePane text={step.result.content} />
           </div>
         ) : null}
       </div>
@@ -1221,7 +1222,7 @@ function PermissionCard({
                   className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
                 />
               </summary>
-              <pre className="chat-pre">{args}</pre>
+              <CodePane text={args} language="json" />
             </details>
           ) : null}
           {prompt.canDecide ? (

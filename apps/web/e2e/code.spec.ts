@@ -713,6 +713,11 @@ test.describe('code projects', () => {
       await expect(area).toBeVisible();
       await expect(area).toHaveValue(/MAX_ATTEMPTS/);
       await expect(main.getByRole('toolbar', { name: 'Keys' })).toBeVisible();
+      // The text area is coloured: the same text drawn beneath it in the
+      // chat's code palette, TypeScript keywords and strings told apart.
+      const backdrop = main.locator('.code-area-backdrop');
+      await expect(backdrop.locator('.hljs-keyword', { hasText: 'import' }).first()).toBeVisible();
+      await expect(backdrop.locator('.hljs-string', { hasText: './util' })).toBeVisible();
       const save = main.getByRole('button', { name: 'Save to checkout' });
       await expect(save).toBeDisabled();
       await area.focus();
@@ -720,6 +725,10 @@ test.describe('code projects', () => {
       await page.keyboard.type('\n// reviewed by hand\n');
       await expect(save).toBeEnabled();
       await expect(tabs.getByRole('tab', { name: /Code/ })).toContainText('1');
+      // What was just typed is coloured as it lands: a comment.
+      await expect(
+        backdrop.locator('.hljs-comment', { hasText: 'reviewed by hand' })
+      ).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await shot('code-pane-mobile-editing.png');
       await save.click();
@@ -777,6 +786,17 @@ test.describe('code projects', () => {
     await expect(
       main.getByText('Saved to the checkout · not committed until you commit')
     ).toBeVisible();
+    // Coloured as TypeScript, in the pane's own theme: the status line names
+    // the language, and the tokens on screen are painted in several colours
+    // (Monaco gives each colour of the theme its own class).
+    await expect(main.getByText('TypeScript', { exact: true })).toBeVisible();
+    await expect
+      .poll(() =>
+        editor
+          .locator('.view-lines span[class*="mtk"]')
+          .evaluateAll((spans) => new Set(spans.map((span) => span.className)).size)
+      )
+      .toBeGreaterThan(3);
     await expectNoHorizontalOverflow(page);
     await shot('code-pane-desktop.png');
 
