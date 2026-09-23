@@ -186,6 +186,39 @@ describe('WebexClient.sendNoteToSelf', () => {
     const result = await client.sendNoteToSelf('Hi');
     expect(result.ok).toBe(false);
   });
+
+  it('carries a file into the solo room as multipart, not JSON', async () => {
+    fetchMock.mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url.includes('/rooms?')) {
+        return Promise.resolve(jsonResponse({ items: [{ id: 'room-1', title: 'Note to Self' }] }));
+      }
+      if (url.includes('/memberships?')) {
+        return Promise.resolve(jsonResponse({ items: [{ id: 'me' }] }));
+      }
+      if (url.endsWith('/messages')) {
+        return Promise.resolve(jsonResponse({ id: 'msg-3' }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const client = new WebexClient('token');
+    const result = await client.sendNoteToSelf('Digest', {
+      filename: 'report.pdf',
+      contentType: 'application/pdf',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+
+    expect(result).toEqual({ ok: true, val: { id: 'msg-3', roomId: 'room-1' } });
+    const send = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/messages')) as
+      | [unknown, RequestInit]
+      | undefined;
+    expect(send?.[1].body).toBeInstanceOf(FormData);
+    const form = send?.[1].body as FormData;
+    expect(form.get('roomId')).toBe('room-1');
+    expect(form.get('markdown')).toBe('Digest');
+    expect((form.get('files') as File).name).toBe('report.pdf');
+  });
 });
 
 describe('sendNoteToPerson', () => {

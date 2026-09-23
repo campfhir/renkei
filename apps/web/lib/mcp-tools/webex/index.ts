@@ -591,14 +591,19 @@ const BULK_ROOMS_CAP = 25;
  * webex_note_to_self instead of burning the attempt.
  */
 async function selfDmError(context: MCPToolContext, toPersonEmail: string): Promise<string | null> {
-  const access = await resolveWebexAccess(context);
-  // Identity unknown (unresolved grant, no recorded email): let WebEx answer.
-  if (typeof access === 'string' || !access.personEmail) return null;
-  if (access.personEmail.toLowerCase() !== toPersonEmail.trim().toLowerCase()) return null;
+  if (!(await isOwnAddress(context, toPersonEmail))) return null;
   return (
     'That address is your own WebEx account, and WebEx cannot deliver a 1:1 message to ' +
     'yourself. Use webex_note_to_self instead, or send to a space by roomId.'
   );
+}
+
+/** Is this address the caller's own WebEx account? False when the identity is unknown. */
+async function isOwnAddress(context: MCPToolContext, email: string): Promise<boolean> {
+  const access = await resolveWebexAccess(context);
+  // Identity unknown (unresolved grant, no recorded email): let WebEx answer.
+  if (typeof access === 'string' || !access.personEmail) return false;
+  return access.personEmail.toLowerCase() === email.trim().toLowerCase();
 }
 
 /** Which WebEx scope each tool stands on; used at both registration and call time. */
@@ -1369,13 +1374,23 @@ export async function registerWebexUserTools(
         'staged in your sandbox scratch space (e.g. from webex_download_attachments, or ' +
         'sharepoint_download_document + sandbox_download_url) forwards here with ' +
         'sandbox_send_to_upload instead of a manual upload. WebEx allows exactly one file per ' +
-        'message. Never generate file content as a tool argument.',
+        'message. To send a file to the user themself, pass toSelf: true (their own address ' +
+        'routes there too): like webex_note_to_self, it arrives as a direct message from the ' +
+        "org's WebEx bot when there is one, otherwise in the user's own \"Note to Self\" " +
+        'space. Never generate file content as a tool argument.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         roomId: z.string().describe('Destination room id (from webex_list_rooms)').optional(),
         toPersonEmail: z
           .string()
           .describe('Recipient email for a 1:1 message instead of a room')
+          .optional(),
+        toSelf: z
+          .boolean()
+          .describe(
+            'Send the file to the connected user themself — a note to self, instead of a ' +
+              'room or another person'
+          )
           .optional(),
         markdown: z
           .string()
@@ -1389,11 +1404,16 @@ export async function registerWebexUserTools(
     async (args: Record<string, any>) => {
       const roomId = str(args.roomId);
       const toPersonEmail = str(args.toPersonEmail);
-      if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
-      if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
-      if (toPersonEmail) {
-        const refusal = await selfDmError(context, toPersonEmail);
-        if (refusal) return errText(refusal);
+      const named = [roomId, toPersonEmail, args.toSelf === true].filter(Boolean).length;
+      if (named === 0) return errText('Provide roomId, toPersonEmail, or toSelf: true.');
+      if (named > 1) return errText('Provide only one of roomId, toPersonEmail, or toSelf.');
+      // WebEx cannot open a 1:1 with yourself, so the user's own address can
+      // only ever mean a note to self — routed there rather than refused.
+      const toSelf =
+        args.toSelf === true || (!!toPersonEmail && (await isOwnAddress(context, toPersonEmail)));
+      const parentId = str(args.parentId);
+      if (toSelf && parentId) {
+        return errText('parentId does not apply to a note to self — omit it.');
       }
       const filename = str(args.filename);
       if (!filename) return errText('filename is required');
@@ -1414,9 +1434,9 @@ export async function registerWebexUserTools(
         context,
         'webex-attachment',
         {
-          ...(roomId ? { roomId } : { toPersonEmail }),
+          ...(toSelf ? { noteToSelf: true } : roomId ? { roomId } : { toPersonEmail }),
           ...(markdown ? { markdown } : {}),
-          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
+          ...(parentId ? { parentId } : {}),
         },
         { filename, contentType: str(args.contentType) || undefined }
       );

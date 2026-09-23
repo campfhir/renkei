@@ -634,11 +634,14 @@ export class WebexClient {
    *
    * A from-scratch twin of the `webex_note_to_self` MCP tool
    * (apps/web/lib/mcp-tools/webex/index.ts), for callers with no MCP
-   * session of their own to call that tool through — today, the
-   * interactive worker's run-failure notifier.
+   * session of their own to call that tool through — the interactive
+   * worker's run-failure notifier, and the upload executor carrying a
+   * file the user asked to have sent to themself (`file`, the one
+   * attachment WebEx allows per message).
    */
   async sendNoteToSelf(
-    markdown: string
+    markdown: string,
+    file?: OutgoingFile
   ): Promise<Result<{ id: string; roomId: string }, 'WEBEX_API_ERROR'>> {
     const roomsResult = await this.listGroupRooms(100);
     if (!roomsResult.ok) return roomsResult;
@@ -665,7 +668,7 @@ export class WebexClient {
       roomId = created.val.id;
     }
 
-    const sent = await this.postMessage({ roomId, markdown });
+    const sent = await this.postMessage({ roomId, markdown, ...(file ? { file } : {}) });
     if (!sent.ok) return sent;
     return ok({ id: sent.val.id, roomId });
   }

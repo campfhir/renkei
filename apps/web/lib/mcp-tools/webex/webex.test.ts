@@ -874,13 +874,13 @@ describe('webex_request_attachment_upload', () => {
     );
   });
 
-  it('refuses when neither roomId nor toPersonEmail is given', async () => {
+  it('refuses when no destination is given', async () => {
     const tools = await toolsOf();
 
     const result = await tools.get('webex_request_attachment_upload')!({ filename: 'x.txt' });
 
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('Provide roomId or toPersonEmail');
+    expect(textOf(result)).toContain('Provide roomId, toPersonEmail, or toSelf');
     expect(mockCreateSlot).not.toHaveBeenCalled();
   });
 
@@ -894,19 +894,69 @@ describe('webex_request_attachment_upload', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('not both');
+    expect(textOf(result)).toContain('only one of');
   });
 
-  it('refuses to DM the user’s own address, pointing at webex_note_to_self', async () => {
+  it('refuses toSelf alongside a room', async () => {
     const tools = await toolsOf();
 
     const result = await tools.get('webex_request_attachment_upload')!({
-      toPersonEmail: 'alice@example.com',
+      roomId: 'room-1',
+      toSelf: true,
       filename: 'x.txt',
     });
 
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('webex_note_to_self');
+    expect(textOf(result)).toContain('only one of');
+    expect(mockCreateSlot).not.toHaveBeenCalled();
+  });
+
+  it('mints a noteToSelf slot for toSelf, carrying markdown', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      toSelf: true,
+      filename: 'report.pdf',
+      markdown: 'for later',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCreateSlot).toHaveBeenCalledWith(
+      expect.anything(),
+      'webex-attachment',
+      { noteToSelf: true, markdown: 'for later' },
+      { filename: 'report.pdf', contentType: undefined }
+    );
+  });
+
+  it('routes the user’s own address to a note to self instead of refusing', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      toPersonEmail: 'Alice@Example.com',
+      filename: 'x.txt',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCreateSlot).toHaveBeenCalledWith(
+      expect.anything(),
+      'webex-attachment',
+      { noteToSelf: true },
+      expect.anything()
+    );
+  });
+
+  it('refuses parentId on a note to self rather than dropping it', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_request_attachment_upload')!({
+      toSelf: true,
+      parentId: 'msg-root',
+      filename: 'x.txt',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('parentId');
     expect(mockCreateSlot).not.toHaveBeenCalled();
   });
 
