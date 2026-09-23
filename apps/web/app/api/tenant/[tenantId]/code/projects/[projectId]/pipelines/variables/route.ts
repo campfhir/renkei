@@ -21,7 +21,7 @@ import {
   variablesPath,
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
-import { missing, projectFor } from '../route';
+import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
 
 const TEXT_MAX_CHARS = 200_000;
 
@@ -30,10 +30,10 @@ export async function PUT(
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
   const { tenantId, projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, true);
+  const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
   if (!found.ok) return found.response;
-  const { project, subject, scopes } = found.found;
-  const needs = missing(scopes, PIPELINES_VARIABLE_SCOPE);
+  const { project, subject, scopes } = found.context;
+  const needs = missingScope(scopes, PIPELINES_VARIABLE_SCOPE);
   if (needs) return jsonError(403, 'scope', needs);
   const body = await readJsonBody(request);
   const text = typeof body.text === 'string' ? body.text : '';

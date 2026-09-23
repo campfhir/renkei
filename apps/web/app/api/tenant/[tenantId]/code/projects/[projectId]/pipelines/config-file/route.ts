@@ -17,7 +17,7 @@ import {
   readPipelineConfigFile,
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
-import { missing, projectFor } from '../route';
+import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
 
 const FILE_MAX_CHARS = 200_000;
 const MESSAGE_MAX_CHARS = 500;
@@ -27,9 +27,9 @@ export async function GET(
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
   const { tenantId, projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, false);
+  const found = await pipelinesProjectContext(request, tenantId, projectId);
   if (!found.ok) return found.response;
-  const { project, subject } = found.found;
+  const { project, subject } = found.context;
   const auth = await bitbucketAuthFor(request, tenantId, subject);
   const file = await readPipelineConfigFile(auth, project.repo.fullName, project.repo.branch);
   if (!file.ok) return jsonError(502, 'bitbucket', file.error);
@@ -41,10 +41,10 @@ export async function PUT(
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
   const { tenantId, projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, true);
+  const found = await pipelinesProjectContext(request, tenantId, projectId, { write: true });
   if (!found.ok) return found.response;
-  const { project, subject, scopes } = found.found;
-  const needs = missing(scopes, PIPELINES_FILE_SCOPE);
+  const { project, subject, scopes } = found.context;
+  const needs = missingScope(scopes, PIPELINES_FILE_SCOPE);
   if (needs) return jsonError(403, 'scope', needs);
   const body = await readJsonBody(request);
   const text = typeof body.text === 'string' ? body.text.replace(/\r\n?/g, '\n') : '';
