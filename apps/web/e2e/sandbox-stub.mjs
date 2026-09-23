@@ -52,6 +52,61 @@ index 1111111..2222222 100644
  }
 `;
 
+/**
+ * What the code pane reads: the files the tree names, as text. A file a
+ * person uploads or saves lands in the workspace's own map and wins.
+ */
+const FILES = {
+  'package.json': `{
+  "name": "billing-service",
+  "version": "2.4.1",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  }
+}
+`,
+  'README.md': `# Billing service
+
+Invoices, dunning and the nightly jobs.
+
+## Running it
+
+    pnpm install
+    pnpm start
+`,
+  'src/billing.ts': `import { sleep } from './util';
+
+const MAX_ATTEMPTS = 5;
+
+export interface InvoiceJob {
+  id: string;
+  attempts: number;
+}
+
+export async function retryInvoice(job: InvoiceJob) {
+  const attempt = job.attempts + 1;
+  if (attempt > MAX_ATTEMPTS) {
+    return { status: 'failed', reason: 'max attempts reached' };
+  }
+  await sleep(backoff(attempt));
+  return run(job, attempt);
+}
+
+function backoff(attempt: number): number {
+  return Math.min(60_000, 500 * 2 ** attempt);
+}
+`,
+  'src/index.ts': `import { retryInvoice } from './billing';
+
+export { retryInvoice };
+`,
+};
+
+/** A commit made from the pane: the counter behind its short hash. */
+let commitCounter = 0;
+
 /** scope key → { workspaces: Map<id, workspace>, env: Map<name, variable> } */
 const scopes = new Map();
 
@@ -177,6 +232,87 @@ function handleWorkspaces(op, body, response) {
         return error(response, 409, 'not_ready', 'That workspace is still cloning.');
       return json(response, 200, {
         branch: workspace.branch,
+        diff: body.statOnly ? '' : SAMPLE_DIFF,
+        files: [{ path: 'src/billing.ts', added: 3, deleted: 1, status: 'modified' }],
+        truncated: false,
+      });
+    }
+    case 'read': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      if (workspace.status !== 'ready')
+        return error(response, 409, 'not_ready', 'That workspace is still cloning.');
+      const path = body.path ?? '';
+      const uploaded = workspace.files.get(path);
+      const text = uploaded ? uploaded.toString('utf8') : FILES[path];
+      if (text === undefined) return error(response, 404, 'not_found', `No such file: ${path}`);
+      const lines = text.split('\n');
+      return json(response, 200, {
+        path,
+        text,
+        sizeBytes: Buffer.byteLength(text, 'utf8'),
+        totalLines: lines.length,
+        startLine: 1,
+        endLine: lines.length,
+      });
+    }
+    case 'write': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      const created = !workspace.files.has(body.path) && FILES[body.path] === undefined;
+      const bytes = Buffer.from(body.content ?? '', 'utf8');
+      workspace.files.set(body.path, bytes);
+      return json(response, 200, { path: body.path, created, sizeBytes: bytes.byteLength });
+    }
+    case 'git-status': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      return json(response, 200, {
+        branch: workspace.branch,
+        status: ' M src/billing.ts',
+        diffStat: ' src/billing.ts | 4 +++-',
+      });
+    }
+    case 'git-commit': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      if (!body.message || !body.author?.name) return error(response, 400, 'bad_request');
+      if (body.newBranch) workspace.branch = body.newBranch;
+      commitCounter += 1;
+      const commit = `c0ffee${String(commitCounter).padStart(2, '0')}`;
+      workspace.commits = workspace.commits ?? [];
+      workspace.commits.push({ commit, message: body.message, branch: workspace.branch });
+      return json(response, 200, { branch: workspace.branch, commit });
+    }
+    case 'git-push': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      if (!body.authHeader) return error(response, 400, 'bad_request');
+      const remoteBranch = body.branch || workspace.branch;
+      return json(response, 200, {
+        branch: workspace.branch,
+        remoteBranch,
+        output: `To bitbucket.org:acme/billing-service.git\n * [new branch] ${workspace.branch} -> ${remoteBranch}`,
+      });
+    }
+    case 'git-show': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      const found = (workspace.commits ?? []).find((entry) => entry.commit.startsWith(body.commit));
+      if (!found) return error(response, 404, 'not_found', 'No such commit.');
+      return json(response, 200, {
+        branch: workspace.branch,
+        commit: {
+          sha: found.commit.padEnd(40, '0'),
+          shortSha: found.commit,
+          subject: found.message.split('\n')[0],
+          body: '',
+          author: body.author?.name ?? 'E2E Dev',
+          date: new Date().toISOString(),
+          parents: [],
+        },
+        pushed: false,
+        inHead: found.branch === workspace.branch,
         diff: body.statOnly ? '' : SAMPLE_DIFF,
         files: [{ path: 'src/billing.ts', added: 3, deleted: 1, status: 'modified' }],
         truncated: false,

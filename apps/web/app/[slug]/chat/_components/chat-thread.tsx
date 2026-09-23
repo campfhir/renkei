@@ -957,6 +957,7 @@ export default function ChatThread({
                     type="button"
                     role="tab"
                     aria-selected={paneTab === which}
+                    aria-label={which === 'chat' ? 'Chat' : 'Code'}
                     onClick={() => setPaneTab(which)}
                     className={`flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${
                       paneTab === which
