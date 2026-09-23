@@ -65,7 +65,14 @@ export type AuditAction =
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'
   | 'code.commit'
-  | 'code.push';
+  | 'code.push'
+  /**
+   * A Jira admin change request was applied from its review page — what
+   * Renkei changed in Jira's configuration, and on whose click. Recorded
+   * however it ended (details.status), since a partial apply changed Jira
+   * too.
+   */
+  | 'jira_admin.change_applied';
 
 export interface AuditEventInput {
   tenantId: string;

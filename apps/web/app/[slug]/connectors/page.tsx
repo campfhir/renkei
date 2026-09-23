@@ -1,6 +1,7 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
+import { countPendingChangeRequests } from '@/lib/jira-admin/change-requests';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -214,6 +215,11 @@ export default async function ConnectorsPage({
   const confluenceGrant = grants.get(ATLASSIAN_CONFLUENCE);
   const bitbucketGrant = grants.get(ATLASSIAN_BITBUCKET);
   const jiraAdminGrant = grants.get(ATLASSIAN_ADMIN);
+  // Proposals wait for their owner on the review page; the card says how
+  // many, so an agent's proposal is not only a notification away.
+  const pendingJiraAdminChanges = jiraAdminGrant
+    ? await countPendingChangeRequests(db, tenant.id, session.subject)
+    : 0;
   const microsoftGrant = grants.get(MICROSOFT);
   const zoomGrant = grants.get(ZOOM);
   const githubGrant = grants.get(GITHUB);
@@ -305,6 +311,8 @@ export default async function ConnectorsPage({
                     displayName: jiraAdminGrant?.displayName ?? null,
                     ceiling: jiraAdminCeiling,
                     priorScopes: jiraAdminGrant?.requestedScopes ?? null,
+                    changesHref: `/${slug}/jira-admin/changes`,
+                    pendingChanges: pendingJiraAdminChanges,
                   }
                 : undefined
             }

@@ -34,6 +34,15 @@ import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guar
 /** Refresh when the token is inside this window of expiry. */
 const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
+/**
+ * The Jira platform gateway, less the cloud id. A deployment may point it
+ * elsewhere (JIRA_ADMIN_API_BASE_URL) — the browser suite runs the app
+ * against a stand-in for the few option endpoints a change request applies,
+ * the way BITBUCKET_API_BASE_URL serves the Code pages.
+ */
+const JIRA_ADMIN_API_BASE =
+  process.env.JIRA_ADMIN_API_BASE_URL?.replace(/\/+$/, '') || 'https://api.atlassian.com/ex/jira';
+
 export interface JiraAdminAccess {
   cloudId: string;
   /** The site's browser URL (https://x.atlassian.net), for links; may be empty. */
@@ -43,9 +52,13 @@ export interface JiraAdminAccess {
   authHeader: string;
 }
 
-/** The caller's live Jira Admin token + site, refreshed when stale. */
+/**
+ * The caller's live Jira Admin token + site, refreshed when stale. Takes
+ * only who is asking, so the apply route — a browser session, not an MCP
+ * call — resolves the same grant the same way.
+ */
 export async function resolveJiraAdminAccess(
-  context: MCPToolContext
+  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<JiraAdminAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
@@ -160,11 +173,41 @@ export async function jiraAdminGet(
   access: JiraAdminAccess,
   pathAndQuery: string
 ): Promise<JiraAdminResult> {
+  return jiraAdminRequest(scope, access, 'GET', pathAndQuery);
+}
+
+/**
+ * POST or PUT a JSON body. Only the change-request executor
+ * (lib/jira-admin) calls this — no MCP tool writes to Jira directly; a tool
+ * proposes, and a person applies from a signed-in session.
+ */
+export async function jiraAdminSend(
+  scope: JiraAdminLogScope,
+  access: JiraAdminAccess,
+  method: 'POST' | 'PUT',
+  pathAndQuery: string,
+  body: unknown
+): Promise<JiraAdminResult> {
+  return jiraAdminRequest(scope, access, method, pathAndQuery, body);
+}
+
+async function jiraAdminRequest(
+  scope: JiraAdminLogScope,
+  access: JiraAdminAccess,
+  method: 'GET' | 'POST' | 'PUT',
+  pathAndQuery: string,
+  body?: unknown
+): Promise<JiraAdminResult> {
   let response: Response;
   try {
-    response = await fetch(`https://api.atlassian.com/ex/jira/${access.cloudId}${pathAndQuery}`, {
-      method: 'GET',
-      headers: { Authorization: access.authHeader, Accept: 'application/json' },
+    response = await fetch(`${JIRA_ADMIN_API_BASE}/${access.cloudId}${pathAndQuery}`, {
+      method,
+      headers: {
+        Authorization: access.authHeader,
+        Accept: 'application/json',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
@@ -173,20 +216,27 @@ export async function jiraAdminGet(
       component: 'jira-admin/fetch',
       tenantId: scope.tenantId,
       subject: scope.subject,
+      method,
       path: pathAndQuery,
       timedOut,
     });
+    const reason = timedOut
+      ? `api.atlassian.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+      : 'Could not reach api.atlassian.com';
     return {
       ok: false,
-      error: timedOut
-        ? `api.atlassian.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'Could not reach api.atlassian.com',
+      // A write that timed out may still have landed; say so rather than
+      // implying nothing happened.
+      error:
+        method === 'GET' || !timedOut
+          ? reason
+          : `${reason} — the change may still have gone through; check Jira before retrying.`,
     };
   }
   const text = await response.text().catch(() => '');
-  let body: unknown = null;
+  let parsed: unknown = null;
   try {
-    body = text ? JSON.parse(text) : null;
+    parsed = text ? JSON.parse(text) : null;
   } catch {
     // Not JSON — the status decides what the caller hears.
   }
@@ -195,13 +245,14 @@ export async function jiraAdminGet(
       component: 'jira-admin/fetch',
       tenantId: scope.tenantId,
       subject: scope.subject,
+      method,
       path: pathAndQuery,
       status: response.status,
       responseBody: text ? secure(truncateForLog(text)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, jiraReasons(body)) };
+    return { ok: false, error: describeStatus(response.status, jiraReasons(parsed)) };
   }
-  return { ok: true, body };
+  return { ok: true, body: parsed };
 }
 
 export function textResult(value: string) {

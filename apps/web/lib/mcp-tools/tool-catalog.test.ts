@@ -210,6 +210,25 @@ describe('listAvailableTools', () => {
     tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools).toContain('jira_admin_get_field');
     expect(tools).toContain('jira_admin_get_space_configuration');
+    expect(tools).toContain('jira_admin_propose_option_changes');
+    expect(tools).toContain('jira_admin_list_changes');
+  });
+
+  it('hides Jira admin proposals in read-only mode, since applying one would be refused', async () => {
+    // A proposal changes nothing in Jira, but it is the first half of a
+    // write — an Act tool — and the apply route refuses read-only orgs.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-admin': {
+        requested_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
+        granted_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
+      },
+    };
+    readOnly = true;
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).not.toContain('jira_admin_propose_option_changes');
+    expect(tools).toContain('jira_admin_list_changes');
+    expect(tools).toContain('jira_admin_get_field');
   });
 
   it('switches Jira Administration off on its own key, leaving Jira as it was', async () => {

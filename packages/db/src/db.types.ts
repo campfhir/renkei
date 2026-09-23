@@ -769,6 +769,27 @@ export interface Identities {
   updated_at: Generated<Timestamp>;
 }
 
+export interface JiraAdminChangeRequests {
+  agent_id: string | null;
+  applied_at: Timestamp | null;
+  applied_by: string | null;
+  cancelled_at: Timestamp | null;
+  cloud_id: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  kind: string;
+  payload: Json;
+  reason: string | null;
+  results: Json | null;
+  site_url: string | null;
+  status: Generated<string>;
+  subject: string;
+  tenant_id: string;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface JiraSessions {
   account_id: string;
   created_at: Generated<Timestamp>;
@@ -1332,6 +1353,7 @@ export interface DB {
   file_share_connections: FileShareConnections;
   file_shares: FileShares;
   identities: Identities;
+  jira_admin_change_requests: JiraAdminChangeRequests;
   jira_sessions: JiraSessions;
   knowledge_chunks: KnowledgeChunks;
   knowledge_reindex_runs: KnowledgeReindexRuns;
