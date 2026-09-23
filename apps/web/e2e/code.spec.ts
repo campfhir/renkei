@@ -380,12 +380,17 @@ test.describe('code projects', () => {
     //    that), the repository fixed — no clone or change buttons — and
     //    the README from Bitbucket in place of a description ──
     await seededRow.click();
-    await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
+    // First hit on a project page in this test: dev-mode's on-demand
+    // compile can outrun the default assertion timeout.
+    await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByText('Your code project')).toBeVisible();
-    // A code project keeps no files of its own, picks its tools per chat,
-    // and describes itself through its README; its chats are listed here.
+    // A code project keeps no files of its own, has a toolset of its own
+    // (the picker in its header, which its chats start from), and
+    // describes itself through its README; its chats are listed here.
     await expect(main.getByRole('button', { name: 'Add files' })).toHaveCount(0);
-    await expect(main.getByRole('button', { name: 'Tools' })).toHaveCount(0);
+    await expect(main.getByRole('button', { name: 'Tools' })).toBeVisible();
     await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
@@ -579,21 +584,24 @@ test.describe('code projects', () => {
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
 
     // ── A finished turn in the project's chat: the clone step reads as a
-    //    sentence after the prompt, the commit by its own name, each with
-    //    its git glyph, both opening to their input and result ──
+    //    sentence inside the work fold after the prompt; the commit is
+    //    lifted out of the fold as a milestone card of its own, with its
+    //    git glyph and the result on its line ──
     await seedTranscript(ids);
     await main.getByRole('link', { name: ids.seededChatTitle }).click();
     await expect(main.getByText('Why does the invoice job retry forever?')).toBeVisible();
-    const work = main.locator('details.chat-fold').first();
-    await expect(work).toContainText('2 tool calls');
+    const work = main.locator('details.chat-fold:not([data-milestone])').first();
+    await expect(work).toContainText('1 tool call');
     await work.locator('> summary').click();
     const steps = work.locator('ol > li > details.chat-fold');
     const cloneStep = steps.filter({ hasText: 'Cloned the repository' });
     await expect(cloneStep).toBeVisible();
     await cloneStep.locator('> summary').click();
     await expect(cloneStep.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
-    const commitStep = steps.filter({ hasText: 'Called Commit' });
-    await expect(commitStep).toBeVisible();
+    const commitCard = main.locator('details[data-milestone="code_git_commit"]');
+    await expect(commitCard).toBeVisible();
+    await expect(commitCard).toContainText('Committed');
+    await expect(commitCard).toContainText('3f2a9c1');
     await expect(main.getByText('Calling', { exact: false })).toHaveCount(0);
     await shot('code-chat-transcript.png');
     await main.getByRole('link', { name: 'Back to project' }).click();
