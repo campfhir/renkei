@@ -69,8 +69,13 @@ const INTEGER_KINDS = new Set<RefKind>(['user', 'connector']);
  * Which tool arguments are references, by name. One convention for the
  * curated and the generated tools: an argument called `channelId` is a
  * channel wherever it appears, `channelIds` a list of them, and so on.
- * `metaDataId` / `destinationMetaDataIds` are connectors OF the channel
- * the same call names.
+ * `metaDataId`, `destinationMetaDataIds`, `includedMetaDataId` and
+ * `excludedMetaDataId` are connectors OF the channel the same call names.
+ *
+ * Every id-shaped argument of every tool is either listed here or is a
+ * plain identifier with no name (a message, event or attachment id, a
+ * numeric bound); the tests hold both the table and the curated schemas
+ * to that, so a new reference argument cannot ship unresolvable.
  */
 export const REF_ARGS: Record<string, RefKind> = {
   channelId: 'channel',
@@ -84,7 +89,35 @@ export const REF_ARGS: Record<string, RefKind> = {
   databaseTaskId: 'database_task',
   metaDataId: 'connector',
   destinationMetaDataIds: 'connector',
+  includedMetaDataId: 'connector',
+  excludedMetaDataId: 'connector',
 };
+
+/**
+ * Id-shaped arguments that are NOT references: identifiers Mirth never
+ * names, so there is nothing to resolve them from. Everything else ending
+ * in Id/Ids must be in REF_ARGS.
+ */
+export const PLAIN_ID_ARGS: ReadonlySet<string> = new Set([
+  'instanceId', // resolved separately, against the caller's connected instances
+  'messageId',
+  'eventId',
+  'attachmentId',
+  'serverId',
+  'patientId',
+  'previewId',
+  'minMessageId',
+  'maxMessageId',
+  'minOriginalId',
+  'maxOriginalId',
+  'minImportId',
+  'maxImportId',
+  'minEventId',
+  'maxEventId',
+  'removedChannelGroupIds', // XML documents inside a multipart body, not arguments
+  'removedLibraryIds',
+  'removedCodeTemplateIds',
+]);
 
 export interface RefEntry {
   id: string;

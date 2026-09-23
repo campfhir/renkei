@@ -281,9 +281,9 @@ const messageFilterFields = {
     .describe('Connector-message statuses to match.'),
   textSearch: z.string().optional().describe('Free text searched across message content.'),
   includedMetaDataId: z
-    .array(z.number().int())
+    .array(connectorField)
     .optional()
-    .describe('Connector metadata ids to include (0 = source, 1.. = destinations).'),
+    .describe('Only these connectors (0 = source, 1.. = destinations), by metaDataId or name.'),
   error: z.boolean().optional().describe('Only messages with an error.'),
 };
 
@@ -973,7 +973,10 @@ export function registerMirthTools(
         levels: z.array(z.enum(['INFORMATION', 'WARNING', 'ERROR'])).optional(),
         name: z.string().optional().describe('Event name fragment (e.g. "Deploy").'),
         outcome: z.enum(['SUCCESS', 'FAILURE']).optional(),
-        userId: z.number().int().optional(),
+        userId: z
+          .union([z.number().int(), z.string().min(1)])
+          .optional()
+          .describe('The acting user, by id or username.'),
         startDate: dateField('On or after.'),
         endDate: dateField('On or before.'),
         minEventId: z.number().int().optional(),

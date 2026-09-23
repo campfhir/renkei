@@ -19,6 +19,7 @@ import {
   sampleArgsFor,
   type OperationRuntime,
 } from './operations';
+import { PLAIN_ID_ARGS, REF_ARGS } from './resolve';
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: { text: string }[];
@@ -397,5 +398,42 @@ describe('xml-value bodies', () => {
     expect(
       schema.safeParse({ instanceId: INSTANCE_ID, auditMessageAttributesMap: ['a=b'] }).success
     ).toBe(false);
+  });
+});
+
+describe('reference arguments in the operation table', () => {
+  it('lists every id-shaped parameter as a reference or as a plain identifier', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      const names = [
+        ...operation.params.map((param) => param.name),
+        ...(operation.body?.kind === 'form' ? operation.body.fields.map((f) => f.name) : []),
+        ...(operation.body?.kind === 'multipart' ? operation.body.parts.map((p) => p.name) : []),
+      ];
+      for (const name of names) {
+        if (!/Ids?$/.test(name)) continue;
+        expect({
+          tool: operation.tool,
+          name,
+          known: name in REF_ARGS || PLAIN_ID_ARGS.has(name),
+        }).toEqual({ tool: operation.tool, name, known: true });
+      }
+    }
+  });
+
+  it('lets every reference parameter be a name in the generated schema', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      const schema = inputSchemaFor(operation);
+      for (const param of operation.params) {
+        if (!(param.name in REF_ARGS)) continue;
+        const field = schema.shape[param.name];
+        const accepts =
+          field.safeParse('Some Name').success || field.safeParse(['Some Name']).success;
+        expect({ tool: operation.tool, param: param.name, accepts }).toEqual({
+          tool: operation.tool,
+          param: param.name,
+          accepts: true,
+        });
+      }
+    }
   });
 });
