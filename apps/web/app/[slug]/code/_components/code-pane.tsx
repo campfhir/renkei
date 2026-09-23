@@ -32,6 +32,7 @@ import CommitDialog, { FileDiffInline } from './commit-dialog';
 import DiffView, { Counts } from './diff-view';
 import RepoTree, { type FileMark } from './repo-tree';
 import type { CodePaneFile, CodePaneHandle } from './use-code-pane';
+import type { LanguageServersHandle, LanguageServerStatus } from './use-language-servers';
 
 const TREE_KEY = 'code-pane:tree';
 
@@ -256,6 +257,7 @@ export default function CodePane({
 
   const editor = active ? (
     <FileBody
+      lsp={pane.lsp}
       file={active}
       touch={touch}
       canEdit={canEdit}
@@ -458,6 +460,12 @@ export default function CodePane({
                 <span className="shrink-0">
                   {languageLabel(active.language) ?? active.language}
                 </span>
+                {!touch && active.state === 'ready' && active.source === 'checkout' ? (
+                  <ServerWord
+                    status={pane.lsp.statusFor(active.language)}
+                    onRetry={() => pane.lsp.retry(active.language)}
+                  />
+                ) : null}
                 <span className="ml-auto shrink-0">{statusWord(active, activeDirty, canEdit)}</span>
               </>
             ) : (
@@ -481,6 +489,58 @@ export default function CodePane({
 
 function Dot() {
   return <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" title="Unsaved edits" />;
+}
+
+/** The status line's word on the file's language server: which, starting, ready, or why not. */
+function ServerWord({
+  status,
+  onRetry,
+}: {
+  status: LanguageServerStatus | null;
+  onRetry: () => void;
+}) {
+  if (!status) return null;
+  switch (status.state) {
+    case 'unavailable':
+      return (
+        <span
+          className="shrink-0"
+          title={`The sandbox worker has no ${status.label} language server installed; the file is coloured but not analysed.`}
+        >
+          No {status.label} server
+        </span>
+      );
+    case 'starting':
+      return (
+        <span className="shrink-0" role="status">
+          Starting {status.label}…
+        </span>
+      );
+    case 'ready':
+      return (
+        <span
+          className="shrink-0 text-emerald-700 dark:text-emerald-400"
+          role="status"
+          title={status.name ? `${status.name} is analysing this file.` : undefined}
+        >
+          {status.label} language server
+        </span>
+      );
+    case 'failed':
+    case 'exited':
+      return (
+        <span
+          className="flex shrink-0 items-center gap-1.5 text-amber-700 dark:text-amber-400"
+          role="status"
+          title={status.detail}
+        >
+          {status.label} {status.state === 'failed' ? 'could not start' : 'exited'}
+          <button type="button" onClick={onRetry} className="font-medium hover:underline">
+            Retry
+          </button>
+        </span>
+      );
+  }
 }
 
 /** The repository's host, for a file read before any chat has cloned. */
@@ -510,10 +570,12 @@ function FileBody({
   onCompare,
   onReloadTheirs,
   onKeepMine,
+  lsp,
 }: {
   file: CodePaneFile;
   touch: boolean;
   canEdit: boolean;
+  lsp: LanguageServersHandle;
   onChange: (text: string) => void;
   onSave: () => void;
   onCompare: () => void;
@@ -591,6 +653,7 @@ function FileBody({
           value={file.text}
           readOnly={readOnly}
           touch={touch}
+          lsp={touch ? null : lsp}
           onChange={onChange}
           onSave={onSave}
         />

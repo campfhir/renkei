@@ -55,6 +55,7 @@ import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
 import { canIsolateByUid, ensureWorkspacesRoot, verifyUidIsolation } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
+import { probeLanguageServers } from './lsp-sessions';
 import { createSandboxServer } from './server';
 import { DockerClient, parseDockerHost, parseMemoryBytes } from './docker';
 import { ServiceManager } from './services';
@@ -167,6 +168,15 @@ async function main(): Promise<void> {
         { component: 'worker-sandbox/workspaces' }
       );
     }
+    // Which language servers the code pane can have here: the image
+    // installs them (docker/Dockerfile, target sandbox); a developer's
+    // machine has whichever are on the PATH. Said once, so an operator
+    // can see what a "no server for this language" in the pane means.
+    const servers = await probeLanguageServers();
+    logger.info('language servers for the code pane: {servers}', {
+      component: 'worker-sandbox/lsp',
+      servers: servers.length ? servers.join(', ') : 'none',
+    });
   }
 
   // Code project services: containers beside a checkout, from the

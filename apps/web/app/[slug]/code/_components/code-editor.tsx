@@ -19,6 +19,7 @@ import { useMemo, useRef, type KeyboardEvent, type UIEvent } from 'react';
 import { highlightedTokens } from '@/components/code-tokens';
 import { LoadingLine } from '@/components/skeleton';
 import { highlighterLanguageFor } from '@/lib/code/language';
+import type { LanguageServersHandle } from './use-language-servers';
 
 const CodeMonaco = dynamic(() => import('./code-monaco'), {
   ssr: false,
@@ -32,6 +33,8 @@ export interface CodeEditorProps {
   readOnly: boolean;
   /** A touch screen: the text area, not Monaco. */
   touch: boolean;
+  /** The pane's language servers; Monaco attaches the file to its language's. The text area has none. */
+  lsp: LanguageServersHandle | null;
   onChange: (value: string) => void;
   onSave: () => void;
 }

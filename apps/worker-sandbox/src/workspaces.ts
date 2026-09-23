@@ -237,7 +237,16 @@ export async function ensureCallerDirs(
 
 // ─── Running things ─────────────────────────────────────────────────────────
 
-const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+/**
+ * The system PATH plus the toolchains the sandbox image installs
+ * outside it (docker/Dockerfile, target sandbox): Go under /usr/local/go
+ * and the Rust toolchain's proxies under /usr/local/cargo. Absent
+ * directories on a developer's machine cost nothing.
+ */
+const SYSTEM_PATH =
+  '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/usr/local/cargo/bin';
+/** Where the image keeps the Rust toolchains, read-only to every caller. */
+const RUSTUP_HOME = '/usr/local/rustup';
 /** Bytes of each stream kept in memory; beyond this the stream is dropped and the result says so. */
 const STREAM_CAP_BYTES = 4 * 1_048_576;
 const KILL_GRACE_MS = 2_000;
@@ -282,6 +291,15 @@ export function childEnvironment(input: RunInput): Record<string, string> {
     // Package managers cache under HOME (npm reads npm_config_cache; pnpm its store) so a
     // second install is fast and nothing lands outside the caller's tree.
     npm_config_cache: `${input.home}/.npm`,
+    // The other toolchains' caches and per-user state, likewise under
+    // HOME: Go's module cache and build cache, cargo's registry, and the
+    // XDG cache the language servers (jdtls, clangd) index into. Rustup's
+    // toolchains are the image's, shared read-only.
+    XDG_CACHE_HOME: `${input.home}/.cache`,
+    GOPATH: `${input.home}/go`,
+    GOCACHE: `${input.home}/.cache/go-build`,
+    CARGO_HOME: `${input.home}/.cargo`,
+    RUSTUP_HOME,
     ...(input.extraEnv ?? {}),
   };
   if (input.gitAuthHeader) {

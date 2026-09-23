@@ -118,10 +118,12 @@ the place. Unsaved text is kept in memory per file across tab switches and
 guarded by `beforeunload`.
 
 **Monaco** is the editor on any device with a fine pointer, configured as
-the admin script editor does it (self-hosted, `editor.worker` only; the
-TypeScript worker is not loaded — there is no project-wide type
-information on the client, so a language service would only mislead).
-Syntax colouring uses Monaco's built-in tokenizers by file extension, in
+the admin script editor does it (self-hosted, `editor.worker` only; Monaco's
+own TypeScript worker is kept off the pane's models — there is no
+project-wide type information on the client, so its single-file service
+would only mislead). Language intelligence comes from the sandbox worker
+instead: see **Language servers** below. Syntax colouring uses Monaco's
+built-in tokenizers by file extension, in
 two themes (`renkei-light`, `renkei-dark`, `lib/monaco/setup.ts`) that carry
 the chat's code palette so a file and the same code quoted in a reply read
 alike. On a coarse pointer (a phone) Monaco is replaced by a plain monospace
@@ -137,6 +139,89 @@ mounted.
 
 **Dark mode**: the dark theme follows the app's `data-theme`, as the script
 editor already does.
+
+## Language servers
+
+The editor is an IDE's when the sandbox worker has a language server for
+the file's language, and a coloured text box otherwise. The shape:
+
+- **The worker runs the server, in the checkout, as the project's uid.**
+  `packages/connector-sandbox/src/lsp.ts` is the registry — TypeScript
+  and JavaScript (typescript-language-server), Python (Pyright), Java
+  (Eclipse JDT), SQL, C and C++ (clangd), Go (gopls), Rust
+  (rust-analyzer), R, shell (bash-language-server, linting through
+  shellcheck) — each with its command, and the sandbox image
+  installs them (`docker/Dockerfile`, one layer each). The worker probes
+  its PATH at boot and `lsp/languages` says which it found, so a
+  deployment that drops a toolchain loses only that language's server.
+  `apps/worker-sandbox/src/lsp-sessions.ts` starts one process per
+  (checkout, server, editor) exactly as a checkout's commands start
+  (setpriv to the project's uid, an environment built from nothing, the
+  shell prelude's limits), speaks the protocol's `Content-Length` framing
+  over stdio, and owns the lifecycle: it runs `initialize` rooted at the
+  checkout and nowhere else, keeps the capabilities for the editor,
+  answers the server→client requests that are about the process rather
+  than the editor (configuration, capability registration, progress
+  tokens, the workspace folder), and shuts the server down on close,
+  after ten idle minutes, and when the worker exits. At most six servers
+  per checkout, forty-eight per worker.
+- **Every message from the browser is checked.** `validateClientMessage`
+  refuses anything that is not JSON-RPC 2.0, any lifecycle method, and
+  any message naming a `file:` URI outside the checkout — so an editor
+  can neither re-root a server nor have it open `/etc/passwd`. What the
+  server says back is scrubbed of the project's environment values like
+  every other text the worker returns.
+- **The transport is two routes.** `POST …/code/projects/[id]/lsp
+{ server, clientId }` starts (or, for the same client id, hands back)
+  a session and answers its capabilities; `POST …/lsp/[session]` carries
+  one message to the server; `GET …/lsp/[session]` is a
+  `text/event-stream` of the server's messages, relayed byte for byte
+  from the worker's own; `DELETE` shuts it down. The client
+  (`lib/lsp/client.ts`) sends in order (a `didChange` must land before
+  the completion asked on it), correlates responses, cancels with
+  `$/cancelRequest` when Monaco does, and answers the server's own
+  requests or says they are unhandled. The `EventSource` reconnects on
+  its own and the worker buffers what the server said meanwhile, so a
+  hiccup costs nothing. The client id lives in `sessionStorage`, so a
+  reload gets its still-running servers back rather than starting them
+  again.
+- **Monaco is the language client.** `lib/lsp/monaco.ts` registers, from
+  the server's capabilities, completion (with resolve), hover, signature
+  help, definition / type definition / implementation / references,
+  document highlights, formatting, code actions whose edits the pane can
+  apply, and semantic tokens (drawn in the pane's own theme, where named
+  things fall into the same few colours as the tokenizer's), and turns
+  `publishDiagnostics` into markers. Documents are synced whole: `didOpen`
+  when a file is first shown, a debounced full-text `didChange` (flushed
+  before any request that reads the file), `didSave` from the pane's
+  Save, `didClose` when its tab closes. Open tabs stay open to the server
+  across tab switches, so a diagnostic in one file sees the unsaved text
+  of another. A definition or a reference in another file loads that
+  file as a model (peek works) and, when followed, opens it as a pane
+  tab and reveals the range; one outside the checkout (a library) is
+  named, not opened.
+- **The status line says which.** Beside the language: _Starting
+  TypeScript…_, _TypeScript language server_, _No Pyright server_ (the
+  worker lacks it; colouring only), or _clangd exited · Retry_.
+- **A file is chosen a server by its extension, one file at a time.** A
+  repository mixing TypeScript, Python and shell has three servers
+  running in its checkout, each seeing its own files; a language with
+  no server in the registry gets the tokenizer alone.
+- **What has no server is counted.** Every file the pane opens whose
+  language has no server — none in the registry (`no_server`), or one
+  the worker lacks (`not_installed`) — is counted in
+  `code_language_gaps` (migration 123, `lib/code/language-gaps.ts`): one
+  row per tenant, extension, language and reason, with how many opens,
+  when, and the last path. Nothing in the app reads it; it is the
+  operator's `SELECT extension, language, reason, open_count FROM
+  code_language_gaps ORDER BY open_count DESC` for deciding which
+  server to add next.
+- **Not in this cut.** Rename and workspace-wide edits (an edit to a file
+  the pane has not loaded would be silently dropped, so they are not
+  offered), commands a server wants the client to run, inlay hints,
+  `didChangeWatchedFiles` (servers watch the disk themselves), the
+  touch-screen text area (no server; the accessory keys are the point
+  there).
 
 ## Editing and saving
 

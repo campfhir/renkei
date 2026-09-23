@@ -570,6 +570,18 @@ export interface CoachMarkProgress {
   view_count: Generated<number>;
 }
 
+export interface CodeLanguageGaps {
+  extension: string;
+  first_seen_at: Generated<Timestamp>;
+  id: Generated<string>;
+  language: string;
+  last_seen_at: Generated<Timestamp>;
+  open_count: Generated<number>;
+  reason: string;
+  sample_path: string | null;
+  tenant_id: string;
+}
+
 export interface CodeProjectTemplates {
   created_at: Generated<Timestamp>;
   description: string | null;
@@ -1378,6 +1390,7 @@ export interface DB {
   chat_user_memories: ChatUserMemories;
   chats: Chats;
   coach_mark_progress: CoachMarkProgress;
+  code_language_gaps: CodeLanguageGaps;
   code_project_templates: CodeProjectTemplates;
   code_service_image_rules: CodeServiceImageRules;
   connector_configs: ConnectorConfigs;

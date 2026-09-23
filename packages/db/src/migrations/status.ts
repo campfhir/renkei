@@ -152,6 +152,7 @@ export const EXPECTED_MIGRATIONS = [
   '120-jira-admin-change-requests',
   '121-pipeline-templates',
   '122-code-project-services',
+  '123-code-language-gaps',
 ];
 
 export interface MigrationStatus {

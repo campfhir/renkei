@@ -79,19 +79,30 @@ describe('sbFetchUrl / sbListFiles / sbStatFile / sbDeleteFile (JSON ops)', () =
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(JSON.stringify(WIRE_FILE), { status: 200 }));
 
-    const result = await sbFetchUrl(TARGET, { url: 'https://example.test/a.pdf', filename: 'report.pdf' });
+    const result = await sbFetchUrl(TARGET, {
+      url: 'https://example.test/a.pdf',
+      filename: 'report.pdf',
+    });
 
     expect(result).toEqual({ ok: true, val: WIRE_FILE });
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://sandbox.internal:8092/v1/fetch');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer test-key');
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-    expect(body).toMatchObject({ ...TARGET, url: 'https://example.test/a.pdf', filename: 'report.pdf' });
+    expect(body).toMatchObject({
+      ...TARGET,
+      url: 'https://example.test/a.pdf',
+      filename: 'report.pdf',
+    });
   });
 
   it('threads an optional batchId through sbListFiles, and omits it when absent', async () => {
-    const listResponse = () => new Response(JSON.stringify({ files: [WIRE_FILE] }), { status: 200 });
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(listResponse()).mockResolvedValueOnce(listResponse());
+    const listResponse = () =>
+      new Response(JSON.stringify({ files: [WIRE_FILE] }), { status: 200 });
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(listResponse())
+      .mockResolvedValueOnce(listResponse());
 
     await sbListFiles(TARGET, 'batch-1');
     const [, withBatch] = fetchSpy.mock.calls[0] as [string, RequestInit];
@@ -105,7 +116,9 @@ describe('sbFetchUrl / sbListFiles / sbStatFile / sbDeleteFile (JSON ops)', () =
   it('refuses a malformed file in a list response rather than dropping it silently', async () => {
     fetchSpy = jest
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify({ files: [{ id: 'file-1' }] }), { status: 200 }));
+      .mockResolvedValue(
+        new Response(JSON.stringify({ files: [{ id: 'file-1' }] }), { status: 200 })
+      );
 
     const result = await sbListFiles(TARGET);
 
@@ -115,9 +128,13 @@ describe('sbFetchUrl / sbListFiles / sbStatFile / sbDeleteFile (JSON ops)', () =
   });
 
   it('maps a non-2xx response body to a typed op error', async () => {
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ error: { type: 'not_found', message: 'gone' } }), { status: 404 })
-    );
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { type: 'not_found', message: 'gone' } }), {
+          status: 404,
+        })
+      );
 
     const result = await sbStatFile(TARGET, 'file-1');
 
@@ -210,7 +227,12 @@ describe('sbWriteFile', () => {
     const bytes = new Uint8Array([104, 105]); // "hi"
     const result = await sbWriteFile(
       TARGET,
-      { filename: 'report.pdf', contentType: 'application/pdf', source: 'document-ocr-pipeline', batchId: 'batch-1' },
+      {
+        filename: 'report.pdf',
+        contentType: 'application/pdf',
+        source: 'document-ocr-pipeline',
+        batchId: 'batch-1',
+      },
       bytes
     );
 
@@ -224,14 +246,20 @@ describe('sbWriteFile', () => {
     expect(query.get('contentType')).toBe('application/pdf');
     expect(query.get('source')).toBe('document-ocr-pipeline');
     expect(query.get('batchId')).toBe('batch-1');
-    expect((init.headers as Record<string, string>)['content-type']).toBe('application/octet-stream');
+    expect((init.headers as Record<string, string>)['content-type']).toBe(
+      'application/octet-stream'
+    );
     expect(new Uint8Array(init.body as ArrayBuffer)).toEqual(bytes);
   });
 
   it('maps a non-2xx response to a typed op error', async () => {
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ error: { type: 'quota_exceeded', message: 'full' } }), { status: 429 })
-    );
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { type: 'quota_exceeded', message: 'full' } }), {
+          status: 429,
+        })
+      );
 
     const result = await sbWriteFile(TARGET, { filename: 'x.md' }, new Uint8Array([1]));
 
@@ -268,7 +296,12 @@ describe('clientFailure', () => {
 
 describe('browser verbs', () => {
   let fetchSpy: jest.SpiedFunction<typeof fetch>;
-  const PAGE = { url: 'https://example.com/', title: 'Example', snapshot: 'Page: Example', truncated: false };
+  const PAGE = {
+    url: 'https://example.com/',
+    title: 'Example',
+    snapshot: 'Page: Example',
+    truncated: false,
+  };
 
   beforeEach(() => {
     fetchSpy = jest.spyOn(globalThis, 'fetch');
@@ -280,12 +313,20 @@ describe('browser verbs', () => {
 
   it('posts each verb to /v1/browser/<op> with the target and arguments', async () => {
     const {
-      sbBrowserNavigate, sbBrowserSnapshot, sbBrowserClick, sbBrowserType, sbBrowserSelect,
-      sbBrowserPress, sbBrowserBack, sbBrowserClose,
+      sbBrowserNavigate,
+      sbBrowserSnapshot,
+      sbBrowserClick,
+      sbBrowserType,
+      sbBrowserSelect,
+      sbBrowserPress,
+      sbBrowserBack,
+      sbBrowserClose,
     } = await import('./index');
     fetchSpy.mockResolvedValue(new Response(JSON.stringify(PAGE), { status: 200 }));
 
-    expect(await sbBrowserNavigate(TARGET, { url: 'https://example.com/', maxChars: 500 })).toEqual({ ok: true, val: PAGE });
+    expect(await sbBrowserNavigate(TARGET, { url: 'https://example.com/', maxChars: 500 })).toEqual(
+      { ok: true, val: PAGE }
+    );
     await sbBrowserSnapshot(TARGET);
     await sbBrowserClick(TARGET, { ref: 'e1' });
     await sbBrowserType(TARGET, { ref: 'e2', text: 'hi', submit: true });
@@ -293,17 +334,31 @@ describe('browser verbs', () => {
     await sbBrowserPress(TARGET, { key: 'Escape' });
     await sbBrowserBack(TARGET);
 
-    const calls = fetchSpy.mock.calls.map(([url, init]) => [String(url), JSON.parse(String(init?.body))]);
+    const calls = fetchSpy.mock.calls.map(([url, init]) => [
+      String(url),
+      JSON.parse(String(init?.body)),
+    ]);
     expect(calls).toEqual([
-      ['http://sandbox.internal:8092/v1/browser/navigate', { ...TARGET, url: 'https://example.com/', maxChars: 500 }],
+      [
+        'http://sandbox.internal:8092/v1/browser/navigate',
+        { ...TARGET, url: 'https://example.com/', maxChars: 500 },
+      ],
       ['http://sandbox.internal:8092/v1/browser/snapshot', TARGET],
       ['http://sandbox.internal:8092/v1/browser/click', { ...TARGET, ref: 'e1' }],
-      ['http://sandbox.internal:8092/v1/browser/type', { ...TARGET, ref: 'e2', text: 'hi', submit: true }],
-      ['http://sandbox.internal:8092/v1/browser/select', { ...TARGET, ref: 'e3', values: ['Blue'] }],
+      [
+        'http://sandbox.internal:8092/v1/browser/type',
+        { ...TARGET, ref: 'e2', text: 'hi', submit: true },
+      ],
+      [
+        'http://sandbox.internal:8092/v1/browser/select',
+        { ...TARGET, ref: 'e3', values: ['Blue'] },
+      ],
       ['http://sandbox.internal:8092/v1/browser/press', { ...TARGET, key: 'Escape' }],
       ['http://sandbox.internal:8092/v1/browser/back', TARGET],
     ]);
-    expect(fetchSpy.mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: 'Bearer test-key' });
+    expect(fetchSpy.mock.calls[0]?.[1]?.headers).toMatchObject({
+      authorization: 'Bearer test-key',
+    });
 
     fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ closed: true }), { status: 200 }));
     expect(await sbBrowserClose(TARGET)).toEqual({ ok: true, val: { closed: true } });
@@ -312,10 +367,16 @@ describe('browser verbs', () => {
   it('parses a screenshot as a staged file plus where the page was', async () => {
     const { sbBrowserScreenshot } = await import('./index');
     fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ file: WIRE_FILE, url: 'https://example.com/', title: 'Example' }), { status: 200 })
+      new Response(
+        JSON.stringify({ file: WIRE_FILE, url: 'https://example.com/', title: 'Example' }),
+        { status: 200 }
+      )
     );
     const result = await sbBrowserScreenshot(TARGET, { fullPage: true, filename: 'home.png' });
-    expect(result).toEqual({ ok: true, val: { file: WIRE_FILE, url: 'https://example.com/', title: 'Example' } });
+    expect(result).toEqual({
+      ok: true,
+      val: { file: WIRE_FILE, url: 'https://example.com/', title: 'Example' },
+    });
     expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
       ...TARGET,
       fullPage: true,
@@ -325,9 +386,13 @@ describe('browser verbs', () => {
 
   it('reads status, and treats a page without a snapshot as malformed', async () => {
     const { sbBrowserStatus, sbBrowserSnapshot } = await import('./index');
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ enabled: true, sessions: 3 }), { status: 200 }));
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ enabled: true, sessions: 3 }), { status: 200 })
+    );
     expect(await sbBrowserStatus()).toEqual({ ok: true, val: { enabled: true, sessions: 3 } });
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ url: 'https://x' }), { status: 200 }));
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ url: 'https://x' }), { status: 200 })
+    );
     const result = await sbBrowserSnapshot(TARGET);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.kind).toBe('unreachable');
@@ -336,24 +401,40 @@ describe('browser verbs', () => {
   it('carries the worker error tag and message through clientFailure', async () => {
     const { sbBrowserClick } = await import('./index');
     fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: { type: 'bad_ref', message: 'No element carries ref e9' } }), { status: 400 })
+      new Response(
+        JSON.stringify({ error: { type: 'bad_ref', message: 'No element carries ref e9' } }),
+        { status: 400 }
+      )
     );
     const result = await sbBrowserClick(TARGET, { ref: 'e9' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(clientFailure(result.err)).toEqual({ status: 400, message: 'No element carries ref e9' });
+      expect(clientFailure(result.err)).toEqual({
+        status: 400,
+        message: 'No element carries ref e9',
+      });
     }
-    expect(clientFailure({ kind: 'op', type: 'no_session', message: undefined, status: 409 })).toEqual({
+    expect(
+      clientFailure({ kind: 'op', type: 'no_session', message: undefined, status: 409 })
+    ).toEqual({
       status: 409,
       message: 'No page is open — open one with sandbox_browser_navigate first.',
     });
-    expect(clientFailure({ kind: 'op', type: 'browser_unavailable', message: undefined, status: 503 }).status).toBe(503);
+    expect(
+      clientFailure({ kind: 'op', type: 'browser_unavailable', message: undefined, status: 503 })
+        .status
+    ).toBe(503);
   });
 });
 
 describe('sbBrowserRun / sbBrowserScroll', () => {
   let fetchSpy: jest.SpiedFunction<typeof fetch>;
-  const PAGE = { url: 'https://example.com/', title: 'Example', snapshot: 'Page: Example', truncated: false };
+  const PAGE = {
+    url: 'https://example.com/',
+    title: 'Example',
+    snapshot: 'Page: Example',
+    truncated: false,
+  };
 
   beforeEach(() => {
     fetchSpy = jest.spyOn(globalThis, 'fetch');
@@ -374,7 +455,11 @@ describe('sbBrowserRun / sbBrowserScroll', () => {
       val: { completed: 2, page: PAGE, failed: null },
     });
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/browser/run');
-    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({ ...TARGET, steps, maxChars: 500 });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      steps,
+      maxChars: 500,
+    });
 
     fetchSpy.mockResolvedValueOnce(
       new Response(
@@ -388,7 +473,11 @@ describe('sbBrowserRun / sbBrowserScroll', () => {
     );
     expect(await sbBrowserRun(TARGET, { steps })).toEqual({
       ok: true,
-      val: { completed: 1, page: null, failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' } },
+      val: {
+        completed: 1,
+        page: null,
+        failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' },
+      },
     });
 
     fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ page: PAGE }), { status: 200 }));
@@ -399,9 +488,18 @@ describe('sbBrowserRun / sbBrowserScroll', () => {
   it('posts scroll fields', async () => {
     const { sbBrowserScroll } = await import('./index');
     fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(PAGE), { status: 200 }));
-    expect(await sbBrowserScroll(TARGET, { direction: 'up', amount: 200 })).toEqual({ ok: true, val: PAGE });
-    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/browser/scroll');
-    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({ ...TARGET, direction: 'up', amount: 200 });
+    expect(await sbBrowserScroll(TARGET, { direction: 'up', amount: 200 })).toEqual({
+      ok: true,
+      val: PAGE,
+    });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
+      'http://sandbox.internal:8092/v1/browser/scroll'
+    );
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      direction: 'up',
+      amount: 200,
+    });
   });
 });
 
@@ -427,13 +525,28 @@ describe('secrets', () => {
   });
 
   it('creates, lists, unlocks, locks and revokes through /v1/secrets/*', async () => {
-    const { sbSecretCreate, sbSecretsList, sbSecretUnlock, sbSecretLock, sbSecretRevoke } = await import('./index');
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: SECRET, passphrase: 'abcde-fghjk-mnpqr-stuvw-xyz23' }), { status: 200 }));
-    expect(await sbSecretCreate(TARGET, { name: 'vendor-portal', fields: { password: 'x' }, hosts: ['portal.vendor.com'], unlockMs: 1000 })).toEqual({
+    const { sbSecretCreate, sbSecretsList, sbSecretUnlock, sbSecretLock, sbSecretRevoke } =
+      await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ secret: SECRET, passphrase: 'abcde-fghjk-mnpqr-stuvw-xyz23' }),
+        { status: 200 }
+      )
+    );
+    expect(
+      await sbSecretCreate(TARGET, {
+        name: 'vendor-portal',
+        fields: { password: 'x' },
+        hosts: ['portal.vendor.com'],
+        unlockMs: 1000,
+      })
+    ).toEqual({
       ok: true,
       val: { secret: SECRET, passphrase: 'abcde-fghjk-mnpqr-stuvw-xyz23' },
     });
-    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/secrets/create');
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
+      'http://sandbox.internal:8092/v1/secrets/create'
+    );
     expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
       ...TARGET,
       name: 'vendor-portal',
@@ -442,39 +555,70 @@ describe('secrets', () => {
       unlockMs: 1000,
     });
 
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secrets: [SECRET] }), { status: 200 }));
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ secrets: [SECRET] }), { status: 200 })
+    );
     expect(await sbSecretsList(TARGET)).toEqual({ ok: true, val: [SECRET] });
 
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: SECRET }), { status: 200 }));
-    expect(await sbSecretUnlock(TARGET, { id: 'secret-1', passphrase: 'p'.repeat(12) })).toEqual({ ok: true, val: SECRET });
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ secret: SECRET }), { status: 200 })
+    );
+    expect(await sbSecretUnlock(TARGET, { id: 'secret-1', passphrase: 'p'.repeat(12) })).toEqual({
+      ok: true,
+      val: SECRET,
+    });
 
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: { ...SECRET, unlockedUntil: null } }), { status: 200 }));
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ secret: { ...SECRET, unlockedUntil: null } }), { status: 200 })
+    );
     const locked = await sbSecretLock(TARGET, 'secret-1');
     expect(locked.ok && locked.val.unlockedUntil).toBeNull();
 
-    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ revoked: true, id: 'secret-1', name: 'vendor-portal' }), { status: 200 }));
-    expect(await sbSecretRevoke(TARGET, 'secret-1')).toEqual({ ok: true, val: { id: 'secret-1', name: 'vendor-portal' } });
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ revoked: true, id: 'secret-1', name: 'vendor-portal' }), {
+        status: 200,
+      })
+    );
+    expect(await sbSecretRevoke(TARGET, 'secret-1')).toEqual({
+      ok: true,
+      val: { id: 'secret-1', name: 'vendor-portal' },
+    });
   });
 
   it('phrases the secret error tags', () => {
-    expect(clientFailure({ kind: 'op', type: 'bad_passphrase', message: undefined, status: 403 })).toEqual({
+    expect(
+      clientFailure({ kind: 'op', type: 'bad_passphrase', message: undefined, status: 403 })
+    ).toEqual({
       status: 403,
       message: 'That passphrase does not open this secret.',
     });
-    expect(clientFailure({ kind: 'op', type: 'secret_unavailable', message: 'locked', status: 403 })).toEqual({
+    expect(
+      clientFailure({ kind: 'op', type: 'secret_unavailable', message: 'locked', status: 403 })
+    ).toEqual({
       status: 403,
       message: 'locked',
     });
-    expect(clientFailure({ kind: 'op', type: 'secret_exists', message: undefined, status: 409 }).status).toBe(409);
-    expect(clientFailure({ kind: 'op', type: 'secret_limit', message: undefined, status: 429 }).status).toBe(429);
+    expect(
+      clientFailure({ kind: 'op', type: 'secret_exists', message: undefined, status: 409 }).status
+    ).toBe(409);
+    expect(
+      clientFailure({ kind: 'op', type: 'secret_limit', message: undefined, status: 429 }).status
+    ).toBe(429);
   });
 
   it('posts a secret reference on a type call, never a value', async () => {
     const { sbBrowserType } = await import('./index');
     fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ url: 'https://x', title: '', snapshot: 'Page', truncated: false }), { status: 200 })
+      new Response(
+        JSON.stringify({ url: 'https://x', title: '', snapshot: 'Page', truncated: false }),
+        { status: 200 }
+      )
     );
-    await sbBrowserType(TARGET, { ref: 'e1', secret: { name: 'vendor-portal', field: 'password' }, submit: true });
+    await sbBrowserType(TARGET, {
+      ref: 'e1',
+      secret: { name: 'vendor-portal', field: 'password' },
+      submit: true,
+    });
     expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
       ...TARGET,
       ref: 'e1',
@@ -573,5 +717,105 @@ describe('sbWorkspaceGitShow', () => {
     const result = await sbWorkspaceGitShow(TARGET, { id: 'ws-1', commit: 'aaaaaaa' });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.kind).toBe('unreachable');
+  });
+});
+
+describe('language server calls', () => {
+  const { sbLspLanguages, sbLspOpen, sbLspSend, sbLspClose, sbLspEvents } =
+    jest.requireActual<typeof import('./index')>('./index');
+
+  it('lists the servers a worker has, in shape', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        new Response(JSON.stringify({ languages: ['typescript', 3, 'go'] }), { status: 200 })
+    ) as unknown as typeof fetch;
+    expect(await sbLspLanguages(TARGET)).toEqual({ ok: true, val: ['typescript', 'go'] });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://sandbox.internal:8092/v1/workspaces/lsp/languages');
+    expect(JSON.parse(init.body as string)).toEqual(TARGET);
+  });
+
+  it('opens a session and keeps the capabilities verbatim', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id: 'sess-1',
+            server: 'typescript',
+            workspaceId: 'ws-1',
+            rootUri: 'file:///w/ws-1',
+            capabilities: { hoverProvider: true },
+            serverInfo: { name: 'ts' },
+            reused: true,
+          }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
+    const opened = await sbLspOpen(TARGET, { id: 'ws-1', server: 'typescript', clientId: 'ed' });
+    expect(opened).toEqual({
+      ok: true,
+      val: {
+        id: 'sess-1',
+        server: 'typescript',
+        workspaceId: 'ws-1',
+        rootUri: 'file:///w/ws-1',
+        capabilities: { hoverProvider: true },
+        serverInfo: { name: 'ts' },
+        reused: true,
+      },
+    });
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ nope: 1 }), { status: 200 })
+    ) as unknown as typeof fetch;
+    const malformedOpen = await sbLspOpen(TARGET, {
+      id: 'ws-1',
+      server: 'typescript',
+      clientId: 'ed',
+    });
+    expect(malformedOpen.ok).toBe(false);
+  });
+
+  it('sends, closes, and maps a refusal to its tag', async () => {
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ sent: true }), { status: 202 })
+    ) as unknown as typeof fetch;
+    expect(
+      await sbLspSend(TARGET, { session: 's', message: { jsonrpc: '2.0', method: 'x' } })
+    ).toEqual({ ok: true, val: undefined });
+    global.fetch = jest.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { type: 'bad_message', message: 'outside' } }), {
+          status: 400,
+        })
+    ) as unknown as typeof fetch;
+    const refused = await sbLspSend(TARGET, { session: 's', message: {} });
+    expect(refused).toEqual({
+      ok: false,
+      err: { kind: 'op', type: 'bad_message', message: 'outside', status: 400 },
+    });
+    global.fetch = jest.fn(
+      async () => new Response(JSON.stringify({ closed: true }), { status: 200 })
+    ) as unknown as typeof fetch;
+    expect(await sbLspClose(TARGET, { session: 's' })).toEqual({ ok: true, val: true });
+  });
+
+  it('hands the events stream over as it is, and is unconfigured without the worker', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {}\n\n'));
+        controller.close();
+      },
+    });
+    global.fetch = jest.fn(
+      async () => new Response(body, { status: 200 })
+    ) as unknown as typeof fetch;
+    const events = await sbLspEvents(TARGET, { session: 's' }, new AbortController().signal);
+    expect(events.ok).toBe(true);
+    if (events.ok) expect(await new Response(events.val).text()).toBe('data: {}\n\n');
+    delete process.env.SANDBOX_WORKER_URL;
+    expect(await sbLspEvents(TARGET, { session: 's' }, new AbortController().signal)).toEqual({
+      ok: false,
+      err: { kind: 'unconfigured' },
+    });
   });
 });
