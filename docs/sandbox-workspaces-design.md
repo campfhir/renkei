@@ -348,6 +348,19 @@ The model names the service (`db`), the image (`postgres:16`), the
 container's own variables (`env`: `POSTGRES_PASSWORD`, a throwaway) and
 what to export into the project's commands (`exports`: templates over
 `{host}` and `{port}` — `DATABASE_URL: postgres://postgres:pw@{host}:{port}/app`).
+A person has the same verbs on the project's **Services page**
+(`/[slug]/code/[projectId]/services`,
+`apps/web/app/[slug]/code/_components/services-page.tsx`, over
+`/api/tenant/[tenantId]/code/projects/[projectId]/services`): what is
+running with its address, the variables it sets and when it expires,
+its last log lines, a Stop, and a form to start one — name, image, the
+container's variables and the exports as text, `KEY=value` a line — with
+the organization's allowed images listed beside it so the image field is
+not a guess. The project page carries only a card (`services-summary.tsx`,
+the route's `?view=summary`: how many running, their names, how many
+images are allowed) that opens the page, the Pipelines arrangement, so
+the project page stays a summary; a start or stop from the page is an
+audit event (`code.services.started`, `code.services.stopped`).
 While the service runs, every `code_run` command gets
 `SERVICE_<NAME>_HOST`, `SERVICE_<NAME>_PORT` (the lowest port the image
 declares) and `SERVICE_<NAME>_PORTS`, plus the exports rendered — set

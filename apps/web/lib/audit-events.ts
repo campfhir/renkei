@@ -70,6 +70,9 @@ export type AuditAction =
   | 'code.pipelines.run'
   /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
   | 'code.pipelines.file.committed'
+  /** A service container started or stopped from a code project's Services page. */
+  | 'code.services.started'
+  | 'code.services.stopped'
   | 'code.files.uploaded'
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'
