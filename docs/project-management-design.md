@@ -1,9 +1,9 @@
 # Project management on Renkei — plan
 
 Written 2026-09-23. Stage 1a (the Jira Admin connector's foundation) shipped
-with this document, and stage 1b (change requests and the first writes)
-right after it; everything after that is the agreed direction, not code
-yet.
+with this document, stage 1b (change requests and the first writes) right
+after it, and then the first part of stage 1c (space templates and new
+spaces); everything after that is the agreed direction, not code yet.
 
 ## What this is solving
 
@@ -173,6 +173,16 @@ screen tab. **Blueprints**: capture a space's configuration as a
 declarative document, kept in a Renkei table, plan the difference against
 the live site, and apply it as one change request.
 
+The first part has shipped ("1c as built" below): templates in a Renkei
+table, a new space from a template or like another space, its roles, and a
+space compared against a template. It needs no new scope: creating a space
+and adding role members are `manage:jira-configuration`, which 1a already
+asks for. The rest of 1c comes with `manage:jira-project` and so with one
+reconnect: components and versions, a custom field placed on a screen tab,
+and copying a scheme so one space can differ from its family. A board from
+a filter waits on the Jira Software scopes for boards, which are not yet
+confirmed to work on a classic-scope app.
+
 **1d — Plans.** Create and update plans from spaces, boards and filters;
 scheduling settings; plan-only teams with capacity and members;
 cross-project releases.
@@ -223,6 +233,45 @@ publish a form to issue create or to a request type.
 - **Nothing deletes.** Disabling keeps an option on the issues that carry
   it; there is no delete operation.
 
+### 1c as built (first part)
+
+- **Templates.** `jira_admin_space_templates` (migration 124): a name
+  (unique per site, ignoring case), a description, the space it was saved
+  from, and a document — the space's type, default assignee and category,
+  its seven schemes by id and name (work types, screens, workflows, field
+  configuration, permissions, notifications, issue security; field
+  configuration and issue security may be "none"), and the groups in each
+  role. Never the people: a template describes a kind of space, and who
+  works in the next one is named when it is proposed. Org-wide, shared by
+  the organization's Jira admins, and tied to the site it was saved from,
+  since scheme ids mean nothing on another. Store:
+  `apps/web/lib/jira-admin/space-templates.ts`.
+- **Reading a space** (`apps/web/lib/jira-admin/space-config.ts`) takes the
+  whole picture or nothing: a scheme that cannot be read fails the read,
+  since a template without its permission scheme would quietly build spaces
+  on the default one. Team-managed spaces are refused — they have no site
+  schemes — and so, for now, are service desk spaces.
+- **Tools.** `jira_admin_save_space_template` (with `overwrite` to replace
+  one), `jira_admin_list_space_templates`, `jira_admin_delete_space_template`
+  and `jira_admin_compare_space_to_template`, which reports each scheme,
+  default, category and role group that differs — never corrects it.
+  `jira_admin_propose_space` takes a key, name, lead and either `template`
+  or `likeSpace`, plus people and groups per role, and checks everything it
+  can before saving the proposal: the key and name are free, the lead and
+  every member resolve (an exact email wins; several matches are refused), a
+  template's schemes still exist. It writes nothing to Jira.
+- **The change** (`create_space`, `apps/web/lib/jira-admin/space-creation.ts`)
+  creates the space on the template's or source space's schemes — it runs ON
+  them, not on copies, which keeps a family of spaces in step and which the
+  review page says in so many words — then adds each role's groups and
+  people. Every operation is labelled as an access change. Applying checks
+  the key is still free, creates the space, and adds only the role members
+  Jira did not already put in; it stops at the first step Jira refuses, and
+  a space it created stays created.
+- **Pages.** `/[slug]/jira-admin/templates` lists the organization's
+  templates, read-only, linked from the Jira Administration card beside the
+  proposed changes.
+
 ### Guardrails
 
 - **No deletes in phase 1.** Deleting a custom field, an option or a scheme
@@ -251,8 +300,10 @@ it. Two pieces go after that:
 
 1. **Propose in plain language, apply in one click.** "Add a Vendor option
    to the Source field in OPS" becomes a change request. (1b)
-2. **Drift.** A space stood up from a blueprint is compared to it on a
-   schedule; a difference is reported, never auto-corrected. (After 1c.)
+2. **Drift.** A space stood up from a template is compared to it; a
+   difference is reported, never auto-corrected. On demand today
+   (`jira_admin_compare_space_to_template`); on a schedule once agents can
+   run it.
 
 ## Phase 2 — getting status out of people
 

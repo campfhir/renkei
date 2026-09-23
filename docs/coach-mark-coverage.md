@@ -75,6 +75,7 @@ with the next one.
 | Confluence              | Atlassian; space watches once connected          | `connect-confluence`   | Covered |
 | Jira Administration     | own Atlassian app, classic scopes; for admins    | `connect-jira-admin`   | Covered |
 | Jira admin changes      | review and apply proposals; from the card's link | —                      | None    |
+| Jira space templates    | the org's templates, read-only; from the card    | —                      | None    |
 | Bitbucket               | own OAuth system                                 | `connect-bitbucket`    | Covered |
 | GitHub                  | own GitHub App; install + authorize in one click | `connect-github`       | Covered |
 | Outlook                 | Microsoft; "What gets indexed" once connected    | `connect-microsoft`    | Covered |

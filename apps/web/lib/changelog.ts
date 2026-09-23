@@ -82,6 +82,12 @@ export const CHANGELOG: ChangelogRelease[] = [
           'Ask the assistant — or have an agent — add, rename, disable or reorder the options of a Jira select field, and it proposes the change instead of making it. Nothing reaches Jira until you open the proposal’s review page and apply it, on your own Jira Administration connection. Renkei checks the field again first and stops at anything that has changed since; nothing is ever deleted. Proposals wait under Jira admin changes, linked from the Jira Administration card, for a day.',
       },
       {
+        kind: 'added',
+        title: 'Jira space templates, and new spaces from them',
+        detail:
+          'Save how a Jira space is set up — its schemes, default assignee, category and the groups in each role — as a template your Jira admins share, and check any space against one to see where it has drifted. Ask for a new space from a template, or like an existing space, and it is proposed for your review: the page lists every scheme it will run on and labels each access change, and nothing is created in Jira until you apply it. Templates are listed under Space templates, next to the proposed changes on the Jira Administration card.',
+      },
+      {
         kind: 'fixed',
         title: 'The Connectors page loads for people connected to Jira',
         detail:
