@@ -4,8 +4,12 @@
  * tools, and answers with that loop's final report. The orchestrating
  * chat stays in charge — it decides what to delegate, reads the report,
  * and alone commits and pushes (a sub-agent cannot push or delegate
- * further). Each sub-agent's calls are made on the turn's own model and
- * counted against the turn's usage.
+ * further). A sub-agent runs on the model the orchestrator picks for the
+ * task from the org's roster (`model` — a cheaper, faster one for a
+ * search, the strongest for a hard change), or on the turn's own model
+ * when it names none; either way its calls are counted against the
+ * turn's usage, stamped in the ledger with the model that actually
+ * answered.
  *
  * The point of delegating is what stays OUT of the chat: the sub-agent's
  * file reads, searches, edits and test runs are its own conversation,
@@ -19,14 +23,21 @@
  * through the same recorder; the report comes back as the tool result.
  */
 
+import type { Kysely } from 'kysely';
+import type { DB } from '@renkei/db';
 import {
+  resolveAgentLlm,
   streamOrComplete,
   type LlmContentBlock,
   type LlmErrorKind,
   type LlmMessage,
   type LlmToolDef,
+  type ResolveLlmError,
+  type ResolvedLlm,
 } from '@renkei/agent-llm';
+import type { LlmCallModel } from '@renkei/agents/runs';
 import { clipOutput } from '@renkei/connector-sandbox';
+import type { Result } from '@campfhir/safe-functions/types';
 import {
   createLocalToolSet,
   errorResult,
@@ -87,12 +98,78 @@ function str(value: unknown): string {
 }
 
 /**
+ * One of the org's enabled models (llm_model_configs), as offered to the
+ * orchestrator for a sub-agent: what `listChatModels` (lib/chat/models.ts)
+ * lists for the composer's own picker, minus what only the composer needs.
+ */
+export interface SubagentModelChoice {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  isDefault: boolean;
+}
+
+export interface DelegateOptions {
+  /**
+   * The models the orchestrator may pick from, named in the tool's
+   * description and matched against its `model` argument. Absent or
+   * empty, every sub-agent runs on the turn's own model and the argument
+   * is not offered.
+   */
+  models?: SubagentModelChoice[];
+  /** How a chosen config becomes a provider — resolveAgentLlm, or a fake in tests. */
+  resolve?: (
+    db: Kysely<DB>,
+    tenantId: string,
+    modelConfigId: string
+  ) => Promise<Result<ResolvedLlm, ResolveLlmError>>;
+}
+
+/** The ledger's view of the model a sub-agent ran on. */
+export function subagentModelOf(llm: ResolvedLlm): LlmCallModel {
+  return { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId };
+}
+
+/**
+ * The choice the orchestrator named, by config id, label or provider
+ * model name (label and name case-insensitively); null when nothing
+ * offered matches.
+ */
+export function matchSubagentModel(
+  models: SubagentModelChoice[],
+  wanted: string
+): SubagentModelChoice | null {
+  const needle = wanted.trim();
+  if (!needle) return null;
+  const lower = needle.toLowerCase();
+  return (
+    models.find((choice) => choice.id === needle) ??
+    models.find((choice) => choice.label.toLowerCase() === lower) ??
+    models.find((choice) => choice.model.toLowerCase() === lower) ??
+    null
+  );
+}
+
+/** How the roster reads in the tool's description: one line per model, the default flagged. */
+function describeModels(models: SubagentModelChoice[]): string {
+  return models
+    .map(
+      (choice) =>
+        `"${choice.label}" (${choice.provider} ${choice.model}${choice.isDefault ? ', the org default' : ''})`
+    )
+    .join('; ');
+}
+
+/**
  * The delegate tool over the given checkout tools. `tools` is the full
  * code_* set for the project; the sub-agent gets it minus what is withheld,
  * and only the read-only part when the task says so.
  */
-export function codeDelegateTool(tools: LocalTool[]): LocalTool {
+export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = {}): LocalTool {
   const offered = tools.filter((tool) => !WITHHELD.has(tool.def.name));
+  const models = options.models ?? [];
+  const resolve = options.resolve ?? resolveAgentLlm;
   const def: LlmToolDef = {
     name: CODE_DELEGATE_TOOL,
     description:
@@ -106,7 +183,13 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
       'say what to report — it sees nothing of this chat — and read its report critically; you ' +
       'remain responsible for the result, for checking what it claims, and for committing and ' +
       `pushing. A sub-agent makes at most maxSteps model calls (default ${DELEGATE_DEFAULT_STEPS}). ` +
-      'A person can open its full transcript from this chat, so the report can stay brief.',
+      'A person can open its full transcript from this chat, so the report can stay brief.' +
+      (models.length > 0
+        ? ' A sub-agent need not run on the model answering this chat: pick one per task with ' +
+          '`model` — a fast, cheap model for a search or a mechanical edit, the strongest for a ' +
+          'change that takes judgement; leave it out to use this chat’s own model. Available: ' +
+          `${describeModels(models)}.`
+        : ''),
     inputSchema: {
       type: 'object',
       properties: {
@@ -134,6 +217,18 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
           maximum: DELEGATE_MAX_STEPS,
           description: `Model calls the sub-agent may make (default ${DELEGATE_DEFAULT_STEPS}).`,
         },
+        ...(models.length > 0
+          ? {
+              model: {
+                type: 'string',
+                maxLength: 200,
+                description:
+                  'The model the sub-agent runs on, by its label: one of ' +
+                  `${models.map((choice) => `"${choice.label}"`).join(', ')}. ` +
+                  'Omit to use the model answering this chat.',
+              },
+            }
+          : {}),
       },
       required: ['task'],
     },
@@ -143,10 +238,41 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
     def,
     timeoutMs: DELEGATE_TOOL_TIMEOUT_MS,
     async execute(input, context: LocalToolContext) {
-      const llm = context.llm;
-      if (!llm) return errorResult('Sub-agents are not available in this chat.');
+      const turnLlm = context.llm;
+      if (!turnLlm) return errorResult('Sub-agents are not available in this chat.');
       const task = str(input.task).trim();
       if (!task) return errorResult('Say what the sub-agent should do.');
+      // The model for this task: the one named, resolved with its own key
+      // and settings, or the turn's own. A name that matches nothing
+      // offered is refused with the roster rather than quietly run on the
+      // default — the orchestrator chose for a reason and should know.
+      const wanted = str(input.model).trim();
+      let llm = turnLlm;
+      if (wanted) {
+        const choice = matchSubagentModel(models, wanted);
+        if (!choice) {
+          return errorResult(
+            models.length > 0
+              ? `No model called "${wanted}" is available to a sub-agent. Choose one of: ` +
+                  `${models.map((entry) => `"${entry.label}"`).join(', ')} — or leave model out.`
+              : 'Sub-agents run on this chat’s own model here; leave model out.'
+          );
+        }
+        if (choice.id !== turnLlm.modelConfigId) {
+          const resolved = await resolve(context.db, context.tenantId, choice.id);
+          // resolveAgentLlm falls back to the org default when the row no
+          // longer resolves; that is not what was asked for, so say so.
+          if (!resolved.ok || resolved.val.modelConfigId !== choice.id) {
+            return errorResult(
+              `The model "${choice.label}" cannot be used right now` +
+                (resolved.ok ? '' : ` (${friendlyResolveError(resolved.err.type)})`) +
+                '. Choose another, or leave model out to use this chat’s own model.'
+            );
+          }
+          llm = resolved.val;
+        }
+      }
+      const model = subagentModelOf(llm);
       const instructions = str(input.instructions).trim();
       const readOnly = input.readOnly === true || context.readOnly;
       const maxSteps =
@@ -175,6 +301,7 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
               instructions: instructions || null,
               readOnly,
               maxSteps,
+              model,
             })
           : null;
       const close = async (
@@ -243,7 +370,7 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
           return close('failed', failure, friendlyLlmError(result.err.type), step - 1);
         }
         const reply = result.val;
-        if (context.recordUsage) await context.recordUsage(reply.usage);
+        if (context.recordUsage) await context.recordUsage(reply.usage, model);
         messages.push({ role: 'assistant', content: reply.content });
         const text = reply.content
           .flatMap((block) => (block.type === 'text' ? [block.text] : []))
@@ -303,6 +430,19 @@ export function codeDelegateTool(tools: LocalTool[]): LocalTool {
       );
     },
   };
+}
+
+function friendlyResolveError(kind: ResolveLlmError): string {
+  switch (kind) {
+    case 'NO_MODEL':
+      return 'it is no longer enabled';
+    case 'UNSUPPORTED_PROVIDER':
+      return 'its provider has no adapter';
+    case 'CONFIG_ERROR':
+      return 'its configuration is incomplete';
+    case 'DB_ERROR':
+      return 'the database could not be read';
+  }
 }
 
 function report(outcome: string, text: string, calls: string[], steps: number): string {

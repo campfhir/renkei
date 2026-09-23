@@ -55,7 +55,7 @@ import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools'
 import type { McpToolResult } from '@renkei/mcp-client';
 import { GITHUB } from '@renkei/provider-grants';
 import { commitAuthorFor, resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
-import { codeDelegateTool } from './delegate';
+import { codeDelegateTool, type SubagentModelChoice } from './delegate';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
 
 /** How much of a file's diff rides back on a write or edit, for the model and the page. */
@@ -82,6 +82,12 @@ export interface CodeToolBinding {
    * lost checkout is simply the error the worker gave.
    */
   recover?: (lostWorkspaceId: string) => Promise<CheckoutRecovery>;
+  /**
+   * The org's enabled models, for the orchestrator to pick a sub-agent's
+   * from per task (lib/code/delegate.ts). Absent, a sub-agent runs on the
+   * turn's own model.
+   */
+  subagentModels?: SubagentModelChoice[];
 }
 
 /**
@@ -768,6 +774,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       }
     : null;
   const recovering = recovery ? tools.map((tool) => withCheckoutRecovery(tool, recovery)) : tools;
-  // The sub-agent gets these same tools (minus pushing and delegating).
-  return [...recovering, codeDelegateTool(recovering)];
+  // The sub-agent gets these same tools (minus pushing and delegating),
+  // on whichever of the org's models the orchestrator picks for its task.
+  return [
+    ...recovering,
+    codeDelegateTool(recovering, {
+      ...(binding.subagentModels ? { models: binding.subagentModels } : {}),
+    }),
+  ];
 }

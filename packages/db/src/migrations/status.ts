@@ -147,6 +147,7 @@ export const EXPECTED_MIGRATIONS = [
   '115-code-project-templates',
   '116-actionable-items-full-history-index',
   '117-chat-presence',
+  '118-chat-subagent-runs-model',
 ];
 
 export interface MigrationStatus {

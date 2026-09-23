@@ -141,6 +141,11 @@ export default function SubagentModal({
               {run.usage.inputTokens.toLocaleString()} in /{' '}
               {run.usage.outputTokens.toLocaleString()} out tokens
             </span>
+            {run.model ? (
+              <span data-subagent-model title={`${run.model.provider} ${run.model.model}`}>
+                on {run.model.label ?? run.model.model}
+              </span>
+            ) : null}
             {run.readOnly ? <span>read-only</span> : null}
             {run.error ? (
               <span className="text-amber-700 dark:text-amber-400">{run.error}</span>

@@ -51,6 +51,7 @@ import {
   type LlmUsage,
   type ResolvedLlm,
 } from '@renkei/agent-llm';
+import type { LlmCallModel } from '@renkei/agents/runs';
 import { randomUUID } from 'node:crypto';
 import { secure } from '@/lib/logger';
 import type { McpClient, McpToolResult } from '@renkei/mcp-client';
@@ -87,7 +88,8 @@ export interface TurnStore {
    */
   heartbeat(iterations: number, stage: string | null): Promise<boolean>;
   finishTurn(outcome: TurnOutcome): Promise<void>;
-  recordUsage(usage: LlmUsage): Promise<void>;
+  /** `model` is what spent it when not the turn's own (a sub-agent's model); absent, the turn's. */
+  recordUsage(usage: LlmUsage, model?: LlmCallModel | null): Promise<void>;
   /**
    * Keeps the files a tool round handed back, hung off the results row;
    * returns what was kept (an unconfigured store keeps nothing).
@@ -1323,10 +1325,10 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
                   // here, once, so the turn's outcome (and chat_turns) count
                   // what delegation actually cost.
                   recordUsage: deps.localContext.recordUsage
-                    ? async (usage: LlmUsage) => {
+                    ? async (usage: LlmUsage, model?: LlmCallModel | null) => {
                         totals.inputTokens += usage.inputTokens;
                         totals.outputTokens += usage.outputTokens;
-                        await deps.localContext.recordUsage!(usage);
+                        await deps.localContext.recordUsage!(usage, model);
                       }
                     : undefined,
                 }),

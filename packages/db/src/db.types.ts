@@ -488,8 +488,11 @@ export interface ChatSubagentRuns {
   input_tokens: Generated<number>;
   instructions: string | null;
   last_tool: string | null;
+  llm_model_id: string | null;
   max_steps: number;
+  model: string | null;
   output_tokens: Generated<number>;
+  provider: string | null;
   read_only: Generated<boolean>;
   report: string | null;
   started_at: Generated<Timestamp>;

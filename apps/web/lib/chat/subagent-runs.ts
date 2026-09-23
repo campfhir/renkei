@@ -14,6 +14,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { LlmContentBlock, LlmMessage, LlmUsage } from '@renkei/agent-llm';
+import type { LlmCallModel } from '@renkei/agents/runs';
 import { isUuid } from '@/lib/uuid';
 import { openText, parseBlock, sealText } from './content-crypto';
 import { toChatBlocks, type ChatBlock } from './views';
@@ -29,6 +30,13 @@ export interface SubagentRunView {
   task: string;
   instructions: string | null;
   readOnly: boolean;
+  /**
+   * The model the sub-agent ran on (migration 118): the provider and
+   * model name as resolved at the time, and the config's label as it is
+   * now — null when the config has since been removed. Null altogether
+   * on a run recorded before models were, which ran on its turn's.
+   */
+  model: { provider: string; model: string; label: string | null } | null;
   steps: number;
   maxSteps: number;
   toolCalls: number;
@@ -56,6 +64,8 @@ export interface SubagentRecorder {
     instructions: string | null;
     readOnly: boolean;
     maxSteps: number;
+    /** What the sub-agent runs on — the turn's own model, or the one the orchestrator picked. */
+    model: LlmCallModel | null;
   }): Promise<string | null>;
   /** After each model call: how far it is and what it last reached for. */
   progress(
@@ -120,6 +130,7 @@ export async function createSubagentRun(
     instructions: string | null;
     readOnly: boolean;
     maxSteps: number;
+    model: LlmCallModel | null;
   }
 ): Promise<string | null> {
   const task = sealText(input.task);
@@ -137,6 +148,9 @@ export async function createSubagentRun(
       instructions: instructions ? instructions.val : null,
       read_only: input.readOnly,
       max_steps: input.maxSteps,
+      llm_model_id: input.model?.llmModelId ?? null,
+      provider: input.model?.provider ?? null,
+      model: input.model?.model ?? null,
     })
     // A tool_use id is unique per chat; a retry of the same call replaces its row.
     .onConflict((oc) =>
@@ -147,6 +161,9 @@ export async function createSubagentRun(
         instructions: instructions ? instructions.val : null,
         read_only: input.readOnly,
         max_steps: input.maxSteps,
+        llm_model_id: input.model?.llmModelId ?? null,
+        provider: input.model?.provider ?? null,
+        model: input.model?.model ?? null,
         steps: 0,
         tool_calls: 0,
         last_tool: null,
@@ -239,10 +256,14 @@ export async function getSubagentRunByCall(
   if (!isUuid(chatId) || !toolUseId) return null;
   const row = await db
     .selectFrom('chat_subagent_runs')
-    .selectAll()
-    .where('tenant_id', '=', tenantId)
-    .where('chat_id', '=', chatId)
-    .where('tool_use_id', '=', toolUseId)
+    // The config's label as it reads today; the name columns are the
+    // record, and stand alone once the config is gone.
+    .leftJoin('llm_model_configs', 'llm_model_configs.id', 'chat_subagent_runs.llm_model_id')
+    .selectAll('chat_subagent_runs')
+    .select('llm_model_configs.label as model_label')
+    .where('chat_subagent_runs.tenant_id', '=', tenantId)
+    .where('chat_subagent_runs.chat_id', '=', chatId)
+    .where('chat_subagent_runs.tool_use_id', '=', toolUseId)
     .executeTakeFirst();
   if (!row) return null;
   return {
@@ -253,6 +274,10 @@ export async function getSubagentRunByCall(
     task: openText(row.task),
     instructions: row.instructions ? openText(row.instructions) : null,
     readOnly: row.read_only,
+    model:
+      row.provider && row.model
+        ? { provider: row.provider, model: row.model, label: row.model_label ?? null }
+        : null,
     steps: row.steps,
     maxSteps: row.max_steps,
     toolCalls: row.tool_calls,
