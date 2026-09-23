@@ -29,6 +29,10 @@ import {
 } from '@/lib/mcp-tools/graph/client';
 import { confluenceUpload, resolveConfluenceAccess } from '@/lib/mcp-tools/confluence/client';
 import { resolveWebexAccess } from '@/lib/mcp-tools/webex/webex-auth';
+import { recordSentWebexMessage } from '@/lib/mcp-tools/webex/sent-ledger';
+import { WebexClient, type OutgoingFile } from '@renkei/connector-webex';
+import { webexBotClient } from '@/lib/webex-bot';
+import { logger } from '@/lib/logger';
 import { timeoutSignal, UPLOAD_TIMEOUT_MS, isTimeoutError } from '@/lib/mcp-tools/fetch-guard';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
@@ -311,6 +315,7 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
  */
 async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   const destination = destinationOf(slot);
+  if (destination.noteToSelf === true) return webexNoteToSelfAttachment(slot, bytes);
   const roomId = str(destination.roomId);
   const toPersonEmail = str(destination.toPersonEmail);
   if (!roomId && !toPersonEmail) {
@@ -355,7 +360,57 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
       detail: `WebEx API answered ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}.`,
     };
   }
+  // Posted as the user, so the ledger must know it — or their own webhook
+  // re-ingests it as something they typed (see sent-ledger.ts).
+  const sent = rec(await response.json().catch(() => ({})));
+  await recordSentWebexMessage(slot.tenant_id, str(sent.id), slot.account_id);
   return { ok: true, detail: `Attached "${slot.filename}" to the WebEx message.` };
+}
+
+/**
+ * A file the user asked to have sent to themself, in the same order
+ * webex_note_to_self delivers text: as a direct message from the org's bot
+ * when there is one (it arrives unread — lib/webex-bot.ts says why), else
+ * into the user's own "Note to Self" space with their token. The bytes
+ * could not ride the tool call, so the two-step delivery happens here at
+ * byte-arrival time instead.
+ */
+async function webexNoteToSelfAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const access = await resolveWebexAccess(graphContextOf(slot) as MCPToolContext);
+  if (typeof access === 'string') return { ok: false, detail: access };
+  const markdown = str(destinationOf(slot).markdown) || undefined;
+  const file: OutgoingFile = {
+    filename: slot.filename,
+    ...(slot.content_type ? { contentType: slot.content_type } : {}),
+    bytes: new Uint8Array(bytes),
+  };
+
+  const bot = await webexBotClient(slot.tenant_id);
+  if (bot && access.personEmail) {
+    const viaBot = await bot.postMessage({ toPersonEmail: access.personEmail, markdown, file });
+    if (viaBot.ok && viaBot.val.roomId) {
+      await recordSentWebexMessage(slot.tenant_id, viaBot.val.id, slot.account_id);
+      return {
+        ok: true,
+        detail: `Sent "${slot.filename}" as a direct message from the org's WebEx bot.`,
+      };
+    }
+    logger.warn('webex note-to-self upload: the bot could not deliver; posting to the solo space', {
+      component: 'upload-executors',
+      tenantId: slot.tenant_id,
+      reason: viaBot.ok ? 'no roomId in the bot response' : viaBot.err.message,
+    });
+  }
+
+  const user = new WebexClient(access.accessToken, { lane: 'interactive' });
+  const sent = await user.sendNoteToSelf(markdown ?? '', file);
+  if (!sent.ok) return { ok: false, detail: sent.err.message ?? 'WebEx refused the note.' };
+  await recordSentWebexMessage(slot.tenant_id, sent.val.id, slot.account_id);
+  return {
+    ok: true,
+    detail: `Sent "${slot.filename}" to your "Note to Self" space (room ${sent.val.roomId}).`,
+  };
 }
 
 /**

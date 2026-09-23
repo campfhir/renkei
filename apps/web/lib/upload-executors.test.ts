@@ -38,6 +38,14 @@ jest.mock('@/lib/mcp-tools/confluence/client', () => ({
 jest.mock('@/lib/mcp-tools/webex/webex-auth', () => ({
   resolveWebexAccess: jest.fn(),
 }));
+jest.mock('@/lib/mcp-tools/webex/sent-ledger', () => ({
+  recordSentWebexMessage: jest.fn(async () => undefined),
+}));
+jest.mock('@/lib/webex-bot', () => ({ webexBotClient: jest.fn() }));
+jest.mock('@renkei/connector-webex', () => ({ WebexClient: jest.fn() }));
+jest.mock('@/lib/logger', () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+}));
 jest.mock('@/lib/file-shares/service-client', () => {
   const actual = jest.requireActual<typeof import('@/lib/file-shares/service-client')>(
     '@/lib/file-shares/service-client'
@@ -77,6 +85,13 @@ const { confluenceUpload, resolveConfluenceAccess } = jest.requireMock<{
 const { resolveWebexAccess } = jest.requireMock<{ resolveWebexAccess: jest.Mock }>(
   '@/lib/mcp-tools/webex/webex-auth'
 );
+const { recordSentWebexMessage } = jest.requireMock<{ recordSentWebexMessage: jest.Mock }>(
+  '@/lib/mcp-tools/webex/sent-ledger'
+);
+const { webexBotClient } = jest.requireMock<{ webexBotClient: jest.Mock }>('@/lib/webex-bot');
+const { WebexClient: MockWebexClient } = jest.requireMock<{ WebexClient: jest.Mock }>(
+  '@renkei/connector-webex'
+);
 
 function slotOf(kind: string, destination: unknown): UploadSlotRow {
   return {
@@ -115,6 +130,10 @@ beforeEach(() => {
   confluenceUpload.mockReset();
   resolveConfluenceAccess.mockReset();
   resolveWebexAccess.mockReset();
+  recordSentWebexMessage.mockReset();
+  webexBotClient.mockReset();
+  webexBotClient.mockResolvedValue(null);
+  MockWebexClient.mockReset();
   getGrant.mockResolvedValue({
     ok: true,
     val: { accessToken: 'atl-token', accountId: 'acct-1', metadata: {} },
@@ -290,9 +309,9 @@ describe('webex-attachment', () => {
     global.fetch = realFetch;
   });
 
-  it('multiparts the bytes to a room under the resolved grant', async () => {
+  it('multiparts the bytes to a room under the resolved grant, and records the send', async () => {
     resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
-    const fetchMock = jest.fn(async () => new Response('{}', { status: 200 }));
+    const fetchMock = jest.fn(async () => new Response('{"id":"msg-room"}', { status: 200 }));
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const outcome = await executeUpload(
@@ -303,6 +322,10 @@ describe('webex-attachment', () => {
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toContain('report.pdf');
+    // Posted as the user: without the ledger row their own webhook would
+    // re-ingest it as something they typed.
+    expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-room', 'acct-1');
+    expect(webexBotClient).not.toHaveBeenCalled();
     const [url, init] = (fetchMock as jest.Mock).mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://webexapis.com/v1/messages');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer webex-token');
@@ -368,6 +391,125 @@ describe('webex-attachment', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.detail).toContain('400');
     expect(outcome.detail).toContain('bad request');
+  });
+});
+
+describe('webex-attachment to self', () => {
+  const realFetch = global.fetch;
+  const selfSlot = (markdown?: string) =>
+    slotOf('webex-attachment', { noteToSelf: true, ...(markdown ? { markdown } : {}) });
+  const expectedFile = expect.objectContaining({
+    filename: 'report.pdf',
+    contentType: 'application/pdf',
+    bytes: expect.any(Uint8Array),
+  });
+
+  beforeEach(() => {
+    // Anything that reaches raw fetch here is a bug: the self path speaks
+    // through the bot client or WebexClient, never the multipart POST above.
+    global.fetch = jest.fn(async () => {
+      throw new Error('unexpected raw fetch');
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  it('sends as the org bot first, so the note arrives unread', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    const postMessage = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'msg-bot', roomId: 'dm-1' } });
+    webexBotClient.mockResolvedValue({ postMessage });
+
+    const outcome = await executeUpload(db, selfSlot('for later'), Buffer.from('bytes'));
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.detail).toContain('bot');
+    expect(webexBotClient).toHaveBeenCalledWith('tenant-1');
+    expect(postMessage).toHaveBeenCalledWith({
+      toPersonEmail: 'a@x.com',
+      markdown: 'for later',
+      file: expectedFile,
+    });
+    expect(MockWebexClient).not.toHaveBeenCalled();
+    expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-bot', 'acct-1');
+  });
+
+  it('falls back to the user’s own Note to Self space when the org has no bot', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'msg-self', roomId: 'room-solo' } });
+    MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
+
+    const outcome = await executeUpload(db, selfSlot('for later'), Buffer.from('bytes'));
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.detail).toContain('Note to Self');
+    expect(MockWebexClient).toHaveBeenCalledWith('webex-token', { lane: 'interactive' });
+    expect(sendNoteToSelf).toHaveBeenCalledWith('for later', expectedFile);
+    expect(recordSentWebexMessage).toHaveBeenCalledWith('tenant-1', 'msg-self', 'acct-1');
+  });
+
+  it('falls back to the solo space when the bot cannot deliver', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    const postMessage = jest
+      .fn()
+      .mockResolvedValue({ ok: false, err: { type: 'WEBEX_API_ERROR', message: '403' } });
+    webexBotClient.mockResolvedValue({ postMessage });
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'msg-self', roomId: 'room-solo' } });
+    MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
+
+    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+
+    expect(outcome.ok).toBe(true);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    // No markdown on the slot: the file goes alone, with an empty body.
+    expect(sendNoteToSelf).toHaveBeenCalledWith('', expectedFile);
+  });
+
+  it('skips the bot when the grant recorded no address for it to reach', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
+    const postMessage = jest.fn();
+    webexBotClient.mockResolvedValue({ postMessage });
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: true, val: { id: 'msg-self', roomId: 'room-solo' } });
+    MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
+
+    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+
+    expect(outcome.ok).toBe(true);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(sendNoteToSelf).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces the solo-space failure when both routes fail', async () => {
+    resolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: 'a@x.com' });
+    const sendNoteToSelf = jest
+      .fn()
+      .mockResolvedValue({ ok: false, err: { type: 'WEBEX_API_ERROR', message: 'WebEx API 403 for /rooms' } });
+    MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
+
+    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain('403');
+    expect(recordSentWebexMessage).not.toHaveBeenCalled();
+  });
+
+  it('fails before consulting the bot when there is no usable grant', async () => {
+    resolveWebexAccess.mockResolvedValue('WebEx is not connected.');
+
+    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toBe('WebEx is not connected.');
+    expect(webexBotClient).not.toHaveBeenCalled();
   });
 });
 
