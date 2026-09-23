@@ -191,7 +191,8 @@ export default function PipelinesSection({
               <dt className="text-gray-500">
                 <span className="font-mono">bitbucket-pipelines.yml</span>
               </dt>
-              <dd className="min-w-0 flex-1">
+              {/* The note is a sentence: below the name on a phone, beside it when there is room. */}
+              <dd className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
                 {setup.configFile === 'present' ? (
                   <span>On {branchLabel}.</span>
                 ) : setup.configFile === 'absent' ? (
