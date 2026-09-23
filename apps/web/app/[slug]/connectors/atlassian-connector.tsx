@@ -3,28 +3,30 @@ import { ConnectorShell, ConnectorHeading } from './connector-shell';
 import JiraConnector from './jira-connector';
 import JsmConnector from './jsm-connector';
 import ConfluenceConnector from './confluence-connector';
+import JiraAdminConnector from './jira-admin-connector';
 import BitbucketConnector from './bitbucket-connector';
 
 /**
- * The Atlassian suite: Jira, Service Management, Confluence and Bitbucket,
- * grouped under one heading.
+ * The Atlassian suite: Jira, Service Management, Jira Administration,
+ * Confluence and Bitbucket, grouped under one heading.
  *
  * Grouping only — and the difference from the Microsoft card matters enough
  * to state, because the two look alike and behave oppositely.
  *
  * Microsoft is ONE consent covering four products, so its card owns a single
  * connect/disconnect/re-authorize control and the products inside it own
- * nothing but their capabilities. Atlassian is FOUR separate OAuth apps with
- * four separate grants — the split is forced, not chosen: Atlassian enforces
+ * nothing but their capabilities. Atlassian is FIVE separate OAuth apps with
+ * five separate grants — the split is forced, not chosen: Atlassian enforces
  * scopes all-of and its consent URL has a length cliff, so the union of Jira,
- * JSM and Confluence scopes cannot fit on one app; Bitbucket is not even the
- * same OAuth system (consumers live on bitbucket.org). Each product here is
- * therefore genuinely its own connection, and keeps its own connect,
- * disconnect and approve controls, on the product they act on.
+ * JSM and Confluence scopes cannot fit on one app; Jira Administration needs
+ * classic scopes, which cannot share an app with granular ones; and Bitbucket
+ * is not even the same OAuth system (consumers live on bitbucket.org). Each
+ * product here is therefore genuinely its own connection, and keeps its own
+ * connect, disconnect and approve controls, on the product they act on.
  *
  * A shared control at the foot of this card would be actively wrong: there is
  * no single Atlassian consent for it to perform, and someone could reasonably
- * read one "Disconnect Atlassian" button as covering all three when it could
+ * read one "Disconnect Atlassian" button as covering all of them when it could
  * only ever cover one.
  *
  * A server component: it holds no state, and every product below manages its
@@ -34,6 +36,7 @@ export default function AtlassianConnector({
   tenantId,
   jira,
   jsm,
+  jiraAdmin,
   confluence,
   bitbucket,
 }: {
@@ -46,6 +49,12 @@ export default function AtlassianConnector({
     priorScopes: string[] | null;
   };
   jsm?: {
+    connected: boolean;
+    displayName: string | null;
+    ceiling: string[];
+    priorScopes: string[] | null;
+  };
+  jiraAdmin?: {
     connected: boolean;
     displayName: string | null;
     ceiling: string[];
@@ -73,8 +82,9 @@ export default function AtlassianConnector({
 
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
         Separate connections per product — Atlassian cannot fit the Jira, Service Management and
-        Confluence scopes on a single consent, and Bitbucket has an OAuth system of its own. Connect
-        each product you want; they are independent, and connecting one does not affect the others.
+        Confluence scopes on a single consent, Jira Administration needs permissions of a different
+        kind, and Bitbucket has an OAuth system of its own. Connect each product you want; they are
+        independent, and connecting one does not affect the others.
       </p>
 
       <div className="mt-3 space-y-3">
@@ -107,6 +117,17 @@ export default function AtlassianConnector({
             displayName={jsm.displayName}
             ceiling={jsm.ceiling}
             priorScopes={jsm.priorScopes}
+          />
+        )}
+
+        {jiraAdmin && (
+          <JiraAdminConnector
+            nested
+            tenantId={tenantId}
+            connected={jiraAdmin.connected}
+            displayName={jiraAdmin.displayName}
+            ceiling={jiraAdmin.ceiling}
+            priorScopes={jiraAdmin.priorScopes}
           />
         )}
 

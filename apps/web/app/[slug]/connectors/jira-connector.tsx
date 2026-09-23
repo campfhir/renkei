@@ -120,10 +120,7 @@ export default function JiraConnector({
             </>
           }
           buttonLabel="Disconnect Jira"
-          parseError={(data) =>
-            (typeof data.message === 'string' ? data.message : undefined) ??
-            (typeof data.error === 'string' ? data.error : undefined)
-          }
+          errorFields={['message', 'error']}
         />
       )}
 

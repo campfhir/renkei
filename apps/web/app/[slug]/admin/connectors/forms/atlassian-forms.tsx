@@ -10,6 +10,8 @@ import {
   ATLASSIAN_CONFLUENCE_SCOPE_GROUPS,
   ATLASSIAN_BITBUCKET_SCOPE_OPTIONS,
   ATLASSIAN_BITBUCKET_SCOPE_GROUPS,
+  ATLASSIAN_ADMIN_SCOPE_OPTIONS,
+  ATLASSIAN_ADMIN_SCOPE_GROUPS,
   ATLASSIAN_OFFLINE_SCOPE,
   BITBUCKET_ACCOUNT_SCOPE,
 } from '@/lib/atlassian-scopes';
@@ -79,6 +81,37 @@ export function AtlassianConfluenceForm({ slug, origin }: { slug: string; origin
   );
 }
 
+export function AtlassianAdminForm({ slug, origin }: { slug: string; origin: string | null }) {
+  return (
+    <AtlassianAppForm
+      slug={slug}
+      origin={origin}
+      connector="atlassian-admin"
+      title="Atlassian (Jira Administration)"
+      groups={ATLASSIAN_ADMIN_SCOPE_GROUPS}
+      options={ATLASSIAN_ADMIN_SCOPE_OPTIONS}
+      intro={
+        <>
+          A separate OAuth 2.0 (3LO) app from{' '}
+          <a
+            href="https://developer.atlassian.com/console/myapps/"
+            className="text-blue-600 hover:underline dark:text-blue-400"
+            target="_blank"
+            rel="noreferrer"
+          >
+            developer.atlassian.com
+          </a>
+          , holding Jira&apos;s <strong>classic</strong> scopes (Permissions → Jira API → Classic
+          scopes) — the Plans and Forms APIs accept no others, and one app cannot mix classic with
+          the granular scopes the Jira app uses. Its callback URL must be{' '}
+          <CallbackUrl origin={origin} />. Only Jira admins get anything from connecting it: Jira
+          still checks Administer Jira or Administer Projects on every call.
+        </>
+      }
+    />
+  );
+}
+
 export function AtlassianBitbucketForm({ slug, origin }: { slug: string; origin: string | null }) {
   return (
     <AtlassianAppForm
@@ -114,10 +147,11 @@ export function AtlassianBitbucketForm({ slug, origin }: { slug: string; origin:
 }
 
 /**
- * One form serves all three Atlassian app registrations — Jira, "Renkei JSM"
+ * One form serves every Atlassian app registration — Jira, "Renkei JSM"
  * (the split exists because Atlassian's all-of scope enforcement times its
  * consent-URL length cliff makes the combined scope union unfittable on one
- * app). Each connector stores its own client id/secret and scope ceiling.
+ * app), Confluence, Bitbucket and Jira Administration. Each connector stores
+ * its own client id/secret and scope ceiling.
  */
 function AtlassianAppForm({
   slug,

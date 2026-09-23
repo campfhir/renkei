@@ -110,6 +110,7 @@ const WALKS: Record<string, Walk> = {
   // Service Management — on the page. No other product is added, so every
   // other card tour is walked with its steps centred.
   'connect-confluence': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-jira-admin': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-bitbucket': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-github': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-microsoft': { path: `/${E2E_SLUG}/connectors`, spotlight: false },

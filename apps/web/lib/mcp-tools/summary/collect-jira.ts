@@ -145,9 +145,13 @@ export async function collectSprint(
     return { connector: 'jira', label: 'Sprint', lines: [], omitted: 'Jira did not answer' };
   }
 
+  // `!=` never matches an empty field in JQL, so without the EMPTY arm the
+  // unassigned work — the items a sprint most needs someone to pick up —
+  // would silently drop out of the "elsewhere" list.
   const others = await searchJql(
     context,
-    'sprint in openSprints() AND assignee != currentUser() ORDER BY status ASC, priority DESC',
+    'sprint in openSprints() AND (assignee != currentUser() OR assignee is EMPTY) ' +
+      'ORDER BY status ASC, priority DESC',
     fields,
     MAX_ITEMS_PER_SECTION
   );

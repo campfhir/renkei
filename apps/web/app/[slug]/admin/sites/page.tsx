@@ -26,6 +26,7 @@ const PRODUCT_OF_PROVIDER: Record<string, string> = {
   atlassian: 'Jira',
   'atlassian-jsm': 'JSM',
   'atlassian-confluence': 'Confluence',
+  'atlassian-admin': 'Jira Administration',
 };
 
 const WATCH_KIND: Record<string, string> = {
@@ -63,7 +64,12 @@ export default async function SitesPage({
       .selectFrom('provider_grants')
       .select(['provider', 'metadata', 'display_name', 'created_at'])
       .where('tenant_id', '=', tenantRef.id)
-      .where('provider', 'in', ['atlassian', 'atlassian-jsm', 'atlassian-confluence'])
+      .where('provider', 'in', [
+        'atlassian',
+        'atlassian-jsm',
+        'atlassian-confluence',
+        'atlassian-admin',
+      ])
       .execute(),
     dbResult.val
       .selectFrom('content_watches')

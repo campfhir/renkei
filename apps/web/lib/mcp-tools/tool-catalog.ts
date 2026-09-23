@@ -264,6 +264,7 @@ export async function listAvailableTools(
     graphScopes: availability.microsoftAvailable ? availability.graphScopes : undefined,
     zoomScopes: availability.zoomAvailable ? availability.zoomScopes : undefined,
     confluenceScopes: availability.confluenceAvailable ? availability.confluenceScopes : undefined,
+    jiraAdminScopes: availability.jiraAdminAvailable ? availability.jiraAdminScopes : undefined,
     bitbucketScopes: availability.bitbucketAvailable ? availability.bitbucketScopes : undefined,
     // Scopes real, credentials deliberately empty — same reasoning as the
     // token fields above: the JSM scope gates read these at registration,

@@ -178,6 +178,52 @@ describe('listAvailableTools', () => {
     expect(tools.some((name) => name.startsWith('zoom_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('confluence_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('bitbucket_'))).toBe(false);
+    expect(tools.some((name) => name.startsWith('jira_admin_'))).toBe(false);
+  });
+
+  it('includes Jira Administration on its own grant, narrowed by its classic scopes', async () => {
+    // The fifth Atlassian app: a separate grant from Jira's, carrying classic
+    // scopes. Without manage:jira-configuration, the tools that read field
+    // contexts and space schemes cannot register — they could only 401.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-admin': {
+        requested_scopes: ['read:jira-user', 'read:jira-work', 'offline_access'],
+        granted_scopes: ['read:jira-user', 'read:jira-work'],
+      },
+    };
+    let tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('jira_admin_check_access');
+    expect(tools).toContain('jira_admin_list_fields');
+    expect(tools).toContain('jira_admin_list_plans');
+    expect(tools).not.toContain('jira_admin_get_field');
+    expect(tools).not.toContain('jira_admin_get_space_configuration');
+
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-admin': {
+        requested_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
+        granted_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
+      },
+    };
+    invalidateToolCatalogCache('tenant-1', 'subject-1');
+    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('jira_admin_get_field');
+    expect(tools).toContain('jira_admin_get_space_configuration');
+  });
+
+  it('switches Jira Administration off on its own key, leaving Jira as it was', async () => {
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-admin': {
+        requested_scopes: ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'],
+        granted_scopes: null,
+      },
+    };
+    disabledConnectors = ['jira-admin'];
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools.some((name) => name.startsWith('jira_admin_'))).toBe(false);
+    expect(tools).toContain('jira_search_issues');
   });
 
   it('includes Bitbucket once its grant exists, narrowed to requested ∩ granted', async () => {

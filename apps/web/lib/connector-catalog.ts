@@ -116,6 +116,36 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    // Its own key, unlike JSM: administration has to be switchable and
+    // audience-limited without touching anyone's everyday Jira.
+    capabilityKey: 'jira-admin',
+    configKey: 'atlassian-admin',
+    label: 'Jira Administration',
+    summary:
+      'Look up how Jira is configured: what you can administer, custom fields and their ' +
+      'options, a space’s schemes and roles, and Plans. For Jira admins — a separate ' +
+      'connection from Jira above (its own Atlassian app), so connecting one does not ' +
+      'connect the other.',
+    toolPrefix: 'jira_admin_*',
+    category: 'atlassian',
+    keywords: [
+      'jira admin',
+      'administration',
+      'configuration',
+      'custom fields',
+      'field options',
+      'schemes',
+      'workflows',
+      'spaces',
+      'plans',
+      'advanced roadmaps',
+    ],
+    suite: 'atlassian',
+    grantProviders: ['atlassian-admin'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
     capabilityKey: 'atlassian-confluence',
     configKey: 'atlassian-confluence',
     label: 'Confluence',

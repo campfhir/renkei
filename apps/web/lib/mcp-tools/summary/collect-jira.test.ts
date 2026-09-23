@@ -117,6 +117,22 @@ describe('collectSprint', () => {
     expect(text).toContain('Sam');
     expect(section?.headline).toBe('1 assigned to you');
   });
+
+  it('keeps unassigned sprint work in the rest of the sprint', async () => {
+    // JQL `!=` never matches an empty field, so the "elsewhere" search needs
+    // an explicit EMPTY arm or unassigned issues vanish from the summary.
+    mockFetch
+      .mockResolvedValueOnce(json(FIELD_LIST))
+      .mockResolvedValueOnce(json({ issues: [] }))
+      .mockResolvedValueOnce(json({ issues: [issue('ENG-7', { assignee: null })] }));
+
+    const section = await collectSprint(context(), resolvePeriod({}));
+
+    const othersJql = String(JSON.parse(String(mockFetch.mock.calls[2]![2]?.body)).jql);
+    expect(othersJql).toContain('assignee != currentUser() OR assignee is EMPTY');
+    expect(section?.lines.join('\n')).toContain('ENG-7');
+    expect(section?.lines.join('\n')).toContain('unassigned');
+  });
 });
 
 describe('collectWorkItems', () => {

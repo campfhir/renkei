@@ -10,6 +10,7 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+import { resolveProject } from './work-types';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
@@ -114,12 +115,12 @@ export async function registerVersionTools(
       description: 'Create a new version/release in a project.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
-        projectKey: z.string().describe('Project key, e.g. SCRUM'),
+        projectKey: z.string().describe('Project key or numeric ID, e.g. SCRUM'),
         name: z.string().describe('Version name, e.g. "1.0.0"'),
         description: z.string().describe('Version description').optional(),
         startDate: z.string().describe('Start date in YYYY-MM-DD format').optional(),
         releaseDate: z.string().describe('Release date in YYYY-MM-DD format').optional(),
-        released: z.boolean().describe('Is this version released?').optional(),
+        released: z.boolean().describe('Mark the new version released right away').optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -145,32 +146,54 @@ export async function registerVersionTools(
           };
         }
 
+        // Create is POST /version with the numeric projectId in the body:
+        // /project/{key}/version only answers GET, and the key-bearing
+        // `project` body field is deprecated.
+        const project = await resolveProject(auth, String(projectKey));
+        if (!project.ok) return errText(project.reason);
+
         const body: any = {
           name: name as string,
+          projectId: Number(project.project.id),
         };
 
         if (description) body.description = description as string;
         if (startDate) body.startDate = startDate as string;
         if (releaseDate) body.releaseDate = releaseDate as string;
-        if (released !== undefined) body.released = released as boolean;
 
-        const response = await auth.fetch(
-          granularJiraScopes('jira_create_version', false),
-          `/rest/api/3/project/${projectKey}/version`,
-          {
-            method: 'POST',
-            body: JSON.stringify(body),
-          }
-        );
+        const scopes = granularJiraScopes('jira_create_version', false);
+        const response = await auth.fetch(scopes, '/rest/api/3/version', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
         if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
-        const version = (await response.json()) as any;
+        let version = (await response.json()) as any;
+
+        // Jira ignores `released` on create ("not applicable when creating a
+        // version"), so releasing takes a second call. The version exists by
+        // now either way — a failed release is reported, never thrown.
+        let releaseNote = '';
+        if (released === true && version?.id) {
+          try {
+            const update = await auth.fetch(scopes, `/rest/api/3/version/${version.id}`, {
+              method: 'PUT',
+              body: JSON.stringify({ released: true }),
+            });
+            if (update.ok) version = (await update.json()) as any;
+            else releaseNote = await describeJiraAuthFailure(update);
+          } catch (error) {
+            releaseNote = error instanceof Error ? error.message : String(error);
+          }
+        }
 
         const lines = [
           `Version created: ${version.name}`,
           `ID: ${version.id}`,
+          `Project: ${project.project.key}`,
           version.description ? `Description: ${version.description}` : '',
           `Released: ${version.released || false}`,
+          releaseNote ? `Marking it released failed: ${releaseNote}` : '',
         ].filter(Boolean);
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };

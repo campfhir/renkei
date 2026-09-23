@@ -24,6 +24,14 @@ export const ATLASSIAN_JSM = 'atlassian-jsm';
  * context fields, just the same adapter and OAuth mechanics.
  */
 export const ATLASSIAN_CONFLUENCE = 'atlassian-confluence';
+/**
+ * A fourth 3LO app ("Renkei Jira Admin"): Jira administration on its own
+ * grant. It holds CLASSIC scopes (manage:jira-configuration and friends) —
+ * the Plans and Forms APIs accept nothing else, and one Atlassian app cannot
+ * mix classic with the granular scopes the Jira app carries — and only Jira
+ * admins ever grant it.
+ */
+export const ATLASSIAN_ADMIN = 'atlassian-admin';
 
 const TOKEN_ENDPOINT = 'https://auth.atlassian.com/oauth/token';
 
@@ -45,8 +53,9 @@ export function readAtlassianMetadata(metadata: Record<string, unknown>): {
 export class AtlassianAdapter implements ProviderAdapter {
   // client_secret is required for the refresh_token grant, same as the initial
   // code exchange. Omitting it yields 401 access_denied / "Unauthorized".
-  // The provider key is a parameter because both Atlassian apps (ATLASSIAN
-  // and ATLASSIAN_JSM) refresh identically — only the rows differ.
+  // The provider key is a parameter because every 3LO Atlassian app
+  // (ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE, ATLASSIAN_ADMIN)
+  // refreshes identically — only the rows differ.
   constructor(
     private readonly clientSecret: string,
     readonly provider: string = ATLASSIAN

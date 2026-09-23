@@ -183,6 +183,12 @@ export const COACH_ANCHORS = [
   'confluence-scopes',
   /** Connect Confluence. */
   'confluence-connect',
+  /** The Jira Administration panel. */
+  'card-jira-admin',
+  /** Its capability picker. */
+  'jira-admin-scopes',
+  /** Connect Jira Administration. */
+  'jira-admin-connect',
   /** The Bitbucket panel. */
   'card-bitbucket',
   /** Its capability picker. */

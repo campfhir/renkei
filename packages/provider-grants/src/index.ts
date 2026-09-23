@@ -25,6 +25,7 @@ export {
   ATLASSIAN,
   ATLASSIAN_JSM,
   ATLASSIAN_CONFLUENCE,
+  ATLASSIAN_ADMIN,
   AtlassianAdapter,
   readAtlassianMetadata,
 } from './atlassian';
@@ -32,7 +33,13 @@ export { ATLASSIAN_BITBUCKET, BitbucketAdapter, readBitbucketMetadata } from './
 export { GITHUB, GitHubAdapter, readGitHubMetadata } from './github';
 export { WEBEX_USER, WebexUserAdapter } from './webex';
 export { ZOOM, ZoomAdapter } from './zoom';
-export { ONBASE, OnBaseAdapter, ONBASE_ADMIN, OnBaseAdminAdapter, type OnBaseRefresh } from './onbase';
+export {
+  ONBASE,
+  OnBaseAdapter,
+  ONBASE_ADMIN,
+  OnBaseAdminAdapter,
+  type OnBaseRefresh,
+} from './onbase';
 export { MICROSOFT, MicrosoftAdapter } from './microsoft';
 export {
   outlookIndexingOf,
