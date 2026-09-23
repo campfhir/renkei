@@ -8,6 +8,7 @@
  * pencil is dropped in favor of the title bar's overflow menu, which has
  * its own Rename. Under the name, the project the chat sits in, when it
  * does — and, for a code project, the branch its checkout is on right now.
+ * A `tag` (a code project's "history") sits beside the name.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -17,11 +18,14 @@ import { Icon, ICONS } from '@/components/icons';
 export default function ChatTitle({
   title,
   project,
+  tag = null,
   canRename,
   onRename,
 }: {
   title: string;
   project: { id: string; name: string; href: string; branch?: string | null } | null;
+  /** A short word after the name — what state the chat is in, when that matters. */
+  tag?: string | null;
   canRename: boolean;
   /** Saves the new name; resolves to the name as stored, or null on failure. */
   onRename: ((title: string) => Promise<string | null>) | null;
@@ -83,6 +87,14 @@ export default function ChatTitle({
           >
             {title}
           </h1>
+          {tag ? (
+            <span
+              data-testid="chat-tag"
+              className="shrink-0 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+            >
+              {tag}
+            </span>
+          ) : null}
           {canRename ? (
             <button
               type="button"

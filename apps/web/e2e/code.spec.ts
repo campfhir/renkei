@@ -115,6 +115,12 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
        VALUES ($1, $2, $3, $4, $5, NOW())`,
       [ids.seededChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.seededProjectId, ids.seededChatTitle]
     );
+    // The one chat in the project is its active chat, as starting it
+    // through the app would have left it (lib/code/active-chat.ts).
+    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
+      ids.seededChatId,
+      ids.seededProjectId,
+    ]);
   } finally {
     await client.end();
   }
@@ -507,7 +513,7 @@ test.describe('code projects', () => {
 
     // ── A chat started in the project: its title bar names the project,
     //    links back to it, and carries the code buttons ──
-    await main.getByRole('link', { name: 'New chat' }).click();
+    await main.getByRole('button', { name: 'New chat' }).click();
     // First hit on the chat page in this test — and, beside it, the code
     // pane's own bundle: dev-mode's on-demand compile can outrun the
     // default assertion timeout.

@@ -15,6 +15,7 @@ import { resolveChatAccess } from '@/lib/chat/access';
 import { loadChatView } from '@/lib/chat/chat-view';
 import { deleteChat, updateChat, type ChatPatch } from '@/lib/chat/store';
 import { parseToolConfig } from '@/lib/chat/tool-config';
+import { releaseActiveChat } from '@/lib/code/active-chat';
 
 const TITLE_MAX_CHARS = 200;
 
@@ -61,6 +62,9 @@ export async function PATCH(
 
   const updated = await updateChat(db, tenantId, session.subject, chatId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such chat');
+  // Archiving a code project's active chat leaves the project with none
+  // until the next new chat; unarchiving does not bring it back.
+  if (patch.archived === true) await releaseActiveChat(db, tenantId, chatId);
   return NextResponse.json({ ok: true });
 }
 
