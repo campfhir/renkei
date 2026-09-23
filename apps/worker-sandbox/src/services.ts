@@ -41,6 +41,7 @@ import type { DB } from '@renkei/db';
 import {
   SERVICE_MAX_PER_SUBJECT,
   SERVICE_START_TIMEOUT_MS,
+  filterLogEntries,
   mergeLogEntries,
   parseStampedLogs,
   type ServiceLogEntry,
@@ -373,19 +374,31 @@ export class ServiceManager {
     return this.reconcile(row);
   }
 
+  /**
+   * One service's recent lines, stamped by the engine: `lines` from the
+   * end, or only those after `since`, and only those `match` keeps —
+   * so a reader asks for the error it is after rather than everything.
+   */
   async logs(
     target: store.ServiceTarget,
     name: string,
-    lines: number
-  ): Promise<{ service: store.StoredService; logs: string }> {
+    input: { lines: number; since: string | null; match: RegExp | null }
+  ): Promise<{ service: store.StoredService; entries: ServiceLogEntry[] }> {
     const service = await this.get(target, name);
     if (!service.containerId || service.status === 'gone') {
-      return { service, logs: '' };
+      return { service, entries: [] };
     }
     try {
-      return { service, logs: await this.engine.containerLogs(service.containerId, lines) };
+      const text = await this.engine.containerLogs(service.containerId, input.lines, {
+        timestamps: true,
+        ...(input.since ? { since: input.since } : {}),
+      });
+      return {
+        service,
+        entries: filterLogEntries(parseStampedLogs(service.name, text), input.match),
+      };
     } catch (error) {
-      if (error instanceof DockerError && error.status === 404) return { service, logs: '' };
+      if (error instanceof DockerError && error.status === 404) return { service, entries: [] };
       throw new ServiceOpError('engine', `The logs could not be read: ${engineMessage(error)}`);
     }
   }
@@ -400,7 +413,7 @@ export class ServiceManager {
    */
   async tail(
     target: store.ServiceTarget,
-    input: { lines: number; since: string | null }
+    input: { lines: number; since: string | null; match?: RegExp | null }
   ): Promise<{ entries: ServiceLogEntry[]; truncated: boolean; unreadable: string[] }> {
     const rows = await store.listServices(this.db, target);
     const perService: ServiceLogEntry[][] = [];
@@ -413,7 +426,9 @@ export class ServiceManager {
           timestamps: true,
           ...(input.since ? { since: input.since } : {}),
         });
-        perService.push(parseStampedLogs(service.name, text));
+        perService.push(
+          filterLogEntries(parseStampedLogs(service.name, text), input.match ?? null)
+        );
       } catch (error) {
         if (!(error instanceof DockerError && error.status === 404)) unreadable.push(service.name);
       }

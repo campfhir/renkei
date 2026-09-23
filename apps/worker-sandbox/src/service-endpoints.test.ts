@@ -195,11 +195,17 @@ function scriptedEngine() {
       if (options?.timestamps) {
         const name = containers.get(id)?.spec.labels['renkei.sandbox.name'] ?? id;
         const base = name === 'db' ? 0 : 1;
-        return [
+        const stamped = [
           `2026-09-23T10:00:0${base}.000000000Z ${name} starting`,
           `2026-09-23T10:00:0${base + 2}.500000000Z ${name} ready`,
-        ]
-          .filter((line) => !options.since || line > `${options.since}`)
+          `2026-09-23T10:00:0${base + 4}.000000000Z ERROR: ${name} lost a connection`,
+        ];
+        // The engine's since is seconds.nanos; compared against each stamp's own seconds.
+        const sinceSeconds = options.since ? Number(options.since) : null;
+        return stamped
+          .filter(
+            (line) => sinceSeconds === null || Date.parse(line.slice(0, 30)) / 1000 > sinceSeconds
+          )
           .join('\n');
       }
       return engine.logs;
@@ -562,13 +568,43 @@ describe('a running service and the project’s commands', () => {
     expect(listed.json.services[0].error).toContain('exit 137');
   });
 
-  it('logs read the container’s tail; stop removes it and its row', async () => {
+  it('logs read the container’s tail, stamped; since and match narrow it; stop removes it and its row', async () => {
     await post(enabledBase, 'services/start', { ...TARGET, name: 'db', image: 'postgres' });
-    engine.logs = 'database system is ready to accept connections\n';
     const logs = await post(enabledBase, 'services/logs', { ...TARGET, name: 'db', lines: 50 });
     expect(logs.status).toBe(200);
-    expect(logs.json.logs).toContain('ready to accept');
-    expect(engine.calls.at(-1)).toEqual({ op: 'logs', args: ['c1', 50] });
+    expect(logs.json.logs).toBe(
+      '2026-09-23T10:00:00.000000000Z db starting\n2026-09-23T10:00:02.500000000Z db ready\n2026-09-23T10:00:04.000000000Z ERROR: db lost a connection'
+    );
+    expect(logs.json).toMatchObject({ count: 3, lastAt: '2026-09-23T10:00:04.000000000Z' });
+    expect(engine.calls.at(-1)).toEqual({ op: 'logs', args: ['c1', 50, { timestamps: true }] });
+    // Only the error, and only what came after a stamp from the last answer.
+    const errors = await post(enabledBase, 'services/logs', {
+      ...TARGET,
+      name: 'db',
+      match: 'error',
+    });
+    expect(errors.json.logs).toBe('2026-09-23T10:00:04.000000000Z ERROR: db lost a connection');
+    expect(errors.json.count).toBe(1);
+    const after = await post(enabledBase, 'services/logs', {
+      ...TARGET,
+      name: 'db',
+      since: '2026-09-23T10:00:02.500000000Z',
+    });
+    expect(engine.calls.at(-1)).toEqual({
+      op: 'logs',
+      args: ['c1', 200, { timestamps: true, since: '1790157602.500000001' }],
+    });
+    expect(after.json.logs).toBe('2026-09-23T10:00:04.000000000Z ERROR: db lost a connection');
+    // A duration is read back from now; a bad since or match is refused.
+    await post(enabledBase, 'services/logs', { ...TARGET, name: 'db', since: '5m' });
+    const asked = engine.calls.at(-1)!.args[2] as { since?: string };
+    expect(Number(asked.since)).toBeGreaterThan(Date.now() / 1000 - 301);
+    expect(
+      (await post(enabledBase, 'services/logs', { ...TARGET, name: 'db', since: 'ages' })).status
+    ).toBe(400);
+    expect(
+      (await post(enabledBase, 'services/logs', { ...TARGET, name: 'db', match: '(' })).status
+    ).toBe(400);
 
     const stopped = await post(enabledBase, 'services/stop', { ...TARGET, name: 'db' });
     expect(stopped.status).toBe(200);
@@ -599,7 +635,19 @@ describe('tail', () => {
       all.json.entries.map(
         (entry: { service: string; line: string }) => `${entry.service}: ${entry.line}`
       )
-    ).toEqual(['db: db starting', 'cache: cache starting', 'db: db ready', 'cache: cache ready']);
+    ).toEqual([
+      'db: db starting',
+      'cache: cache starting',
+      'db: db ready',
+      'cache: cache ready',
+      'db: ERROR: db lost a connection',
+      'cache: ERROR: cache lost a connection',
+    ]);
+    const matched = await post(enabledBase, 'services/tail', { ...TARGET, match: '^error' });
+    expect(matched.json.entries.map((entry: { line: string }) => entry.line)).toEqual([
+      'ERROR: db lost a connection',
+      'ERROR: cache lost a connection',
+    ]);
     expect(all.json.truncated).toBe(false);
     expect(all.json.unreadable).toEqual([]);
     // Following: the engine is asked for lines after the last stamp, one nanosecond on.
@@ -609,7 +657,7 @@ describe('tail', () => {
     expect(
       asked.every(
         (call) =>
-          call.args[2] && (call.args[2] as { since?: string }).since === '1790157603.500000001'
+          call.args[2] && (call.args[2] as { since?: string }).since === '1790157605.000000001'
       )
     ).toBe(true);
     expect((await post(enabledBase, 'services/tail', { ...TARGET, since: 'nope' })).status).toBe(

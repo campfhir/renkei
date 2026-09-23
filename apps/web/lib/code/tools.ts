@@ -47,6 +47,7 @@ import {
   sbServiceLogs,
   sbServiceStart,
   sbServiceStop,
+  sbServicesTail,
   sbWorkspaceEdit,
   sbWorkspaceExec,
   sbWorkspaceFind,
@@ -400,29 +401,76 @@ function serviceTools(
       def: {
         name: 'code_service_logs',
         description:
-          'The last lines a service wrote (both streams) — to see whether it is ready, or why it ' +
-          `stopped. Default ${SERVICE_LOGS_DEFAULT_LINES} lines, at most ${SERVICE_LOGS_MAX_LINES}.`,
+          'Lines a service wrote (both streams), each stamped with when — to see whether it is ' +
+          'ready, or why it stopped. Ask for what you need rather than everything: `match` keeps ' +
+          'only lines a word or regular expression matches (case-insensitive; "error|fatal", ' +
+          '"relation .* does not exist"), `since` only lines after a point — a stamp copied from ' +
+          'an earlier answer (everything after that line) or a duration back from now ("30s", ' +
+          '"5m", "2h"). Without a name, every service’s lines come interleaved in time order, ' +
+          `each prefixed with its service. Default ${SERVICE_LOGS_DEFAULT_LINES} lines per service ` +
+          `from the end, at most ${SERVICE_LOGS_MAX_LINES}; filtered lines count against nothing, ` +
+          'so a narrow match over many lines is cheap.',
         inputSchema: {
           type: 'object',
           properties: {
-            name: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$' },
+            name: {
+              type: 'string',
+              pattern: '^[a-z][a-z0-9-]{0,31}$',
+              description: 'One service; omit for all of them, interleaved.',
+            },
             lines: { type: 'integer', minimum: 1, maximum: SERVICE_LOGS_MAX_LINES },
+            since: {
+              type: 'string',
+              maxLength: 64,
+              description: 'A stamp from an earlier answer, or a duration such as 5m.',
+            },
+            match: {
+              type: 'string',
+              maxLength: 512,
+              description: 'Keep only lines matching this word or regular expression.',
+            },
           },
-          required: ['name'],
         },
       },
       readOnly: true,
       async execute(input) {
         const lines = num(input.lines);
-        const got = await sbServiceLogs(target, {
-          name: str(input.name),
+        const narrow = {
           ...(lines !== undefined ? { lines } : {}),
-        });
+          ...(str(input.since) ? { since: str(input.since) } : {}),
+          ...(str(input.match) ? { match: str(input.match) } : {}),
+        };
+        const name = str(input.name);
+        if (!name) {
+          const tailed = await sbServicesTail(target, narrow);
+          if (!tailed.ok) return failed(tailed.err);
+          const body = tailed.val.entries
+            .map((entry) => `${entry.at} ${entry.service} ${entry.line}`)
+            .join('\n');
+          const notes = [
+            tailed.val.truncated ? 'the oldest lines were dropped' : '',
+            tailed.val.unreadable.length
+              ? `logs could not be read for ${tailed.val.unreadable.join(', ')}`
+              : '',
+          ].filter(Boolean);
+          const last = tailed.val.entries.at(-1)?.at;
+          return textResult(
+            `${tailed.val.entries.length} line${tailed.val.entries.length === 1 ? '' : 's'} across every service` +
+              (last ? ` (pass since: "${last}" next time for what comes after)` : '') +
+              (notes.length ? ` [${notes.join('; ')}]` : '') +
+              `\n--- logs ---\n${body || '(nothing yet)'}`
+          );
+        }
+        const got = await sbServiceLogs(target, { name, ...narrow });
         if (!got.ok) return failed(got.err);
         const head = renderService(got.val.service);
-        const body = got.val.logs.trim() ? got.val.logs.replace(/\s+$/, '') : '(no output yet)';
+        const body = got.val.logs.trim() ? got.val.logs.replace(/\s+$/, '') : '(nothing yet)';
         return textResult(
-          `${head}\n${got.val.truncated ? '[the start was cut]\n' : ''}--- logs ---\n${body}`
+          `${head}\n${got.val.count} line${got.val.count === 1 ? '' : 's'}` +
+            (got.val.lastAt
+              ? ` (pass since: "${got.val.lastAt}" next time for what comes after)`
+              : '') +
+            `${got.val.truncated ? ' [the start was cut]' : ''}\n--- logs ---\n${body}`
         );
       },
     },

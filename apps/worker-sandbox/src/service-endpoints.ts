@@ -5,8 +5,8 @@
  *
  *   services/start   { tenantId, subject, name, image, env?, exports? }
  *   services/list    { tenantId, subject }
- *   services/logs    { tenantId, subject, name, lines? }
- *   services/tail    { tenantId, subject, lines?, since? }   every service, one stream
+ *   services/logs    { tenantId, subject, name, lines?, since?, match? }
+ *   services/tail    { tenantId, subject, lines?, since?, match? }   every service, one stream
  *   services/stop    { tenantId, subject, name }
  *   services/rules/list     { tenantId }
  *   services/rules/set      { tenantId, id?, pattern, note?, registryUsername?, registrySecret?, clearCredential? }
@@ -31,7 +31,9 @@ import {
   SERVICE_LOGS_MAX_CHARS,
   SERVICE_TAIL_DEFAULT_LINES,
   clipOutput,
-  sinceAfter,
+  compileLogMatch,
+  renderLogEntries,
+  sinceOf,
   normalizeImageRule,
   serviceLogLines,
   validateServiceEnv,
@@ -279,31 +281,34 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
         case 'logs': {
           const name = validateServiceName(body.name);
           if (!name.ok) return sendError(response, 400, 'bad_request', name.message);
-          const { service, logs } = await manager.logs(
-            target,
-            name.name,
-            serviceLogLines(body.lines)
-          );
-          const clipped = clipOutput(logs, SERVICE_LOGS_MAX_CHARS);
+          const since = sinceOf(body.since);
+          if (!since.ok) return sendError(response, 400, 'bad_request', since.message);
+          const match = compileLogMatch(body.match);
+          if (!match.ok) return sendError(response, 400, 'bad_request', match.message);
+          const { service, entries } = await manager.logs(target, name.name, {
+            lines: serviceLogLines(body.lines),
+            since: since.since,
+            match: match.match,
+          });
+          const clipped = clipOutput(renderLogEntries(entries, false), SERVICE_LOGS_MAX_CHARS);
           return sendJson(response, 200, {
             service: serviceWire(service),
             logs: clipped.text,
             truncated: clipped.clipped,
+            count: entries.length,
+            lastAt: entries.length ? entries[entries.length - 1]!.at : null,
           });
         }
         case 'tail': {
-          if (body.since !== undefined && body.since !== null && sinceAfter(body.since) === null) {
-            return sendError(
-              response,
-              400,
-              'bad_request',
-              'since is a stamp from an earlier tail.'
-            );
-          }
+          const since = sinceOf(body.since);
+          if (!since.ok) return sendError(response, 400, 'bad_request', since.message);
+          const match = compileLogMatch(body.match);
+          if (!match.ok) return sendError(response, 400, 'bad_request', match.message);
           const tailed = await manager.tail(target, {
             lines:
               body.lines === undefined ? SERVICE_TAIL_DEFAULT_LINES : serviceLogLines(body.lines),
-            since: sinceAfter(body.since),
+            since: since.since,
+            match: match.match,
           });
           return sendJson(response, 200, tailed);
         }

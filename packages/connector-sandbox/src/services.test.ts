@@ -6,6 +6,10 @@
  */
 
 import {
+  compileLogMatch,
+  filterLogEntries,
+  renderLogEntries,
+  sinceOf,
   mergeLogEntries,
   normalizeStamp,
   parseStampedLogs,
@@ -234,5 +238,45 @@ describe('a combined tail', () => {
     expect(sinceAfter('2026-09-23T15:27:56Z')).toBe('1790177276.000000001');
     expect(sinceAfter('yesterday')).toBeNull();
     expect(sinceAfter(5)).toBeNull();
+  });
+});
+
+describe('since and match', () => {
+  it('reads a duration back from now, a stamp one nanosecond on, or nothing', () => {
+    const now = Date.parse('2026-09-23T16:00:00Z');
+    expect(sinceOf('5m', now)).toEqual({ ok: true, since: `${now / 1000 - 300}.000000000` });
+    expect(sinceOf('2h', now)).toEqual({ ok: true, since: `${now / 1000 - 7200}.000000000` });
+    expect(sinceOf('2026-09-23T15:27:56Z', now)).toEqual({
+      ok: true,
+      since: '1790177276.000000001',
+    });
+    expect(sinceOf(undefined, now)).toEqual({ ok: true, since: null });
+    expect(sinceOf('', now)).toEqual({ ok: true, since: null });
+    expect(sinceOf('yesterday', now).ok).toBe(false);
+    expect(sinceOf(5, now).ok).toBe(false);
+  });
+
+  it('keeps matching lines only, case-insensitively, and renders them reusably', () => {
+    const entries = parseStampedLogs(
+      'db',
+      '2026-09-23T10:00:01Z FATAL: password not set\n2026-09-23T10:00:02Z ready\n2026-09-23T10:00:03Z ERROR: relation missing\n'
+    );
+    const match = compileLogMatch('fatal|error');
+    expect(match.ok).toBe(true);
+    if (!match.ok) return;
+    const kept = filterLogEntries(entries, match.match);
+    expect(kept.map((entry) => entry.line)).toEqual([
+      'FATAL: password not set',
+      'ERROR: relation missing',
+    ]);
+    expect(renderLogEntries(kept, false)).toBe(
+      '2026-09-23T10:00:01.000000000Z FATAL: password not set\n2026-09-23T10:00:03.000000000Z ERROR: relation missing'
+    );
+    expect(renderLogEntries(kept.slice(0, 1), true)).toBe(
+      '2026-09-23T10:00:01.000000000Z db FATAL: password not set'
+    );
+    expect(filterLogEntries(entries, null)).toHaveLength(3);
+    expect(compileLogMatch('(').ok).toBe(false);
+    expect(compileLogMatch('x'.repeat(600)).ok).toBe(false);
   });
 });

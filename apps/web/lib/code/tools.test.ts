@@ -18,6 +18,7 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbServiceLogs: jest.fn(),
   sbServiceStart: jest.fn(),
   sbServiceStop: jest.fn(),
+  sbServicesTail: jest.fn(),
   sbWorkspaceEdit: jest.fn(),
   sbWorkspaceExec: jest.fn(),
   sbWorkspaceFind: jest.fn(),
@@ -565,5 +566,75 @@ describe('services beside the checkout', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('Allowed: docker.io/library/postgres');
     expect(result.meta).toEqual({});
+  });
+});
+
+describe('service logs, narrowed', () => {
+  const list = () =>
+    codeTools({
+      target: TARGET,
+      workspaceId: WS_ID,
+      repoFullName: 'acme/demo',
+      repoProvider: 'atlassian-bitbucket',
+      origin: 'https://r.example',
+      servicesEnabled: true,
+    }).find((tool) => tool.def.name === 'code_service_logs')!;
+
+  it('one service: match and since go to the worker, the stamps come back for reuse', async () => {
+    client.sbServiceLogs.mockResolvedValue({
+      ok: true,
+      val: {
+        service: {
+          id: 's1',
+          name: 'db',
+          image: 'docker.io/library/postgres:16',
+          status: 'running',
+          error: null,
+          host: '172.20.0.3',
+          ports: [5432],
+          exportNames: [],
+          createdAt: '',
+          lastUsedAt: '',
+          expiresAt: '',
+        },
+        logs: '2026-09-23T10:00:04.000000000Z ERROR: relation "users" does not exist',
+        truncated: false,
+        count: 1,
+        lastAt: '2026-09-23T10:00:04.000000000Z',
+      },
+    });
+    const result = await list().execute({ name: 'db', match: 'error', since: '5m' }, context);
+    expect(client.sbServiceLogs).toHaveBeenCalledWith(TARGET, {
+      name: 'db',
+      match: 'error',
+      since: '5m',
+    });
+    expect(result.content[0]?.text).toContain(
+      '1 line (pass since: "2026-09-23T10:00:04.000000000Z"'
+    );
+    expect(result.content[0]?.text).toContain('ERROR: relation "users" does not exist');
+  });
+
+  it('no name: every service interleaved, each line named', async () => {
+    client.sbServicesTail.mockResolvedValue({
+      ok: true,
+      val: {
+        entries: [
+          { service: 'db', at: '2026-09-23T10:00:01.000000000Z', line: 'ready' },
+          {
+            service: 'cache',
+            at: '2026-09-23T10:00:02.000000000Z',
+            line: 'Ready to accept connections',
+          },
+        ],
+        truncated: false,
+        unreadable: [],
+      },
+    });
+    const result = await list().execute({ match: 'ready' }, context);
+    expect(client.sbServicesTail).toHaveBeenCalledWith(TARGET, { match: 'ready' });
+    expect(result.content[0]?.text).toContain('2 lines across every service');
+    expect(result.content[0]?.text).toContain('2026-09-23T10:00:01.000000000Z db ready');
+    expect(result.content[0]?.text).toContain('cache Ready to accept connections');
   });
 });

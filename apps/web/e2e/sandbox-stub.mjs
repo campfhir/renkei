@@ -403,10 +403,15 @@ function handleServices(op, body, response) {
     case 'logs': {
       const service = scope.services.get(String(body.name ?? ''));
       if (!service) return error(response, 404, 'not_found', 'No such service — see the list.');
+      const at = new Date(Date.parse(service.createdAt) + 1000)
+        .toISOString()
+        .replace('Z', '000000Z');
       return json(response, 200, {
         service: wireService(service),
-        logs: 'database system is ready to accept connections\n',
+        logs: `${at} database system is ready to accept connections`,
         truncated: false,
+        count: 1,
+        lastAt: at,
       });
     }
     case 'tail': {

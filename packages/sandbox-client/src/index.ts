@@ -1325,10 +1325,24 @@ export async function sbServiceStop(
   return service ? { ok: true, val: service } : malformed();
 }
 
+/**
+ * One service's recent lines, each stamped by the engine (the stamp is
+ * what to pass as `since` next time). `since` is such a stamp or a
+ * duration back from now (`5m`); `match` keeps only lines a word or a
+ * regular expression matches, case-insensitively.
+ */
 export async function sbServiceLogs(
   target: SandboxTarget,
-  input: { name: string; lines?: number }
-): Promise<ClientResult<{ service: WireService; logs: string; truncated: boolean }>> {
+  input: { name: string; lines?: number; since?: string; match?: string }
+): Promise<
+  ClientResult<{
+    service: WireService;
+    logs: string;
+    truncated: boolean;
+    count: number;
+    lastAt: string | null;
+  }>
+> {
   const result = await callJson('services/logs', { ...target, ...input });
   if (!result.ok) return result;
   if (!isRecord(result.val) || typeof result.val.logs !== 'string') return malformed();
@@ -1336,7 +1350,13 @@ export async function sbServiceLogs(
   if (!service) return malformed();
   return {
     ok: true,
-    val: { service, logs: result.val.logs, truncated: result.val.truncated === true },
+    val: {
+      service,
+      logs: result.val.logs,
+      truncated: result.val.truncated === true,
+      count: typeof result.val.count === 'number' ? result.val.count : 0,
+      lastAt: optStr(result.val.lastAt) ?? null,
+    },
   };
 }
 
@@ -1349,11 +1369,12 @@ export interface WireServiceLogEntry {
 
 /**
  * Every service's recent lines in one time-ordered stream; with `since`
- * (the `at` of the last entry already shown) only what came after it.
+ * (the `at` of the last entry already shown, or a duration such as `5m`)
+ * only what came after it, with `match` only the lines it keeps.
  */
 export async function sbServicesTail(
   target: SandboxTarget,
-  input: { lines?: number; since?: string } = {}
+  input: { lines?: number; since?: string; match?: string } = {}
 ): Promise<
   ClientResult<{ entries: WireServiceLogEntry[]; truncated: boolean; unreadable: string[] }>
 > {

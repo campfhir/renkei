@@ -24,7 +24,7 @@
  * pull — the worker seals that value, this package never sees it.
  */
 
-import { ENV_NAME_PATTERN, validateEnvName } from './workspaces';
+import { ENV_NAME_PATTERN, GREP_PATTERN_MAX_CHARS, validateEnvName } from './workspaces';
 
 // ─── Bounds ─────────────────────────────────────────────────────────────────
 
@@ -569,4 +569,72 @@ export function sinceAfter(stamp: unknown): string | null {
     whole += 1;
   }
   return `${whole}.${String(nanos).padStart(9, '0')}`;
+}
+
+/**
+ * What "since" a log reader asks for, as the engine takes it: a stamp
+ * from an earlier answer (everything after that line — `sinceAfter`),
+ * or a duration back from now (`30s`, `5m`, `2h`). Empty means from the
+ * start of what is kept; anything else is refused with why.
+ */
+export function sinceOf(
+  value: unknown,
+  nowMs = Date.now()
+): { ok: true; since: string | null } | { ok: false; message: string } {
+  if (value === undefined || value === null || value === '') return { ok: true, since: null };
+  if (typeof value !== 'string') {
+    return {
+      ok: false,
+      message: 'since is a stamp from an earlier answer, or a duration such as 5m.',
+    };
+  }
+  const duration = /^(\d{1,6})([smh])$/.exec(value.trim());
+  if (duration) {
+    const unit = { s: 1, m: 60, h: 3_600 }[duration[2]!]!;
+    const seconds = Math.max(0, Math.floor(nowMs / 1000) - Number(duration[1]) * unit);
+    return { ok: true, since: `${seconds}.000000000` };
+  }
+  const after = sinceAfter(value);
+  if (after) return { ok: true, since: after };
+  return {
+    ok: false,
+    message:
+      'since is a stamp from an earlier answer (2026-09-23T15:27:56.471800000Z), or a duration such as 30s, 5m or 2h.',
+  };
+}
+
+/** A case-insensitive pattern to keep only matching lines; a plain word works, so does a regex. */
+export function compileLogMatch(
+  input: unknown
+): { ok: true; match: RegExp | null } | { ok: false; message: string } {
+  if (input === undefined || input === null || input === '') return { ok: true, match: null };
+  if (typeof input !== 'string')
+    return { ok: false, message: 'match is a word or a regular expression.' };
+  if (input.length > GREP_PATTERN_MAX_CHARS) {
+    return { ok: false, message: `match is at most ${GREP_PATTERN_MAX_CHARS} characters.` };
+  }
+  try {
+    return { ok: true, match: new RegExp(input, 'i') };
+  } catch {
+    return { ok: false, message: `match is not a usable regular expression: ${input}` };
+  }
+}
+
+export function filterLogEntries(
+  entries: ServiceLogEntry[],
+  match: RegExp | null
+): ServiceLogEntry[] {
+  return match ? entries.filter((entry) => match.test(entry.line)) : entries;
+}
+
+/**
+ * Entries as text a reader can reuse: the stamp first (what to pass as
+ * `since` next time), the service when several are mixed, then the line.
+ */
+export function renderLogEntries(entries: ServiceLogEntry[], withService: boolean): string {
+  return entries
+    .map((entry) =>
+      withService ? `${entry.at} ${entry.service} ${entry.line}` : `${entry.at} ${entry.line}`
+    )
+    .join('\n');
 }
