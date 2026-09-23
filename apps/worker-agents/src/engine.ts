@@ -3154,6 +3154,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
         });
         if (!completion.ok) {
           const kind = completion.err.type;
+          logger.error('model error deciding branch {branchId} in run {runId}: {kind} {message}', {
+            component: 'worker-agents/engine',
+            runId: run.id,
+            tenantId: run.tenant_id,
+            branchId: branch.id,
+            kind,
+            message: completion.err.message ?? '',
+          });
           if (kind === 'auth') {
             await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
             return {
@@ -3444,6 +3452,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
         });
         if (!completion.ok) {
           const kind = completion.err.type;
+          logger.error('model error deciding loop {loopId} in run {runId}: {kind} {message}', {
+            component: 'worker-agents/engine',
+            runId: run.id,
+            tenantId: run.tenant_id,
+            loopId: loop.id,
+            kind,
+            message: completion.err.message ?? '',
+          });
           if (kind === 'auth') {
             await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
             return {
@@ -3707,6 +3723,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       });
       if (!completion.ok) {
         const kind = completion.err.type;
+        logger.error('model error on step {stepId} in run {runId}: {kind} {message}', {
+          component: 'worker-agents/engine',
+          runId: run.id,
+          tenantId: run.tenant_id,
+          stepId: step.id,
+          kind,
+          message: completion.err.message ?? '',
+        });
         if (kind === 'auth') throw new RunAbort('llm_auth', 'The model rejected the API key.');
         if (kind === 'invalid_request') {
           throw new RunAbort(
