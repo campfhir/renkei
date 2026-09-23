@@ -59,6 +59,9 @@ export default function AtlassianConnector({
     displayName: string | null;
     ceiling: string[];
     priorScopes: string[] | null;
+    /** The review list for this person's proposed admin changes. */
+    changesHref: string;
+    pendingChanges: number;
   };
   confluence?: {
     connected: boolean;
@@ -128,6 +131,8 @@ export default function AtlassianConnector({
             displayName={jiraAdmin.displayName}
             ceiling={jiraAdmin.ceiling}
             priorScopes={jiraAdmin.priorScopes}
+            changesHref={jiraAdmin.changesHref}
+            pendingChanges={jiraAdmin.pendingChanges}
           />
         )}
 

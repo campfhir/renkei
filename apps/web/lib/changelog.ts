@@ -61,7 +61,13 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'Jira Administration, for Jira admins',
         detail:
-          'A new connection on the Connectors page, separate from Jira. Once connected, the assistant can say what you can administer, list custom fields and show a field’s contexts and options, lay out how a space is configured — its schemes, which of them other spaces share, and who holds each role — and read your Plans. It only reads, for now. An organization admin sets it up under Connector setup and can limit it to Jira admins.',
+          'A new connection on the Connectors page, separate from Jira. Once connected, the assistant can say what you can administer, list custom fields and show a field’s contexts and options, lay out how a space is configured — its schemes, which of them other spaces share, and who holds each role — and read your Plans. An organization admin sets it up under Connector setup and can limit it to Jira admins.',
+      },
+      {
+        kind: 'added',
+        title: 'Change a field’s options, after you review it',
+        detail:
+          'Ask the assistant — or have an agent — add, rename, disable or reorder the options of a Jira select field, and it proposes the change instead of making it. Nothing reaches Jira until you open the proposal’s review page and apply it, on your own Jira Administration connection. Renkei checks the field again first and stops at anything that has changed since; nothing is ever deleted. Proposals wait under Jira admin changes, linked from the Jira Administration card, for a day.',
       },
       {
         kind: 'fixed',

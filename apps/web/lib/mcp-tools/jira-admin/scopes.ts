@@ -38,6 +38,15 @@ export function jiraAdminScopeFor(toolName: string): string[] {
     case 'jira_admin_get_plan':
       return ['read:jira-user', 'read:jira-work'];
 
+    // Proposing reads the field, its contexts and options, and names the
+    // spaces a context covers (read:jira-work, manage:jira-configuration);
+    // the option writes it proposes take manage:jira-configuration too, so
+    // a grant without it could never apply what it proposed. The list tool
+    // reads only Renkei's own table, but lives and dies with proposing.
+    case 'jira_admin_propose_option_changes':
+    case 'jira_admin_list_changes':
+      return ['read:jira-work', 'manage:jira-configuration'];
+
     // A tool nobody mapped stands on the whole admin set: registering it
     // for less could only produce 401s.
     default:

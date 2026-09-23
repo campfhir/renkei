@@ -69,6 +69,12 @@ function typeKey(field: Record<string, unknown>): string {
   return custom.includes(':') ? custom.slice(custom.lastIndexOf(':') + 1) : custom;
 }
 
+/** The field's type key when its values come from options (`select`…), else null. */
+export function optionTypeOf(field: Record<string, unknown>): string | null {
+  const key = typeKey(field);
+  return OPTION_TYPES.has(key) ? key : null;
+}
+
 export function fieldTypeLabel(field: Record<string, unknown>): string {
   const key = typeKey(field);
   return TYPE_LABELS[key] ?? (key || str(rec(field.schema).type) || 'unknown type');

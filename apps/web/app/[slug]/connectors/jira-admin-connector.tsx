@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import ConnectorIcon from '@/components/connector-icon';
 import ConnectorStatusBadge from '@/components/connector-status-badge';
 import { ConnectorShell, ConnectorHeading } from './connector-shell';
@@ -23,6 +24,8 @@ export default function JiraAdminConnector({
   displayName,
   ceiling,
   priorScopes,
+  changesHref,
+  pendingChanges,
   nested = false,
 }: {
   tenantId: string;
@@ -32,6 +35,10 @@ export default function JiraAdminConnector({
   ceiling: string[];
   /** Scopes on the user's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
+  /** The review list for this person's proposed admin changes. */
+  changesHref: string;
+  /** How many of them are waiting for review. */
+  pendingChanges: number;
   /**
    * Rendered inside the Atlassian suite card rather than as a card of its
    * own. Presentation only: the connect and disconnect controls stay here,
@@ -56,6 +63,7 @@ export default function JiraAdminConnector({
           <>
             Connected as <strong>{displayName}</strong>. Custom fields and their options, space
             configuration and Plans are read on this grant, with the Jira permissions you hold.
+            Changes are proposed first, and reach Jira only when you apply them.
           </>
         ) : (
           'For Jira admins: custom fields and their options, how each space is configured, and Plans. A separate Atlassian app from Jira, so it connects on its own — and Jira still checks your admin rights on every call.'
@@ -73,6 +81,20 @@ export default function JiraAdminConnector({
           scopesAnchor="jira-admin-scopes"
           connectAnchor="jira-admin-connect"
         />
+      )}
+
+      {connected && (
+        <p className="mt-2 text-sm">
+          <Link
+            href={changesHref}
+            data-testid="jira-admin-changes-link"
+            className="font-medium text-blue-700 hover:underline dark:text-blue-400"
+          >
+            {pendingChanges > 0
+              ? `${pendingChanges} proposed ${pendingChanges === 1 ? 'change' : 'changes'} waiting for your review`
+              : 'Proposed changes'}
+          </Link>
+        </p>
       )}
 
       {connected && (

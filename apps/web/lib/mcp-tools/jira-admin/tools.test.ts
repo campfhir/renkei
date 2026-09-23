@@ -95,7 +95,7 @@ describe('registration', () => {
     expect(names).not.toContain('jira_admin_get_space_configuration');
   });
 
-  it('marks every tool read-only — this stage changes nothing in Jira', async () => {
+  it('marks every tool read-only but the proposal — and no tool can apply one', async () => {
     const configs: { name: string; readOnly: unknown }[] = [];
     const server = {
       registerTool: (name: string, config: { annotations?: { readOnlyHint?: boolean } }) => {
@@ -107,8 +107,14 @@ describe('registration', () => {
       { tenantId: 'tenant-1', subject: 'subject-1' } as MCPToolContext,
       stubAuth
     );
-    expect(configs.length).toBe(6);
-    expect(configs.every((config) => config.readOnly === true)).toBe(true);
+    expect(configs.length).toBe(8);
+    // Proposing is an Act tool (read-only mode hides it) that writes only a
+    // Renkei change request; applying one is a signed-in browser click, so
+    // nothing on the MCP surface applies, confirms or approves anything.
+    expect(configs.filter((config) => config.readOnly !== true).map((c) => c.name)).toEqual([
+      'jira_admin_propose_option_changes',
+    ]);
+    expect(configs.some((config) => /apply|confirm|approve/.test(config.name))).toBe(false);
   });
 });
 

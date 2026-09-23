@@ -421,6 +421,18 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     short: 'Deleted an issue',
   },
 
+  // ---- Jira Administration ---------------------------------------------
+  // Its own capability key ('jira-admin'), so its own preferences group. A
+  // proposal changes nothing in Jira; what happened is that a change now
+  // waits for its owner's review, and the receipt links the review page —
+  // for an agent run, the notification is how the owner hears of it.
+  jira_admin_propose_option_changes: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Jira admin change for your review',
+    short: 'Proposed a field option change for your review',
+  },
+
   // ---- Jira Service Management -----------------------------------------
   // Same capability key as Jira ('jira'), so these appear in the same
   // preferences group. Their wording says "service request" precisely so

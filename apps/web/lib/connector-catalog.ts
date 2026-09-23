@@ -123,9 +123,10 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     label: 'Jira Administration',
     summary:
       'Look up how Jira is configured: what you can administer, custom fields and their ' +
-      'options, a space’s schemes and roles, and Plans. For Jira admins — a separate ' +
-      'connection from Jira above (its own Atlassian app), so connecting one does not ' +
-      'connect the other.',
+      'options, a space’s schemes and roles, and Plans — and propose changes to field ' +
+      'options, which reach Jira only when you apply them from their review page. For Jira ' +
+      'admins — a separate connection from Jira above (its own Atlassian app), so ' +
+      'connecting one does not connect the other.',
     toolPrefix: 'jira_admin_*',
     category: 'atlassian',
     keywords: [

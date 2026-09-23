@@ -493,6 +493,108 @@ function handleBitbucket(request, url, response) {
   return error(response, 404, 'not_found');
 }
 
+/**
+ * Jira administration's custom field option endpoints, stood in for: the
+ * app is pointed here with JIRA_ADMIN_API_BASE_URL, so applying a change
+ * request from its review page runs against real wire shapes without
+ * Atlassian. One option list per (site, field, context), seeded on first
+ * read; the specs use a fresh site id per run, so a rerun against a stub
+ * left running never sees the last run's options.
+ */
+const JIRA_OPTIONS = new Map();
+let nextOptionId = 20000;
+
+function jiraOptions(key) {
+  if (!JIRA_OPTIONS.has(key)) {
+    JIRA_OPTIONS.set(key, [
+      { id: '10001', value: 'Customer', disabled: false },
+      { id: '10002', value: 'Partner', disabled: false },
+      { id: '10003', value: 'Legacy', disabled: false },
+    ]);
+  }
+  return JIRA_OPTIONS.get(key);
+}
+
+function jiraError(response, status, message) {
+  json(response, status, { errorMessages: [message], errors: {} });
+}
+
+function handleJiraAdmin(request, url, response) {
+  const match =
+    /^\/jira\/([^/]+)\/rest\/api\/3\/field\/([^/]+)\/context\/([^/]+)\/option(\/move)?$/.exec(
+      url.pathname
+    );
+  if (!match) return jiraError(response, 404, 'The stub does not answer that path.');
+  const [, cloudId, fieldId, contextId, move] = match;
+  const options = jiraOptions(`${cloudId}|${fieldId}|${contextId}`);
+  const sameLevel = (a, b) => (a.optionId ?? null) === (b.optionId ?? null);
+
+  if (request.method === 'GET' && !move) {
+    const startAt = Number(url.searchParams.get('startAt') ?? '0');
+    const maxResults = Number(url.searchParams.get('maxResults') ?? '100');
+    const values = options.slice(startAt, startAt + maxResults);
+    return json(response, 200, {
+      startAt,
+      maxResults,
+      total: options.length,
+      isLast: startAt + values.length >= options.length,
+      values,
+    });
+  }
+  void readBody(request).then((body) => {
+    if (request.method === 'POST' && !move) {
+      const created = [];
+      for (const option of body.options ?? []) {
+        const candidate = { value: option.value, optionId: option.optionId };
+        if (
+          options.some(
+            (existing) => sameLevel(existing, candidate) && existing.value === option.value
+          )
+        ) {
+          return jiraError(response, 400, `The option ${option.value} already exists.`);
+        }
+        const row = {
+          id: String(nextOptionId++),
+          value: option.value,
+          disabled: option.disabled === true,
+          ...(option.optionId ? { optionId: option.optionId } : {}),
+        };
+        options.push(row);
+        created.push(row);
+      }
+      return json(response, 200, { options: created });
+    }
+    if (request.method === 'PUT' && !move) {
+      const updates = body.options ?? [];
+      // Jira's rule: any unknown id and nothing is updated.
+      if (updates.some((update) => !options.some((option) => option.id === update.id))) {
+        return jiraError(response, 404, 'One or more options were not found.');
+      }
+      for (const update of updates) {
+        const option = options.find((candidate) => candidate.id === update.id);
+        if (typeof update.value === 'string') option.value = update.value;
+        if (typeof update.disabled === 'boolean') option.disabled = update.disabled;
+      }
+      return json(response, 200, {
+        options: updates.map((update) => options.find((option) => option.id === update.id)),
+      });
+    }
+    if (request.method === 'PUT' && move) {
+      const ids = body.customFieldOptionIds ?? [];
+      const moving = ids.map((id) => options.find((option) => option.id === id));
+      if (moving.some((option) => !option)) {
+        return jiraError(response, 404, 'One or more options were not found.');
+      }
+      const rest = options.filter((option) => !ids.includes(option.id));
+      const ordered = body.position === 'Last' ? [...rest, ...moving] : [...moving, ...rest];
+      options.splice(0, options.length, ...ordered);
+      response.writeHead(204);
+      return response.end();
+    }
+    return jiraError(response, 405, 'Method not allowed.');
+  });
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
   if (request.method === 'GET' && url.pathname === '/health')
@@ -501,6 +603,8 @@ const server = createServer((request, response) => {
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
+  // Jira administration's option endpoints, for applying change requests.
+  if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
   if (request.headers.authorization !== `Bearer ${API_KEY}`) {
     return error(response, 401, 'unauthorized');
   }

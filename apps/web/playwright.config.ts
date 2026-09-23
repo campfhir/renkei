@@ -89,6 +89,9 @@ export default defineConfig({
         // Bitbucket is the stub too (e2e/sandbox-stub.mjs): the browser in
         // the new-project form and a project page's README read from it.
         BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
+        // And Jira administration's option endpoints: applying a change
+        // request from its review page writes to the stub, never Atlassian.
+        JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
       },
     },
   ],

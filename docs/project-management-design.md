@@ -1,12 +1,13 @@
 # Project management on Renkei — plan
 
-Written 2026-09-23. Stage 1a (the Jira Admin connector's foundation) ships
-with this document; everything after it is the agreed direction, not code
+Written 2026-09-23. Stage 1a (the Jira Admin connector's foundation) shipped
+with this document, and stage 1b (change requests and the first writes)
+right after it; everything after that is the agreed direction, not code
 yet.
 
 ## What this is solving
 
-Three decisions set the shape of this plan:
+Five decisions set the shape of this plan:
 
 - **We are on Jira Premium**, so the Plans API (Advanced Roadmaps) is ours
   to use.
@@ -14,6 +15,11 @@ Three decisions set the shape of this plan:
   changing requirements.** Second is getting status out of people.
 - **Every Jira admin change needs a person to confirm it.** No model, agent
   or external MCP client applies an admin change on its own.
+- **Only Jira admins make changes.** A change request is its proposer's to
+  apply, on their own grant; there is no queue for people without admin
+  rights to route requests through.
+- **Space templates live in a Renkei table.** Not a file in a repository
+  and not a Confluence page — nothing new to depend on.
 
 The stance underneath: Renkei does not become a project management tool.
 Jira stays the system of record for work, plans and dates (`RENKEI.md`
@@ -66,14 +72,14 @@ Scopes are classic, and each arrives with the stage whose tools call it — a
 scope nothing calls only widens the consent screen
 (`docs/atlassian-admin-scopes.md` holds the derivation):
 
-| Scope                       | Unlocks                                                                                                                                           | Stage      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| `read:jira-user`            | who the connected person is                                                                                                                       | 1a         |
-| `read:jira-work`            | the access check, custom field search, a space's roles and permission/notification schemes, Plans and Forms reads                                 | 1a         |
-| `manage:jira-configuration` | field contexts and options, work types, statuses and workflows, the issue type / screen / field configuration / workflow schemes, creating spaces | 1a         |
-| `manage:jira-project`       | screens and tabs, space settings, form templates                                                                                                  | 1b, 1c, 1e |
-| `write:jira-work`           | Plans writes: create and update plans, teams, capacity                                                                                            | 1d         |
-| `offline_access`            | refresh tokens (request-time only)                                                                                                                | 1a         |
+| Scope                       | Unlocks                                                                                                                                           | Stage  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `read:jira-user`            | who the connected person is                                                                                                                       | 1a     |
+| `read:jira-work`            | the access check, custom field search, a space's roles and permission/notification schemes, Plans and Forms reads                                 | 1a     |
+| `manage:jira-configuration` | field contexts and options, work types, statuses and workflows, the issue type / screen / field configuration / workflow schemes, creating spaces | 1a     |
+| `manage:jira-project`       | screens and tabs, space settings, form templates                                                                                                  | 1c, 1e |
+| `write:jira-work`           | Plans writes: create and update plans, teams, capacity                                                                                            | 1d     |
+| `offline_access`            | refresh tokens (request-time only)                                                                                                                | 1a     |
 
 Adding a scope later means adding it to the app in the developer console,
 to the catalog, and a reconnect for everyone already connected — the usual
@@ -104,8 +110,8 @@ owner's session, `apps/web/lib/chat/widget-tools.ts`), but in an external
 MCP Apps host the card and the model call the confirm tool with the same
 token. The server cannot tell a click from a model call; keeping app-only
 tools away from the model is the host's promise, not ours. For admin
-changes that is not enough. Proposal tools still return a card — with a link
-to the review page where a confirm button would be.
+changes that is not enough. Proposal tools return a link to the review page
+where a confirm button would be.
 
 Change requests also give:
 
@@ -116,9 +122,10 @@ Change requests also give:
   holds — the option already exists, the field was renamed.
 - **An audit trail.** Who proposed, who applied, what each operation
   returned: a record of every admin change Renkei made.
-- **Delegation** (1c, below): a person without Jira admin rights proposes,
-  and a Jira admin applies it. Apply always runs on the grant of the person
-  who clicks Apply.
+
+A request belongs to the person it was proposed for — their chat, their MCP
+client, their agent — and only they can apply it, on their own grant. Only
+Jira admins make changes, so there is no hand-off to anyone else.
 
 ### Stages
 
@@ -151,16 +158,20 @@ Turning 1a on:
    card) and connects; `jira_admin_check_access` confirms what they can
    administer.
 
-**1b — Change requests and the first writes.** The change-request store,
-the review page, the apply route, and proposals for the most frequent
-maintenance chores: add, rename, disable and reorder field options; create
-a custom field with a space-scoped context; add a field to a screen tab.
+**1b — Change requests and the first writes** (shipped; "1b as built"
+below). The change-request store, the review page, the apply route, and
+proposals for the most frequent maintenance chore: a field's options — add,
+rename, disable, enable and reorder them. Creating a custom field and
+adding a field to a screen tab moved to 1c: a new field is of no use until
+it is on a screen, and screens take `manage:jira-project`, which 1c adds
+anyway.
 
 **1c — Spaces.** Create a space from a template or "like space X" (reusing
 X's schemes); roles and their members; components and versions; a board
-from a filter. **Blueprints**: capture a space's configuration as a
-declarative document, plan the difference against the live site, and apply
-it as one change request. And the **propose-anyone, apply-admin queue**.
+from a filter; a custom field with a space-scoped context, placed on a
+screen tab. **Blueprints**: capture a space's configuration as a
+declarative document, kept in a Renkei table, plan the difference against
+the live site, and apply it as one change request.
 
 **1d — Plans.** Create and update plans from spaces, boards and filters;
 scheduling settings; plan-only teams with capacity and members;
@@ -168,6 +179,49 @@ cross-project releases.
 
 **1e — Forms.** List, capture and stamp form templates between spaces;
 publish a form to issue create or to a request type.
+
+### 1b as built
+
+- **The table.** `jira_admin_change_requests` (migration 120): the owner
+  (tenant, subject), the agent when an agent run proposed it, the Jira site
+  (cloud id) it was read from, the kind (`field_options` so far), a title,
+  the proposer's reason, the exact operations as JSON, the status, and —
+  once applied — what each operation returned, who applied it and when.
+  Expiry is a timestamp read at apply time, not a sweep. Store:
+  `apps/web/lib/jira-admin/change-requests.ts`.
+- **Proposing.** `jira_admin_propose_option_changes` (an Act tool, so org
+  read-only mode hides it) takes a field by id or exact name, a context by
+  id or name — or a space key, meaning that space's own context, or the
+  global one when it has none (and it says so) — and changes by option
+  value: `add`, `rename`, `disable`, `enable`, `move` or
+  `sortAlphabetically`, one level at a time (`parent` for a cascading
+  select's children). It reads the live options, resolves names to ids, and
+  refuses anything that could not apply ("Vendor already exists — disabled,
+  enable it instead") before saving. It writes nothing to Jira. Its result
+  links the review page; for an agent run, the act notification carries the
+  same link. `replaces` supersedes one of the person's pending requests.
+  `jira_admin_list_changes` lists them, and shows one with its results.
+- **Reviewing.** `/[slug]/jira-admin/changes` lists a person's requests,
+  waiting ones first; the Jira Administration card links there with a count.
+  A request's page lists every operation in plain words and where it lands,
+  with a global context called out, and — when applying is refused right
+  now (read-only mode, the connector switched off, outside its audience,
+  not connected, a grant without `manage:jira-configuration`) — says why in
+  place of a working Apply button.
+- **Applying.** `POST /api/tenant/{id}/jira-admin/changes/{id}/apply`,
+  browser session only, owner only (anyone else's request is a 404). It
+  re-asks the same org rules the MCP endpoint asks before registering the
+  tool, refuses a request proposed for a different Jira site than the
+  grant's, and claims the row with a conditional update so a double click
+  applies once. Then it reads the field's options fresh and runs each
+  operation in order — add, rename, enable, disable, move — re-checking it
+  first against what is there now, and stops at the first that no longer
+  holds or that Jira refuses. What ran stays (Jira has no transaction);
+  the results say which operations were done, failed or not run, and the
+  status reads applied, partly applied or failed. Every apply is an audit
+  event, `jira_admin.change_applied`. `…/cancel` withdraws a pending one.
+- **Nothing deletes.** Disabling keeps an option on the issues that carry
+  it; there is no delete operation.
 
 ### Guardrails
 
@@ -193,16 +247,11 @@ publish a form to issue create or to a request type.
 ### Keeping spaces in step with changing requirements
 
 Most admin time is not the first setup; it is the trickle of changes after
-it. Three pieces go after that:
+it. Two pieces go after that:
 
 1. **Propose in plain language, apply in one click.** "Add a Vendor option
    to the Source field in OPS" becomes a change request. (1b)
-2. **Anyone proposes, a Jira admin applies.** A project lead without admin
-   rights proposes; the request lands in the Jira admins' queue; an admin
-   reviews it and applies it on their own grant. Today that is a ticket to
-   the admin team and a wait. (1c — needs change requests addressable to an
-   audience, not only to their owner.)
-3. **Drift.** A space stood up from a blueprint is compared to it on a
+2. **Drift.** A space stood up from a blueprint is compared to it on a
    schedule; a difference is reported, never auto-corrected. (After 1c.)
 
 ## Phase 2 — getting status out of people
@@ -248,12 +297,14 @@ Then the agents on top:
 A Renkei task database, a Gantt editor, time tracking, boards, and Jira
 Automation rule management (OAuth apps are refused).
 
-## Open questions
+## Decided
 
-- Where blueprints live: a Renkei table, a file in a repository (reviewed
-  as a pull request), or a Confluence page.
-- Whether the propose-anyone queue routes to an IdP group, or to whoever
-  holds a `jira-admin` grant.
+- **Blueprints live in a Renkei table** (1c): tenant-scoped rows, no
+  repository or Confluence dependency. (Was: a table, a file in a
+  repository, or a Confluence page.)
+- **No propose-anyone queue.** Only Jira admins make changes, so a request
+  is only ever its proposer's to apply. (Was: a queue routed to an IdP group
+  or to whoever holds a `jira-admin` grant.)
 
 ## Fixed alongside
 

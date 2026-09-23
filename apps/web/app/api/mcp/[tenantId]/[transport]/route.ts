@@ -537,7 +537,9 @@ const handler = async (
             'Renkei: org tools over MCP. Tools are named <connector>_<verb>_<noun> and titled ' +
             '"Connector · Read|Act". Connectors: Jira (jira_*), Jira Service Management ' +
             '(jsm_*, jsm_ops_*), Jira Administration (jira_admin_*: site configuration, a ' +
-            "space's schemes and roles, and Plans — for Jira admins, on its own connection), " +
+            "space's schemes and roles, and Plans — for Jira admins, on its own connection; " +
+            'its changes are proposals the user applies from a Renkei review page, never from ' +
+            'a tool call, so share the link a proposal returns), ' +
             'WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), ' +
             'SharePoint (sharepoint_*), OneDrive (onedrive_*), Confluence (confluence_*), ' +
             'Zoom (zoom_*), org network file shares (fileshare_*, SMB/SFTP, connected with ' +
