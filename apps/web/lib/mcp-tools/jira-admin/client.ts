@@ -180,6 +180,40 @@ export async function jiraAdminGet(
 }
 
 /**
+ * Every record of a startAt-paged listing, page after page until Jira says
+ * the last one came back — `truncated` when there were more than `maxPages`
+ * pages, so a caller can say "and more" rather than pretend it saw all.
+ */
+export async function jiraAdminPages(
+  scope: JiraAdminLogScope,
+  access: JiraAdminAccess,
+  pathAndQuery: string,
+  maxPages = 10
+): Promise<
+  | { ok: true; values: Record<string, unknown>[]; truncated: boolean }
+  | { ok: false; error: string; status?: number }
+> {
+  const values: Record<string, unknown>[] = [];
+  const joiner = pathAndQuery.includes('?') ? '&' : '?';
+  for (let page = 0; page < maxPages; page++) {
+    const result = await jiraAdminGet(
+      scope,
+      access,
+      `${pathAndQuery}${joiner}startAt=${page * PAGE_SIZE}&maxResults=${PAGE_SIZE}`
+    );
+    if (!result.ok) return result;
+    const batch = records(result.body);
+    values.push(...batch);
+    if (rec(result.body).isLast !== false || batch.length === 0) {
+      return { ok: true, values, truncated: false };
+    }
+  }
+  return { ok: true, values, truncated: true };
+}
+
+const PAGE_SIZE = 100;
+
+/**
  * POST or PUT a JSON body. Only the change-request executor
  * (lib/jira-admin) calls this — no MCP tool writes to Jira directly; a tool
  * proposes, and a person applies from a signed-in session.

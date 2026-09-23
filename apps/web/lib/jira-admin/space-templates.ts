@@ -11,7 +11,8 @@
  *
  * The document keeps the GROUPS in each role and never the people: a
  * template describes a kind of space, and who works in the next one is
- * named when it is created.
+ * named when it is created. Components are kept the same way — by name,
+ * description and who their issues go to, without a lead.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -34,6 +35,17 @@ export interface TemplateRole {
   groups: { groupId: string; name: string }[];
 }
 
+export interface TemplateComponent {
+  name: string;
+  description: string | null;
+  /**
+   * Who a new issue with the component goes to: 'PROJECT_DEFAULT',
+   * 'PROJECT_LEAD' or 'UNASSIGNED' — never 'COMPONENT_LEAD', since a
+   * template holds no people to lead one.
+   */
+  assigneeType: string;
+}
+
 export interface TemplateDocument {
   version: 1;
   projectTypeKey: string;
@@ -41,6 +53,22 @@ export interface TemplateDocument {
   category: { id: string; name: string } | null;
   schemes: SpaceSchemes;
   roles: TemplateRole[];
+  /** Null in a template saved before Renkei kept components. */
+  components: TemplateComponent[] | null;
+}
+
+/** A component as a template keeps it: a component lead's issues fall to the space's default. */
+export function templateComponent(component: {
+  name: string;
+  description: string | null;
+  assigneeType: string;
+}): TemplateComponent {
+  return {
+    name: component.name,
+    description: component.description,
+    assigneeType:
+      component.assigneeType === 'COMPONENT_LEAD' ? 'PROJECT_DEFAULT' : component.assigneeType,
+  };
 }
 
 export interface SpaceTemplate {
@@ -70,7 +98,31 @@ export function documentFromSpace(space: SpaceConfiguration): TemplateDocument {
       roleName: role.roleName,
       groups: role.groups,
     })),
+    components: space.components.map(templateComponent),
   };
+}
+
+/** A template's components in a phrase — or that it predates keeping them. */
+export function componentsText(document: Pick<TemplateDocument, 'components'>): string {
+  if (document.components === null) return 'not kept (saved before Renkei kept components)';
+  if (document.components.length === 0) return 'none';
+  return document.components.map((component) => component.name).join(', ');
+}
+
+const COMPONENT_ASSIGNEES = new Set(['PROJECT_DEFAULT', 'PROJECT_LEAD', 'UNASSIGNED']);
+
+/** Stored components, or null when the document predates them. */
+export function readTemplateComponents(value: unknown): TemplateComponent[] | null {
+  if (!Array.isArray(value)) return null;
+  return records(value)
+    .filter((component) => str(component.name))
+    .map((component) => ({
+      name: str(component.name),
+      description: str(component.description) || null,
+      assigneeType: COMPONENT_ASSIGNEES.has(str(component.assigneeType))
+        ? str(component.assigneeType)
+        : 'PROJECT_DEFAULT',
+    }));
 }
 
 function schemeRef(value: unknown): SchemeRef | null {
@@ -133,6 +185,7 @@ export function readTemplateDocument(value: unknown): TemplateDocument | null {
           .filter((group) => typeof group.name === 'string')
           .map((group) => ({ groupId: str(group.groupId), name: str(group.name) })),
       })),
+    components: readTemplateComponents(record.components),
   };
 }
 
@@ -373,6 +426,23 @@ export function templateDifferences(
     if (extra.length > 0) {
       differences.push(
         `${role.roleName}: ${space.key} also has ${extra.map((group) => `group “${group.name}”`).join(', ')}, which the template does not.`
+      );
+    }
+  }
+  // Components by name; a template saved before they were kept has no say.
+  if (template.components) {
+    const names = (list: { name: string }[]) => new Set(list.map((c) => c.name.toLowerCase()));
+    const have = names(space.components);
+    const want = names(template.components);
+    const missing = template.components.filter((c) => !have.has(c.name.toLowerCase()));
+    const extra = space.components.filter((c) => !want.has(c.name.toLowerCase()));
+    const quoted = (list: { name: string }[]) => list.map((c) => `“${c.name}”`).join(', ');
+    if (missing.length > 0) {
+      differences.push(`Components: ${space.key} is missing ${quoted(missing)}.`);
+    }
+    if (extra.length > 0) {
+      differences.push(
+        `Components: ${space.key} also has ${quoted(extra)}, which the template does not.`
       );
     }
   }

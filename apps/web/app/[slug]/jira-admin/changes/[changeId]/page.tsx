@@ -67,7 +67,7 @@ export default async function JiraAdminChangePage({
   // Apply is off before anyone presses it.
   const gate =
     state === 'pending'
-      ? await applyGate(db, tenant.id, session.subject, session.roles, change.kind)
+      ? await applyGate(db, tenant.id, session.subject, session.roles, change)
       : null;
 
   return (
@@ -192,7 +192,7 @@ export default async function JiraAdminChangePage({
       {state === 'interrupted' && (
         <p className="mt-4 text-sm text-amber-800 dark:text-amber-300">
           Applying this was cut off before it finished, so some of it may have reached Jira. Check
-          the field in Jira before asking for it again.
+          Jira before asking for it again.
         </p>
       )}
     </div>

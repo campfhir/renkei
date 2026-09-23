@@ -7,8 +7,11 @@
  * a template's schemes are still there), and stores the exact operations.
  *
  * "Like OPS" reads OPS live and copies what a template would keep — its
- * schemes, type, default assignee, category and role groups — but not the
- * people in its roles: who works in the new space is named in `members`.
+ * schemes, type, default assignee, category, role groups and components —
+ * but not the people in its roles: who works in the new space is named in
+ * `members`. More components, and the space's first versions, can be named
+ * too; those two are manage:jira-project writes, so the result says when
+ * the connection cannot apply them yet.
  */
 
 import { z } from 'zod';
@@ -19,6 +22,7 @@ import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
 import { errText, jiraAdminGet, rec, records, str, type JiraAdminAccess } from './client';
 import { reviewPrefix } from './review-link';
+import { ATLASSIAN_ADMIN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import {
   CHANGE_REQUEST_TTL_HOURS,
   cancelChangeRequest,
@@ -34,15 +38,27 @@ import {
 } from '@/lib/jira-admin/space-config';
 import {
   CREATE_SPACE_KIND,
+  DATE_PATTERN,
   SPACE_KEY_PATTERN,
+  createSpaceScopes,
   planSpaceCreation,
   spaceTitle,
   type CreateSpacePayload,
   type SpaceBase,
+  type VersionPlan,
 } from '@/lib/jira-admin/space-creation';
 import { documentFromSpace, findSpaceTemplate } from '@/lib/jira-admin/space-templates';
 
 const MAX_MEMBERS_PER_ROLE = 50;
+
+/** The connect-picker boxes that carry these scopes, for "reconnect with … ticked". */
+function scopeBoxes(scopes: string[]): string {
+  return ATLASSIAN_ADMIN_SCOPE_OPTIONS.filter((option) =>
+    option.scopes.some((scope) => scopes.includes(scope))
+  )
+    .map((option) => `“${option.label}”`)
+    .join(' and ');
+}
 
 /** Every project role on the site, by id and name — for roles a template does not mention. */
 async function siteRoles(
@@ -73,7 +89,9 @@ export async function registerProposeSpaceTools(
         'and the user applies it from the Renkei review page linked in the result (it expires ' +
         `in ${CHANGE_REQUEST_TTL_HOURS} hours). Give the user that link. The new space shares ` +
         'those schemes rather than copying them, and the review page says so. People in the ' +
-        'source space’s roles are not copied — name them in members.',
+        'source space’s roles are not copied — name them in members. The template’s or source ' +
+        'space’s components come along; name more in components, and the first versions in ' +
+        'versions.',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: z.object({
         key: z
@@ -113,6 +131,22 @@ export async function registerProposeSpaceTools(
           .max(20)
           .describe('People and groups to add to each role, beyond the template’s groups')
           .optional(),
+        components: z
+          .array(z.string().min(1).max(255))
+          .max(50)
+          .describe('Components to add beyond the template’s or source space’s, by name')
+          .optional(),
+        versions: z
+          .array(
+            z.object({
+              name: z.string().min(1).max(255).describe('e.g. 2026.1'),
+              startDate: z.string().regex(DATE_PATTERN).describe('YYYY-MM-DD').optional(),
+              releaseDate: z.string().regex(DATE_PATTERN).describe('YYYY-MM-DD').optional(),
+            })
+          )
+          .max(20)
+          .describe('Versions to create in the new space')
+          .optional(),
         reason: z
           .string()
           .max(1000)
@@ -149,6 +183,24 @@ export async function registerProposeSpaceTools(
           'Pass exactly one of template (a saved template) or likeSpace (a space key).'
         );
       }
+      const versions: VersionPlan[] = [];
+      for (const entry of Array.isArray(args.versions) ? args.versions.map(rec) : []) {
+        const version = {
+          name: text(entry.name),
+          startDate: text(entry.startDate) || null,
+          releaseDate: text(entry.releaseDate) || null,
+        };
+        const badDate = [version.startDate, version.releaseDate].find(
+          (date) => date !== null && !DATE_PATTERN.test(date)
+        );
+        if (!version.name) return errText('Each version needs a name.');
+        if (badDate)
+          return errText(`Version ${version.name}: “${badDate}” is not a YYYY-MM-DD date.`);
+        if (version.startDate && version.releaseDate && version.startDate > version.releaseDate) {
+          return errText(`Version ${version.name} would be released before it starts.`);
+        }
+        versions.push(version);
+      }
 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
@@ -181,6 +233,12 @@ export async function registerProposeSpaceTools(
         }
         base = template.document;
         source = { kind: 'template', id: template.id, name: template.name };
+        if (template.document.components === null) {
+          notes.push(
+            `The template “${template.name}” was saved before Renkei kept components, so it ` +
+              'brings none; save it again with overwrite to include them.'
+          );
+        }
       } else {
         const read = await readSpaceConfiguration(context, access, likeRef);
         if (!read.ok) return errText(read.reason);
@@ -275,8 +333,22 @@ export async function registerProposeSpaceTools(
           lead: lead.value,
           base,
           members,
+          components: Array.isArray(args.components) ? args.components.map(text) : [],
+          versions,
         }),
       };
+      // Components and versions are manage:jira-project writes; say now,
+      // not at apply time, when this connection cannot make them.
+      const unheld = createSpaceScopes(payload).filter(
+        (scope) => !(context.jiraAdminScopes ?? []).includes(scope)
+      );
+      if (unheld.length > 0) {
+        notes.push(
+          `Applying this needs ${scopeBoxes(unheld)}, which your Jira Administration ` +
+            'connection does not include: reconnect it with that ticked before applying (if it ' +
+            'is not offered, an organization admin allows it under Connector setup first).'
+        );
+      }
       const reason = text(args.reason);
       const change = await createChangeRequest(db, {
         tenantId: context.tenantId,

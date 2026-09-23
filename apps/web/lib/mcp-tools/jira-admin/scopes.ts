@@ -7,8 +7,8 @@
  * never sees the tools that needed it.
  *
  * Classic scopes are coarse: reading a field's contexts or a space's schemes
- * already takes manage:jira-configuration, and Plans reads take
- * read:jira-work.
+ * already takes manage:jira-configuration, reading a screen's tabs takes
+ * manage:jira-project, and Plans reads take read:jira-work.
  */
 export function jiraAdminScopeFor(toolName: string): string[] {
   switch (toolName) {
@@ -65,6 +65,14 @@ export function jiraAdminScopeFor(toolName: string): string[] {
     // on apply, is manage:jira-configuration too.
     case 'jira_admin_propose_space':
       return ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'];
+
+    // A field for a space: the space and the field search (read:jira-work);
+    // contexts, options and the screens scheme mapping
+    // (manage:jira-configuration); screen schemes, screens, their tabs and
+    // which screens a field is on (manage:jira-project) — the same three
+    // its apply writes stand on.
+    case 'jira_admin_propose_space_field':
+      return ['read:jira-work', 'manage:jira-configuration', 'manage:jira-project'];
 
     // A tool nobody mapped stands on the whole admin set: registering it
     // for less could only produce 401s.

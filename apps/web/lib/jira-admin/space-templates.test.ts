@@ -40,10 +40,20 @@ const OPS: SpaceConfiguration = {
       users: [{ accountId: 'acct-dana', displayName: 'Dana Admin' }],
     },
   ],
+  components: [
+    {
+      id: '20000',
+      name: 'Backend',
+      description: 'Services and jobs',
+      assigneeType: 'COMPONENT_LEAD',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+    },
+    { id: '20001', name: 'Reports', description: null, assigneeType: 'PROJECT_LEAD', lead: null },
+  ],
 };
 
 describe('the template document', () => {
-  it('keeps the schemes, facts and role groups, and never the people', () => {
+  it('keeps the schemes, facts, role groups and components, and never the people', () => {
     const document = documentFromSpace(OPS);
     expect(document).toEqual({
       version: 1,
@@ -57,6 +67,11 @@ describe('the template document', () => {
           roleName: 'Administrators',
           groups: [{ groupId: 'g-admins', name: 'ops-admins' }],
         },
+      ],
+      // No component leads: Backend's issues fall to the space's default.
+      components: [
+        { name: 'Backend', description: 'Services and jobs', assigneeType: 'PROJECT_DEFAULT' },
+        { name: 'Reports', description: null, assigneeType: 'PROJECT_LEAD' },
       ],
     });
     expect(JSON.stringify(document)).not.toContain('acct-dana');
@@ -72,6 +87,11 @@ describe('the template document', () => {
         schemes: { ...document.schemes, permissionScheme: null },
       })
     ).toBeNull();
+  });
+
+  it('reads a template saved before components were kept as not knowing them', () => {
+    const { components: _dropped, ...older } = documentFromSpace(OPS);
+    expect(readTemplateDocument(JSON.parse(JSON.stringify(older)))?.components).toBeNull();
   });
 });
 
@@ -101,6 +121,10 @@ describe('comparing a space to a template', () => {
           users: [],
         },
       ],
+      components: [
+        { id: '30000', name: 'backend', description: null, assigneeType: 'UNASSIGNED', lead: null },
+        { id: '30001', name: 'Ledger', description: null, assigneeType: 'UNASSIGNED', lead: null },
+      ],
     };
     expect(templateDifferences(template, drifted)).toEqual([
       'Workflows: the template has “OPS workflows”, FIN has “Finance workflows”.',
@@ -109,6 +133,15 @@ describe('comparing a space to a template', () => {
       'Category: the template has “Internal”, FIN has none.',
       'Administrators: FIN is missing group “ops-admins”.',
       'Administrators: FIN also has group “fin-admins”, which the template does not.',
+      // By name, ignoring case: "backend" is Backend.
+      'Components: FIN is missing “Reports”.',
+      'Components: FIN also has “Ledger”, which the template does not.',
     ]);
+  });
+
+  it('does not compare components against a template that never kept them', () => {
+    expect(
+      templateDifferences({ ...template, components: null }, { ...OPS, components: [] })
+    ).toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
 /**
  * One Jira space's configuration as data: the facts a new space copies
- * (type, default assignee, category), the seven schemes it runs on, and
- * which groups and people hold each role.
+ * (type, default assignee, category), the seven schemes it runs on, which
+ * groups and people hold each role, and its components.
  *
  * Three callers: saving a space as a template, proposing a space "like
  * X", and comparing a space against a template. All three need the whole
@@ -75,6 +75,15 @@ export interface RoleActors {
   users: { accountId: string; displayName: string }[];
 }
 
+export interface SpaceComponent {
+  id: string;
+  name: string;
+  description: string | null;
+  /** Who a new issue with this component goes to: 'PROJECT_DEFAULT' | 'COMPONENT_LEAD' | 'PROJECT_LEAD' | 'UNASSIGNED'. */
+  assigneeType: string;
+  lead: { accountId: string; displayName: string } | null;
+}
+
 export interface SpaceConfiguration {
   id: string;
   key: string;
@@ -87,6 +96,7 @@ export interface SpaceConfiguration {
   lead: { accountId: string; displayName: string } | null;
   schemes: SpaceSchemes;
   roles: RoleActors[];
+  components: SpaceComponent[];
 }
 
 export type SpaceRead = { ok: true; space: SpaceConfiguration } | { ok: false; reason: string };
@@ -187,29 +197,35 @@ export async function readSpaceConfiguration(
   }
 
   const byProject = `projectId=${encodeURIComponent(id)}`;
-  const [workTypes, screens, workflows, fields, permissions, notifications, security, roles] =
-    await Promise.all([
-      jiraAdminGet(scope, access, `/rest/api/3/issuetypescheme/project?${byProject}`),
-      jiraAdminGet(scope, access, `/rest/api/3/issuetypescreenscheme/project?${byProject}`),
-      jiraAdminGet(scope, access, `/rest/api/3/workflowscheme/project?${byProject}`),
-      jiraAdminGet(scope, access, `/rest/api/3/fieldconfigurationscheme/project?${byProject}`),
-      jiraAdminGet(
-        scope,
-        access,
-        `/rest/api/3/project/${encodeURIComponent(key)}/permissionscheme`
-      ),
-      jiraAdminGet(
-        scope,
-        access,
-        `/rest/api/3/project/${encodeURIComponent(key)}/notificationscheme`
-      ),
-      jiraAdminGet(
-        scope,
-        access,
-        `/rest/api/3/project/${encodeURIComponent(key)}/issuesecuritylevelscheme`
-      ),
-      readRoles(scope, access, key),
-    ]);
+  const [
+    workTypes,
+    screens,
+    workflows,
+    fields,
+    permissions,
+    notifications,
+    security,
+    roles,
+    components,
+  ] = await Promise.all([
+    jiraAdminGet(scope, access, `/rest/api/3/issuetypescheme/project?${byProject}`),
+    jiraAdminGet(scope, access, `/rest/api/3/issuetypescreenscheme/project?${byProject}`),
+    jiraAdminGet(scope, access, `/rest/api/3/workflowscheme/project?${byProject}`),
+    jiraAdminGet(scope, access, `/rest/api/3/fieldconfigurationscheme/project?${byProject}`),
+    jiraAdminGet(scope, access, `/rest/api/3/project/${encodeURIComponent(key)}/permissionscheme`),
+    jiraAdminGet(
+      scope,
+      access,
+      `/rest/api/3/project/${encodeURIComponent(key)}/notificationscheme`
+    ),
+    jiraAdminGet(
+      scope,
+      access,
+      `/rest/api/3/project/${encodeURIComponent(key)}/issuesecuritylevelscheme`
+    ),
+    readRoles(scope, access, key),
+    jiraAdminGet(scope, access, `/rest/api/3/project/${encodeURIComponent(key)}/components`),
+  ]);
 
   const need = (name: keyof SpaceSchemes, result: JiraAdminResult, value: SchemeRef | null) => {
     if (!result.ok) return `The ${SCHEME_LABELS[name]} scheme: ${result.error}`;
@@ -243,6 +259,7 @@ export async function readSpaceConfiguration(
     return { ok: false, reason: `The issue security scheme: ${security.error}` };
   }
   if (!roles.ok) return { ok: false, reason: roles.reason };
+  if (!components.ok) return { ok: false, reason: `Components: ${components.error}` };
 
   const lead = rec(project.lead);
   const category = rec(project.projectCategory);
@@ -268,6 +285,24 @@ export async function readSpaceConfiguration(
         issueSecurityScheme: security.ok ? ref(security.body) : null,
       },
       roles: roles.roles,
+      components: records(components.body)
+        .filter((component) => str(component.name))
+        .map((component) => {
+          const componentLead = rec(component.lead);
+          return {
+            id: str(component.id),
+            name: str(component.name),
+            description: str(component.description) || null,
+            assigneeType: str(component.assigneeType) || 'PROJECT_DEFAULT',
+            lead: str(componentLead.accountId)
+              ? {
+                  accountId: str(componentLead.accountId),
+                  displayName: str(componentLead.displayName),
+                }
+              : null,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name)),
     },
   };
 }

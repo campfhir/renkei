@@ -15,14 +15,22 @@ jest.mock('@/lib/mcp-tools/registry', () => ({
   provisionedConnectorsFor: (availability: { jiraAdminAvailable: boolean }) =>
     availability.jiraAdminAvailable ? ['jira-admin'] : [],
 }));
-jest.mock('@/lib/mcp-tools/jira-admin/client', () => ({}));
+jest.mock('@/lib/logger', () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  secure: (value: unknown) => value,
+}));
+jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
+jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
+jest.mock('@renkei/provider-grants', () => ({}));
+jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
-import { applyGate } from './apply';
+import { applyGate, changeScopes } from './apply';
+import { planSpaceCreation, type CreateSpacePayload } from './space-creation';
 
 const db = {} as unknown as Kysely<DB>;
 
@@ -44,7 +52,42 @@ beforeEach(() => {
   jest.mocked(resolveConnectorAvailability).mockImplementation(async () => availability as never);
 });
 
-const gate = () => applyGate(db, 'tenant-1', 'owner', [], 'field_options');
+const gate = () => applyGate(db, 'tenant-1', 'owner', [], { kind: 'field_options', payload: {} });
+
+/** A new space, with or without components. */
+function newSpace(components: string[]): { kind: string; payload: CreateSpacePayload } {
+  return {
+    kind: 'create_space',
+    payload: {
+      source: { kind: 'space', key: 'OPS' },
+      workflowUsage: null,
+      operations: planSpaceCreation({
+        key: 'FIN',
+        name: 'Finance',
+        description: null,
+        lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+        base: {
+          projectTypeKey: 'software',
+          assigneeType: null,
+          category: null,
+          schemes: {
+            issueTypeScheme: { id: '11', name: 'a' },
+            issueTypeScreenScheme: { id: '12', name: 'b' },
+            workflowScheme: { id: '13', name: 'c' },
+            fieldConfigurationScheme: null,
+            permissionScheme: { id: '15', name: 'd' },
+            notificationScheme: { id: '16', name: 'e' },
+            issueSecurityScheme: null,
+          },
+          roles: [],
+          components: null,
+        },
+        members: [],
+        components,
+      }),
+    },
+  };
+}
 
 it('allows a connected Jira admin in an org that allows it', async () => {
   expect(await gate()).toEqual({ ok: true });
@@ -82,17 +125,38 @@ it('refuses without a connection, or without the scope the writes need', async (
     ok: false,
     reason:
       'Your Jira Administration connection does not include manage:jira-configuration. ' +
-      'Reconnect it with Site configuration ticked.',
+      'Reconnect it with Site configuration ticked (if it is not offered, an organization ' +
+      'admin allows it under Connector setup first).',
   });
 });
 
 it('names every box a new space needs that the connection lacks', async () => {
   availability = { jiraAdminAvailable: true, jiraAdminScopes: ['read:jira-user'] };
-  expect(await applyGate(db, 'tenant-1', 'owner', [], 'create_space')).toEqual({
+  expect(await applyGate(db, 'tenant-1', 'owner', [], newSpace([]))).toEqual({
     ok: false,
     reason:
       'Your Jira Administration connection does not include read:jira-work, ' +
       'manage:jira-configuration. Reconnect it with Read access & space details and Site ' +
-      'configuration ticked.',
+      'configuration ticked (if it is not offered, an organization admin allows it under ' +
+      'Connector setup first).',
   });
+});
+
+it('asks for the components permission only when the new space has components', async () => {
+  expect(await applyGate(db, 'tenant-1', 'owner', [], newSpace([]))).toEqual({ ok: true });
+  expect(await applyGate(db, 'tenant-1', 'owner', [], newSpace(['Backend']))).toEqual({
+    ok: false,
+    reason:
+      'Your Jira Administration connection does not include manage:jira-project. Reconnect ' +
+      'it with Space components, versions and screens ticked (if it is not offered, an ' +
+      'organization admin allows it under Connector setup first).',
+  });
+});
+
+it('asks for every admin scope for a change it cannot read', () => {
+  expect(changeScopes({ kind: 'create_space', payload: { nonsense: true } })).toEqual([
+    'read:jira-work',
+    'manage:jira-configuration',
+    'manage:jira-project',
+  ]);
 });

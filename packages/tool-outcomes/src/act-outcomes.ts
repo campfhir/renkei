@@ -438,6 +438,12 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Proposed a new Jira space for your review',
     short: 'Proposed a new space for your review',
   },
+  jira_admin_propose_space_field: {
+    category: 'created',
+    entity: 'change request',
+    label: 'Proposed a Jira field for a space, for your review',
+    short: 'Proposed a field for a space for your review',
+  },
 
   // ---- Jira Service Management -----------------------------------------
   // Same capability key as Jira ('jira'), so these appear in the same

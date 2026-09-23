@@ -2,11 +2,13 @@
  * Jira space templates and new spaces, end to end in a browser: an
  * organization's templates listed from the Jira Administration card, a
  * new space proposed from one reviewed with every scheme it will run on
- * and every access change labelled, then applied — creating the space and
- * filling its roles in the stand-in Jira of e2e/sandbox-stub.mjs (reached
- * through JIRA_ADMIN_API_BASE_URL), without adding a member Jira already
- * put in. And a key taken between proposal and apply stops everything
- * before anything is created.
+ * and every access change labelled, then applied — creating the space,
+ * filling its roles and adding its components and versions in the
+ * stand-in Jira of e2e/sandbox-stub.mjs (reached through
+ * JIRA_ADMIN_API_BASE_URL), without adding a member Jira already put in.
+ * A key taken between proposal and apply stops everything before anything
+ * is created, and a connection without the components permission is told
+ * to reconnect rather than offered an Apply that would fail half-way.
  *
  * The template and the proposal are seeded as the rows the tools write
  * (their behavior is covered by space-tools.test.ts), the way
@@ -108,7 +110,20 @@ const ROLES = [
 
 const DANA = { accountId: 'acct-dana', displayName: 'Dana Admin' };
 
-async function seedTenant(fixture: Fixture): Promise<string> {
+const COMPONENTS = [
+  { name: 'Backend', description: 'Services and jobs', assigneeType: 'PROJECT_DEFAULT' },
+  { name: 'Reports', description: null, assigneeType: 'PROJECT_LEAD' },
+];
+
+const ALL_SCOPES = [
+  'read:jira-user',
+  'read:jira-work',
+  'manage:jira-configuration',
+  'manage:jira-project',
+  'offline_access',
+];
+
+async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string> {
   return withDb(async (client) => {
     const tenant = [fixture.tenantId];
     await client.query('DELETE FROM jira_admin_change_requests WHERE tenant_id = $1', tenant);
@@ -168,7 +183,7 @@ async function seedTenant(fixture: Fixture): Promise<string> {
         secretbox('e2e-admin-access-token'),
         secretbox('e2e-admin-refresh-token'),
         new Date(Date.now() + 365 * 24 * 3_600_000),
-        ['read:jira-user', 'read:jira-work', 'manage:jira-configuration', 'offline_access'],
+        scopes,
         { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
       ]
     );
@@ -190,6 +205,7 @@ async function seedTenant(fixture: Fixture): Promise<string> {
           category: null,
           schemes: SCHEMES,
           roles: ROLES,
+          components: COMPONENTS,
         }),
         fixture.subject,
       ]
@@ -224,6 +240,11 @@ async function proposeSpace(
       },
       { op: 'add_role_members', ...ROLES[0], users: [DANA] },
       { op: 'add_role_members', ...ROLES[1], users: [] },
+      { op: 'add_components', components: COMPONENTS },
+      {
+        op: 'add_versions',
+        versions: [{ name: 'FY27', startDate: '2026-10-01', releaseDate: '2027-09-30' }],
+      },
     ],
   };
   const result = await withDb((client) =>
@@ -252,7 +273,9 @@ async function stubSpace(fixture: Fixture, key: string): Promise<Record<string, 
   const response = await fetch(`${STUB}/${fixture.cloudId}/rest/api/3/project/${key}`);
   if (!response.ok) return null;
   const body: unknown = await response.json();
-  return typeof body === 'object' && body !== null ? Object.fromEntries(Object.entries(body)) : null;
+  return typeof body === 'object' && body !== null
+    ? Object.fromEntries(Object.entries(body))
+    : null;
 }
 
 async function signIn(page: Page, fixture: Fixture): Promise<void> {
@@ -314,6 +337,9 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   await expect(templateCard).toContainText(
     'Roles: Administrators — ops-admins; Developers — jira-software-users'
   );
+  await expect(templateCard.getByTestId('space-template-components')).toHaveText(
+    'Components: Backend, Reports'
+  );
   await shot(page, testInfo, 'jira-admin-spaces-01-templates');
 
   // --- The proposal, reviewed. ---
@@ -325,7 +351,7 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
       'schemes changes every space on it.'
   );
   const operations = main(page).getByTestId('change-operations').locator(':scope > li');
-  await expect(operations).toHaveCount(3);
+  await expect(operations).toHaveCount(5);
   await expect(operations.nth(0)).toContainText(
     'Create the software space FIN — “Finance” — led by Dana Admin, on the schemes of ' +
       'template “Ops standard”'
@@ -339,20 +365,30 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   await expect(operations.nth(1)).toContainText(
     'Add group “ops-admins”, Dana Admin to the Administrators role'
   );
-  // Every operation changes who can see or do what, and says so.
-  await expect(main(page).getByTestId('change-operations').getByText('Access', { exact: true })).toHaveCount(3);
+  await expect(operations.nth(3)).toContainText('Add 2 components: Backend, Reports');
+  await expect(operations.nth(3).getByTestId('operation-details')).toContainText(
+    'Reports (its issues go to the space lead)'
+  );
+  await expect(operations.nth(4)).toContainText('Add 1 version: FY27');
+  // The creation and role steps change who can see or do what, and say so;
+  // components and versions do not.
+  await expect(
+    main(page).getByTestId('change-operations').getByText('Access', { exact: true })
+  ).toHaveCount(3);
   expect(await stubSpace(fixture, 'FIN')).toBeNull();
   await shot(page, testInfo, 'jira-admin-spaces-02-review');
 
   // --- Applied: the space exists on the stored schemes, its roles filled once. ---
-  await page.getByRole('button', { name: 'Apply these 3 changes to Jira' }).click();
+  await page.getByRole('button', { name: 'Apply these 5 changes to Jira' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Applied', { timeout: 30_000 });
-  await expect(operations).toHaveCount(3);
+  await expect(operations).toHaveCount(5);
   await expect(operations.nth(0)).toContainText('Done');
   await expect(operations.nth(0)).toContainText('https://e2e.atlassian.net/browse/FIN');
   // Jira's default put ops-admins in already; only Dana was added.
   await expect(operations.nth(1)).toContainText('1 already in the role.');
   await expect(operations.nth(2)).toContainText('Done');
+  await expect(operations.nth(3)).toContainText('Done');
+  await expect(operations.nth(4)).toContainText('Done');
 
   const created = await stubSpace(fixture, 'FIN');
   expect(created?.created).toMatchObject({
@@ -379,6 +415,24 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
       { type: 'atlassian-group-role-actor', actorGroup: { groupId: 'g-users', name: 'g-users' } },
     ],
   });
+  expect(created?.components).toEqual([
+    expect.objectContaining({
+      project: 'FIN',
+      name: 'Backend',
+      description: 'Services and jobs',
+      assigneeType: 'PROJECT_DEFAULT',
+    }),
+    expect.objectContaining({ project: 'FIN', name: 'Reports', assigneeType: 'PROJECT_LEAD' }),
+  ]);
+  // Versions go to the id Jira gave the new space.
+  expect(created?.versions).toEqual([
+    expect.objectContaining({
+      projectId: Number(created?.id),
+      name: 'FY27',
+      startDate: '2026-10-01',
+      releaseDate: '2027-09-30',
+    }),
+  ]);
   await expect
     .poll(async () =>
       withDb(async (client) => {
@@ -416,16 +470,42 @@ test('a key taken since the proposal stops it before anything is created', async
   await signIn(page, fixture);
 
   await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
-  await page.getByRole('button', { name: 'Apply these 3 changes to Jira' }).click();
+  await page.getByRole('button', { name: 'Apply these 5 changes to Jira' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Failed', { timeout: 30_000 });
   const operations = main(page).getByTestId('change-operations').locator(':scope > li');
   await expect(operations.nth(0)).toContainText(
     'TAKEN cannot be used now: A project with that project key already exists.'
   );
-  await expect(operations.nth(1)).toContainText('Not run');
-  await expect(operations.nth(2)).toContainText('Not run');
+  for (const index of [1, 2, 3, 4]) {
+    await expect(operations.nth(index)).toContainText('Not run');
+  }
   // The hand-made space is untouched: nothing was created or added.
   const space = await stubSpace(fixture, 'TAKEN');
   expect(space?.name).toBe('Made by hand');
   await shot(page, testInfo, 'jira-admin-spaces-05-key-taken');
+});
+
+test('a new space with components waits for a connection that can add them', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(testInfo.project.name);
+  // Connected before the components permission existed.
+  const templateId = await seedTenant(
+    fixture,
+    ALL_SCOPES.filter((scope) => scope !== 'manage:jira-project')
+  );
+  const id = await proposeSpace(fixture, templateId, 'FIN', 'Finance');
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/jira-admin/changes/${id}`);
+  await expect(
+    main(page).getByText(
+      'Your Jira Administration connection does not include manage:jira-project. Reconnect ' +
+        'it with Space components, versions and screens ticked (if it is not offered, an ' +
+        'organization admin allows it under Connector setup first).'
+    )
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply these 5 changes to Jira' })).toBeDisabled();
+  expect(await stubSpace(fixture, 'FIN')).toBeNull();
+  await shot(page, testInfo, 'jira-admin-spaces-06-needs-reconnect');
 });

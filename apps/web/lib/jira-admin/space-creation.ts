@@ -2,7 +2,7 @@
  * Creating a Jira space — the second kind of change request (stage 1c of
  * docs/project-management-design.md): a new company-managed space on the
  * schemes of a template or of an existing space, then the groups and people
- * each role should hold.
+ * each role should hold, its components and any versions named for it.
  *
  * The space runs ON those schemes, it does not get copies: that is what
  * keeps a family of spaces in step, and it is also why the review page
@@ -15,6 +15,11 @@
  * default members in at creation, and refuses to add one twice). As with
  * field options, it stops at the first operation that fails; a space that
  * was created stays created, and the results say which roles were set.
+ *
+ * Components and versions are manage:jira-project writes, where everything
+ * else here is manage:jira-configuration — so a proposal with either needs
+ * the connection's "Space components, versions and screens" permission to
+ * apply (createSpaceScopes).
  */
 
 import {
@@ -28,7 +33,11 @@ import {
 import type { OperationResult } from './change-requests';
 import type { Group, Person } from './people';
 import { SCHEME_KEYS, SCHEME_LABELS, type SchemeRef, type SpaceSchemes } from './space-config';
-import type { TemplateDocument } from './space-templates';
+import {
+  readTemplateComponents,
+  type TemplateComponent,
+  type TemplateDocument,
+} from './space-templates';
 
 export const CREATE_SPACE_KIND = 'create_space';
 
@@ -60,7 +69,28 @@ export interface RoleMembersOperation {
   users: Person[];
 }
 
-export type SpaceOperation = CreateSpaceOperation | RoleMembersOperation;
+export interface ComponentsOperation {
+  op: 'add_components';
+  components: TemplateComponent[];
+}
+
+export interface VersionPlan {
+  name: string;
+  /** YYYY-MM-DD, or null. */
+  startDate: string | null;
+  releaseDate: string | null;
+}
+
+export interface VersionsOperation {
+  op: 'add_versions';
+  versions: VersionPlan[];
+}
+
+export type SpaceOperation =
+  CreateSpaceOperation | RoleMembersOperation | ComponentsOperation | VersionsOperation;
+
+/** A calendar date as Jira takes it for a version. */
+export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface CreateSpacePayload {
   source: { kind: 'template'; id: string; name: string } | { kind: 'space'; key: string };
@@ -72,15 +102,25 @@ export interface CreateSpacePayload {
 /** What a space is built from: a template's document, or a live space read the same way. */
 export type SpaceBase = Pick<
   TemplateDocument,
-  'projectTypeKey' | 'assigneeType' | 'category' | 'schemes' | 'roles'
+  'projectTypeKey' | 'assigneeType' | 'category' | 'schemes' | 'roles' | 'components'
 >;
+
+/** The classic scopes applying this proposal takes (lib/jira-admin/apply.ts asks). */
+export function createSpaceScopes(payload: CreateSpacePayload): string[] {
+  const scopes = ['read:jira-work', 'manage:jira-configuration'];
+  const projectWrites = payload.operations.some(
+    (operation) => operation.op === 'add_components' || operation.op === 'add_versions'
+  );
+  return projectWrites ? [...scopes, 'manage:jira-project'] : scopes;
+}
 
 // ---- planning --------------------------------------------------------------
 
 /**
  * The operations for a new space: create it, then fill each role — the
  * base's groups plus whoever the proposal names — skipping roles left
- * empty.
+ * empty; then the base's components plus any more the proposal names, and
+ * the versions it names.
  */
 export function planSpaceCreation(input: {
   key: string;
@@ -89,6 +129,9 @@ export function planSpaceCreation(input: {
   lead: Person;
   base: SpaceBase;
   members: { roleId: string; roleName: string; groups: Group[]; users: Person[] }[];
+  /** Components beyond the base's, by name. */
+  components?: string[];
+  versions?: VersionPlan[];
 }): SpaceOperation[] {
   const roles = new Map<string, RoleMembersOperation>();
   const entry = (roleId: string, roleName: string) => {
@@ -124,6 +167,30 @@ export function planSpaceCreation(input: {
     }
   }
 
+  const components: TemplateComponent[] = [];
+  const named = new Set<string>();
+  for (const component of [
+    ...(input.base.components ?? []),
+    ...(input.components ?? []).map((name) => ({
+      name,
+      description: null,
+      assigneeType: 'PROJECT_DEFAULT',
+    })),
+  ]) {
+    const name = component.name.trim();
+    if (!name || named.has(name.toLowerCase())) continue;
+    named.add(name.toLowerCase());
+    components.push({ ...component, name });
+  }
+  const versions: VersionPlan[] = [];
+  for (const version of input.versions ?? []) {
+    const name = version.name.trim();
+    if (!name || versions.some((other) => other.name.toLowerCase() === name.toLowerCase())) {
+      continue;
+    }
+    versions.push({ ...version, name });
+  }
+
   return [
     {
       op: 'create_space',
@@ -139,6 +206,8 @@ export function planSpaceCreation(input: {
     ...[...roles.values()]
       .filter((role) => role.groups.length + role.users.length > 0)
       .sort((a, b) => a.roleName.localeCompare(b.roleName)),
+    ...(components.length > 0 ? [{ op: 'add_components' as const, components }] : []),
+    ...(versions.length > 0 ? [{ op: 'add_versions' as const, versions }] : []),
   ];
 }
 
@@ -208,6 +277,40 @@ export function describeSpaceOperation(
       ],
     };
   }
+  if (operation.op === 'add_components') {
+    return {
+      text: `Add ${plural(operation.components.length, 'component')}: ${operation.components
+        .map((component) => component.name)
+        .join(', ')}`,
+      access: false,
+      details: operation.components.map(
+        (component) =>
+          `${component.name}${component.description ? ` — ${component.description}` : ''}` +
+          (COMPONENT_ASSIGNEE_LABELS[component.assigneeType]
+            ? ` (${COMPONENT_ASSIGNEE_LABELS[component.assigneeType]})`
+            : '')
+      ),
+    };
+  }
+  if (operation.op === 'add_versions') {
+    return {
+      text: `Add ${plural(operation.versions.length, 'version')}: ${operation.versions
+        .map((version) => version.name)
+        .join(', ')}`,
+      access: false,
+      details: operation.versions
+        .filter((version) => version.startDate || version.releaseDate)
+        .map(
+          (version) =>
+            `${version.name}: ${[
+              version.startDate ? `starts ${version.startDate}` : '',
+              version.releaseDate ? `releases ${version.releaseDate}` : '',
+            ]
+              .filter(Boolean)
+              .join(', ')}`
+        ),
+    };
+  }
   const members = [
     ...operation.groups.map((group) => `group “${group.name}”`),
     ...operation.users.map((user) => user.displayName),
@@ -218,6 +321,16 @@ export function describeSpaceOperation(
     details: [],
   };
 }
+
+function plural(count: number, noun: string): string {
+  return count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
+}
+
+/** Only the component assignee rules worth a word: the default says nothing. */
+const COMPONENT_ASSIGNEE_LABELS: Record<string, string> = {
+  PROJECT_LEAD: 'its issues go to the space lead',
+  UNASSIGNED: 'its issues start unassigned',
+};
 
 export function describeSpaceReach(payload: CreateSpacePayload, siteUrl: string | null): string {
   const create = payload.operations.find(
@@ -332,6 +445,21 @@ function readOperation(value: unknown): SpaceOperation | null {
       users,
     };
   }
+  if (record.op === 'add_components') {
+    const components = readTemplateComponents(record.components);
+    return components && components.length > 0 ? { op: 'add_components', components } : null;
+  }
+  if (record.op === 'add_versions') {
+    const date = (value: unknown) => (DATE_PATTERN.test(str(value)) ? str(value) : null);
+    const versions = records(record.versions)
+      .filter((version) => str(version.name))
+      .map((version) => ({
+        name: str(version.name),
+        startDate: date(version.startDate),
+        releaseDate: date(version.releaseDate),
+      }));
+    return versions.length > 0 ? { op: 'add_versions', versions } : null;
+  }
   return null;
 }
 
@@ -395,7 +523,7 @@ async function createSpace(
   scope: LogScope,
   access: JiraAdminAccess,
   operation: CreateSpaceOperation
-): Promise<Step> {
+): Promise<Step & { id?: string }> {
   const check = await jiraAdminGet(
     scope,
     access,
@@ -416,6 +544,7 @@ async function createSpace(
   const key = str(rec(created.body).key) || operation.key;
   return {
     ok: true,
+    id: str(rec(created.body).id) || undefined,
     note: access.siteUrl ? `${access.siteUrl}/browse/${key}` : undefined,
   };
 }
@@ -469,8 +598,94 @@ async function addRoleMembers(
 }
 
 /**
+ * Add the components the space does not have yet, by name. A component Jira
+ * refuses stops the rest; the error names any added before it.
+ */
+async function addComponents(
+  scope: LogScope,
+  access: JiraAdminAccess,
+  spaceKey: string,
+  operation: ComponentsOperation
+): Promise<Step> {
+  const current = await jiraAdminGet(
+    scope,
+    access,
+    `/rest/api/3/project/${encodeURIComponent(spaceKey)}/components`
+  );
+  if (!current.ok) return { ok: false, error: `Reading the components: ${current.error}` };
+  const held = new Set(records(current.body).map((component) => str(component.name).toLowerCase()));
+  const wanted = operation.components.filter(
+    (component) => !held.has(component.name.toLowerCase())
+  );
+  const added: string[] = [];
+  for (const component of wanted) {
+    const result = await jiraAdminSend(scope, access, 'POST', '/rest/api/3/component', {
+      project: spaceKey,
+      name: component.name,
+      ...(component.description ? { description: component.description } : {}),
+      assigneeType: component.assigneeType,
+    });
+    if (!result.ok) {
+      return { ok: false, error: `“${component.name}”: ${result.error}${addedFirst(added)}` };
+    }
+    added.push(component.name);
+  }
+  const already = operation.components.length - wanted.length;
+  return { ok: true, note: already > 0 ? `${already} already there.` : undefined };
+}
+
+/** The versions the space does not have yet, by name — stopping, like components, at a refusal. */
+async function addVersions(
+  scope: LogScope,
+  access: JiraAdminAccess,
+  space: { key: string; id: string | null },
+  operation: VersionsOperation
+): Promise<Step> {
+  let spaceId = space.id;
+  if (!spaceId) {
+    const project = await jiraAdminGet(
+      scope,
+      access,
+      `/rest/api/3/project/${encodeURIComponent(space.key)}`
+    );
+    if (!project.ok) return { ok: false, error: `Reading ${space.key}: ${project.error}` };
+    spaceId = str(rec(project.body).id);
+  }
+  const current = await jiraAdminGet(
+    scope,
+    access,
+    `/rest/api/3/project/${encodeURIComponent(space.key)}/versions`
+  );
+  if (!current.ok) return { ok: false, error: `Reading the versions: ${current.error}` };
+  const held = new Set(records(current.body).map((version) => str(version.name).toLowerCase()));
+  const wanted = operation.versions.filter((version) => !held.has(version.name.toLowerCase()));
+  const added: string[] = [];
+  for (const version of wanted) {
+    const result = await jiraAdminSend(scope, access, 'POST', '/rest/api/3/version', {
+      projectId: Number(spaceId),
+      name: version.name,
+      ...(version.startDate ? { startDate: version.startDate } : {}),
+      ...(version.releaseDate ? { releaseDate: version.releaseDate } : {}),
+    });
+    if (!result.ok) {
+      return { ok: false, error: `“${version.name}”: ${result.error}${addedFirst(added)}` };
+    }
+    added.push(version.name);
+  }
+  const already = operation.versions.length - wanted.length;
+  return { ok: true, note: already > 0 ? `${already} already there.` : undefined };
+}
+
+function addedFirst(added: string[]): string {
+  return added.length > 0
+    ? ` (${added.map((name) => `“${name}”`).join(', ')} ${added.length === 1 ? 'was' : 'were'} added before it.)`
+    : '';
+}
+
+/**
  * Apply a stored create-space proposal: create the space, then set its
- * roles, stopping at the first operation that fails.
+ * roles, components and versions, stopping at the first operation that
+ * fails.
  */
 export async function applySpaceCreation(
   scope: LogScope,
@@ -478,7 +693,7 @@ export async function applySpaceCreation(
   payload: CreateSpacePayload
 ): Promise<{ status: 'applied' | 'partial' | 'failed'; results: OperationResult[] }> {
   const results: OperationResult[] = [];
-  let spaceKey: string | null = null;
+  let space: { key: string; id: string | null } | null = null;
   let stopped = false;
   for (const operation of payload.operations) {
     const label = describeSpaceOperation(operation).text;
@@ -488,12 +703,17 @@ export async function applySpaceCreation(
     }
     let step: Step;
     if (operation.op === 'create_space') {
-      step = await createSpace(scope, access, operation);
-      if (step.ok) spaceKey = operation.key;
-    } else if (!spaceKey) {
-      step = { ok: false, error: 'The space was not created, so its roles cannot be set.' };
+      const created = await createSpace(scope, access, operation);
+      if (created.ok) space = { key: operation.key, id: created.id ?? null };
+      step = created;
+    } else if (!space) {
+      step = { ok: false, error: 'The space was not created, so nothing can be added to it.' };
+    } else if (operation.op === 'add_role_members') {
+      step = await addRoleMembers(scope, access, space.key, operation);
+    } else if (operation.op === 'add_components') {
+      step = await addComponents(scope, access, space.key, operation);
     } else {
-      step = await addRoleMembers(scope, access, spaceKey, operation);
+      step = await addVersions(scope, access, space, operation);
     }
     if (!step.ok) {
       results.push({ label, outcome: 'failed', detail: step.error });

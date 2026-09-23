@@ -75,7 +75,30 @@ describe('readSpaceConfiguration', () => {
           users: [],
         },
       ],
+      // By name, whatever order Jira lists them in.
+      components: [
+        {
+          id: '20000',
+          name: 'Backend',
+          description: 'Services and jobs',
+          assigneeType: 'COMPONENT_LEAD',
+          lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+        },
+        {
+          id: '20001',
+          name: 'Reports',
+          description: null,
+          assigneeType: 'PROJECT_LEAD',
+          lead: null,
+        },
+      ],
     });
+  });
+
+  it('refuses a partial picture when the components cannot be read', async () => {
+    site['/rest/api/3/project/OPS/components'] = [500, {}];
+    const read = await readSpaceConfiguration(scope, access, 'OPS');
+    expect(read).toEqual({ ok: false, reason: 'Components: Jira answered 500.' });
   });
 
   it('refuses a team-managed space, which has no site schemes to copy', async () => {

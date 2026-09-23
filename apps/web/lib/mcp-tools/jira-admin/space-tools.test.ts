@@ -139,6 +139,16 @@ const OPS: SpaceConfiguration = {
       users: [],
     },
   ],
+  components: [
+    {
+      id: '20000',
+      name: 'Backend',
+      description: 'Services and jobs',
+      assigneeType: 'COMPONENT_LEAD',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+    },
+    { id: '20001', name: 'Reports', description: null, assigneeType: 'PROJECT_LEAD', lead: null },
+  ],
 };
 
 function template(overrides: Partial<SpaceTemplate> = {}): SpaceTemplate {
@@ -337,6 +347,8 @@ describe('jira_admin_propose_space', () => {
       { role: 'Administrators', users: ['dana@acme.com'] },
       { role: 'Viewers', groups: ['finance-team'], users: ['sam@acme.com'] },
     ],
+    components: ['Ledger'],
+    versions: [{ name: 'FY27', releaseDate: '2027-09-30' }],
     reason: 'Finance is moving off spreadsheets',
   };
 
@@ -387,6 +399,22 @@ describe('jira_admin_propose_space', () => {
             groups: [{ groupId: 'g-fin', name: 'finance-team' }],
             users: [{ accountId: 'acct-sam', displayName: 'Sam Dev' }],
           },
+          {
+            op: 'add_components',
+            components: [
+              {
+                name: 'Backend',
+                description: 'Services and jobs',
+                assigneeType: 'PROJECT_DEFAULT',
+              },
+              { name: 'Reports', description: null, assigneeType: 'PROJECT_LEAD' },
+              { name: 'Ledger', description: null, assigneeType: 'PROJECT_DEFAULT' },
+            ],
+          },
+          {
+            op: 'add_versions',
+            versions: [{ name: 'FY27', startDate: null, releaseDate: '2027-09-30' }],
+          },
         ],
       },
     });
@@ -400,8 +428,36 @@ describe('jira_admin_propose_space', () => {
     expect(text(result)).toContain(
       '• [access] Add group “finance-team”, Sam Dev to the Viewers role'
     );
+    expect(text(result)).toContain('• Add 3 components: Backend, Reports, Ledger');
+    // This connection has no manage:jira-project, and components need it.
+    expect(text(result)).toContain(
+      'Applying this needs “Space components, versions and screens”, which your Jira ' +
+        'Administration connection does not include'
+    );
     expect(text(result)).toContain(`Review and apply: ${link}`);
     expect(result._meta?.['renkei/act']).toEqual({ url: link });
+  });
+
+  it('refuses a version that would be released before it starts', async () => {
+    jest.mocked(findSpaceTemplate).mockResolvedValue(template());
+    const result = await call('jira_admin_propose_space', {
+      ...proposal,
+      versions: [{ name: 'FY27', startDate: '2027-10-01', releaseDate: '2027-09-30' }],
+    });
+    expect(text(result)).toBe('Version FY27 would be released before it starts.');
+    expect(createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('says when a template was saved before components were kept', async () => {
+    const older = template();
+    jest
+      .mocked(findSpaceTemplate)
+      .mockResolvedValue({ ...older, document: { ...older.document, components: null } });
+    const result = await call('jira_admin_propose_space', { ...proposal, components: undefined });
+    expect(text(result)).toContain(
+      'The template “Ops standard” was saved before Renkei kept components, so it brings none; ' +
+        'save it again with overwrite to include them.'
+    );
   });
 
   it('builds like a live space, copying its groups and saying its people were not copied', async () => {

@@ -6,16 +6,16 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { viewGate } from '@/lib/jira-admin/apply';
-import { listSpaceTemplates } from '@/lib/jira-admin/space-templates';
+import { componentsText, listSpaceTemplates } from '@/lib/jira-admin/space-templates';
 import { SCHEME_KEYS, SCHEME_LABELS } from '@/lib/jira-admin/space-config';
 import LocalTime from '@/components/local-time';
 
 /**
  * The organization's Jira space templates (migration 124), read-only:
- * what each one sets up, so an admin can see what "a space like our
- * standard" would get before asking for one. Saving, deleting and building
- * from a template happen in chat; building from one is proposed for review
- * like any other change.
+ * what each one sets up — schemes, role groups, components — so an admin
+ * can see what "a space like our standard" would get before asking for
+ * one. Saving, deleting and building from a template happen in chat;
+ * building from one is proposed for review like any other change.
  */
 export default async function JiraAdminTemplatesPage({
   params,
@@ -111,6 +111,9 @@ export default async function JiraAdminTemplatesPage({
                               `${role.roleName} — ${role.groups.map((group) => group.name).join(', ')}`
                           )
                           .join('; ')}
+                  </li>
+                  <li className="break-words" data-testid="space-template-components">
+                    Components: {componentsText(template.document)}
                   </li>
                 </ul>
               </li>

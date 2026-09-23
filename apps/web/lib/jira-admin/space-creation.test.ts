@@ -3,7 +3,8 @@
  * Creating a space: what a proposal plans, how it reads on the review
  * page, and what applying sends to a fake Jira — above all that the key is
  * checked again at apply time, that role members Jira already put in are
- * not sent twice, and that a failure stops everything after it.
+ * not sent twice, that components and versions go to the new space, and
+ * that a failure stops everything after it.
  */
 
 jest.mock('@/lib/logger', () => ({
@@ -19,6 +20,7 @@ import type { JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
 import { FAKE_BASE } from './fake-site.fixture';
 import {
   applySpaceCreation,
+  createSpaceScopes,
   describeSpaceOperation,
   describeSpaceReach,
   planSpaceCreation,
@@ -57,6 +59,10 @@ const BASE_SPACE: SpaceBase = {
     },
     { roleId: '10001', roleName: 'Developers', groups: [] },
   ],
+  components: [
+    { name: 'Backend', description: 'Services and jobs', assigneeType: 'PROJECT_DEFAULT' },
+    { name: 'Reports', description: null, assigneeType: 'PROJECT_LEAD' },
+  ],
 };
 
 const DANA = { accountId: 'acct-dana', displayName: 'Dana Admin' };
@@ -87,11 +93,14 @@ function plan() {
       },
       { roleId: '10001', roleName: 'Developers', groups: [], users: [SAM] },
     ],
+    // "backend" is the template's Backend already.
+    components: ['Ledger', 'backend'],
+    versions: [{ name: 'FY27', startDate: '2026-10-01', releaseDate: '2027-09-30' }],
   });
 }
 
 describe('planning', () => {
-  it('creates the space on the base’s schemes, then fills roles, skipping empty ones', () => {
+  it('creates the space on the base’s schemes, then fills roles, components and versions', () => {
     const operations = plan();
     expect(operations[0]).toEqual({
       op: 'create_space',
@@ -113,21 +122,45 @@ describe('planning', () => {
         users: [DANA],
       },
       { op: 'add_role_members', roleId: '10001', roleName: 'Developers', groups: [], users: [SAM] },
+      {
+        op: 'add_components',
+        components: [
+          { name: 'Backend', description: 'Services and jobs', assigneeType: 'PROJECT_DEFAULT' },
+          { name: 'Reports', description: null, assigneeType: 'PROJECT_LEAD' },
+          { name: 'Ledger', description: null, assigneeType: 'PROJECT_DEFAULT' },
+        ],
+      },
+      {
+        op: 'add_versions',
+        versions: [{ name: 'FY27', startDate: '2026-10-01', releaseDate: '2027-09-30' }],
+      },
     ]);
   });
 
-  it('leaves out a role nobody is named for', () => {
+  it('leaves out a role nobody is named for, and components a template never kept', () => {
     const operations = planSpaceCreation({
       key: 'FIN',
       name: 'Finance',
       description: null,
       lead: DANA,
-      base: BASE_SPACE,
+      base: { ...BASE_SPACE, components: null },
       members: [],
     });
     expect(operations.map((operation) => operation.op)).toEqual([
       'create_space',
       'add_role_members',
+    ]);
+  });
+
+  it('asks for manage:jira-project only when components or versions are part of it', () => {
+    expect(createSpaceScopes(payloadOf())).toEqual([
+      'read:jira-work',
+      'manage:jira-configuration',
+      'manage:jira-project',
+    ]);
+    expect(createSpaceScopes(payloadOf(plan().slice(0, 3)))).toEqual([
+      'read:jira-work',
+      'manage:jira-configuration',
     ]);
   });
 });
@@ -159,7 +192,15 @@ describe('describing', () => {
     expect(described.slice(1).map((operation) => [operation.text, operation.access])).toEqual([
       ['Add group “ops-admins”, Dana Admin to the Administrators role', true],
       ['Add Sam Dev to the Developers role', true],
+      ['Add 3 components: Backend, Reports, Ledger', false],
+      ['Add 1 version: FY27', false],
     ]);
+    expect(described[3]?.details).toEqual([
+      'Backend — Services and jobs',
+      'Reports (its issues go to the space lead)',
+      'Ledger',
+    ]);
+    expect(described[4]?.details).toEqual(['FY27: starts 2026-10-01, releases 2027-09-30']);
     expect(describeSpaceReach(payload, 'https://acme.atlassian.net')).toBe(
       'A new space FIN on https://acme.atlassian.net, running on the same schemes as template ' +
         '“Ops standard” rather than copies of them — a later change to one of those schemes ' +
@@ -186,6 +227,13 @@ describe('describing', () => {
       })
     ).toBeNull();
     expect(readCreateSpacePayload({ ...payload, source: { kind: 'somewhere' } })).toBeNull();
+    // An empty component list is not one this code wrote either.
+    expect(
+      readCreateSpacePayload({
+        ...payload,
+        operations: [...payload.operations, { op: 'add_components', components: [] }],
+      })
+    ).toBeNull();
   });
 });
 
@@ -213,6 +261,11 @@ describe('applying against Jira', () => {
       'POST /rest/api/3/project/FIN/role/10002': [200, {}],
       'GET /rest/api/3/project/FIN/role/10001': [200, { actors: [] }],
       'POST /rest/api/3/project/FIN/role/10001': [200, {}],
+      // A component someone added by hand in the meantime.
+      'GET /rest/api/3/project/FIN/components': [200, [{ id: '1', name: 'Reports' }]],
+      'POST /rest/api/3/component': [201, { id: '2' }],
+      'GET /rest/api/3/project/FIN/versions': [200, []],
+      'POST /rest/api/3/version': [201, { id: '3' }],
     };
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
@@ -226,13 +279,15 @@ describe('applying against Jira', () => {
     }) as unknown as typeof fetch;
   });
 
-  it('checks the key, creates the space on the stored scheme ids, and adds only missing members', async () => {
+  it('checks the key, creates the space on the stored scheme ids, and adds only what is missing', async () => {
     const outcome = await applySpaceCreation(scope, access, payloadOf());
 
     expect(outcome.status).toBe('applied');
     expect(outcome.results.map((result) => [result.outcome, result.detail])).toEqual([
       ['done', 'https://acme.atlassian.net/browse/FIN'],
       ['done', '1 already in the role.'],
+      ['done', undefined],
+      ['done', '1 already there.'],
       ['done', undefined],
     ]);
     const create = calls.find(
@@ -260,6 +315,56 @@ describe('applying against Jira', () => {
     expect(
       calls.find((call) => call.method === 'POST' && call.path.endsWith('/role/10001'))?.body
     ).toEqual({ user: ['acct-sam'] });
+    // Reports was there; Backend and Ledger go in, to FIN by key.
+    expect(
+      calls
+        .filter((call) => call.method === 'POST' && call.path === '/rest/api/3/component')
+        .map((call) => call.body)
+    ).toEqual([
+      {
+        project: 'FIN',
+        name: 'Backend',
+        description: 'Services and jobs',
+        assigneeType: 'PROJECT_DEFAULT',
+      },
+      { project: 'FIN', name: 'Ledger', assigneeType: 'PROJECT_DEFAULT' },
+    ]);
+    // A version goes to the id Jira gave the new space.
+    expect(
+      calls.find((call) => call.method === 'POST' && call.path === '/rest/api/3/version')?.body
+    ).toEqual({
+      projectId: 10200,
+      name: 'FY27',
+      startDate: '2026-10-01',
+      releaseDate: '2027-09-30',
+    });
+  });
+
+  it('names the components added before the one Jira refused', async () => {
+    let posts = 0;
+    const answer = global.fetch as jest.Mock;
+    const inner = answer.getMockImplementation();
+    answer.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST' && String(input).endsWith('/rest/api/3/component')) {
+        posts += 1;
+        if (posts === 2) {
+          return new Response(JSON.stringify({ errors: { name: 'Too long.' } }), { status: 400 });
+        }
+      }
+      return inner?.(input, init);
+    });
+    const outcome = await applySpaceCreation(scope, access, payloadOf());
+    expect(outcome.status).toBe('partial');
+    expect(outcome.results.map((result) => result.outcome)).toEqual([
+      'done',
+      'done',
+      'done',
+      'failed',
+      'not_run',
+    ]);
+    expect(outcome.results[3]?.detail).toBe(
+      '“Ledger”: Jira answered 400. Too long. (“Backend” was added before it.)'
+    );
   });
 
   it('stops before creating anything when the key was taken since', async () => {
@@ -284,7 +389,13 @@ describe('applying against Jira', () => {
     site['POST /rest/api/3/project/FIN/role/10002'] = [400, { errorMessages: ['Bad actor.'] }];
     const outcome = await applySpaceCreation(scope, access, payloadOf());
     expect(outcome.status).toBe('partial');
-    expect(outcome.results.map((result) => result.outcome)).toEqual(['done', 'failed', 'not_run']);
+    expect(outcome.results.map((result) => result.outcome)).toEqual([
+      'done',
+      'failed',
+      'not_run',
+      'not_run',
+      'not_run',
+    ]);
     expect(outcome.results[1]?.detail).toBe('Jira answered 400. Bad actor.');
   });
 
@@ -296,6 +407,7 @@ describe('applying against Jira', () => {
       lead: DANA,
       base: {
         ...BASE_SPACE,
+        components: null,
         roles: [
           {
             roleId: '10001',

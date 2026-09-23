@@ -95,6 +95,16 @@ describe('registration', () => {
     expect(names).not.toContain('jira_admin_get_space_configuration');
   });
 
+  it('holds the field tool back until the grant has manage:jira-project, which screens take', async () => {
+    const configuration = ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'];
+    const without = [...(await tools(configuration)).keys()];
+    expect(without).toContain('jira_admin_propose_space');
+    expect(without).not.toContain('jira_admin_propose_space_field');
+    expect([...(await tools([...configuration, 'manage:jira-project'])).keys()]).toContain(
+      'jira_admin_propose_space_field'
+    );
+  });
+
   it('marks only the proposals and template writes as acts — and no tool can apply one', async () => {
     const configs: { name: string; readOnly: unknown }[] = [];
     const server = {
@@ -107,7 +117,7 @@ describe('registration', () => {
       { tenantId: 'tenant-1', subject: 'subject-1' } as MCPToolContext,
       stubAuth
     );
-    expect(configs.length).toBe(13);
+    expect(configs.length).toBe(14);
     // The writes are proposals, which only store a Renkei change request,
     // and templates, which are Renkei's own records — Act tools all the
     // same, so read-only mode hides them. Applying a proposal is a
@@ -122,6 +132,7 @@ describe('registration', () => {
       'jira_admin_delete_space_template',
       'jira_admin_propose_option_changes',
       'jira_admin_propose_space',
+      'jira_admin_propose_space_field',
       'jira_admin_save_space_template',
     ]);
     expect(configs.some((config) => /apply|confirm|approve/.test(config.name))).toBe(false);

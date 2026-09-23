@@ -21,15 +21,32 @@ import { JIRA_ADMIN_MCP_CONNECTOR } from '@/lib/mcp-tools/jira-admin';
 import type { JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
 import type { ChangeRequest, OperationResult } from './change-requests';
 import { FIELD_OPTIONS_KIND, applyFieldOptions, readFieldOptionsPayload } from './field-options';
-import { CREATE_SPACE_KIND, applySpaceCreation, readCreateSpacePayload } from './space-creation';
+import {
+  CREATE_SPACE_KIND,
+  applySpaceCreation,
+  createSpaceScopes,
+  readCreateSpacePayload,
+} from './space-creation';
+import { SPACE_FIELD_KIND, applySpaceField, readSpaceFieldPayload } from './space-field';
 
-/** The classic scopes each kind's writes stand on. */
-const SCOPES_BY_KIND: Record<string, string[]> = {
-  [FIELD_OPTIONS_KIND]: ['manage:jira-configuration'],
-  // Checking the key and reading a role (read:jira-work); creating the
-  // space and adding role members (manage:jira-configuration).
-  [CREATE_SPACE_KIND]: ['read:jira-work', 'manage:jira-configuration'],
-};
+/**
+ * The classic scopes applying a change stands on. Option writes are
+ * manage:jira-configuration. A new space: checking the key and reading a
+ * role (read:jira-work), creating it and adding role members
+ * (manage:jira-configuration), and — only when it has any — components and
+ * versions (manage:jira-project). A field for a space takes all three: the
+ * field search (read:jira-work), the field, its contexts and options
+ * (manage:jira-configuration) and screen tabs (manage:jira-project), so it
+ * falls to the default. Anything unrecognised asks for the most.
+ */
+export function changeScopes(change: Pick<ChangeRequest, 'kind' | 'payload'>): string[] {
+  if (change.kind === FIELD_OPTIONS_KIND) return ['manage:jira-configuration'];
+  if (change.kind === CREATE_SPACE_KIND) {
+    const payload = readCreateSpacePayload(change.payload);
+    if (payload) return createSpaceScopes(payload);
+  }
+  return ['read:jira-work', 'manage:jira-configuration', 'manage:jira-project'];
+}
 
 type Gate = { ok: true } | { ok: false; reason: string };
 
@@ -38,7 +55,7 @@ export async function applyGate(
   tenantId: string,
   subject: string,
   roles: readonly string[],
-  kind: string
+  change: Pick<ChangeRequest, 'kind' | 'payload'>
 ): Promise<Gate> {
   const settingsResult = await getOrgSettings(tenantId);
   if (!settingsResult.ok)
@@ -74,7 +91,7 @@ export async function applyGate(
       reason: 'Jira Administration is not connected. Connect it on the Connectors page first.',
     };
   }
-  const missing = (SCOPES_BY_KIND[kind] ?? ['manage:jira-configuration']).filter(
+  const missing = changeScopes(change).filter(
     (scope) => !availability.jiraAdminScopes.includes(scope)
   );
   if (missing.length > 0) {
@@ -86,7 +103,8 @@ export async function applyGate(
       ok: false,
       reason:
         `Your Jira Administration connection does not include ${missing.join(', ')}. ` +
-        `Reconnect it with ${boxes.join(' and ') || 'the permissions this change needs'} ticked.`,
+        `Reconnect it with ${boxes.join(' and ') || 'the permissions this change needs'} ticked ` +
+        '(if it is not offered, an organization admin allows it under Connector setup first).',
     };
   }
 
@@ -153,6 +171,10 @@ export async function applyChangeRequest(
   if (change.kind === CREATE_SPACE_KIND) {
     const payload = readCreateSpacePayload(change.payload);
     if (payload) return applySpaceCreation(scope, access, payload);
+  }
+  if (change.kind === SPACE_FIELD_KIND) {
+    const payload = readSpaceFieldPayload(change.payload);
+    if (payload) return applySpaceField(scope, access, payload);
   }
   return {
     status: 'failed',

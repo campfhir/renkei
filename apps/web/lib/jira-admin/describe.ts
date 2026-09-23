@@ -18,6 +18,13 @@ import {
   describeSpaceReach,
   readCreateSpacePayload,
 } from './space-creation';
+import {
+  SPACE_FIELD_KIND,
+  describeFieldOperation,
+  describeFieldReach,
+  readSpaceFieldPayload,
+  touchesOtherSpaces,
+} from './space-field';
 
 export interface DescribedOperation {
   text: string;
@@ -36,7 +43,10 @@ export interface ChangeDescription {
   operations: DescribedOperation[];
   /** Where it lands, in a sentence; null when the kind has nothing to say. */
   reach: string | null;
-  /** True when it lands beyond one set of spaces — a global context — so the page can warn. */
+  /**
+   * True when it lands beyond the spaces it names — a global context, a
+   * screen other spaces show — so the page can warn.
+   */
   siteWide: boolean;
   /** What applying re-checks and how it stops, for the line beside the Apply button. */
   applyNote: string | null;
@@ -75,6 +85,23 @@ export function describeChange(
           'Renkei checks the key is still free first, and stops at the first step Jira ' +
           'refuses — a space it has created stays created, and the results say which roles ' +
           'were set. Nothing is deleted.',
+      };
+    }
+  }
+  if (change.kind === SPACE_FIELD_KIND) {
+    const payload = readSpaceFieldPayload(change.payload);
+    if (payload) {
+      return {
+        operations: payload.operations.map((operation) =>
+          describeFieldOperation(operation, payload)
+        ),
+        reach: describeFieldReach(payload, change.siteUrl),
+        siteWide: touchesOtherSpaces(payload),
+        applyNote:
+          'Renkei checks first that no field of this name has appeared, that the space still ' +
+          'has no context of its own, and which options and screens it already has — and ' +
+          'stops at anything that has changed. A field it has created stays created. Nothing ' +
+          'is deleted.',
       };
     }
   }

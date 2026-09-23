@@ -34,6 +34,7 @@ const DOCUMENT: TemplateDocument = {
   roles: [
     { roleId: '10002', roleName: 'Administrators', groups: [{ groupId: 'g', name: 'ops-admins' }] },
   ],
+  components: [{ name: 'Backend', description: null, assigneeType: 'PROJECT_DEFAULT' }],
 };
 
 maybe('jira_admin_space_templates', () => {

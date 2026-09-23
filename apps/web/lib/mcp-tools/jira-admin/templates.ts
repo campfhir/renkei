@@ -22,6 +22,7 @@ import {
 } from '@/lib/jira-admin/space-config';
 import {
   TEMPLATE_NAME_MAX,
+  componentsText,
   deleteSpaceTemplate,
   documentFromSpace,
   findSpaceTemplate,
@@ -58,6 +59,7 @@ export function templateLines(document: TemplateDocument): string[] {
           .map((role) => `${role.roleName} — ${role.groups.map((group) => group.name).join(', ')}`)
           .join('; ')}`
   );
+  lines.push(`Components: ${componentsText(document)}`);
   return lines;
 }
 
@@ -81,10 +83,11 @@ export async function registerTemplateTools(
       description:
         'Save how a company-managed space is configured — its type, the seven schemes it runs ' +
         'on (work types, screens, workflows, field configuration, permissions, notifications, ' +
-        'issue security), default assignee, category, and the groups in each role — as a named ' +
-        'template, for creating new spaces the same way (jira_admin_propose_space) and ' +
-        'checking spaces against it (jira_admin_compare_space_to_template). People in roles ' +
-        'are not saved. Templates are shared by everyone in the organization who uses Jira ' +
+        'issue security), default assignee, category, the groups in each role and its ' +
+        'components — as a named template, for creating new spaces the same way ' +
+        '(jira_admin_propose_space) and checking spaces against it ' +
+        '(jira_admin_compare_space_to_template). People in roles and component leads are not ' +
+        'saved. Templates are shared by everyone in the organization who uses Jira ' +
         'Administration. Changes nothing in Jira.',
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: z.object({
@@ -137,6 +140,9 @@ export async function registerTemplateTools(
         );
       }
       const people = space.roles.reduce((total, role) => total + role.users.length, 0);
+      const led = space.components.filter(
+        (component) => component.assigneeType === 'COMPONENT_LEAD'
+      );
       return textResult(
         [
           `${saved.replaced ? 'Replaced' : 'Saved'} the template “${saved.template.name}” from ${space.key} — nothing changed in Jira.`,
@@ -147,6 +153,14 @@ export async function registerTemplateTools(
                 '',
                 `${people} ${people === 1 ? 'person' : 'people'} in ${space.key}’s roles ${people === 1 ? 'was' : 'were'} not saved: a template ` +
                   'keeps groups, and the people for a new space are named when it is proposed.',
+              ]
+            : []),
+          ...(led.length > 0
+            ? [
+                '',
+                `${led.map((component) => component.name).join(', ')} ${led.length === 1 ? 'sends its' : 'send their'} issues to a component lead in ` +
+                  `${space.key}; in a new space ${led.length === 1 ? 'it goes' : 'they go'} to the space’s default assignee instead, since a template ` +
+                  'holds no people.',
               ]
             : []),
         ].join('\n')
@@ -253,9 +267,9 @@ export async function registerTemplateTools(
     {
       title: 'Jira Admin · Read — Compare a space to a template',
       description:
-        'Check a space against a saved template: which schemes, default assignee, category and ' +
-        'role groups differ. Reports differences only; nothing is changed. Useful for finding ' +
-        'spaces that have drifted from how they were set up.',
+        'Check a space against a saved template: which schemes, default assignee, category, ' +
+        'role groups and components differ. Reports differences only; nothing is changed. ' +
+        'Useful for finding spaces that have drifted from how they were set up.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         space: z.string().min(1).describe('The space (project) key, e.g. OPS'),
@@ -285,7 +299,8 @@ export async function registerTemplateTools(
       return textResult(
         differences.length === 0
           ? `${read.space.key} matches the template “${template.name}”: same type, schemes, ` +
-              'default assignee, category and role groups.'
+              'default assignee, category, role groups' +
+              (template.document.components === null ? '.' : ' and components.')
           : [
               `${read.space.key} differs from the template “${template.name}” in ${differences.length} way${differences.length === 1 ? '' : 's'}:`,
               ...differences.map((difference) => `• ${difference}`),
