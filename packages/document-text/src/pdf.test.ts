@@ -73,6 +73,23 @@ describe('pdf extraction', () => {
     }
   }, 30_000);
 
+  it("leaves the caller's bytes intact after extraction", async () => {
+    // pdfjs transfers the buffer it is given to its worker, and the fake
+    // worker Node runs still detaches it. A caller that extracts text and
+    // then stores the same bytes (the chat upload does exactly this) would
+    // otherwise store nothing. The input here must own its whole buffer:
+    // pdfjs copies a partial view itself, so only a full one shows the bug.
+    const bytes = new Uint8Array(buildPdf('Kept for storage'));
+    expect(bytes.byteLength).toBe(bytes.buffer.byteLength);
+    const before = bytes.byteLength;
+
+    const result = await extractText(bytes, { fileName: 'kept.pdf' });
+
+    expect(result.ok).toBe(true);
+    expect(bytes.byteLength).toBe(before);
+    expect(bytes.buffer.detached).toBe(false);
+  }, 30_000);
+
   it('reports a malformed PDF as corrupt rather than throwing', async () => {
     const result = await extractText(new TextEncoder().encode('%PDF-1.4\nnot really a pdf'), {
       fileName: 'broken.pdf',
