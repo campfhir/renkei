@@ -986,12 +986,14 @@ input[type='number']::-webkit-inner-spin-button {
 
 /*
  * Code colours — one palette, named here once and swapped for the dark
- * scheme in the two dark blocks below. The chat's Markdown blocks and
- * the tool-call panes (.chat-pre) both carry the highlighter's `hljs-…`
- * classes and share it.
+ * scheme in the two dark blocks below. The chat's Markdown blocks, the
+ * tool-call panes (.chat-pre) and the code pane's touch-screen editor
+ * (.code-tokens) all carry the highlighter's `hljs-…` classes and share
+ * it; lib/monaco/setup.ts writes the same colours out for Monaco.
  */
 .chat-markdown,
-.chat-pre {
+.chat-pre,
+.code-tokens {
   --hl-comment: var(--color-gray-500);
   --hl-keyword: var(--color-purple-700);
   --hl-type: var(--color-teal-700);
@@ -1004,40 +1006,40 @@ input[type='number']::-webkit-inner-spin-button {
   --hl-deletion: var(--color-red-700);
   --hl-addition: var(--color-emerald-700);
 }
-:is(.chat-markdown, .chat-pre) :is(.hljs-comment, .hljs-quote) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-comment, .hljs-quote) {
   color: var(--hl-comment);
   font-style: italic;
 }
-:is(.chat-markdown, .chat-pre) .hljs-doctag {
+:is(.chat-markdown, .chat-pre, .code-tokens) .hljs-doctag {
   color: var(--hl-comment);
   font-weight: 600;
 }
-:is(.chat-markdown, .chat-pre) :is(.hljs-keyword, .hljs-selector-tag, .hljs-meta) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-keyword, .hljs-selector-tag, .hljs-meta) {
   color: var(--hl-keyword);
 }
 /* Types and built-ins, plus a class's name where the grammar marks one. */
-:is(.chat-markdown, .chat-pre) :is(.hljs-type, .hljs-built_in, .hljs-title.class_) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-type, .hljs-built_in, .hljs-title.class_) {
   color: var(--hl-type);
 }
-:is(.chat-markdown, .chat-pre) :is(.hljs-string, .hljs-regexp, .hljs-template-tag) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-string, .hljs-regexp, .hljs-template-tag) {
   color: var(--hl-string);
 }
-:is(.chat-markdown, .chat-pre) :is(.hljs-char.escape_) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-char.escape_) {
   color: var(--hl-number);
 }
 /* A key — JSON and YAML keys, an HTML attribute, a CSS or HTTP header — is
  * not a string: the two read apart. */
-:is(.chat-markdown, .chat-pre) :is(.hljs-attr, .hljs-attribute, .hljs-property) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-attr, .hljs-attribute, .hljs-property) {
   color: var(--hl-key);
 }
-:is(.chat-markdown, .chat-pre) :is(.hljs-number, .hljs-literal) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-number, .hljs-literal) {
   color: var(--hl-number);
 }
 /* JSON's true/false/null come as a keyword inside the literal; they stay a literal. */
-:is(.chat-markdown, .chat-pre) .hljs-literal .hljs-keyword {
+:is(.chat-markdown, .chat-pre, .code-tokens) .hljs-literal .hljs-keyword {
   color: inherit;
 }
-:is(.chat-markdown, .chat-pre)
+:is(.chat-markdown, .chat-pre, .code-tokens)
   :is(
     .hljs-title,
     .hljs-function,
@@ -1050,32 +1052,34 @@ input[type='number']::-webkit-inner-spin-button {
   ) {
   color: var(--hl-title);
 }
-:is(.chat-markdown, .chat-pre) :is(.hljs-variable, .hljs-template-variable, .hljs-symbol) {
+:is(.chat-markdown, .chat-pre, .code-tokens)
+  :is(.hljs-variable, .hljs-template-variable, .hljs-symbol) {
   color: var(--hl-variable);
 }
-:is(.chat-markdown, .chat-pre) :is(.hljs-punctuation, .hljs-operator, .hljs-tag, .hljs-bullet) {
+:is(.chat-markdown, .chat-pre, .code-tokens)
+  :is(.hljs-punctuation, .hljs-operator, .hljs-tag, .hljs-bullet) {
   color: var(--hl-punctuation);
 }
 /* The code inside a template literal's `${…}` is code again, not string. */
-:is(.chat-markdown, .chat-pre) :is(.hljs-subst, .hljs-params) {
+:is(.chat-markdown, .chat-pre, .code-tokens) :is(.hljs-subst, .hljs-params) {
   color: var(--foreground);
 }
-:is(.chat-markdown, .chat-pre) .hljs-link {
+:is(.chat-markdown, .chat-pre, .code-tokens) .hljs-link {
   color: var(--hl-key);
   text-decoration: underline;
 }
-:is(.chat-markdown, .chat-pre) .hljs-deletion {
+:is(.chat-markdown, .chat-pre, .code-tokens) .hljs-deletion {
   color: var(--hl-deletion);
   background: color-mix(in oklab, var(--color-red-500) 15%, transparent);
 }
-:is(.chat-markdown, .chat-pre) .hljs-addition {
+:is(.chat-markdown, .chat-pre, .code-tokens) .hljs-addition {
   color: var(--hl-addition);
   background: color-mix(in oklab, var(--color-emerald-500) 15%, transparent);
 }
-:is(.chat-markdown, .chat-pre) .hljs-emphasis {
+:is(.chat-markdown, .chat-pre, .code-tokens) .hljs-emphasis {
   font-style: italic;
 }
-:is(.chat-markdown, .chat-pre) .hljs-strong {
+:is(.chat-markdown, .chat-pre, .code-tokens) .hljs-strong {
   font-weight: 600;
 }
 
@@ -1123,7 +1127,7 @@ input[type='number']::-webkit-inner-spin-button {
     color: var(--color-gray-100);
     background: var(--color-gray-800);
   }
-  :root:not([data-theme='light']) :is(.chat-markdown, .chat-pre) {
+  :root:not([data-theme='light']) :is(.chat-markdown, .chat-pre, .code-tokens) {
     --hl-comment: var(--color-gray-400);
     --hl-keyword: var(--color-purple-300);
     --hl-type: var(--color-teal-300);
@@ -1181,7 +1185,7 @@ input[type='number']::-webkit-inner-spin-button {
   color: var(--color-gray-100);
   background: var(--color-gray-800);
 }
-:root[data-theme='dark'] :is(.chat-markdown, .chat-pre) {
+:root[data-theme='dark'] :is(.chat-markdown, .chat-pre, .code-tokens) {
   --hl-comment: var(--color-gray-400);
   --hl-keyword: var(--color-purple-300);
   --hl-type: var(--color-teal-300);
@@ -1193,6 +1197,58 @@ input[type='number']::-webkit-inner-spin-button {
   --hl-punctuation: var(--color-gray-400);
   --hl-deletion: var(--color-red-300);
   --hl-addition: var(--color-emerald-300);
+}
+
+/*
+ * The code pane's touch-screen editor: a text area whose glyphs are
+ * transparent over a backdrop drawing the same text in colour. Every
+ * metric that places a glyph — font, size, line height, padding, tab
+ * width, no wrapping — is set once here for both, or the colours drift
+ * from the letters.
+ */
+.code-area-backdrop,
+.code-area-input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0.75rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.25rem;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.code-area-backdrop {
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--color-gray-900);
+}
+.code-area-input {
+  overflow: auto;
+  resize: none;
+  outline: none;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--color-gray-900);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .code-area-backdrop {
+    color: var(--color-gray-100);
+  }
+  :root:not([data-theme='light']) .code-area-input {
+    caret-color: var(--color-gray-100);
+  }
+}
+:root[data-theme='dark'] .code-area-backdrop {
+  color: var(--color-gray-100);
+}
+:root[data-theme='dark'] .code-area-input {
+  caret-color: var(--color-gray-100);
 }
 
 /* A folded block — thinking, a tool call — with its result inside. No

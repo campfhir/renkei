@@ -24,6 +24,9 @@ import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
 import type { ChatNote } from '@/lib/code/note-text';
 import { unifiedDiff } from '@/lib/code/text-diff';
+import { highlighterLanguageFor } from '@/lib/code/language';
+import { languageLabel } from '@/lib/chat/code-languages';
+import { highlightedTokens } from '@/components/code-tokens';
 import CodeEditor from './code-editor';
 import CommitDialog, { FileDiffInline } from './commit-dialog';
 import DiffView, { Counts } from './diff-view';
@@ -452,7 +455,9 @@ export default function CodePane({
             {active ? (
               <>
                 <span className="truncate font-mono">{active.path}</span>
-                <span className="shrink-0">{active.language}</span>
+                <span className="shrink-0">
+                  {languageLabel(active.language) ?? active.language}
+                </span>
                 <span className="ml-auto shrink-0">{statusWord(active, activeDirty, canEdit)}</span>
               </>
             ) : (
@@ -601,6 +606,14 @@ function CompareModal({ file, onClose }: { file: CodePaneFile; onClose: () => vo
     () => unifiedDiff(file.path, theirs, file.text),
     [file.path, theirs, file.text]
   );
+  const grammar = highlighterLanguageFor(file.language);
+  const sides = useMemo(
+    () =>
+      diff === null
+        ? [highlightedTokens(theirs, grammar), highlightedTokens(file.text, grammar)]
+        : null,
+    [diff, theirs, file.text, grammar]
+  );
   return (
     <Modal title={`Compare ${nameOf(file.path)}`} onClose={onClose} size="wide">
       <p className="mb-2 text-xs text-gray-500">
@@ -609,8 +622,8 @@ function CompareModal({ file, onClose }: { file: CodePaneFile; onClose: () => vo
       <div className="max-h-[70vh] overflow-y-auto">
         {diff === null ? (
           <div className="grid grid-cols-2 gap-2 font-mono text-xs">
-            <pre className="chat-pre max-h-[65vh] overflow-auto">{theirs}</pre>
-            <pre className="chat-pre max-h-[65vh] overflow-auto">{file.text}</pre>
+            <pre className="chat-pre max-h-[65vh] overflow-auto">{sides?.[0] ?? theirs}</pre>
+            <pre className="chat-pre max-h-[65vh] overflow-auto">{sides?.[1] ?? file.text}</pre>
           </div>
         ) : diff === '' ? (
           <p className="text-xs text-gray-500">The two are the same now.</p>

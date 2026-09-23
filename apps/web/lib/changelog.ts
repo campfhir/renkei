@@ -47,6 +47,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Files in the code pane are coloured the same way',
+        detail:
+          'A file opened beside a code chat is coloured in the same palette as code quoted in a reply, in light and dark. On a phone, where the pane is a plain text area, the text is coloured now as well, as it is typed. More file types are recognised: Terraform, Protobuf, PowerShell modules, batch files, .properties, the .env variants and the common dotfiles.',
+      },
+      {
+        kind: 'changed',
         title: 'Code in a reply is easier to read',
         detail:
           'A code block in a chat now names its language in a header, with Copy always beside it, and colours more of the code: keys apart from values in JSON and YAML, types apart from keywords in SQL and TypeScript, operators and punctuation set back. Blocks fenced as postgres, psql, mysql, env, ps1 or a Dockerfile colour too, where they were plain before, and a tool call’s input and its JSON result are coloured the same way.',

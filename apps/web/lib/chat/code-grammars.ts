@@ -3,14 +3,15 @@
  * set covers the languages a reply is likely to carry — SQL, TypeScript,
  * JavaScript, JSON, YAML, XML/HTML, shell, CSS, Python, Go, Java and the
  * rest — and a few more are added that an integration shop meets daily:
- * Dockerfiles, PowerShell, raw HTTP exchanges, Java .properties files,
- * Protobuf, nginx configuration and Groovy. Every grammar here ships in
+ * Dockerfiles, PowerShell, Windows batch files, raw HTTP exchanges, Java
+ * .properties files, Protobuf, nginx configuration and Groovy. Every grammar here ships in
  * the bundle; nothing is fetched. The words a fence may use for them
  * live in lib/chat/code-languages.ts.
  */
 
 import { common, createLowlight } from 'lowlight';
 import dockerfile from 'highlight.js/lib/languages/dockerfile';
+import dos from 'highlight.js/lib/languages/dos';
 import groovy from 'highlight.js/lib/languages/groovy';
 import http from 'highlight.js/lib/languages/http';
 import nginx from 'highlight.js/lib/languages/nginx';
@@ -22,6 +23,7 @@ import { CODE_ALIASES } from './code-languages';
 export const CODE_GRAMMARS = {
   ...common,
   dockerfile,
+  dos,
   groovy,
   http,
   nginx,

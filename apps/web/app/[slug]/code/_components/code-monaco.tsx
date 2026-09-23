@@ -12,7 +12,7 @@
 import { useEffect, useRef } from 'react';
 import Editor, { type Monaco, type OnMount } from '@monaco-editor/react';
 import type { editor as MonacoEditorNs } from 'monaco-editor';
-import { configureMonacoOnce } from '@/lib/monaco/setup';
+import { configureMonacoOnce, MONACO_THEME } from '@/lib/monaco/setup';
 import { useMonacoDark } from '@/lib/monaco/use-dark-theme';
 import { LoadingLine } from '@/components/skeleton';
 
@@ -50,7 +50,7 @@ export default function CodeMonaco({
   return (
     <Editor
       height="100%"
-      theme={dark ? 'vs-dark' : 'vs'}
+      theme={dark ? MONACO_THEME.dark : MONACO_THEME.light}
       path={`file:///${path}`}
       language={language}
       value={value}

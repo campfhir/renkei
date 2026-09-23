@@ -6,12 +6,19 @@
  * never downloads it), and on a touch screen a plain monospace text area
  * with a row of accessory keys above the keyboard — Monaco on a phone
  * keyboard is a known bad time, and the text area is a fraction of the
- * bundle. Nothing above this component knows which is mounted.
+ * bundle. The text area is still coloured: the same text is drawn beneath
+ * it, tokenised by the chat's highlighter, with the text area's own glyphs
+ * transparent and its caret and selection on top; the two share every
+ * font metric and scroll together, so the colours sit exactly under the
+ * letters being typed. Nothing above this component knows which is
+ * mounted.
  */
 
 import dynamic from 'next/dynamic';
-import { useRef, type KeyboardEvent } from 'react';
+import { useMemo, useRef, type KeyboardEvent, type UIEvent } from 'react';
+import { highlightedTokens } from '@/components/code-tokens';
 import { LoadingLine } from '@/components/skeleton';
+import { highlighterLanguageFor } from '@/lib/code/language';
 
 const CodeMonaco = dynamic(() => import('./code-monaco'), {
   ssr: false,
@@ -47,8 +54,20 @@ const ACCESSORY_KEYS: { label: string; insert: string; cursorBack?: number }[] =
   { label: '`', insert: '``', cursorBack: 1 },
 ];
 
-function TextAreaEditor({ path, value, readOnly, onChange, onSave }: CodeEditorProps) {
+function TextAreaEditor({ path, language, value, readOnly, onChange, onSave }: CodeEditorProps) {
   const area = useRef<HTMLTextAreaElement>(null);
+  const backdrop = useRef<HTMLPreElement>(null);
+  const tokens = useMemo(
+    () => highlightedTokens(value, highlighterLanguageFor(language)),
+    [value, language]
+  );
+  // The backdrop follows the text area's scroll, never the other way round.
+  const onScroll = (event: UIEvent<HTMLTextAreaElement>) => {
+    const pre = backdrop.current;
+    if (!pre) return;
+    pre.scrollTop = event.currentTarget.scrollTop;
+    pre.scrollLeft = event.currentTarget.scrollLeft;
+  };
 
   const insert = (text: string, cursorBack = 0) => {
     const element = area.current;
@@ -77,20 +96,27 @@ function TextAreaEditor({ path, value, readOnly, onChange, onSave }: CodeEditorP
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <textarea
-        ref={area}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={onKeyDown}
-        readOnly={readOnly}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
-        autoComplete="off"
-        wrap="off"
-        aria-label={`Contents of ${path}`}
-        className="min-h-0 flex-1 resize-none bg-white p-3 font-mono text-[13px] leading-5 text-gray-900 outline-none dark:bg-gray-950 dark:text-gray-100"
-      />
+      <div className="relative min-h-0 flex-1 bg-white dark:bg-gray-950">
+        <pre ref={backdrop} aria-hidden className="code-area-backdrop code-tokens">
+          {tokens}
+          {'\n'}
+        </pre>
+        <textarea
+          ref={area}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={onKeyDown}
+          onScroll={onScroll}
+          readOnly={readOnly}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          autoComplete="off"
+          wrap="off"
+          aria-label={`Contents of ${path}`}
+          className="code-area-input"
+        />
+      </div>
       {!readOnly ? (
         <div
           role="toolbar"

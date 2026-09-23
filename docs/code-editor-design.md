@@ -121,17 +121,22 @@ guarded by `beforeunload`.
 the admin script editor does it (self-hosted, `editor.worker` only; the
 TypeScript worker is not loaded — there is no project-wide type
 information on the client, so a language service would only mislead).
-Syntax colouring uses Monaco's built-in tokenizers by file extension. On a
-coarse pointer (a phone) Monaco is replaced by a plain monospace
+Syntax colouring uses Monaco's built-in tokenizers by file extension, in
+two themes (`renkei-light`, `renkei-dark`, `lib/monaco/setup.ts`) that carry
+the chat's code palette so a file and the same code quoted in a reply read
+alike. On a coarse pointer (a phone) Monaco is replaced by a plain monospace
 `<textarea>` with a line-number column and a row of accessory keys above
 the keyboard (tab, braces, parens, arrow, semicolon, quote, undo — artboard
 6): Monaco on a phone keyboard is a known bad time, and a textarea saves
-the bundle. Both editors are one component behind one interface (`value`,
+the bundle. The textarea is coloured all the same: its glyphs are
+transparent over a backdrop that draws the same text through the chat's
+highlighter (`components/code-tokens.tsx`), sharing every font metric and
+scrolling with it. Both editors are one component behind one interface (`value`,
 `onChange`, `readOnly`, `markers`), so nothing above them knows which is
 mounted.
 
-**Dark mode**: Monaco's `vs-dark` theme follows the app's `data-theme`, as
-the script editor already does.
+**Dark mode**: the dark theme follows the app's `data-theme`, as the script
+editor already does.
 
 ## Editing and saving
 
