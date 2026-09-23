@@ -15,9 +15,10 @@
  * — are set here by a person. A secured value goes to Bitbucket once and
  * is never shown again; Bitbucket itself never sends one back.
  *
- * The layout is one column of cards on a phone and two on a wide
- * screen, runs beside setup and variables; a GitHub Actions variant
- * would fill the same frame from its own reader.
+ * The layout is one column of cards on a phone (where the runs are
+ * cards too, not a table) and two on a wide screen, runs beside setup
+ * and variables; a GitHub Actions variant would fill the same frame
+ * from its own reader.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -304,10 +305,36 @@ function RunsCard({ runs, error }: { runs: PipelineRun[]; error: string | null }
       ) : runs.length === 0 ? (
         <p className="mt-2 text-sm text-gray-500">No runs yet.</p>
       ) : (
-        // The table scrolls inside its card on a narrow screen rather than
-        // widening the page: a no-wrap cell must never push the frame sideways.
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-sm">
+        <>
+          {/* A phone gets one card per run instead of a table too wide to read. */}
+          <ul className="mt-2 divide-y divide-gray-200 sm:hidden dark:divide-gray-800">
+            {runs.map((run) => (
+              <li key={run.uuid} className="space-y-1 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <a
+                    href={run.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium hover:underline"
+                  >
+                    #{run.buildNumber}
+                  </a>
+                  <RunStatePill state={run.state} />
+                  <span className="ml-auto text-xs whitespace-nowrap text-gray-500">
+                    {run.durationSeconds === null ? '' : duration(run.durationSeconds)}
+                  </span>
+                </div>
+                <div className="truncate font-mono text-xs" title={run.ref}>
+                  {run.ref}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {run.startedBy ? `${run.startedBy} · ` : ''}
+                  {run.createdOn ? <LocalTime at={run.createdOn} /> : '—'}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <table className="mt-2 hidden w-full text-sm sm:table">
             <thead className="text-left text-xs text-gray-500">
               <tr>
                 <th scope="col" className="py-1 pr-2 font-medium">
@@ -364,7 +391,7 @@ function RunsCard({ runs, error }: { runs: PipelineRun[]; error: string | null }
               ))}
             </tbody>
           </table>
-        </div>
+        </>
       )}
     </section>
   );

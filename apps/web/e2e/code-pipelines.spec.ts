@@ -207,6 +207,7 @@ test.describe('Code project pipelines', () => {
     const runs = main.getByRole('region', { name: 'Recent runs' });
     const rows = runs.getByRole('row');
     await expect(rows).toHaveCount(3);
+    await expect(runs.getByRole('list')).toBeHidden();
     await expect(rows.nth(1)).toContainText('#2');
     await expect(rows.nth(1)).toContainText('Failed');
     await expect(rows.nth(1)).toContainText('feature/retry-invoices');
@@ -308,11 +309,20 @@ test.describe('Code project pipelines', () => {
       )
     ).toBeVisible();
 
-    // ── Phone width: the page again, one column, nothing sideways ──
+    // ── Phone width: the page again, one column, the runs as cards
+    //    rather than a table, nothing sideways ──
     await page.setViewportSize(MOBILE_VIEWPORT);
     await page.goto(pagePath);
     await expect(page.getByRole('heading', { level: 1, name: /^Pipelines/ })).toBeVisible();
-    await expect(rows.nth(1)).toContainText('Failed');
+    await expect(runs.getByRole('table')).toBeHidden();
+    const runCards = runs.getByRole('listitem');
+    await expect(runCards).toHaveCount(2);
+    await expect(runCards.nth(0)).toContainText('#2');
+    await expect(runCards.nth(0)).toContainText('Failed');
+    await expect(runCards.nth(0)).toContainText('feature/retry-invoices');
+    await expect(runCards.nth(0)).toContainText('E2E Dev');
+    await expect(runCards.nth(0)).toContainText('5m 12s');
+    await expect(runCards.nth(1)).toContainText('Successful');
     await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
     await production.getByRole('button', { name: 'Add variable' }).click();
     await expect(productionForm.getByLabel('Name', { exact: true })).toBeVisible();
