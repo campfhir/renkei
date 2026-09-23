@@ -13,6 +13,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
+import { ATLASSIAN_ADMIN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { buildProjection } from '@/lib/mcp-tools/projection';
 import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
@@ -20,10 +21,14 @@ import { JIRA_ADMIN_MCP_CONNECTOR } from '@/lib/mcp-tools/jira-admin';
 import type { JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
 import type { ChangeRequest, OperationResult } from './change-requests';
 import { FIELD_OPTIONS_KIND, applyFieldOptions, readFieldOptionsPayload } from './field-options';
+import { CREATE_SPACE_KIND, applySpaceCreation, readCreateSpacePayload } from './space-creation';
 
 /** The classic scopes each kind's writes stand on. */
 const SCOPES_BY_KIND: Record<string, string[]> = {
   [FIELD_OPTIONS_KIND]: ['manage:jira-configuration'],
+  // Checking the key and reading a role (read:jira-work); creating the
+  // space and adding role members (manage:jira-configuration).
+  [CREATE_SPACE_KIND]: ['read:jira-work', 'manage:jira-configuration'],
 };
 
 type Gate = { ok: true } | { ok: false; reason: string };
@@ -73,11 +78,15 @@ export async function applyGate(
     (scope) => !availability.jiraAdminScopes.includes(scope)
   );
   if (missing.length > 0) {
+    // Name the boxes on the connect picker, which is where it is fixed.
+    const boxes = ATLASSIAN_ADMIN_SCOPE_OPTIONS.filter((option) =>
+      option.scopes.some((scope) => missing.includes(scope))
+    ).map((option) => option.label);
     return {
       ok: false,
       reason:
         `Your Jira Administration connection does not include ${missing.join(', ')}. ` +
-        'Reconnect it with Site configuration ticked.',
+        `Reconnect it with ${boxes.join(' and ') || 'the permissions this change needs'} ticked.`,
     };
   }
 
@@ -96,6 +105,42 @@ export async function applyGate(
   return { ok: true };
 }
 
+/**
+ * May this person see Jira Administration's own records — the org's space
+ * templates? The connector's off switch, its audience and a connected grant
+ * decide, as they decide whether its tools register. Read-only mode does
+ * not: looking changes nothing.
+ */
+export async function viewGate(db: Kysely<DB>, tenantId: string, subject: string): Promise<Gate> {
+  const settingsResult = await getOrgSettings(tenantId);
+  if (!settingsResult.ok)
+    return { ok: false, reason: 'Could not read your organization’s settings.' };
+  if (settingsResult.val.disabledConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR)) {
+    return { ok: false, reason: 'Jira Administration is switched off for your organization.' };
+  }
+  const [availability, audience] = await Promise.all([
+    resolveConnectorAvailability(db, tenantId, subject),
+    resolveAudience(db, tenantId, subject),
+  ]);
+  if (
+    audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&
+    !audience.allowedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR)
+  ) {
+    return {
+      ok: false,
+      reason:
+        'Your organization limits Jira Administration to certain people, and you are not one.',
+    };
+  }
+  if (!availability.jiraAdminAvailable) {
+    return {
+      ok: false,
+      reason: 'Jira Administration is not connected. Connect it on the Connectors page first.',
+    };
+  }
+  return { ok: true };
+}
+
 export async function applyChangeRequest(
   scope: { tenantId: string; subject?: string },
   access: JiraAdminAccess,
@@ -104,6 +149,10 @@ export async function applyChangeRequest(
   if (change.kind === FIELD_OPTIONS_KIND) {
     const payload = readFieldOptionsPayload(change.payload);
     if (payload) return applyFieldOptions(scope, access, payload);
+  }
+  if (change.kind === CREATE_SPACE_KIND) {
+    const payload = readCreateSpacePayload(change.payload);
+    if (payload) return applySpaceCreation(scope, access, payload);
   }
   return {
     status: 'failed',

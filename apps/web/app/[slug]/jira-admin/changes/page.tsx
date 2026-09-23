@@ -56,7 +56,15 @@ export default async function JiraAdminChangesPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="mb-1 text-xl font-bold">Jira admin changes</h1>
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="min-w-0 truncate text-xl font-bold">Jira admin changes</h1>
+        <Link
+          href={`/${slug}/jira-admin/templates`}
+          className="shrink-0 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+        >
+          Space templates
+        </Link>
+      </div>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Changes to Jira&apos;s configuration proposed in chat, by an AI app connected to Renkei, or
         by your agents. Nothing reaches Jira until you open one here and apply it — on your own Jira

@@ -85,3 +85,14 @@ it('refuses without a connection, or without the scope the writes need', async (
       'Reconnect it with Site configuration ticked.',
   });
 });
+
+it('names every box a new space needs that the connection lacks', async () => {
+  availability = { jiraAdminAvailable: true, jiraAdminScopes: ['read:jira-user'] };
+  expect(await applyGate(db, 'tenant-1', 'owner', [], 'create_space')).toEqual({
+    ok: false,
+    reason:
+      'Your Jira Administration connection does not include read:jira-work, ' +
+      'manage:jira-configuration. Reconnect it with Read access & space details and Site ' +
+      'configuration ticked.',
+  });
+});

@@ -22,6 +22,8 @@ import { registerFieldTools } from './fields';
 import { registerSpaceTools } from './spaces';
 import { registerPlanTools } from './plans';
 import { registerChangeTools } from './changes';
+import { registerTemplateTools } from './templates';
+import { registerProposeSpaceTools } from './propose-space';
 
 export const JIRA_ADMIN_MCP_CONNECTOR = 'jira-admin';
 
@@ -39,4 +41,6 @@ export async function registerJiraAdminTools(
   await registerSpaceTools(server, context, auth);
   await registerPlanTools(server, context, auth);
   await registerChangeTools(server, context, auth);
+  await registerTemplateTools(server, context, auth);
+  await registerProposeSpaceTools(server, context, auth);
 }

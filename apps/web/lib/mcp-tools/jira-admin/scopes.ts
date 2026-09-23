@@ -47,6 +47,25 @@ export function jiraAdminScopeFor(toolName: string): string[] {
     case 'jira_admin_list_changes':
       return ['read:jira-work', 'manage:jira-configuration'];
 
+    // Templates: reading a space in full — the project, its roles and its
+    // permission, notification and security schemes (read:jira-work), and
+    // its work type, screen, workflow and field configuration schemes
+    // (manage:jira-configuration). Listing and deleting touch only Renkei's
+    // table, but live and die with saving.
+    case 'jira_admin_save_space_template':
+    case 'jira_admin_list_space_templates':
+    case 'jira_admin_delete_space_template':
+    case 'jira_admin_compare_space_to_template':
+      return ['read:jira-work', 'manage:jira-configuration'];
+
+    // A new space: everything saving a template reads, plus the lead and
+    // members (/user, /user/search, /group/bulk: read:jira-user), the key
+    // and name checks (read:jira-work) and the site's roles (/role:
+    // manage:jira-configuration) — and creating it and filling its roles,
+    // on apply, is manage:jira-configuration too.
+    case 'jira_admin_propose_space':
+      return ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'];
+
     // A tool nobody mapped stands on the whole admin set: registering it
     // for less could only produce 401s.
     default:

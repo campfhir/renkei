@@ -1165,7 +1165,101 @@ function jiraError(response, status, message) {
   json(response, status, { errorMessages: [message], errors: {} });
 }
 
+/**
+ * Spaces, per site: what creating one from a change request writes. A new
+ * space's Administrators role starts with the group Jira's defaults would
+ * put there, so applying has a member it must not add twice.
+ */
+const JIRA_SPACES = new Map();
+let nextSpaceId = 30000;
+
+function jiraSpaces(cloudId) {
+  if (!JIRA_SPACES.has(cloudId)) JIRA_SPACES.set(cloudId, new Map());
+  return JIRA_SPACES.get(cloudId);
+}
+
+function handleJiraSpaces(request, url, response, cloudId, path) {
+  const spaces = jiraSpaces(cloudId);
+  if (request.method === 'GET' && path === '/rest/api/3/projectvalidate/key') {
+    const key = url.searchParams.get('key') ?? '';
+    return json(response, 200, {
+      errorMessages: [],
+      errors: spaces.has(key)
+        ? { projectKey: 'A project with that project key already exists.' }
+        : {},
+    });
+  }
+  if (path === '/rest/api/3/project' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      if (spaces.has(body.key)) {
+        return jiraError(response, 400, 'A project with that project key already exists.');
+      }
+      const space = {
+        id: String(nextSpaceId++),
+        key: body.key,
+        name: body.name,
+        created: body,
+        roles: {
+          10002: [
+            {
+              type: 'atlassian-group-role-actor',
+              actorGroup: { name: 'ops-admins', displayName: 'ops-admins', groupId: 'g-admins' },
+            },
+          ],
+        },
+      };
+      spaces.set(body.key, space);
+      json(response, 201, { id: Number(space.id), key: space.key });
+    });
+    return;
+  }
+  const one = /^\/rest\/api\/3\/project\/([^/]+)$/.exec(path);
+  if (one && request.method === 'GET') {
+    const space = spaces.get(one[1]);
+    return space ? json(response, 200, space) : jiraError(response, 404, 'No project.');
+  }
+  const role = /^\/rest\/api\/3\/project\/([^/]+)\/role\/(\d+)$/.exec(path);
+  if (role) {
+    const space = spaces.get(role[1]);
+    if (!space) return jiraError(response, 404, 'No project.');
+    const actors = (space.roles[role[2]] ??= []);
+    if (request.method === 'GET') return json(response, 200, { id: Number(role[2]), actors });
+    if (request.method === 'POST') {
+      void readBody(request).then((body) => {
+        const groups = [
+          ...(body.groupId ?? []).map((groupId) => ({ groupId, name: groupId })),
+          ...(body.group ?? []).map((name) => ({ groupId: '', name })),
+        ];
+        for (const group of groups) {
+          const held = actors.some(
+            (actor) =>
+              actor.actorGroup &&
+              ((group.groupId && actor.actorGroup.groupId === group.groupId) ||
+                actor.actorGroup.name === group.name)
+          );
+          // Jira refuses a member twice; so does the stub, so a double add fails loudly.
+          if (held) return jiraError(response, 400, `Group ${group.name} is already a member.`);
+          actors.push({ type: 'atlassian-group-role-actor', actorGroup: group });
+        }
+        for (const accountId of body.user ?? []) {
+          if (actors.some((actor) => actor.actorUser?.accountId === accountId)) {
+            return jiraError(response, 400, `User ${accountId} is already a member.`);
+          }
+          actors.push({ type: 'atlassian-user-role-actor', actorUser: { accountId } });
+        }
+        json(response, 200, { id: Number(role[2]), actors });
+      });
+      return;
+    }
+  }
+  return jiraError(response, 404, 'The stub does not answer that path.');
+}
+
 function handleJiraAdmin(request, url, response) {
+  const site = /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:project|projectvalidate)(?:\/.*)?)$/.exec(
+    url.pathname
+  );
+  if (site) return handleJiraSpaces(request, url, response, site[1], site[2]);
   const match =
     /^\/jira\/([^/]+)\/rest\/api\/3\/field\/([^/]+)\/context\/([^/]+)\/option(\/move)?$/.exec(
       url.pathname

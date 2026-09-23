@@ -813,6 +813,22 @@ export interface JiraAdminChangeRequests {
   updated_at: Generated<Timestamp>;
 }
 
+export interface JiraAdminSpaceTemplates {
+  cloud_id: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  description: string | null;
+  document: Json;
+  id: Generated<string>;
+  name: string;
+  name_key: string;
+  site_url: string | null;
+  source_space_key: string | null;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+}
+
 export interface JiraSessions {
   account_id: string;
   created_at: Generated<Timestamp>;
@@ -1407,6 +1423,7 @@ export interface DB {
   file_shares: FileShares;
   identities: Identities;
   jira_admin_change_requests: JiraAdminChangeRequests;
+  jira_admin_space_templates: JiraAdminSpaceTemplates;
   jira_sessions: JiraSessions;
   knowledge_chunks: KnowledgeChunks;
   knowledge_reindex_runs: KnowledgeReindexRuns;

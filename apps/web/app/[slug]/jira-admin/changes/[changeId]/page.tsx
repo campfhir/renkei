@@ -61,7 +61,7 @@ export default async function JiraAdminChangePage({
     : undefined;
 
   const state = stateOf(change);
-  const { operations, reach, siteWide } = describeChange(change);
+  const { operations, reach, siteWide, applyNote } = describeChange(change);
   const results = change.results;
   // The apply route asks this again on the click; asking now says why
   // Apply is off before anyone presses it.
@@ -146,9 +146,31 @@ export default async function JiraAdminChangePage({
           : operations.map((operation, index) => (
               <li
                 key={index}
-                className="rounded-md border border-gray-200 p-3 text-sm break-words dark:border-gray-800"
+                className="rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800"
               >
-                {operation}
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 break-words">{operation.text}</span>
+                  {operation.access && (
+                    <span
+                      title="Changes who can see or do what in Jira"
+                      className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800 dark:bg-purple-950 dark:text-purple-300"
+                    >
+                      Access
+                    </span>
+                  )}
+                </div>
+                {operation.details.length > 0 && (
+                  <ul
+                    data-testid="operation-details"
+                    className="mt-2 space-y-0.5 text-gray-600 dark:text-gray-400"
+                  >
+                    {operation.details.map((detail) => (
+                      <li key={detail} className="break-words">
+                        {detail}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </li>
             ))}
       </ol>
@@ -157,8 +179,7 @@ export default async function JiraAdminChangePage({
         <>
           <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
             Applying runs these on your own Jira Administration connection, in this order, and Jira
-            checks your admin rights on each. Renkei reads the field again first and stops at
-            anything that has changed since this was proposed. Nothing is deleted.
+            checks your admin rights on each.{applyNote ? ` ${applyNote}` : ''}
           </p>
           <ChangeActions
             tenantId={tenant.id}

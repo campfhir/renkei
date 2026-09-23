@@ -165,7 +165,10 @@ interface JiraAdminLogScope {
   subject?: string;
 }
 
-export type JiraAdminResult = { ok: true; body: unknown } | { ok: false; error: string };
+export type JiraAdminResult =
+  | { ok: true; body: unknown }
+  /** `status` is Jira's answer when there was one; absent when Jira was unreachable. */
+  | { ok: false; error: string; status?: number };
 
 /** GET a path under the site's Jira gateway; any JSON shape comes back as `unknown`. */
 export async function jiraAdminGet(
@@ -250,7 +253,11 @@ async function jiraAdminRequest(
       status: response.status,
       responseBody: text ? secure(truncateForLog(text)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, jiraReasons(parsed)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, jiraReasons(parsed)),
+      status: response.status,
+    };
   }
   return { ok: true, body: parsed };
 }

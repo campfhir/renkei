@@ -212,6 +212,9 @@ describe('listAvailableTools', () => {
     expect(tools).toContain('jira_admin_get_space_configuration');
     expect(tools).toContain('jira_admin_propose_option_changes');
     expect(tools).toContain('jira_admin_list_changes');
+    expect(tools).toContain('jira_admin_save_space_template');
+    expect(tools).toContain('jira_admin_compare_space_to_template');
+    expect(tools).toContain('jira_admin_propose_space');
   });
 
   it('hides Jira admin proposals in read-only mode, since applying one would be refused', async () => {
@@ -227,7 +230,12 @@ describe('listAvailableTools', () => {
     readOnly = true;
     const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools).not.toContain('jira_admin_propose_option_changes');
+    expect(tools).not.toContain('jira_admin_propose_space');
+    expect(tools).not.toContain('jira_admin_save_space_template');
+    expect(tools).not.toContain('jira_admin_delete_space_template');
     expect(tools).toContain('jira_admin_list_changes');
+    expect(tools).toContain('jira_admin_list_space_templates');
+    expect(tools).toContain('jira_admin_compare_space_to_template');
     expect(tools).toContain('jira_admin_get_field');
   });
 

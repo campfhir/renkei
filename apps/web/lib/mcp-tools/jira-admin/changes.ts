@@ -16,7 +16,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
-import { getPublicBaseUrl } from '@renkei/settings';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
@@ -42,7 +41,8 @@ import {
   type FieldOptionsPayload,
   type OptionChangeInput,
 } from '@/lib/jira-admin/field-options';
-import { describeChange } from '@/lib/jira-admin/describe';
+import { describeChange, operationLines } from '@/lib/jira-admin/describe';
+import { reviewPrefix } from './review-link';
 
 const optionList = (what: string) =>
   z.array(z.string().min(1).max(255)).max(100).describe(what).optional();
@@ -156,23 +156,6 @@ async function spacesOf(
     ])
   );
   return ids.map((id) => keys.get(id) || `id ${id}`);
-}
-
-/**
- * Where a person reviews a request, less its id: absolute when the
- * deployment knows its address. Pages are keyed by the tenant's slug.
- */
-async function reviewPrefix(context: MCPToolContext): Promise<string> {
-  const dbResult = getDatabase();
-  const tenant = dbResult.ok
-    ? await dbResult.val
-        .selectFrom('tenants')
-        .select('slug')
-        .where('id', '=', context.tenantId)
-        .executeTakeFirst()
-    : undefined;
-  const base = context.origin || getPublicBaseUrl() || '';
-  return `${base}/${tenant?.slug ?? ''}/jira-admin/changes/`;
 }
 
 const STATE_WORDS: Record<ChangeRequestState, string> = {
@@ -418,7 +401,7 @@ export async function registerChangeTools(
       const lines = [
         'Proposed — nothing has changed in Jira yet.',
         '',
-        ...operations.map((operation) => `• ${operation}`),
+        ...operationLines(operations),
         ...(reach ? ['', `Where: ${reach}`] : []),
         ...(notes.length > 0 ? ['', ...notes] : []),
         '',
@@ -476,7 +459,7 @@ export async function registerChangeTools(
                   `• ${result.label} — ${result.outcome === 'not_run' ? 'not run' : result.outcome}` +
                   (result.detail ? `: ${result.detail}` : '')
               )
-            : operations.map((operation) => `• ${operation}`)),
+            : operationLines(operations)),
           '',
           `${await reviewPrefix(context)}${change.id}`,
         ];
