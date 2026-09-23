@@ -19,13 +19,20 @@ export type {
   LlmStreamOptions,
   LlmToolDef,
   LlmUsage,
+  WireRequestCause,
 } from './contract';
-export { transportErrorKind } from './contract';
+export {
+  transportErrorKind,
+  wireRequestCauseOf,
+  maskCredentialHeaders,
+  CREDENTIAL_HEADER_NAMES,
+} from './contract';
 export { readSseEvents, IdleTimeoutError, type SseEvent } from './sse-reader';
 export { createAccumulator, type StreamAccumulator } from './stream-accumulator';
 export { streamOrComplete } from './stream-fallback';
 export { AnthropicProvider, type AnthropicConfig } from './anthropic';
 export { OpenAiProvider, type OpenAiConfig } from './openai';
+export { OpenAiResponsesProvider, type OpenAiResponsesConfig } from './openai-responses';
 export {
   listAvailableModels,
   type AvailableModel,

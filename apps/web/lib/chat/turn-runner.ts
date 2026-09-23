@@ -41,6 +41,8 @@
 
 import {
   streamOrComplete,
+  maskCredentialHeaders,
+  wireRequestCauseOf,
   type LlmContentBlock,
   type LlmErrorKind,
   type LlmMessage,
@@ -532,14 +534,6 @@ function clip(text: string, max: number): string {
     ? `${text.slice(0, max)}\n…[${text.length - max} more characters clipped]`
     : text;
 }
-
-/**
- * How much of a tool call's arguments or result rides on a debug log line —
- * matches the connectors' own request/response logging (mcp-tools/common.ts):
- * a secure()-marked value past ~2KB of ciphertext falls into blob storage,
- * which the log viewer does not decrypt on read, so this keeps it inline.
- */
-const LOG_BODY_MAX_CHARS = 1300;
 
 /**
  * Whether a tool_use block's raw streamed JSON never finished — non-empty
@@ -1088,14 +1082,29 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         if (result.err.type === 'aborted' || cancelRequested) {
           return await finalize('canceled', null, 'canceled');
         }
-        log(
-          'chat turn model error: {kind} {message}',
-          {
-            kind: result.err.type,
-            message: result.err.message ?? '',
-          },
-          'error'
-        );
+        {
+          const cause = wireRequestCauseOf(result.err.cause);
+          log(
+            'chat turn model error: {kind} {message}',
+            {
+              kind: result.err.type,
+              message: result.err.message ?? '',
+              // Plain text, unclipped — see wireRequestCauseOf's doc: no
+              // credential lives in the URL or body, and the logging
+              // pipeline already handles an oversized value. `headers`
+              // alone is masked, since it's the one part of this that
+              // does carry one (authorization / api-key).
+              ...(cause
+                ? {
+                    url: cause.url,
+                    headers: maskCredentialHeaders(cause.headers, secure),
+                    request: JSON.stringify(cause.request),
+                  }
+                : {}),
+            },
+            'error'
+          );
+        }
         return await finalize('failed', friendlyLlmError(result.err.type), 'failed');
       }
 
@@ -1276,7 +1285,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             tool: use.name,
             toolUseId: use.id,
             local: deps.localTools.has(use.name),
-            input: secure(clip(JSON.stringify(use.input ?? {}), LOG_BODY_MAX_CHARS)),
+            input: JSON.stringify(use.input ?? {}),
           },
           'debug'
         );
@@ -1287,7 +1296,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
               tool: use.name,
               toolUseId: use.id,
               isError: outcome.isError === true,
-              result: secure(clip(textOfResult(outcome), LOG_BODY_MAX_CHARS)),
+              result: textOfResult(outcome),
             },
             'debug'
           );

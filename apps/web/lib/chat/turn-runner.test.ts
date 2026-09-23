@@ -1413,6 +1413,63 @@ describe('runChatTurn logs every tool call attempt', () => {
   });
 });
 
+describe('runChatTurn logs the actual request on a model error', () => {
+  it('attaches the plain-text, redacted-nowhere request body — not just the error kind/message', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-log-model-error');
+    const logged: { message: string; fields: Record<string, unknown>; level?: string }[] = [];
+    const rejecting: LlmProvider = {
+      async complete() {
+        return err('invalid_request' as const, {
+          message: 'OpenAI-compatible endpoint 400: bad request',
+          cause: {
+            summary: 'POST https://x/y\n{"model":"<redacted>"}',
+            url: 'https://api.openai.com/v1/chat/completions',
+            headers: { authorization: 'Bearer sk-real-secret', 'content-type': 'application/json' },
+            request: { model: 'gpt-6-astra-1', messages: [{ role: 'user', content: 'hi' }] },
+          },
+        });
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(rejecting),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        log: (message, fields, level) => logged.push({ message, fields, level }),
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-log-model-error')
+    );
+    expect(outcome.status).toBe('failed');
+    const errorLog = logged.find((row) => row.message.includes('chat turn model error'));
+    expect(errorLog).toMatchObject({ level: 'error', fields: { kind: 'invalid_request' } });
+    // Plain text, not secure() — no credential ever lives in a request
+    // body, so there is nothing here worth the encrypt-at-rest treatment.
+    const requestField = errorLog?.fields.request;
+    expect(typeof requestField).toBe('string');
+    const parsed: { model?: unknown; messages?: unknown } = JSON.parse(
+      typeof requestField === 'string' ? requestField : '{}'
+    );
+    expect(parsed.model).toBe('gpt-6-astra-1');
+    expect(Array.isArray(parsed.messages)).toBe(true);
+
+    // The URL rides plain; the credential-bearing header is masked, every
+    // other header is plain.
+    expect(errorLog?.fields.url).toBe('https://api.openai.com/v1/chat/completions');
+    const headers = errorLog?.fields.headers as
+      | { authorization?: { _secure?: boolean; value?: string }; 'content-type'?: unknown }
+      | undefined;
+    expect(headers?.authorization?._secure).toBe(true);
+    expect(headers?.authorization?.value).toBe('Bearer sk-real-secret');
+    expect(headers?.['content-type']).toBe('application/json');
+  });
+});
+
 describe('runChatTurn in auto mode', () => {
   const doneTool: LocalTool = {
     def: { name: 'task_complete', description: 'done', inputSchema: { type: 'object' } },

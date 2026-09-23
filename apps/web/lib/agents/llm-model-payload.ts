@@ -6,6 +6,19 @@
 
 export const SUPPORTED_PROVIDERS = ['anthropic', 'openai'] as const;
 
+/**
+ * Which OpenAI-compatible wire dialect a `provider: 'openai'` config
+ * speaks — unlike reasoningEffort, this picks between OUR OWN two
+ * adapters (openai.ts vs. openai-responses.ts), not a provider-defined
+ * vocabulary, so a closed list is the right call here. 'chat_completions'
+ * (the default, and every config that predates this field) covers OpenAI,
+ * Azure AI Foundry's chat-completions v1 surface, and self-hosted
+ * gateways; 'responses' targets the Responses API — the only surface some
+ * reasoning-model deployments (a gpt-6-astra-1 case found in production)
+ * accept tool calls on at all.
+ */
+export const API_SURFACES = ['chat_completions', 'responses'] as const;
+
 export interface ModelPayload {
   label: string;
   provider: string;
@@ -16,6 +29,7 @@ export interface ModelPayload {
     temperature?: number;
     apiVersion?: string;
     reasoningEffort?: string;
+    apiSurface?: string;
   };
   apiKey: string | null;
   /**
@@ -40,6 +54,7 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
     temperature?: unknown;
     apiVersion?: unknown;
     reasoningEffort?: unknown;
+    apiSurface?: unknown;
     apiKey?: unknown;
     apiKeyFromId?: unknown;
     enabled?: unknown;
@@ -81,6 +96,10 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
       // apiVersion do.
       ...(typeof payload.reasoningEffort === 'string' && payload.reasoningEffort.trim()
         ? { reasoningEffort: payload.reasoningEffort.trim() }
+        : {}),
+      ...(typeof payload.apiSurface === 'string' &&
+      API_SURFACES.some((surface) => surface === payload.apiSurface)
+        ? { apiSurface: payload.apiSurface }
         : {}),
     },
     apiKey: typeof payload.apiKey === 'string' && payload.apiKey ? payload.apiKey : null,

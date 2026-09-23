@@ -257,3 +257,39 @@ test('admin: reasoning effort is free text — no fixed value list — and round
   await page.getByRole('button', { name: 'Edit' }).click();
   await expect(page.getByLabel('Reasoning effort')).toHaveValue('xhigh');
 });
+
+test('admin: API surface can opt an OpenAI-compatible model into the Responses API', async ({
+  page,
+}, testInfo) => {
+  // Its own tenant, same reasoning as the spec above.
+  const fixture = fixtureFor(`${testInfo.project.name}-api-surface`);
+  await seedTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/admin/llm-models`);
+
+  // Anthropic (the default provider) never shows the toggle — it's
+  // meaningless outside the OpenAI-compatible dialect family.
+  await page.getByRole('button', { name: '+ Add a model' }).click();
+  await expect(page.getByLabel('API surface')).toHaveCount(0);
+
+  await page.getByLabel('Display name').fill('Astra Responses');
+  await page.getByLabel('Provider').selectOption('openai');
+  await expect(page.getByLabel('API surface')).toBeVisible();
+  await page.getByLabel('Model id').fill('gpt-6-astra-1');
+  await page.getByLabel('API key').fill('sk-e2e-fake-key');
+
+  // Some reasoning-model deployments cannot make tool calls on chat
+  // completions at any reasoning_effort value — /v1/responses is their
+  // only documented path. Selecting it here is what lets resolve.ts pick
+  // the Responses API adapter instead of the chat-completions one.
+  await page.getByLabel('API surface').selectOption('responses');
+  await shot(page, testInfo, 'llm-models-api-surface-responses-selected');
+
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Astra Responses')).toBeVisible();
+
+  // Round-trips through the real save route and DB.
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('API surface')).toHaveValue('responses');
+});

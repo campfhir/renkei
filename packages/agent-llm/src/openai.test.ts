@@ -154,6 +154,35 @@ describe('OpenAiProvider.complete', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('attaches the exact request — url, headers, and body — as cause on a rejection', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(400, { error: { message: 'bad schema' } }));
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    const cause: {
+      summary?: unknown;
+      url?: unknown;
+      headers?: { authorization?: unknown; 'api-key'?: unknown };
+      request?: { model?: unknown; messages?: unknown };
+    } = typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+    expect(typeof cause.summary).toBe('string');
+    expect(cause.url).toBe('https://api.openai.com/v1/chat/completions');
+    expect(cause.headers?.authorization).toBe('Bearer sk-test');
+    expect(cause.headers?.['api-key']).toBe('sk-test');
+    expect(cause.request?.model).toBe('gpt-5');
+    expect(Array.isArray(cause.request?.messages)).toBe(true);
+  });
+
+  it('attaches cause.request on a network failure too', async () => {
+    fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    expect(result.err.type).toBe('network');
+    const cause: { url?: unknown; request?: { model?: unknown } } =
+      typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+    expect(cause.url).toBe('https://api.openai.com/v1/chat/completions');
+    expect(cause.request?.model).toBe('gpt-5');
+  });
+
   it('sends reasoning_effort when configured', async () => {
     const reasoning = new OpenAiProvider({
       apiKey: 'sk-test',

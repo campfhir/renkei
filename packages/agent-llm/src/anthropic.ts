@@ -12,7 +12,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
-import { looksLikeCredentialFailure, transportErrorKind } from './contract';
+import { isAzureHost, looksLikeCredentialFailure, transportErrorKind } from './contract';
 import { readSseEvents } from './sse-reader';
 import { createAccumulator } from './stream-accumulator';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -323,8 +323,7 @@ export class AnthropicProvider implements LlmProvider {
     // failed") even when one is right — so Azure hosts get EXACTLY the
     // headers Foundry's own sample curl sends: Bearer alone. Anthropic
     // direct keeps its own x-api-key alone; other gateways get both.
-    const isAzure = /\.azure\.com$/i.test(new URL(baseUrl).hostname);
-    const authHeaders: Record<string, string> = isAzure
+    const authHeaders: Record<string, string> = isAzureHost(baseUrl)
       ? { authorization: `Bearer ${this.config.apiKey}` }
       : this.config.baseUrl
         ? {
@@ -390,26 +389,30 @@ export class AnthropicProvider implements LlmProvider {
     callerSignal?: AbortSignal
   ): Promise<Result<Response, LlmErrorKind>> {
     const { baseUrl, url } = this.endpoint();
+    const headers = this.headers(baseUrl);
     let response: Response;
     try {
       response = await fetch(url, {
         method: 'POST',
-        headers: this.headers(baseUrl),
+        headers,
         body: JSON.stringify(body),
         signal,
       });
     } catch (error) {
       return err(transportErrorKind(error, callerSignal), {
         message: error instanceof Error ? error.message : String(error),
+        cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
       });
     }
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       return err(errorKindOf(response.status, text), {
         message: `Anthropic ${response.status}: ${text.slice(0, 500)}`,
-        // The redacted request shape, for "what did we actually send"
-        // troubleshooting — content replaced by lengths.
-        cause: summarizeWireRequest(`${baseUrl}/v1/messages`, body),
+        // The full request — URL (query params included), headers, and
+        // body — alongside a redacted summary of the body; see
+        // WireRequestCause's doc for why the credential in `headers`
+        // is the one part a caller must mask before logging this.
+        cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
       });
     }
     return ok(response);

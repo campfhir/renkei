@@ -178,6 +178,23 @@ describe('AnthropicProvider.complete', () => {
     expect(body.tool_choice).toEqual({ type: 'any' });
   });
 
+  it('attaches the exact request — url, headers, and body — as cause on a rejection', async () => {
+    fetchSpy.mockResolvedValue(new Response('{"error":{"message":"bad schema"}}', { status: 400 }));
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    const cause: {
+      summary?: unknown;
+      url?: unknown;
+      headers?: { 'x-api-key'?: unknown };
+      request?: { model?: unknown; messages?: unknown };
+    } = typeof result.err.cause === 'object' && result.err.cause !== null ? result.err.cause : {};
+    expect(typeof cause.summary).toBe('string');
+    expect(cause.url).toBe('https://api.anthropic.com/v1/messages');
+    expect(cause.headers?.['x-api-key']).toBe('sk-test');
+    expect(cause.request?.model).toBe('claude-sonnet-5');
+    expect(Array.isArray(cause.request?.messages)).toBe(true);
+  });
+
   it('renames tool_result blocks onto the wire', async () => {
     fetchSpy.mockResolvedValue(
       jsonResponse(200, { content: [], stop_reason: 'end_turn', usage: {} })

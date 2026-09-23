@@ -237,6 +237,22 @@ export function looksLikeCredentialFailure(body: string): boolean {
 }
 
 /**
+ * Whether a base URL's host is an Azure endpoint (`*.azure.com`) — every
+ * OpenAI-compatible adapter and models-listing helper special-cases these
+ * (Azure's gateway fails a request carrying both credential headers, where
+ * every other host tolerates it), so the hostname sniff is shared rather
+ * than copied at each call site. A base URL that fails to parse is simply
+ * not Azure, same as an empty one.
+ */
+export function isAzureHost(baseUrl: string): boolean {
+  try {
+    return /\.azure\.com$/i.test(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The error kind for a thrown fetch/read failure: the caller's own cancel,
  * a deadline, or the network. Shared by both adapters so "the user clicked
  * Stop" is never reported as a timeout.
@@ -248,4 +264,75 @@ export function transportErrorKind(error: unknown, signal?: AbortSignal): LlmErr
     if (error.name === 'AbortError') return 'aborted';
   }
   return 'network';
+}
+
+/**
+ * What every adapter attaches as a request-level failure's `err().cause`:
+ * the whole outgoing request — URL (query parameters included, e.g. an
+ * Azure `?api-version=`), headers, and body — alongside a safe-to-display
+ * summary (see wire-summary.ts) of the body. This exists so a real
+ * failure — the whole reason someone is looking — can be diagnosed from
+ * what actually went out on the wire instead of a guess: this package's
+ * own adapters were built by reasoning about documentation and asking an
+ * operator to run curl by hand, exactly because no request was ever
+ * captured anywhere. Headers and the URL matter as much as the body here:
+ * a wrong base URL, a missing api-version, or a header the gateway
+ * didn't like are exactly the class of failure the body alone can't show.
+ *
+ * The one thing here worth encrypting at rest is a credential: `headers`
+ * carries the real `authorization`/`api-key` value (CREDENTIAL_HEADER_NAMES
+ * names which keys), because those ARE the picture a caller needs — but
+ * that caller must run each header through maskCredentialHeaders() (or
+ * equivalent) before logging, so the credential itself is masked while
+ * the fact that it was sent, and everything else about the request,
+ * stays plain text. `request` (the body) and the rest of `headers` are
+ * ordinary prompt/tool content, not secrets — log them as plain text, not
+ * secure(), and don't clip them: the logging pipeline already handles an
+ * oversized value. Still never surface any of this on an admin-facing UI
+ * verbatim.
+ */
+export interface WireRequestCause {
+  summary: string;
+  url: string;
+  headers: Record<string, string>;
+  request: Record<string, unknown>;
+}
+
+/** Header names that carry a credential — the one thing in a
+ *  WireRequestCause a logging call site must mask (e.g. with secure())
+ *  rather than write as plain text. Lowercase; compare case-insensitively. */
+export const CREDENTIAL_HEADER_NAMES = new Set(['authorization', 'api-key', 'x-api-key']);
+
+/**
+ * Every header from a WireRequestCause, with credential-bearing values run
+ * through `mask` instead of left as plain text. Takes the masking function
+ * as a parameter (rather than calling `secure()` itself) so this package
+ * stays free of a dependency on the logging library — the caller passes
+ * its own `secure()`.
+ */
+export function maskCredentialHeaders(
+  headers: Record<string, string>,
+  mask: (value: string) => unknown
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    out[key] = CREDENTIAL_HEADER_NAMES.has(key.toLowerCase()) ? mask(value) : value;
+  }
+  return out;
+}
+
+/** Narrows an `Err.cause` down to a `WireRequestCause`, for a logging call
+ *  site that does not otherwise know what an adapter put there. */
+export function wireRequestCauseOf(cause: unknown): WireRequestCause | null {
+  if (typeof cause !== 'object' || cause === null) return null;
+  const row: { summary?: unknown; url?: unknown; headers?: unknown; request?: unknown } = cause;
+  if (typeof row.summary !== 'string') return null;
+  if (typeof row.url !== 'string') return null;
+  if (typeof row.headers !== 'object' || row.headers === null) return null;
+  if (typeof row.request !== 'object' || row.request === null) return null;
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(row.headers)) {
+    if (typeof value === 'string') headers[key] = value;
+  }
+  return { summary: row.summary, url: row.url, headers, request: { ...row.request } };
 }

@@ -27,7 +27,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
-import { looksLikeCredentialFailure, transportErrorKind } from './contract';
+import { isAzureHost, looksLikeCredentialFailure, transportErrorKind } from './contract';
 import { readSseEvents } from './sse-reader';
 import { createAccumulator } from './stream-accumulator';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -238,16 +238,10 @@ export class OpenAiProvider implements LlmProvider {
   /** See the module docstring: Azure's gateway rejects a request carrying
    *  both credential headers, so an Azure host gets Bearer alone. */
   private headers(baseUrl: string): Record<string, string> {
-    let isAzure: boolean;
-    try {
-      isAzure = /\.azure\.com$/i.test(new URL(baseUrl).hostname);
-    } catch {
-      isAzure = false;
-    }
     return {
       'content-type': 'application/json',
       authorization: `Bearer ${this.config.apiKey}`,
-      ...(isAzure ? {} : { 'api-key': this.config.apiKey }),
+      ...(isAzureHost(baseUrl) ? {} : { 'api-key': this.config.apiKey }),
     };
   }
 
@@ -290,6 +284,7 @@ export class OpenAiProvider implements LlmProvider {
   ): Promise<Result<Response, LlmErrorKind>> {
     const { baseUrl, url } = this.endpoint();
     const baseBody = this.baseBody(request, stream);
+    const headers = this.headers(baseUrl);
     for (;;) {
       const body = {
         ...baseBody,
@@ -301,13 +296,14 @@ export class OpenAiProvider implements LlmProvider {
       try {
         response = await fetch(url, {
           method: 'POST',
-          headers: this.headers(baseUrl),
+          headers,
           body: JSON.stringify(body),
           signal,
         });
       } catch (error) {
         return err(transportErrorKind(error, callerSignal), {
           message: error instanceof Error ? error.message : String(error),
+          cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
         });
       }
 
@@ -323,9 +319,11 @@ export class OpenAiProvider implements LlmProvider {
         }
         return err(errorKindOf(response.status, text), {
           message: `OpenAI-compatible endpoint ${response.status}: ${text.slice(0, 500)}`,
-          // The redacted request shape, for "what did we actually send"
-          // troubleshooting — content replaced by lengths.
-          cause: summarizeWireRequest(`${baseUrl}/chat/completions`, body),
+          // The full request — URL (query params included), headers, and
+          // body — alongside a redacted summary of the body; see
+          // WireRequestCause's doc for why the credential in `headers`
+          // is the one part a caller must mask before logging this.
+          cause: { summary: summarizeWireRequest(url, body), url, headers, request: body },
         });
       }
       return ok(response);
