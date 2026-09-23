@@ -462,8 +462,8 @@ export default function PipelinesPage({
                     </label>
                     <div className="flex items-center justify-end gap-2">
                       <p className="mr-auto text-xs text-gray-500">
-                        Commits straight to {branchLabel} with your Bitbucket access. The picked
-                        template is a starting point; what is in the box is what lands.
+                        Commit goes straight to {branchLabel}, with your Bitbucket access. The
+                        picked template is a starting point; what is in the box is what lands.
                       </p>
                       <button
                         type="button"
@@ -477,7 +477,7 @@ export default function PipelinesPage({
                         disabled={busy || !fileDraft.text.trim()}
                         className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                       >
-                        {busy ? 'Committing…' : `Commit to ${branchLabel}`}
+                        {busy ? 'Committing…' : 'Commit'}
                       </button>
                     </div>
                   </form>

@@ -283,7 +283,8 @@ test.describe('Code project pipelines', () => {
     await fileText.fill((await fileText.inputValue()).replace('pnpm test', 'pnpm test -- --ci'));
     await expect(fileForm.getByLabel('Commit message')).toHaveValue('Add bitbucket-pipelines.yml');
     await shot('code-pipelines-file-template.png');
-    await fileForm.getByRole('button', { name: 'Commit to main' }).click();
+    await expect(fileForm.getByText(/Commit goes straight to main/)).toBeVisible();
+    await fileForm.getByRole('button', { name: 'Commit', exact: true }).click();
     await expect(setup.getByRole('status')).toContainText(
       'Committed bitbucket-pipelines.yml to main'
     );
