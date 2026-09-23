@@ -643,30 +643,34 @@ export default function ModelForms({ slug }: { slug: string }) {
               <label className={labelClass} htmlFor="model-reasoning-effort">
                 Reasoning effort <span className="font-normal text-gray-500">(optional)</span>
               </label>
-              <select
+              <input
                 id="model-reasoning-effort"
                 className={inputClass}
                 value={draft.reasoningEffort}
+                list="reasoning-effort-suggestions"
+                placeholder="Model default"
                 onChange={(event) => {
                   setDraft({ ...draft, reasoningEffort: event.target.value });
                   clearTest();
                 }}
-              >
-                <option value="">Model default</option>
-                <option value="none">None</option>
-                <option value="minimal">Minimal</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
+              />
+              <datalist id="reasoning-effort-suggestions">
+                <option value="none" />
+                <option value="minimal" />
+                <option value="low" />
+                <option value="medium" />
+                <option value="high" />
+                <option value="xhigh" />
+              </datalist>
               <p className={hintClass}>
                 Reasoning models only (GPT-5 family and newer). Leave temperature blank for these
-                — they reject it. Some reasoning models reject tool calls entirely unless this is
-                set to &quot;None&quot; (their error names <span className="font-mono">
-                  reasoning_effort
-                </span>{' '}
-                and says to set it to &quot;none&quot;) — &quot;Model default&quot; is not the same
-                thing and will keep failing.
+                — they reject it. Free text, not a fixed list: which values a model accepts (and
+                whether it accepts &quot;none&quot; at all) is entirely the provider&apos;s call and
+                differs by model — one Azure deployment demanded &quot;none&quot; to allow tool
+                calls at all, another rejected &quot;none&quot; outright and only took low/medium/
+                high/xhigh. Blank keeps the model&apos;s own default, which is not the same as
+                &quot;none&quot; and may reject tool calls on its own. Check the exact error message
+                — it names the accepted values — and paste one here.
               </p>
             </div>
           ) : null}

@@ -223,7 +223,7 @@ test('admin: the model roster, listing, testing, and saving', async ({ page }, t
   await shot(page, testInfo, 'llm-models-08-mobile-edit');
 });
 
-test('admin: reasoning effort offers a None option, and it round-trips through save', async ({
+test('admin: reasoning effort is free text — no fixed value list — and round-trips through save', async ({
   page,
 }, testInfo) => {
   // Its own tenant (AGENTS.md's rule for a spec that writes data): this
@@ -239,22 +239,21 @@ test('admin: reasoning effort offers a None option, and it round-trips through s
   await page.getByLabel('Model id').fill('gpt-6-astra-1');
   await page.getByLabel('API key').fill('sk-e2e-fake-key');
 
-  // Some reasoning models (e.g. an Azure AI Foundry gpt-6-astra-1
-  // deployment) reject any request carrying tool definitions unless
-  // reasoning_effort is explicitly "none" — leaving it on "Model default"
-  // silently keeps the model's own non-none default, so chat's tool calls
-  // 400 with no way for an admin to fix it from this form. The dropdown
-  // must offer that exact value, distinct from "Model default".
+  // Which reasoning_effort values a model accepts is entirely the
+  // provider's call and varies by model — one Azure deployment demanded
+  // "none" to allow tool calls at all, another rejected "none" outright
+  // and only took low/medium/high/xhigh. The field must accept an
+  // arbitrary value a fixed dropdown could never enumerate, not just the
+  // handful of values known when this form was written.
   const reasoningEffort = page.getByLabel('Reasoning effort');
-  await expect(page.locator('#model-reasoning-effort option', { hasText: 'None' })).toHaveCount(1);
-  await reasoningEffort.selectOption('none');
-  await shot(page, testInfo, 'llm-models-reasoning-effort-none-selected');
+  await reasoningEffort.fill('xhigh');
+  await shot(page, testInfo, 'llm-models-reasoning-effort-freetext');
 
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByText('Astra Reasoning')).toBeVisible();
 
   // Round-trips through the real save route and DB: reopening the row
-  // shows "None" still selected, not back to the blank "Model default".
+  // shows the typed value still there, not stripped back to blank.
   await page.getByRole('button', { name: 'Edit' }).click();
-  await expect(page.getByLabel('Reasoning effort')).toHaveValue('none');
+  await expect(page.getByLabel('Reasoning effort')).toHaveValue('xhigh');
 });
