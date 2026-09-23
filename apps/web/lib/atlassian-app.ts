@@ -33,6 +33,13 @@ export const ATLASSIAN_CONFLUENCE_CONNECTOR = 'atlassian-confluence';
  * shape, not because it shares any plumbing with 3LO.
  */
 export const ATLASSIAN_BITBUCKET_CONNECTOR = 'atlassian-bitbucket';
+/**
+ * The fifth Atlassian app ("Renkei Jira Admin") — Jira administration on
+ * its own grant, with CLASSIC scopes (atlassian-scopes.ts says why), so only
+ * Jira admins ever consent to it and an org admin can switch it off on its
+ * own. Same 3LO mechanics and callback as the Jira, JSM and Confluence apps.
+ */
+export const ATLASSIAN_ADMIN_CONNECTOR = 'atlassian-admin';
 
 // The scope catalog lives in atlassian-scopes.ts (pure data, client-importable
 // — the admin form renders it as checkboxes); re-exported here for the server
@@ -42,16 +49,19 @@ import {
   DEFAULT_ATLASSIAN_JSM_SCOPES,
   DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
   DEFAULT_ATLASSIAN_BITBUCKET_SCOPES,
+  DEFAULT_ATLASSIAN_ADMIN_SCOPES,
   usableAtlassianCeiling,
   usableAtlassianJsmCeiling,
   usableAtlassianConfluenceCeiling,
   usableAtlassianBitbucketCeiling,
+  usableAtlassianAdminCeiling,
 } from '@/lib/atlassian-scopes';
 export {
   DEFAULT_ATLASSIAN_SCOPES,
   DEFAULT_ATLASSIAN_JSM_SCOPES,
   DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
   DEFAULT_ATLASSIAN_BITBUCKET_SCOPES,
+  DEFAULT_ATLASSIAN_ADMIN_SCOPES,
 };
 
 export interface AtlassianApp {
@@ -101,6 +111,14 @@ export async function getAtlassianBitbucketApp(
   origin: string
 ): Promise<AtlassianApp | null> {
   return readApp(tenantId, origin, ATLASSIAN_BITBUCKET_CONNECTOR, usableAtlassianBitbucketCeiling);
+}
+
+/** The tenant's fifth Atlassian app (Jira administration), same contract. */
+export async function getAtlassianAdminApp(
+  tenantId: string,
+  origin: string
+): Promise<AtlassianApp | null> {
+  return readApp(tenantId, origin, ATLASSIAN_ADMIN_CONNECTOR, usableAtlassianAdminCeiling);
 }
 
 async function readApp(

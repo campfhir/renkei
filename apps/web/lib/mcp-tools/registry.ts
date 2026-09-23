@@ -24,6 +24,7 @@ import {
   WEBEX_USER,
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_BITBUCKET,
+  ATLASSIAN_ADMIN,
   MICROSOFT,
   ZOOM,
   ONBASE,
@@ -51,6 +52,8 @@ import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth';
+import { registerJiraAdminTools, JIRA_ADMIN_MCP_CONNECTOR } from '@/lib/mcp-tools/jira-admin';
+import { oauthJiraAdminAuth } from '@/lib/mcp-tools/jira-admin/jira-admin-auth';
 import { registerBitbucketTools, BITBUCKET_MCP_CONNECTOR } from '@/lib/mcp-tools/bitbucket';
 import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { registerGitHubTools, GITHUB_MCP_CONNECTOR } from '@/lib/mcp-tools/github';
@@ -103,6 +106,9 @@ export interface ConnectorAvailability {
   zoomScopes: string[];
   confluenceAvailable: boolean;
   confluenceScopes: string[];
+  /** A SEPARATE connector/grant from Jira — the fifth Atlassian app, classic scopes. */
+  jiraAdminAvailable: boolean;
+  jiraAdminScopes: string[];
   bitbucketAvailable: boolean;
   bitbucketScopes: string[];
   githubAvailable: boolean;
@@ -201,6 +207,16 @@ export async function resolveConnectorAvailability(
     ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
     : [];
 
+  // Jira Administration: the fifth Atlassian app, its own grant — connecting
+  // Jira does not connect it, and it does not need Jira connected. Same
+  // granted-over-requested rule as Confluence (a 3LO consent narrows the
+  // token itself); its tools resolve their access fresh per call too.
+  const jiraAdminGrantRow = await grantRow(db, tenantId, ATLASSIAN_ADMIN, subject);
+  const jiraAdminAvailable = jiraAdminGrantRow !== undefined;
+  const jiraAdminScopes = jiraAdminGrantRow
+    ? (jiraAdminGrantRow.granted_scopes ?? jiraAdminGrantRow.requested_scopes)
+    : [];
+
   // Bitbucket inverts the Atlassian rule the same way Zoom does: the token
   // ALWAYS carries the OAuth consumer's full scope set (Bitbucket cannot
   // narrow at consent), so bare granted would erase the user's narrowing —
@@ -277,6 +293,8 @@ export async function resolveConnectorAvailability(
     zoomScopes,
     confluenceAvailable,
     confluenceScopes,
+    jiraAdminAvailable,
+    jiraAdminScopes,
     bitbucketAvailable,
     bitbucketScopes,
     githubAvailable,
@@ -323,6 +341,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.onedriveAvailable ? [ONEDRIVE_MCP_CONNECTOR] : []),
     ...(availability.zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
+    ...(availability.jiraAdminAvailable ? [JIRA_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.githubAvailable ? [GITHUB_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
@@ -355,6 +374,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   ONEDRIVE_MCP_CONNECTOR,
   ZOOM_MCP_CONNECTOR,
   CONFLUENCE_MCP_CONNECTOR,
+  JIRA_ADMIN_MCP_CONNECTOR,
   BITBUCKET_MCP_CONNECTOR,
   GITHUB_MCP_CONNECTOR,
   FILESHARES_MCP_CONNECTOR,
@@ -396,6 +416,7 @@ export async function registerRenkeiTools(
     onedriveAvailable,
     zoomAvailable,
     confluenceAvailable,
+    jiraAdminAvailable,
     bitbucketAvailable,
     githubAvailable,
     filesharesAvailable,
@@ -586,6 +607,17 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, CONFLUENCE_MCP_CONNECTOR),
       context,
       oauthConfluenceAuth(context)
+    );
+  }
+  if (jiraAdminAvailable) {
+    // A SEPARATE connector from Jira — its own Atlassian app (classic
+    // scopes), grant and capability gate, the onbase-admin arrangement — so
+    // it can be switched off or audience-limited on its own. Its scope gate
+    // sits inside registerJiraAdminTools, like Confluence's.
+    await registerJiraAdminTools(
+      withCapabilityGate(server, projection, JIRA_ADMIN_MCP_CONNECTOR),
+      context,
+      oauthJiraAdminAuth(context)
     );
   }
   if (bitbucketAvailable) {

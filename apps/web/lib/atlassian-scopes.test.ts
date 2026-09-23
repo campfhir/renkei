@@ -4,11 +4,15 @@ import {
   ALL_ATLASSIAN_SCOPES,
   ALL_ATLASSIAN_JSM_SCOPES,
   ALL_ATLASSIAN_CONFLUENCE_SCOPES,
+  ALL_ATLASSIAN_ADMIN_SCOPES,
   ATLASSIAN_SCOPE_OPTIONS,
   ATLASSIAN_JSM_SCOPE_OPTIONS,
   ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
+  ATLASSIAN_ADMIN_SCOPE_OPTIONS,
   DEFAULT_ATLASSIAN_SCOPES,
   DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
+  DEFAULT_ATLASSIAN_ADMIN_SCOPES,
+  usableAtlassianAdminCeiling,
 } from './atlassian-scopes';
 
 /**
@@ -38,11 +42,12 @@ describe('atlassian scope catalog', () => {
     expect(classic).toEqual([]);
   });
 
-  it('has unique option ids across all three catalogs', () => {
+  it('has unique option ids across the 3LO catalogs', () => {
     const ids = [
       ...ATLASSIAN_SCOPE_OPTIONS,
       ...ATLASSIAN_JSM_SCOPE_OPTIONS,
       ...ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
+      ...ATLASSIAN_ADMIN_SCOPE_OPTIONS,
     ].map((option) => option.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -165,6 +170,74 @@ describe('confluence scope catalog', () => {
     const est =
       250 +
       encodeURIComponent([...ALL_ATLASSIAN_CONFLUENCE_SCOPES, 'offline_access'].join(' ')).length;
+    expect(est).toBeLessThan(2900);
+  });
+});
+
+/**
+ * The fifth app ("Renkei Jira Admin") — the one CLASSIC catalog, so the
+ * classic/granular tripwire runs the other way here: one app cannot mix the
+ * two, and the Plans and Forms APIs take classic scopes only. Its own doc
+ * (docs/atlassian-admin-scopes.md) is the source of truth.
+ */
+describe('jira admin scope catalog', () => {
+  const doc = readFileSync(join(__dirname, '../../../docs/atlassian-admin-scopes.md'), 'utf8');
+  const documented = new Set(
+    [...doc.matchAll(/^((?:read|write|manage):jira-[a-z-]+)$/gm)].map((m) => m[1])
+  );
+
+  it('carries exactly the documented classic scopes', () => {
+    const catalog = new Set(ALL_ATLASSIAN_ADMIN_SCOPES);
+    const missingFromCatalog = [...documented].filter((scope) => !catalog.has(scope));
+    const undocumented = [...catalog].filter((scope) => !documented.has(scope));
+    expect(missingFromCatalog).toEqual([]);
+    expect(undocumented).toEqual([]);
+  });
+
+  it('is classic only — a granular scope cannot share its app', () => {
+    const notClassic = ALL_ATLASSIAN_ADMIN_SCOPES.filter(
+      (scope) => !/^(read|write|manage):jira-[a-z-]+$/.test(scope)
+    );
+    expect(notClassic).toEqual([]);
+  });
+
+  it('shares no scope with any granular catalog', () => {
+    const granular = new Set([
+      ...ALL_ATLASSIAN_SCOPES,
+      ...ALL_ATLASSIAN_JSM_SCOPES,
+      ...ALL_ATLASSIAN_CONFLUENCE_SCOPES,
+    ]);
+    expect(ALL_ATLASSIAN_ADMIN_SCOPES.filter((scope) => granular.has(scope))).toEqual([]);
+  });
+
+  it('defaults include offline_access and only default bundles', () => {
+    const defaults = DEFAULT_ATLASSIAN_ADMIN_SCOPES.split(' ');
+    expect(defaults).toContain('offline_access');
+    const defaultBundleScopes = new Set(
+      ATLASSIAN_ADMIN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
+        (option) => option.scopes
+      )
+    );
+    for (const scope of defaults) {
+      if (scope === 'offline_access') continue;
+      expect(defaultBundleScopes.has(scope)).toBe(true);
+    }
+  });
+
+  it('keeps a stored ceiling to known admin scopes, falling back to the defaults', () => {
+    expect(usableAtlassianAdminCeiling('read:jira-work read:issue:jira')).toEqual([
+      'read:jira-work',
+    ]);
+    // A ceiling holding nothing this catalog knows (granular scopes pasted in
+    // from the Jira app, say) degrades to the defaults rather than to nothing.
+    expect(usableAtlassianAdminCeiling('read:issue:jira')).toEqual(
+      DEFAULT_ATLASSIAN_ADMIN_SCOPES.split(' ')
+    );
+  });
+
+  it('stays comfortably under the consent-URL cliff', () => {
+    const est =
+      250 + encodeURIComponent([...ALL_ATLASSIAN_ADMIN_SCOPES, 'offline_access'].join(' ')).length;
     expect(est).toBeLessThan(2900);
   });
 });

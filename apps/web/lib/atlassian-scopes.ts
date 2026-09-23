@@ -1,11 +1,13 @@
 /**
- * The Atlassian OAuth (3LO) scopes Renkei's tools actually use — all
- * GRANULAR (classic and granular scopes cannot mix in one app), grouped into
- * capability bundles rendered as checkboxes via ScopePicker. One checkbox is
- * one capability; the scopes underneath were derived per-endpoint from the
- * vendored OpenAPI specs (docs/atlassian-granular-scopes.md holds the
- * derivation and the console setup blocks). Pure data, importable from
- * client components; atlassian-app.ts re-exports the derived default.
+ * The Atlassian OAuth (3LO) scopes Renkei's tools actually use — GRANULAR
+ * (classic and granular scopes cannot mix in one app) for every app but the
+ * Jira Admin one, whose catalog is classic for reasons its own header
+ * gives. Grouped into capability bundles rendered as checkboxes via
+ * ScopePicker. One checkbox is one capability; the scopes underneath were
+ * derived per-endpoint from the vendored OpenAPI specs
+ * (docs/atlassian-granular-scopes.md holds the derivation and the console
+ * setup blocks). Pure data, importable from client components;
+ * atlassian-app.ts re-exports the derived default.
  */
 
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
@@ -486,6 +488,47 @@ export const ATLASSIAN_BITBUCKET_SCOPE_OPTIONS: ScopeOption[] = [
 ];
 
 /**
+ * The fifth catalog ("Renkei Jira Admin"): Jira administration, and the one
+ * catalog here that is CLASSIC rather than granular. One app cannot mix the
+ * two, and this app cannot be granular: the Plans API documents only
+ * read:jira-work/write:jira-work, the Forms API creates templates under
+ * manage:jira-project, and the configuration endpoints (field contexts and
+ * options, schemes, workflows, spaces) list classic manage:* as their
+ * current scopes with the granular ones still Beta. Classic scopes are
+ * coarse, so even READING configuration takes a manage:* scope. Derivation:
+ * docs/atlassian-admin-scopes.md. Only scopes a tool calls today are here —
+ * manage:jira-project (screens, forms) and write:jira-work (Plans writes)
+ * arrive with the tools that need them. Everything defaults on: the app
+ * exists to be used, and only Jira admins connect it.
+ */
+export const ATLASSIAN_ADMIN_SCOPE_GROUPS: ScopeGroup[] = [
+  { id: 'jira-admin', label: 'Jira administration' },
+];
+
+export const ATLASSIAN_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
+  {
+    id: 'jira-admin-read',
+    label: 'Read access & space details',
+    hint: 'jira_admin_check_access, jira_admin_list_fields, a space’s roles and permission/notification schemes, and Plans reads',
+    userHint:
+      'See what you can administer in Jira, its custom fields, the roles in each space, and its plans.',
+    group: 'jira-admin',
+    defaultChecked: true,
+    scopes: ['read:jira-user', 'read:jira-work'],
+  },
+  {
+    id: 'jira-admin-site',
+    label: 'Site configuration',
+    hint: 'Custom field contexts and options, and a space’s work type / workflow / screen / field configuration schemes (jira_admin_get_field, jira_admin_get_space_configuration) — classic scopes have no read-only form of this',
+    userHint:
+      'See Jira’s site-wide configuration: custom fields and their options, and the schemes each space runs on. Jira’s permission for this also covers changing it, but nothing changes unless you apply it in Renkei.',
+    group: 'jira-admin',
+    defaultChecked: true,
+    scopes: ['manage:jira-configuration'],
+  },
+];
+
+/**
  * Always requested, never a choice: without offline_access Atlassian issues
  * no refresh token, and every grant would die within an hour of connecting.
  */
@@ -510,6 +553,9 @@ export const ALL_ATLASSIAN_JSM_SCOPES = [
 ];
 export const ALL_ATLASSIAN_CONFLUENCE_SCOPES = [
   ...new Set(ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS.flatMap((option) => option.scopes)),
+];
+export const ALL_ATLASSIAN_ADMIN_SCOPES = [
+  ...new Set(ATLASSIAN_ADMIN_SCOPE_OPTIONS.flatMap((option) => option.scopes)),
 ];
 export const ALL_ATLASSIAN_BITBUCKET_SCOPES = [
   ...new Set([
@@ -545,6 +591,15 @@ export const DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES = [
   ATLASSIAN_OFFLINE_SCOPE,
 ].join(' ');
 
+export const DEFAULT_ATLASSIAN_ADMIN_SCOPES = [
+  ...new Set(
+    ATLASSIAN_ADMIN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
+      (option) => option.scopes
+    )
+  ),
+  ATLASSIAN_OFFLINE_SCOPE,
+].join(' ');
+
 export const DEFAULT_ATLASSIAN_BITBUCKET_SCOPES = [
   ...new Set(
     ATLASSIAN_BITBUCKET_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
@@ -574,6 +629,10 @@ export function usableAtlassianConfluenceCeiling(stored: string | null | undefin
     ALL_ATLASSIAN_CONFLUENCE_SCOPES,
     DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES
   );
+}
+
+export function usableAtlassianAdminCeiling(stored: string | null | undefined): string[] {
+  return usableCeiling(stored, ALL_ATLASSIAN_ADMIN_SCOPES, DEFAULT_ATLASSIAN_ADMIN_SCOPES);
 }
 
 export function usableAtlassianBitbucketCeiling(stored: string | null | undefined): string[] {

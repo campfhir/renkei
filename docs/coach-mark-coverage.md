@@ -67,24 +67,25 @@ either. The card tours start only on request — from Tutorials or a
 `?tour=` link — since a page of six cards would otherwise greet every visit
 with the next one.
 
-| Connector               | Notes                                           | Tour                   | Status  |
-| ----------------------- | ----------------------------------------------- | ---------------------- | ------- |
-| The catalog             | Add connector → search, Add                     | `add-connector`        | Covered |
-| Jira                    | Atlassian OAuth; scope picker                   | `connect-jira`         | Covered |
-| Jira Service Management | own Atlassian consent; Operations group         | `connect-jsm`          | Covered |
-| Confluence              | Atlassian; space watches once connected         | `connect-confluence`   | Covered |
-| Bitbucket               | own OAuth system                                | `connect-bitbucket`    | Covered |
+| Connector               | Notes                                            | Tour                   | Status  |
+| ----------------------- | ------------------------------------------------ | ---------------------- | ------- |
+| The catalog             | Add connector → search, Add                      | `add-connector`        | Covered |
+| Jira                    | Atlassian OAuth; scope picker                    | `connect-jira`         | Covered |
+| Jira Service Management | own Atlassian consent; Operations group          | `connect-jsm`          | Covered |
+| Confluence              | Atlassian; space watches once connected          | `connect-confluence`   | Covered |
+| Jira Administration     | own Atlassian app, classic scopes; for admins    | `connect-jira-admin`   | Covered |
+| Bitbucket               | own OAuth system                                 | `connect-bitbucket`    | Covered |
 | GitHub                  | own GitHub App; install + authorize in one click | `connect-github`       | Covered |
-| Outlook                 | Microsoft; "What gets indexed" once connected   | `connect-microsoft`    | Covered |
-| SharePoint              | Microsoft; library watches once connected       | `connect-microsoft`    | Partial |
-| OneDrive                | Microsoft                                       | `connect-microsoft`    | Covered |
-| WebEx                   | Integration OAuth; "Watch all my spaces"        | `connect-webex`        | Covered |
-| Zoom                    | OAuth; ungranted-scope notice                   | `connect-zoom`         | Covered |
-| OnBase                  | tenant IdP, PKCE; no scope picker               | `connect-onbase`       | Covered |
-| OnBase Administration   | separate Hyland client                          | `connect-onbase-admin` | Covered |
-| File shares             | per-share credentials; write/delete exposure    | `connect-fileshares`   | Covered |
-| Mirth Connect           | per-instance account; permission presets        | `connect-mirth`        | Covered |
-| Sandbox secrets         | on the connectors page when a sandbox is set up | `browser-secrets`      | Covered |
+| Outlook                 | Microsoft; "What gets indexed" once connected    | `connect-microsoft`    | Covered |
+| SharePoint              | Microsoft; library watches once connected        | `connect-microsoft`    | Partial |
+| OneDrive                | Microsoft                                        | `connect-microsoft`    | Covered |
+| WebEx                   | Integration OAuth; "Watch all my spaces"         | `connect-webex`        | Covered |
+| Zoom                    | OAuth; ungranted-scope notice                    | `connect-zoom`         | Covered |
+| OnBase                  | tenant IdP, PKCE; no scope picker                | `connect-onbase`       | Covered |
+| OnBase Administration   | separate Hyland client                           | `connect-onbase-admin` | Covered |
+| File shares             | per-share credentials; write/delete exposure     | `connect-fileshares`   | Covered |
+| Mirth Connect           | per-instance account; permission presets         | `connect-mirth`        | Covered |
+| Sandbox secrets         | on the connectors page when a sandbox is set up  | `browser-secrets`      | Covered |
 
 SharePoint is Partial because the library watch manager (which libraries
 feed knowledge search) appears only once connected and the Microsoft tour

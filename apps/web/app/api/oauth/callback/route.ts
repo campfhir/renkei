@@ -14,6 +14,7 @@ import {
   ATLASSIAN_JSM,
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_BITBUCKET,
+  ATLASSIAN_ADMIN,
   WEBEX_USER,
   MICROSOFT,
   ZOOM,
@@ -28,6 +29,7 @@ import {
   getAtlassianJsmApp,
   getAtlassianConfluenceApp,
   getAtlassianBitbucketApp,
+  getAtlassianAdminApp,
 } from '@/lib/atlassian-app';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
@@ -217,6 +219,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         pendingSignIn.scopes
       );
     }
+    if (pendingSignIn.provider === 'atlassian-admin') {
+      return handleAtlassianAdminCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
+    }
     if (pendingSignIn.provider === 'atlassian-bitbucket') {
       return handleAtlassianBitbucketCallback(
         request,
@@ -227,7 +238,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
     if (pendingSignIn.provider === 'github') {
-      return handleGitHubCallback(request, tenant, pendingSignIn.subject, code, pendingSignIn.scopes);
+      return handleGitHubCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
     }
     if (pendingSignIn.provider === 'microsoft') {
       return handleMicrosoftCallback(
@@ -1545,6 +1562,179 @@ async function handleAtlassianConfluenceCallback(
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
+/**
+ * The fifth Atlassian app ("Renkei Jira Admin"): Jira administration with
+ * classic scopes. Same token endpoint and fallback chain as Confluence, with
+ * two differences that matter for an admin grant:
+ *
+ * - The SITE is chosen, not taken first. accessible-resources lists every
+ *   site the person reaches; when their Jira grant names one of them, this
+ *   grant targets the same site, so admin changes never land on a different
+ *   Jira from the one they work in. Otherwise the first site, as elsewhere.
+ * - The token carries read:jira-user, so /myself answers with the person's
+ *   real display name instead of borrowing one from another grant.
+ */
+async function handleAtlassianAdminCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  logger.debug('Atlassian Jira Admin callback', { component: 'auth/oauth', tenantId: tenant.id });
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  const db = dbResult.val;
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  const app = await getAtlassianAdminApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'Jira Administration connector not configured' },
+      { status: 503 }
+    );
+  }
+
+  const tokenResponse = await fetch('https://auth.atlassian.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
+      code,
+      redirect_uri: app.redirectUri,
+    }),
+  });
+  const rawTokenBody = await tokenResponse.text().catch(() => '');
+  let tokenData: unknown = null;
+  try {
+    tokenData = JSON.parse(rawTokenBody);
+  } catch {
+    // stays null — isJiraTokenResponse below fails on it, same as a real parse failure
+  }
+  if (!tokenResponse.ok || !isJiraTokenResponse(tokenData)) {
+    logger.error('Atlassian Jira Admin token exchange failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+      // No token material reaches a failed exchange's body — safe to log
+      // verbatim, and this is exactly what a wrong client_secret needs to
+      // diagnose instead of a bare status code.
+      body: rawTokenBody.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'Token exchange failed' }, { status: 502 });
+  }
+
+  const jiraGrantRow = await db
+    .selectFrom('provider_grants')
+    .select(['display_name', 'metadata'])
+    .where('tenant_id', '=', tenant.id)
+    .where('provider', '=', ATLASSIAN)
+    .where('subject', '=', subject)
+    .executeTakeFirst();
+  const jiraMeta =
+    jiraGrantRow && typeof jiraGrantRow.metadata === 'object' && jiraGrantRow.metadata !== null
+      ? (jiraGrantRow.metadata as Record<string, unknown>)
+      : {};
+  const jiraCloudId = typeof jiraMeta.cloudId === 'string' ? jiraMeta.cloudId : '';
+
+  let cloudId: string | null = null;
+  let siteUrl = '';
+  try {
+    const resources = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: 'application/json' },
+    });
+    const list: unknown = await resources.json().catch(() => null);
+    if (isResourceArray(list) && list.length > 0) {
+      const site = list.find((entry) => entry.id === jiraCloudId) ?? list[0];
+      cloudId = site.id;
+      siteUrl = site.url;
+    }
+  } catch {
+    // fall through to the claim/prior-grant chain
+  }
+  cloudId ??=
+    cloudIdFromTokenClaims(code) ??
+    cloudIdFromTokenClaims(tokenData.access_token) ??
+    (jiraCloudId || null);
+  if (!cloudId) {
+    logger.error('Atlassian Jira Admin callback could not resolve a cloud id', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'No Jira site resolvable for this token' }, { status: 502 });
+  }
+
+  const accountId = subFromTokenClaims(tokenData.access_token);
+  if (!accountId) {
+    return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
+  }
+  let displayName = jiraGrantRow?.display_name || accountId;
+  try {
+    const myself = await fetch(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/myself`, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: 'application/json' },
+    });
+    const me: unknown = myself.ok ? await myself.json().catch(() => null) : null;
+    const name =
+      typeof me === 'object' && me !== null
+        ? (me as Record<string, unknown>).displayName
+        : undefined;
+    if (typeof name === 'string' && name) displayName = name;
+  } catch {
+    // The borrowed name above stands.
+  }
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    ATLASSIAN_ADMIN,
+    tenant.id,
+    {
+      accountId,
+      clientId: app.clientId,
+      displayName,
+      subject,
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token || '',
+      expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      grantedScopes:
+        scopesFromAccessToken(tokenData.access_token) ??
+        ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
+        null,
+      metadata: { cloudId, siteUrl },
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store Atlassian Jira Admin grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Failed to store grant' }, { status: 500 });
+  }
+
+  logger.info('Atlassian Jira Admin grant stored', {
+    component: 'auth/oauth',
+    tenantId: tenant.id,
+    subject,
+  });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: ATLASSIAN_ADMIN,
+  });
+  invalidateToolCatalogCache(tenant.id, subject);
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
 /** The granted-scope list from a Bitbucket token response, either spelling. */
 function grantedScopesOf(tokenData: Record<string, unknown>): string[] | null {
   const raw =
@@ -1694,7 +1884,11 @@ interface OnBaseCallbackSpec {
   label: string;
 }
 
-const ONBASE_SPEC: OnBaseCallbackSpec = { connector: 'onbase', grantProvider: ONBASE, label: 'OnBase' };
+const ONBASE_SPEC: OnBaseCallbackSpec = {
+  connector: 'onbase',
+  grantProvider: ONBASE,
+  label: 'OnBase',
+};
 const ONBASE_ADMIN_SPEC: OnBaseCallbackSpec = {
   connector: 'onbase-admin',
   grantProvider: ONBASE_ADMIN,

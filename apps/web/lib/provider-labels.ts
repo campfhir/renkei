@@ -12,6 +12,7 @@ export const GRANT_PROVIDER_LABELS: Record<string, string> = {
   'atlassian-jsm': 'Jira Service Management',
   'atlassian-confluence': 'Confluence',
   'atlassian-bitbucket': 'Bitbucket',
+  'atlassian-admin': 'Jira Administration',
   microsoft: 'Microsoft 365',
   webex: 'WebEx',
   zoom: 'Zoom',

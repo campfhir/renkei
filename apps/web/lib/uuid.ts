@@ -24,6 +24,7 @@ const UUID_SEGMENT_PREFIXES = [
   '/api/zoom/',
   '/api/atlassian-jsm/',
   '/api/atlassian-confluence/',
+  '/api/atlassian-admin/',
   '/api/webhooks/microsoft/',
   '/api/webhooks/webex/',
   '/api/webhooks/zoom/',

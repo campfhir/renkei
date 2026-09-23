@@ -37,6 +37,8 @@ const EXACT: Record<string, string> = {
 
 /** Longest prefix first, so `jsm_ops_` never falls through to a shorter match. */
 const PREFIXES: [string, string][] = [
+  // Before `jira_`: the admin tools are a separate connector and grant.
+  ['jira_admin_', 'jira-admin'],
   ['jira_', 'jira'],
   ['jsm_', 'jira'],
   ['confluence_', 'atlassian-confluence'],

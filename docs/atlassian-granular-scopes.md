@@ -16,6 +16,12 @@ surface is split across **two OAuth 2.0 (3LO) app registrations**:
   (`<origin>/api/oauth/callback`); the pending-state row routes each code
   exchange to the right app.
 
+Three more Atlassian apps have docs of their own: Confluence
+(`atlassian-confluence-granular-scopes.md`), Bitbucket (its own OAuth system,
+scopes fixed on the consumer) and Jira Administration
+(`atlassian-admin-scopes.md` — the one app with CLASSIC scopes, which is why
+it cannot share either app above).
+
 Lines marked `# trimmed:` are spec-listed scopes excluded on purpose (only
 `read:audit-log:jira` remains: listed by GET /search/jql while the code uses
 POST). `offline_access` is request-time only, never a Permissions-page

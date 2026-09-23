@@ -25,6 +25,7 @@ import {
   ATLASSIAN_JSM,
   ATLASSIAN_CONFLUENCE,
   ATLASSIAN_BITBUCKET,
+  ATLASSIAN_ADMIN,
   MICROSOFT,
   ZOOM,
   ONBASE,
@@ -44,6 +45,7 @@ import {
   usableAtlassianJsmCeiling,
   usableAtlassianConfluenceCeiling,
   usableAtlassianBitbucketCeiling,
+  usableAtlassianAdminCeiling,
 } from '@/lib/atlassian-scopes';
 import { resolveUserCatalog, type UserCatalog } from '@/lib/connectors/user-catalog';
 import { resolveAudienceAllows } from '@/lib/connectors/audience';
@@ -198,6 +200,7 @@ export default async function ConnectorsPage({
   const bitbucketCeiling = usableAtlassianBitbucketCeiling(
     storedScopes(settingsOf('atlassian-bitbucket'))
   );
+  const jiraAdminCeiling = usableAtlassianAdminCeiling(storedScopes(settingsOf('atlassian-admin')));
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
   const microsoftCeiling = ceilingFrom(settingsOf(MICROSOFT_CONNECTOR), DEFAULT_MICROSOFT_SCOPES);
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
@@ -210,6 +213,7 @@ export default async function ConnectorsPage({
   const jsmGrant = grants.get(ATLASSIAN_JSM);
   const confluenceGrant = grants.get(ATLASSIAN_CONFLUENCE);
   const bitbucketGrant = grants.get(ATLASSIAN_BITBUCKET);
+  const jiraAdminGrant = grants.get(ATLASSIAN_ADMIN);
   const microsoftGrant = grants.get(MICROSOFT);
   const zoomGrant = grants.get(ZOOM);
   const githubGrant = grants.get(GITHUB);
@@ -231,7 +235,10 @@ export default async function ConnectorsPage({
 
   const microsoftKeys = ['microsoft', 'sharepoint', 'onedrive'].filter((key) => shown.has(key));
   const atlassianShown =
-    jiraShown || shown.has('atlassian-confluence') || shown.has('atlassian-bitbucket');
+    jiraShown ||
+    shown.has('jira-admin') ||
+    shown.has('atlassian-confluence') ||
+    shown.has('atlassian-bitbucket');
   const hylandShown = shown.has('onbase') || shown.has('onbase-admin');
   const anyCard =
     atlassianShown ||
@@ -264,6 +271,7 @@ export default async function ConnectorsPage({
       needsAttention:
         (jiraShown && enabledConfig.has('atlassian') && atlassianGrant === undefined) ||
         (jiraShown && enabledConfig.has('atlassian-jsm') && jsmGrant === undefined) ||
+        (shown.has('jira-admin') && jiraAdminGrant === undefined) ||
         (shown.has('atlassian-confluence') && confluenceGrant === undefined) ||
         (shown.has('atlassian-bitbucket') && bitbucketGrant === undefined),
       node: (
@@ -290,6 +298,16 @@ export default async function ConnectorsPage({
                   }
                 : undefined
             }
+            jiraAdmin={
+              shown.has('jira-admin')
+                ? {
+                    connected: jiraAdminGrant !== undefined,
+                    displayName: jiraAdminGrant?.displayName ?? null,
+                    ceiling: jiraAdminCeiling,
+                    priorScopes: jiraAdminGrant?.requestedScopes ?? null,
+                  }
+                : undefined
+            }
             confluence={
               shown.has('atlassian-confluence')
                 ? {
@@ -313,7 +331,12 @@ export default async function ConnectorsPage({
           />
           <RemovableProducts
             tenantId={tenant.id}
-            products={removable(catalog, ['jira', 'atlassian-confluence', 'atlassian-bitbucket'])}
+            products={removable(catalog, [
+              'jira',
+              'jira-admin',
+              'atlassian-confluence',
+              'atlassian-bitbucket',
+            ])}
           />
         </>
       ),
@@ -483,7 +506,10 @@ export default async function ConnectorsPage({
       key: 'browser-secrets',
       needsAttention: false,
       node: (
-        <SandboxSecrets tenantId={tenant.id} secrets={browserSecrets.ok ? browserSecrets.val : []} />
+        <SandboxSecrets
+          tenantId={tenant.id}
+          secrets={browserSecrets.ok ? browserSecrets.val : []}
+        />
       ),
     });
   }

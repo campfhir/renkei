@@ -110,6 +110,13 @@ export interface MCPToolContext {
    */
   githubScopes?: string[];
   /**
+   * Same, for the caller's grant on the fifth Atlassian app ("Renkei Jira
+   * Admin"): its CLASSIC scopes, for the registration-time gate. The
+   * jira_admin_ tools resolve their token fresh per call, Confluence-style
+   * (jira-admin/client.ts), rather than riding Jira's context fields.
+   */
+  jiraAdminScopes?: string[];
+  /**
    * Present when the caller is an agent run (an agent-runner token,
    * migration 040). `subject`/`userEmail` still name the run OWNER — every
    * gate applies as if the owner called — this only says an agent is doing
