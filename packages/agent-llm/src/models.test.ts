@@ -143,6 +143,21 @@ describe('listAvailableModels — openai', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('auth');
   });
+
+  it('sends Bearer alone on an Azure host — both headers fails Azure\'s gateway', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(200, { data: [] }));
+    await listAvailableModels({
+      provider: 'openai',
+      apiKey: 'azure-key',
+      baseUrl: 'https://myresource.services.ai.azure.com/openai/v1',
+    });
+    const headers = (fetchSpy.mock.calls[0] as [string, RequestInit])[1].headers as Record<
+      string,
+      string
+    >;
+    expect(headers.authorization).toBe('Bearer azure-key');
+    expect(headers['api-key']).toBeUndefined();
+  });
 });
 
 describe('listAvailableModels — edges', () => {
