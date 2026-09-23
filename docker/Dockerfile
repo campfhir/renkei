@@ -414,22 +414,26 @@ RUN npm install -g \
     typescript-language-server --version && pyright --version
 
 # C and C++: Debian's clangd. R: Debian's R with the languageserver package
-# from CRAN, its heavier dependencies from Debian so nothing compiles ICU.
+# from CRAN. Its heavier dependencies (stringi's ICU, xml2, roxygen2,
+# lintr) come from Debian so nothing compiles them; the two bookworm does
+# not package — styler and collections — install.packages pulls from
+# CRAN itself, with styler's own dependencies from Debian below it.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       clangd shellcheck \
-      r-base-core r-cran-jsonlite r-cran-r6 r-cran-callr r-cran-collections \
-      r-cran-fs r-cran-lintr r-cran-repr r-cran-roxygen2 r-cran-stringi \
-      r-cran-styler r-cran-xml2 r-cran-xmlparsedata && \
+      r-base-core r-cran-jsonlite r-cran-r6 r-cran-callr r-cran-fs r-cran-lintr \
+      r-cran-repr r-cran-roxygen2 r-cran-stringi r-cran-xml2 r-cran-xmlparsedata \
+      r-cran-r.cache r-cran-purrr r-cran-rlang r-cran-cli r-cran-vctrs r-cran-withr \
+      r-cran-magrittr r-cran-rprojroot r-cran-digest && \
     rm -rf /var/lib/apt/lists/* && \
-    R --slave -e 'install.packages("languageserver", repos = "https://cloud.r-project.org", quiet = TRUE); stopifnot(requireNamespace("languageserver"))' && \
+    R --slave -e 'install.packages("languageserver", repos = "https://cloud.r-project.org"); stopifnot(requireNamespace("languageserver"))' && \
     clangd --version
 
 # Go and gopls: the toolchain under /usr/local/go (on every caller's PATH),
 # gopls built with it into /usr/local/bin; the build caches go with the layer.
 RUN ARCH="$(dpkg --print-architecture)" && \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz && \
-    GOPATH=/tmp/gopath GOCACHE=/tmp/gocache GOBIN=/usr/local/bin GOFLAGS=-mod=mod \
+    GOPATH=/tmp/gopath GOCACHE=/tmp/gocache GOBIN=/usr/local/bin \
       /usr/local/go/bin/go install golang.org/x/tools/gopls@${GOPLS_VERSION} && \
     rm -rf /tmp/gopath /tmp/gocache && \
     /usr/local/go/bin/go version && gopls version
