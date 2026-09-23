@@ -5,8 +5,8 @@
  * Bitbucket grant. GET reads it all for the project's Pipelines page, or
  * with `?view=summary` just what the project page's card shows: counts
  * and the last run, no variable names or values (any member). PUT flips
- * the switch, POST adds a variable, PATCH replaces one, DELETE removes
- * one (editors). Starting a run is runs/route.ts beside this.
+ * the switch (editors). Starting a run is runs/route.ts beside this, and
+ * replacing a variable set from its text is variables/route.ts.
  *
  * Deliberately NOT MCP tools: a pipeline variable is where a deploy key
  * or a registry token lives. A chat can commit the YAML; the switch and
@@ -26,13 +26,9 @@ import { bitbucketAuthFor } from '@/lib/code/bitbucket-browse';
 import {
   PIPELINES_CONFIG_SCOPE,
   PIPELINES_VARIABLE_SCOPE,
-  createPipelineVariable,
-  deletePipelineVariable,
   readPipelineSetup,
   setPipelinesEnabled,
   summarize,
-  updatePipelineVariable,
-  validateVariableInput,
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
 
@@ -139,108 +135,4 @@ export async function PUT(
     details: { projectId, repository: project.repo.fullName },
   });
   return NextResponse.json({ enabled: set.enabled });
-}
-
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
-): Promise<Response> {
-  const { tenantId, projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, true);
-  if (!found.ok) return found.response;
-  const { project, subject, scopes } = found.found;
-  const needs = missing(scopes, PIPELINES_VARIABLE_SCOPE);
-  if (needs) return jsonError(403, 'scope', needs);
-  const input = validateVariableInput(await readJsonBody(request));
-  if (!input.ok) return jsonError(400, 'invalid', input.message);
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
-  const created = await createPipelineVariable(auth, project.repo.fullName, input.input);
-  if (!created.ok) return jsonError(502, 'bitbucket', created.error);
-  recordAuditEvent({
-    tenantId,
-    actorSubject: subject,
-    action: 'code.pipelines.variable.set',
-    targetKind: 'code_project',
-    targetLabel: project.name,
-    // The key and where it lives — never the value.
-    details: {
-      projectId,
-      repository: project.repo.fullName,
-      key: created.variable.key,
-      secured: created.variable.secured,
-      environmentUuid: input.input.environmentUuid ?? null,
-    },
-  });
-  return NextResponse.json({ variable: created.variable });
-}
-
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
-): Promise<Response> {
-  const { tenantId, projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, true);
-  if (!found.ok) return found.response;
-  const { project, subject, scopes } = found.found;
-  const needs = missing(scopes, PIPELINES_VARIABLE_SCOPE);
-  if (needs) return jsonError(403, 'scope', needs);
-  const body = await readJsonBody(request);
-  const uuid = typeof body.uuid === 'string' ? body.uuid.trim() : '';
-  if (!uuid) return jsonError(400, 'invalid', 'Which variable?');
-  const input = validateVariableInput(body);
-  if (!input.ok) return jsonError(400, 'invalid', input.message);
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
-  const updated = await updatePipelineVariable(auth, project.repo.fullName, uuid, input.input);
-  if (!updated.ok) return jsonError(502, 'bitbucket', updated.error);
-  recordAuditEvent({
-    tenantId,
-    actorSubject: subject,
-    action: 'code.pipelines.variable.set',
-    targetKind: 'code_project',
-    targetLabel: project.name,
-    details: {
-      projectId,
-      repository: project.repo.fullName,
-      key: updated.variable.key,
-      secured: updated.variable.secured,
-      environmentUuid: input.input.environmentUuid ?? null,
-    },
-  });
-  return NextResponse.json({ variable: updated.variable });
-}
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; projectId: string }> }
-): Promise<Response> {
-  const { tenantId, projectId } = await params;
-  const found = await projectFor(request, tenantId, projectId, true);
-  if (!found.ok) return found.response;
-  const { project, subject, scopes } = found.found;
-  const needs = missing(scopes, PIPELINES_VARIABLE_SCOPE);
-  if (needs) return jsonError(403, 'scope', needs);
-  const body = await readJsonBody(request);
-  const uuid = typeof body.uuid === 'string' ? body.uuid.trim() : '';
-  if (!uuid) return jsonError(400, 'invalid', 'Which variable?');
-  const environmentUuid =
-    typeof body.environmentUuid === 'string' && body.environmentUuid.trim()
-      ? body.environmentUuid.trim()
-      : undefined;
-  const auth = await bitbucketAuthFor(request, tenantId, subject);
-  const deleted = await deletePipelineVariable(auth, project.repo.fullName, uuid, environmentUuid);
-  if (!deleted.ok) return jsonError(502, 'bitbucket', deleted.error);
-  recordAuditEvent({
-    tenantId,
-    actorSubject: subject,
-    action: 'code.pipelines.variable.deleted',
-    targetKind: 'code_project',
-    targetLabel: project.name,
-    details: {
-      projectId,
-      repository: project.repo.fullName,
-      key: typeof body.key === 'string' ? body.key.slice(0, 128) : null,
-      environmentUuid: environmentUuid ?? null,
-    },
-  });
-  return NextResponse.json({ ok: true });
 }

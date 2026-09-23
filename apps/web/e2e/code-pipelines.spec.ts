@@ -247,71 +247,70 @@ test.describe('Code project pipelines', () => {
     await expect(rows.nth(1)).toContainText('E2E Dev');
     await shot('code-pipelines-run-started.png');
 
-    // ── A secured variable: listed as Secured, its value never on the page ──
-    await repositoryVariables.getByRole('button', { name: 'Add variable' }).click();
-    const addForm = repositoryVariables.getByRole('form', {
-      name: 'Add a variable to Repository variables',
-    });
-    await expect(addForm.getByLabel(/^Secured/)).toBeChecked();
-    await addForm.getByLabel('Name', { exact: true }).fill('NPM_TOKEN');
-    await addForm.getByLabel('Value', { exact: true }).fill('npm_secret_value_123');
-    await addForm.getByRole('button', { name: 'Save' }).click();
+    // ── The repository's variables, as one text box: a secured line, a
+    //    plain one, and a line that is nothing — the names appear, the
+    //    bad line is reported, the secured value is never on the page ──
+    await repositoryVariables.getByRole('button', { name: 'Add variables' }).click();
+    const repoForm = repositoryVariables.getByRole('form', { name: 'Edit Repository variables' });
+    const repoText = repoForm.getByLabel('Repository variables as text');
+    await expect(repoText).toHaveValue('');
+    await repoText.fill(
+      'secret NPM_TOKEN=npm_secret_value_123\nAPI_BASE_URL: https://api.example.test\nthis line is broken\n'
+    );
+    await repoForm.getByRole('button', { name: 'Save' }).click();
+    await expect(repositoryVariables.getByRole('status')).toContainText(
+      'added NPM_TOKEN, API_BASE_URL'
+    );
+    await expect(repositoryVariables.getByText(/Not read as variables: line 3/)).toBeVisible();
     const npmRow = repositoryVariables.getByRole('listitem').filter({ hasText: 'NPM_TOKEN' });
-    await expect(npmRow).toBeVisible();
     await expect(npmRow.getByText('Secured')).toBeVisible();
-    await expect(page.getByText('npm_secret_value_123')).toHaveCount(0);
-
-    // ── A plain one: its value shown, then edited, then removed ──
-    await repositoryVariables.getByRole('button', { name: 'Add variable' }).click();
-    await addForm.getByLabel('Name', { exact: true }).fill('API_BASE_URL');
-    await addForm.getByLabel(/^Secured/).uncheck();
-    await addForm.getByLabel('Value', { exact: true }).fill('https://api.example.test');
-    await addForm.getByRole('button', { name: 'Save' }).click();
     const apiRow = repositoryVariables.getByRole('listitem').filter({ hasText: 'API_BASE_URL' });
     await expect(apiRow.getByText('https://api.example.test')).toBeVisible();
+    await expect(page.getByText('npm_secret_value_123')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-variables.png');
-    await apiRow.getByRole('button', { name: 'Edit' }).click();
-    const editForm = repositoryVariables.getByRole('form', { name: 'Edit API_BASE_URL' });
-    await expect(editForm.getByLabel('Value', { exact: true })).toHaveValue(
-      'https://api.example.test'
-    );
-    await editForm.getByLabel('Value', { exact: true }).fill('https://api.example.test/v2');
-    await editForm.getByRole('button', { name: 'Save' }).click();
+
+    // ── Editing again: the box holds the set, the secured one without its
+    //    value; a changed plain value applies, the secured one is kept ──
+    await repositoryVariables.getByRole('button', { name: 'Edit variables' }).click();
+    await expect(repoText).toHaveValue('API_BASE_URL=https://api.example.test\nsecret NPM_TOKEN=');
+    await repoText.fill('API_BASE_URL=https://api.example.test/v2\nsecret NPM_TOKEN=\n');
+    await repoForm.getByRole('button', { name: 'Save' }).click();
+    await expect(repositoryVariables.getByRole('status')).toHaveText('changed API_BASE_URL.');
     await expect(apiRow.getByText('https://api.example.test/v2')).toBeVisible();
-    page.once('dialog', (dialog) => void dialog.accept());
-    await apiRow.getByRole('button', { name: 'Remove' }).click();
-    await expect(repositoryVariables.getByText('API_BASE_URL')).toHaveCount(0);
+    await expect(npmRow.getByText('Secured')).toBeVisible();
+
+    // ── A line taken out removes its variable, after a confirmation ──
+    await repositoryVariables.getByRole('button', { name: 'Edit variables' }).click();
+    await repoText.fill('secret NPM_TOKEN=\n');
+    page.once('dialog', (dialog) => {
+      expect(dialog.message()).toContain('Remove API_BASE_URL?');
+      void dialog.accept();
+    });
+    await repoForm.getByRole('button', { name: 'Save' }).click();
+    await expect(repositoryVariables.getByRole('status')).toHaveText('removed API_BASE_URL.');
+    await expect(apiRow).toHaveCount(0);
     await expect(npmRow).toBeVisible();
 
-    // ── Editing the secured one with an empty value keeps Bitbucket's ──
-    await npmRow.getByRole('button', { name: 'Edit' }).click();
-    const secureEdit = repositoryVariables.getByRole('form', { name: 'Edit NPM_TOKEN' });
-    await expect(secureEdit.getByLabel('Value', { exact: true })).toHaveValue('');
-    await expect(secureEdit.getByLabel('Value', { exact: true })).toHaveAttribute(
-      'placeholder',
-      'Leave empty to keep the current value'
-    );
-    await secureEdit.getByLabel('Name', { exact: true }).fill('NPM_TOKEN_RO');
-    await secureEdit.getByRole('button', { name: 'Save' }).click();
-    await expect(repositoryVariables.getByText('NPM_TOKEN_RO')).toBeVisible();
-    await expect(repositoryVariables.getByText('NPM_TOKEN', { exact: true })).toHaveCount(0);
-
-    // ── A deployment environment's variable goes on that environment ──
-    await production.getByRole('button', { name: 'Add variable' }).click();
-    const productionForm = production.getByRole('form', { name: 'Add a variable to Production' });
-    await productionForm.getByLabel('Name', { exact: true }).fill('DEPLOY_KEY');
-    await productionForm.getByLabel('Value', { exact: true }).fill('deploy-key-bytes');
+    // ── A deployment environment's set is its own box ──
+    await production.getByRole('button', { name: 'Add variables' }).click();
+    const productionForm = production.getByRole('form', { name: 'Edit Production' });
+    await productionForm
+      .getByLabel('Production as text')
+      .fill('secret DEPLOY_KEY=deploy-key-bytes');
     await productionForm.getByRole('button', { name: 'Save' }).click();
+    await expect(production.getByRole('status')).toHaveText('added DEPLOY_KEY.');
     const deployRow = production.getByRole('listitem').filter({ hasText: 'DEPLOY_KEY' });
     await expect(deployRow.getByText('Secured')).toBeVisible();
-    await expect(repositoryVariables.getByText('DEPLOY_KEY')).toHaveCount(0);
+    await expect(
+      repositoryVariables.getByRole('listitem').filter({ hasText: 'DEPLOY_KEY' })
+    ).toHaveCount(0);
     await expect(page.getByText('deploy-key-bytes')).toHaveCount(0);
 
     // ── It all survives a reload: the stub is the truth, not the page ──
     await page.reload();
     await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
-    await expect(repositoryVariables.getByText('NPM_TOKEN_RO')).toBeVisible();
+    await expect(repositoryVariables.getByText('NPM_TOKEN')).toBeVisible();
     await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
     await shot('code-pipelines-set.png');
 
@@ -345,8 +344,8 @@ test.describe('Code project pipelines', () => {
     await expect(runs.getByRole('form', { name: 'Run pipeline' })).toBeVisible();
     await runs.getByRole('button', { name: 'Cancel' }).click();
     await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
-    await production.getByRole('button', { name: 'Add variable' }).click();
-    await expect(productionForm.getByLabel('Name', { exact: true })).toBeVisible();
+    await production.getByRole('button', { name: 'Edit variables' }).click();
+    await expect(productionForm.getByLabel('Production as text')).toHaveValue('secret DEPLOY_KEY=');
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-mobile.png');
   });

@@ -5,8 +5,9 @@
  * — whether Bitbucket runs pipelines for the repository at all, and
  * whether a `bitbucket-pipelines.yml` is on the branch — and the
  * variables the runs get, the repository's and each deployment
- * environment's. Read on open and after every change, with the person's
- * own Bitbucket grant. Its summary card on the project page is
+ * environment's — each set edited as one text box, `KEY=value` a line,
+ * and applied as a difference. Read on open and after every change,
+ * with the person's own Bitbucket grant. Its summary card on the project page is
  * pipelines-summary.tsx.
  *
  * A run can be started from here too, on the scope the chat's trigger
@@ -26,7 +27,13 @@ import { useCallback, useEffect, useState } from 'react';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
-import type { PipelineRun, PipelineSetup, PipelineVariable } from '@/lib/code/bitbucket-pipelines';
+import type {
+  PipelineRun,
+  PipelineSetup,
+  PipelineVariable,
+  VariablesApplied,
+} from '@/lib/code/bitbucket-pipelines';
+import { renderVariableText } from '@/lib/code/pipeline-variables-text';
 
 const cardClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -43,15 +50,17 @@ interface Setup extends PipelineSetup {
   };
 }
 
-/** Which set a form writes to: the repository's, or one environment's. */
+/** Which set a box writes to: the repository's, or one environment's. */
 type Scope = { environmentUuid?: string };
 
+/** One set being edited as text. */
 interface Draft extends Scope {
-  /** Set when editing; absent when adding. */
-  editing?: PipelineVariable;
-  key: string;
-  value: string;
-  secured: boolean;
+  text: string;
+}
+
+/** What the last save of a set did, shown under it until the next edit. */
+interface Outcome extends Scope, VariablesApplied {
+  problems: string[];
 }
 
 /** The "Run pipeline" form: where, and which pipeline. */
@@ -85,6 +94,7 @@ export default function PipelinesPage({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [runDraft, setRunDraft] = useState<RunDraft | null>(null);
   /** The run just started from here, named until the next change. */
   const [started, setStarted] = useState<PipelineRun | null>(null);
@@ -113,20 +123,55 @@ export default function PipelinesPage({
 
   const flip = (enabled: boolean) => void act(async () => sendJsonFull(url, 'PUT', { enabled }));
 
-  const save = async () => {
+  /**
+   * Save one set from its text. Keys about to disappear are named first:
+   * a secured value cannot be brought back once its line is gone.
+   */
+  const saveVariables = async (current: PipelineVariable[]) => {
     if (!draft) return;
-    const body = {
-      key: draft.key.trim(),
-      value: draft.value,
-      secured: draft.secured,
-      ...(draft.environmentUuid ? { environmentUuid: draft.environmentUuid } : {}),
-    };
-    const saved = await act(() =>
-      draft.editing
-        ? sendJsonFull(url, 'PATCH', { ...body, uuid: draft.editing.uuid })
-        : sendJsonFull(url, 'POST', body)
+    const keysInText = new Set(
+      draft.text
+        .split(/\r?\n/)
+        .map(
+          (line) =>
+            /^\s*(?:secret|secured)?\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=:]/i.exec(
+              line
+            )?.[1]
+        )
+        .filter((key): key is string => Boolean(key))
     );
-    if (saved) setDraft(null);
+    const going = current.filter((variable) => !keysInText.has(variable.key));
+    if (
+      going.length > 0 &&
+      !window.confirm(
+        `Remove ${going.map((variable) => variable.key).join(', ')}? Pipeline runs will no longer see ${going.length === 1 ? 'it' : 'them'}.`
+      )
+    ) {
+      return;
+    }
+    setOutcome(null);
+    let result: Outcome | null = null;
+    const saved = await act(async () => {
+      const response = await sendJsonFull<VariablesApplied & { problems: string[] }>(
+        `${url}/variables`,
+        'PUT',
+        {
+          text: draft.text,
+          ...(draft.environmentUuid ? { environmentUuid: draft.environmentUuid } : {}),
+        }
+      );
+      if (response.data && !response.error) {
+        result = {
+          ...response.data,
+          ...(draft.environmentUuid ? { environmentUuid: draft.environmentUuid } : {}),
+        };
+      }
+      return response;
+    });
+    if (saved) {
+      setDraft(null);
+      setOutcome(result);
+    }
   };
 
   const startRun = async () => {
@@ -146,17 +191,6 @@ export default function PipelinesPage({
       setRunDraft(null);
       setStarted(run);
     }
-  };
-
-  const remove = (variable: PipelineVariable, scope: Scope) => {
-    if (!window.confirm(`Remove ${variable.key}? Pipeline runs will no longer see it.`)) return;
-    void act(() =>
-      sendJsonFull(url, 'DELETE', {
-        uuid: variable.uuid,
-        key: variable.key,
-        ...(scope.environmentUuid ? { environmentUuid: scope.environmentUuid } : {}),
-      })
-    );
   };
 
   const [workspace, repoSlug] = repoFullName.split('/');
@@ -298,8 +332,8 @@ export default function PipelinesPage({
                 busy={busy}
                 draft={draft}
                 setDraft={setDraft}
-                onSave={save}
-                onRemove={remove}
+                outcome={outcome}
+                onSave={saveVariables}
               />
               {setup.environments.map((environment) => (
                 <VariableGroup
@@ -314,8 +348,8 @@ export default function PipelinesPage({
                   busy={busy}
                   draft={draft}
                   setDraft={setDraft}
-                  onSave={save}
-                  onRemove={remove}
+                  outcome={outcome}
+                  onSave={saveVariables}
                 />
               ))}
               {setup.environmentsError ? (
@@ -588,8 +622,8 @@ function VariableGroup({
   busy,
   draft,
   setDraft,
+  outcome,
   onSave,
-  onRemove,
 }: {
   title: string;
   hint: string;
@@ -602,34 +636,42 @@ function VariableGroup({
   busy: boolean;
   draft: Draft | null;
   setDraft: (draft: Draft | null) => void;
-  onSave: () => Promise<void>;
-  onRemove: (variable: PipelineVariable, scope: Scope) => void;
+  outcome: Outcome | null;
+  onSave: (current: PipelineVariable[]) => Promise<void>;
 }) {
-  const here = (draft: Draft | null): draft is Draft =>
-    draft !== null && (draft.environmentUuid ?? '') === (scope.environmentUuid ?? '');
+  const here = <T extends Scope>(candidate: T | null): candidate is T =>
+    candidate !== null && (candidate.environmentUuid ?? '') === (scope.environmentUuid ?? '');
   const open = here(draft) ? draft : null;
+  const last = here(outcome) ? outcome : null;
   const groupId = `pipeline-variables-${scope.environmentUuid ?? 'repository'}`;
+  const summary = last
+    ? [
+        last.added.length ? `added ${last.added.join(', ')}` : '',
+        last.changed.length ? `changed ${last.changed.join(', ')}` : '',
+        last.removed.length ? `removed ${last.removed.join(', ')}` : '',
+      ].filter(Boolean)
+    : [];
   return (
     <section className={cardClass} aria-labelledby={groupId}>
       <div className="flex items-center gap-2">
         <h2 id={groupId} className="text-sm font-semibold">
           {title}
         </h2>
-        {canEdit ? (
+        {canEdit && !open ? (
           <button
             type="button"
             disabled={busy}
-            onClick={() => setDraft({ ...scope, key: '', value: '', secured: true })}
+            onClick={() => setDraft({ ...scope, text: renderVariableText(variables) })}
             className={`ml-auto ${linkButtonClass}`}
           >
-            Add variable
+            {variables.length ? 'Edit variables' : 'Add variables'}
           </button>
         ) : null}
       </div>
       <p className="text-xs text-gray-500">{hint}</p>
       {error ? (
         <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">{error}</p>
-      ) : variables.length === 0 ? (
+      ) : open ? null : variables.length === 0 ? (
         <p className="mt-1 text-sm text-gray-500">No variables.</p>
       ) : (
         <ul className="mt-1 divide-y divide-gray-200 text-sm dark:divide-gray-800">
@@ -647,34 +689,6 @@ function VariableGroup({
                   </span>
                 )}
               </span>
-              {canEdit ? (
-                <>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      setDraft({
-                        ...scope,
-                        editing: variable,
-                        key: variable.key,
-                        value: variable.value ?? '',
-                        secured: variable.secured,
-                      })
-                    }
-                    className={linkButtonClass}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onRemove(variable, scope)}
-                    className="text-xs text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
-                  >
-                    Remove
-                  </button>
-                </>
-              ) : null}
             </li>
           ))}
         </ul>
@@ -684,46 +698,27 @@ function VariableGroup({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            void onSave();
+            void onSave(variables);
           }}
-          aria-label={open.editing ? `Edit ${open.editing.key}` : `Add a variable to ${title}`}
-          className="mt-3 space-y-2"
+          aria-label={`Edit ${title}`}
+          className="mt-2 space-y-2"
         >
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="block text-xs">
-              <span className="text-gray-500">Name</span>
-              <input
-                value={open.key}
-                onChange={(event) => setDraft({ ...open, key: event.target.value })}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder="DEPLOY_TOKEN"
-                className={`mt-0.5 font-mono ${inputClass}`}
-              />
-            </label>
-            <label className="block text-xs">
-              <span className="text-gray-500">Value</span>
-              <input
-                type={open.secured ? 'password' : 'text'}
-                value={open.value}
-                onChange={(event) => setDraft({ ...open, value: event.target.value })}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder={
-                  open.editing?.secured ? 'Leave empty to keep the current value' : undefined
-                }
-                className={`mt-0.5 font-mono ${inputClass}`}
-              />
-            </label>
-          </div>
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={open.secured}
-              onChange={(event) => setDraft({ ...open, secured: event.target.checked })}
-            />
-            Secured — Bitbucket masks it in logs and never shows the value again
-          </label>
+          <textarea
+            value={open.text}
+            onChange={(event) => setDraft({ ...open, text: event.target.value })}
+            rows={Math.max(4, Math.min(16, open.text.split('\n').length + 1))}
+            spellCheck={false}
+            aria-label={`${title} as text`}
+            placeholder={'API_BASE_URL=https://api.example.test\nsecret DEPLOY_TOKEN=…'}
+            className={`font-mono ${inputClass}`}
+          />
+          <p className="text-xs text-gray-500">
+            One <span className="font-mono">KEY=value</span> a line, as a .env; start a line with{' '}
+            <span className="font-mono">secret</span> to secure it — Bitbucket masks it in logs and
+            never shows the value again, so a secured one shows here as{' '}
+            <span className="font-mono">secret KEY=</span> and keeps its value while that line
+            stays. A line taken out removes the variable.
+          </p>
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
@@ -734,13 +729,36 @@ function VariableGroup({
             </button>
             <button
               type="submit"
-              disabled={busy || !open.key.trim()}
+              disabled={busy}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {busy ? 'Saving…' : 'Save'}
             </button>
           </div>
         </form>
+      ) : null}
+      {last ? (
+        <div className="mt-2 space-y-1 text-xs">
+          {summary.length ? (
+            <p role="status" className="text-green-700 dark:text-green-400">
+              {summary.join(' · ')}.
+            </p>
+          ) : last.errors.length === 0 && last.problems.length === 0 ? (
+            <p role="status" className="text-gray-500">
+              Nothing changed.
+            </p>
+          ) : null}
+          {last.errors.length ? (
+            <p role="alert" className="text-red-600 dark:text-red-400">
+              Not applied: {last.errors.join('; ')}
+            </p>
+          ) : null}
+          {last.problems.length ? (
+            <p className="text-amber-700 dark:text-amber-400">
+              Not read as variables: {last.problems.join('; ')}.
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

@@ -64,8 +64,8 @@ export type AuditAction =
   /** A repository's Pipelines switch or variables, changed from a code project's page. */
   | 'code.pipelines.enabled'
   | 'code.pipelines.disabled'
-  | 'code.pipelines.variable.set'
-  | 'code.pipelines.variable.deleted'
+  /** A variable set replaced from its text box: which keys were added, changed, removed. */
+  | 'code.pipelines.variables.replaced'
   /** A pipeline run started from a code project's Pipelines page. */
   | 'code.pipelines.run'
   | 'code.files.uploaded'

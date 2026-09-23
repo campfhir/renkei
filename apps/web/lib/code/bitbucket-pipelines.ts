@@ -15,6 +15,7 @@
  * and this module returns exactly what Bitbucket does, nothing kept.
  */
 
+import { parseDotenv } from '@renkei/connector-sandbox';
 import type { BitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import {
   bbJson,
@@ -116,7 +117,7 @@ export interface VariableInput {
   environmentUuid?: string;
 }
 
-function repoBase(fullName: string): string | null {
+export function repoBase(fullName: string): string | null {
   const [workspace, slug] = fullName.split('/');
   if (!workspace || !slug) return null;
   return `/repositories/${encodeURIComponent(workspace)}/${encodeURIComponent(slug)}`;
@@ -129,7 +130,7 @@ function uuidSegment(raw: string): string {
 }
 
 /** Where a variable lives: the repository's set, or one environment's. */
-function variablesPath(base: string, environmentUuid: string | undefined): string {
+export function variablesPath(base: string, environmentUuid: string | undefined): string {
   return environmentUuid
     ? `${base}/deployments_config/environments/${uuidSegment(environmentUuid)}/variables`
     : `${base}/pipelines_config/variables`;
@@ -144,7 +145,7 @@ function variableOf(raw: Record<string, unknown>): PipelineVariable | null {
 }
 
 /** Every page of a variables listing — a repository's or an environment's. */
-async function listVariables(
+export async function listVariables(
   auth: BitbucketAuth,
   path: string
 ): Promise<{ ok: true; variables: PipelineVariable[] } | { ok: false; error: string }> {
@@ -486,4 +487,124 @@ export async function deletePipelineVariable(
   );
   if (response.ok) return { ok: true };
   return { ok: false, error: await describeBitbucketFailure(response) };
+}
+
+// ——— Variables as text: one box per set, parsed and applied as a diff ———
+
+/**
+ * A variable set as text, the way a `.env` reads: `KEY=value` a line
+ * (`KEY: value` is taken too), `#` comments, quotes as dotenv has them,
+ * and a `secret ` prefix on a line for a secured variable. A secured
+ * variable's value cannot be read back, so it renders as `secret KEY=`
+ * and an empty value on one that exists means "keep what Bitbucket has".
+ */
+export interface VariableEntry {
+  key: string;
+  value: string;
+  secured: boolean;
+}
+
+export interface ParsedVariables {
+  entries: VariableEntry[];
+  /** Lines that were not variables, as "line N: why". */
+  problems: string[];
+}
+
+const SECRET_PREFIX = /^(\s*)(?:secret|secured)\s+(?=[A-Za-z_])/i;
+const YAML_LINE = /^(\s*[A-Za-z_][A-Za-z0-9_]*)\s*:(?:\s+|$)(.*)$/;
+
+export function parseVariableText(text: string): ParsedVariables {
+  const entries: VariableEntry[] = [];
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  lines.forEach((raw, index) => {
+    const number = index + 1;
+    if (!raw.trim() || raw.trim().startsWith('#')) return;
+    let line = raw;
+    const secured = SECRET_PREFIX.test(line);
+    if (secured) line = line.replace(SECRET_PREFIX, '$1');
+    const yaml = YAML_LINE.exec(line);
+    if (yaml && !line.includes('=')) line = `${yaml[1]}=${yaml[2]}`;
+    const parsed = parseDotenv(line);
+    const key = Object.keys(parsed.values)[0];
+    if (!key) {
+      problems.push(
+        ...parsed.problems.map((problem) => problem.replace(/^line 1:/, `line ${number}:`))
+      );
+      return;
+    }
+    if (!VARIABLE_KEY_PATTERN.test(key)) {
+      problems.push(`line ${number}: ${key} is not a variable name`);
+      return;
+    }
+    if (seen.has(key)) {
+      problems.push(`line ${number}: ${key} is given twice; the last one wins`);
+      entries.splice(
+        entries.findIndex((entry) => entry.key === key),
+        1
+      );
+    }
+    seen.add(key);
+    entries.push({ key, value: parsed.values[key] ?? '', secured });
+  });
+  return { entries, problems };
+}
+
+// Rendering the set as text is pure and lives beside the page's client
+// code (pipeline-variables-text.ts): this module reaches the sandbox
+// package for the parser, which a browser bundle cannot carry.
+export { renderVariableText } from './pipeline-variables-text';
+
+export interface VariablesApplied {
+  added: string[];
+  changed: string[];
+  removed: string[];
+  /** What Bitbucket refused, per key. */
+  errors: string[];
+}
+
+/**
+ * Make one set match the text: create what is new, replace what changed
+ * (a secured variable with an empty value is kept as it is; a new secured
+ * one needs a value), delete what is gone. Each change is its own call,
+ * so a refusal is reported by key and the rest still applies.
+ */
+export async function applyVariableText(
+  auth: BitbucketAuth,
+  fullName: string,
+  environmentUuid: string | undefined,
+  current: readonly PipelineVariable[],
+  entries: readonly VariableEntry[]
+): Promise<VariablesApplied> {
+  const applied: VariablesApplied = { added: [], changed: [], removed: [], errors: [] };
+  const existing = new Map(current.map((variable) => [variable.key, variable]));
+  const wanted = new Set(entries.map((entry) => entry.key));
+  for (const entry of entries) {
+    const input: VariableInput = { ...entry, environmentUuid };
+    const before = existing.get(entry.key);
+    if (!before) {
+      if (entry.secured && entry.value === '') {
+        applied.errors.push(`${entry.key}: a new secured variable needs a value.`);
+        continue;
+      }
+      const created = await createPipelineVariable(auth, fullName, input);
+      if (created.ok) applied.added.push(entry.key);
+      else applied.errors.push(`${entry.key}: ${created.error}`);
+      continue;
+    }
+    const keepSecured = before.secured && entry.secured && entry.value === '';
+    const samePlain = !before.secured && !entry.secured && before.value === entry.value;
+    if (keepSecured || samePlain) continue;
+    const updated = await updatePipelineVariable(auth, fullName, before.uuid, input);
+    if (updated.ok) applied.changed.push(entry.key);
+    else applied.errors.push(`${entry.key}: ${updated.error}`);
+  }
+  for (const variable of current) {
+    if (wanted.has(variable.key)) continue;
+    const deleted = await deletePipelineVariable(auth, fullName, variable.uuid, environmentUuid);
+    if (deleted.ok) applied.removed.push(variable.key);
+    else applied.errors.push(`${variable.key}: ${deleted.error}`);
+  }
+  return applied;
 }

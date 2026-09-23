@@ -206,7 +206,15 @@ custom pipeline; `runs/route.ts`, on `pipeline:write` exactly as the
 chat's `bitbucket_trigger_pipeline` is), whether Bitbucket runs pipelines for the repository at
 all, whether a `bitbucket-pipelines.yml` is on the project's branch, and
 the variables the runs get — the repository's own and each deployment
-environment's, secured or plain. The project page carries only a card
+environment's, each set edited as one text box (`KEY=value` a line as a
+`.env` reads, `KEY: value` taken too, `secret ` in front of a secured
+one; `parseVariableText`/`renderVariableText`) and applied as the
+difference against what Bitbucket has (`applyVariableText`, over
+`variables/route.ts`): creates, replacements and deletions each on their
+own call, so a refusal names its key and the rest still lands. A secured
+variable renders as `secret KEY=` and keeps its value while that line
+stays; a line taken out removes the variable, after the page names what
+is about to go. The project page carries only a card
 (`pipelines-summary.tsx`, the route's `?view=summary`: on/off, the file,
 counts, the last run — no names or values) so it stays a summary, and
 the page has the room for a runs table beside the setup. It exists to
