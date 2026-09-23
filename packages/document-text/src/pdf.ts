@@ -123,7 +123,14 @@ export async function extractPdfText(
   let task: PdfLoadingTask | null = null;
   try {
     task = pdfjs.getDocument({
-      data: bytes,
+      // A COPY, and the copy is the fix, not a nicety. pdfjs transfers the
+      // buffer it is handed to its worker, and Node's in-thread fake worker
+      // still honours the transfer list (structuredClone with `transfer`),
+      // so the caller's buffer comes back detached — zero bytes. The chat
+      // upload extracts text and THEN writes the same bytes to blob storage,
+      // which is how every PDF attachment arrived in the store empty while
+      // its extracted text read fine.
+      data: new Uint8Array(bytes),
       // No font rasterization: we want characters, not glyphs, and this keeps
       // the optional native canvas package irrelevant.
       disableFontFace: true,
