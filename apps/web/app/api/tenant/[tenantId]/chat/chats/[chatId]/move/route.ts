@@ -2,6 +2,9 @@
  * Move a chat into a project, or back out (`projectId: null`). Owner
  * only; the target project must be one the owner can open; not while a
  * reply is in progress, since the running turn already built its context.
+ * Never into or out of a code project: its chats belong to its checkout,
+ * and which of them may continue is the project's own affair
+ * (lib/code/active-chat.ts) — the menu offers no move for them either.
  */
 
 import type { NextRequest } from 'next/server';
@@ -9,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { resolveResourceAccess } from '@/lib/chat/access';
+import { getProjectRow } from '@/lib/chat/projects';
 import { getChatForOwner, moveChatToProject } from '@/lib/chat/store';
 import { getActiveTurn } from '@/lib/chat/turns';
 
@@ -38,6 +42,11 @@ export async function POST(
     );
     if (!access) return jsonError(404, 'not-found', 'No such project');
     projectId = body.projectId;
+  }
+  const codeProject = async (id: string | null) =>
+    id ? (await getProjectRow(db, tenantId, id))?.kind === 'code' : false;
+  if ((await codeProject(chat.projectId)) || (await codeProject(projectId))) {
+    return jsonError(400, 'code-project', 'A code project’s chats stay with its repository.');
   }
   if (await getActiveTurn(db, chat.id)) {
     return jsonError(409, 'turn-running', 'Wait for the current reply to finish first.');

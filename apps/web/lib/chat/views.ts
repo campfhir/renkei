@@ -110,6 +110,13 @@ export interface ChatView {
   projectKind: 'chat' | 'code' | null;
   /** A code project's checkout branch as the worker last saw it; null when none is usable. */
   projectBranch: string | null;
+  /**
+   * A code project's active chat — the one that may continue
+   * (lib/code/active-chat.ts). When it is not this chat, this chat is
+   * history: read-only for everyone, its owner included. Null outside a
+   * code project, and in one whose active chat is gone.
+   */
+  projectActiveChatId: string | null;
   llmModelId: string | null;
   toolConfig: ChatToolConfigView | null;
   thinkingEnabled: boolean;
@@ -142,6 +149,8 @@ export interface ChatListItem {
   projectKind: 'chat' | 'code' | null;
   /** A code project's checkout branch, named under the title beside the project. */
   projectBranch: string | null;
+  /** A code project's chat that is no longer its active one: readable, not continuable. */
+  history: boolean;
   updatedAt: string;
   lastMessageAt: string | null;
   archived: boolean;

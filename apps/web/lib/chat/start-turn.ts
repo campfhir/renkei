@@ -29,6 +29,7 @@ import {
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { sandboxConfig } from '@renkei/sandbox-client';
+import { isHistoryChat } from '@/lib/code/active-chat';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
@@ -127,6 +128,8 @@ const THINKING_MAX = 16_000;
 export type StartTurnError =
   | 'NOT_FOUND'
   | 'FORBIDDEN'
+  /** A code project's chat that is no longer its active one (lib/code/active-chat.ts). */
+  | 'HISTORY'
   | 'EMPTY'
   | 'TOO_LONG'
   | 'ALREADY_RUNNING'
@@ -169,6 +172,12 @@ export async function startChatTurn(
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
+  // A code project's history chat is read-only, its owner's or not: the
+  // project's checkout is the active chat's to work in.
+  if (chat.projectId) {
+    const project = await getProjectRow(db, input.tenantId, chat.projectId);
+    if (isHistoryChat(project, chat.id)) return err('HISTORY' as const);
+  }
 
   const requestedModel =
     input.llmModelId !== undefined && input.llmModelId !== null && isUuid(input.llmModelId)

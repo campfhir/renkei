@@ -193,6 +193,10 @@ export default function ChatThread({
   );
   const isOwner = chat.role === 'owner';
   const running = activeTurnId !== null;
+  // A code project's chat that is no longer its active one is history:
+  // read by anyone, continued by no one (lib/code/active-chat.ts). The
+  // composer and the code pane's edits give way to a note saying so.
+  const history = chat.projectKind === 'code' && chat.projectActiveChatId !== chat.id;
 
   /*
     Voice, when the org has it: one speech queue for the thread (a reply
@@ -746,11 +750,30 @@ export default function ChatThread({
     tenantId,
     chatId: chat.id,
     projectId: codeProjectId,
-    canEdit: isOwner,
+    canEdit: isOwner && !history,
     running,
     messages: state.messages,
-    onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
+    onAsk:
+      isOwner && !history && !running && !sending
+        ? (text) => submit({ text, attachments: [] })
+        : null,
   });
+  // A new chat in the project: through the API, which says why when a
+  // code project's active chat is still replying; outside one, the page
+  // that creates it.
+  const startNewChat = useCallback(async () => {
+    if (!chat.projectId) {
+      router.push(`/${slug}/chat/new`);
+      return;
+    }
+    setError(null);
+    const created = await chatClient.createChat(tenantId, { projectId: chat.projectId });
+    if (created.error || !created.data) {
+      setError(created.error ?? 'A new chat could not be started.');
+      return;
+    }
+    router.push(`/${slug}/chat/${created.data.chatId}`);
+  }, [chat.projectId, router, slug, tenantId]);
   const openCommit = codeTools.openChanges;
   const openSubagent = codeTools.openSubagent;
   const codeActions = useMemo(
@@ -768,12 +791,7 @@ export default function ChatThread({
   // the checkout, then whatever the last look said.
   const branch = codeProjectId ? (codeTools.branch ?? chat.projectBranch) : null;
   const overflow: OverflowItem[] = [
-    {
-      label: 'New chat',
-      icon: ICONS.plus,
-      onSelect: () =>
-        router.push(`/${slug}/chat/new${chat.projectId ? `?project=${chat.projectId}` : ''}`),
-    },
+    { label: 'New chat', icon: ICONS.plus, onSelect: () => void startNewChat() },
   ];
   if (codeProjectId) {
     overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
@@ -941,6 +959,7 @@ export default function ChatThread({
                   }
                 : null
             }
+            tag={history ? 'history' : null}
             canRename={isOwner}
             onRename={rename}
           />
@@ -1054,7 +1073,7 @@ export default function ChatThread({
               turn={state.turn}
               compaction={state.compaction}
               promptActions={
-                isOwner && !running && !sending
+                isOwner && !history && !running && !sending
                   ? { onResend: setConfirmResend, onEdit: setEditing }
                   : null
               }
@@ -1103,7 +1122,38 @@ export default function ChatThread({
               </p>
             ) : null}
 
-            {isOwner ? (
+            {history ? (
+              <div
+                data-testid="chat-history-notice"
+                className="border-t border-gray-200 px-4 py-3 text-sm text-gray-600 dark:border-gray-800 dark:text-gray-400"
+              >
+                <p>
+                  <span className="font-medium text-gray-800 dark:text-gray-200">
+                    This chat is history.
+                  </span>{' '}
+                  {chat.projectActiveChatId
+                    ? 'The project has moved on to a newer chat; this one stays to read.'
+                    : 'The project has no active chat right now; this one stays to read.'}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {chat.projectActiveChatId ? (
+                    <Link
+                      href={`/${slug}/chat/${chat.projectActiveChatId}`}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                    >
+                      Open the active chat
+                    </Link>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void startNewChat()}
+                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+                  >
+                    Start a new chat
+                  </button>
+                </div>
+              </div>
+            ) : isOwner ? (
               <Composer
                 tenantId={tenantId}
                 chatId={chat.id}

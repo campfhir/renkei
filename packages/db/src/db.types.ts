@@ -447,6 +447,7 @@ export interface ChatProjectMemories {
 }
 
 export interface ChatProjects {
+  active_chat_id: string | null;
   created_at: Generated<Timestamp>;
   description: string | null;
   id: Generated<string>;

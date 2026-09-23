@@ -77,6 +77,7 @@ export async function loadChatView(
       projectName: project?.name ?? null,
       projectKind: project?.kind ?? null,
       projectBranch: project?.workspaceId ? (branches.get(project.workspaceId) ?? null) : null,
+      projectActiveChatId: project?.kind === 'code' ? project.activeChatId : null,
       llmModelId: chat.llmModelId,
       toolConfig: chat.toolConfig,
       thinkingEnabled: chat.thinkingEnabled,

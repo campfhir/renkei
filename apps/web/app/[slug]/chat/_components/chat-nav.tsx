@@ -450,11 +450,21 @@ function ChatRow({
           <Icon path={mark.path} className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate">
-            {chat.title ?? 'New chat'}
+          {/* The tags sit outside the truncating title, so a long name never hides them. */}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate">{chat.title ?? 'New chat'}</span>
             {chat.archived ? (
-              <span className="ml-1.5 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+              <span className="shrink-0 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
                 archived
+              </span>
+            ) : null}
+            {chat.history ? (
+              <span
+                data-testid="chat-history-tag"
+                title="A previous chat in its code project: readable, no longer continued"
+                className="shrink-0 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+              >
+                history
               </span>
             ) : null}
           </span>

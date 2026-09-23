@@ -8,6 +8,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { isHistoryChat } from '@/lib/code/active-chat';
 import { workspaceBranches } from '@/lib/code/branches';
 import { listAccessibleProjectIds, listGrantedResources } from './access';
 import { listProjectsById } from './projects';
@@ -66,7 +67,12 @@ function item(
   chat: ChatRow,
   via: ChatListItem['via'],
   ownerName: string | null,
-  project: { name: string; kind: 'chat' | 'code'; branch: string | null } | null
+  project: {
+    name: string;
+    kind: 'chat' | 'code';
+    branch: string | null;
+    activeChatId: string | null;
+  } | null
 ): ChatListItem {
   return {
     id: chat.id,
@@ -75,6 +81,7 @@ function item(
     projectName: project?.name ?? null,
     projectKind: project?.kind ?? null,
     projectBranch: project?.branch ?? null,
+    history: isHistoryChat(project, chat.id),
     updatedAt: chat.updatedAt.toISOString(),
     lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
     archived: chat.archivedAt !== null,
@@ -89,7 +96,12 @@ async function projectMapFor(
   db: Kysely<DB>,
   tenantId: string,
   projects: Awaited<ReturnType<typeof listProjectsById>>
-): Promise<Map<string, { name: string; kind: 'chat' | 'code'; branch: string | null }>> {
+): Promise<
+  Map<
+    string,
+    { name: string; kind: 'chat' | 'code'; branch: string | null; activeChatId: string | null }
+  >
+> {
   // A code project's checkout branch, for the rows of its chats: one read
   // of the worker's own table, never a worker call from the menu.
   const branches = await workspaceBranches(
@@ -104,6 +116,7 @@ async function projectMapFor(
         name: project.name,
         kind: project.kind,
         branch: project.workspaceId ? (branches.get(project.workspaceId) ?? null) : null,
+        activeChatId: project.activeChatId,
       },
     ])
   );

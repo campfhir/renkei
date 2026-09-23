@@ -28,6 +28,22 @@ repository on it, kept apart from ordinary chats:
   chats in the app menu — marked with the Code glyph and naming the
   project beneath the title, so they are told apart from ordinary chats
   and from chats in chat projects at a glance.
+- **One active chat.** Because the project has one checkout on one
+  branch (below), only one chat at a time works in it:
+  `chat_projects.active_chat_id` (migration 119,
+  `apps/web/lib/code/active-chat.ts`). Starting a new chat makes it the
+  active one and every earlier chat _history_ — still listed, still
+  readable by anyone who could read it before, but with no composer: a
+  send, a resend, a compaction or an edit from the code pane in a history
+  chat is refused (409 `chat-history`), and the chat says so with a link
+  to the active chat and a way to start a new one. A new chat is refused
+  (409 `turn-running`) while the active chat's reply is still running in
+  the checkout: stop it or let it finish first. Deleting or archiving the
+  active chat leaves the project with none until the next new chat;
+  unarchiving does not bring it back. The project page lists the active
+  chat first and the rest under _Previous chats_; the menu tags them
+  _history_. Chat projects are untouched: their chats are independent
+  conversations sharing context, and any number may run at once.
 
 In such a chat the model has the `code_*` tools (below) bound to the
 project's checkout and a brief in its system prompt on how to work in

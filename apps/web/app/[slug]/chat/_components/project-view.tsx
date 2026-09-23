@@ -6,7 +6,10 @@
  * the chats inside it, and sharing (owner). Every change goes through a
  * route and refreshes the server data. On a code project the chats come
  * right after the repository and environment — what a developer opens
- * the page for — and the README folds beneath them.
+ * the page for — and the README folds beneath them. A code project has
+ * one active chat and the rest are history (lib/code/active-chat.ts):
+ * the list says which, and New chat there goes through the API so it can
+ * say why when the active chat is still replying.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -113,6 +116,23 @@ export default function ProjectView({
   const [uploading, setUploading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [startingChat, setStartingChat] = useState(false);
+  const [newChatError, setNewChatError] = useState<string | null>(null);
+
+  // A code project's New chat: the new chat becomes the active one and
+  // the previous one history — unless the previous one is mid-reply, in
+  // which case the route says so and the page shows it here.
+  const startNewChat = async () => {
+    setStartingChat(true);
+    setNewChatError(null);
+    const created = await chatClient.createChat(tenantId, { projectId: project.id });
+    setStartingChat(false);
+    if (created.error || !created.data) {
+      setNewChatError(created.error ?? 'A new chat could not be started.');
+      return;
+    }
+    router.push(`/${slug}/chat/${created.data.chatId}`);
+  };
 
   const dirty =
     name !== project.name ||
@@ -223,6 +243,40 @@ export default function ProjectView({
   const aboutAnchor = useCoachAnchor('project-about');
   const filesAnchor = useCoachAnchor('project-files');
   const memoryAnchor = useCoachAnchor('project-memory');
+  const chatRow = (chat: (typeof chats)[number]) => {
+    const chatSpend = usage?.byChat[chat.id];
+    const tokens = chatSpend ? chatSpend.inputTokens + chatSpend.outputTokens : 0;
+    return (
+      <li key={chat.id} data-history={chat.history ? 'true' : undefined}>
+        <Link
+          href={`/${slug}/chat/${chat.id}`}
+          className="flex items-center gap-2 py-1.5 hover:underline"
+        >
+          <Icon
+            path={variant === 'code' ? ICONS.code : ICONS.pages}
+            className="h-4 w-4 shrink-0 text-gray-400"
+          />
+          <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
+          {tokens > 0 ? (
+            <span
+              className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+              title={`${chatSpend!.inputTokens.toLocaleString('en-US')} in · ${chatSpend!.outputTokens.toLocaleString('en-US')} out`}
+            >
+              {formatTokens(tokens)} tokens
+            </span>
+          ) : null}
+          <span className="text-xs text-gray-500">
+            {chat.ownerName ? `${chat.ownerName} · ` : ''}
+            <LocalTime at={chat.updatedAt} format="date" />
+          </span>
+        </Link>
+      </li>
+    );
+  };
+  // A code project: the one chat that may continue, then the rest as
+  // history. A chat project: every chat, as it always was.
+  const activeChat = variant === 'code' ? (chats.find((chat) => !chat.history) ?? null) : null;
+  const previousChats = variant === 'code' ? chats.filter((chat) => chat.history) : chats;
   const chatsSection = (
     <section className={sectionClass} {...chatsAnchor}>
       <div className="mb-2 flex items-center gap-2">
@@ -236,40 +290,46 @@ export default function ProjectView({
           </span>
         ) : null}
       </div>
-      {chats.length === 0 ? (
+      {variant === 'code' ? (
+        <>
+          <p className="mb-2 text-xs text-gray-500">
+            One chat at a time works in the checkout. Starting a new chat makes the current one
+            history: still there to read, no longer continued.
+          </p>
+          <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Active chat
+          </h3>
+          {activeChat ? (
+            <ul
+              className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
+              data-testid="project-active-chat"
+            >
+              {chatRow(activeChat)}
+            </ul>
+          ) : (
+            <p className="text-sm text-gray-500" data-testid="project-active-chat">
+              No active chat. Start a new chat to work in the checkout.
+            </p>
+          )}
+          {previousChats.length > 0 ? (
+            <>
+              <h3 className="mt-3 mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Previous chats
+              </h3>
+              <ul
+                className="divide-y divide-gray-200 text-sm text-gray-600 dark:divide-gray-800 dark:text-gray-400"
+                data-testid="project-previous-chats"
+              >
+                {previousChats.map(chatRow)}
+              </ul>
+            </>
+          ) : null}
+        </>
+      ) : chats.length === 0 ? (
         <p className="text-sm text-gray-500">No chats yet.</p>
       ) : (
         <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-          {chats.map((chat) => {
-            const chatSpend = usage?.byChat[chat.id];
-            const tokens = chatSpend ? chatSpend.inputTokens + chatSpend.outputTokens : 0;
-            return (
-              <li key={chat.id}>
-                <Link
-                  href={`/${slug}/chat/${chat.id}`}
-                  className="flex items-center gap-2 py-1.5 hover:underline"
-                >
-                  <Icon
-                    path={variant === 'code' ? ICONS.code : ICONS.pages}
-                    className="h-4 w-4 shrink-0 text-gray-400"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
-                  {tokens > 0 ? (
-                    <span
-                      className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-                      title={`${chatSpend!.inputTokens.toLocaleString('en-US')} in · ${chatSpend!.outputTokens.toLocaleString('en-US')} out`}
-                    >
-                      {formatTokens(tokens)} tokens
-                    </span>
-                  ) : null}
-                  <span className="text-xs text-gray-500">
-                    {chat.ownerName ? `${chat.ownerName} · ` : ''}
-                    <LocalTime at={chat.updatedAt} format="date" />
-                  </span>
-                </Link>
-              </li>
-            );
-          })}
+          {previousChats.map(chatRow)}
         </ul>
       )}
     </section>
@@ -364,15 +424,34 @@ export default function ProjectView({
             <Icon path={ICONS.share} className="h-5 w-5" />
           </button>
         ) : null}
-        <Link
-          href={`/${slug}/chat/new?project=${project.id}`}
-          // Opening it creates a chat in the project; only a click may do that.
-          prefetch={false}
-          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          New chat
-        </Link>
+        {variant === 'code' ? (
+          <button
+            type="button"
+            onClick={() => void startNewChat()}
+            disabled={startingChat}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            New chat
+          </button>
+        ) : (
+          <Link
+            href={`/${slug}/chat/new?project=${project.id}`}
+            // Opening it creates a chat in the project; only a click may do that.
+            prefetch={false}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            New chat
+          </Link>
+        )}
       </header>
+      {newChatError ? (
+        <p
+          role="alert"
+          className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+        >
+          {newChatError}
+        </p>
+      ) : null}
 
       <div
         className={

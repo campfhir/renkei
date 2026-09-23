@@ -2,9 +2,10 @@
  * A note row for a code chat's transcript (lib/code/notes.ts): what the
  * owner did to the checkout from the code pane — a save, a commit, a
  * push — as a structured note the server renders, never free text.
- * Owner only, in a code project's chat only; refused while a turn is
- * running (409 `turn-running`), and the pane sends it again when the
- * turn ends.
+ * Owner only, in a code project's chat only — its active chat, never a
+ * history one (409 `chat-history`, lib/code/active-chat.ts); refused
+ * while a turn is running (409 `turn-running`), and the pane sends it
+ * again when the turn ends.
  */
 
 import type { NextRequest } from 'next/server';
@@ -13,6 +14,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { getProjectRow } from '@/lib/chat/projects';
 import { getChatForOwner } from '@/lib/chat/store';
 import { appendChatNote, noteFromInput } from '@/lib/code/notes';
+import { isHistoryChat } from '@/lib/code/active-chat';
 
 export async function POST(
   request: NextRequest,
@@ -27,6 +29,12 @@ export async function POST(
   const project = chat.projectId ? await getProjectRow(db, tenantId, chat.projectId) : null;
   if (!project || project.kind !== 'code')
     return jsonError(400, 'invalid', 'Only a code project’s chat keeps editor notes.');
+  if (isHistoryChat(project, chat.id))
+    return jsonError(
+      409,
+      'chat-history',
+      'This chat is history. Continue in the project’s active chat, or start a new one.'
+    );
   const body = await readJsonBody(request);
   const note = noteFromInput(body.note);
   if (!note) return jsonError(400, 'invalid', 'That is not a note the pane writes.');
