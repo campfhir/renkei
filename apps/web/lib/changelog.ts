@@ -46,6 +46,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'added',
+        title: 'A Pipelines page for each Bitbucket code project',
+        detail:
+          'A Bitbucket code project’s page now carries a Pipelines card — on or off, whether a bitbucket-pipelines.yml is on the branch, how many variables, and the last run — that opens the project’s own Pipelines page: the recent runs with their state, ref and timing, a Run pipeline button to start one on a branch or tag, the switch to turn Pipelines on for the repository, a way to start the pipeline file from one of the org’s pipeline templates (a new admin catalog, seeded with Node, Python and a bare skeleton, editable like project templates) and commit it to the branch — or edit the one there — without a chat, and the repository’s pipeline variables and each deployment environment’s, each set edited as one text box — KEY=value a line, as a .env, with “secret” in front of a secured one — and applied as the difference. None of this is a chat tool: a chat can commit the YAML and start or stop runs, but the switch and the variables are set on the page, by a person, and a secured value is never shown again. The Bitbucket connector gains a “Set pipeline variables” checkbox for it.',
+      },
+      {
         kind: 'changed',
         title: 'Files in the code pane are coloured the same way',
         detail:

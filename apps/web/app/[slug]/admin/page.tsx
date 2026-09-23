@@ -84,6 +84,12 @@ function adminSections(slug: string): AdminSection[] {
           label: 'Project templates',
           detail: 'The starting instructions offered when someone creates a code project.',
         },
+        {
+          href: `${admin}/pipeline-templates`,
+          label: 'Pipeline templates',
+          detail:
+            'The starting pipeline files offered on a code project’s Pipelines page when its repository has none.',
+        },
       ],
     },
     {

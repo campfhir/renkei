@@ -43,6 +43,8 @@ const SESSION_GUARDS = [
   'chatRequestContext',
   // lib/code/route-access.ts: chatRequestContext plus the project's access, for the code pane's routes.
   'codeProjectContext',
+  // lib/code/pipelines-access.ts: codeProjectContext plus the Bitbucket grant, for a project's Pipelines routes.
+  'pipelinesProjectContext',
 ];
 
 /**

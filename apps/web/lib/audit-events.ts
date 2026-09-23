@@ -61,6 +61,15 @@ export type AuditAction =
   | 'code.project.deleted'
   | 'code.env.replaced'
   | 'code.env.deleted'
+  /** A repository's Pipelines switch or variables, changed from a code project's page. */
+  | 'code.pipelines.enabled'
+  | 'code.pipelines.disabled'
+  /** A variable set replaced from its text box: which keys were added, changed, removed. */
+  | 'code.pipelines.variables.replaced'
+  /** A pipeline run started from a code project's Pipelines page. */
+  | 'code.pipelines.run'
+  /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
+  | 'code.pipelines.file.committed'
   | 'code.files.uploaded'
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'

@@ -59,6 +59,7 @@ export default async function CodeProjectPage({
       before={
         <CodeSections
           key="code"
+          slug={slug}
           tenantId={tenant.id}
           projectId={projectId}
           code={view.code}

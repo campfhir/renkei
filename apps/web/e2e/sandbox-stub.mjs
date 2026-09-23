@@ -11,7 +11,7 @@
  * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
  */
 
-/* global process, Buffer, setTimeout, URL, console */
+/* global process, Buffer, setTimeout, URL, URLSearchParams, console */
 
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -415,8 +415,186 @@ Invoices, dunning and the nightly jobs.
 - \`pnpm test\`
 `;
 
+/**
+ * Pipelines setup per repository, for the project page's Pipelines
+ * section: the switch, the repository's variables and one deployment
+ * environment's. Keyed by full_name; the pipelines spec seeds a project
+ * on a repository of its own per Playwright project, so the three never
+ * share a row.
+ */
+const PIPELINES = new Map();
+let nextVariableNumber = 1;
+
+function pipelinesOf(fullName) {
+  if (!PIPELINES.has(fullName)) {
+    PIPELINES.set(fullName, {
+      enabled: false,
+      /** bitbucket-pipelines.yml once committed from the page; null before. */
+      configFile: null,
+      // Two runs, as Bitbucket lists them newest first: the latest failed
+      // on a branch, the one before passed on main.
+      runs: [
+        {
+          uuid: '{run-0002}',
+          build_number: 2,
+          state: { name: 'COMPLETED', result: { name: 'FAILED' } },
+          target: { ref_name: 'feature/retry-invoices', commit: { hash: 'abc123def456' } },
+          creator: { display_name: 'E2E Dev' },
+          created_on: '2026-09-22T14:05:00Z',
+          duration_in_seconds: 312,
+        },
+        {
+          uuid: '{run-0001}',
+          build_number: 1,
+          state: { name: 'COMPLETED', result: { name: 'SUCCESSFUL' } },
+          target: { ref_name: 'main', commit: { hash: '0123456789ab' } },
+          creator: {},
+          created_on: '2026-09-21T09:30:00Z',
+          duration_in_seconds: 95,
+        },
+      ],
+      variables: [],
+      environments: [
+        {
+          uuid: '{e1e1e1e1-0000-4000-8000-000000000001}',
+          name: 'Production',
+          environment_type: { name: 'Production' },
+          rank: 2,
+          variables: [],
+        },
+      ],
+    });
+  }
+  return PIPELINES.get(fullName);
+}
+
+/** The variable endpoints, on the repository's list or an environment's. */
+function handlePipelineVariables(request, response, list, uuid) {
+  if (!uuid) {
+    if (request.method === 'GET') {
+      return json(response, 200, {
+        values: list.map((variable) =>
+          variable.secured ? { ...variable, value: undefined } : variable
+        ),
+      });
+    }
+    if (request.method === 'POST') {
+      void readBody(request).then((body) => {
+        if (list.some((variable) => variable.key === body.key)) {
+          return error(response, 409, 'variable_exists', 'Variable already exists');
+        }
+        const created = {
+          uuid: `{aaaaaaaa-0000-4000-8000-${String(nextVariableNumber++).padStart(12, '0')}}`,
+          key: body.key,
+          value: body.value ?? '',
+          secured: body.secured === true,
+          type: 'pipeline_variable',
+        };
+        list.push(created);
+        json(response, 200, created.secured ? { ...created, value: undefined } : created);
+      });
+      return;
+    }
+    return error(response, 405, 'method_not_allowed');
+  }
+  const index = list.findIndex((variable) => variable.uuid === decodeURIComponent(uuid));
+  if (index === -1) return error(response, 404, 'not_found');
+  if (request.method === 'DELETE') {
+    list.splice(index, 1);
+    response.writeHead(204);
+    return response.end();
+  }
+  if (request.method === 'PUT') {
+    void readBody(request).then((body) => {
+      const current = list[index];
+      const updated = {
+        ...current,
+        key: body.key ?? current.key,
+        secured: body.secured ?? current.secured,
+        ...(body.value !== undefined ? { value: body.value } : {}),
+      };
+      list[index] = updated;
+      json(response, 200, updated.secured ? { ...updated, value: undefined } : updated);
+    });
+    return;
+  }
+  return error(response, 405, 'method_not_allowed');
+}
+
 function handleBitbucket(request, url, response) {
   const path = url.pathname.slice('/bitbucket/2.0'.length);
+  const pipelinesConfig = /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config$/.exec(path);
+  if (pipelinesConfig) {
+    const state = pipelinesOf(`${pipelinesConfig[1]}/${pipelinesConfig[2]}`);
+    if (request.method === 'PUT') {
+      void readBody(request).then((body) => {
+        state.enabled = body.enabled === true;
+        json(response, 200, { enabled: state.enabled });
+      });
+      return;
+    }
+    return json(response, 200, { enabled: state.enabled });
+  }
+  const runs = /^\/repositories\/([^/]+)\/([^/]+)\/pipelines$/.exec(path);
+  if (runs) {
+    const state = pipelinesOf(`${runs[1]}/${runs[2]}`);
+    if (request.method === 'POST') {
+      // A run started from the page: pending, newest, by the person.
+      void readBody(request).then((body) => {
+        const target = body.target ?? {};
+        const run = {
+          uuid: `{run-${String(state.runs.length + 1).padStart(4, '0')}}`,
+          build_number: state.runs.length + 1,
+          state: { name: 'PENDING', stage: { name: 'PENDING' } },
+          target: {
+            ref_type: target.ref_type ?? 'branch',
+            ref_name: target.ref_name ?? 'main',
+            ...(target.selector ? { selector: target.selector } : {}),
+          },
+          creator: { display_name: 'E2E Dev' },
+          created_on: new Date().toISOString(),
+        };
+        state.runs.unshift(run);
+        json(response, 201, run);
+      });
+      return;
+    }
+    return json(response, 200, { values: state.runs });
+  }
+  const repoVariables =
+    /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config\/variables(?:\/([^/]+))?$/.exec(path);
+  if (repoVariables) {
+    const state = pipelinesOf(`${repoVariables[1]}/${repoVariables[2]}`);
+    return handlePipelineVariables(request, response, state.variables, repoVariables[3]);
+  }
+  const environments = /^\/repositories\/([^/]+)\/([^/]+)\/environments$/.exec(path);
+  if (environments) {
+    const state = pipelinesOf(`${environments[1]}/${environments[2]}`);
+    return json(response, 200, {
+      values: state.environments.map((environment) => {
+        const rest = { ...environment };
+        delete rest.variables;
+        return rest;
+      }),
+    });
+  }
+  const environmentVariables =
+    /^\/repositories\/([^/]+)\/([^/]+)\/deployments_config\/environments\/([^/]+)\/variables(?:\/([^/]+))?$/.exec(
+      path
+    );
+  if (environmentVariables) {
+    const state = pipelinesOf(`${environmentVariables[1]}/${environmentVariables[2]}`);
+    const environment = state.environments.find(
+      (candidate) => candidate.uuid === decodeURIComponent(environmentVariables[3])
+    );
+    if (!environment) return error(response, 404, 'not_found');
+    return handlePipelineVariables(
+      request,
+      response,
+      environment.variables,
+      environmentVariables[4]
+    );
+  }
   // The membership listing the app reads (bare /workspaces is deprecated
   // and refuses newer tokens): workspace_access rows wrapping each workspace.
   if (path === '/user/workspaces') {
@@ -468,7 +646,35 @@ function handleBitbucket(request, url, response) {
       return;
     }
     const repo = BITBUCKET.repos.find((entry) => entry.full_name === fullName);
-    return repo ? json(response, 200, repo) : error(response, 404, 'not_found');
+    if (repo) return json(response, 200, repo);
+    // The pipelines spec's repositories: one per Playwright project, kept
+    // out of the browsable list so the new-project form's counts hold.
+    if (workspace === 'acme' && slug.startsWith('pipelines-demo-')) {
+      return json(response, 200, {
+        full_name: fullName,
+        name: slug,
+        project: { key: 'BILL' },
+        mainbranch: { name: 'main' },
+        updated_on: '2026-09-01T00:00:00Z',
+      });
+    }
+    return error(response, 404, 'not_found');
+  }
+  // A file committed from the page: the src endpoint's form post, the
+  // file keyed by its path beside `message` and `branch`. 201, no body.
+  const commit = /^\/repositories\/([^/]+)\/([^/]+)\/src$/.exec(path);
+  if (commit && request.method === 'POST') {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      const state = pipelinesOf(`${commit[1]}/${commit[2]}`);
+      const text = form.get('bitbucket-pipelines.yml');
+      if (typeof text === 'string') state.configFile = text;
+      response.writeHead(201);
+      response.end();
+    });
+    return;
   }
   const listing = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.*)$/.exec(path);
   if (listing && (listing[4] === '' || listing[4].endsWith('/'))) {
@@ -485,7 +691,14 @@ function handleBitbucket(request, url, response) {
   }
   const file = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.+)$/.exec(path);
   if (file) {
-    if (decodeURIComponent(file[4]) !== 'README.md') return error(response, 404, 'not_found');
+    const name = decodeURIComponent(file[4]);
+    if (name === 'bitbucket-pipelines.yml') {
+      const state = pipelinesOf(`${file[1]}/${file[2]}`);
+      if (state.configFile === null) return error(response, 404, 'not_found');
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      return response.end(state.configFile);
+    }
+    if (name !== 'README.md') return error(response, 404, 'not_found');
     const payload = README;
     response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
     return response.end(payload);
