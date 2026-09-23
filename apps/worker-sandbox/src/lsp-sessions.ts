@@ -502,7 +502,13 @@ export class LspSessions {
       session,
       'initialize',
       {
-        processId: process.pid,
+        // Null, never this worker's pid: a server checks the pid it is
+        // given with a zero signal every few seconds and exits when that
+        // fails, and a process running as the project's uid cannot
+        // signal this root-owned one — so the server would die three
+        // seconds after starting, every time. The worker's own lifecycle
+        // handling (close, idle, exit) is what ends a server here.
+        processId: null,
         clientInfo: { name: 'renkei-code-pane', version: '1' },
         locale: 'en',
         rootUri: session.rootUri,
@@ -834,13 +840,16 @@ function spawnServer(input: OpenSessionInput, sessionId: string): ChildProcess {
     extraEnv: {
       // The Node-based servers otherwise size their heap to the machine.
       NODE_OPTIONS: '--max-old-space-size=2048',
+      // Scratch files (tsserver's logs and typings installs) under the
+      // caller's own home, not a shared /tmp.
+      TMPDIR: `${input.home}/.cache/tmp`,
     },
   };
   // Behind the shell prelude for its process and file-size limits, then
   // exec'd so the server IS the process the group is killed by.
   const wrapped = wrapCommand(input.identity, 'bash', [
     '-c',
-    `${shellPrelude()}exec "$@"`,
+    `${shellPrelude()}mkdir -p "$TMPDIR" 2>/dev/null\nexec "$@"`,
     'lsp',
     spec.command,
     ...args,

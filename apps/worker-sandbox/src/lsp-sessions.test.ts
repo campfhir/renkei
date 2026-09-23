@@ -106,7 +106,13 @@ describe('LspSessions', () => {
     expect(opened.session.server).toBe('typescript');
     expect(opened.session.rootUri).toBe(`file://${root}`);
     expect((opened.session.capabilities as { hoverProvider: boolean }).hoverProvider).toBe(true);
-    expect(opened.session.serverInfo).toEqual({ name: 'fake-ls', version: '0.0.1' });
+    // No pid in initialize: a server running as another uid cannot signal
+    // this process, and would take the failed check as its cue to exit.
+    expect(opened.session.serverInfo).toEqual({
+      name: 'fake-ls',
+      version: '0.0.1',
+      processId: null,
+    });
 
     // Spoken to before any editor listens: buffered, then delivered first.
     const uri = `${opened.session.rootUri}/src/a.ts`;

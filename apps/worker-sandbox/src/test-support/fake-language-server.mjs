@@ -40,7 +40,9 @@ function handle(message) {
             completionProvider: { triggerCharacters: ['.'] },
             definitionProvider: true,
           },
-          serverInfo: { name: 'fake-ls', version: '0.0.1' },
+          // The pid the client gave, echoed so a test can see it: a server
+          // exits when it cannot signal that pid, so the worker sends none.
+          serverInfo: { name: 'fake-ls', version: '0.0.1', processId: params.processId ?? null },
         },
       });
       // A request the worker answers on the client's behalf.
