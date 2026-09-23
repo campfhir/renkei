@@ -68,6 +68,8 @@ export type AuditAction =
   | 'code.pipelines.variables.replaced'
   /** A pipeline run started from a code project's Pipelines page. */
   | 'code.pipelines.run'
+  /** A bitbucket-pipelines.yml committed from the page, from a template or edited. */
+  | 'code.pipelines.file.committed'
   | 'code.files.uploaded'
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'

@@ -150,6 +150,7 @@ export const EXPECTED_MIGRATIONS = [
   '118-chat-subagent-runs-model',
   '119-code-project-active-chat',
   '120-jira-admin-change-requests',
+  '121-pipeline-templates',
 ];
 
 export interface MigrationStatus {

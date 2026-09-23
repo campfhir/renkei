@@ -3,7 +3,9 @@
 /**
  * A Bitbucket code project's Pipelines page: the recent runs, the setup
  * — whether Bitbucket runs pipelines for the repository at all, and
- * whether a `bitbucket-pipelines.yml` is on the branch — and the
+ * whether a `bitbucket-pipelines.yml` is on the branch, with an editor
+ * that starts one from the org's pipeline templates and commits it, or
+ * edits the one there — and the
  * variables the runs get, the repository's and each deployment
  * environment's — each set edited as one text box, `KEY=value` a line,
  * and applied as a difference. Read on open and after every change,
@@ -34,6 +36,7 @@ import type {
   VariablesApplied,
 } from '@/lib/code/bitbucket-pipelines';
 import { renderVariableText } from '@/lib/code/pipeline-variables-text';
+import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
 
 const cardClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -61,6 +64,13 @@ interface Draft extends Scope {
 /** What the last save of a set did, shown under it until the next edit. */
 interface Outcome extends Scope, VariablesApplied {
   problems: string[];
+}
+
+/** The pipeline file being written: its text, the commit message, and which template filled it. */
+interface FileDraft {
+  text: string;
+  message: string;
+  templateId: string;
 }
 
 /** The "Run pipeline" form: where, and which pipeline. */
@@ -98,6 +108,10 @@ export default function PipelinesPage({
   const [runDraft, setRunDraft] = useState<RunDraft | null>(null);
   /** The run just started from here, named until the next change. */
   const [started, setStarted] = useState<PipelineRun | null>(null);
+  const [fileDraft, setFileDraft] = useState<FileDraft | null>(null);
+  const [templates, setTemplates] = useState<PipelineTemplate[] | null>(null);
+  /** Where the file just committed from here went, until the next change. */
+  const [committed, setCommitted] = useState<{ ref: string; url: string } | null>(null);
 
   const reload = useCallback(async () => {
     const result = await getJson<Setup>(url);
@@ -171,6 +185,51 @@ export default function PipelinesPage({
     if (saved) {
       setDraft(null);
       setOutcome(result);
+    }
+  };
+
+  /** Open the file editor: the file as it is on the branch, or empty for a template to fill. */
+  const openFile = async () => {
+    setError(null);
+    setCommitted(null);
+    setBusy(true);
+    const [file, catalog] = await Promise.all([
+      getJson<{ ref: string; text: string | null }>(`${url}/config-file`),
+      templates
+        ? Promise.resolve({ data: { templates }, error: null })
+        : getJson<{ templates: PipelineTemplate[] }>(
+            `/api/tenant/${tenantId}/code/pipeline-templates?provider=atlassian-bitbucket`
+          ),
+    ]);
+    setBusy(false);
+    if (file.error) {
+      setError(file.error);
+      return;
+    }
+    setTemplates(catalog.data?.templates ?? []);
+    const existing = file.data?.text ?? null;
+    setFileDraft({
+      text: existing ?? '',
+      message: existing === null ? 'Add bitbucket-pipelines.yml' : 'Update bitbucket-pipelines.yml',
+      templateId: '',
+    });
+  };
+
+  const commitFile = async () => {
+    if (!fileDraft) return;
+    let result: { ref: string; url: string } | null = null;
+    const ok = await act(async () => {
+      const response = await sendJsonFull<{ ref: string; url: string }>(
+        `${url}/config-file`,
+        'PUT',
+        { text: fileDraft.text, message: fileDraft.message.trim() }
+      );
+      result = response.data && !response.error ? response.data : null;
+      return response;
+    });
+    if (ok) {
+      setFileDraft(null);
+      setCommitted(result);
     }
   };
 
@@ -307,11 +366,34 @@ export default function PipelinesPage({
                     </dt>
                     <dd className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
                       {setup.configFile === 'present' ? (
-                        <span>On {branchLabel}.</span>
+                        <span>
+                          On {branchLabel}.{' '}
+                          {canEdit && !fileDraft ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void openFile()}
+                              className={linkButtonClass}
+                            >
+                              Edit file
+                            </button>
+                          ) : null}
+                        </span>
                       ) : setup.configFile === 'absent' ? (
                         <span>
-                          Not on {branchLabel} yet — ask a chat in this project to write one. Runs
-                          start once it is committed and Pipelines is on.
+                          Not on {branchLabel} yet.{' '}
+                          {canEdit && !fileDraft ? (
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void openFile()}
+                              className={linkButtonClass}
+                            >
+                              Start from a template
+                            </button>
+                          ) : null}{' '}
+                          A chat in this project can write one fitted to the code. Runs start once
+                          it is committed and Pipelines is on.
                         </span>
                       ) : (
                         <span className="text-gray-500">Could not be checked.</span>
@@ -319,6 +401,101 @@ export default function PipelinesPage({
                     </dd>
                   </div>
                 </dl>
+                {fileDraft ? (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void commitFile();
+                    }}
+                    aria-label="Pipeline file"
+                    className="mt-3 space-y-2"
+                  >
+                    {templates && templates.length > 0 ? (
+                      <label className="block text-xs">
+                        <span className="text-gray-500">Start from a template</span>
+                        <select
+                          value={fileDraft.templateId}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            const template = templates.find((entry) => entry.id === next);
+                            setFileDraft({
+                              ...fileDraft,
+                              templateId: next,
+                              ...(template ? { text: template.body } : {}),
+                            });
+                          }}
+                          className={`mt-0.5 ${inputClass}`}
+                        >
+                          <option value="">
+                            {fileDraft.text ? 'Keep what is here' : 'Pick a template…'}
+                          </option>
+                          {templates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name}
+                              {template.description ? ` — ${template.description}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <textarea
+                      value={fileDraft.text}
+                      onChange={(event) => setFileDraft({ ...fileDraft, text: event.target.value })}
+                      rows={Math.max(8, Math.min(28, fileDraft.text.split('\n').length + 1))}
+                      spellCheck={false}
+                      aria-label="bitbucket-pipelines.yml"
+                      placeholder={
+                        'image: node:22\n\npipelines:\n  default:\n    - step:\n        script:\n          - npm test'
+                      }
+                      className={`font-mono ${inputClass}`}
+                    />
+                    <label className="block text-xs">
+                      <span className="text-gray-500">Commit message</span>
+                      <input
+                        value={fileDraft.message}
+                        onChange={(event) =>
+                          setFileDraft({ ...fileDraft, message: event.target.value })
+                        }
+                        maxLength={500}
+                        className={`mt-0.5 ${inputClass}`}
+                      />
+                    </label>
+                    <div className="flex items-center justify-end gap-2">
+                      <p className="mr-auto text-xs text-gray-500">
+                        Commits straight to {branchLabel} with your Bitbucket access. The picked
+                        template is a starting point; what is in the box is what lands.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setFileDraft(null)}
+                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={busy || !fileDraft.text.trim()}
+                        className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {busy ? 'Committing…' : `Commit to ${branchLabel}`}
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+                {committed ? (
+                  <p role="status" className="mt-2 text-sm text-green-700 dark:text-green-400">
+                    Committed bitbucket-pipelines.yml to {committed.ref}.{' '}
+                    <a
+                      href={committed.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                    >
+                      Open on Bitbucket
+                    </a>
+                    {setup.enabled === false ? ' Turn Pipelines on above to run it.' : ''}
+                  </p>
+                ) : null}
               </section>
 
               <VariableGroup

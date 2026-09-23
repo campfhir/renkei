@@ -204,7 +204,14 @@ ref, who, when, how long — each opening on Bitbucket, where the steps
 and logs are), a way to start one (a branch or tag, optionally a named
 custom pipeline; `runs/route.ts`, on `pipeline:write` exactly as the
 chat's `bitbucket_trigger_pipeline` is), whether Bitbucket runs pipelines for the repository at
-all, whether a `bitbucket-pipelines.yml` is on the project's branch, and
+all, whether a `bitbucket-pipelines.yml` is on the project's branch —
+and when there is none, an editor that starts one from the org's
+**pipeline templates** (`pipeline_templates`, migration 121, seeded with
+Node/pnpm, Node/npm, Python and a bare skeleton; operators rename,
+rewrite or delete them at `/admin/pipeline-templates`, the
+project-templates idiom) and commits it to the branch with the person's
+own grant over `config-file/route.ts`, on `repository:write` as a code
+project's pushes are; the file there is edited the same way — and
 the variables the runs get — the repository's own and each deployment
 environment's, each set edited as one text box (`KEY=value` a line as a
 `.env` reads, `KEY: value` taken too, `secret ` in front of a secured
@@ -219,8 +226,9 @@ is about to go. The project page carries only a card
 counts, the last run — no names or values) so it stays a summary, and
 the page has the room for a runs table beside the setup. It exists to
 make CI/CD the path of least resistance: the page says what is missing
-and what to do about it (turn it on here; ask a chat to write the file),
-and the variables are set where the person already is. The page is
+and what to do about it (turn it on here; start the file from a template
+here, or ask a chat to write one fitted to the code), and the variables
+are set where the person already is. The page is
 framed provider-neutrally — runs, setup, variables — so a GitHub Actions
 variant can fill the same frame from its own reader; today the page and
 the card render for Bitbucket projects only.

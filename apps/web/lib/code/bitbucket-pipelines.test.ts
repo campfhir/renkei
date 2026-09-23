@@ -15,6 +15,8 @@ jest.mock('@/lib/logger', () => ({
 
 import type { BitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import {
+  commitPipelineConfigFile,
+  readPipelineConfigFile,
   applyVariableText,
   parseVariableText,
   renderVariableText,
@@ -565,5 +567,51 @@ describe('variables as text', () => {
       ['POST', `${REPO}/pipelines_config/variables`],
       ['DELETE', `${REPO}/pipelines_config/variables/%7Bgone%7D`],
     ]);
+  });
+});
+
+describe('the pipeline file', () => {
+  it('reads it on the branch, or answers null when there is none', async () => {
+    // Both name a branch, so the repository itself is never fetched.
+    routes = [{ match: `${REPO}/src/main/bitbucket-pipelines.yml`, text: 'pipelines: {}\n' }];
+    const present = await readPipelineConfigFile(stubAuth, 'acme/billing-service', 'main');
+    const absent = await readPipelineConfigFile(stubAuth, 'acme/billing-service', 'develop');
+    expect(present).toEqual({ ok: true, ref: 'main', text: 'pipelines: {}\n' });
+    expect(absent).toEqual({ ok: true, ref: 'develop', text: null });
+  });
+
+  it('commits it as the src form post, on the project’s branch, under repository:write', async () => {
+    routes = [{ match: `${REPO}/src`, method: 'POST', status: 201, text: '' }];
+    const committed = await commitPipelineConfigFile(
+      stubAuth,
+      'acme/billing-service',
+      'main',
+      'pipelines: {}\n',
+      'Add bitbucket-pipelines.yml'
+    );
+    expect(committed).toEqual({
+      ok: true,
+      ref: 'main',
+      url: 'https://bitbucket.org/acme/billing-service/src/main/bitbucket-pipelines.yml',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('POST');
+    expect(calls[0].path).toBe(`${REPO}/src`);
+    expect(calls[0].scopes).toEqual(['repository:write']);
+  });
+
+  it('resolves the main branch first when the project names none', async () => {
+    routes = [
+      { match: `${REPO}/src`, method: 'POST', status: 201, text: '' },
+      { match: REPO, body: { mainbranch: { name: 'develop' } } },
+    ];
+    const committed = await commitPipelineConfigFile(
+      stubAuth,
+      'acme/billing-service',
+      '',
+      'pipelines: {}\n',
+      'Add'
+    );
+    expect(committed.ok && committed.ref).toBe('develop');
   });
 });

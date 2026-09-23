@@ -40,6 +40,8 @@ export const PIPELINES_READ_SCOPE = 'pipeline';
 export const PIPELINES_RUN_SCOPE = 'pipeline:write';
 
 export const PIPELINES_CONFIG_FILE = 'bitbucket-pipelines.yml';
+/** Committing the file: what a code project's pushes already stand on. */
+export const PIPELINES_FILE_SCOPE = 'repository:write';
 
 /** How many runs the page lists; the card shows the newest of them. */
 export const RUNS_ON_PAGE = 20;
@@ -487,6 +489,76 @@ export async function deletePipelineVariable(
   );
   if (response.ok) return { ok: true };
   return { ok: false, error: await describeBitbucketFailure(response) };
+}
+
+// ——— The pipeline file itself: read, and committed from the page ———
+
+/** The branch to work on: the project's, else the repository's main branch. */
+async function branchOf(
+  auth: BitbucketAuth,
+  base: string,
+  branch: string
+): Promise<{ ok: true; ref: string } | { ok: false; error: string }> {
+  if (branch) return { ok: true, ref: branch };
+  const repo = await bbJson(auth, ['repository'], base);
+  if (!repo.ok) return repo;
+  const ref = str(rec(repo.body.mainbranch).name);
+  return ref
+    ? { ok: true, ref }
+    : { ok: false, error: 'The repository has no branch yet; push something first.' };
+}
+
+/** The file's text on the branch, or null when there is none. */
+export async function readPipelineConfigFile(
+  auth: BitbucketAuth,
+  fullName: string,
+  branch: string
+): Promise<{ ok: true; ref: string; text: string | null } | { ok: false; error: string }> {
+  const base = repoBase(fullName);
+  if (!base) return { ok: false, error: 'The repository name is not usable.' };
+  const found = await branchOf(auth, base, branch);
+  if (!found.ok) return found;
+  const file = await bbRawText(
+    auth,
+    ['repository'],
+    `${base}/src/${encodeURIComponent(found.ref)}/${PIPELINES_CONFIG_FILE}`
+  );
+  if (file.ok) return { ok: true, ref: found.ref, text: file.text };
+  if (/\b404\b/.test(file.error)) return { ok: true, ref: found.ref, text: null };
+  return file;
+}
+
+/**
+ * Commit the file to the branch — create or overwrite — the way the
+ * chat's bitbucket_commit_file does: the src endpoint takes a form with
+ * the file keyed by path, the message and the branch beside it.
+ */
+export async function commitPipelineConfigFile(
+  auth: BitbucketAuth,
+  fullName: string,
+  branch: string,
+  text: string,
+  message: string
+): Promise<{ ok: true; ref: string; url: string } | { ok: false; error: string }> {
+  const base = repoBase(fullName);
+  if (!base) return { ok: false, error: 'The repository name is not usable.' };
+  const found = await branchOf(auth, base, branch);
+  if (!found.ok) return found;
+  const form = new URLSearchParams();
+  form.set(PIPELINES_CONFIG_FILE, text);
+  form.set('message', message);
+  form.set('branch', found.ref);
+  const response = await auth.fetch([PIPELINES_FILE_SCOPE], `${base}/src`, {
+    method: 'POST',
+    form,
+  });
+  if (!response.ok) return { ok: false, error: await describeBitbucketFailure(response) };
+  const [workspace, slug] = fullName.split('/');
+  return {
+    ok: true,
+    ref: found.ref,
+    url: `https://bitbucket.org/${encodeURIComponent(workspace ?? '')}/${encodeURIComponent(slug ?? '')}/src/${encodeURIComponent(found.ref)}/${PIPELINES_CONFIG_FILE}`,
+  };
 }
 
 // ——— Variables as text: one box per set, parsed and applied as a diff ———

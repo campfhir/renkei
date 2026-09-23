@@ -11,7 +11,7 @@
  * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
  */
 
-/* global process, Buffer, setTimeout, URL, console */
+/* global process, Buffer, setTimeout, URL, URLSearchParams, console */
 
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -429,6 +429,8 @@ function pipelinesOf(fullName) {
   if (!PIPELINES.has(fullName)) {
     PIPELINES.set(fullName, {
       enabled: false,
+      /** bitbucket-pipelines.yml once committed from the page; null before. */
+      configFile: null,
       // Two runs, as Bitbucket lists them newest first: the latest failed
       // on a branch, the one before passed on main.
       runs: [
@@ -658,6 +660,22 @@ function handleBitbucket(request, url, response) {
     }
     return error(response, 404, 'not_found');
   }
+  // A file committed from the page: the src endpoint's form post, the
+  // file keyed by its path beside `message` and `branch`. 201, no body.
+  const commit = /^\/repositories\/([^/]+)\/([^/]+)\/src$/.exec(path);
+  if (commit && request.method === 'POST') {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
+      const state = pipelinesOf(`${commit[1]}/${commit[2]}`);
+      const text = form.get('bitbucket-pipelines.yml');
+      if (typeof text === 'string') state.configFile = text;
+      response.writeHead(201);
+      response.end();
+    });
+    return;
+  }
   const listing = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.*)$/.exec(path);
   if (listing && (listing[4] === '' || listing[4].endsWith('/'))) {
     const dir = decodeURIComponent(listing[4].replace(/\/$/, ''));
@@ -673,7 +691,14 @@ function handleBitbucket(request, url, response) {
   }
   const file = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.+)$/.exec(path);
   if (file) {
-    if (decodeURIComponent(file[4]) !== 'README.md') return error(response, 404, 'not_found');
+    const name = decodeURIComponent(file[4]);
+    if (name === 'bitbucket-pipelines.yml') {
+      const state = pipelinesOf(`${file[1]}/${file[2]}`);
+      if (state.configFile === null) return error(response, 404, 'not_found');
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      return response.end(state.configFile);
+    }
+    if (name !== 'README.md') return error(response, 404, 'not_found');
     const payload = README;
     response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
     return response.end(payload);

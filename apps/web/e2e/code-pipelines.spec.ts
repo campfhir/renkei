@@ -1,8 +1,8 @@
 /**
  * A Bitbucket code project's Pipelines: the card on the project page
  * (off, no file, the last run) opening the project's Pipelines page,
- * where the recent runs are listed, the switch turned on, a run started,
- * the missing pipeline file named, a secured and a plain repository variable added
+ * where the recent runs are listed, the switch turned on, the pipeline
+ * file started from a template and committed, a run started, a secured and a plain repository variable added
  * (the secured value never rendered), a plain one edited and removed,
  * and a deployment environment's variable added — then the page at
  * phone width. Bitbucket is the stub in sandbox-stub.mjs (the app is
@@ -59,9 +59,44 @@ async function db(): Promise<Client> {
   return client;
 }
 
+/**
+ * What migration 121 seeds for a real tenant, in short: global-setup
+ * deletes and reinserts the e2e tenant on every run, and tenant_id
+ * cascades — which drops the seeded rows. Patched in the way
+ * project-templates.spec.ts patches its own catalog.
+ */
+const SEED_PIPELINE_TEMPLATES = [
+  {
+    name: 'Node with pnpm',
+    description: 'Install with pnpm, then lint, typecheck and test on every push.',
+    body: 'image: node:22\n\npipelines:\n  default:\n    - step:\n        script:\n          - pnpm install --frozen-lockfile\n          - pnpm test\n',
+  },
+  {
+    name: 'Bare skeleton',
+    description: 'One step with one command — the shape of a pipeline, nothing assumed.',
+    body: 'pipelines:\n  default:\n    - step:\n        script:\n          - echo "Replace me"\n',
+  },
+];
+
+function customTemplateNameFor(project: string): string {
+  return `Playwright pipeline template (${project})`;
+}
+
 async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
+    for (const template of SEED_PIPELINE_TEMPLATES) {
+      await client.query(
+        `INSERT INTO pipeline_templates (tenant_id, provider, name, description, body)
+         VALUES ($1, 'atlassian-bitbucket', $2, $3, $4)
+         ON CONFLICT (tenant_id, provider, name) DO NOTHING`,
+        [E2E_TENANT_ID, template.name, template.description, template.body]
+      );
+    }
+    await client.query(`DELETE FROM pipeline_templates WHERE tenant_id = $1 AND name = $2`, [
+      E2E_TENANT_ID,
+      customTemplateNameFor(ids.digit),
+    ]);
     // The person's Bitbucket grant, carrying the two checkboxes the
     // page stands on beyond a code project's own three: the admin
     // bundle (the switch) and the pipeline-variable one. code.spec.ts
@@ -218,7 +253,8 @@ test.describe('Code project pipelines', () => {
     await expect(rows.nth(2)).toContainText('main');
     const setup = main.getByRole('region', { name: 'Setup' });
     await expect(setup.getByText('Off', { exact: true })).toBeVisible();
-    await expect(setup.getByText(/Not on main yet — ask a chat in this project/)).toBeVisible();
+    await expect(setup.getByText(/Not on main yet\./)).toBeVisible();
+    await expect(setup.getByText(/A chat in this project can write one/)).toBeVisible();
     const repositoryVariables = main.getByRole('region', { name: 'Repository variables' });
     const production = main.getByRole('region', { name: 'Production' });
     await expect(repositoryVariables.getByText('No variables.')).toBeVisible();
@@ -231,6 +267,38 @@ test.describe('Code project pipelines', () => {
     await setup.getByRole('button', { name: 'Turn on' }).click();
     await expect(setup.getByText('On', { exact: true })).toBeVisible();
     await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
+
+    // ── The pipeline file, from a template: the editor fills from the
+    //    picked one, the text is committed to the branch, and the setup
+    //    then says the file is there ──
+    await setup.getByRole('button', { name: 'Start from a template' }).click();
+    const fileForm = setup.getByRole('form', { name: 'Pipeline file' });
+    const fileText = fileForm.getByLabel('bitbucket-pipelines.yml');
+    await expect(fileText).toHaveValue('');
+    const pnpmOption = fileForm.getByRole('option', { name: /^Node with pnpm/ });
+    await fileForm
+      .getByLabel('Start from a template')
+      .selectOption((await pnpmOption.getAttribute('value')) ?? '');
+    await expect(fileText).toHaveValue(/pnpm install --frozen-lockfile/);
+    await fileText.fill((await fileText.inputValue()).replace('pnpm test', 'pnpm test -- --ci'));
+    await expect(fileForm.getByLabel('Commit message')).toHaveValue('Add bitbucket-pipelines.yml');
+    await shot('code-pipelines-file-template.png');
+    await fileForm.getByRole('button', { name: 'Commit to main' }).click();
+    await expect(setup.getByRole('status')).toContainText(
+      'Committed bitbucket-pipelines.yml to main'
+    );
+    await expect(
+      setup.getByRole('status').getByRole('link', { name: 'Open on Bitbucket' })
+    ).toHaveAttribute('href', `https://bitbucket.org/${ids.repo}/src/main/bitbucket-pipelines.yml`);
+    await expect(setup.getByText('On main.')).toBeVisible();
+    await expect(setup.getByRole('button', { name: 'Start from a template' })).toHaveCount(0);
+    // Editing it again opens what was committed, as the person left it.
+    await setup.getByRole('button', { name: 'Edit file' }).click();
+    await expect(fileText).toHaveValue(/pnpm test -- --ci/);
+    await expect(fileForm.getByLabel('Commit message')).toHaveValue(
+      'Update bitbucket-pipelines.yml'
+    );
+    await fileForm.getByRole('button', { name: 'Cancel' }).click();
 
     // ── Start a run: the project's branch is offered, a custom pipeline
     //    is optional; the run is named and heads the list ──
@@ -319,7 +387,7 @@ test.describe('Code project pipelines', () => {
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible();
     await expect(
       card.getByText(
-        /^On · no bitbucket-pipelines\.yml on main yet · 2 variables across the repository and 1 environment/
+        /^On · bitbucket-pipelines\.yml on main · 2 variables across the repository and 1 environment/
       )
     ).toBeVisible();
 
@@ -348,5 +416,40 @@ test.describe('Code project pipelines', () => {
     await expect(productionForm.getByLabel('Production as text')).toHaveValue('secret DEPLOY_KEY=');
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-mobile.png');
+  });
+
+  test('the admin catalog: seeded rows, one added, edited and deleted', async ({
+    page,
+  }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const name = customTemplateNameFor(ids.digit);
+    await page.goto(`/${E2E_SLUG}/admin/pipeline-templates`);
+    await expect(page.getByRole('heading', { level: 1, name: 'Pipeline templates' })).toBeVisible({
+      timeout: 30_000,
+    });
+    const main = page.getByRole('main');
+    await expect(main.getByText('Node with pnpm', { exact: true })).toBeVisible();
+    await expect(main.getByText('Bare skeleton', { exact: true })).toBeVisible();
+
+    await main.getByRole('button', { name: '+ New template' }).click();
+    await main.getByLabel('Name', { exact: true }).fill(name);
+    await main.getByLabel(/^Description/).fill('Made by the browser suite.');
+    await main
+      .getByLabel('bitbucket-pipelines.yml')
+      .fill('pipelines:\n  default:\n    - step:\n        script:\n          - make test\n');
+    await main.getByRole('button', { name: 'Create template' }).click();
+    const row = main.getByRole('listitem').filter({ hasText: name });
+    await expect(row).toBeVisible();
+    await expect(row.getByText('Made by the browser suite.')).toBeVisible();
+
+    await row.getByRole('button', { name: 'Edit' }).click();
+    await expect(main.getByLabel('bitbucket-pipelines.yml')).toHaveValue(/make test/);
+    await main.getByLabel(/^Description/).fill('Edited by the browser suite.');
+    await main.getByRole('button', { name: 'Save template' }).click();
+    await expect(row.getByText('Edited by the browser suite.')).toBeVisible();
+
+    await row.getByRole('button', { name: 'Delete' }).click();
+    await expect(row).toHaveCount(0);
+    await expect(main.getByText('Node with pnpm', { exact: true })).toBeVisible();
   });
 });
