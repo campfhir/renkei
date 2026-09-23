@@ -47,23 +47,35 @@ function uuidFrom(seed: string): string {
 }
 
 /** This project's own tenant/session/slug — isolated from every other project and spec. */
-function fixtureFor(projectName: string): {
+function fixtureFor(
+  projectName: string,
+  variant = 'connectors'
+): {
   tenantId: string;
   sessionId: string;
   slug: string;
   subject: string;
 } {
   return {
-    tenantId: uuidFrom(`connectors-e2e-tenant:${projectName}`),
-    sessionId: uuidFrom(`connectors-e2e-session:${projectName}`),
-    slug: `e2e-connectors-${projectName}`,
-    subject: `e2e-connectors-${projectName}@example.com`,
+    tenantId: uuidFrom(`${variant}-e2e-tenant:${projectName}`),
+    sessionId: uuidFrom(`${variant}-e2e-session:${projectName}`),
+    slug: `e2e-${variant}-${projectName}`,
+    subject: `e2e-${variant}-${projectName}@example.com`,
   };
 }
 
 type Fixture = ReturnType<typeof fixtureFor>;
 
-async function seedTenant(fixture: Fixture): Promise<void> {
+/**
+ * Zoom and WebEx: the two single-catalog OAuth cards, the shape most
+ * connectors share. Both enabled org-wide, both added by this person.
+ */
+const DEFAULT_CONNECTORS = { configs: ['zoom', 'webex-user'], added: ['zoom', 'webex'] };
+
+async function seedTenant(
+  fixture: Fixture,
+  connectors: { configs: string[]; added: string[] } = DEFAULT_CONNECTORS
+): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
@@ -99,11 +111,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
        VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.tenantId, fixture.subject]
     );
-    // Zoom and WebEx: the two single-catalog OAuth cards, the shape most
-    // connectors share. Both enabled org-wide, both added by this person,
-    // neither connected yet — everything on the page should start in
-    // "Needs setup".
-    for (const connector of ['zoom', 'webex-user']) {
+    // Nothing connected yet — everything on the page starts in "Needs setup".
+    for (const connector of connectors.configs) {
       await client.query(
         `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
          VALUES ($1, $2, true, 'not-a-real-secret', '{}'::jsonb)`,
@@ -112,8 +121,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     }
     await client.query(
       `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'connectors', '{"added": ["zoom", "webex"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+       VALUES ($1, $2, 'connectors', $3::jsonb)`,
+      [fixture.tenantId, fixture.subject, JSON.stringify({ added: connectors.added })]
     );
   } finally {
     await client.end();
@@ -132,6 +141,32 @@ async function connectZoom(fixture: Fixture): Promise<void> {
        VALUES ($1, 'zoom', 'e2e-zoom-account', $2, 'e2e-client', 'E2E Zoom',
                'not-a-real-token', 'not-a-real-token', $3, $4)`,
       [fixture.tenantId, fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), []]
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Simulates a completed Jira OAuth: the `atlassian` grant row its authorize
+ * callback would write. Granular scopes, same as e2e/seed.ts's Jira grant.
+ */
+async function connectJira(fixture: Fixture): Promise<void> {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `INSERT INTO provider_grants
+         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
+          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes)
+       VALUES ($1, 'atlassian', 'e2e-jira-account', $2, 'e2e-client', 'E2E Jira',
+               'not-a-real-token', 'not-a-real-token', $3, $4)`,
+      [
+        fixture.tenantId,
+        fixture.subject,
+        new Date(Date.now() + 365 * 24 * 3_600_000),
+        ['read:issue:jira', 'read:project:jira', 'offline_access'],
+      ]
     );
   } finally {
     await client.end();
@@ -186,9 +221,7 @@ test('connectors page: needs-setup ordering, live scope picker, real disconnect'
   const connectZoomLink = zoomCard.getByRole('link', { name: 'Connect Zoom' });
   const hrefBefore = await connectZoomLink.getAttribute('href');
   await zoomCard.getByRole('checkbox').first().uncheck();
-  await expect
-    .poll(() => connectZoomLink.getAttribute('href'))
-    .not.toBe(hrefBefore);
+  await expect.poll(() => connectZoomLink.getAttribute('href')).not.toBe(hrefBefore);
 
   // Simulate finishing Zoom's OAuth (the row its authorize callback would
   // write) and reload: Zoom should move out of "Needs setup" into its own
@@ -228,4 +261,56 @@ test('connectors page: needs-setup ordering, live scope picker, real disconnect'
   await expect(zoomCard).toBeVisible();
   await expect(webexCard).toBeVisible();
   await shot(page, testInfo, 'connectors-04-mobile');
+});
+
+/**
+ * Regression: e6bbd90 made the Jira card a server component that handed
+ * DisconnectControl a callback prop. Functions cannot cross the server →
+ * client boundary, so the moment Jira was connected (the only state that
+ * renders DisconnectControl) the whole connectors page failed with "This
+ * page couldn't load". Own tenant — this one holds a Jira grant.
+ */
+test('connectors page: loads with Jira connected, and its disconnect control works', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(testInfo.project.name, 'connectors-jira');
+  await seedTenant(fixture, { configs: ['atlassian'], added: ['jira'] });
+  await connectJira(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/connectors`);
+  await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
+  const jiraCard = page.locator('[data-coach="card-jira"]');
+  await expect(jiraCard.getByText('Connected', { exact: true })).toBeVisible();
+  await expect(jiraCard.getByText('E2E Jira')).toBeVisible();
+  // Nothing left to set up, so no sections at all — the "Connected"
+  // heading only appears to separate itself from a "Needs setup" one.
+  await expect(page.getByRole('heading', { name: 'Needs setup' })).toHaveCount(0);
+  await shot(page, testInfo, 'connectors-jira-01-connected');
+
+  // The island that broke the page: open the confirm, then back out
+  // (a real disconnect would also revoke MCP tokens — not this spec's point).
+  await jiraCard.getByRole('button', { name: 'Disconnect Jira' }).click();
+  await expect(jiraCard.getByText(/Disconnect E2E Jira\?/)).toBeVisible();
+  await jiraCard.getByRole('button', { name: 'Keep it' }).click();
+  await expect(jiraCard.getByText(/Disconnect E2E Jira\?/)).toHaveCount(0);
+
+  // A failed disconnect surfaces the route's `message` field — the shape
+  // the old callback prop existed for, now read via `errorFields`.
+  await page.route(`**/api/mcp/${fixture.tenantId}/grant`, (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ message: 'Jira said no' }),
+    })
+  );
+  await jiraCard.getByRole('button', { name: 'Disconnect Jira' }).click();
+  await jiraCard.getByRole('button', { name: 'Yes, disconnect' }).click();
+  await expect(jiraCard.getByText('Jira said no')).toBeVisible();
+  await expect(jiraCard.getByText('Connected', { exact: true })).toBeVisible();
+  await shot(page, testInfo, 'connectors-jira-02-disconnect-error');
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(jiraCard).toBeVisible();
+  await shot(page, testInfo, 'connectors-jira-03-mobile');
 });

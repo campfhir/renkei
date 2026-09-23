@@ -21,7 +21,7 @@ export default function DisconnectControl({
   endpoint,
   confirmText,
   buttonLabel,
-  parseError,
+  errorFields = ['error'],
 }: {
   /** DELETE endpoint that revokes the grant. */
   endpoint: string;
@@ -29,8 +29,13 @@ export default function DisconnectControl({
   confirmText: React.ReactNode;
   /** Label on the initial button, e.g. "Disconnect Zoom". */
   buttonLabel: string;
-  /** Pulls the message out of a failed response body; defaults to `.error`. */
-  parseError?: (data: Record<string, unknown>) => string | undefined;
+  /**
+   * Response-body fields to read a failure message from, first string wins;
+   * defaults to `.error`. Plain data rather than a callback: the cards that
+   * render this are server components, and a function prop cannot cross
+   * the server → client boundary (the whole page fails to render).
+   */
+  errorFields?: string[];
 }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -42,9 +47,12 @@ export default function DisconnectControl({
     setNotice(null);
     try {
       const response = await fetch(endpoint, { method: 'DELETE' });
-      const data = await response.json().catch(() => ({}));
+      const data: Record<string, unknown> = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setNotice(parseError?.(data) ?? (typeof data.error === 'string' ? data.error : undefined) ?? 'Could not disconnect');
+        const message = errorFields
+          .map((field) => data[field])
+          .find((value): value is string => typeof value === 'string');
+        setNotice(message ?? 'Could not disconnect');
         return;
       }
       setConfirming(false);
