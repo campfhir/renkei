@@ -485,6 +485,19 @@ export const ATLASSIAN_BITBUCKET_SCOPE_OPTIONS: ScopeOption[] = [
     defaultChecked: true,
     scopes: ['pipeline:write'],
   },
+  {
+    id: 'bb-pipelines-variables',
+    label: 'Set pipeline variables',
+    // No chat tool stands on this scope, by design: a pipeline variable
+    // is where a deploy key lives, and it is set on a code project's page
+    // with the person's own session (lib/code/bitbucket-pipelines.ts).
+    hint: 'Add, change and remove a repository’s pipeline and deployment variables from a code project’s page — never through a chat tool; no bitbucket_* tool carries this scope',
+    userHint:
+      'Set the variables your repository’s pipelines run with, from a code project’s page. Chats never see or change them.',
+    group: 'pipelines',
+    defaultChecked: true,
+    scopes: ['pipeline:variable'],
+  },
 ];
 
 /**

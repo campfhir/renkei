@@ -108,6 +108,30 @@ export function codeProjectAccessOf(
   };
 }
 
+/**
+ * The scopes one person's connection to a host carries, by the same rule
+ * — or null when they have not connected it. For a page that stands on
+ * scopes beyond CODE_PROJECT_SCOPES (a project's Pipelines setup) and
+ * wants to say, in the Connectors page's words, what is missing.
+ */
+export async function grantScopes(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string,
+  provider: string = ATLASSIAN_BITBUCKET
+): Promise<string[] | null> {
+  const row = await db
+    .selectFrom('provider_grants')
+    .select(['requested_scopes', 'granted_scopes'])
+    .where('tenant_id', '=', tenantId)
+    .where('provider', '=', provider)
+    .where('subject', '=', subject)
+    .orderBy('updated_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row ? grantScopesOf(row) : null;
+}
+
 export async function codeProjectAccess(
   db: Kysely<DB>,
   tenantId: string,

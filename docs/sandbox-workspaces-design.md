@@ -20,9 +20,10 @@ repository on it, kept apart from ordinary chats:
   starts the clone; the project page follows it until it reads _Ready_.
 - **The project page** shows the repository and its checkout (clone
   again, change repository), the environment as names (replace by
-  pasting a `.env` again, remove one), and everything a chat project's
-  page has: instructions, files, memory, toolset, the chats inside it,
-  sharing. Values are never shown again, to anyone.
+  pasting a `.env` again, remove one), a Bitbucket project's Pipelines
+  setup (below), and everything a chat project's page has: instructions,
+  files, memory, toolset, the chats inside it, sharing. Values are never
+  shown again, to anyone.
 - **New chat** starts a chat in the project. Its chats are listed on the
   project's page, right under its environment, and among the person's
   chats in the app menu — marked with the Code glyph and naming the
@@ -191,6 +192,41 @@ a transcript. So, as with browser secrets, values go around the model:
 
 What a command does with a value it was given — sends it to the service
 it is for — is, of course, the point.
+
+## Pipelines: set up on the page, never from a chat
+
+A Bitbucket code project's page carries a **Pipelines** section
+(`apps/web/app/[slug]/code/_components/pipelines-section.tsx`, over
+`/api/tenant/[tenantId]/code/projects/[projectId]/pipelines` and
+`apps/web/lib/code/bitbucket-pipelines.ts`): whether Bitbucket runs
+pipelines for the repository at all, whether a `bitbucket-pipelines.yml`
+is on the project's branch, and the variables the runs get — the
+repository's own and each deployment environment's, secured or plain.
+It exists to make CI/CD the path of least resistance: the page says what
+is missing and what to do about it (turn it on here; ask a chat to write
+the file), and the variables are set where the person already is.
+
+The split follows the `.env`'s rule. The **YAML is a file**: a chat can
+write and commit it with the code tools, and a chat can run, watch and
+stop pipelines through the `bitbucket_*` tools. The **switch and the
+variables are not tools**, and are never to be: a pipeline variable is
+where a deploy key or a registry token lives, and a value the model can
+set is a value in a transcript. They are read and written on the page
+with the person's own Bitbucket grant, a value travels to Bitbucket once
+and is never echoed, and Bitbucket keeps a secured variable's value to
+itself (its API never returns one, and neither does this route). The
+audit log records the key and where it lives, never the value.
+
+Two Bitbucket scopes sit under it beyond a code project's own three
+(`apps/web/lib/atlassian-scopes.ts`): the switch stands on
+`repository:admin` (the admin bundle, off by default), the variables on
+`pipeline:variable` — a checkbox of its own, "Set pipeline variables",
+that no `bitbucket_*` tool maps to (`mcp-tools/bitbucket/scopes.ts`), so
+granting it registers nothing for the model. A connection narrowed away
+from either is told so in the Connectors page's words before Bitbucket
+is asked. Not on the page, on purpose: workspace-wide variables (a
+workspace's secrets are not one project's to edit), SSH keys, schedules
+and caches — the Bitbucket UI, linked from the section, keeps those.
 
 ## Git credentials
 

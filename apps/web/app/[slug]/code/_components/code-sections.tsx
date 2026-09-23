@@ -7,13 +7,15 @@
  * clones it, then ready, cloning, or failed with why — and the
  * environment: the names of the variables the project's commands run
  * with, replaced by pasting a `.env` again. Values are never shown; the
- * worker sealed them and only a command ever sees them.
+ * worker sealed them and only a command ever sees them. A Bitbucket
+ * project gets a third, its Pipelines setup (pipelines-section.tsx).
  */
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
+import PipelinesSection from './pipelines-section';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -254,6 +256,15 @@ export default function CodeSections({
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
+      ) : null}
+      {!isGitHub ? (
+        <PipelinesSection
+          tenantId={tenantId}
+          projectId={projectId}
+          repoFullName={code.repoFullName}
+          branch={code.branch}
+          canEdit={canEdit}
+        />
       ) : null}
     </>
   );

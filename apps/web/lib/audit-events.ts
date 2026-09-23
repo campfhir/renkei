@@ -61,6 +61,11 @@ export type AuditAction =
   | 'code.project.deleted'
   | 'code.env.replaced'
   | 'code.env.deleted'
+  /** A repository's Pipelines switch or variables, changed from a code project's page. */
+  | 'code.pipelines.enabled'
+  | 'code.pipelines.disabled'
+  | 'code.pipelines.variable.set'
+  | 'code.pipelines.variable.deleted'
   | 'code.files.uploaded'
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'

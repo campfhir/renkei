@@ -415,8 +415,136 @@ Invoices, dunning and the nightly jobs.
 - \`pnpm test\`
 `;
 
+/**
+ * Pipelines setup per repository, for the project page's Pipelines
+ * section: the switch, the repository's variables and one deployment
+ * environment's. Keyed by full_name; the pipelines spec seeds a project
+ * on a repository of its own per Playwright project, so the three never
+ * share a row.
+ */
+const PIPELINES = new Map();
+let nextVariableNumber = 1;
+
+function pipelinesOf(fullName) {
+  if (!PIPELINES.has(fullName)) {
+    PIPELINES.set(fullName, {
+      enabled: false,
+      variables: [],
+      environments: [
+        {
+          uuid: '{e1e1e1e1-0000-4000-8000-000000000001}',
+          name: 'Production',
+          environment_type: { name: 'Production' },
+          rank: 2,
+          variables: [],
+        },
+      ],
+    });
+  }
+  return PIPELINES.get(fullName);
+}
+
+/** The variable endpoints, on the repository's list or an environment's. */
+function handlePipelineVariables(request, response, list, uuid) {
+  if (!uuid) {
+    if (request.method === 'GET') {
+      return json(response, 200, {
+        values: list.map((variable) =>
+          variable.secured ? { ...variable, value: undefined } : variable
+        ),
+      });
+    }
+    if (request.method === 'POST') {
+      void readBody(request).then((body) => {
+        if (list.some((variable) => variable.key === body.key)) {
+          return error(response, 409, 'variable_exists', 'Variable already exists');
+        }
+        const created = {
+          uuid: `{aaaaaaaa-0000-4000-8000-${String(nextVariableNumber++).padStart(12, '0')}}`,
+          key: body.key,
+          value: body.value ?? '',
+          secured: body.secured === true,
+          type: 'pipeline_variable',
+        };
+        list.push(created);
+        json(response, 200, created.secured ? { ...created, value: undefined } : created);
+      });
+      return;
+    }
+    return error(response, 405, 'method_not_allowed');
+  }
+  const index = list.findIndex((variable) => variable.uuid === decodeURIComponent(uuid));
+  if (index === -1) return error(response, 404, 'not_found');
+  if (request.method === 'DELETE') {
+    list.splice(index, 1);
+    response.writeHead(204);
+    return response.end();
+  }
+  if (request.method === 'PUT') {
+    void readBody(request).then((body) => {
+      const current = list[index];
+      const updated = {
+        ...current,
+        key: body.key ?? current.key,
+        secured: body.secured ?? current.secured,
+        ...(body.value !== undefined ? { value: body.value } : {}),
+      };
+      list[index] = updated;
+      json(response, 200, updated.secured ? { ...updated, value: undefined } : updated);
+    });
+    return;
+  }
+  return error(response, 405, 'method_not_allowed');
+}
+
 function handleBitbucket(request, url, response) {
   const path = url.pathname.slice('/bitbucket/2.0'.length);
+  const pipelinesConfig = /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config$/.exec(path);
+  if (pipelinesConfig) {
+    const state = pipelinesOf(`${pipelinesConfig[1]}/${pipelinesConfig[2]}`);
+    if (request.method === 'PUT') {
+      void readBody(request).then((body) => {
+        state.enabled = body.enabled === true;
+        json(response, 200, { enabled: state.enabled });
+      });
+      return;
+    }
+    return json(response, 200, { enabled: state.enabled });
+  }
+  const repoVariables =
+    /^\/repositories\/([^/]+)\/([^/]+)\/pipelines_config\/variables(?:\/([^/]+))?$/.exec(path);
+  if (repoVariables) {
+    const state = pipelinesOf(`${repoVariables[1]}/${repoVariables[2]}`);
+    return handlePipelineVariables(request, response, state.variables, repoVariables[3]);
+  }
+  const environments = /^\/repositories\/([^/]+)\/([^/]+)\/environments$/.exec(path);
+  if (environments) {
+    const state = pipelinesOf(`${environments[1]}/${environments[2]}`);
+    return json(response, 200, {
+      values: state.environments.map((environment) => {
+        const rest = { ...environment };
+        delete rest.variables;
+        return rest;
+      }),
+    });
+  }
+  const environmentVariables =
+    /^\/repositories\/([^/]+)\/([^/]+)\/deployments_config\/environments\/([^/]+)\/variables(?:\/([^/]+))?$/.exec(
+      path
+    );
+  if (environmentVariables) {
+    const state = pipelinesOf(`${environmentVariables[1]}/${environmentVariables[2]}`);
+    const environment = state.environments.find(
+      (candidate) => candidate.uuid === decodeURIComponent(environmentVariables[3])
+    );
+    if (!environment) return error(response, 404, 'not_found');
+    return handlePipelineVariables(
+      request,
+      response,
+      environment.variables,
+      environmentVariables[4]
+    );
+  }
   // The membership listing the app reads (bare /workspaces is deprecated
   // and refuses newer tokens): workspace_access rows wrapping each workspace.
   if (path === '/user/workspaces') {
@@ -468,7 +596,19 @@ function handleBitbucket(request, url, response) {
       return;
     }
     const repo = BITBUCKET.repos.find((entry) => entry.full_name === fullName);
-    return repo ? json(response, 200, repo) : error(response, 404, 'not_found');
+    if (repo) return json(response, 200, repo);
+    // The pipelines spec's repositories: one per Playwright project, kept
+    // out of the browsable list so the new-project form's counts hold.
+    if (workspace === 'acme' && slug.startsWith('pipelines-demo-')) {
+      return json(response, 200, {
+        full_name: fullName,
+        name: slug,
+        project: { key: 'BILL' },
+        mainbranch: { name: 'main' },
+        updated_on: '2026-09-01T00:00:00Z',
+      });
+    }
+    return error(response, 404, 'not_found');
   }
   const listing = /^\/repositories\/([^/]+)\/([^/]+)\/src\/([^/]+)\/(.*)$/.exec(path);
   if (listing && (listing[4] === '' || listing[4].endsWith('/'))) {
