@@ -49,9 +49,11 @@ export async function chatLocalTools(
   if (filesAllowed) tools.push(...fileTools());
   if (context.projectId) {
     if (!context.readOnly) tools.push(...memoryTools());
-  } else {
-    if (!context.readOnly) tools.push(...userMemoryTools());
-    tools.push(...recallTools());
+  } else if (!context.readOnly) {
+    tools.push(...userMemoryTools());
   }
+  // Recall sees the project's own chats in a project, the person's own
+  // outside one — the tool decides from the context (recall-tools.ts).
+  tools.push(...recallTools());
   return tools;
 }

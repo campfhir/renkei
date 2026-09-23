@@ -1,21 +1,40 @@
 /**
- * chat_recall_chats — the model's way to reach a person's *other* chats:
+ * chat_recall_chats — the model's way to reach chats beyond this one:
  * search their titles and content for a query, or list the most recent
- * ones, then read one back in full by id. Offered only outside a project
- * (a project chat sees only its own project — its sibling chats are not
- * "other chats" of the person's, they belong to the project) so a
- * project's isolation from the rest of a person's history holds for
- * recall exactly as it does for memory.
+ * ones, then read one back in full by id. Which chats those are is the
+ * turn's own affair, never the model's:
+ *
+ * - Outside a project, the person's *other* chats — everything they own
+ *   but this conversation.
+ * - In a project, the project's other chats — every member's, the way the
+ *   project's page lists them (a member may read any chat in a project
+ *   they belong to, access.ts) — and nothing outside it: not the person's
+ *   own chats elsewhere, not another project's. In a code project that is
+ *   how the active chat reaches what its history chats found and decided
+ *   (lib/code/active-chat.ts).
+ *
+ * The project comes from the tool's context (LocalToolContext.projectId),
+ * not from an input, so the model has no way to name another project; a
+ * chat id from outside the project — or outside the person's own chats,
+ * outside one — reads as "no such chat", the same word as for an id that
+ * does not exist. So a project's isolation from the rest of a person's
+ * history holds for recall exactly as it does for memory.
  *
  * Titles are plaintext and free to scan; message content is sealed, so a
  * content search decrypts a bounded, most-recently-active slice of the
- * person's other chats rather than their whole history — the same
- * small-catalog tradeoff find_tools makes for tool discovery.
+ * reachable chats rather than the whole history — the same small-catalog
+ * tradeoff find_tools makes for tool discovery.
  */
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { getChatForOwner, listOwnedChats, type ChatRow } from './store';
+import {
+  getChatForOwner,
+  getChatRow,
+  listOwnedChats,
+  listProjectChats,
+  type ChatRow,
+} from './store';
 import { listMessages } from './messages';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 
@@ -77,13 +96,45 @@ function dateOf(chat: ChatRow): string {
   return (chat.lastMessageAt ?? chat.updatedAt).toISOString().slice(0, 10);
 }
 
+/** "other chats" / "other chats in this project", for the tool's answers. */
+function scopeWord(context: LocalToolContext): string {
+  return context.projectId ? 'other chats in this project' : 'other chats';
+}
+
+/**
+ * The chats the tool may see, most recently active first: the project's
+ * (every member's, started ones only — an empty chat has nothing to
+ * recall) or the person's own, this conversation left out either way.
+ */
 async function listOthers(context: LocalToolContext): Promise<ChatRow[]> {
+  if (context.projectId) {
+    const inProject = await listProjectChats(
+      context.db,
+      context.tenantId,
+      [context.projectId],
+      null
+    );
+    return inProject.filter((chat) => chat.id !== context.chatId && chat.lastMessageAt !== null);
+  }
   const owned = await listOwnedChats(context.db, context.tenantId, context.subject);
   return owned.filter((chat) => chat.id !== context.chatId);
 }
 
+/**
+ * One chat by id, within the tool's scope — the project's or the
+ * person's own — or null. The scope is checked here, behind the tool,
+ * whatever id the model hands in.
+ */
+async function readable(context: LocalToolContext, chatId: string): Promise<ChatRow | null> {
+  if (context.projectId) {
+    const chat = await getChatRow(context.db, context.tenantId, chatId);
+    return chat && chat.projectId === context.projectId ? chat : null;
+  }
+  return getChatForOwner(context.db, context.tenantId, context.subject, chatId);
+}
+
 async function readOne(context: LocalToolContext, chatId: string) {
-  const chat = await getChatForOwner(context.db, context.tenantId, context.subject, chatId);
+  const chat = await readable(context, chatId);
   if (!chat) return errorResult('No such chat.');
   const transcript = await transcriptOf(context.db, context.tenantId, chat, READ_MAX_CHARS);
   if (!transcript) return textResult(`${titleOf(chat)} (${dateOf(chat)}) has no text to show.`);
@@ -94,7 +145,7 @@ async function readOne(context: LocalToolContext, chatId: string) {
 
 async function search(context: LocalToolContext, query: string, limit: number) {
   const others = await listOthers(context);
-  if (others.length === 0) return textResult('There are no other chats yet.');
+  if (others.length === 0) return textResult(`There are no ${scopeWord(context)} yet.`);
 
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const candidates = others.slice(0, SCAN_LIMIT);
@@ -112,7 +163,7 @@ async function search(context: LocalToolContext, query: string, limit: number) {
     .slice(0, limit);
   if (matches.length === 0) {
     return errorResult(
-      `No other chat matched "${query}" among the ${candidates.length} most recently active.`
+      `No ${context.projectId ? 'other chat in this project' : 'other chat'} matched "${query}" among the ${candidates.length} most recently active.`
     );
   }
   return textResult(
@@ -128,10 +179,10 @@ async function search(context: LocalToolContext, query: string, limit: number) {
 
 async function listRecent(context: LocalToolContext, limit: number) {
   const others = await listOthers(context);
-  if (others.length === 0) return textResult('There are no other chats yet.');
+  if (others.length === 0) return textResult(`There are no ${scopeWord(context)} yet.`);
   const recent = others.slice(0, limit);
   return textResult(
-    `Your ${recent.length} most recently active other chat(s) — call chat_recall_chats again with chatId to read one in full:\n` +
+    `The ${recent.length} most recently active ${scopeWord(context)} — call chat_recall_chats again with chatId to read one in full:\n` +
       recent.map((chat) => `- ${chat.id} [${dateOf(chat)}] ${titleOf(chat)}`).join('\n')
   );
 }
@@ -143,7 +194,7 @@ export function recallTools(): LocalTool[] {
       def: {
         name: 'chat_recall_chats',
         description:
-          "Search or list this person's other chats — the ones outside this conversation — by title and content, then read one back in full. Use it when they refer to something from an earlier, different chat that this conversation does not already contain. Give `query` to search; omit it to list the most recently active other chats; give `chatId` (from an earlier result) to read that chat's messages in full.",
+          "Search or list the other chats this conversation may see — in a project, the project's own other chats (every member's) and nothing outside it; otherwise this person's other chats — by title and content, then read one back in full. Use it when something from an earlier, different chat is referred to that this conversation does not already contain: in a code project, what a previous chat found, tried or decided. Give `query` to search; omit it to list the most recently active; give `chatId` (from an earlier result) to read that chat's messages in full.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -167,9 +218,6 @@ export function recallTools(): LocalTool[] {
         },
       },
       async execute(input, context) {
-        if (context.projectId) {
-          return errorResult('This chat is in a project and only sees the project’s own chats.');
-        }
         const chatId = typeof input.chatId === 'string' ? input.chatId.trim() : '';
         if (chatId) return readOne(context, chatId);
 

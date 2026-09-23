@@ -42,8 +42,13 @@ repository on it, kept apart from ordinary chats:
   active chat leaves the project with none until the next new chat;
   unarchiving does not bring it back. The project page lists the active
   chat first and the rest under _Previous chats_; the menu tags them
-  _history_. Chat projects are untouched: their chats are independent
-  conversations sharing context, and any number may run at once.
+  _history_. What a history chat found, tried or decided is reachable from
+  the active chat through `chat_recall_chats`
+  (`apps/web/lib/chat/recall-tools.ts`), which in a project sees the
+  project's own chats and nothing outside it — the project is the tool's
+  context, never the model's input. Chat projects are untouched: their
+  chats are independent conversations sharing context, and any number may
+  run at once.
 
 In such a chat the model has the `code_*` tools (below) bound to the
 project's checkout and a brief in its system prompt on how to work in
