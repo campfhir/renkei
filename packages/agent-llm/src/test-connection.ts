@@ -9,11 +9,22 @@
  * endpoint all still list fine and only fail here, which is exactly the
  * class of mistake someone wants caught before saving, not after an
  * agent's first run.
+ *
+ * The request carries one harmless tool definition (TEST_TOOL) with
+ * toolChoice 'auto', the same shape every real chat turn sends (the
+ * engine always offers its active tool set) — a config that only breaks
+ * once tools are present would otherwise sail through this test and only
+ * fail in the first real chat. That's exactly how a gpt-6-astra-1 Azure
+ * deployment failed once: it rejects any request carrying tool
+ * definitions unless reasoning_effort is explicitly "none", a config a
+ * toolless test call could never have caught. `toolChoice: 'auto'` means
+ * the trivial prompt below has no reason to actually trigger a call, so a
+ * normal provider still answers with the same plain-text reply.
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import type { LlmErrorKind } from './contract';
+import type { LlmErrorKind, LlmToolDef } from './contract';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
 
@@ -21,6 +32,13 @@ import { OpenAiProvider } from './openai';
 const REQUEST_TIMEOUT_MS = 20_000;
 const TEST_PROMPT = 'Reply with only the single word: ok';
 const MAX_TOKENS = 16;
+/** See the module doc: present so the test exercises the same
+ *  tools-in-the-request shape a real chat turn always sends. */
+const TEST_TOOL: LlmToolDef = {
+  name: 'test_tool',
+  description: 'Unused — present only to verify the model accepts tool definitions.',
+  inputSchema: { type: 'object', properties: {} },
+};
 
 export interface TestConnectionConfig {
   provider: string;
@@ -72,7 +90,8 @@ export async function testLlmConnection(
   const result = await provider.complete({
     system: '',
     messages: [{ role: 'user', content: [{ type: 'text', text: TEST_PROMPT }] }],
-    tools: [],
+    tools: [TEST_TOOL],
+    toolChoice: 'auto',
     maxTokens: MAX_TOKENS,
     timeoutMs: REQUEST_TIMEOUT_MS,
   });

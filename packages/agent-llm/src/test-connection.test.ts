@@ -51,6 +51,22 @@ describe('testLlmConnection — anthropic', () => {
     expect(Array.isArray(body.messages)).toBe(true);
   });
 
+  it('sends a tool definition and tool_choice auto — same shape a real chat turn sends', async () => {
+    // A config that only breaks once tools are present (a reasoning model
+    // that rejects tool_choice/temperature combos, a deployment with no
+    // function-calling support at all) must fail HERE, not on the chat's
+    // first real turn — see the module doc.
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' })
+    );
+    await testLlmConnection({ provider: 'anthropic', apiKey: 'sk-test', model: 'claude-sonnet-5' });
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body: { tools?: unknown; tool_choice?: unknown } = JSON.parse(init.body as string);
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect((body.tools as unknown[]).length).toBe(1);
+    expect(body.tool_choice).toEqual({ type: 'auto' });
+  });
+
   it('sends Azure hosts Bearer alone, honoring the draft base URL', async () => {
     fetchSpy.mockResolvedValue(
       jsonResponse(200, { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' })
@@ -155,6 +171,37 @@ describe('testLlmConnection — openai', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('invalid_request');
+  });
+
+  it('sends a tool definition — catches a reasoning model that only fails once tools are present', async () => {
+    // The gpt-6-astra-1 case this test exists for: no reasoning_effort was
+    // ever configured, yet the deployment 400s the moment ANY tool
+    // definition rides along, because its own default reasoning effort is
+    // not "none". A toolless request would answer 200 and hide this.
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message:
+              "Function tools with reasoning_effort are not supported for gpt-6-astra-1 in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.",
+            type: 'invalid_request_error',
+            param: 'reasoning_effort',
+          },
+        }),
+        { status: 400 }
+      )
+    );
+    const result = await testLlmConnection({
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'gpt-6-astra-1',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.err.type).toBe('invalid_request');
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body: { tools?: unknown } = JSON.parse(init.body as string);
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect((body.tools as unknown[]).length).toBe(1);
   });
 });
 
