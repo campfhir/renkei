@@ -107,7 +107,12 @@ describe('createEventLoop.run', () => {
       idleDelayMs: 1,
     });
     const running = loop.run();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Wait for the claims rather than the clock: a fixed sleep starved on a
+    // loaded CI runner (two claims in 50 ms, with the web suite beside it).
+    const started = Date.now();
+    while (claims < 4 && Date.now() - started < 5_000) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     loop.stop();
     await running;
     // Kept claiming after the thrown claim — the error was contained.
