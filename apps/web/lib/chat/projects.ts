@@ -40,6 +40,12 @@ export interface ProjectRow {
   repo: ProjectRepo | null;
   /** A code project's checkout on the sandbox worker, once cloned. */
   workspaceId: string | null;
+  /**
+   * A code project's one chat that may continue (lib/code/active-chat.ts);
+   * every other chat in it is history. Null on a chat project, and on a
+   * code project whose active chat was deleted or archived.
+   */
+  activeChatId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -58,6 +64,7 @@ const PROJECT_COLUMNS = [
   'repo_full_name',
   'repo_branch',
   'workspace_id',
+  'active_chat_id',
   'created_at',
   'updated_at',
 ] as const;
@@ -79,6 +86,7 @@ function rowOf(raw: {
   repo_full_name: string | null;
   repo_branch: string | null;
   workspace_id: string | null;
+  active_chat_id: string | null;
   created_at: Date;
   updated_at: Date;
 }): ProjectRow {
@@ -101,6 +109,7 @@ function rowOf(raw: {
           }
         : null,
     workspaceId: raw.workspace_id,
+    activeChatId: raw.kind === 'code' ? raw.active_chat_id : null,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   };
@@ -219,6 +228,8 @@ export interface ProjectPatch {
   repo?: ProjectRepo;
   /** The checkout on the worker: set when a clone starts, cleared when it is dropped. */
   workspaceId?: string | null;
+  /** The chat that may continue in a code project; null when none may. */
+  activeChatId?: string | null;
 }
 
 /** Keyed by project id only — the caller has already resolved edit rights. */
@@ -257,6 +268,7 @@ export async function updateProject(
           }
         : {}),
       ...(patch.workspaceId !== undefined ? { workspace_id: patch.workspaceId } : {}),
+      ...(patch.activeChatId !== undefined ? { active_chat_id: patch.activeChatId } : {}),
       updated_at: sql<Date>`NOW()`,
     })
     .where('tenant_id', '=', tenantId)

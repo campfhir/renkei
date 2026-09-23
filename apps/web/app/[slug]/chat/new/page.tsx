@@ -6,6 +6,8 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { isUuid } from '@/lib/uuid';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { createChat } from '@/lib/chat/store';
+import { createChatInProject } from '@/lib/code/active-chat';
+import { getProjectRow } from '@/lib/chat/projects';
 
 /**
  * "+ New": an empty chat is created here and now (optionally inside the
@@ -14,6 +16,13 @@ import { createChat } from '@/lib/chat/store';
  * exists — the thread never has to change address or reload under the
  * person mid-reply. An empty chat stays out of the menu until its first
  * message, and one nobody ever wrote in is swept after a day.
+ *
+ * In a code project the new chat becomes the project's active chat and
+ * the previous one history (lib/code/active-chat.ts). While that previous
+ * chat is still replying no new one may start, and this page — a
+ * redirect, with nowhere to say so — sends the person to the chat that
+ * is busy, where the reply can be stopped; the buttons that call the API
+ * directly say why instead.
  */
 export default async function NewChatPage({
   params,
@@ -48,13 +57,21 @@ export default async function NewChatPage({
     );
     if (access) projectId = requestedProjectId;
   }
-  const chatId = await createChat(db, {
+  const input = {
     tenantId: tenant.id,
     ownerSubject: session.subject,
-    projectId,
     llmModelId: null,
     toolConfig: null,
     thinkingEnabled: false,
-  });
-  redirect(`/${slug}/chat/${chatId}`);
+  };
+  if (!projectId) {
+    const chatId = await createChat(db, { ...input, projectId: null });
+    redirect(`/${slug}/chat/${chatId}`);
+  }
+  const created = await createChatInProject(db, { ...input, projectId });
+  if (created.ok) redirect(`/${slug}/chat/${created.val}`);
+  const project = await getProjectRow(db, tenant.id, projectId);
+  redirect(
+    project?.activeChatId ? `/${slug}/chat/${project.activeChatId}` : `/${slug}/code/${projectId}`
+  );
 }

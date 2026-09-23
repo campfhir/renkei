@@ -43,6 +43,14 @@ export const chatClient = {
       `${base(tenantId)}/chats/${chatId}/subagents/${encodeURIComponent(toolUseId)}`
     ),
 
+  /**
+   * A new chat, in a project or not. In a code project the new chat
+   * becomes the project's active one — refused (409 `turn-running`) while
+   * the current active chat is mid-reply, with the reason in `error`.
+   */
+  createChat: (tenantId: string, input: { projectId?: string | null }) =>
+    sendJsonFull<{ chatId: string; code?: string }>(`${base(tenantId)}/chats`, 'POST', input),
+
   getChat: (tenantId: string, chatId: string) =>
     getJson<{ chat: ChatView; messages: ChatMessageView[] }>(`${base(tenantId)}/chats/${chatId}`),
 

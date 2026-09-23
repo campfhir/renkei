@@ -3,7 +3,9 @@
  *
  * Creating inside a project requires access to that project (any role —
  * members chat with the project's context); the chat itself is always
- * the creator's.
+ * the creator's. In a code project the new chat becomes the project's
+ * active chat and the previous one history (lib/code/active-chat.ts) —
+ * refused with 409 `turn-running` while the active chat is mid-reply.
  */
 
 import type { NextRequest } from 'next/server';
@@ -14,6 +16,7 @@ import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { createChat } from '@/lib/chat/store';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { parseToolConfig } from '@/lib/chat/tool-config';
+import { createChatInProject } from '@/lib/code/active-chat';
 
 export async function GET(
   request: NextRequest,
@@ -52,13 +55,24 @@ export async function POST(
   const llmModelId =
     typeof body.llmModelId === 'string' && isUuid(body.llmModelId) ? body.llmModelId : null;
   const toolConfig = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
-  const chatId = await createChat(db, {
+  const input = {
     tenantId,
     ownerSubject: session.subject,
-    projectId,
     llmModelId,
     toolConfig,
     thinkingEnabled: body.thinkingEnabled === true,
-  });
-  return NextResponse.json({ chatId }, { status: 201 });
+  };
+  if (!projectId) {
+    const chatId = await createChat(db, { ...input, projectId: null });
+    return NextResponse.json({ chatId }, { status: 201 });
+  }
+  const created = await createChatInProject(db, { ...input, projectId });
+  if (!created.ok) {
+    return jsonError(
+      409,
+      'turn-running',
+      'The active chat is still replying. Stop it or wait for it to finish, then start a new chat.'
+    );
+  }
+  return NextResponse.json({ chatId: created.val }, { status: 201 });
 }

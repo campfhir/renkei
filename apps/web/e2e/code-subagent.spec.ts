@@ -102,6 +102,11 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
        VALUES ($1, $2, $3, $4, $5, NOW())`,
       [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
+    // The project's active chat — a history chat takes no turn (lib/code/active-chat.ts).
+    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
+      ids.chatId,
+      ids.projectId,
+    ]);
     await client.query(
       `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
        VALUES ($1, $2, $3, 'anthropic', 'claude-haiku-4-5', $4, TRUE, FALSE)`,

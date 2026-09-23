@@ -32,6 +32,12 @@ export async function POST(
         return jsonError(404, 'not-found', 'No such chat');
       case 'FORBIDDEN':
         return jsonError(403, 'read-only', 'Only the owner can continue this chat.');
+      case 'HISTORY':
+        return jsonError(
+          409,
+          'chat-history',
+          'This chat is history. Continue in the project’s active chat, or start a new one.'
+        );
       case 'ALREADY_RUNNING':
         return jsonError(409, 'turn-running', 'A reply is already in progress.');
       case 'NO_MODEL':
