@@ -276,12 +276,15 @@ export function transportErrorKind(error: unknown, signal?: AbortSignal): LlmErr
  * curl by hand, exactly because no request was ever captured anywhere.
  *
  * No credential ever lives here — auth rides in HTTP headers, which are
- * never part of `request` and never logged at all. `request` can still
- * hold a person's message text or a tool's real arguments, so a caller
- * MUST mark it `secure()` (or an equivalent encrypt-at-rest wrapper)
- * before writing it to a log line, never print it to a console or an
- * admin-facing surface directly, and clip it — the whole prompt history
- * of a long-running chat is not a reasonable log line.
+ * never part of `request` and never logged at all. That is also the only
+ * thing worth encrypting at rest: `request` is plain prompt/tool content,
+ * not a secret, so a caller logs it as ordinary text rather than under
+ * secure() — the encrypt-at-rest path exists for credentials, and wrapping
+ * a whole request body in it every time a call fails only inflates the
+ * record for no protection anything here actually needs. Still clip it
+ * before logging — the whole prompt history of a long-running chat is not
+ * a reasonable log line — and never surface it on an admin-facing UI
+ * verbatim, but plain text in the structured log is fine.
  */
 export interface WireRequestCause {
   summary: string;

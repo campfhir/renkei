@@ -549,7 +549,10 @@ const LOG_BODY_MAX_CHARS = 1300;
  * bytes, but a rejected request is the whole point of the log line, and
  * clipping it to 1300 chars would cut off the very tool definitions or
  * settings most likely to be the actual cause. This is exactly the class
- * of guess this exists to end — see wireRequestCauseOf's doc.
+ * of guess this exists to end — see wireRequestCauseOf's doc. Logged as
+ * plain text, not secure(): it holds no credential (those never leave the
+ * request's headers, never logged at all), so there is nothing here the
+ * encrypt-at-rest path protects — only inflates the record.
  */
 const REQUEST_LOG_MAX_CHARS = 40_000;
 
@@ -1107,12 +1110,10 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             {
               kind: result.err.type,
               message: result.err.message ?? '',
+              // Plain text, not secure(): no credential ever lives in a
+              // request body — see REQUEST_LOG_MAX_CHARS's doc.
               ...(cause
-                ? {
-                    request: secure(
-                      clip(JSON.stringify(cause.request), REQUEST_LOG_MAX_CHARS)
-                    ),
-                  }
+                ? { request: clip(JSON.stringify(cause.request), REQUEST_LOG_MAX_CHARS) }
                 : {}),
             },
             'error'

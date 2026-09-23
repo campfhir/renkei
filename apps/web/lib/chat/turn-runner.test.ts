@@ -1414,7 +1414,7 @@ describe('runChatTurn logs every tool call attempt', () => {
 });
 
 describe('runChatTurn logs the actual request on a model error', () => {
-  it('attaches the secured, redacted-nowhere request body — not just the error kind/message', async () => {
+  it('attaches the plain-text, redacted-nowhere request body — not just the error kind/message', async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-log-model-error');
     const logged: { message: string; fields: Record<string, unknown>; level?: string }[] = [];
@@ -1446,10 +1446,13 @@ describe('runChatTurn logs the actual request on a model error', () => {
     expect(outcome.status).toBe('failed');
     const errorLog = logged.find((row) => row.message.includes('chat turn model error'));
     expect(errorLog).toMatchObject({ level: 'error', fields: { kind: 'invalid_request' } });
-    const request = errorLog?.fields.request as { _secure?: boolean; value?: string } | undefined;
-    expect(request?._secure).toBe(true);
-    expect(typeof request?.value).toBe('string');
-    const parsed: { model?: unknown; messages?: unknown } = JSON.parse(request?.value ?? '{}');
+    // Plain text, not secure() — no credential ever lives in a request
+    // body, so there is nothing here worth the encrypt-at-rest treatment.
+    const requestField = errorLog?.fields.request;
+    expect(typeof requestField).toBe('string');
+    const parsed: { model?: unknown; messages?: unknown } = JSON.parse(
+      typeof requestField === 'string' ? requestField : '{}'
+    );
     expect(parsed.model).toBe('gpt-6-astra-1');
     expect(Array.isArray(parsed.messages)).toBe(true);
   });
