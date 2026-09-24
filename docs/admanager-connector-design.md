@@ -238,11 +238,19 @@ still can't express per-request TLS policy.
 
 `test-connection` (the connect flow's live validation, before anything is
 stored) and `probe` (the admin form's unauthenticated reachability check)
-both call `GET /api/v1/domain/listDomains` — the lightest read in the
-API, requires no domain/filter parameters, and (per the vendor's own
-error-code table) answers 401 on a missing/invalid token. `probe` treats
-401 as reachable, the same "a 401 IS the healthy answer" logic Mirth's
-`/server/version` probe uses.
+both call `GET /api/v1/domain/listDomains` — it requires no domain/filter
+parameters, and (per the vendor's own error-code table) answers 401 on a
+missing/invalid token. `probe` treats 401 as reachable, the same "a 401
+IS the healthy answer" logic Mirth's `/server/version` probe uses.
+
+Its answer body is NOT assumed small, though — a large org's `listDomains`
+has been observed streaming well past a few megabytes, and neither op
+reads the body at all (both decide purely from the status line). Both
+calls into `forward()` pass `readBody: false`, which tells the upstream
+dialer to resolve as soon as the response headers arrive and abandon the
+socket rather than buffer anything — so a big answer from an endpoint
+that was expected to be small can never fail a reachability check that
+was never going to look past `status`.
 
 ## What deliberately did not ship
 

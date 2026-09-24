@@ -85,7 +85,13 @@ const MAX_JSON_BYTES = 1_048_576;
 const MAX_UPSTREAM_BYTES = 4 * 1_048_576;
 const API_TIMEOUT_MS = 30_000;
 
-/** The lightest read in the API: no domain/filter parameters required. */
+/**
+ * No domain/filter parameters required, so it works before anything is
+ * chosen or saved. NOT assumed lightweight, though — a large org's answer
+ * here has been observed well past MAX_UPSTREAM_BYTES, so every caller of
+ * this path passes `readBody: false` to `forward()` and never buffers it;
+ * only the status line is ever needed.
+ */
 const PROBE_PATH = '/api/v1/domain/listDomains';
 
 type WorkerErrorType =
@@ -172,13 +178,21 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
     deps.resolveInstance ??
     ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
 
-  /** One forwarded request, the authtoken set directly as Authorization. */
+  /**
+   * One forwarded request, the authtoken set directly as Authorization.
+   * `readBody: false` for a caller that only reads `status` back (probe,
+   * test-connection's reachability check) — the response is never
+   * buffered or counted against MAX_UPSTREAM_BYTES, so a large answer
+   * from an endpoint that was expected to be small can't fail a call
+   * that was never going to look past the status line.
+   */
   function forward(
     instance: InstanceRow,
     authToken: string,
     body: Record<string, unknown>,
     method: string,
-    path: string
+    path: string,
+    readBody = true
   ): ReturnType<UpstreamDialer> {
     const hasBody = body.body !== undefined && body.body !== null && method !== 'GET';
     const payload = hasBody
@@ -198,6 +212,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       tls: tlsOf(instance),
       timeoutMs: API_TIMEOUT_MS,
       maxBodyBytes: MAX_UPSTREAM_BYTES,
+      readBody,
     });
   }
 
@@ -270,7 +285,8 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         credentials.authToken,
         { accept: 'application/json' },
         'GET',
-        PROBE_PATH
+        PROBE_PATH,
+        false
       );
       if ('failed' in answer) {
         return sendError(
@@ -341,7 +357,14 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         instance = stored.val;
       }
 
-      const ping = await forward(instance, '', { accept: 'application/json' }, 'GET', PROBE_PATH);
+      const ping = await forward(
+        instance,
+        '',
+        { accept: 'application/json' },
+        'GET',
+        PROBE_PATH,
+        false
+      );
       if ('failed' in ping) {
         // A failed probe is a successful request.
         return sendJson(response, 200, {
