@@ -178,7 +178,7 @@ describe('admanager_get_user', () => {
 });
 
 describe('unlock account: preview + confirm', () => {
-  it('preview builds an issue card with the confirm tool and args', async () => {
+  it('preview builds a directory_action card, identifying the person, with the confirm tool and args', async () => {
     admanagerApi.mockResolvedValueOnce(
       usersResponse([{ DISPLAY_NAME: 'Jane Doe', ACCOUNT_STATUS: 'Locked' }])
     );
@@ -188,7 +188,11 @@ describe('unlock account: preview + confirm', () => {
       domainName: 'corp.example',
       samAccountName: 'jdoe',
     });
-    expect(result.structuredContent?.kind).toBe('issue');
+    expect(result.structuredContent?.kind).toBe('directory_action');
+    expect(result.structuredContent?.action).toBe('Unlock account');
+    expect(
+      (result.structuredContent?.person as Record<string, unknown>).name
+    ).toBe('Jane Doe');
     expect(result.structuredContent?.confirmTool).toBe('admanager_unlock_account_confirm');
     expect(
       (result.structuredContent?.confirmArgs as Record<string, unknown>).samAccountName
@@ -237,10 +241,9 @@ describe('reset password: the shown password is the one used', () => {
       samAccountName: 'jdoe',
     });
     const confirmArgs = result.structuredContent?.confirmArgs as Record<string, unknown>;
-    const shownPassword = (result.structuredContent?.fields as { label: string; value: string }[]).find(
-      (field) => field.label === 'New password'
-    )?.value;
-    expect(confirmArgs.newPassword).toBe(shownPassword);
+    const secret = result.structuredContent?.secret as { label: string; value: string };
+    expect(secret.label).toBe('New password');
+    expect(confirmArgs.newPassword).toBe(secret.value);
     expect(typeof confirmArgs.newPassword).toBe('string');
     expect((confirmArgs.newPassword as string).length).toBeGreaterThanOrEqual(16);
   });
@@ -283,11 +286,14 @@ describe('group membership is additive only', () => {
       samAccountName: 'jdoe',
       groupNames: ['VPN Users', 'Finance-ReadOnly'],
     });
-    const fields = result.structuredContent?.fields as { label: string; value: string }[];
-    expect(fields.find((field) => field.label === 'Groups to add')?.value).toBe(
-      'VPN Users, Finance-ReadOnly'
-    );
-    expect(fields.find((field) => field.label === 'Already a member of')?.value).toBe('VPN Users');
+    const lists = result.structuredContent?.groupLists as { label: string; groups: string[] }[];
+    expect(lists.find((list) => list.label === 'Groups to add')?.groups).toEqual([
+      'VPN Users',
+      'Finance-ReadOnly',
+    ]);
+    expect(lists.find((list) => list.label === 'Already a member of')?.groups).toEqual([
+      'VPN Users',
+    ]);
   });
 
   it('remove preview only ever offers groups the account actually has', async () => {

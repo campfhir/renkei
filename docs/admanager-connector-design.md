@@ -125,6 +125,14 @@ gates it. Reasoning:
   confirmation on every reversible write would make the bulk tooling
   unusable.
 
+The card itself is purpose-built rather than the reused issue-preview
+card (`apps/web/lib/mcp-widgets/src/directory-action-preview.ts`, bound
+via `_meta.ui.resourceUri`): an AD account action centers on a person's
+identity, not a work item, so the card leads with a named avatar row,
+shows a generated password or new-hire credential plainly with a Copy
+button rather than hiding it, and renders group membership as add/remove
+pill lists instead of a diff string.
+
 ## Group membership: additive verbs, not a replace-the-list PATCH
 
 The vendor's `PATCH /api/v2/users` accepts a `memberOf` attribute as a

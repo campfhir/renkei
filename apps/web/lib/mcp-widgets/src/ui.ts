@@ -165,6 +165,17 @@ button.link {
   background: transparent; border: 1px solid var(--card-border);
 }
 button.link:hover { border-color: var(--card-accent); }
+.title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.person { display: flex; align-items: center; gap: 10px; }
+.person-name { font-weight: 600; overflow-wrap: anywhere; }
+.person-detail { color: var(--card-muted); font-size: 12px; overflow-wrap: anywhere; }
+.avatar.lg { width: 36px; height: 36px; font-size: 13px; flex: none; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.secret-row { display: flex; align-items: center; gap: 8px; }
+.secret-row .field-value {
+  flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+}
 `;
 
 export function injectStyle(): void {
@@ -446,6 +457,21 @@ export function recallDone(key: string): DoneState | null {
   } catch {
     return null;
   }
+}
+
+/** First letter of up to the first two words, uppercased — for an avatar with no image. */
+export function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  return words
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
+/** A plain initials avatar — the `results-list` card overlays a photo on the same markup. */
+export function avatar(name: string, size?: 'lg'): HTMLElement {
+  return el('div', `avatar${size ? ` ${size}` : ''}`, initials(name));
 }
 
 export function strings(value: unknown): string[] {

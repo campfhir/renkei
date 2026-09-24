@@ -25,11 +25,17 @@
  * or copy another user's groups onto a target) — not the rest of
  * ADManager Plus's REST API.
  *
- * Every write here is preview + confirm on the shared issue-preview card,
- * whatever permission gates it — a deliberately wider net than Mirth's
- * "only permanent operations" rule, because these are identity/access
- * actions against a real employee's account with no version history to
- * catch a model's mistake after the fact.
+ * Every write here is preview + confirm on its own purpose-built preview
+ * card (`directory_action_preview` — see
+ * apps/web/lib/mcp-widgets/src/directory-action-preview.ts), not the
+ * generic Jira-shaped `issue_preview` card: these are identity/access
+ * actions against a real employee's AD account, not a ticket, and the
+ * card shows who the account belongs to and (for a generated password)
+ * the value itself, neither of which the generic card renders. Every
+ * write previews regardless of which permission gates it — a
+ * deliberately wider net than Mirth's "only permanent operations" rule,
+ * because there is no version history here to catch a model's mistake
+ * after the fact.
  */
 
 import { z } from 'zod';
@@ -52,9 +58,39 @@ import type {
   AdManagerTarget,
   WireApiResponse,
 } from '@/lib/admanager/service-client';
-import { APP_ONLY_META, ISSUE_PREVIEW_URI, confirmGuard, newPreviewId, previewToolMeta } from '../widgets';
+import {
+  APP_ONLY_META,
+  DIRECTORY_ACTION_PREVIEW_URI,
+  confirmGuard,
+  newPreviewId,
+  previewToolMeta,
+} from '../widgets';
 import { NO_SUCH_INSTANCE } from './admanager-auth';
 import type { AdManagerAuth } from './admanager-auth';
+
+/** A person's identity for the preview card — name plus a detail line (logon name/domain). */
+interface CardPerson {
+  name: string;
+  detail?: string;
+}
+
+/** One row of the directory_action_preview card's structuredContent. */
+interface DirectoryActionPreview {
+  kind: 'directory_action';
+  previewId: string;
+  action: string;
+  tone: 'positive' | 'caution' | 'neutral';
+  title: string;
+  subtitle: string;
+  person: CardPerson;
+  secondaryPerson?: { label: string; name: string; detail?: string };
+  fields?: { label: string; value: string; oldValue?: string }[];
+  secret?: { label: string; value: string; note?: string };
+  groupLists?: { label: string; groups: string[]; tone?: 'add' | 'remove' | 'muted' }[];
+  confirmTool: string;
+  confirmLabel: string;
+  confirmArgs: Record<string, unknown>;
+}
 
 /** The connector key the ADManager Plus capabilities register under. */
 export const ADMANAGER_MCP_CONNECTOR = 'admanager';
@@ -477,7 +513,7 @@ export function registerAdManagerTools(
         'Show the user an interactive card to confirm or cancel unlocking a locked-out AD account. ' +
         'This is the only way to unlock an account here — the user decides on the card.',
       annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: unlockSchema,
     },
     async (args: Record<string, unknown>) => {
@@ -492,23 +528,23 @@ export function registerAdManagerTools(
       ]);
       if (!existing.ok) return errText(existing.message);
       const instanceName = await instanceNameFor(instanceId);
+      const displayName = str(existing.user.DISPLAY_NAME) || samAccountName;
+      const preview: DirectoryActionPreview = {
+        kind: 'directory_action',
+        previewId: newPreviewId(),
+        action: 'Unlock account',
+        tone: 'positive',
+        title: `Unlock ${displayName}`,
+        subtitle: `${instanceName} · ${domainName}`,
+        person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
+        fields: [{ label: 'Current status', value: str(existing.user.ACCOUNT_STATUS) || 'unknown' }],
+        confirmTool: 'admanager_unlock_account_confirm',
+        confirmLabel: 'Unlock account',
+        confirmArgs: args,
+      };
       return {
         content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `Unlock ${str(existing.user.DISPLAY_NAME) || samAccountName}`,
-          subtitle: `${instanceName} · ${domainName}`,
-          confirmTool: 'admanager_unlock_account_confirm',
-          confirmLabel: 'Unlock account',
-          confirmArgs: args,
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'Domain', value: domainName },
-            { label: 'User', value: `${str(existing.user.DISPLAY_NAME)} (${samAccountName})` },
-            { label: 'Current status', value: str(existing.user.ACCOUNT_STATUS) || 'unknown' },
-          ],
-        },
+        structuredContent: preview,
       };
     }
   );
@@ -575,7 +611,7 @@ export function registerAdManagerTools(
         'password. When no password is given, a strong one is generated and shown on the card so ' +
         'it can be relayed to the employee.',
       annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: resetPasswordSchema,
     },
     async (args: Record<string, unknown>) => {
@@ -589,27 +625,33 @@ export function registerAdManagerTools(
       const newPassword = str(args.newPassword) || generatePassword();
       const mustChangePassword = args.mustChangePassword !== false;
       const instanceName = await instanceNameFor(instanceId);
+      const displayName = str(existing.user.DISPLAY_NAME) || samAccountName;
       // The password is resolved HERE and carried in confirmArgs, so confirm
       // uses exactly what the human sees on the card — never regenerated.
       const confirmArgs = { ...args, newPassword, mustChangePassword };
+      const preview: DirectoryActionPreview = {
+        kind: 'directory_action',
+        previewId: newPreviewId(),
+        action: 'Reset password',
+        tone: 'caution',
+        title: `Reset password for ${displayName}`,
+        subtitle: `${instanceName} · ${domainName}`,
+        person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
+        secret: {
+          label: 'New password',
+          value: newPassword,
+          note: 'Share this with the account holder directly — it is shown here only once.',
+        },
+        fields: [
+          { label: 'Must change at next logon', value: mustChangePassword ? 'Yes' : 'No' },
+        ],
+        confirmTool: 'admanager_reset_password_confirm',
+        confirmLabel: 'Reset password',
+        confirmArgs,
+      };
       return {
         content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `Reset password for ${str(existing.user.DISPLAY_NAME) || samAccountName}`,
-          subtitle: `${instanceName} · ${domainName}`,
-          confirmTool: 'admanager_reset_password_confirm',
-          confirmLabel: 'Reset password',
-          confirmArgs,
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'Domain', value: domainName },
-            { label: 'User', value: `${str(existing.user.DISPLAY_NAME)} (${samAccountName})` },
-            { label: 'New password', value: newPassword },
-            { label: 'Must change at next logon', value: mustChangePassword ? 'Yes' : 'No' },
-          ],
-        },
+        structuredContent: preview,
       };
     }
   );
@@ -713,7 +755,7 @@ export function registerAdManagerTools(
         'optionally from an ADManager Plus template. When no password is given, a strong one is ' +
         'generated and shown on the card.',
       annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: createUserSchema,
     },
     async (args: Record<string, unknown>) => {
@@ -723,31 +765,32 @@ export function registerAdManagerTools(
       const password = str(args.password) || generatePassword();
       const instanceName = await instanceNameFor(instanceId);
       const confirmArgs = { ...args, password };
+      const displayName = `${str(args.firstName)} ${str(args.lastName)}`.trim();
+      const preview: DirectoryActionPreview = {
+        kind: 'directory_action',
+        previewId: newPreviewId(),
+        action: 'Create account',
+        tone: 'positive',
+        title: `Create ${displayName}`,
+        subtitle: `${instanceName} · ${str(args.domainName)}`,
+        person: { name: displayName, detail: `${str(args.sAMAccountName)} · ${str(args.domainName)}` },
+        fields: [
+          { label: 'OU', value: str(args.ouPath) },
+          { label: 'UPN', value: str(args.userPrincipalName) },
+          ...(args.email ? [{ label: 'Email', value: str(args.email) }] : []),
+          ...(args.department ? [{ label: 'Department', value: str(args.department) }] : []),
+          ...(args.title ? [{ label: 'Title', value: str(args.title) }] : []),
+          ...(args.templateName ? [{ label: 'Template', value: str(args.templateName) }] : []),
+          { label: 'Enabled', value: args.enabled === false ? 'No' : 'Yes' },
+        ],
+        secret: { label: 'Initial password', value: password },
+        confirmTool: 'admanager_create_user_confirm',
+        confirmLabel: 'Create account',
+        confirmArgs,
+      };
       return {
         content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `Create ${str(args.firstName)} ${str(args.lastName)}`,
-          subtitle: `${instanceName} · ${str(args.domainName)}`,
-          confirmTool: 'admanager_create_user_confirm',
-          confirmLabel: 'Create account',
-          confirmArgs,
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'Domain', value: str(args.domainName) },
-            { label: 'OU', value: str(args.ouPath) },
-            { label: 'Name', value: `${str(args.firstName)} ${str(args.lastName)}` },
-            { label: 'Logon name', value: str(args.sAMAccountName) },
-            { label: 'UPN', value: str(args.userPrincipalName) },
-            ...(args.email ? [{ label: 'Email', value: str(args.email) }] : []),
-            ...(args.department ? [{ label: 'Department', value: str(args.department) }] : []),
-            ...(args.title ? [{ label: 'Title', value: str(args.title) }] : []),
-            ...(args.templateName ? [{ label: 'Template', value: str(args.templateName) }] : []),
-            { label: 'Initial password', value: password },
-            { label: 'Enabled', value: args.enabled === false ? 'No' : 'Yes' },
-          ],
-        },
+        structuredContent: preview,
       };
     }
   );
@@ -834,7 +877,7 @@ export function registerAdManagerTools(
         'reapplying a template. Never changes security-group membership — use the group tools for ' +
         'that.',
       annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: updateUserSchema,
     },
     async (args: Record<string, unknown>) => {
@@ -858,6 +901,7 @@ export function registerAdManagerTools(
       ]);
       if (!existing.ok) return errText(existing.message);
       const instanceName = await instanceNameFor(instanceId);
+      const displayName = str(existing.user.DISPLAY_NAME) || samAccountName;
       const fieldLabels: Record<string, string> = {
         department: 'Department',
         title: 'Title',
@@ -874,26 +918,29 @@ export function registerAdManagerTools(
         description: 'DESCRIPTION',
         manager: 'MANAGER',
       };
+      const preview: DirectoryActionPreview = {
+        kind: 'directory_action',
+        previewId: newPreviewId(),
+        action: 'Edit account',
+        tone: 'neutral',
+        title: `Edit ${displayName}`,
+        subtitle: `${instanceName} · ${domainName}`,
+        person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
+        fields: [
+          ...(args.templateName ? [{ label: 'Reapply template', value: str(args.templateName) }] : []),
+          ...changed.map(([argKey]) => ({
+            label: fieldLabels[argKey],
+            value: str(args[argKey]),
+            oldValue: str(existing.user[columnFor[argKey]]) || '(none)',
+          })),
+        ],
+        confirmTool: 'admanager_update_user_confirm',
+        confirmLabel: 'Save changes',
+        confirmArgs: args,
+      };
       return {
         content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `Edit ${str(existing.user.DISPLAY_NAME) || samAccountName}`,
-          subtitle: `${instanceName} · ${domainName}`,
-          confirmTool: 'admanager_update_user_confirm',
-          confirmLabel: 'Save changes',
-          confirmArgs: args,
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'User', value: `${str(existing.user.DISPLAY_NAME)} (${samAccountName})` },
-            ...(args.templateName ? [{ label: 'Reapply template', value: str(args.templateName) }] : []),
-            ...changed.map(([argKey]) => ({
-              label: fieldLabels[argKey],
-              value: `${str(existing.user[columnFor[argKey]]) || '(none)'} → ${str(args[argKey])}`,
-            })),
-          ],
-        },
+        structuredContent: preview,
       };
     }
   );
@@ -956,7 +1003,7 @@ export function registerAdManagerTools(
         'Show the user an interactive card to confirm or cancel adding an AD account to one or ' +
         'more security groups. Purely additive — existing group membership is untouched.',
       annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: addGroupsSchema,
     },
     async (args: Record<string, unknown>) => {
@@ -974,25 +1021,26 @@ export function registerAdManagerTools(
       const current = groupNamesFromDns(toStringArray(existing.user.MEMBER_OF));
       const already = groupsPresent(requested, current);
       const instanceName = await instanceNameFor(instanceId);
+      const displayName = str(existing.user.DISPLAY_NAME) || samAccountName;
+      const preview: DirectoryActionPreview = {
+        kind: 'directory_action',
+        previewId: newPreviewId(),
+        action: 'Add to groups',
+        tone: 'positive',
+        title: `Add ${displayName} to groups`,
+        subtitle: `${instanceName} · ${domainName}`,
+        person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
+        groupLists: [
+          { label: 'Groups to add', groups: requested, tone: 'add' },
+          ...(already.length ? [{ label: 'Already a member of', groups: already, tone: 'muted' as const }] : []),
+        ],
+        confirmTool: 'admanager_add_user_to_groups_confirm',
+        confirmLabel: 'Add to groups',
+        confirmArgs: { ...args, groupNames: requested },
+      };
       return {
         content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `Add ${str(existing.user.DISPLAY_NAME) || samAccountName} to groups`,
-          subtitle: `${instanceName} · ${domainName}`,
-          confirmTool: 'admanager_add_user_to_groups_confirm',
-          confirmLabel: 'Add to groups',
-          confirmArgs: { ...args, groupNames: requested },
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'User', value: `${str(existing.user.DISPLAY_NAME)} (${samAccountName})` },
-            { label: 'Groups to add', value: requested.join(', ') },
-            ...(already.length
-              ? [{ label: 'Already a member of', value: already.join(', ') }]
-              : []),
-          ],
-        },
+        structuredContent: preview,
       };
     }
   );
@@ -1047,7 +1095,7 @@ export function registerAdManagerTools(
         'or more security groups. Only the groups the account actually belongs to are offered for ' +
         'removal.',
       annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: removeGroupsSchema,
     },
     async (args: Record<string, unknown>) => {
@@ -1064,34 +1112,37 @@ export function registerAdManagerTools(
       if (!existing.ok) return errText(existing.message);
       const current = groupNamesFromDns(toStringArray(existing.user.MEMBER_OF));
       const toRemove = groupsPresent(requested, current);
+      const displayName = str(existing.user.DISPLAY_NAME) || samAccountName;
       if (toRemove.length === 0) {
         return textResult(
-          `${str(existing.user.DISPLAY_NAME) || samAccountName} is not a member of any of: ${requested.join(', ')}. Nothing to do.`
+          `${displayName} is not a member of any of: ${requested.join(', ')}. Nothing to do.`
         );
       }
       const notAMember = requested.filter((name) => !toRemove.includes(name));
       const instanceName = await instanceNameFor(instanceId);
+      const preview: DirectoryActionPreview = {
+        kind: 'directory_action',
+        previewId: newPreviewId(),
+        action: 'Remove from groups',
+        tone: 'caution',
+        title: `Remove ${displayName} from groups`,
+        subtitle: `${instanceName} · ${domainName}`,
+        person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
+        groupLists: [
+          { label: 'Groups to remove', groups: toRemove, tone: 'remove' },
+          ...(notAMember.length
+            ? [{ label: 'Not currently a member of (ignored)', groups: notAMember, tone: 'muted' as const }]
+            : []),
+        ],
+        confirmTool: 'admanager_remove_user_from_groups_confirm',
+        confirmLabel: 'Remove from groups',
+        // Only the groups actually held are sent to confirm — never a
+        // guess at a group the account was never in.
+        confirmArgs: { ...args, groupNames: toRemove },
+      };
       return {
         content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `Remove ${str(existing.user.DISPLAY_NAME) || samAccountName} from groups`,
-          subtitle: `${instanceName} · ${domainName}`,
-          confirmTool: 'admanager_remove_user_from_groups_confirm',
-          confirmLabel: 'Remove from groups',
-          // Only the groups actually held are sent to confirm — never a
-          // guess at a group the account was never in.
-          confirmArgs: { ...args, groupNames: toRemove },
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'User', value: `${str(existing.user.DISPLAY_NAME)} (${samAccountName})` },
-            { label: 'Groups to remove', value: toRemove.join(', ') },
-            ...(notAMember.length
-              ? [{ label: 'Not currently a member of (ignored)', value: notAMember.join(', ') }]
-              : []),
-          ],
-        },
+        structuredContent: preview,
       };
     }
   );
@@ -1124,7 +1175,7 @@ export function registerAdManagerTools(
         'same access as their teammate." Never removes a group the target already has; the source ' +
         'user’s membership is read-only here.',
       annotations: { readOnlyHint: false },
-      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: z.object({
         instanceId: instanceIdField,
         domainName: domainField,
@@ -1151,37 +1202,41 @@ export function registerAdManagerTools(
       const sourceGroups = groupNamesFromDns(toStringArray(source.user.MEMBER_OF));
       const targetGroups = groupNamesFromDns(toStringArray(target.user.MEMBER_OF));
       const toAdd = groupsToAdd(sourceGroups, targetGroups);
+      const sourceDisplayName = str(source.user.DISPLAY_NAME) || sourceSam;
+      const targetDisplayName = str(target.user.DISPLAY_NAME) || targetSam;
       if (toAdd.length === 0) {
-        return textResult(
-          `${str(target.user.DISPLAY_NAME) || targetSam} already has every group ${str(source.user.DISPLAY_NAME) || sourceSam} has.`
-        );
+        return textResult(`${targetDisplayName} already has every group ${sourceDisplayName} has.`);
       }
       const instanceName = await instanceNameFor(instanceId);
+      const preview: DirectoryActionPreview = {
+        kind: 'directory_action',
+        previewId: newPreviewId(),
+        action: 'Copy group membership',
+        tone: 'neutral',
+        title: `Copy groups from ${sourceDisplayName} to ${targetDisplayName}`,
+        subtitle: `${instanceName} · ${domainName}`,
+        person: { name: targetDisplayName, detail: `${targetSam} · ${domainName}` },
+        secondaryPerson: {
+          label: 'Copying groups from',
+          name: sourceDisplayName,
+          detail: sourceSam,
+        },
+        groupLists: [{ label: 'Groups to add', groups: toAdd, tone: 'add' }],
+        // Reuses the add-groups confirm tool directly: by the time a
+        // human clicks confirm, this is exactly an "add these groups to
+        // this user" action with the list already resolved.
+        confirmTool: 'admanager_add_user_to_groups_confirm',
+        confirmLabel: 'Copy groups',
+        confirmArgs: {
+          instanceId,
+          domainName,
+          samAccountName: targetSam,
+          groupNames: toAdd,
+        },
+      };
       return {
         content: [{ type: 'text' as const, text: 'A card is shown for the user to confirm or cancel.' }],
-        structuredContent: {
-          kind: 'issue',
-          previewId: newPreviewId(),
-          title: `Copy groups from ${str(source.user.DISPLAY_NAME) || sourceSam} to ${str(target.user.DISPLAY_NAME) || targetSam}`,
-          subtitle: `${instanceName} · ${domainName}`,
-          // Reuses the add-groups confirm tool directly: by the time a
-          // human clicks confirm, this is exactly an "add these groups to
-          // this user" action with the list already resolved.
-          confirmTool: 'admanager_add_user_to_groups_confirm',
-          confirmLabel: 'Copy groups',
-          confirmArgs: {
-            instanceId,
-            domainName,
-            samAccountName: targetSam,
-            groupNames: toAdd,
-          },
-          fields: [
-            { label: 'Instance', value: instanceName },
-            { label: 'From', value: `${str(source.user.DISPLAY_NAME)} (${sourceSam})` },
-            { label: 'To', value: `${str(target.user.DISPLAY_NAME)} (${targetSam})` },
-            { label: 'Groups to add', value: toAdd.join(', ') },
-          ],
-        },
+        structuredContent: preview,
       };
     }
   );

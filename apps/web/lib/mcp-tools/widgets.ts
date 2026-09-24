@@ -28,6 +28,10 @@ import {
 } from '@/lib/mcp-widgets/generated/meeting-preview';
 import { ISSUE_PREVIEW_HTML, ISSUE_PREVIEW_HASH } from '@/lib/mcp-widgets/generated/issue-preview';
 import { RESULTS_LIST_HTML, RESULTS_LIST_HASH } from '@/lib/mcp-widgets/generated/results-list';
+import {
+  DIRECTORY_ACTION_PREVIEW_HTML,
+  DIRECTORY_ACTION_PREVIEW_HASH,
+} from '@/lib/mcp-widgets/generated/directory-action-preview';
 
 // The content hash in each URI is the cache-buster: hosts cache templates by
 // URI, and a stale template silently misrenders a newer data contract (a
@@ -39,6 +43,7 @@ export const CHAT_MESSAGE_URI = `ui://widget/chat-message.${CHAT_MESSAGE_HASH}.h
 export const MEETING_PREVIEW_URI = `ui://widget/meeting-preview.${MEETING_PREVIEW_HASH}.html`;
 export const ISSUE_PREVIEW_URI = `ui://widget/issue-preview.${ISSUE_PREVIEW_HASH}.html`;
 export const RESULTS_LIST_URI = `ui://widget/results-list.${RESULTS_LIST_HASH}.html`;
+export const DIRECTORY_ACTION_PREVIEW_URI = `ui://widget/directory-action-preview.${DIRECTORY_ACTION_PREVIEW_HASH}.html`;
 
 const WIDGET_MIME = 'text/html;profile=mcp-app';
 
@@ -147,6 +152,14 @@ const TEMPLATES: Array<{
       'https://secure.gravatar.com',
       'https://*.gravatar.com',
     ],
+  },
+  {
+    name: 'directory_action_preview',
+    uri: DIRECTORY_ACTION_PREVIEW_URI,
+    description:
+      'Preview of an Active Directory account action (unlock, reset password, create/edit a ' +
+      'user, security-group membership) awaiting confirmation.',
+    html: DIRECTORY_ACTION_PREVIEW_HTML,
   },
 ];
 
