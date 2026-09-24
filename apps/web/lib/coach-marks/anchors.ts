@@ -239,6 +239,10 @@ export const COACH_ANCHORS = [
   'card-mirth',
   /** Its list of instances, each with Connect or its connection. */
   'mirth-list',
+  /** The ADManager Plus card. */
+  'card-admanager',
+  /** Its list of instances, each with Connect or its connection. */
+  'admanager-list',
   /** The Browser secrets card. */
   'card-secrets',
   /** Add secret. */
@@ -264,6 +268,10 @@ export const COACH_ANCHORS = [
   'admin-mirth-list',
   /** Mirth Connect: + New instance. */
   'admin-mirth-new',
+  /** ADManager Plus: the list of registered instances (or its empty note). */
+  'admin-admanager-list',
+  /** ADManager Plus: + New instance. */
+  'admin-admanager-new',
   /** Sites: the Atlassian sites block. */
   'admin-sites-atlassian',
   /** Sites: the Indexed for knowledge search block. */

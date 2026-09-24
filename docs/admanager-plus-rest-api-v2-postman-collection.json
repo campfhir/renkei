@@ -1,0 +1,2309 @@
+{
+	"info": {
+		"_postman_id": "c7543744-39be-4ac2-b799-1da440ddb739",
+		"name": "ADManager Plus - REST APIs - Version 2",
+		"description": "ADManager Plus Rest APIs - Version 2",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "21050821",
+		"_collection_link": "https://www.postman.com/admp-restapi-b2224bba-4125783/admp-restapi-s-workspace/collection/nk9mgc6/admanager-plus-rest-apis-version-2?action=share&source=collection_link&creator=21050821"
+	},
+	"item": [
+		{
+			"name": "Users",
+			"item": [
+				{
+					"name": "List AD Users",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"user-agent": true,
+							"accept-encoding": true,
+							"connection": true,
+							"accept": true,
+							"host": true
+						}
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "X-Date-Time-Format",
+								"value": "",
+								"description": "Date time format that should be used for parsing date values returned in response.  \n",
+								"type": "text",
+								"disabled": true
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/users?domains=sample1.com,sample2.com",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"users"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1",
+									"description": "The starting index for pagination.",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "100",
+									"description": "The maximum number of records to retrieve",
+									"disabled": true
+								},
+								{
+									"key": "domains",
+									"value": "sample1.com,sample2.com",
+									"description": "Comma-separated list of domains to fetch data."
+								},
+								{
+									"key": "sort",
+									"value": "-FIRST_NAME",
+									"description": "Sort the objects based on the provided field. The default sort order is ascending. To sort in descending order, prefix the field with a - (hyphen).\n",
+									"disabled": true
+								},
+								{
+									"key": "filter",
+									"value": "((FIRST_NAME eq Test) or (LAST_NAME pr))",
+									"description": "Filter objects based on a the provided SCIM filter query. Refer to filter section for more details\neg: (FIRST_NAME eq \"John\") and (LAST_NAME eq \"Doe\")",
+									"disabled": true
+								},
+								{
+									"key": "fields",
+									"value": "FIRST_NAME,LAST_NAME,SAM_ACCOUNT_NAME",
+									"description": "Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned).",
+									"disabled": true
+								},
+								{
+									"key": "refresh",
+									"value": "false",
+									"description": "Boolean value to trigger sync prior fetching results",
+									"disabled": true
+								}
+							]
+						},
+						"description": "### List AD Users\n\n#### Description\n\nThis endpoint retrieves AD users based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** GET\n    \n- **URL:** {{host_url}}/api/v2/users\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of response the client accepts. |\n| X-Date-Time-Format | Date Time Format in String | No | Date time format that should be used for parsing date values returned in response.  <br>If not provided by default ISO date format will be used (yyyy-MM-dd'T'HH:mm:ss\\[.SSS\\]\\[XXX\\]) |\n| Authorization |  | Yes | Authorization for the API Request |\n| X-Module |  | No | Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API) |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve. |\n| domains | String | Yes | Comma-separated list of domains to fetch data. |\n| fields | String | No | Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned). |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n#### Sample Request\n\n``` http\ncurl --location &#x27;http://<admp_host_name>:8080/api/v2/users?domains=sample1.com,sample2.com&#x27; \\\n--header &#x27;Accept: application/json&#x27; \\\n--header &#x27;Host: API&#x27; \\\n--header &#x27;Authorization: <admp_auth_token>&#x27;\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\n``` json\n{\n    \"data\": [\n        {\n            \"EMPLOYEE_ID\": \"1\",\n            \"LOGON_NAME\": \"testuser1@domain.com\",\n            \"DISTINGUISHED_NAME\": \"CN=testuser1,CN=Users,DC=domain,DC=com\",\n            \"INITIAL\": \"-\",\n            \"LAST_NAME\": \"user1\",\n            \"DOMAIN_NAME\": \"domain.com\",\n            \"DISPLAY_NAME\": \"testuser1\",\n            \"FIRST_NAME\": \"testuser1\",\n            \"OU_NAME\": \"Users\",\n            \"CITY\": \"Chennai\",\n            \"COUNTRY\": \"India\",\n            \"EMAIL_ADDRESS\": \"test@domain.com\",\n            \"SID_STRING\": \"S-1-5-21-829226656-1721363957-3165918102-24877\",\n            \"OBJECT_GUID\": \"{E6L8H46E-CB3B-4OFA-BK88-B2050347970F}\",\n            \"STREET_ADDRESS\": \"Test Street\",\n            \"SAM_ACCOUNT_NAME\": \"testuserapi1\",\n            \"MOBILE\": \"9876540123\"\n        },\n        {\n            \"EMPLOYEE_ID\": \"2\",\n            \"LOGON_NAME\": \"testuser2@domain.com\",\n            \"DISTINGUISHED_NAME\": \"CN=testuser2,CN=Users,DC=domain,DC=com\",\n            \"INITIAL\": \"-\",\n            \"LAST_NAME\": \"user2\",\n            \"DOMAIN_NAME\": \"domain.com\",\n            \"DISPLAY_NAME\": \"testuser2\",\n            \"FIRST_NAME\": \"testuser2\",\n            \"OU_NAME\": \"Users\",\n            \"CITY\": \"Chennai\",\n            \"COUNTRY\": \"India\",\n            \"EMAIL_ADDRESS\": \"test@domain.com\",\n            \"SID_STRING\": \"S-1-5-21-829226656-1721363957-3165918102-24877\",\n            \"OBJECT_GUID\": \"{E6L8H46E-CB3B-4OFA-BK88-B2050347970F}\",\n            \"STREET_ADDRESS\": \"Test Street\",\n            \"SAM_ACCOUNT_NAME\": \"testuserapi2\",\n            \"MOBILE\": \"9876543210\"\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 10,\n        \"total_no_of_objects\": 2\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Update AD Users",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept-encoding": true,
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "Postman",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"template\": {\r\n        \"template_name\": \"System Template\",\r\n    },\r\n    \"data\": {\r\n        \"attributes\": {\r\n            \"employeeID\": \"12345\",\r\n            \"memberOf\":\"CrossGrp1;CrossGrp2\",\r\n            \"accountNameHistory\": \"Value1;Value2;\",\r\n            \"extensionAttribute1\": \"Value1\",\r\n            \"co\": \"India\",\r\n            \"manager\": \"manager1\",\r\n            \"microsoft_365\":{\r\n                \"waadLicenseInfo\" : \"flow_free;license_sku2\"\r\n            },\r\n            \"exchange\":{\r\n                \"msExchHomeServerName\":\"/o=Sample/ou=Exchange Administrative Group/cn=Configuration/cn=Servers/cn=SAMPLE-MEM1\",\r\n                \"homeMDB\":\"CN=Mailbox Database,CN=Databases,CN=Exchange Administrative Group,CN=Administrative Groups,CN=sample,CN=Microsoft Exchange,CN=Services,CN=Configuration,DC=sample,DC=com\",\r\n                \"mailNickname\":\"aliasname\",\r\n                \"proxyAddresses\":\"SMTP:test@mail.com\"\r\n            }\r\n        }\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/users?domain=sample.com&filter=(FIRST_NAME eq John) and (LAST_NAME eq Doe)",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"users"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1",
+									"description": "The starting index for pagination.",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "100",
+									"description": "The maximum number of records to retrieve",
+									"disabled": true
+								},
+								{
+									"key": "domain",
+									"value": "sample.com",
+									"description": "Domain Name from which the object should be fetched."
+								},
+								{
+									"key": "sort",
+									"value": "SAM_ACCOUNT_NAME",
+									"description": "Sort the users based on the provided field. The default sort order is ascending. To sort in descending order, prefix the field with a - (hyphen).\neg: FIRST_NAME,-LAST_NAME",
+									"disabled": true
+								},
+								{
+									"key": "filter",
+									"value": "(FIRST_NAME eq John) and (LAST_NAME eq Doe)",
+									"description": "Filter users based on a the provided SCIM filter query. Refer to filter section for more details\neg: (FIRST_NAME eq \"John\") and (LAST_NAME eq \"Doe\")"
+								},
+								{
+									"key": "refresh",
+									"value": "false",
+									"description": "Boolean value to trigger sync prior fetching results",
+									"disabled": true
+								}
+							]
+						},
+						"description": "### Update Active Directory User\n\n#### Description\n\nUpdates the Active Directory user with the specified payload.\n\n#### Request\n\n- **Method:** PATCH\n    \n- **URL:** {{host_url}}/api/v2/users\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of response the client accepts. |\n| Content-Type | application/json | Yes | Type of the data client posts to server. |\n| Authorization |  | Yes | Authorization for the API Request |\n| X-Module |  | No | Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API) |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n- **Request body**\n    \n\n| Key | Type | **Required** | Description |\n| --- | --- | --- | --- |\n| template | object | No | Common Template details that should be used for the bulk object processing |\n| data | object | Yes | An JSONObject containing the object data to be updated. The object can include template,general attributes, exchange attributes details to be updated for the object. |\n\n#### **Sample Request :**\n\n```\ncurl --location --request PATCH &#x27;http://<admp_host_name>:8080/api/v2/users?domain=sample.com&filter=(FIRST_NAME eq John) and (LAST_NAME eq Doe)&#x27; \\\n--header 'Accept: application/json' \\\n--header 'Content-Type: application/json' \\\n--header &#x27;Authorization: <admp_auth_token>&#x27; \\\n--data-raw '{\n    \"template\": {\n        \"template_name\": \"System Template\",\n    },\n    \"data\": {\n        \"attributes\": {\n            \"employeeID\": \"12345\",\n            \"memberOf\":\"CrossGrp1;CrossGrp2\",\n            \"accountNameHistory\": \"Value1;Value2;\",\n            \"extensionAttribute1\": \"Value1\",\n            \"co\": \"India\",\n            \"manager\": \"manager1\",\n            \"microsoft_365\":{\n                \"waadLicenseInfo\" : \"flow_free;license_sku2\"\n            },\n            \"exchange\":{\n                \"msExchHomeServerName\":\"/o=Sample/ou=Exchange Administrative Group/cn=Configuration/cn=Servers/cn=SAMPLE-MEM1\",\n                \"homeMDB\":\"CN=Mailbox Database,CN=Databases,CN=Exchange Administrative Group,CN=Administrative Groups,CN=sample,CN=Microsoft Exchange,CN=Services,CN=Configuration,DC=sample,DC=com\",\n                \"mailNickname\":\"aliasname\",\n                \"proxyAddresses\":\"SMTP:test@mail.com\"\n            }\n        }\n    }\n}'\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"Description\": \"User Modified via API\",\n                \"User Name\": \"Test User\",\n                \"OU Name\": \"CN=Users,DC=test,DC=com\",\n                \"Managed by\": \"CN=Manager Name,CN=Users,DC=test,DC=com\"\n            },\n            \"status\": {\n                \"status_code\": 1,\n                \"status_message\": \"Successfully updated the user.Setting values for custom attributes: Error in setting attributes,A constraint violation occurred. - Error Code : 8007202f.  Error in creating mailbox enabled user, Could not connect to the Exchange Server.Click <a class=&#x27;preserveHtml&#x27; class=&#x27;preserveHtml&#x27; class=&#x27;preserveHtml&#x27; class=&#x27;preserveHtml&#x27; class=&#x27;preserveHtml&#x27; class=&#x27;preserveHtml&#x27; class=\\\"greenlinktxt admp-ml-0\\\" target=\\\"_blank\\\"  href=\\\"help/misc/troubleshooting_tips.html\\\" >here </a>to troubleshoot.\"\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 10,\n        \"total_no_of_objects\": 1\n    }\n}\n\n ```"
+					},
+					"response": []
+				}
+			],
+			"description": "APIs to Manage AD Users effectively"
+		},
+		{
+			"name": "Groups",
+			"item": [
+				{
+					"name": "List AD Groups",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "X-Date-Time-Format",
+								"value": "YYYY-MM-DD",
+								"description": "Date time format that should be used for parsing date values returned in response.  \n",
+								"type": "text",
+								"disabled": true
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/groups?domains=sample.com",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"groups"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1",
+									"description": "The starting index for pagination.",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "100",
+									"description": "The maximum number of records to retrieve",
+									"disabled": true
+								},
+								{
+									"key": "domains",
+									"value": "sample.com",
+									"description": "Comma-separated list of domains to fetch data."
+								},
+								{
+									"key": "sort",
+									"value": "SAM_ACCOUNT_NAME",
+									"description": "Sort the objects based on the provided field. The default sort order is ascending. To sort in descending order, prefix the field with a - (hyphen).\n",
+									"disabled": true
+								},
+								{
+									"key": "filter",
+									"value": "SAM_ACCOUNT_NAME co Group1",
+									"description": "Filter objects based on a the provided SCIM filter query. Refer to filter section for more details\neg: (FIRST_NAME eq \"John\") and (LAST_NAME eq \"Doe\")",
+									"disabled": true
+								},
+								{
+									"key": "fields",
+									"value": "SAM_ACCOUNT_NAME,MANAGER,GROUP_SCOPE,GROUP_NAME",
+									"description": "Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned).",
+									"disabled": true
+								},
+								{
+									"key": "refresh",
+									"value": "false",
+									"description": "Boolean value to trigger sync prior fetching results",
+									"disabled": true
+								}
+							]
+						},
+						"description": "### List AD Groups\n\n#### Description\n\nThis endpoint retrieves AD Groups based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** GET\n    \n- **URL:** {{host_url}}/api/v2/groups\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of response the client accepts. |\n| X-Date-Time-Format | Date Time format in String | No | Date time format that should be used for parsing date values returned in response.  <br>If not provided by default ISO date format will be used (yyyy-MM-dd'T'HH:mm:ss\\[.SSS\\]\\[XXX\\]) |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve. |\n| domains | String | Yes | Comma-separated list of domains to fetch data. |\n| fields | String | No | Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned). |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n#### Sample Request\n\n``` http\ncurl --location 'localhost:8020/api/v2/groups?limit=100&from=1&filter=SAM_ACCOUNT_NAME co test&sort=SAM_ACCOUNT_NAME&domains=xcross.com' \\\n--header 'Authorization: ••••••' \\\n--header 'Accept: application\\json' \\\n--header 'X-Date-Time-Format: dd/MM/YYYY' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\n``` json\n{\n    \"data\": [\n        {\n            \"GROUP_NAME\": \"ManoTestGroupChanges\",\n            \"GROUP_SCOPE\": \"Global\",\n            \"DISTINGUISHED_NAME\": \"CN=ManoTestGroupChanges,OU=TestOU1,DC=xcross,DC=com\",\n            \"OU_NAME\": \"TestOU1\",\n            \"GROUP_TYPE\": \"Security\",\n            \"SID_STRING\": \"S-1-5-21-829226656-1721363957-3165918102-24019\",\n            \"OBJECT_GUID\": \"{BC6BE22B-DAF6-465C-8FD6-53A2485D4D0C}\",\n            \"MANAGER\": \"Manager 1\",\n            \"SAM_ACCOUNT_NAME\": \"ManoTestGroupChange\"\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 1\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Update AD Groups",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Host",
+								"value": "",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\": {\r\n        \"attributes\": {\r\n            \"sAMAccountName\": \"TestGroup2\",\r\n            \"name\": \"TestGroup2\",\r\n            \"accountNameHistory\": \"Val1;Val2;Val3\",\r\n            \"memberOf\": \"TestGroup3;TestGroup4\",\r\n            \"exchange\": {\r\n                \"msExchAdminGroup\": \"/o=Test/ou=Exchange Administrative Group\",\r\n                \"mailNickname\": \"TestGroup2\",\r\n                \"proxyAddresses\": \"SMTP:TestGroup2@domain.com\"\r\n            }\r\n        }\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/groups?from=1&limit=100&domain=sample.com&sort=SAM_ACCOUNT_NAME&filter=SAM_ACCOUNT_NAME eq Test Group",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"groups"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1",
+									"description": "The starting index for pagination."
+								},
+								{
+									"key": "limit",
+									"value": "100",
+									"description": "The maximum number of records to retrieve"
+								},
+								{
+									"key": "domain",
+									"value": "sample.com",
+									"description": "Domain Name from which the object should be fetched."
+								},
+								{
+									"key": "sort",
+									"value": "SAM_ACCOUNT_NAME",
+									"description": "Sort the objects based on the provided field. The default sort order is ascending. To sort in descending order, prefix the field with a - (hyphen)."
+								},
+								{
+									"key": "filter",
+									"value": "SAM_ACCOUNT_NAME eq Test Group",
+									"description": "Filter objects based on a the provided SCIM filter query. Refer to filter section for more details"
+								},
+								{
+									"key": "refresh",
+									"value": "false",
+									"description": "Boolean value to trigger sync prior fetching results",
+									"disabled": true
+								}
+							]
+						},
+						"description": "### Update Active Directory Group\n\n#### Description\n\nUpdates the Active Directory group with the specified payload.\n\n#### Request\n\n- **Method:** PATCH\n    \n- **URL:** {{host_url}}/api/v2/groups\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of response the client accepts. |\n| Content-Type | application/json | Yes | Type of the data client posts to server. |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n- **Request body**\n    \n\n| Key | Type | **Required** | Description |\n| --- | --- | --- | --- |\n| data | JSONObject | Yes | An JSONObject containing the object data to be updated. The object can include general attributes, exchange attributes details to be updated for the object. |\n\n#### **Sample Request :**\n\n```\ncurl --location --request PATCH 'localhost:8010/api/v2/groups?limit=100&from=1&filter=SAM_ACCOUNT_NAME eq CrossGrp1&sort=SAM_ACCOUNT_NAME&domain=xcross.com' \\\n--header 'Accept: application/json' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n--data-raw '{\n    \"data\"  :  {\n        \"attributes\" : {\n                \"sAMAccountName\":\"TestGG1\",\n                \"name\":\"TestGG1\",\n                \"accountNameHistory\":\"st9v9;s9t3s;9st5\",\n                \"memberOf\":\"CN=CrossGrp2,OU=Selva,DC=xcross,DC=com\",\n                \"exchange\":{\n                    \"msExchAdminGroup\":\"/o=Zoho/ou=Exchange Administrative Group (FYDIBOHF23SPDLT)\",\n                    \"mailNickname\":\"pavi\",\n                    \"proxyAddresses\":\"SMTP:testuser@taco.com\"\n                }\n            }\n    }\n}'\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestGG2\",\n                \"Distinguished Name\": \"CN=TestGG2,OU=Selva,DC=xcross,DC=com\",\n                \"Email Proxy Addresses\": \"[SMTP:pavi@akash.com]\",\n                \"Name\": \"TestGG2\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully updated the group.\",\n                \"status_code\": 1\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 1\n    }\n}\n\n ```"
+					},
+					"response": []
+				}
+			],
+			"description": "APIs to Manage AD Groups effectively"
+		},
+		{
+			"name": "Computers",
+			"item": [
+				{
+					"name": "List AD Computers",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "X-Date-Time-Forma",
+								"value": "",
+								"description": "Date time format that should be used for parsing date values returned in response.  \n",
+								"type": "text",
+								"disabled": true
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/computers?domains=sample.com",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"computers"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "100",
+									"disabled": true
+								},
+								{
+									"key": "domains",
+									"value": "sample.com"
+								},
+								{
+									"key": "sort",
+									"value": "COMPUTER_NAME",
+									"disabled": true
+								},
+								{
+									"key": "filter",
+									"value": "MANAGER eq Manager1",
+									"disabled": true
+								},
+								{
+									"key": "fields",
+									"value": "SAM_ACCOUNT_NAME,COMPUTER_NAME,MANAGER,OU_NAME",
+									"disabled": true
+								},
+								{
+									"key": "refresh",
+									"value": "false",
+									"disabled": true
+								}
+							]
+						},
+						"description": "### List AD Computers\n\n#### Description\n\nThis endpoint retrieves AD Computers based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** GET\n    \n- **URL:** {{host_url}}/api/v2/computers\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| X-Date-Time-Format | Date time format in String | No | Date time format that should be used for parsing date values returned in response.  <br>If not provided by default ISO date format will be used (yyyy-MM-dd'T'HH:mm:ss\\[.SSS\\]\\[XXX\\]) |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve. |\n| domains | String | Yes | Comma-separated list of domains to fetch data. |\n| fields | String | No | Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned). |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n#### Sample Request\n\n``` http\ncurl --location 'localhost:8020/api/v2/computers?limit=100&from=1&filter=MANAGER co pavi&sort=SAM_ACCOUNT_NAME&domains=xcross.com' \\\n--header 'Authorization: ••••••'\n--header 'Accept: application\\json' \\\n--header 'X-Date-Time-Format: dd/MM/YYYY' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\n``` json\n{\n    \"data\": [\n        {\n            \"COMPUTER_NAME\": \"APIC2\",\n            \"DISTINGUISHED_NAME\": \"CN=APIC2,OU=AdmpUsers,DC=xcross,DC=com\",\n            \"OU_NAME\": \"AdmpUsers\",\n            \"VERSION\": \"-\",\n            \"SID_STRING\": \"S-1-5-21-829226656-1721363957-3165918102-24870\",\n            \"OBJECT_GUID\": \"{BD96FD35-7013-40CC-8F28-DFDD8F91D228}\",\n            \"MANAGER\": \"pavi\",\n            \"OPERATING_SYSTEM\": \"-\",\n            \"DEPARTMENT\": \"-\",\n            \"SAM_ACCOUNT_NAME\": \"APIC2$\"\n        },\n        {\n            \"COMPUTER_NAME\": \"APIC4\",\n            \"DISTINGUISHED_NAME\": \"CN=APIC4,OU=AdmpUsers,DC=xcross,DC=com\",\n            \"OU_NAME\": \"AdmpUsers\",\n            \"VERSION\": \"-\",\n            \"SID_STRING\": \"S-1-5-21-829226656-1721363957-3165918102-25022\",\n            \"OBJECT_GUID\": \"{5316AEE5-DEA4-402E-A85B-58330ED7B7DB}\",\n            \"MANAGER\": \"pavi\",\n            \"OPERATING_SYSTEM\": \"-\",\n            \"DEPARTMENT\": \"-\",\n            \"SAM_ACCOUNT_NAME\": \"APIC4$\"\n        },\n        {\n            \"COMPUTER_NAME\": \"APICom2\",\n            \"DISTINGUISHED_NAME\": \"CN=APICom2,OU=AdmpUsers,DC=xcross,DC=com\",\n            \"OU_NAME\": \"AdmpUsers\",\n            \"VERSION\": \"-\",\n            \"SID_STRING\": \"S-1-5-21-829226656-1721363957-3165918102-25024\",\n            \"OBJECT_GUID\": \"{8EB9A467-63F4-403B-8C2C-CB97B3E43922}\",\n            \"MANAGER\": \"pavi\",\n            \"OPERATING_SYSTEM\": \"-\",\n            \"DEPARTMENT\": \"-\",\n            \"SAM_ACCOUNT_NAME\": \"APICom2\"\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 3\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Create AD Computers",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"template\": {\r\n        \"template_name\": \"Computer Creation Template\"\r\n    },\r\n    \"data\": [\r\n        {\r\n            \"attributes\": {\r\n                \"sAMAccountName\": \"APIComputer1$\",\r\n                \"name\": \"APIComputer1\",\r\n                \"OUName\": \"OU=Computers,DC=test,DC=com\",\r\n                \"description\": \"Computer created via API\",\r\n                \"memberOf\": \"Test Group1;Test Group2\"\r\n            }\r\n        },\r\n        {\r\n            \"attributes\": {\r\n                \"sAMAccountName\": \"APIComputer2$\",\r\n                \"name\": \"APIComputer2\",\r\n                \"OUName\": \"OU=Computers,DC=test,DC=com\",\r\n                \"description\": \"Computer created via API\",\r\n                \"memberOf\": \"Test Group3;Test Group4\",\r\n                \"managedBy\": \"Manager2\",\r\n                \"extensionAttribute1\": \"Test Attribute 2\"\r\n            }\r\n        }\r\n    ]\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/computers?domain=sample.com",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"computers"
+							],
+							"query": [
+								{
+									"key": "domain",
+									"value": "sample.com"
+								}
+							]
+						},
+						"description": "### Create Active Directory Computers\n\nCreates a new the Active Directory computer object with the specified payload.\n\n#### Request\n\n- **Method:** POST\n    \n- **URL:** {{host_url}}/api/v2/computers\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| Content-Type | application/json | Yes | Type of data the client posts to the server |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**\n    \n\n| **Name** | **Type** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| domain | String | Yes | Domain of the object that is to be created |\n\n- **Request Body:**\n    \n\n| Key | Type | **Required** | Description |\n| --- | --- | --- | --- |\n| template | object | No | Common Template details that should be used for the bulk object processing |\n| data | array | Yes | An array containing the object data for object creation. The object can include template,general attribute details to be used for the object creation. |\n\n#### **Sample Request :**\n\n```\ncurl --location 'localhost:8010/api/v2/computers?domain=xcross.com' \\\n--header 'Accept: application/json' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n--data '{\n    \"template\": {\n        \"template_name\": \"System Template\",\n    },\n    \"data\": [\n        {\n            \"template\": {\n                \"template_name\": \"t11\",\n            },\n            \"attributes\": {\n                \"sAMAccountName\": \"APICop1\",\n                \"employeeID\": \"12345\",\n                \"name\": \"APICop1\",\n                \"accountNameHistory\": \"st9v9;s9t3s;9st5\",\n                \"co\": \"India\"\n            }\n        },\n        {\n            \"attributes\": {\n                \"sAMAccountName\": \"APICop2\",\n                \"name\": \"APICop2\",\n                \"accountNameHistory\": \"st9v9;s9t3s;9st5\",\n                \"description\": \"API\",\n                \"OUName\": \"OU=AdmpUsers,DC=xcross,DC=com\",\n                \"memberOf\": \"CrossGrp1;CrossGrp2\",\n                \"managedBy\": \"pavi\"\n            }\n        }\n    ]\n}'\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"Computer Name\": \"APICop1\",\n                \"SAM Account Name\": \"APICop1\",\n                \"Managed by\": \"taco\"\n            },\n            \"status\": {\n                \"status_message\": \"Value for managedBy attribute could not be found in AD. Value for the managedBy attribute must be specified in DN format or mail or displayName\",\n                \"status_code\": 0\n            }\n        },\n        {\n            \"object\": {\n                \"Description\": \"API\",\n                \"Manager(AD)\": \"CN=pavi,CN=Users,DC=xcross,DC=com\",\n                \"Name\": \"APICop2\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully created the computer.\",\n                \"status_code\": 0\n            }\n        }\n    ]\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Update AD Computers",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\": {\r\n        \"attributes\": {\r\n            \"name\": \"UpdatedComputerName\",\r\n            \"OUName\": \"OU=UpdatedComputers,DC=test,DC=com\",\r\n            \"description\": \"Updated description for the computer\",\r\n            \"memberOf\": \"Updated Group1;Updated Group2\",\r\n            \"managedBy\": \"Updated Manager\",\r\n            \"extensionAttribute1\": \"Updated Attribute\"\r\n        }\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/computers?domain=sample1.com",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"computers"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1",
+									"disabled": true
+								},
+								{
+									"key": "limit",
+									"value": "100",
+									"disabled": true
+								},
+								{
+									"key": "domain",
+									"value": "sample1.com"
+								},
+								{
+									"key": "sort",
+									"value": "COMPUTER_NAME ",
+									"disabled": true
+								},
+								{
+									"key": "filter",
+									"value": "((SAM_ACCOUNT_NAME eq Test) or (COMPUTER_NAME eq Test))",
+									"disabled": true
+								},
+								{
+									"key": "refresh",
+									"value": "false",
+									"disabled": true
+								}
+							]
+						},
+						"description": "### Update Active Directory Computers\n\n#### Description\n\nUpdates the Active Directory computers with the specified payload.\n\n#### Request\n\n- **Method:** PATCH\n    \n- **URL:** {{host_url}}/api/v2/computers\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of response the client accepts. |\n| Content-Type | application/json | Yes | Type of the data client posts to server. |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n- **Request body**\n    \n\n| Key | Type | **Required** | Description |\n| --- | --- | --- | --- |\n| data | JSONObject | Yes | An JSONObject containing the object data to be updated. The object can include general attributes, exchange attributes details to be updated for the object. |\n\n#### **Sample Request :**\n\n```\ncurl --location --request PATCH 'localhost:8010/api/v2/computers?from=1&filter=MANAGER co pavi&sort=SAM_ACCOUNT_NAME&domain=xcross.com&limit=100' \\\n--header 'Content-Type: application/json' \\\n--header 'Accept: application\\json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n--data '{\n    \"data\"  :  {\n    \"attributes\" : {\n            \"description\":\"APICom1\",\n            \"extensionAttribute1\":\"APICom1\",\n            \"accountNameHistory\":\"st9v9;s9t3s;9st5\",\n            \"memberOf\":\"CrossGrp2\"\n        }\n    }\n}'\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"Description\": \"APICom1\",\n                \"Distinguished Name\": \"CN=APICom1,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Member of\": \"[CN=TestGG2,OU=Selva,DC=xcross,DC=com]\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully modified the computer.\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"Description\": \"APICom1\",\n                \"Distinguished Name\": \"CN=APIC4,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Member of\": \"[CN=TestGG2,OU=Selva,DC=xcross,DC=com]\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully modified the computer.\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"Description\": \"APICom1\",\n                \"Distinguished Name\": \"CN=APICom2,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Member of\": \"[CN=TestGG2,OU=Selva,DC=xcross,DC=com]\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully modified the computer.\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"Description\": \"APICom1\",\n                \"Distinguished Name\": \"CN=APICop2,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Member of\": \"[CN=TestGG2,OU=Selva,DC=xcross,DC=com]\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully modified the computer.\",\n                \"status_code\": 1\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 4\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Disable AD Computers",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/computers/disable?from=1&limit=100&domain=sample.com&sort=SAM_ACCOUNT_NAME&filter=MANAGER eq Manager1&refresh=false",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"computers",
+								"disable"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "domain",
+									"value": "sample.com"
+								},
+								{
+									"key": "sort",
+									"value": "SAM_ACCOUNT_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "MANAGER eq Manager1"
+								},
+								{
+									"key": "refresh",
+									"value": "false"
+								}
+							]
+						},
+						"description": "### Disable AD Computers\n\n#### Description\n\nThis endpoint disable AD Computers based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** POST\n    \n- **URL:** {{host_url}}/api/v2/computers/disable\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n#### Sample Request\n\n``` http\ncurl --location --request POST 'localhost:8010/api/v2/computers/disable?limit=100&from=1&filter=MANAGER eq pavi&sort=SAM_ACCOUNT_NAME&domain=xcross.com&refresh=false' \\\n--header 'Accept: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"OU Name\": \"AdmpUsers\",\n                \"Object GUID\": \"{BD96FD35-7013-40CC-8F28-DFDD8F91D228}\",\n                \"Computer Name\": \"APICom1\",\n                \"SAM Account Name\": \"APIC2$\",\n                \"Distinguished Name\": \"CN=APICom1,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Managed by\": \"pavi\",\n                \"Object SID\": \"S-1-5-21-829226656-1721363957-3165918102-24870\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully Disabled.\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"OU Name\": \"AdmpUsers\",\n                \"Object GUID\": \"{5316AEE5-DEA4-402E-A85B-58330ED7B7DB}\",\n                \"Computer Name\": \"APIC4\",\n                \"SAM Account Name\": \"APIC4$\",\n                \"Distinguished Name\": \"CN=APIC4,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Managed by\": \"pavi\",\n                \"Object SID\": \"S-1-5-21-829226656-1721363957-3165918102-25022\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully Disabled.\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"OU Name\": \"AdmpUsers\",\n                \"Object GUID\": \"{8EB9A467-63F4-403B-8C2C-CB97B3E43922}\",\n                \"Computer Name\": \"APICom2\",\n                \"SAM Account Name\": \"APICom2\",\n                \"Distinguished Name\": \"CN=APICom2,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Managed by\": \"pavi\",\n                \"Object SID\": \"S-1-5-21-829226656-1721363957-3165918102-25024\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully Disabled.\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"OU Name\": \"AdmpUsers\",\n                \"Object GUID\": \"{B0DA733A-B140-4FA8-808A-328F06570D0C}\",\n                \"Computer Name\": \"APICop2\",\n                \"SAM Account Name\": \"APICop2$\",\n                \"Distinguished Name\": \"CN=APICop2,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Managed by\": \"pavi\",\n                \"Object SID\": \"S-1-5-21-829226656-1721363957-3165918102-25085\"\n            },\n            \"status\": {\n                \"status_message\": \"Successfully Disabled.\",\n                \"status_code\": 1\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 4\n    }\n}\n\n ```"
+					},
+					"response": []
+				}
+			],
+			"description": "APIs to Manage AD Computers effectively"
+		},
+		{
+			"name": "Contacts",
+			"item": [
+				{
+					"name": "List AD Contacts",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "X-Date-Time-Format",
+								"value": "",
+								"description": "Date time format that should be used for parsing date values returned in response.  \n",
+								"type": "text",
+								"disabled": true
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/contacts?from=1&limit=100&domains=sample1.com,sample2.com&sort=FULL_NAME&filter=FULL_NAME in [\"FullName1\",\"FullName2\"]&fields=FULL_NAME,EMAIL_ADDRESS,OU_NAME",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"contacts"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "domains",
+									"value": "sample1.com,sample2.com"
+								},
+								{
+									"key": "sort",
+									"value": "FULL_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "FULL_NAME in [\"FullName1\",\"FullName2\"]"
+								},
+								{
+									"key": "fields",
+									"value": "FULL_NAME,EMAIL_ADDRESS,OU_NAME"
+								}
+							]
+						},
+						"description": "#### **List AD Contacts**\n\n#### Description\n\nThis endpoint retrieves AD contacts based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** GET\n    \n- **URL:** {{host_url}}/api/v2/contacts\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| X-Date-Time-Format | Date time format in String | No | Date time format that should be used for parsing date values returned in response.  <br>If not provided by default ISO date format will be used (yyyy-MM-dd'T'HH:mm:ss\\[.SSS\\]\\[XXX\\]) |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve. |\n| domains | String | Yes | Comma-separated list of domains to fetch data. |\n| fields | String | No | Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned). |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n#### Sample Request\n\nPlain Text\n\n```\ncurl --location --globoff 'localhost:8020/api/v2/contacts?limit=1000&from=1&filter=FULL_NAME in [\"APICo1\",\"APICo2\"]&sort=FULL_NAME&domains=xcross.com' \\\n--header 'Authorization: ••••••' \\\n--header 'Accept: application\\json' \\\n--header 'X-Date-Time-Format: dd/MM/YYYY' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\nJSON\n\n```\n{\n    \"data\": [\n        {\n            \"DISTINGUISHED_NAME\": \"CN=APICo1,CN=Users,DC=xcross,DC=com\",\n            \"OU_NAME\": \"Users\",\n            \"EMAIL_ADDRESS\": \"-\",\n            \"COMMON_NAME\": \"APICo1\",\n            \"FULL_NAME\": \"APICo1\",\n            \"LAST_NAME\": \"-\",\n            \"DOMAIN_NAME\": \"xcross.com\",\n            \"FIRST_NAME\": \"-\",\n            \"DISPLAY_NAME\": \"-\"\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 1\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Create AD Contacts",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"template\": {\r\n        \"template_name\": \"Contact Creation Template\"\r\n    },\r\n    \"data\": [\r\n        {\r\n            \"attributes\": {\r\n                \"displayName\": \"APIContact1\",\r\n                \"name\": \"APIContact1\",\r\n                \"memberOf\": \"Test Group3;Test Group4\",\r\n                \"co\": \"India\",\r\n                \"exchange\": {\r\n                    \"msExchAdminGroup\": \"/o=Contact/ou=Exchange Administrative Group (FY0IB0HF2LPDLT)\",\r\n                    \"targetAddress\": \"APIContact1\",\r\n                    \"mailNickname\": \"APIContact1\"\r\n                },\r\n                \"manager\": \"Manager 1\"\r\n            }\r\n        },\r\n        {\r\n            \"attributes\": {\r\n                \"displayName\": \"APIContact2\",\r\n                \"name\": \"APIContact2\",\r\n                \"description\": \"API\",\r\n                \"OUName\": \"OU=Contacts,DC=xcross,DC=com\",\r\n                \"memberOf\": \"Test Group3;Test Group4\",\r\n                \"manager\": \"Manager 1\"\r\n            }\r\n        }\r\n    ]\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/contacts?domain=sample1.com",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"contacts"
+							],
+							"query": [
+								{
+									"key": "domain",
+									"value": "sample1.com"
+								}
+							]
+						},
+						"description": "### Create Active Directory Contacts\n\nCreates a new the Active Directory contact object with the specified payload.\n\n#### Request\n\n- **Method:** POST\n    \n- **URL:** {{host_url}}/api/v2/contacts\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| Content-Type | application/json | Yes | Type of data the client posts to server |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameter**\n    \n\n| **Parameter** | **Type** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| domain | String | Yes | Domain in which the object should be created |\n\n- **Request Body:**\n    \n\n| Key | Type | **Required** | Description |\n| --- | --- | --- | --- |\n| template | object | No | Common Template details that should be used for the bulk object processing |\n| data | array | Yes | An array containing the object data for object creation. The object can include template,general attribute details to be used for the object creation. |\n\n#### **Sample Request :**\n\n```\ncurl --location 'localhost:8010/api/v2/contacts?domain=xcross.com' \\\n--header 'Accept: application/json' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n--data '{\n    \"template\": {\n        \"template_name\": \"Contact Creation with basic attributes\",\n    },\n    \"data\": [\n        {\n            \"attributes\": {\n                \"displayName\": \"APICo5\",\n                \"name\": \"APICo5\",\n                \"accountNameHistory\": \"st9v9;s9t3s;9st5\",\n                \"co\": \"India\",\n                \"exchange\": {\n                    \"msExchAdminGroup\": \"/o=Zoho/ou=Exchange Administrative Group (FYDIBOHF23SPDLT)\",\n                    \"targetAddress\": \"APICo5\",\n                    \"mailNickname\": \"APICo5\"\n                }\n            }\n        },\n        {\n            \"attributes\": {\n                \"sAMAccountName\": \"APICo6\",\n                \"name\": \"APICo6\",\n                \"accountNameHistory\": \"st9v9;s9t3s;9st5\",\n                \"description\": \"API\",\n                \"OUName\": \"OU=AdmpUsers,DC=xcross,DC=com\",\n                \"memberOf\": \"CrossGrp1;CrossGrp2\",\n                \"manager\": \"pavi\"\n            }\n        }\n    ]\n}'\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"Description\": \"\",\n                \"Manager(AD)\": \"\",\n                \"Manager(Microsoft 365)\": \"\",\n                \"Name\": \"APICo5\",\n                \"Email Address\": \"\"\n            },\n            \"status\": {\n                \"status_code\": 1,\n                \"status_message\": \"Successfully created the contact.Setting values for custom attributes: Error in setting attributes,The specified directory service attribute or value does not exist. - Error Code : 8007200a. \"\n            }\n        },\n        {\n            \"object\": {\n                \"Description\": \"API\",\n                \"Manager(AD)\": \"CN=pavi,CN=Users,DC=xcross,DC=com\",\n                \"Manager(Microsoft 365)\": \"\",\n                \"Name\": \"APICo6\",\n                \"Email Address\": \"\"\n            },\n            \"status\": {\n                \"status_code\": 1,\n                \"status_message\": \"Successfully created the contact.Setting values for custom attributes: Error in setting attributes,The server is unwilling to process the request. - Error Code : 80072035. \"\n            }\n        }\n    ]\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Update AD Contacts",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\": {\r\n        \"attributes\": {\r\n            \"name\": \"UpdatedContact1\",\r\n            \"OUName\": \"OU=Contacts,DC=test,DC=com\",\r\n            \"description\": \"Updated description for the contact\",\r\n            \"memberOf\": \"Updated Group1;Updated Group2\",\r\n            \"managedBy\": \"Updated Manager\",\r\n            \"extensionAttribute1\": \"Updated Attribute\"\r\n        }\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/contacts?from=1&limit=100&domain=sample.com&sort=FULL_NAME&filter=FULL_NAME co TestContact&refresh=false",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"contacts"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "domain",
+									"value": "sample.com"
+								},
+								{
+									"key": "sort",
+									"value": "FULL_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "FULL_NAME co TestContact"
+								},
+								{
+									"key": "refresh",
+									"value": "false"
+								}
+							]
+						},
+						"description": "### Update Active Directory Contacts\n\n#### Description\n\nUpdates the Active Directory contacts with the specified payload.\n\n#### Request\n\n- **Method:** PATCH\n    \n- **URL:** {{host_url}}/api/v2/contacts\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of response the client accepts. |\n| Content-Type | application/json | Yes | Type of the data client posts to server. |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n- **Request body**\n    \n\n| Key | Type | **Required** | Description |\n| --- | --- | --- | --- |\n| data | JSONObject | Yes | An JSONObject containing the object data to be updated. The object can include general attributes, exchange attributes details to be updated for the object. |\n\n#### **Sample Request :**\n\n```\ncurl --location --globoff --request PATCH 'localhost:8010/api/v2/contacts?limit=100&from=1&filter=FULL_NAME in [\"APICo1\",\"APICo2\"]&sort=FULL_NAME&domain=xcross.com' \\\n--header 'Accept: application/json' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n--data '{\n    \"data\"  :  {\n        \"attributes\" : {\n            \"name\":\"Contactas2001\",\n            \"memberOf\":\"CrossGrp1\",\n            \"exchange\":{\n                \"msExchAdminGroup\":\"/o=Zoho/ou=Exchange Administrative Group (FYDIBOHF23SPDLT)\",\n                \"mailAlias\":\"Contactas2001\"\n            },\n            \"accountNameHistory\":\"st9v9;s9t3s;9st5\",\n            \"extensionAttribute1\":\"Talking\"\n        }\n    }\n}'\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"Distinguished Name\": \"CN=APICo4,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Member of\": \"[CN=TestGG1,OU=Selva,DC=xcross,DC=com]\"\n            },\n            \"status\": {\n                \"status_code\": 1,\n                \"status_message\": \"Successfully Updated.Setting values for custom attributes: Error in setting attributes,The specified directory service attribute or value does not exist. - Error Code : 8007200a. \"\n            }\n        },\n        {\n            \"object\": {\n                \"Distinguished Name\": \"CN=APICo6,OU=AdmpUsers,DC=xcross,DC=com\",\n                \"Domain Name\": \"CN=APICo6,OU=AdmpUsers,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_code\": 0,\n                \"status_message\": \"API Limit Exceeded.\"\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 2,\n        \"total_no_of_objects\": 2\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Delete AD Contacts",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/contacts?from=1&limit=100&domain=sample.com&sort=FULL_NAME&filter=FULL_NAME eq TestContact&refresh=false",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"contacts"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "domain",
+									"value": "sample.com"
+								},
+								{
+									"key": "sort",
+									"value": "FULL_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "FULL_NAME eq TestContact"
+								},
+								{
+									"key": "refresh",
+									"value": "false"
+								}
+							]
+						},
+						"description": "### Delete AD Contacts\n\n#### Description\n\nThis endpoint delete AD contacts based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** DELETE\n    \n- **URL:** {{host_url}}/api/v2/contacts\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n#### Sample Request\n\n``` http\ncurl --location --request DELETE 'localhost:8010/api/v2/contacts?limit=100&from=1&filter=FULL_NAME eq APICo5&sort=FULL_NAME&domain=xcross.com&refresh=false' \\\n--header 'Accept: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"Object GUID\": \"{144F7EFD-7A0F-40C7-B47B-FDEF762D4A7B}\",\n                \"Common Name\": \"APICo5\",\n                \"Full Name\": \"APICo5\",\n                \"Distinguished Name\": \"CN=APICo5,CN=Users,DC=xcross,DC=com\",\n                \"Email Address\": \"-\",\n                \"Domain Name\": \"xcross.com\"\n            },\n            \"status\": {\n                \"status_code\": 1,\n                \"status_message\": \"Successfully deleted the contact.\"\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 1\n    }\n}\n\n ```"
+					},
+					"response": []
+				}
+			],
+			"description": "APIs to Manage AD Contacts effectively"
+		},
+		{
+			"name": "Organizational Units",
+			"item": [
+				{
+					"name": "List AD OUs",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "X-Date-Time-Format",
+								"value": "",
+								"description": "Date time format that should be used for parsing date values returned in response.  \n",
+								"type": "text",
+								"disabled": true
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/organizational_units?from=1&limit=100&domains=sample.com&sort=OU_NAME&filter=OU_NAME co OrgUnit&fields=NAME,STATE_PROVINCE,MANAGER",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"organizational_units"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "domains",
+									"value": "sample.com"
+								},
+								{
+									"key": "sort",
+									"value": "OU_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "OU_NAME co OrgUnit"
+								},
+								{
+									"key": "fields",
+									"value": "NAME,STATE_PROVINCE,MANAGER"
+								}
+							]
+						},
+						"description": "#### **List AD** Organizational units\n\n#### Description\n\nThis endpoint retrieves AD Organizational units based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** GET\n    \n- **URL:** {{host_url}}/api/v2/organizational_units\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| X-Date-Time-Format | Date time format in String | No | Date time format that should be used for parsing date values returned in response.  <br>If not provided by default ISO date format will be used (yyyy-MM-dd'T'HH:mm:ss\\[.SSS\\]\\[XXX\\]) |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve. |\n| domains | String | Yes | Comma-separated list of domains to fetch data. |\n| fields | String | No | Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned). |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n#### Sample Request\n\nPlain Text\n\n```\ncurl --location 'localhost:8020/api/v2/organizational_units?limit=1000&from=1&filter=OU_NAME co ashi&sort=OU_NAME&domains=xcross.com' \\\n--header 'Authorization: 44c73ad9-80ff-48eb-8e18-33a325ce9536' \n\\--header 'Accept: application/json' \\\n\\--header 'X-Date-Time-Format: dd-MM-YYYY' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\nJSON\n\n``` json\n{\n    \"data\": [\n        {\n            \"DISTINGUISHED_NAME\": \"OU=Ashik,DC=xcross,DC=com\",\n            \"OU_NAME\": \"xcross.com/Ashik\",\n            \"CITY\": \"-\",\n            \"COUNTRY\": \"American Samoa\",\n            \"STATE_PROVINCE\": \"-\",\n            \"OBJECT_GUID\": \"{B3BDB520-AB2D-4DB0-8B6D-B5209C75F1B2}\",\n            \"MANAGER\": \"-\",\n            \"NAME\": \"Ashik\"\n        },\n        {\n            \"DISTINGUISHED_NAME\": \"OU=Ashik,OU=Ashik,DC=xcross,DC=com\",\n            \"OU_NAME\": \"xcross.com/Ashik/Ashik\",\n            \"CITY\": \"-\",\n            \"COUNTRY\": \"-\",\n            \"STATE_PROVINCE\": \"-\",\n            \"OBJECT_GUID\": \"{8A26B627-4865-4BC2-A2BF-405B9AF1EA48}\",\n            \"MANAGER\": \"-\",\n            \"NAME\": \"Ashik\"\n        },\n        {\n            \"DISTINGUISHED_NAME\": \"OU=Computers,OU=Ashik,OU=Ashik,DC=xcross,DC=com\",\n            \"OU_NAME\": \"xcross.com/Ashik/Ashik/Computers\",\n            \"CITY\": \"-\",\n            \"COUNTRY\": \"-\",\n            \"STATE_PROVINCE\": \"-\",\n            \"OBJECT_GUID\": \"{C94B3F8D-81AC-4425-9609-DBDC5682DD4C}\",\n            \"MANAGER\": \"-\",\n            \"NAME\": \"Computers\"\n        },\n        {\n            \"DISTINGUISHED_NAME\": \"OU=Computers,OU=Ashik,DC=xcross,DC=com\",\n            \"OU_NAME\": \"xcross.com/Ashik/Computers\",\n            \"CITY\": \"-\",\n            \"COUNTRY\": \"-\",\n            \"STATE_PROVINCE\": \"-\",\n            \"OBJECT_GUID\": \"{B8E3C67E-6114-4BFA-B101-3A7D558DF817}\",\n            \"MANAGER\": \"-\",\n            \"NAME\": \"Computers\"\n        },\n        {\n            \"DISTINGUISHED_NAME\": \"OU=Ashik,OU=Manoj ou,DC=xcross,DC=com\",\n            \"OU_NAME\": \"xcross.com/Manoj ou/Ashik\",\n            \"CITY\": \"-\",\n            \"COUNTRY\": \"-\",\n            \"STATE_PROVINCE\": \"-\",\n            \"OBJECT_GUID\": \"{9A2B8D03-9A7A-45E2-8BAB-E4F043F1F2F5}\",\n            \"MANAGER\": \"-\",\n            \"NAME\": \"Ashik\"\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 5\n    }\n}\n\n ```\n\nEndFragment"
+					},
+					"response": []
+				},
+				{
+					"name": "Update AD OUs",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\": {\r\n        \"attributes\": {\r\n            \"name\": \"BulkUser10000\",\r\n            \"OUName\": \"OU=AdmpUsers,DC=xcross,DC=com\",\r\n            \"managedBy\": \"pavi\",\r\n            \"co\": \"India\",\r\n            \"extensionAttribute1\": \"Targery\",\r\n            \"accountNameHistory\": \"st9v9;s9t3s;9st5\"\r\n        }\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/organizational_units?from=1&limit=100&domain=sample.com&sort=OU_NAME&filter=NAME eq TestOU1&refresh=false",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"organizational_units"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "domain",
+									"value": "sample.com"
+								},
+								{
+									"key": "sort",
+									"value": "OU_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "NAME eq TestOU1"
+								},
+								{
+									"key": "refresh",
+									"value": "false"
+								}
+							]
+						},
+						"description": "### Update Active Directory OUs\n\n#### Description\n\nUpdates the Active Directory OUs with the specified payload.\n\n#### Request\n\n- **Method:** PATCH\n    \n- **URL:** {{host_url}}/api/v2/organizational_units\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of response the client accepts. |\n| Content-Type | application/json | Yes | Type of the data client posts to server. |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n\n- **Request body**\n    \n\n| Key | Type | **Required** | Description |\n| --- | --- | --- | --- |\n| data | JSONObject | Yes | An JSONObject containing the object data to be updated. The object can include general attributes, exchange attributes details to be updated for the object. |\n\n#### **Sample Request :**\n\n```\ncurl --location --request PATCH 'localhost:8010/api/v2/organizational_units?limit=100&from=1&filter=name eq TestOU1&sort=OU_NAME&domain=xcross.com' \\\n--header 'Accept: application/json' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n--data '{\n    \"data\": {\n        \"attributes\": {\n            \"name\": \"BulkUser10000\",\n            \"OUName\": \"OU=AdmpUsers,DC=xcross,DC=com\",\n            \"managedBy\": \"pavi\",\n            \"co\": \"India\",\n            \"extensionAttribute1\": \"Targery\",\n            \"accountNameHistory\": \"st9v9;s9t3s;9st5\"\n        }\n    }\n}'\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"Container Name\": \"OU=AdmpUsers,DC=xcross,DC=com\",\n                \"OU Name\": \"BulkUser10000\",\n                \"Distinguished Name\": \"OU=TestOU1,DC=xcross,DC=com\",\n                \"Managed by\": \"CN=pavi,CN=Users,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_code\": 0,\n                \"status_message\": \"Successfully Updated.Setting values for custom attributes: Error in Setting attributes,The requested operation did not satisfy one or more constraints associated with the class of the object. - Error Code : 80072014.  , Error in modifying full name of the OU: The object already exists. - Error Code : 80071392 \"\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 1,\n        \"total_no_of_objects\": 1\n    }\n}\n\n ```"
+					},
+					"response": []
+				}
+			],
+			"description": "APIs to Manage AD OUs effectively"
+		},
+		{
+			"name": "Orchestrations",
+			"item": [
+				{
+					"name": "List Orchestration Templates",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/orchestrations?from=1&limit=100&sort=TEMPLATE_ID&filter=TEMPLATE_NAME co OrchTemp&fields=TEMPLATE_NAME,TEMPLATE_ID,DESCRIPTION,STATUS",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"orchestrations"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "sort",
+									"value": "TEMPLATE_ID"
+								},
+								{
+									"key": "filter",
+									"value": "TEMPLATE_NAME co OrchTemp"
+								},
+								{
+									"key": "fields",
+									"value": "TEMPLATE_NAME,TEMPLATE_ID,DESCRIPTION,STATUS"
+								}
+							]
+						},
+						"description": "### **List Orchestration Templates**\n\n#### Description\n\nThis endpoint retrieves orchestration templates based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** GET\n    \n- **URL:** {{host_url}}/api/v2/orchestration\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes |  |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve. |\n| fields | String | No | Comma-separated list of fields to retrieve. (If no fields specified all fields will be returned). |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n\n#### Sample Request\n\n```\ncurl --location 'localhost:8020/api/v2/orchestration?limit=100&from=1&sort=template_id' \\\n--header 'Authorization: 44c73ad9-80ff-48eb-8e18-33a325ce9536' \\\n\\--header 'Accept: application/json' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\n``` json\n{\n    \"data\": [\n        {\n            \"TEMPLATE_NAME\": \"Enable enterprise apps and notify onboarding employees\",\n            \"TEMPLATE_DESCRIPTION\": \"Enable Zoho CRM and send a onboarding notification\",\n            \"TEMPLATE_ID\": 1\n        },\n        {\n            \"TEMPLATE_NAME\": \"Delete cloud accounts, raise Sysadmin request and notify Admin\",\n            \"TEMPLATE_DESCRIPTION\": \"Delete Microsoft 365,O365 and Exchange accounts, raise request to ManageEngine ServiceDesk Plus and notify Admin\",\n            \"TEMPLATE_ID\": 2\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 2\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Execute Orchestration Template",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true,
+							"content-length": true
+						}
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/orchestrations/{{template_id}}/execute?from=1&limit=100&domain=sample.com&object_type=user&sort=SAM_ACCOUNT_NAME&filter=SAM_ACCOUNT_NAME co TestUser&refresh=false",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"orchestrations",
+								"{{template_id}}",
+								"execute"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "100"
+								},
+								{
+									"key": "domain",
+									"value": "sample.com"
+								},
+								{
+									"key": "object_type",
+									"value": "user"
+								},
+								{
+									"key": "sort",
+									"value": "SAM_ACCOUNT_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "SAM_ACCOUNT_NAME co TestUser"
+								},
+								{
+									"key": "refresh",
+									"value": "false"
+								}
+							]
+						},
+						"description": "### Execute Orchestration\n\n#### Description\n\nThis endpoint is to execute orchestration template on a object based on specified criteria such as fields, sort order, filter, and pagination.\n\n#### Request\n\n- **Method:** POST\n    \n- **URL:** {{host_url}}/api/v2/orchestration/{template_id}/execute\n    \n- **Headers:**\n    \n\n| Name | **Value** | **Required** | **Description** |\n| --- | --- | --- | --- |\n| Accept | application/json | Yes | Type of data the client accepts |\n| Authorization |  | Yes | Authorization for the API Request |\n\n- **Parameters**:\n    \n\n| Parameter | Type | Required | Description |\n| --- | --- | --- | --- |\n| from | Integer | Yes | The starting index for pagination. |\n| limit | Integer | Yes | The maximum number of records to retrieve for modification. |\n| domain | String | Yes | Domain Name from which the object should be fetched. |\n| sort | String | No | Comma-separated list of fields to sort by (\\`-\\` for descending order). |\n| filter | String | No | The filter criteria to apply for retrieving specific user data. |\n| refresh | Boolean | No | Boolean value to trigger sync prior fetching results |\n| object_type | String | Yes | Type of object to fetch and modify |\n\n#### Sample Request\n\n``` http\ncurl --location --request POST 'localhost:8010/api/v2/orchestration/1/execute?limit=100&from=1&filter=sam_account_name eq testuserapi1&sort=full_name&domain=xcross.com&object_type=user&refresh=false' \\\n--header 'Accept: application/json' \\\n--header 'Authorization: 6077bcad-6d97-4e34-9780-23242d9da205' \\\n\n ```\n\n#### Response\n\n- Status: 200\n    \n- Content-Type: application/json\n    \n\n#### Sample Response\n\n``` json\n{\n    \"data\": [\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule59\",\n                \"Logon Name\": \"TestRule59@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule59,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"311\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule58\",\n                \"Logon Name\": \"TestRule58@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule58,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"310\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule57\",\n                \"Logon Name\": \"TestRule57@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule57,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"309\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule56\",\n                \"Logon Name\": \"TestRule56@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule56,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"308\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule55\",\n                \"Logon Name\": \"TestRule55@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule55,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"307\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule54\",\n                \"Logon Name\": \"TestRule54@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule54,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"306\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule53\",\n                \"Logon Name\": \"TestRule53@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule53,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"305\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule52\",\n                \"Logon Name\": \"TestRule52@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule52,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"304\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule51\",\n                \"Logon Name\": \"TestRule51@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule51,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"303\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule50\",\n                \"Logon Name\": \"TestRule50@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule50,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"302\",\n                \"status_code\": 1\n            }\n        },\n        {\n            \"object\": {\n                \"SAM Account Name\": \"TestRule5\",\n                \"Logon Name\": \"TestRule5@xcross.com\",\n                \"Distinguished Name\": \"CN=TestRule5,OU=Testing OU,DC=xcross,DC=com\"\n            },\n            \"status\": {\n                \"status_message\": \"Executing\",\n                \"execution_id\": \"301\",\n                \"status_code\": 1\n            }\n        }\n    ],\n    \"meta\": {\n        \"start_index\": 1,\n        \"limit\": 100,\n        \"total_no_of_objects\": 11\n    }\n}\n\n ```"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Orchestration Execution Status",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/orchestrations/execution_status/{{execution_id}}",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"orchestrations",
+								"execution_status",
+								"{{execution_id}}"
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"description": "APIs to execute orchestration on a object."
+		},
+		{
+			"name": "Admin Settings",
+			"item": [
+				{
+					"name": "List Environment Variable",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true,
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/environment_variables?from=1&limit=10&sort=VAR_NAME&filter=VAR_NAME pr&fields=UNIQUE_ID,VAR_NAME,DESCRIPTION",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"environment_variables"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "VAR_NAME"
+								},
+								{
+									"key": "filter",
+									"value": "VAR_NAME pr"
+								},
+								{
+									"key": "fields",
+									"value": "UNIQUE_ID,VAR_NAME,DESCRIPTION"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Add Environment Variable",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							},
+							{
+								"key": "X-Module",
+								"value": "",
+								"description": "Module Name to be recorded in Audit. (If Not provided, The default module will be Rest API)",
+								"type": "text",
+								"disabled": true
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\":{\r\n        \"variable_name\":\"Env1\",\r\n        \"variable_value\":\"EnvVal1\",\r\n        \"description\":\"Environment API\",\r\n        \"is_secure\":true\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/environment_variables",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"environment_variables"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Environment Variable",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\":{\r\n        \"variable_value\":\"Update Env 1\",\r\n        \"description\":\"API update\",\r\n        \"is_secure\":true\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/environment_variables/{{variable_id}}",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"environment_variables",
+								"{{variable_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Titles",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/titles?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq System Administrator)&fields=ORG_ATTRIB_NAME,ORG_ATTRIB_ID",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"titles"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq System Administrator)"
+								},
+								{
+									"key": "fields",
+									"value": "ORG_ATTRIB_NAME,ORG_ATTRIB_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Add Titles",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\" : {\r\n        \"attribute_values\" : \"Test1;Test2;Test3\"\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/titles",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"titles"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Titles",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/titles?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq System Administrator)&fields=ORG_ATTRIB_NAME,ORG_ATTRIB_ID",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"titles"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq System Administrator)"
+								},
+								{
+									"key": "fields",
+									"value": "ORG_ATTRIB_NAME,ORG_ATTRIB_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Department",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/departments?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq System Administrator)&fields=ORG_ATTRIB_NAME,ORG_ATTRIB_ID",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"departments"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq System Administrator)"
+								},
+								{
+									"key": "fields",
+									"value": "ORG_ATTRIB_NAME,ORG_ATTRIB_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Add department",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\" : {\r\n        \"attribute_values\" : \"Test1;Test2;Test3\"\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/departments",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"departments"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Departments",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/departments?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq Systems)",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"departments"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq Systems)"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Offices",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/offices?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq Systems)&fields=ORG_ATTRIB_NAME,ORG_ATTRIB_ID",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"offices"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq Systems)"
+								},
+								{
+									"key": "fields",
+									"value": "ORG_ATTRIB_NAME,ORG_ATTRIB_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Add Offices",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\" : {\r\n        \"attribute_values\" : \"Test1;Test2;Test3\"\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/offices",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"offices"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Offices",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/offices?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq Systems)",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"offices"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq Systems)"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "List Companies",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Host",
+								"value": "",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/companies?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq SysTalk)&fields=ORG_ATTRIB_NAME,ORG_ATTRIB_ID",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"companies"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq SysTalk)"
+								},
+								{
+									"key": "fields",
+									"value": "ORG_ATTRIB_NAME,ORG_ATTRIB_ID"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Add Companies",
+					"protocolProfileBehavior": {
+						"disabledSystemHeaders": {
+							"accept": true
+						}
+					},
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							},
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"description": "Type of data the client posts to the server",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"data\" : {\r\n        \"attribute_values\" : \"Test1;Test2;Test3\"\r\n    }\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/companies",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"companies"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Companies",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Host",
+								"value": "API",
+								"description": "Host name of the Client",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"description": "Type of response the client accepts.",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{protocol}}://{{host}}:{{port}}/api/{{api_version}}/admin_settings/organization_attributes/companies?from=1&limit=10&sort=ORG_ATTRIB_ID&filter=(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq SysTalk)",
+							"protocol": "{{protocol}}",
+							"host": [
+								"{{host}}"
+							],
+							"port": "{{port}}",
+							"path": [
+								"api",
+								"{{api_version}}",
+								"admin_settings",
+								"organization_attributes",
+								"companies"
+							],
+							"query": [
+								{
+									"key": "from",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								},
+								{
+									"key": "sort",
+									"value": "ORG_ATTRIB_ID"
+								},
+								{
+									"key": "filter",
+									"value": "(ORG_ATTRIB_NAME pr) and (ORG_ATTRIB_NAME eq SysTalk)"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"auth": {
+		"type": "apikey",
+		"apikey": [
+			{
+				"key": "value",
+				"value": "{{authtoken}}",
+				"type": "string"
+			},
+			{
+				"key": "key",
+				"value": "Authorization",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "protocol",
+			"value": "http"
+		},
+		{
+			"key": "host",
+			"value": "<admp_host_name>"
+		},
+		{
+			"key": "port",
+			"value": "8080"
+		},
+		{
+			"key": "authtoken",
+			"value": "<admp_auth_token>"
+		},
+		{
+			"key": "api_version",
+			"value": "v2",
+			"type": "string"
+		}
+	]
+}

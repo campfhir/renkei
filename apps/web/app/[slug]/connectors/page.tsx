@@ -14,11 +14,13 @@ import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
 import MirthConnector from './mirth-connector';
+import AdManagerConnector from './admanager-connector';
 import SandboxSecrets from './sandbox-secrets';
 import { AddConnectorButton, RemovableProducts } from './catalog-controls';
 import type { CatalogItem } from './add-connector-modal';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
 import { listInstancesWithConnection } from '@renkei/connector-mirth';
+import { listInstancesWithConnection as listAdManagerInstancesWithConnection } from '@renkei/connector-admanager';
 import { sandboxBrowserEnabled, sbSecretsList } from '@/lib/sandbox/service-client';
 import {
   WEBEX_USER,
@@ -184,6 +186,28 @@ export default async function ConnectorsPage({
         }))
       : [];
 
+  // ADManager Plus instances follow the same arrangement as Mirth: an
+  // admin registers each server, and this person connects it with their
+  // own authtoken right on the card. Every enabled instance is offered.
+  const admanagerRows = shown.has('admanager')
+    ? await listAdManagerInstancesWithConnection(db, tenant.id, session.subject)
+    : null;
+  const connectableAdManagerInstances =
+    admanagerRows && admanagerRows.ok
+      ? admanagerRows.val.map((entry) => ({
+          id: entry.instance.id,
+          name: entry.instance.name,
+          environment: entry.instance.environment,
+          baseUrl: entry.instance.baseUrl,
+          connection: entry.connection
+            ? {
+                technicianName: entry.connection.technicianName,
+                permissions: entry.connection.permissions,
+              }
+            : null,
+        }))
+      : [];
+
   // Browser secrets live on the sandbox worker, never in this app's tables:
   // the card exists only where the deployment runs the sandbox browser, and
   // the listing is names, fields and hosts — no values.
@@ -254,7 +278,8 @@ export default async function ConnectorsPage({
     shown.has('github') ||
     hylandShown ||
     shown.has('fileshares') ||
-    shown.has('mirth');
+    shown.has('mirth') ||
+    shown.has('admanager');
 
   /**
    * Each card, tagged with whether it has something a person added but
@@ -503,6 +528,21 @@ export default async function ConnectorsPage({
         <>
           <MirthConnector tenantId={tenant.id} instances={connectableMirthInstances} />
           <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['mirth'])} />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('admanager')) {
+    cards.push({
+      key: 'admanager',
+      needsAttention: connectableAdManagerInstances.some(
+        (instance) => instance.connection === null
+      ),
+      node: (
+        <>
+          <AdManagerConnector tenantId={tenant.id} instances={connectableAdManagerInstances} />
+          <RemovableProducts tenantId={tenant.id} products={removable(catalog, ['admanager'])} />
         </>
       ),
     });

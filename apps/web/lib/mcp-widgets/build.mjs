@@ -24,6 +24,11 @@ const WIDGETS = [
   { entry: 'meeting-preview.ts', exportName: 'MEETING_PREVIEW_HTML', title: 'Meeting preview' },
   { entry: 'issue-preview.ts', exportName: 'ISSUE_PREVIEW_HTML', title: 'Work item preview' },
   { entry: 'results-list.ts', exportName: 'RESULTS_LIST_HTML', title: 'Results' },
+  {
+    entry: 'directory-action-preview.ts',
+    exportName: 'DIRECTORY_ACTION_PREVIEW_HTML',
+    title: 'Directory action preview',
+  },
 ];
 
 mkdirSync(join(here, 'generated'), { recursive: true });

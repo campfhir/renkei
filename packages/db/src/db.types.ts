@@ -52,6 +52,32 @@ export interface ActionableItems {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AdmanagerInstanceConnections {
+  created_at: Generated<Timestamp>;
+  encrypted_credentials: string;
+  instance_id: string;
+  permissions: Generated<string[]>;
+  subject: string;
+  technician_name: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AdmanagerInstances {
+  allow_insecure_http: Generated<boolean>;
+  base_url: string;
+  ca_pem: string | null;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  environment: Generated<string>;
+  id: Generated<string>;
+  name: string;
+  settings: Generated<Json>;
+  tenant_id: string;
+  tls_verify: Generated<boolean>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AgentAccessGrants {
   agent_id: string;
   created_at: Generated<Timestamp>;
@@ -1376,6 +1402,8 @@ export interface WebhookSubscriptions {
 
 export interface DB {
   actionable_items: ActionableItems;
+  admanager_instance_connections: AdmanagerInstanceConnections;
+  admanager_instances: AdmanagerInstances;
   agent_access_grants: AgentAccessGrants;
   agent_drafts: AgentDrafts;
   agent_jobs: AgentJobs;

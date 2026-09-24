@@ -2,10 +2,11 @@
  * The card reads its links out of the confirm tool's own reply text, so
  * this parser is what stands between "Created ENG-789" and a clickable
  * ticket. It is also the only widget logic that can be tested without a
- * browser, which is reason enough to keep it pure.
+ * browser (this jest config runs testEnvironment: 'node' — no `document`),
+ * which is reason enough to keep it, and `initials`, pure.
  */
 
-import { parseLinks } from './ui';
+import { initials, parseLinks } from './ui';
 
 describe('parseLinks', () => {
   it('pulls the links a Jira reply carries', () => {
@@ -40,5 +41,20 @@ describe('parseLinks', () => {
   it('stops the URL at the closing paren, not at the end of the line', () => {
     const links = parseLinks('see [one](https://x.test/a) then [two](https://x.test/b) done');
     expect(links.map((link) => link.href)).toEqual(['https://x.test/a', 'https://x.test/b']);
+  });
+});
+
+describe('initials', () => {
+  it('takes the first letter of up to the first two words, uppercased', () => {
+    expect(initials('Jane Doe')).toBe('JD');
+    expect(initials('jane doe')).toBe('JD');
+    expect(initials('Cher')).toBe('C');
+    expect(initials('Jane Middle Doe')).toBe('JM');
+  });
+
+  it('collapses extra whitespace and falls back on an empty name', () => {
+    expect(initials('  Jane   Doe  ')).toBe('JD');
+    expect(initials('')).toBe('?');
+    expect(initials('   ')).toBe('?');
   });
 });

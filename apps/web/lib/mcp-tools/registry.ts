@@ -64,6 +64,9 @@ import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
 import { resolveToolExposure as resolveMirthExposure } from '@renkei/connector-mirth';
 import { registerMirthTools, MIRTH_MCP_CONNECTOR } from '@/lib/mcp-tools/mirth';
 import { userMirthAuth } from '@/lib/mcp-tools/mirth/mirth-auth';
+import { resolveToolExposure as resolveAdManagerExposure } from '@renkei/connector-admanager';
+import { registerAdManagerTools, ADMANAGER_MCP_CONNECTOR } from '@/lib/mcp-tools/admanager';
+import { userAdManagerAuth } from '@/lib/mcp-tools/admanager/admanager-auth';
 import { registerOnbaseTools, ONBASE_MCP_CONNECTOR } from '@/lib/mcp-tools/onbase';
 import {
   registerOnbaseAdminTools,
@@ -121,6 +124,10 @@ export interface ConnectorAvailability {
   mirthAvailable: boolean;
   /** The union of the permissions granted on the caller's connected instances. */
   mirthPermissions: string[];
+  /** Same shape as Mirth: the caller's own ADManager Plus instance connections. */
+  admanagerAvailable: boolean;
+  /** The union of the permissions granted on the caller's connected instances. */
+  admanagerPermissions: string[];
   onbaseAvailable: boolean;
   /** A SEPARATE connector/grant from onbaseAvailable — see registerRenkeiTools. */
   onbaseAdminAvailable: boolean;
@@ -260,6 +267,14 @@ export async function resolveConnectorAvailability(
   const mirthAvailable = mirthExposure.ok && mirthExposure.val.connected;
   const mirthPermissions = mirthExposure.ok ? mirthExposure.val.permissions : [];
 
+  // ADManager Plus follows the same shape as Mirth: no provider_grants
+  // row, the caller's own per-instance connections stand in for the
+  // grant, and the exposure they chose per instance decides which
+  // families register. Errors read as "not provisioned".
+  const admanagerExposure = await resolveAdManagerExposure(db, tenantId, subject);
+  const admanagerAvailable = admanagerExposure.ok && admanagerExposure.val.connected;
+  const admanagerPermissions = admanagerExposure.ok ? admanagerExposure.val.permissions : [];
+
   // OnBase carries one opaque IdP scope, so availability is simply "this
   // caller connected their OnBase account"; the API server enforces the
   // rest per request under their token.
@@ -304,6 +319,8 @@ export async function resolveConnectorAvailability(
     fileshareDelete,
     mirthAvailable,
     mirthPermissions,
+    admanagerAvailable,
+    admanagerPermissions,
     onbaseAvailable,
     onbaseAdminAvailable,
     sandboxAvailable,
@@ -346,6 +363,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.githubAvailable ? [GITHUB_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
     ...(availability.mirthAvailable ? [MIRTH_MCP_CONNECTOR] : []),
+    ...(availability.admanagerAvailable ? [ADMANAGER_MCP_CONNECTOR] : []),
     ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
     ...(availability.onbaseAdminAvailable ? [ONBASE_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.sandboxAvailable ? [SANDBOX_MCP_CONNECTOR] : []),
@@ -379,6 +397,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   GITHUB_MCP_CONNECTOR,
   FILESHARES_MCP_CONNECTOR,
   MIRTH_MCP_CONNECTOR,
+  ADMANAGER_MCP_CONNECTOR,
   ONBASE_MCP_CONNECTOR,
   ONBASE_ADMIN_MCP_CONNECTOR,
   SANDBOX_MCP_CONNECTOR,
@@ -421,6 +440,7 @@ export async function registerRenkeiTools(
     githubAvailable,
     filesharesAvailable,
     mirthAvailable,
+    admanagerAvailable,
     onbaseAvailable,
     onbaseAdminAvailable,
     sandboxAvailable,
@@ -663,6 +683,19 @@ export async function registerRenkeiTools(
       context,
       userMirthAuth(context),
       { permissions: availability.mirthPermissions }
+    );
+  }
+  if (admanagerAvailable) {
+    // The file-share/Mirth arrangement again: no OAuth scopes, the
+    // caller's per-instance permissions decide which tools register,
+    // every handler re-checks the permission on the instance named fresh
+    // per call, and authorization itself is ADManager Plus judging the
+    // caller's own authtoken (its scope and the technician's rights).
+    registerAdManagerTools(
+      withCapabilityGate(server, projection, ADMANAGER_MCP_CONNECTOR),
+      context,
+      userAdManagerAuth(context),
+      { permissions: availability.admanagerPermissions }
     );
   }
   if (onbaseAvailable) {
