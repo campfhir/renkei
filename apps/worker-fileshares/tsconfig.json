@@ -16,7 +16,9 @@
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
       "@renkei/settings": ["../../packages/settings/src/index.ts"],
       "@renkei/rate-limit": ["../../packages/rate-limit/src/index.ts"],
-      "@renkei/connector-fileshares": ["../../packages/connector-fileshares/src/index.ts"]
+      "@renkei/connector-fileshares": ["../../packages/connector-fileshares/src/index.ts"],
+      "@renkei/worker-kit": ["../../packages/worker-kit/src/index.ts"],
+      "@renkei/worker-kit/logger": ["../../packages/worker-kit/src/logger.ts"]
     }
   },
   "include": ["src/**/*.ts"],

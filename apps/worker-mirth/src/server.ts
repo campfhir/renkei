@@ -33,8 +33,7 @@
  *   logout          — end the caller's session on disconnect, best effort.
  */
 
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import type { Server, ServerResponse } from 'node:http';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
@@ -52,6 +51,7 @@ import {
   type SubjectTarget,
 } from '@renkei/connector-mirth';
 import type { Result } from '@campfhir/safe-functions/types';
+import { createJsonRpcServer, isRecord, sendJson, str } from '@renkei/worker-kit';
 import { logger } from './logger';
 import { forgetSession, rememberSession, sessionCookie } from './sessions';
 import {
@@ -130,56 +130,6 @@ export function statusForError(type: WorkerErrorType): number {
     default:
       return 502;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function authorized(request: IncomingMessage, keys: string[]): boolean {
-  if (keys.length === 0) return false;
-  const match = request.headers.authorization?.match(/^Bearer\s+(.+)$/i);
-  if (!match) return false;
-  const presented = match[1].trim();
-  return keys.some((key) => {
-    const bufA = Buffer.from(presented);
-    const bufB = Buffer.from(key);
-    // Length is not secret (it leaks via the comparison anyway); the contents are.
-    return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
-  });
-}
-
-/** Read a request body up to `cap` bytes; null means the cap was exceeded. */
-function readBody(request: IncomingMessage, cap: number): Promise<Buffer | null> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let received = 0;
-    request.on('data', (chunk: Buffer) => {
-      received += chunk.byteLength;
-      if (received > cap) {
-        request.removeAllListeners('data');
-        request.removeAllListeners('end');
-        resolve(null);
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on('end', () => resolve(Buffer.concat(chunks)));
-    request.on('error', reject);
-  });
-}
-
-function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  response.writeHead(status, {
-    'content-type': 'application/json',
-    'content-length': Buffer.byteLength(payload),
-  });
-  response.end(payload);
 }
 
 function sendError(response: ServerResponse, type: WorkerErrorType, message?: string): void {
@@ -504,51 +454,16 @@ export function createMirthServer(deps: MirthServerDeps): Server {
     },
   };
 
-  async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const url = new URL(request.url ?? '/', 'http://mirth.internal');
-
-    if (request.method === 'GET' && url.pathname === '/health') {
-      return sendJson(response, 200, { ok: true });
-    }
-    if (!authorized(request, deps.apiKeys)) {
-      return sendError(response, 'unauthorized');
-    }
-    if (request.method !== 'POST') {
-      return sendError(response, 'method_not_allowed');
-    }
-
-    const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';
-    const handler = handlers[op];
-    if (!handler) {
-      return sendError(response, 'unknown_operation');
-    }
-    const raw = await readBody(request, MAX_JSON_BYTES);
-    if (raw === null) {
-      return sendError(response, 'too_large');
-    }
-    let body: unknown;
-    try {
-      body = JSON.parse(raw.toString('utf8') || '{}');
-    } catch {
-      return sendError(response, 'bad_request');
-    }
-    if (!isRecord(body)) {
-      return sendError(response, 'bad_request');
-    }
-    await handler(body, response);
-  }
-
-  return createServer((request, response) => {
-    void handle(request, response).catch((error: unknown) => {
+  return createJsonRpcServer({
+    apiKeys: deps.apiKeys,
+    maxBodyBytes: MAX_JSON_BYTES,
+    handlers,
+    sendError,
+    onUnhandledError: (error) => {
       logger.error('unhandled mirth op failure: {error}', {
         component: 'worker-mirth/server',
         error: error instanceof Error ? error.message : String(error),
       });
-      if (!response.headersSent) {
-        sendError(response, 'internal');
-      } else {
-        response.end();
-      }
-    });
+    },
   });
 }

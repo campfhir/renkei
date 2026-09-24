@@ -15,7 +15,9 @@
       "@renkei/db": ["../../packages/db/src/index.ts"],
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
       "@renkei/settings": ["../../packages/settings/src/index.ts"],
-      "@renkei/connector-admanager": ["../../packages/connector-admanager/src/index.ts"]
+      "@renkei/connector-admanager": ["../../packages/connector-admanager/src/index.ts"],
+      "@renkei/worker-kit": ["../../packages/worker-kit/src/index.ts"],
+      "@renkei/worker-kit/logger": ["../../packages/worker-kit/src/logger.ts"]
     }
   },
   "include": ["src/**/*.ts"],

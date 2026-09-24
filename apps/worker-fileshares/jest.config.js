@@ -14,6 +14,7 @@ export default {
     '^@renkei/rate-limit$': '<rootDir>/../../packages/rate-limit/src/index.ts',
     '^@renkei/connector-fileshares$':
       '<rootDir>/../../packages/connector-fileshares/src/index.ts',
+    '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
   },
   // kysely's published build is ESM-only; ts-jest (allowJs) transforms it to
   // CJS for the test run — the worker-agents arrangement.

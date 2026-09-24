@@ -12,12 +12,9 @@
     "skipLibCheck": true,
     "types": ["node", "jest"],
     "paths": {
-      "@renkei/db": ["../../packages/db/src/index.ts"],
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
-      "@renkei/settings": ["../../packages/settings/src/index.ts"],
-      "@renkei/connector-mirth": ["../../packages/connector-mirth/src/index.ts"],
-      "@renkei/worker-kit": ["../../packages/worker-kit/src/index.ts"],
-      "@renkei/worker-kit/logger": ["../../packages/worker-kit/src/logger.ts"]
+      "@renkei/db": ["../../packages/db/src/index.ts"],
+      "@renkei/settings": ["../../packages/settings/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

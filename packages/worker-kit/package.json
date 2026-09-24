@@ -1,24 +1,24 @@
 {
-  "name": "@renkei/worker-admanager",
+  "name": "@renkei/worker-kit",
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./logger": "./src/logger.ts"
+  },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
-    "@campfhir/safe-functions": "^0.1.3",
-    "@renkei/connector-admanager": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/settings": "workspace:*",
-    "@renkei/worker-kit": "workspace:*",
-    "kysely": "^0.29.4",
-    "tsx": "^4.23.5"
+    "kysely": "^0.29.4"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
