@@ -273,10 +273,9 @@ describe('reset password: the shown password is the one used', () => {
     expect(admanagerApi).not.toHaveBeenCalled();
   });
 
-  it('confirm resets via /RestAPI/ResetPwd then forces the change via /RestAPI/ModifyUser, keyed by EMPLOYEE_ID', async () => {
+  it('confirm resets via /RestAPI/ResetPwd then forces the change via /RestAPI/ModifyUser, keyed by sAMAccountName', async () => {
     admanagerApi
       .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }]))
-      .mockResolvedValueOnce(usersResponse([{ EMPLOYEE_ID: 'CQU00123' }]))
       .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Successfully modified.' }]));
     const handlers = register();
     const result = await handlers.get('admanager_reset_password_confirm')!({
@@ -303,14 +302,14 @@ describe('reset password: the shown password is the one used', () => {
       })
     );
     expect(admanagerApi).toHaveBeenNthCalledWith(
-      3,
+      2,
       expect.anything(),
       expect.objectContaining({
         method: 'POST',
         path: '/RestAPI/ModifyUser',
         query: {
           inputFormat: JSON.stringify([
-            { employeeID: 'CQU00123', templateName: 'Reset Password Template' },
+            { sAMAccountName: 'jdoe', templateName: 'Reset Password Template' },
           ]),
         },
       })
@@ -458,7 +457,7 @@ describe('group membership is additive only', () => {
 });
 
 describe('group membership: confirm PATCHes the two dedicated attribute keys', () => {
-  it('add confirm PATCHes memberOf and reports success', async () => {
+  it('add confirm PATCHes memberOf with the given template and reports success', async () => {
     admanagerApi.mockResolvedValueOnce(
       answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })
     );
@@ -468,6 +467,7 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
       domainName: 'corp.example',
       samAccountName: 'jdoe',
       groupNames: ['VPN Users'],
+      templateName: 'AD Update Template',
     });
     expect(textOf(result)).toMatch(/Added jdoe to: VPN Users/);
     expect(admanagerApi).toHaveBeenCalledWith(
@@ -476,7 +476,10 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
         method: 'PATCH',
         path: '/api/v2/users',
         query: { domain: 'corp.example', filter: '(SAM_ACCOUNT_NAME eq "jdoe")' },
-        body: { data: { attributes: { memberOf: 'VPN Users' } } },
+        body: {
+          template: { template_name: 'AD Update Template' },
+          data: { attributes: { memberOf: 'VPN Users' } },
+        },
       })
     );
   });
@@ -491,6 +494,7 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
       domainName: 'corp.example',
       samAccountName: 'jdoe',
       groupNames: ['VPN Users'],
+      templateName: 'AD Update Template',
     });
     expect(textOf(result)).toMatch(/Removed jdoe from: VPN Users/);
     expect(admanagerApi).toHaveBeenCalledWith(
@@ -498,29 +502,9 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
       expect.objectContaining({
         method: 'PATCH',
         path: '/api/v2/users',
-        body: { data: { attributes: { removememberOf: 'VPN Users' } } },
-      })
-    );
-  });
-
-  it('includes a template when one is given', async () => {
-    admanagerApi.mockResolvedValueOnce(
-      answer(200, { data: [{ status: { status_code: 1, status_message: 'ok' } }] })
-    );
-    const handlers = register();
-    await handlers.get('admanager_add_user_to_groups_confirm')!({
-      instanceId: INSTANCE_ID,
-      domainName: 'corp.example',
-      samAccountName: 'jdoe',
-      groupNames: ['VPN Users'],
-      templateName: 'AD Update Template',
-    });
-    expect(admanagerApi).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
         body: {
           template: { template_name: 'AD Update Template' },
-          data: { attributes: { memberOf: 'VPN Users' } },
+          data: { attributes: { removememberOf: 'VPN Users' } },
         },
       })
     );
@@ -534,6 +518,7 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
       domainName: 'corp.example',
       samAccountName: 'jdoe',
       groupNames: ['VPN Users'],
+      templateName: 'AD Update Template',
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/Template not found/);
@@ -549,6 +534,7 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
       domainName: 'corp.example',
       samAccountName: 'jdoe',
       groupNames: ['Nonexistent Group'],
+      templateName: 'AD Update Template',
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/No such group/);
@@ -570,6 +556,7 @@ describe('create user: /RestAPI/CreateUser', () => {
       sAMAccountName: 'jdoe',
       userPrincipalName: 'jdoe@corp.example',
       password: 'Sup3r!Secret9000',
+      templateName: 'AD Create Template',
     });
     expect(textOf(result)).toMatch(/Created jdoe in corp.example/);
     expect(textOf(result)).toContain('Sup3r!Secret9000');
@@ -589,6 +576,7 @@ describe('create user: /RestAPI/CreateUser', () => {
               userPrincipalName: 'jdoe@corp.example',
               OUName: 'OU=Users,DC=corp,DC=example',
               password: 'Sup3r!Secret9000',
+              templateName: 'AD Create Template',
             },
           ]),
         },
@@ -608,6 +596,7 @@ describe('create user: /RestAPI/CreateUser', () => {
       sAMAccountName: 'jdoe',
       userPrincipalName: 'jdoe@corp.example',
       password: 'Sup3r!Secret9000',
+      templateName: 'AD Create Template',
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/Account already exists/);
@@ -627,6 +616,7 @@ describe('create user: /RestAPI/CreateUser', () => {
       sAMAccountName: 'jdoe',
       userPrincipalName: 'jdoe@corp.example',
       password: 'Sup3r!Secret9000',
+      templateName: 'AD Create Template',
       enabled: false,
     });
     expect(admanagerApi).toHaveBeenNthCalledWith(
@@ -652,9 +642,19 @@ describe('update user: a logical PATCH failure is reported, not swallowed', () =
       domainName: 'corp.example',
       samAccountName: 'jdoe',
       department: 'Finance',
+      templateName: 'AD Update Template',
     });
     expect(textOf(result)).toMatch(/Updated jdoe in corp.example/);
     expect(textOf(result)).toContain('Successfully modified.');
+    expect(admanagerApi).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: {
+          template: { template_name: 'AD Update Template' },
+          data: { attributes: { department: 'Finance' } },
+        },
+      })
+    );
   });
 
   it('reports a per-item failure as an error rather than "Updated"', async () => {
@@ -667,6 +667,7 @@ describe('update user: a logical PATCH failure is reported, not swallowed', () =
       domainName: 'corp.example',
       samAccountName: 'jdoe',
       department: 'Finance',
+      templateName: 'AD Update Template',
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/Attribute rejected/);

@@ -675,21 +675,14 @@ export function registerAdManagerTools(
 
     if (mustChangePassword && templateName) {
       // ResetPwd cannot touch pwdLastSet, so a template applied through
-      // ModifyUser is what actually forces the change — and ModifyUser
-      // locates the account by AD's own EMPLOYEE_ID, not sAMAccountName.
-      const lookup = await getUserRecord(instanceId, domainName, samAccountName, ['EMPLOYEE_ID']);
-      const employeeID = lookup.ok ? str(lookup.user.EMPLOYEE_ID) : '';
-      if (!employeeID) {
-        const reason = lookup.ok ? 'this account has no EMPLOYEE_ID in AD' : lookup.message;
-        return textResult(
-          `Password reset for ${samAccountName} in ${domainName}, but "must change at next logon" ` +
-            `could not be applied: ${reason}. New password: ${newPassword}`
-        );
-      }
+      // ModifyUser is what actually forces the change. ModifyUser can
+      // locate the account by whatever identifying field the instance's
+      // template keys on (EMPLOYEE_ID, email, ...); sAMAccountName is
+      // the one every account here already has, so that's what's used.
       const modify = await call(instanceId, 'force a password change at next logon', {
         method: 'POST',
         path: '/RestAPI/ModifyUser',
-        query: { inputFormat: JSON.stringify([{ employeeID, templateName }]) },
+        query: { inputFormat: JSON.stringify([{ sAMAccountName: samAccountName, templateName }]) },
       });
       const modifyOutcome = modify.ok ? interpretV1Response(parseJson(modify.response.body)) : null;
       if (!modify.ok || !modifyOutcome?.ok) {
@@ -799,8 +792,8 @@ export function registerAdManagerTools(
     telephoneNumber: z.string().optional(),
     templateName: z
       .string()
-      .optional()
-      .describe('An ADManager Plus user-creation template to apply, by name.'),
+      .min(1)
+      .describe('The ADManager Plus user-creation template to apply, by name — required.'),
     password: z
       .string()
       .min(1)
@@ -824,8 +817,7 @@ export function registerAdManagerTools(
     if (args.department) body.department = str(args.department);
     if (args.title) body.title = str(args.title);
     if (args.telephoneNumber) body.telephoneNumber = str(args.telephoneNumber);
-    const templateName = str(args.templateName);
-    if (templateName) body.templateName = templateName;
+    body.templateName = str(args.templateName);
     return body;
   }
 
@@ -911,7 +903,7 @@ export function registerAdManagerTools(
           ...(args.email ? [{ label: 'Email', value: str(args.email) }] : []),
           ...(args.department ? [{ label: 'Department', value: str(args.department) }] : []),
           ...(args.title ? [{ label: 'Title', value: str(args.title) }] : []),
-          ...(args.templateName ? [{ label: 'Template', value: str(args.templateName) }] : []),
+          { label: 'Template', value: str(args.templateName) },
           { label: 'Enabled', value: args.enabled === false ? 'No' : 'Yes' },
         ],
         secret: { label: 'Initial password', value: password },
@@ -956,8 +948,8 @@ export function registerAdManagerTools(
     manager: z.string().optional().describe('The manager’s name or distinguished name.'),
     templateName: z
       .string()
-      .optional()
-      .describe('An ADManager Plus template to reapply, by name.'),
+      .min(1)
+      .describe('The ADManager Plus template to apply, by name — required.'),
   });
 
   const EDITABLE_FIELDS: readonly [string, string][] = [
@@ -974,9 +966,8 @@ export function registerAdManagerTools(
     for (const [argKey, attrKey] of EDITABLE_FIELDS) {
       if (typeof args[argKey] === 'string' && args[argKey]) attributes[attrKey] = args[argKey];
     }
-    const templateName = str(args.templateName);
     return {
-      ...(templateName ? { template: { template_name: templateName } } : {}),
+      template: { template_name: str(args.templateName) },
       data: { attributes },
     };
   }
@@ -1025,10 +1016,10 @@ export function registerAdManagerTools(
       if (refusal) return errText(refusal);
       const samAccountName = str(args.samAccountName);
       const domainName = str(args.domainName);
+      // A template is required on every call, so "just reapply the
+      // template" with zero other changes is always a meaningful update —
+      // nothing to refuse here.
       const changed = EDITABLE_FIELDS.filter(([argKey]) => typeof args[argKey] === 'string' && args[argKey]);
-      if (changed.length === 0 && !args.templateName) {
-        return errText('Give at least one attribute to change, or a template to reapply.');
-      }
       const existing = await getUserRecord(instanceId, domainName, samAccountName, [
         'DISPLAY_NAME',
         'DEPARTMENT',
@@ -1066,7 +1057,7 @@ export function registerAdManagerTools(
         subtitle: `${instanceName} · ${domainName}`,
         person: { name: displayName, detail: `${samAccountName} · ${domainName}` },
         fields: [
-          ...(args.templateName ? [{ label: 'Reapply template', value: str(args.templateName) }] : []),
+          { label: 'Template', value: str(args.templateName) },
           ...changed.map(([argKey]) => ({
             label: fieldLabels[argKey],
             value: str(args[argKey]),
@@ -1110,8 +1101,8 @@ export function registerAdManagerTools(
 
   const groupTemplateNameField = z
     .string()
-    .optional()
-    .describe('An ADManager Plus template to apply for this change, by name, if this instance requires one.');
+    .min(1)
+    .describe('The ADManager Plus template to apply for this change, by name — required.');
 
   const addGroupsSchema = z.object({
     instanceId: instanceIdField,
@@ -1128,13 +1119,12 @@ export function registerAdManagerTools(
     const samAccountName = str(args.samAccountName);
     const domainName = str(args.domainName);
     const groupNames = dedupeGroupNames(toStringArray(args.groupNames));
-    const templateName = str(args.templateName);
     const answered = await call(instanceId, 'add the user to groups', {
       method: 'PATCH',
       path: '/api/v2/users',
       query: { domain: domainName, filter: filterClause('SAM_ACCOUNT_NAME', 'eq', samAccountName) },
       body: {
-        ...(templateName ? { template: { template_name: templateName } } : {}),
+        template: { template_name: str(args.templateName) },
         data: { attributes: { memberOf: groupNames.join(';') } },
       },
     });
@@ -1226,13 +1216,12 @@ export function registerAdManagerTools(
     const samAccountName = str(args.samAccountName);
     const domainName = str(args.domainName);
     const groupNames = dedupeGroupNames(toStringArray(args.groupNames));
-    const templateName = str(args.templateName);
     const answered = await call(instanceId, 'remove the user from groups', {
       method: 'PATCH',
       path: '/api/v2/users',
       query: { domain: domainName, filter: filterClause('SAM_ACCOUNT_NAME', 'eq', samAccountName) },
       body: {
-        ...(templateName ? { template: { template_name: templateName } } : {}),
+        template: { template_name: str(args.templateName) },
         data: { attributes: { removememberOf: groupNames.join(';') } },
       },
     });
@@ -1339,6 +1328,7 @@ export function registerAdManagerTools(
         domainName: domainField,
         sourceSamAccountName: samField.describe('Logon name of the user whose groups to copy from.'),
         targetSamAccountName: samField.describe('Logon name of the user to grant those groups to.'),
+        templateName: groupTemplateNameField,
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -1379,6 +1369,7 @@ export function registerAdManagerTools(
           name: sourceDisplayName,
           detail: sourceSam,
         },
+        fields: [{ label: 'Template', value: str(args.templateName) }],
         groupLists: [{ label: 'Groups to add', groups: toAdd, tone: 'add' }],
         // Reuses the add-groups confirm tool directly: by the time a
         // human clicks confirm, this is exactly an "add these groups to
@@ -1390,6 +1381,7 @@ export function registerAdManagerTools(
           domainName,
           samAccountName: targetSam,
           groupNames: toAdd,
+          templateName: str(args.templateName),
         },
       };
       return {
