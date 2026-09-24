@@ -32,39 +32,43 @@ describe('parseBaseUrl', () => {
 });
 
 describe('validApiPath', () => {
-  it('accepts absolute /api/ routes', () => {
+  it('accepts absolute /api/ routes and the legacy /RestAPI/ routes', () => {
     expect(validApiPath('/api/v1/user/unlockUserAccount')).toBe(true);
     expect(validApiPath('/api/v2/users')).toBe(true);
+    expect(validApiPath('/RestAPI/UnlockUser')).toBe(true);
+    expect(validApiPath('/RestAPI/ResetPwd')).toBe(true);
   });
 
-  it('refuses path traversal, a second URL, query strings and non-/api paths', () => {
+  it('refuses path traversal, a second URL, query strings and non-/api/non-/RestAPI paths', () => {
     expect(validApiPath('/api/v2/../v1/user/unlockUserAccount')).toBe(false);
     expect(validApiPath('/api/v2/users?filter=x')).toBe(false);
     expect(validApiPath('https://evil.example/api/v2/users')).toBe(false);
     expect(validApiPath('//evil.example/api/v2/users')).toBe(false);
     expect(validApiPath('/other/v2/users')).toBe(false);
     expect(validApiPath('api/v2/users')).toBe(false);
+    expect(validApiPath('/RestAPI/../v2/users')).toBe(false);
+    expect(validApiPath('RestAPI/UnlockUser')).toBe(false);
   });
 });
 
 describe('filterClause / combineFilters', () => {
-  it('quotes the value and escapes embedded quotes', () => {
-    expect(filterClause('SAM_ACCOUNT_NAME', 'eq', 'jdoe')).toBe('SAM_ACCOUNT_NAME eq "jdoe"');
-    expect(filterClause('LAST_NAME', 'co', 'O"Brien')).toBe('LAST_NAME co "O\\"Brien"');
+  it('quotes the value, escapes embedded quotes, and wraps the whole clause', () => {
+    expect(filterClause('SAM_ACCOUNT_NAME', 'eq', 'jdoe')).toBe('(SAM_ACCOUNT_NAME eq "jdoe")');
+    expect(filterClause('LAST_NAME', 'co', 'O"Brien')).toBe('(LAST_NAME co "O\\"Brien")');
   });
 
-  it('combines clauses with parentheses, and passes a single clause through unwrapped', () => {
-    expect(combineFilters(['FIRST_NAME eq "A"'])).toBe('FIRST_NAME eq "A"');
-    expect(combineFilters(['FIRST_NAME eq "A"', 'LAST_NAME eq "B"'], 'and')).toBe(
+  it('joins already-wrapped clauses without adding another layer of parens', () => {
+    expect(combineFilters(['(FIRST_NAME eq "A")'])).toBe('(FIRST_NAME eq "A")');
+    expect(combineFilters(['(FIRST_NAME eq "A")', '(LAST_NAME eq "B")'], 'and')).toBe(
       '(FIRST_NAME eq "A") and (LAST_NAME eq "B")'
     );
-    expect(combineFilters(['FIRST_NAME eq "A"', 'FIRST_NAME eq "B"'], 'or')).toBe(
+    expect(combineFilters(['(FIRST_NAME eq "A")', '(FIRST_NAME eq "B")'], 'or')).toBe(
       '(FIRST_NAME eq "A") or (FIRST_NAME eq "B")'
     );
   });
 
   it('drops empty clauses and returns empty for none', () => {
     expect(combineFilters(['', '  '])).toBe('');
-    expect(combineFilters(['', 'FIRST_NAME eq "A"'])).toBe('FIRST_NAME eq "A"');
+    expect(combineFilters(['', '(FIRST_NAME eq "A")'])).toBe('(FIRST_NAME eq "A")');
   });
 });

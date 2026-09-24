@@ -69,6 +69,14 @@ export interface AdManagerServerDeps {
   encryptionKey: Buffer;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
+  /**
+   * The value ADManager Plus's legacy `/RestAPI/*` endpoints want in
+   * PRODUCT_NAME, identifying the calling application to the technician
+   * account's audit trail. Defaults to 'Renkei'; an operator whose
+   * ADManager Plus deployment expects a specific registered name can
+   * override it.
+   */
+  legacyProductName?: string;
   /** Injected in tests; production dials the real server. */
   dial?: UpstreamDialer;
   /** Injected in tests; production reads the store. */
@@ -152,22 +160,36 @@ function tlsOf(instance: InstanceRow): TlsPolicy {
 }
 
 /** Append query parameters exactly once, encoded by URLSearchParams. */
-function withQuery(url: string, query: unknown): string {
-  if (!isRecord(query)) return url;
+function withQuery(url: string, query: unknown, extra?: Record<string, string>): string {
   const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      params.append(key, String(value));
-    } else if (Array.isArray(value)) {
-      for (const item of value) {
-        if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
-          params.append(key, String(item));
+  if (isRecord(query)) {
+    for (const [key, value] of Object.entries(query)) {
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        params.append(key, String(value));
+      } else if (Array.isArray(value)) {
+        for (const item of value) {
+          if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+            params.append(key, String(item));
+          }
         }
       }
     }
   }
+  for (const [key, value] of Object.entries(extra ?? {})) params.append(key, value);
   const encoded = params.toString();
   return encoded ? `${url}?${encoded}` : url;
+}
+
+/**
+ * ADManager Plus's legacy query-param-driven API (everything under
+ * `/RestAPI/*`) — unlock, password reset, create/modify/disable/enable —
+ * predates the `/api/v2/*` JSON API's bearer `Authorization` header. It
+ * authenticates via an `AuthToken` + `PRODUCT_NAME` pair sent as BOTH
+ * request headers and query parameters (matching a real, confirmed-working
+ * caller against a production server), never via `Authorization`.
+ */
+function isLegacyRestPath(path: string): boolean {
+  return path.startsWith('/RestAPI/');
 }
 
 export function createAdManagerServer(deps: AdManagerServerDeps): Server {
@@ -179,7 +201,13 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
     ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
 
   /**
-   * One forwarded request, the authtoken set directly as Authorization.
+   * One forwarded request. `/api/v2/*` (and everything else that isn't
+   * the legacy API) sends the authtoken as an `Authorization` header, no
+   * query-param auth. `/RestAPI/*` — the legacy API unlock, reset-password,
+   * create and group-membership actually live on — instead sends
+   * `AuthToken`/`PRODUCT_NAME` as both headers and query parameters; see
+   * `isLegacyRestPath`.
+   *
    * `readBody: false` for a caller that only reads `status` back (probe,
    * test-connection's reachability check) — the response is never
    * buffered or counted against MAX_UPSTREAM_BYTES, so a large answer
@@ -198,12 +226,26 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
     const payload = hasBody
       ? Buffer.from(typeof body.body === 'string' ? body.body : JSON.stringify(body.body))
       : undefined;
+    const legacy = isLegacyRestPath(path);
+    const productName = deps.legacyProductName?.trim() || 'Renkei';
+    const authHeaders: Record<string, string> = {};
+    const authQuery: Record<string, string> = {};
+    if (authToken) {
+      if (legacy) {
+        authHeaders.AuthToken = authToken;
+        authHeaders.PRODUCT_NAME = productName;
+        authQuery.AuthToken = authToken;
+        authQuery.PRODUCT_NAME = productName;
+      } else {
+        authHeaders.authorization = authToken;
+      }
+    }
     return dial({
-      url: withQuery(`${instance.summary.baseUrl}${path}`, body.query),
+      url: withQuery(`${instance.summary.baseUrl}${path}`, body.query, authQuery),
       method,
       headers: {
         accept: str(body.accept) || 'application/json',
-        ...(authToken ? { authorization: authToken } : {}),
+        ...authHeaders,
         ...(payload
           ? { 'content-type': 'application/json', 'content-length': String(payload.byteLength) }
           : {}),

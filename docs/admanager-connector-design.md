@@ -133,26 +133,31 @@ shows a generated password or new-hire credential plainly with a Copy
 button rather than hiding it, and renders group membership as add/remove
 pill lists instead of a diff string.
 
-## Group membership: additive verbs, not a replace-the-list PATCH
+## Group membership: two dedicated attribute keys, not a replace-the-list PATCH
 
-The vendor's `PATCH /api/v2/users` accepts a `memberOf` attribute as a
-semicolon-separated list in the same `data.attributes` bag used for every
-other field, and the sample payloads in the vendor's own Postman
-collection don't make it unambiguous whether that list *replaces* the
-user's full group membership or *adds* to it. For a security connector,
-guessing wrong in the replace direction would silently strip a user out
-of every group they were not explicitly re-listed in — the worst failure
-mode this connector could have.
-
-So group changes route through the **explicit, unambiguous v1 endpoints**
-instead: `POST /api/v1/user/addUsersToGroups` and
-`POST /api/v1/user/removeUsersFromGroups`, each taking `userNames` and
-`groupNames` arrays. These are additive/subtractive by construction —
-there is nothing to misinterpret. `admanager_update_user` (attribute
-edits) explicitly never touches `memberOf`; group membership only ever
-moves through `admanager_add_user_to_groups`,
+Group changes go through `PATCH /api/v2/users`, targeting the account
+with the same `domain`/`filter` query pair `admanager_update_user` uses
+(`filterClause('SAM_ACCOUNT_NAME', 'eq', samAccountName)`), and an
+optional `template.template_name` in the body when the instance's setup
+requires one. What resolves the original ambiguity here — does a
+`memberOf` PATCH replace the list or add to it? — is a confirmed-working
+reference implementation seen running the same API against a real
+ADManager Plus server: `data.attributes.memberOf` (a semicolon-joined
+group-name list) is **additive**, and the vendor's **dedicated key**
+`data.attributes.removememberOf` is how a targeted removal is done
+safely — never by re-PATCHing `memberOf` with a shorter list. Renkei's
+`admanager_add_user_to_groups`/`admanager_remove_user_from_groups` send
+exactly those two keys and nothing else touches `memberOf`;
+`admanager_update_user` (attribute edits) explicitly never sets it.
+Group membership only ever moves through `admanager_add_user_to_groups`,
 `admanager_remove_user_from_groups`, and
 `admanager_copy_group_membership` (below).
+
+A `PATCH /api/v2/users` (group or attribute) answers HTTP 200 even on a
+logical rejection — the body carries either a request-level
+`{IAM_ERROR_STATUS: true, eSTATUS}` envelope or a per-item array whose
+`status.status_code` must be `1`; `interpretV2PatchResponse` in the tool
+layer is what actually decides success, not the HTTP status.
 
 **Copying group membership** ("give this new hire the same access as
 their teammate") reads the source user's `MEMBER_OF` (a list of group
@@ -167,50 +172,67 @@ narrow it).
 free list diffing (`parseGroupDns`, `groupsToAdd`) so it is unit-tested
 without a server.
 
-## An open assumption: the create/update attribute payload shape
+## Two API generations, and which endpoints actually carry each write
 
-ManageEngine's own published v2 Postman collection (dropped in verbatim
-as
-[`admanager-plus-rest-api-v2-postman-collection.json`](./admanager-plus-rest-api-v2-postman-collection.json))
-does not include a worked "Create AD Users" example — only List and
-Update for the Users group. The wrapper shape used here for
-`admanager_create_user` —
+The vendor doc ingested into this repo
+([`admanager-plus-rest-api-reference.md`](./admanager-plus-rest-api-reference.md))
+describes a single, uniformly `/api/v2/*`-shaped REST API — including
+`/api/v1/user/unlockUserAccount`, `/api/v1/user/resetPassword`,
+`/api/v1/user/addUsersToGroups` and `/api/v1/user/removeUsersFromGroups`
+paths for the "v1" operations. **Those paths do not exist on real,
+currently-deployed ADManager Plus servers.** This was discovered by
+diffing Renkei's connector against a separate, unrelated codebase
+confirmed to be driving ADManager Plus successfully in production today:
+the real server exposes two distinct, older generations —
 
-```json
-{
-  "template": { "template_name": "..." },
-  "data": [{ "attributes": { "sAMAccountName": "...", "...": "..." } }]
-}
-```
+- **`/api/v2/*`** — JSON request/response bodies, a bearer `Authorization`
+  header, SCIM-style `filter` query params, `PATCH`-based updates
+  (`template.template_name` + `data.attributes`). `admanager_get_user`,
+  `admanager_search_users`, `admanager_update_user`, and the group tools
+  (see above) all live here, and always did.
+- **`/RestAPI/*`** (legacy, query-param-driven, no request body) — every
+  other write: `POST /RestAPI/UnlockUser`, `POST /RestAPI/ResetPwd`,
+  `POST /RestAPI/CreateUser`, `POST /RestAPI/ModifyUser`, `POST
+  /RestAPI/DisableUser`/`EnableUser`. Every argument travels as a query
+  parameter — an `inputFormat` key holding a JSON-stringified array of
+  one object per account acted on — and the response is either that same
+  array shape (per-account `status`/`statusMessage`) on success or a
+  single `{SEVERITY, STATUS_MESSAGE, ERROR_CODE}` envelope on a
+  request-level failure. `apps/web/lib/mcp-tools/admanager/index.ts`'s
+  `interpretV1Response` is what actually decides success — like the v2
+  PATCH endpoints, these answer HTTP 200 even on a logical rejection.
 
-— is inferred from two confirmed siblings in the same collection: Create
-AD Computers (`template` + `data: [{ attributes }]`, an array to support
-bulk creation) and Update AD Users (`template` + `data: { attributes }`,
-singular). Attribute keys are the LDAP attribute names in camelCase, the
-same convention the Update Users and Create Computers samples both use
-(`sAMAccountName`, `memberOf`, `co`, `manager`, `employeeID`, `OUName`,
-`extensionAttribute1`, `accountNameHistory`, …) rather than the "Column
-Name" vocabulary from the filtering/response-columns reference (those
-names — `FIRST_NAME`, `SAM_ACCOUNT_NAME` — are for `filter`/`fields`/
-`sort` query parameters only, per that doc's own note, never for a
-request body). The initial `password` (and `enabled`) stay as fields
-alongside `attributes` rather than folded into it, following the older
-V1 API reference's explicit `POST /api/v2/users` body — a plain
-`password` field is far more plausible for an admin API to expose than
-routing a password through `unicodePwd`'s UTF‑16LE/quoted encoding as a
-generic AD attribute, and it matches the pattern of `template` also
-sitting beside `attributes`, not inside it.
+`/RestAPI/*` authenticates differently, too: `AuthToken` and
+`PRODUCT_NAME` (default `'Renkei'`, `ADMANAGER_PRODUCT_NAME` overrides
+it) sent as BOTH request headers and query parameters — never the
+`Authorization` header `/api/v2/*` uses. `apps/worker-admanager/src/server.ts`'s
+`forward()` branches on the path (`isLegacyRestPath`, `/RestAPI/`
+prefix) to inject the right shape; the web/tool layer never sees the
+decrypted authtoken either way, so this branching has to live in the
+worker.
 
-**This is a documented inference, not a confirmed contract.** Whoever
-turns this on against a real ADManager Plus instance should verify
-`admanager_create_user`/`admanager_update_user` against that instance's
-own REST API documentation (Admin → System Settings → Integrations →
-REST API → Documentation, per the companion guide) before relying on it,
-and fix `packages/connector-admanager/src/api.ts`'s
-`buildCreateUserPayload`/`buildUpdateUserPayload` if the real shape
-differs. Unlock, reset password, and the group-membership endpoints
-carry no such uncertainty — they are documented explicitly, with worked
-examples, in the source material.
+Password reset is a two-step flow because `ResetPwd` cannot itself force
+"must change password at next logon" — `admanager_reset_password` calls
+`POST /RestAPI/ResetPwd` to set the password, then, when
+`mustChangePassword` is true, looks up the account's AD-side
+`EMPLOYEE_ID` (not `sAMAccountName` — `ModifyUser` targets by that field)
+and calls `POST /RestAPI/ModifyUser` applying a caller-supplied
+`resetPasswordTemplateName` template, which is what actually toggles
+`pwdLastSet`. There is no way to force that flag without a template, so
+the tool refuses up front rather than silently resetting the password
+without forcing a change.
+
+`admanager_create_user`'s `createUserBody` sends a flat object (no
+`template`/`data.attributes` v2 wrapper — the legacy `CreateUser` input
+format doesn't have one) as one `inputFormat` array entry; success is a
+JSONArray whose first entry has `status: "SUCCESS"`, matching the
+confirmed reference exactly. The exact set of extra attribute keys
+`CreateUser` accepts beyond the ones sent here is still not confirmed
+against a real server response (the reference implementation's own org
+creates users almost entirely through a template, populating very few
+explicit fields) — if an instance rejects a field, that is the
+remaining seam to verify against that instance's own REST API
+documentation.
 
 ## The dedicated worker process, and why it's simpler than Mirth's
 
@@ -221,8 +243,9 @@ Mirth and file shares applies: all HTTP happens in
 (`ADMANAGER_WORKER_API_KEY`). Unlike Mirth's worker, there is:
 
 - **no session/cookie jar** (`sessions.ts`) — the authtoken IS the
-  credential on every request, so `forward()` just sets the
-  `Authorization` header and dials;
+  credential on every request, so `forward()` just sets it and dials (as
+  `Authorization` for `/api/v2/*`, or as `AuthToken`/`PRODUCT_NAME` for
+  `/RestAPI/*` — see above);
 - **no login/logout ops** — nothing to establish or tear down;
 - **no retry-on-401-then-relogin loop** — a 401 here means the stored
   authtoken is bad (expired, revoked, wrong scope) and is forwarded to

@@ -100,9 +100,13 @@ start — no read/write/destructive ladder ever existed here. Unlike Mirth, **ev
 preview + confirm on the shared issue-preview card regardless of which permission gates it (not
 just permanent operations): these are identity/access actions against a real employee's account
 with no version history in ADManager Plus's UI to catch a model's mistake after the fact. Group
-membership changes route through the explicit, additive `addUsersToGroups`/`removeUsersFromGroups`
-v1 endpoints rather than the ambiguous `memberOf` attribute on the v2 PATCH — see the design doc's
-"Group membership: additive verbs, not a replace-the-list PATCH."
+membership changes route through `PATCH /api/v2/users`'s two dedicated attribute keys —
+`memberOf` (additive) and `removememberOf` (subtractive) — never a replace-the-list PATCH; see the
+design doc's "Group membership: two dedicated attribute keys, not a replace-the-list PATCH."
+Unlock, reset password, create, and disable/enable instead go through ADManager Plus's older,
+query-param-driven `/RestAPI/*` API, which several of them turned out to actually live on rather
+than the `/api/v1/user/*` paths this connector originally guessed at — see the design doc's "Two
+API generations" section.
 
 The package itself (`packages/connector-admanager`) is I/O-free apart from the Kysely store: pure
 API helpers (`parseBaseUrl`, `validApiPath`, `filterClause`/`combineFilters` for building
@@ -111,7 +115,8 @@ ADManager Plus's SCIM-like filter expressions) and pure group-membership diffing
 names), the credential envelope, the store, and `resolveTarget`. All HTTP happens in
 **`apps/worker-admanager`**, a dedicated egress process (ADManager Plus is on-prem, the same SSRF
 reasoning as OnBase/Mirth/file shares) — stateless relative to Mirth's worker: no session/cookie
-jar, no login/logout ops, just decrypt-and-forward with the authtoken as `Authorization`.
+jar, no login/logout ops, just decrypt-and-forward, with the authtoken sent as `Authorization` for
+`/api/v2/*` or as `AuthToken`/`PRODUCT_NAME` for the legacy `/RestAPI/*` paths.
 
 The tool surface (`apps/web/lib/mcp-tools/admanager/`, prefix `admanager_*`) is curated only — no
 operation-table codegen the way Mirth covers its ~200 routes, since this connector's scope is
@@ -123,10 +128,11 @@ time a human clicks confirm). Every tool names exactly one permission, registers
 connected instance grants it, and re-checks it on the instance named per call — the Mirth
 discipline.
 
-See [`admanager-connector-design.md`](./admanager-connector-design.md) for the decisions,
-including a documented open assumption about the create/update attribute payload shape (the
-vendor's own v2 Postman export has no worked "Create AD Users" example) that should be verified
-against a live instance before relying on it.
+See [`admanager-connector-design.md`](./admanager-connector-design.md) for the decisions, including
+the two ADManager Plus API generations this connector actually calls against and the one remaining
+open seam — `admanager_create_user`'s exact set of accepted attribute keys beyond what's already
+confirmed working, which should be checked against a live instance before relying on it for
+anything beyond the fields this connector already sends.
 
 ## connector-sandbox
 

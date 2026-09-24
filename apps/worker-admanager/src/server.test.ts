@@ -153,6 +153,30 @@ describe('api', () => {
     expect(calls[0].headers.authorization).toBe('tok-alice');
   });
 
+  it('sends AuthToken/PRODUCT_NAME as headers and query params for legacy /RestAPI/* paths, never Authorization', async () => {
+    script = [ok('[{"status":"1"}]')];
+    const response = await post('/v1/api', {
+      tenantId: 'tenant-1',
+      instanceId: INSTANCE_ID,
+      subject: 'auth0|alice',
+      method: 'POST',
+      path: '/RestAPI/UnlockUser',
+      query: { inputFormat: '[{"sAMAccountName":"jdoe"}]', domainName: 'corp.example' },
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call.headers.authorization).toBeUndefined();
+    expect(call.headers.AuthToken).toBe('tok-alice');
+    expect(call.headers.PRODUCT_NAME).toBe('Renkei');
+    const url = new URL(call.url);
+    expect(url.pathname).toBe('/RestAPI/UnlockUser');
+    expect(url.searchParams.get('inputFormat')).toBe('[{"sAMAccountName":"jdoe"}]');
+    expect(url.searchParams.get('domainName')).toBe('corp.example');
+    expect(url.searchParams.get('AuthToken')).toBe('tok-alice');
+    expect(url.searchParams.get('PRODUCT_NAME')).toBe('Renkei');
+  });
+
   it('refuses a bad path or method before dialing anything', async () => {
     const badMethod = await post('/v1/api', {
       tenantId: 'tenant-1',
