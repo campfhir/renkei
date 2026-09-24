@@ -47,7 +47,7 @@ jobs:
   # above have passed on a push to main — never for a pull request. Each
   # image is tagged twice: `latest` and the version in apps/web/package.json,
   # the same version scripts/docker-build.sh stamps (every app in the
-  # workspace shares it). One matrix entry per target, so seven Dockerfile
+  # workspace shares it). One matrix entry per target, so eight Dockerfile
   # stages build in parallel and no single runner has to hold all of them.
   #
   # Secrets (repository → Settings → Secrets and variables → Actions):
@@ -84,6 +84,8 @@ jobs:
             image: renkei-onbase
           - target: mirth
             image: renkei-mirth
+          - target: admanager
+            image: renkei-admanager
           - target: sandbox
             image: renkei-sandbox
     steps:
