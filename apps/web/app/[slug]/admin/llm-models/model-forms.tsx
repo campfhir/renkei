@@ -463,8 +463,8 @@ export default function ModelForms({ slug }: { slug: string }) {
               <p className={hintClass}>
                 Some reasoning-model deployments (an Azure gpt-6-astra-1 case is where this setting
                 came from) cannot make tool calls on chat completions at ANY reasoning effort value
-                — their own error names <span className="font-mono">/v1/responses</span> as the
-                only path. Switch this only if &quot;Test connection&quot; with tools fails citing
+                — their own error names <span className="font-mono">/v1/responses</span> as the only
+                path. Switch this only if &quot;Test connection&quot; with tools fails citing
                 <span className="font-mono"> reasoning_effort</span> no matter what you set it to.
               </p>
             </div>
@@ -672,33 +672,48 @@ export default function ModelForms({ slug }: { slug: string }) {
             </div>
           </div>
 
-          {draft.provider === 'openai' ? (
-            <div>
-              <label className={labelClass} htmlFor="model-reasoning-effort">
-                Reasoning effort <span className="font-normal text-gray-500">(optional)</span>
-              </label>
-              <input
-                id="model-reasoning-effort"
-                className={inputClass}
-                value={draft.reasoningEffort}
-                list="reasoning-effort-suggestions"
-                placeholder="Model default"
-                onChange={(event) => {
-                  setDraft({ ...draft, reasoningEffort: event.target.value });
-                  clearTest();
-                }}
-              />
-              <datalist id="reasoning-effort-suggestions">
-                <option value="none" />
-                <option value="minimal" />
-                <option value="low" />
-                <option value="medium" />
-                <option value="high" />
-                <option value="xhigh" />
-              </datalist>
+          <div>
+            <label className={labelClass} htmlFor="model-reasoning-effort">
+              Reasoning effort <span className="font-normal text-gray-500">(optional)</span>
+            </label>
+            <input
+              id="model-reasoning-effort"
+              className={inputClass}
+              value={draft.reasoningEffort}
+              list="reasoning-effort-suggestions"
+              placeholder="Model default"
+              onChange={(event) => {
+                setDraft({ ...draft, reasoningEffort: event.target.value });
+                clearTest();
+              }}
+            />
+            <datalist id="reasoning-effort-suggestions">
+              {draft.provider === 'anthropic' ? null : (
+                <>
+                  <option value="none" />
+                  <option value="minimal" />
+                </>
+              )}
+              <option value="low" />
+              <option value="medium" />
+              <option value="high" />
+              <option value="xhigh" />
+              <option value="max" />
+            </datalist>
+            {draft.provider === 'anthropic' ? (
               <p className={hintClass}>
-                Reasoning models only (GPT-5 family and newer). Leave temperature blank for these
-                — they reject it. Free text, not a fixed list: which values a model accepts (and
+                Claude 4.6 and later think adaptively, and this is the one dial on how long they
+                deliberate and how many tool rounds they take (sent as output_config.effort: low,
+                medium, high, xhigh or max; blank is the provider&apos;s default, high). A
+                chat&apos;s own Thinking switch only shows or hides the thinking summary on these
+                models — it does not turn thinking off. Set medium or low here when replies think
+                longer than the work needs, or for a model row meant for sub-agents and quick
+                lookups. Ignored on older Claude models, which take a thinking budget instead.
+              </p>
+            ) : (
+              <p className={hintClass}>
+                Reasoning models only (GPT-5 family and newer). Leave temperature blank for these —
+                they reject it. Free text, not a fixed list: which values a model accepts (and
                 whether it accepts &quot;none&quot; at all) is entirely the provider&apos;s call and
                 differs by model — one Azure deployment demanded &quot;none&quot; to allow tool
                 calls at all, another rejected &quot;none&quot; outright and only took low/medium/
@@ -706,8 +721,8 @@ export default function ModelForms({ slug }: { slug: string }) {
                 &quot;none&quot; and may reject tool calls on its own. Check the exact error message
                 — it names the accepted values — and paste one here.
               </p>
-            </div>
-          ) : null}
+            )}
+          </div>
 
           <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
             {/*
@@ -731,8 +746,8 @@ export default function ModelForms({ slug }: { slug: string }) {
               </span>
             ) : null}
             <p className={hintClass}>
-              Sends one real chat completion with these settings — the same check an agent run
-              would make.
+              Sends one real chat completion with these settings — the same check an agent run would
+              make.
             </p>
             {testError ? (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{testError}</p>

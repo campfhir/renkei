@@ -155,7 +155,7 @@ const DISCOVERY_BRIEF = `This chat has connectors enabled beyond the tools liste
  * secret) does well; the one that guesses at files or asks for a token
  * does not.
  */
-const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. Whether to work on a new branch is your call from what the person asks: a change meant for review goes on a branch of its own, a quick fix or an experiment they want on the current branch stays there.
+const CODE_BRIEF = `The code_* tools work in this repository's checkout on the sandbox. Work the way a careful developer would: read the files you will change and the project's own conventions first (code_ls, code_find, code_grep, code_read_file — the repository is already checked out here, so read and search it with these and never through the Bitbucket or GitHub file, source-browsing or code-search tools, which are slower and see the remote branch rather than this working tree), make changes with code_edit_file rather than rewriting whole files, run the project's own tests, lint or build with code_run and read what they say, then commit with a clear message (code_git_commit) and push (code_git_push); a pull request is bitbucket_create_pull_request. Whether to work on a new branch is your call from what the person asks: a change meant for review goes on a branch of its own, a quick fix or an experiment they want on the current branch stays there.
 
 You are the orchestrator of this conversation, and its context is for coordinating, not for the raw output of every file read and test run: that fills the conversation with detail that is useless a turn later and crowds out what matters. So delegate. Anything that takes more than a handful of tool calls — investigating how something works, finding every place a change touches, implementing one self-contained piece, running and fixing a test suite — goes to a sub-agent with code_delegate: give it a complete, self-contained task with what to report (readOnly for a pure investigation), one sub-agent per piece, and work from its report. The sub-agent's own calls and results never enter this conversation; only its report does, and it is kept for you. Read reports critically — you own the result — and keep for yourself what is quick: a look at one file, a check of what a report claims, and the commit, the push and the pull request, which only you make. Results of tool calls from earlier turns are trimmed from your context; if you need one again, call the tool again rather than recall it.
 
@@ -181,6 +181,11 @@ const SERVICES_BRIEF = `When the project's tests or commands need a service — 
  */
 const VOICE_BRIEF = `This is a voice conversation: what you write is read aloud to the person as it streams, and they cannot see the tools you call — a call is silence to them. Before each tool call, say in one short, plain sentence what you are about to do and with what, then call it: "Looking for a slot with Priya and Marcus on Thursday afternoon", "Checking OPS-41 in Jira", "Searching the last sprint for issues that slipped". After several calls in a row, say in a sentence what you have found so far before going on. Write the reply the way you would say it: short sentences, no headings, tables, bullet lists, code or links unless asked for them, names and numbers said plainly, and a question at the end only when you need an answer.`;
 
+/** `2026-09-04T10:00Z`: the ISO stamp with minutes and seconds dropped. */
+export function hourStamp(now: Date): string {
+  return `${now.toISOString().slice(0, 13)}:00Z`;
+}
+
 function fileLine(file: { id: string; filename: string; contentType: string; sizeBytes: number }) {
   return `- ${file.filename} (${file.contentType}, ${Math.round(file.sizeBytes / 1024)} KB, attachment id ${file.id})`;
 }
@@ -190,7 +195,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   const who: string[] = [];
   if (input.personName) who.push(`You are talking with ${input.personName}.`);
   if (input.orgName) who.push(`The organization is ${input.orgName}.`);
-  who.push(`The current date and time is ${input.now.toISOString()} (UTC).`);
+  // To the hour, not the second: the system prompt sits between the tool
+  // list and the history in the provider's cache prefix, so a stamp that
+  // differs every turn re-writes the whole conversation into the cache
+  // on every Send (full input price and prefill latency, no reads).
+  // resolve_date is always offered for the exact moment.
+  who.push(`The current date and time is ${hourStamp(input.now)} (UTC, to the hour).`);
   sections.push(who.join(' '));
 
   if (input.chatSummary) {

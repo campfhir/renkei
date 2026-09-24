@@ -34,7 +34,12 @@ export interface LocalToolContext {
    * `model` is what spent it when that is not the turn's own model (a
    * sub-agent on a model of its own); absent, the turn's model is stamped.
    */
-  recordUsage?: (usage: LlmUsage, model?: LlmCallModel | null) => Promise<void>;
+  recordUsage?: (
+    usage: LlmUsage,
+    model?: LlmCallModel | null,
+    /** Wall time of the model call the usage came from, for the ledger. */
+    durationMs?: number
+  ) => Promise<void>;
   /**
    * Where a tool that runs a long-ish operation of its own (chat_compact)
    * reports live progress — the turn's own channel, already open. Absent

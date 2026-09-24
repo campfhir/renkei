@@ -44,6 +44,16 @@ export interface AnthropicConfig {
   baseUrl?: string | null;
   /** Azure surfaces version routes with ?api-version=; null = omit. */
   apiVersion?: string | null;
+  /**
+   * `output_config.effort` (low/medium/high/xhigh/max) on the adaptive
+   * generations, where it is the only dial on how much the model thinks
+   * and how many tool rounds it takes — a budget is rejected there, and
+   * omitting `thinking` no longer turns thinking off on Opus 5 / Sonnet 5
+   * / Fable. Passed through verbatim like the OpenAI dialects' effort; null
+   * = the provider's default (high). Not sent on the budget generation,
+   * where Sonnet 4.5 / Haiku 4.5 reject it.
+   */
+  reasoningEffort?: string | null;
 }
 
 function toWire(block: LlmContentBlock): Record<string, unknown> | null {
@@ -370,6 +380,9 @@ export class AnthropicProvider implements LlmProvider {
         ? { temperature: request.temperature }
         : {}),
       ...(thinking ? { thinking } : {}),
+      ...(generation.thinking === 'adaptive' && this.config.reasoningEffort
+        ? { output_config: { effort: this.config.reasoningEffort } }
+        : {}),
       ...(stream ? { stream: true } : {}),
       // With caching on, the system prompt is its own breakpoint too, so a
       // request with no tools still caches its prefix.

@@ -37,9 +37,22 @@ export type ChatBlock =
       /** MCP Apps widget binding — see LlmContentBlock's tool_result doc. */
       uiResourceUri?: string;
       structuredContent?: unknown;
+      /** How long the call ran, for the thread's fold; absent on rows before it was kept. */
+      durationMs?: number;
     }
   | { type: 'document'; mediaType: string; title?: string; bytes: number }
   | { type: 'image'; mediaType: string; bytes: number };
+
+/**
+ * How long a reply's one model call took, kept on its assistant row by
+ * the turn runner: the whole call, and the wait before anything streamed
+ * — prefill and thinking, the part a person experiences as a pause.
+ */
+export interface MessageTiming {
+  durationMs: number;
+  /** Null when the call ended before a single block was opened. */
+  firstTokenMs: number | null;
+}
 
 export interface ChatMessageView {
   id: string;
@@ -54,6 +67,8 @@ export interface ChatMessageView {
   model: string | null;
   stopReason: string | null;
   usage: LlmUsage | null;
+  /** An assistant row's model-call timing; absent or null on every other row and on rows before it was kept. */
+  timing?: MessageTiming | null;
   error: string | null;
   createdAt: string;
   /** Attachments the person sent with this prompt (Phase 5 fills these). */
@@ -200,6 +215,7 @@ export function toChatBlock(block: LlmContentBlock): ChatBlock {
         ...(block.isError ? { isError: true } : {}),
         ...(block.uiResourceUri ? { uiResourceUri: block.uiResourceUri } : {}),
         ...('structuredContent' in block ? { structuredContent: block.structuredContent } : {}),
+        ...(block.durationMs !== undefined ? { durationMs: block.durationMs } : {}),
       };
     case 'document':
       return {

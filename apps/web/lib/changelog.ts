@@ -46,6 +46,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'changed',
+        title: 'Reasoning effort applies to Claude models too',
+        detail:
+          'A model row’s Reasoning effort now sets how long Claude 4.6 and later deliberate before answering and how many tool rounds they take, the same way it already did for the GPT reasoning models — low, medium, high, xhigh or max, blank for the provider’s default. Set it lower on a row whose replies think longer than the work needs, or on a row meant for sub-agents. On these models a chat’s own Thinking switch only shows or hides the thinking summary.',
+      },
+      {
+        kind: 'added',
+        title: 'See where a reply’s time went',
+        detail:
+          'The collapsed “Thought · 3 tool calls” line under a reply now says how long the model’s own calls took apart from the tools they waited on — “12s model, 41s tools” — and each tool call in it carries its own time, so a slow reply reads as thinking or as one slow tool at a glance. A sub-agent’s transcript shows the time of each of its model calls and tool calls the same way, and an agent run’s timeline says how many model calls an attempt made and how long it waited on them beside the tool calls it already listed. Behind it, every model call now records how long it took in the organization’s usage ledger.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Replies in long chats start sooner',
+        detail:
+          'Every Send used to re-read the whole conversation into the model’s cache before the reply could begin, because the prompt carried the time to the second. It now carries the hour, so a chat’s history is read from the cache from one turn to the next and the reply starts on its first line instead of after a pause.',
+      },
+      {
         kind: 'added',
         title: 'A Pipelines page for each Bitbucket code project',
         detail:

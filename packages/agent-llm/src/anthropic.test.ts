@@ -133,6 +133,46 @@ describe('AnthropicProvider thinking by generation', () => {
     expect(body.temperature).toBeUndefined();
   });
 
+  it('sends a configured effort as output_config on the adaptive generations', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({
+      apiKey: 'k',
+      model: 'claude-sonnet-5',
+      reasoningEffort: 'low',
+    }).complete(thinkingRequest);
+    expect(bodyOf().output_config).toEqual({ effort: 'low' });
+  });
+
+  it('sends effort with thinking off too — on Opus 5 the model thinks anyway', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({
+      apiKey: 'k',
+      model: 'claude-opus-5',
+      reasoningEffort: 'medium',
+    }).complete(request);
+    const body = bodyOf();
+    expect(body.thinking).toBeUndefined();
+    expect(body.output_config).toEqual({ effort: 'medium' });
+  });
+
+  it('never sends effort on the budget generation, where Haiku 4.5 rejects it', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({
+      apiKey: 'k',
+      model: 'claude-haiku-4-5',
+      reasoningEffort: 'low',
+    }).complete(thinkingRequest);
+    expect(bodyOf().output_config).toBeUndefined();
+  });
+
+  it('sends no output_config when no effort is configured', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-5' }).complete(
+      thinkingRequest
+    );
+    expect(bodyOf().output_config).toBeUndefined();
+  });
+
   it('keeps temperature on older generations with thinking off', async () => {
     fetchSpy.mockResolvedValue(okResponse());
     await new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-4-6' }).complete({

@@ -193,6 +193,8 @@ async function seedChat(
             null,
             2
           ),
+          // How long the call ran, as the runner stamps it on the block.
+          durationMs: 800,
         },
       ],
     },
@@ -221,8 +223,8 @@ async function seedChat(
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10, $11)`,
+      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason, timing)
+       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10, $11, $12)`,
       [
         E2E_TENANT_ID,
         CHAT_ID,
@@ -235,6 +237,9 @@ async function seedChat(
         assistant ? 'anthropic' : null,
         assistant ? 'e2e-model' : null,
         assistant ? (row.seq === 2 ? 'tool_use' : 'end_turn') : null,
+        // The model call behind the row that thought and called the tool:
+        // 2.1s in all, 0.9s before its first block streamed.
+        assistant && row.seq === 2 ? JSON.stringify({ durationMs: 2100, firstTokenMs: 900 }) : null,
       ]
     );
   }
@@ -371,12 +376,16 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(page.getByText('Which issues slipped out of the last OPS sprint?')).toBeVisible();
     const work = page.locator('details.chat-fold', { hasText: 'Thought · 1 tool call' });
     await expect(work).toBeVisible();
+    // Where the time went, from the rows' own timing: the model call
+    // apart from the tool it waited on.
+    await expect(work.locator('> summary')).toContainText('2s model, 0.8s tools');
     await expect(work.getByText(/closed sprint is the one to search/)).toBeHidden();
     await work.locator('> summary').click();
     await expect(work.getByText(/closed sprint is the one to search/)).toBeVisible();
 
     const call = work.locator('details.chat-fold', { hasText: 'Called' });
     await expect(call).toBeVisible();
+    await expect(call.locator('[data-call-duration]')).toHaveText('0.8s');
     await call.locator('> summary').click();
     await expect(call.getByText('Input')).toBeVisible();
     await expect(call.getByText('Result')).toBeVisible();

@@ -550,6 +550,12 @@ export interface RecordLlmCallInput {
    * re-pointed at another model later, the name on the row cannot.
    */
   model?: LlmCallModel | null;
+  /**
+   * Wall time of the call(s) this row counts (migration 125): one call for
+   * a chat's or a sub-agent's row, an attempt's turns summed for a run's.
+   * Omitted = not measured.
+   */
+  durationMs?: number | null;
 }
 
 export interface LlmCallModel {
@@ -586,6 +592,8 @@ export async function recordLlmCall(
           llm_model_id: input.model?.llmModelId ?? null,
           provider: input.model?.provider ?? null,
           model: input.model?.model ?? null,
+          duration_ms:
+            typeof input.durationMs === 'number' ? Math.max(0, Math.round(input.durationMs)) : null,
         })
         .execute(),
     'DB_ERROR' as const

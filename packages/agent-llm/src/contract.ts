@@ -66,6 +66,12 @@ export type LlmContentBlock =
        */
       uiResourceUri?: string;
       structuredContent?: unknown;
+      /**
+       * A consumer's own record of how long the call took, wall clock,
+       * permission waits excluded — kept in the stored row for the thread
+       * and never sent to a provider, like the two fields above.
+       */
+      durationMs?: number;
     }
   /**
    * A file the model should SEE, not read about — a PDF page-rendered by

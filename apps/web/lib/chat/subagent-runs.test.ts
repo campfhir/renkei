@@ -24,8 +24,13 @@ describe('parseTranscript', () => {
           { type: 'tool_use', id: 'g1', name: 'code_grep', input: { pattern: 'x' } },
           { type: 'bogus' },
         ],
+        // How long the model call took (delegate.ts keeps it on the message).
+        durationMs: 4200,
       },
-      { role: 'user', content: [{ type: 'tool_result', toolUseId: 'g1', content: 'a.ts:1: x' }] },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', toolUseId: 'g1', content: 'a.ts:1: x', durationMs: 310 }],
+      },
       { role: 'system', content: [] },
       'not a message',
     ]);
@@ -37,8 +42,12 @@ describe('parseTranscript', () => {
           { type: 'thinking', thinking: 'grep first' },
           { type: 'tool_use', id: 'g1', name: 'code_grep', input: { pattern: 'x' } },
         ],
+        durationMs: 4200,
       },
-      { role: 'user', blocks: [{ type: 'tool_result', toolUseId: 'g1', content: 'a.ts:1: x' }] },
+      {
+        role: 'user',
+        blocks: [{ type: 'tool_result', toolUseId: 'g1', content: 'a.ts:1: x', durationMs: 310 }],
+      },
     ]);
     expect(parseTranscript('{')).toEqual([]);
     expect(parseTranscript('{}')).toEqual([]);

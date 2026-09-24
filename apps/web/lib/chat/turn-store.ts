@@ -66,7 +66,7 @@ export function createTurnStore(
       await interruptSubagentRunsOfTurn(db, scope.turnId);
       await touchChat(db, scope.chatId, {});
     },
-    async recordUsage(usage, model) {
+    async recordUsage(usage, model, durationMs) {
       await recordLlmCall(db, {
         tenantId: scope.tenantId,
         subject: scope.subject,
@@ -74,6 +74,7 @@ export function createTurnStore(
         purpose: 'chat',
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        ...(durationMs !== undefined ? { durationMs } : {}),
         ...(usage.cacheReadInputTokens !== undefined
           ? { cacheReadInputTokens: usage.cacheReadInputTokens }
           : {}),

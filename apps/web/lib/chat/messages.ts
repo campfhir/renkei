@@ -9,7 +9,13 @@ import type { DB } from '@renkei/db';
 import type { LlmContentBlock, LlmUsage } from '@renkei/agent-llm';
 import { isUuid } from '@/lib/uuid';
 import { openBlocks, sealBlocks } from './content-crypto';
-import type { MessageKind, MessageRole, MessageStatus, ChatMessageView } from './views';
+import type {
+  MessageKind,
+  MessageRole,
+  MessageStatus,
+  MessageTiming,
+  ChatMessageView,
+} from './views';
 import { toChatBlocks } from './views';
 
 export interface StoredMessage {
@@ -26,6 +32,7 @@ export interface StoredMessage {
   model: string | null;
   stopReason: string | null;
   usage: LlmUsage | null;
+  timing: MessageTiming | null;
   error: string | null;
   /** The compaction pass that folded this message, if any (compaction.ts). */
   summaryId: string | null;
@@ -47,6 +54,7 @@ const MESSAGE_COLUMNS = [
   'model',
   'stop_reason',
   'usage',
+  'timing',
   'error',
   'summary_id',
   'created_at',
@@ -103,6 +111,24 @@ function usageOf(value: unknown): LlmUsage | null {
   };
 }
 
+function timingOf(value: unknown): MessageTiming | null {
+  let parsed: unknown = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const record: { durationMs?: unknown; firstTokenMs?: unknown } = parsed;
+  if (typeof record.durationMs !== 'number') return null;
+  return {
+    durationMs: record.durationMs,
+    firstTokenMs: typeof record.firstTokenMs === 'number' ? record.firstTokenMs : null,
+  };
+}
+
 function usageJson(usage: LlmUsage): {
   inputTokens: number;
   outputTokens: number;
@@ -135,6 +161,7 @@ function rowOf(raw: {
   model: string | null;
   stop_reason: string | null;
   usage: unknown;
+  timing: unknown;
   error: string | null;
   summary_id: string | null;
   created_at: Date;
@@ -154,6 +181,7 @@ function rowOf(raw: {
     model: raw.model,
     stopReason: raw.stop_reason,
     usage: usageOf(raw.usage),
+    timing: timingOf(raw.timing),
     error: raw.error,
     summaryId: raw.summary_id,
     createdAt: raw.created_at,
@@ -268,6 +296,7 @@ export interface AssistantPatch {
   status?: MessageStatus;
   stopReason?: string | null;
   usage?: LlmUsage | null;
+  timing?: MessageTiming | null;
   error?: string | null;
 }
 
@@ -286,6 +315,7 @@ export async function updateMessageContent(
       ...(patch.status !== undefined ? { status: patch.status } : {}),
       ...(patch.stopReason !== undefined ? { stop_reason: patch.stopReason } : {}),
       ...(patch.usage !== undefined ? { usage: patch.usage ? usageJson(patch.usage) : null } : {}),
+      ...(patch.timing !== undefined ? { timing: patch.timing ? { ...patch.timing } : null } : {}),
       ...(patch.error !== undefined ? { error: patch.error } : {}),
       updated_at: sql<Date>`NOW()`,
     })
@@ -308,6 +338,7 @@ export function toMessageView(message: StoredMessage): ChatMessageView {
     model: message.model,
     stopReason: message.stopReason,
     usage: message.usage,
+    timing: message.timing,
     error: message.error,
     createdAt: message.createdAt.toISOString(),
     attachments: [],

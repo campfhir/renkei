@@ -332,10 +332,17 @@ describe('runChatTurn', () => {
       'assistant/assistant/complete',
     ]);
     expect(rows[1].blocks).toEqual([
-      { type: 'tool_result', toolUseId: 'tu_jira_search', content: 'result of jira_search' },
+      // durationMs is the call's wall time by the runner's own clock — the
+      // fake clock here does not move, so it reads 0, and it is there.
+      {
+        type: 'tool_result',
+        toolUseId: 'tu_jira_search',
+        content: 'result of jira_search',
+        durationMs: 0,
+      },
     ]);
     expect(rows[3].blocks).toEqual([
-      { type: 'tool_result', toolUseId: 'tu_local_echo', content: 'echo 1' },
+      { type: 'tool_result', toolUseId: 'tu_local_echo', content: 'echo 1', durationMs: 0 },
     ]);
     // The thinking block is kept on the stored row (signature and all)...
     expect(rows[0].blocks[0]).toEqual({
@@ -828,6 +835,8 @@ describe('runChatTurn', () => {
         toolUseId: 'tu_local_stuck',
         content: 'The tool could not be reached.',
         isError: true,
+        // Real clock here (the timeout is a real timer): the time waited, whatever it was.
+        durationMs: expect.any(Number),
       },
     ]);
   });
@@ -861,7 +870,12 @@ describe('runChatTurn', () => {
     const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
     const results = rows.find((row) => row.kind === 'tool_results');
     expect(results?.blocks).toEqual([
-      { type: 'tool_result', toolUseId: 'tu_local_patient', content: 'done' },
+      {
+        type: 'tool_result',
+        toolUseId: 'tu_local_patient',
+        content: 'done',
+        durationMs: expect.any(Number),
+      },
     ]);
   });
 });

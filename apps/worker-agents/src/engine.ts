@@ -260,6 +260,23 @@ interface ToolCallRecord {
   free?: boolean;
 }
 
+/**
+ * One model call of an attempt, as the timeline reads it: how long the
+ * engine waited on the provider and what came back. Beside `toolCalls`
+ * in the attempt's detail, this is the split a slow step is read by —
+ * the model deliberating, or a tool it called being slow.
+ */
+interface ModelCallRecord {
+  durationMs: number;
+  stopReason: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+function modelCallsMs(calls: ModelCallRecord[]): number {
+  return calls.reduce((sum, call) => sum + call.durationMs, 0);
+}
+
 /** A step whose attempt row always has zero tool calls (a terminal ending). */
 const NO_TOOL_CALLS: ToolCallRecord[] = [];
 
@@ -291,6 +308,7 @@ interface AttemptOutcome {
    */
   declaredSkip?: boolean;
   toolCalls: ToolCallRecord[];
+  modelCalls: ModelCallRecord[];
   usage: UsageTotals;
   unbound: string[];
   resolvedInstruction: string;
@@ -908,7 +926,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
     run: RunRow,
     usage: UsageTotals,
     stepId: string,
-    llm: ResolvedLlm
+    llm: ResolvedLlm,
+    /** The attempt's model calls, wall time summed (migration 125). */
+    durationMs: number | null = null
   ): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
     const ledger = await recordLlmCall(db, {
@@ -920,6 +940,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       purpose: 'run',
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
+      ...(durationMs !== null ? { durationMs } : {}),
       ...(usage.cacheReadInputTokens !== null
         ? { cacheReadInputTokens: usage.cacheReadInputTokens }
         : {}),
@@ -1794,6 +1815,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           ? { guidanceUsed: clip(renderInstruction(guidance, vars).text, PREVIEW_CHARS) }
           : {}),
         toolCalls: outcome.toolCalls,
+        modelCalls: outcome.modelCalls,
         usage: outcome.usage,
       };
       const detailText = detailJson(detail);
@@ -1818,7 +1840,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, outcome.usage, step.id, llm);
+      await recordUsage(run, outcome.usage, step.id, llm, modelCallsMs(outcome.modelCalls));
 
       if (outcome.succeeded) {
         // A 'skipped' declaration never binds saveValue/saveItems (both are
@@ -2232,6 +2254,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         const resultText = textOf(toolResult);
         const decidedNote = comment ? ` (comment: ${comment})` : '';
         const synthetic: AttemptOutcome = {
+          // The model already decided before the pause; this attempt only ran the call.
+          modelCalls: [],
           succeeded: !toolResult.isError,
           outcome: toolResult.isError ? 'tool_error' : 'tool_ok',
           outcomeCode: toolResult.isError ? classifyFailure([toolResult], null) : null,
@@ -2780,12 +2804,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
               proposedTool: outcome.proposedCall.tool,
               proposedArgs: outcome.proposedCall.args,
               toolCalls: outcome.toolCalls,
+              modelCalls: outcome.modelCalls,
             }),
             updated_at: sql`NOW()`,
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, outcome.usage, step.id, llm);
+        await recordUsage(run, outcome.usage, step.id, llm, modelCallsMs(outcome.modelCalls));
         await raiseApprovalCard(
           step,
           iteration,
@@ -2822,12 +2847,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
                 ? { timeoutHours: outcome.askPerson.timeoutHours }
                 : {}),
               toolCalls: outcome.toolCalls,
+              modelCalls: outcome.modelCalls,
             }),
             updated_at: sql`NOW()`,
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, outcome.usage, step.id, llm);
+        await recordUsage(run, outcome.usage, step.id, llm, modelCallsMs(outcome.modelCalls));
         await raiseQuestionCard(
           step,
           iteration,
@@ -2940,6 +2966,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // An ending calls no tools of its own anymore — this stays an empty,
       // typed array so `detail`'s shape matches every other attempt row's.
       toolCalls: NO_TOOL_CALLS,
+      modelCalls: [],
     };
     // The row's status mirrors the run's ending, so the timeline never
     // shows a green pill at the node that failed the run on purpose (the
@@ -3161,8 +3188,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // turns cover a model that answered in prose first, or spent one
       // looking up a date. On the LAST turn the decision tool is forced
       // alone — a condition that keeps asking the time must still land.
+      const modelCalls: ModelCallRecord[] = [];
       for (let turn = 0; turn < CONDITION_TURNS && !decidedPath; turn += 1) {
         const lastTurn = turn === CONDITION_TURNS - 1;
+        const callStartedAt = Date.now();
         const completion = await llm.provider.complete({
           system: withRunContext(branchSystem, context),
           messages,
@@ -3213,6 +3242,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         }
 
         addUsage(usage, completion.val.usage);
+        modelCalls.push({
+          durationMs: Date.now() - callStartedAt,
+          stopReason: completion.val.stopReason,
+          inputTokens: completion.val.usage.inputTokens,
+          outputTokens: completion.val.usage.outputTokens,
+        });
         messages.push({ role: 'assistant', content: completion.val.content });
 
         const toolUses = completion.val.content.filter(
@@ -3259,6 +3294,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           declaredOutcome: 'success',
           chosenPathId: decidedPath.id,
           chosenPathName: decidedPath.name,
+          modelCalls,
           ...(built.unbound.length > 0 ? { unboundVariables: built.unbound } : {}),
           usage,
         };
@@ -3282,7 +3318,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, usage, branch.id, llm);
+        await recordUsage(run, usage, branch.id, llm, modelCallsMs(modelCalls));
         return { kind: 'path', path: decidedPath };
       }
 
@@ -3316,7 +3352,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, usage, branch.id, llm);
+      await recordUsage(run, usage, branch.id, llm, modelCallsMs(modelCalls));
     }
   }
 
@@ -3463,8 +3499,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const loopTools = usesTime([loop.condition])
         ? [LOOP_DECISION_DEF, RESOLVE_TIME_DEF]
         : [LOOP_DECISION_DEF];
+      const modelCalls: ModelCallRecord[] = [];
       for (let turn = 0; turn < CONDITION_TURNS && !decided; turn += 1) {
         const lastTurn = turn === CONDITION_TURNS - 1;
+        const callStartedAt = Date.now();
         const completion = await llm.provider.complete({
           system: withRunContext(LOOP_SYSTEM_PROMPT, context),
           messages,
@@ -3511,6 +3549,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         }
 
         addUsage(usage, completion.val.usage);
+        modelCalls.push({
+          durationMs: Date.now() - callStartedAt,
+          stopReason: completion.val.stopReason,
+          inputTokens: completion.val.usage.inputTokens,
+          outputTokens: completion.val.usage.outputTokens,
+        });
         messages.push({ role: 'assistant', content: completion.val.content });
 
         const toolUses = completion.val.content.filter(
@@ -3549,6 +3593,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           ...(timeNotes.length > 0 ? { timeLookups: timeNotes } : {}),
           declaredOutcome: 'success',
           loopDecision: decided,
+          modelCalls,
           ...(built.unbound.length > 0 ? { unboundVariables: built.unbound } : {}),
           usage,
         };
@@ -3572,7 +3617,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, usage, loop.id, llm);
+        await recordUsage(run, usage, loop.id, llm, modelCallsMs(modelCalls));
         return { kind: 'decided', choice: decided };
       }
 
@@ -3604,7 +3649,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, usage, loop.id, llm);
+      await recordUsage(run, usage, loop.id, llm, modelCallsMs(modelCalls));
     }
   }
 
@@ -3696,6 +3741,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     const messages: LlmMessage[] = [...built.messages];
     const toolCalls: ToolCallRecord[] = [];
+    const modelCalls: ModelCallRecord[] = [];
     // Once the budget is spent the conversation narrows to finish_step only:
     // the model generally holds enough to answer, and "declare from what you
     // have seen" turns exhaustion into an honest outcome the step's failure
@@ -3712,6 +3758,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     const base = {
       toolCalls,
+      modelCalls,
       usage,
       unbound: built.unbound,
       resolvedInstruction,
@@ -3737,6 +3784,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // in the cached prompt prefix, so narrowing them would throw the
       // whole cache away. Exhaustion is expressed through tool_choice
       // alone — a forced finish_step leaves the others uncallable anyway.
+      const callStartedAt = Date.now();
       const completion = await llm.provider.complete({
         system: systemPromptWith(context),
         messages,
@@ -3789,6 +3837,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       addUsage(usage, completion.val.usage);
+      modelCalls.push({
+        durationMs: Date.now() - callStartedAt,
+        stopReason: completion.val.stopReason,
+        inputTokens: completion.val.usage.inputTokens,
+        outputTokens: completion.val.usage.outputTokens,
+      });
       messages.push({ role: 'assistant', content: completion.val.content });
 
       const toolUses = completion.val.content.filter(
@@ -4134,7 +4188,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     primaryResults: McpToolResult[],
     base: Pick<
       AttemptOutcome,
-      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'promptText'
+      'toolCalls' | 'modelCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'promptText'
     >
   ): AttemptOutcome {
     if (finish.outcome === 'skipped') {

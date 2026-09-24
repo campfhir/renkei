@@ -77,6 +77,7 @@ export function parseBlock(value: unknown): LlmContentBlock | null {
               ? { uiResourceUri: block.uiResourceUri }
               : {}),
             ...('structuredContent' in block ? { structuredContent: block.structuredContent } : {}),
+            ...(typeof block.durationMs === 'number' ? { durationMs: block.durationMs } : {}),
           }
         : null;
     case 'document':

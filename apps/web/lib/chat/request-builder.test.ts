@@ -15,6 +15,7 @@ function row(
     model: 'x',
     stopReason: null,
     usage: null,
+    timing: null,
     error: null,
     summaryId: null,
     createdAt: new Date(0),
@@ -288,7 +289,59 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('Ship date is Friday');
     expect(prompt).toContain('plan.pdf');
     expect(prompt).toContain('sandbox_*');
-    expect(prompt).toContain('2026-09-04T10:00:00.000Z');
+    expect(prompt).toContain('2026-09-04T10:00Z');
+  });
+
+  it('tells a code chat to read the checkout with code_* tools, never the git host APIs', () => {
+    const prompt = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: {
+        name: 'Billing',
+        instructions: null,
+        memoryText: null,
+        files: [],
+        code: {
+          repoFullName: 'acme/billing',
+          branch: 'main',
+          ready: true,
+          notReady: null,
+          envNames: [],
+        },
+      },
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: true,
+      hasKnowledge: false,
+      hasSandbox: true,
+      filesAllowed: false,
+      now: new Date('2026-09-04T10:00:00Z'),
+    });
+    expect(prompt).toContain('the repository is already checked out here');
+    expect(prompt).toContain('never through the Bitbucket or GitHub file');
+  });
+
+  it('stamps the hour, not the second, so the cache prefix survives from turn to turn', () => {
+    const base = {
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: false,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: false,
+    };
+    const first = buildSystemPrompt({ ...base, now: new Date('2026-09-04T10:00:07Z') });
+    const later = buildSystemPrompt({ ...base, now: new Date('2026-09-04T10:59:59Z') });
+    expect(later).toBe(first);
+    expect(first).toContain('2026-09-04T10:00Z');
+    expect(first).not.toContain('10:00:07');
   });
 
   it('asks a voice turn to say what it is doing before each call, and only a voice turn', () => {

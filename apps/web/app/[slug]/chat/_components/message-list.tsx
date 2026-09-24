@@ -34,6 +34,7 @@ import type {
   TurnView,
 } from '@/lib/chat/views';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
+import { formatDurationMs } from '@/lib/duration';
 import { parseNote } from '@/lib/code/note-text';
 import { parseCommitResult } from '@/lib/code/chat-commits';
 import {
@@ -586,6 +587,7 @@ function Reply({
               <WorkFold
                 key={index}
                 steps={part.steps}
+                modelMs={part.modelMs}
                 pendingToolCalls={pendingToolCalls}
                 live={tail}
                 waitingOn={permission?.pending.toolUseId ?? null}
@@ -639,12 +641,15 @@ function Reply({
  */
 function WorkFold({
   steps,
+  modelMs = 0,
   pendingToolCalls,
   live,
   waitingOn,
   onOpenFile = null,
 }: {
   steps: WorkStep[];
+  /** The model calls behind these steps, summed (segment.ts); 0 when unknown. */
+  modelMs?: number;
   pendingToolCalls: string[];
   live: boolean;
   /** The tool_use id the turn is waiting on permission for, if any. */
@@ -686,6 +691,14 @@ function WorkFold({
     const parts: string[] = [];
     if (thought) parts.push('Thought');
     if (calls.length > 0) parts.push(`${calls.length} tool call${calls.length === 1 ? '' : 's'}`);
+    // Where the time went, when the rows kept it: the model's own calls
+    // apart from the tools they waited on, so a slow reply can be read as
+    // "thinking" or "a slow tool" from the line itself.
+    const toolMs = calls.reduce((sum, step) => sum + (step.result?.durationMs ?? 0), 0);
+    const timing: string[] = [];
+    if (modelMs > 0) timing.push(`${formatDurationMs(modelMs)} model`);
+    if (toolMs > 0) timing.push(`${formatDurationMs(toolMs)} tools`);
+    if (timing.length > 0) parts.push(timing.join(', '));
     label = parts.length > 0 ? parts.join(' · ') : 'Thought';
   }
 
@@ -790,6 +803,11 @@ export function StepList({
                     )}
                     {pending ? <span className="chat-dots" aria-hidden="true" /> : null}
                     {counts ? <Counts added={counts.added} deleted={counts.deleted} /> : null}
+                    {step.result?.durationMs !== undefined ? (
+                      <span className="text-xs text-gray-400" data-call-duration>
+                        {formatDurationMs(step.result.durationMs)}
+                      </span>
+                    ) : null}
                     <Icon
                       path={ICONS.chevron}
                       className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
