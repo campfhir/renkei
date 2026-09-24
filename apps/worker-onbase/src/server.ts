@@ -38,8 +38,8 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
 import { getOrgSettings } from '@renkei/settings';
+import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
   oidcDiscoveryUrl,
   parseDiscoveryDocument,
@@ -137,56 +137,6 @@ function statusForError(type: WorkerErrorType): number {
     default:
       return 502;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function authorized(request: IncomingMessage, keys: string[]): boolean {
-  if (keys.length === 0) return false;
-  const match = request.headers.authorization?.match(/^Bearer\s+(.+)$/i);
-  if (!match) return false;
-  const presented = match[1].trim();
-  return keys.some((key) => {
-    const bufA = Buffer.from(presented);
-    const bufB = Buffer.from(key);
-    // Length is not secret (it leaks via the comparison anyway); the contents are.
-    return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
-  });
-}
-
-/** Read a request body up to `cap` bytes; null means the cap was exceeded. */
-function readBody(request: IncomingMessage, cap: number): Promise<Buffer | null> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let received = 0;
-    request.on('data', (chunk: Buffer) => {
-      received += chunk.byteLength;
-      if (received > cap) {
-        request.removeAllListeners('data');
-        request.removeAllListeners('end');
-        resolve(null);
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on('end', () => resolve(Buffer.concat(chunks)));
-    request.on('error', reject);
-  });
-}
-
-function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  response.writeHead(status, {
-    'content-type': 'application/json',
-    'content-length': Buffer.byteLength(payload),
-  });
-  response.end(payload);
 }
 
 function sendError(response: ServerResponse, type: WorkerErrorType, message?: string): void {

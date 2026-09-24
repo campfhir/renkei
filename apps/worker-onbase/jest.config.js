@@ -13,6 +13,7 @@ export default {
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
     '^@renkei/connector-onbase$': '<rootDir>/../../packages/connector-onbase/src/index.ts',
+    '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
   },
   // kysely's published build is ESM-only; ts-jest (allowJs) transforms it to
   // CJS for the test run — the worker-agents arrangement.

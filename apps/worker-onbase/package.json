@@ -17,6 +17,7 @@
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/settings": "workspace:*",
+    "@renkei/worker-kit": "workspace:*",
     "kysely": "^0.29.4",
     "tsx": "^4.23.5"
   },

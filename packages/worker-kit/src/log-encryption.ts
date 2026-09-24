@@ -7,6 +7,11 @@ import { encrypt, decrypt, parseEncryptionKey } from '@renkei/crypto';
  * web viewer decrypts). Only the direct-Postgres fallback needs this: when
  * shipping over HTTP, secure values travel tagged and the web's ingest sink
  * encrypts them with its own copy of the key.
+ *
+ * Shared by every egress worker (worker-mirth, worker-onbase,
+ * worker-admanager, worker-fileshares, …) — this file was identical,
+ * byte for byte, copy-pasted into each one; it carries no connector-
+ * specific knowledge, so there was nothing to parameterize on the way in.
  */
 export type LogCipher = {
   encrypt: (plaintext: string) => Buffer;
