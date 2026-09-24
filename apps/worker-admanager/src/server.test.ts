@@ -153,6 +153,27 @@ describe('api', () => {
     expect(calls[0].headers.authorization).toBe('tok-alice');
   });
 
+  it('encodes spaces in query values as %20, not the form-encoded +', async () => {
+    // A confirmed production caller of this same API builds its query
+    // strings with qs (default RFC 3986: spaces as %20). URLSearchParams'
+    // own default (+) would reach ADManager Plus as a literal plus sign
+    // rather than a space in any value that has one — a template name, a
+    // filter on a display name, a group name.
+    script = [ok('{"data":[]}')];
+    await post('/v1/api', {
+      tenantId: 'tenant-1',
+      instanceId: INSTANCE_ID,
+      subject: 'auth0|alice',
+      method: 'PATCH',
+      path: '/api/v2/users',
+      query: { domain: 'corp.example', filter: '(DISPLAY_NAME eq "Jane Doe")' },
+    });
+    expect(calls[0].url).toBe(
+      'https://admp.example:8080/api/v2/users?domain=corp.example&filter=%28DISPLAY_NAME%20eq%20%22Jane%20Doe%22%29'
+    );
+    expect(calls[0].url).not.toContain('+');
+  });
+
   it('sends AuthToken/PRODUCT_NAME as headers and query params for legacy /RestAPI/* paths, never Authorization', async () => {
     script = [ok('[{"status":"1"}]')];
     const response = await post('/v1/api', {

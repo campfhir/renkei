@@ -248,6 +248,46 @@ introspect which fields a given template supports, so extending
 only be done by trial against a real instance and that instance's own
 template configuration, field by field, not by reading a spec.
 
+**The `GET /api/v2/users` `fields` column vocabulary is narrower than
+guessed, too.** A real deployment answered `admanager_get_user` with
+`400 {"CODE":"00000100","DETAIL":"SOME COLUMNS SPECIFIED IN THE FIELDS
+PARAMETER ARE INVALID."}`. Renkei's original `USER_FIELDS` included
+`TELEPHONE_NUMBER` and `DESCRIPTION`; neither appears in the
+confirmed-working reference's `V2UserRecord` type (the real server's own
+full default response shape), while every other requested column does —
+so both were dropped from `USER_FIELDS` and from
+`admanager_update_user_preview`'s existing-value lookup. This is the read
+side only: `EDITABLE_FIELDS`' `telephoneNumber`/`description` PATCH
+attribute keys are a different vocabulary (lowercase LDAP attribute
+names, not `fields`/`filter` column names) and were left alone — a
+technician can still set phone/description, the preview card's "old
+value" for those two just shows `(none)` since it can no longer be looked
+up. If an instance turns out to accept these as `fields` values after
+all, this is safe to revert; there was no way to confirm short of trying
+it against a live server.
+
+`EMPLOYEE_ID` was added to `USER_FIELDS` alongside this — it's in the
+confirmed reference's column vocabulary, and useful on `admanager_get_user`
+precisely because it's populated only on accounts AD tracks as an actual
+employee record: a service account or shared mailbox won't have one, and
+`formatUser`'s blank-value filter already omits the line when it's empty,
+so the distinction shows up for free.
+
+**Query values with a space need `%20`, not `+`.** The worker's
+`withQuery()` originally built query strings with `URLSearchParams`
+alone, which serializes as `application/x-www-form-urlencoded` — spaces
+become `+`. A confirmed production caller of this same API instead builds
+its query strings with the `qs` library, whose default (RFC 3986)
+percent-encodes spaces as `%20`, and that caller's convention is the one
+ADManager Plus's own parser actually expects. `withQuery()` now runs a
+`+` → `%20` replace over `URLSearchParams`' output as a final step — safe
+because URLSearchParams itself escapes any literal `+` in a value to
+`%2B` first, so every bare `+` left in the encoded string is one it put
+there to mean a space, never a real plus sign. Left as `+`, any value
+with a space in it — a template name (`AD Update Template`), a filter
+clause on a display name, a group name (`Finance ReadOnly`) — would have
+reached ADManager Plus with literal plus signs instead of spaces.
+
 ## The dedicated worker process, and why it's simpler than Mirth's
 
 ADManager Plus is on-prem, so the same SSRF-guard reasoning as OnBase,

@@ -91,7 +91,7 @@ export interface AdManagerServerDeps {
 const MAX_JSON_BYTES = 1_048_576;
 /** The most of an ADManager Plus answer the worker will buffer. */
 const MAX_UPSTREAM_BYTES = 4 * 1_048_576;
-const API_TIMEOUT_MS = 30_000;
+const API_TIMEOUT_MS = 20_000;
 
 /**
  * No domain/filter parameters required, so it works before anything is
@@ -159,7 +159,20 @@ function tlsOf(instance: InstanceRow): TlsPolicy {
   return { verify: instance.summary.tlsVerify, caPem: instance.caPem };
 }
 
-/** Append query parameters exactly once, encoded by URLSearchParams. */
+/**
+ * Append query parameters exactly once. Built with URLSearchParams, then
+ * `+` is turned into `%20`: URLSearchParams follows
+ * application/x-www-form-urlencoded (spaces as `+`), but a confirmed
+ * production caller of this same API builds its query strings with `qs`,
+ * whose default (RFC 3986) percent-encodes spaces as `%20` instead — and
+ * ADManager Plus's own parser is that caller's, not URLSearchParams'.
+ * Every `+` remaining after URLSearchParams' own encoding IS an encoded
+ * space: a literal `+` in a value is itself escaped to `%2B` first, so
+ * this replace can't corrupt one. Left uncorrected, any value with a
+ * space — a template name ("AD Update Template"), a filter clause on a
+ * display name, a group name ("Finance ReadOnly") — arrives at ADManager
+ * Plus with literal `+` characters instead of spaces.
+ */
 function withQuery(url: string, query: unknown, extra?: Record<string, string>): string {
   const params = new URLSearchParams();
   if (isRecord(query)) {
@@ -176,7 +189,7 @@ function withQuery(url: string, query: unknown, extra?: Record<string, string>):
     }
   }
   for (const [key, value] of Object.entries(extra ?? {})) params.append(key, value);
-  const encoded = params.toString();
+  const encoded = params.toString().replace(/\+/g, '%20');
   return encoded ? `${url}?${encoded}` : url;
 }
 
