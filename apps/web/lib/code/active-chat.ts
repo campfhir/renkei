@@ -82,6 +82,7 @@ export async function createChatInProject(
       llmModelId: input.llmModelId,
       toolConfig: input.toolConfig,
       thinkingEnabled: input.thinkingEnabled,
+      autoMode: code,
     });
     if (code) {
       await trx

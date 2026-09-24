@@ -207,6 +207,24 @@ test.describe('code project active chat', () => {
     await expect(composer).toBeVisible({ timeout: 30_000 });
   });
 
+  test('a new chat in a code project defaults to auto mode on', async ({ page }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const main = page.getByRole('main');
+
+    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await expect(
+      main.getByRole('heading', { level: 2, name: 'Chats in this project' })
+    ).toBeVisible({ timeout: 30_000 });
+    await main.getByRole('button', { name: 'New chat' }).click();
+    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/chat/[0-9a-f-]{36}$`), {
+      timeout: 30_000,
+    });
+
+    const autoToggle = page.getByRole('button', { name: 'Auto mode on' });
+    await expect(autoToggle).toBeVisible({ timeout: 30_000 });
+    await expect(autoToggle).toHaveAttribute('aria-pressed', 'true');
+  });
+
   test('no new chat while the active chat is replying', async ({ page }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const main = page.getByRole('main');
