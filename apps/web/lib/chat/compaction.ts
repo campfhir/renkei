@@ -34,6 +34,13 @@
  * partway through throws and nothing is written, so a retry starts over
  * clean rather than compounding a half-applied summary.
  *
+ * The recent window a pass keeps verbatim keeps its text, not its tool
+ * output: once a summary exists, rows written before it have their tool
+ * results trimmed to their head (request-builder.ts, `compactedAt`), and
+ * needsCompaction measures them that way. A tool-heavy window would
+ * otherwise carry its full output past every pass and trigger the next one
+ * within a turn or two — sooner each time, until the chat stops fitting.
+ *
  * Failure posture matches memory-compaction.ts: a failed or unavailable
  * model leaves every message as it was, for the next check to retry —
  * never a reason to fail the turn that triggered the check.
@@ -48,6 +55,7 @@ import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { resolveChatAccess } from './access';
 import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
+import { elided, elidesResultsOf, predatesCompaction } from './request-builder';
 import { getProjectRow } from './projects';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
@@ -135,8 +143,28 @@ function blockChars(block: LlmContentBlock): number {
   }
 }
 
-function messageChars(message: StoredMessage): number {
-  return message.blocks.reduce((sum, block) => sum + blockChars(block), 0);
+/**
+ * What a row costs as buildHistory would send it: a row from before the
+ * last pass has its tool results trimmed to their head there, so it is
+ * counted trimmed here. Counting it at full size instead is what kept a
+ * tool-heavy chat re-compacting: the kept window's raw tool output alone
+ * could sit over the threshold, so every turn that added a handful of rows
+ * started another pass that could never bring the count back down.
+ */
+function messageChars(
+  message: StoredMessage,
+  compactedAt: Date | null,
+  toolNames: Map<string, string>
+): number {
+  const trimmed = predatesCompaction(message, compactedAt);
+  return message.blocks.reduce(
+    (sum, block) =>
+      sum +
+      (trimmed && block.type === 'tool_result' && elidesResultsOf(toolNames.get(block.toolUseId))
+        ? elided(block).content.length
+        : blockChars(block)),
+    0
+  );
 }
 
 /** Unfolded, ordered — what a prompt would still send in full right now. */
@@ -175,11 +203,28 @@ function endsMidRound(unfolded: StoredMessage[], end: number): boolean {
   return next.blocks.some((block) => block.type === 'tool_result' && calls.has(block.toolUseId));
 }
 
-/** Whether a turn about to build its history should compact first. */
-export function needsCompaction(messages: StoredMessage[]): boolean {
+/**
+ * Whether a turn about to build its history should compact first.
+ * `compactedAt` is the latest summary's createdAt (null before the first
+ * pass): the rows it kept verbatim are measured trimmed, as they are sent.
+ */
+export function needsCompaction(
+  messages: StoredMessage[],
+  compactedAt: Date | null = null
+): boolean {
   const unfolded = unfoldedOf(messages);
   if (foldCandidates(unfolded).length < CHAT_COMPACT_MIN_FOLD) return false;
-  const chars = unfolded.reduce((sum, message) => sum + messageChars(message), 0);
+  const toolNames = new Map(
+    unfolded.flatMap((message) =>
+      message.blocks.flatMap((block) =>
+        block.type === 'tool_use' ? [[block.id, block.name] as const] : []
+      )
+    )
+  );
+  const chars = unfolded.reduce(
+    (sum, message) => sum + messageChars(message, compactedAt, toolNames),
+    0
+  );
   return chars > CHAT_COMPACT_CHAR_THRESHOLD;
 }
 

@@ -320,6 +320,11 @@ export const ELIDED_RESULT_KEEP_CHARS = 600;
 /** Tools whose results are kept whole across turns: a sub-agent's report IS the context. */
 const NEVER_ELIDED = new Set(['code_delegate']);
 
+/** Whether a tool's earlier results are trimmed at all (`NEVER_ELIDED` aside, they are). */
+export function elidesResultsOf(toolName: string | undefined): boolean {
+  return !NEVER_ELIDED.has(toolName ?? '');
+}
+
 export interface HistoryOptions {
   /**
    * Trim the tool results of turns before this one to their head. A code
@@ -328,9 +333,34 @@ export interface HistoryOptions {
    * recall (CODE_BRIEF). The current turn's results stay whole.
    */
   elideEarlierToolResults?: boolean;
+  /**
+   * When the chat's latest compaction summary was written (compaction.ts).
+   * Rows that already existed then — the recent window the pass kept
+   * verbatim — have their tool results trimmed to their head, the same way
+   * `elideEarlierToolResults` trims them, in every chat. Without this, a
+   * tool-heavy chat carries the kept window's full tool output past every
+   * compaction: those rows alone can sit near the threshold, so each pass
+   * buys fewer turns before the next, until the window by itself no longer
+   * fits. Rows written after the pass (and this turn's own) stay whole
+   * until a later pass does the same to them.
+   */
+  compactedAt?: Date | null;
 }
 
-function elided(block: Extract<LlmContentBlock, { type: 'tool_result' }>) {
+/** A row from before the last compaction pass, not from the turn being built. */
+export function predatesCompaction(
+  message: Pick<StoredMessage, 'createdAt' | 'turnId'>,
+  compactedAt: Date | null | undefined,
+  currentTurnId: string | null = null
+): boolean {
+  return (
+    compactedAt != null &&
+    message.createdAt <= compactedAt &&
+    (currentTurnId === null || message.turnId !== currentTurnId)
+  );
+}
+
+export function elided(block: Extract<LlmContentBlock, { type: 'tool_result' }>) {
   if (block.content.length <= ELIDED_RESULT_KEEP_CHARS) return block;
   const cut = block.content.length - ELIDED_RESULT_KEEP_CHARS;
   return {
@@ -379,14 +409,17 @@ export function buildHistory(
         )
       );
       blocks = blocks.filter((block) => block.type !== 'tool_result' || calls.has(block.toolUseId));
-      if (options.elideEarlierToolResults && message.turnId !== target.turnId) {
+      const trim =
+        (options.elideEarlierToolResults && message.turnId !== target.turnId) ||
+        predatesCompaction(message, options.compactedAt, target.turnId);
+      if (trim) {
         const names = new Map(
           (previous?.role === 'assistant' ? previous.content : []).flatMap((block) =>
             block.type === 'tool_use' ? [[block.id, block.name] as const] : []
           )
         );
         blocks = blocks.map((block) =>
-          block.type === 'tool_result' && !NEVER_ELIDED.has(names.get(block.toolUseId) ?? '')
+          block.type === 'tool_result' && elidesResultsOf(names.get(block.toolUseId))
             ? elided(block)
             : block
         );

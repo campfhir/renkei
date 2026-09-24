@@ -69,6 +69,39 @@ describe('needsCompaction', () => {
     expect(needsCompaction(messages)).toBe(false);
   });
 
+  it('measures rows from before the last pass with their tool results trimmed, as they are sent', () => {
+    // The kept window of a tool-heavy chat: every results row carries far
+    // more output than the threshold allows in total. Measured raw, it
+    // would re-trigger a pass every few rows forever.
+    const compactedAt = new Date(1_000);
+    const perResult = Math.ceil(CHAT_COMPACT_CHAR_THRESHOLD / 10);
+    const count = CHAT_COMPACT_KEEP_RECENT + CHAT_COMPACT_MIN_FOLD;
+    const messages = Array.from({ length: count }, (_, i) => {
+      const seq = i + 1;
+      return seq % 2 === 0
+        ? row({
+            seq,
+            role: 'assistant',
+            createdAt: new Date(500),
+            blocks: [{ type: 'tool_use', id: `u${seq}`, name: 'mirth_list_events', input: {} }],
+          })
+        : row({
+            seq,
+            role: 'user',
+            kind: 'tool_results',
+            createdAt: new Date(500),
+            blocks: [
+              { type: 'tool_result', toolUseId: `u${seq - 1}`, content: 'x'.repeat(perResult) },
+            ],
+          });
+    });
+    expect(needsCompaction(messages)).toBe(true);
+    expect(needsCompaction(messages, compactedAt)).toBe(false);
+    // Rows written after the pass count whole.
+    const after = messages.map((message) => ({ ...message, createdAt: new Date(2_000) }));
+    expect(needsCompaction(after, compactedAt)).toBe(true);
+  });
+
   it('ignores failed rows', () => {
     const count = CHAT_COMPACT_KEEP_RECENT + CHAT_COMPACT_MIN_FOLD;
     const perMessage = Math.ceil(CHAT_COMPACT_CHAR_THRESHOLD / count) + 1;
