@@ -133,6 +133,10 @@ const MAX_LLM_TURNS = 10;
  */
 const PREVIEW_CHARS = 2_000;
 const DETAIL_CHARS = 60_000;
+/** Mirrors approvals.ts's APPROVAL_IDENTITY_KEYS — the proposed-call keys
+ * an approval's own edit can never override, kept in sync by hand since
+ * engine.ts and the web app are separate deployables. */
+const IDENTITY_ARG_KEYS = new Set(['projectKey', 'issueType', 'issueKey']);
 const TOKEN_SLACK_SECONDS = 15 * 60;
 /**
  * The run-wide execution budget: total attempt rows a run may create.
@@ -2192,13 +2196,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
         vars['approval.outcome'] = decision;
         if (comment) vars['approval.comment'] = comment;
         // Re-narrowed here, not just trusted from the stored row: the same
-        // two fields a preview card's own editable inputs cover
-        // (approvals.ts's APPROVAL_ARG_OVERRIDE_KEYS — kept in sync by
-        // hand, since engine.ts and the web app are separate deployables).
-        // Everything else about the call (tool, project, recipients,
-        // custom fields…) is exactly what the card showed and a person
-        // approved — an override can reword it, never redirect it.
-        const argsOverride: Record<string, string> = {};
+        // identity keys a preview card's edit can never touch
+        // (approvals.ts's APPROVAL_IDENTITY_KEYS — kept in sync by hand,
+        // since engine.ts and the web app are separate deployables).
+        // Everything else about the call a person approved can be reworded
+        // by their edit; the call's identity (project, type, which issue)
+        // cannot be redirected to one nobody reviewed.
+        const argsOverride: Record<string, unknown> = {};
         if (
           typeof resultObj.argsOverride === 'object' &&
           resultObj.argsOverride !== null &&
@@ -2206,9 +2210,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ) {
           // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
           const override = resultObj.argsOverride as Record<string, unknown>;
-          for (const key of ['summary', 'description'] as const) {
-            const entry = override[key];
-            if (typeof entry === 'string' && entry.trim()) argsOverride[key] = entry.trim();
+          for (const [key, entry] of Object.entries(override)) {
+            if (IDENTITY_ARG_KEYS.has(key)) continue;
+            argsOverride[key] = entry;
           }
         }
 

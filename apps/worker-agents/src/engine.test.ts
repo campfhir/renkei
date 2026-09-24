@@ -3289,7 +3289,7 @@ maybe('agent run engine', () => {
       expect(JSON.stringify(gateRow.detail)).toContain('Approved');
     });
 
-    it('on approval with an edited summary/description, fires the call with the edit merged in — everything else untouched', async () => {
+    it('on approval with an edited card, fires the call with every edit merged in except the call identity', async () => {
       const { doc, gateId } = gatedDoc({});
       const { runId } = await seedRun(doc);
       const { mcp, calls } = recordingMcp([
@@ -3306,11 +3306,17 @@ maybe('agent run engine', () => {
         .updateTable('actionable_items')
         .set({
           status: 'approved',
-          // A widget card's edit round-trips through summary/description
-          // only — the approval decided the CALL, not a substitute one.
+          // A widget card's edit is not limited to text fields — a
+          // picklist, a number, a custom field, all round-trip — but
+          // never the call's own identity.
           result: JSON.stringify({
             decidedBy: 'owner@example.com',
-            argsOverride: { description: 'Edited from the card.', issueKey: 'HACKED-1' },
+            argsOverride: {
+              description: 'Edited from the card.',
+              priority: 'High',
+              storyPoints: 5,
+              issueKey: 'HACKED-1',
+            },
           }),
           decided_at: sql`NOW()`,
         })
@@ -3319,13 +3325,15 @@ maybe('agent run engine', () => {
       await handler({ payload: { runId } });
 
       const fired = calls.find((call) => call.name === 'jira_add_comment');
-      // `description` (not part of the original args at all) is added;
-      // `issueKey` — not one of the two overridable keys — is ignored, so
-      // the call still targets the issue that was actually reviewed.
+      // `description`/`priority`/`storyPoints` (not part of the original
+      // args at all) are added; `issueKey` — the call's identity — is
+      // ignored, so the call still targets the issue that was reviewed.
       expect(fired?.args).toEqual({
         issueKey: 'PROJ-42',
         body: 'Original body.',
         description: 'Edited from the card.',
+        priority: 'High',
+        storyPoints: 5,
       });
 
       const gateRow = await db

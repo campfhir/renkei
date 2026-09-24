@@ -1,5 +1,4 @@
-import { jiraIssueApprovalPreview, normalizeFieldId, renderFieldValue } from './fields';
-import { ISSUE_PREVIEW_URI } from '../widgets';
+import { normalizeFieldId, renderFieldValue } from './fields';
 
 const doc = (...content: unknown[]) => ({ type: 'doc', version: 1, content });
 const paragraph = (value: string) => ({
@@ -77,65 +76,5 @@ describe('normalizeFieldId', () => {
     expect(normalizeFieldId('customfield_12013')).toBe('customfield_12013');
     expect(normalizeFieldId(' labels ')).toBe('labels');
     expect(normalizeFieldId('*all')).toBe('*all');
-  });
-});
-
-describe('jiraIssueApprovalPreview', () => {
-  it('returns null for a tool a needsApproval gate never proposes directly', () => {
-    expect(jiraIssueApprovalPreview('jira_add_comment', {})).toBeNull();
-    // The chat-only twins — a step's `tool` never references these.
-    expect(jiraIssueApprovalPreview('jira_create_issue_preview', {})).toBeNull();
-    expect(jiraIssueApprovalPreview('jira_create_issue_confirm', {})).toBeNull();
-  });
-
-  it('builds the same issue-preview widget shape for a create call', () => {
-    const preview = jiraIssueApprovalPreview('jira_create_issue', {
-      projectKey: 'CIO',
-      issueType: 'Project',
-      summary: 'Salesforce Incentive-Program Tracking',
-      fields: { 'Anti-Kickback Review': 'Required' },
-    });
-    expect(preview?.resourceUri).toBe(ISSUE_PREVIEW_URI);
-    expect(preview?.structuredContent).toMatchObject({
-      kind: 'issue',
-      title: 'Create Jira issue',
-      subtitle: 'CIO · Project',
-      confirmTool: 'jira_create_issue',
-      confirmLabel: 'Create',
-      editable: { summaryKey: 'summary', descriptionKey: 'description' },
-    });
-    // The confirm button's args are the call's own, verbatim — nothing
-    // resolved or stripped, so a round-trip through the card changes only
-    // what the person actually edited.
-    expect(preview?.structuredContent.confirmArgs).toEqual({
-      projectKey: 'CIO',
-      issueType: 'Project',
-      summary: 'Salesforce Incentive-Program Tracking',
-      fields: { 'Anti-Kickback Review': 'Required' },
-    });
-    expect(preview?.structuredContent.fields).toEqual([
-      { label: 'Anti-Kickback Review', value: 'Required' },
-    ]);
-    // Every previewId is fresh — no stale "already decided" receipt from a
-    // localStorage lookup keyed off a repeated id.
-    const again = jiraIssueApprovalPreview('jira_create_issue', { projectKey: 'CIO' });
-    expect(preview?.structuredContent.previewId).not.toBe(again?.structuredContent.previewId);
-  });
-
-  it('only offers editing the fields an update call is already touching', () => {
-    const preview = jiraIssueApprovalPreview('jira_update_issue', {
-      issueKey: 'CIO-51',
-      summary: 'New summary',
-    });
-    expect(preview?.structuredContent).toMatchObject({
-      title: 'Update CIO-51',
-      subtitle: 'CIO-51',
-      confirmTool: 'jira_update_issue',
-      confirmLabel: 'Update',
-      editable: { summaryKey: 'summary' },
-    });
-    // description was never part of this update, so there is nothing to
-    // offer editing — matches jira_update_issue_preview's own behavior.
-    expect(preview?.structuredContent.editable).not.toHaveProperty('descriptionKey');
   });
 });

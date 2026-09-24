@@ -9,7 +9,6 @@
  */
 
 import { adfToMarkdown } from './adf';
-import { ISSUE_PREVIEW_URI, newPreviewId } from '../widgets';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -110,59 +109,6 @@ export function jiraIssueFieldRows(
     }
   }
   return rows;
-}
-
-/** `jira_create_issue`/`jira_update_issue` — the only two a `needsApproval`
- * gate ever proposes directly (their `_preview`/`_confirm` twins are for
- * chat's own in-turn card, never a step's `tool`). */
-const APPROVAL_WIDGET_TOOLS = new Set(['jira_create_issue', 'jira_update_issue']);
-
-/**
- * The issue-preview widget's `structuredContent`, built from a
- * `jira_create_issue`/`jira_update_issue` call's own arguments — no live
- * Jira fetch, so (unlike the real `*_preview` tools' update path) there is
- * no old-value diff, just the call as proposed. `confirmTool` names the
- * gated tool itself — whichever card renders this never actually calls it
- * as an MCP tool; hosting it outside chat means routing that confirm
- * somewhere else entirely (an approval decision, not a live tool call).
- *
- * Returns null for any tool this shape does not cover — the caller's
- * signal to fall back to a plainer rendering instead of a widget.
- */
-export function jiraIssueApprovalPreview(
-  tool: string,
-  args: Record<string, unknown>
-): { resourceUri: string; structuredContent: Record<string, unknown> } | null {
-  if (!APPROVAL_WIDGET_TOOLS.has(tool)) return null;
-  const str = (value: unknown) => (typeof value === 'string' ? value : '');
-  const projectKey = str(args.projectKey);
-  const issueType = str(args.issueType);
-  const issueKey = str(args.issueKey);
-  const subtitle = [projectKey, issueType].filter(Boolean).join(' · ') || issueKey;
-  return {
-    resourceUri: ISSUE_PREVIEW_URI,
-    structuredContent: {
-      kind: 'issue',
-      previewId: newPreviewId(),
-      title: tool === 'jira_create_issue' ? 'Create Jira issue' : `Update ${issueKey}`,
-      ...(subtitle ? { subtitle } : {}),
-      confirmTool: tool,
-      confirmLabel: tool === 'jira_create_issue' ? 'Create' : 'Update',
-      confirmArgs: args,
-      // Create always shows both — summary is required, and description is
-      // worth offering even when the call did not propose one. Update only
-      // offers editing a field the call is already touching, same as the
-      // real jira_update_issue_preview.
-      editable:
-        tool === 'jira_create_issue'
-          ? { summaryKey: 'summary', descriptionKey: 'description' }
-          : {
-              ...(str(args.summary) ? { summaryKey: 'summary' } : {}),
-              ...(str(args.description) ? { descriptionKey: 'description' } : {}),
-            },
-      fields: jiraIssueFieldRows(args),
-    },
-  };
 }
 
 /**

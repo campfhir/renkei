@@ -207,8 +207,12 @@ test('confirming an edit on the widget approves the card with that edit as an ar
       fixture.itemId,
     ]);
     expect(row.rows[0].status).toBe('approved');
+    // Every editable field the card showed round-trips, not just summary —
+    // "Anti-Kickback Review" was rendered too (unedited), so it comes back
+    // unchanged alongside the actual edit.
     expect(row.rows[0].result.argsOverride).toEqual({
       summary: 'Salesforce Incentive-Program Tracking — reviewed',
+      fields: { 'Anti-Kickback Review': 'Required' },
     });
   } finally {
     await client.query('DELETE FROM agent_jobs WHERE tenant_id = $1', [fixture.tenantId]);

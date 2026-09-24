@@ -1,7 +1,8 @@
 import React from 'react';
 import Link from 'next/link';
 import { friendlyToolName, parseFormNodes, type FormNode } from '@renkei/agents';
-import { jiraIssueApprovalPreview, jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
+import { jiraIssueApprovalPreview } from '@/lib/mcp-tools/jira/approval-preview';
+import { jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
 import { Icon, ICONS } from '@/components/icons';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
@@ -47,18 +48,23 @@ export interface ActionableItemRow {
  * alongside the pager, which needs the same "is there another page?"
  * answer the query produces.
  */
-export default function ActionableCards({
+export default async function ActionableCards({
   items,
   tenantId,
+  subject,
   slug,
   showArchived = false,
 }: {
   items: ActionableItemRow[];
   tenantId: string;
+  /** Whose feed this is — the approval widget resolves ITS OWN Jira
+   * grant by this subject, same as any decision on these cards already
+   * requires the card's owner_subject to match it. */
+  subject: string;
   /** The tenant's URL slug — approval cards link to their paused run. */
   slug: string;
   showArchived?: boolean;
-}): React.ReactNode {
+}): Promise<React.ReactNode> {
   if (items.length === 0) {
     return (
       <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -67,103 +73,100 @@ export default function ActionableCards({
     );
   }
 
-  return (
-    <div className="space-y-4">
-      {items.map((item) => {
-        const isPause = item.kind === 'approval' || item.kind === 'question';
-        const widgetPreview =
-          item.kind === 'approval' ? widgetPreviewFor(item.suggested_action, item.status) : null;
-        return (
-          <div
-            key={item.id}
-            className={`rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 ${
-              item.archived_at !== null ? 'opacity-70' : ''
-            }`}
-          >
-            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-x-4">
-              <strong className="min-w-0 break-words">
-                {isPause && item.status === 'suggested' ? (
-                  <PauseKindChip kind={item.kind === 'question' ? 'question' : 'approval'} />
-                ) : null}
-                {item.title}
-              </strong>
-              <span className="text-sm text-gray-500 dark:text-gray-400 sm:whitespace-nowrap">
-                {item.agent_name ? `via ${item.agent_name}` : item.source} · {item.status}
-                {item.archived_at !== null && ' · archived'}
-              </span>
-            </div>
-            <p className="my-2 whitespace-pre-wrap break-words text-sm">{item.summary}</p>
-
-            <RelatedEvidence evidence={item.evidence} />
-
-            {item.kind === 'approval' &&
-              (widgetPreview ? (
-                <ApprovalWidgetCard
-                  tenantId={tenantId}
-                  itemId={item.id}
-                  resourceUri={widgetPreview.resourceUri}
-                  structuredContent={widgetPreview.structuredContent}
-                />
-              ) : (
-                <ProposedCall suggestedAction={item.suggested_action} result={item.result} />
-              ))}
-
-            {isPause && item.run_id && item.agent_id ? (
-              <p className="mb-2 text-sm">
-                <Link
-                  href={`/${slug}/agents/${item.agent_id}/runs/${item.run_id}`}
-                  className="text-blue-600 hover:underline dark:text-blue-400"
-                >
-                  View the paused run →
-                </Link>
-              </p>
+  const cards: React.ReactNode[] = [];
+  for (const item of items) {
+    const isPause = item.kind === 'approval' || item.kind === 'question';
+    const widgetPreview =
+      item.kind === 'approval'
+        ? await widgetPreviewFor(item.suggested_action, item.status, tenantId, subject)
+        : null;
+    cards.push(
+      <div
+        key={item.id}
+        className={`rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 ${
+          item.archived_at !== null ? 'opacity-70' : ''
+        }`}
+      >
+        <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-x-4">
+          <strong className="min-w-0 break-words">
+            {isPause && item.status === 'suggested' ? (
+              <PauseKindChip kind={item.kind === 'question' ? 'question' : 'approval'} />
             ) : null}
+            {item.title}
+          </strong>
+          <span className="text-sm text-gray-500 dark:text-gray-400 sm:whitespace-nowrap">
+            {item.agent_name ? `via ${item.agent_name}` : item.source} · {item.status}
+            {item.archived_at !== null && ' · archived'}
+          </span>
+        </div>
+        <p className="my-2 whitespace-pre-wrap break-words text-sm">{item.summary}</p>
 
-            {item.status === 'suggested' &&
-              (item.kind === 'approval' ? (
-                // No dismiss here: declining is the "no", and doing nothing
-                // lets the wait treat it as not approved.
-                <ApprovalActions
-                  tenantId={tenantId}
-                  itemId={item.id}
-                  hideApprove={widgetPreview !== null}
-                />
-              ) : item.kind === 'question' ? (
-                <QuestionActions
-                  tenantId={tenantId}
-                  itemId={item.id}
-                  form={questionFormFrom(item.suggested_action)}
-                />
-              ) : (
-                <CardActions
-                  tenantId={tenantId}
-                  itemId={item.id}
-                  dismissOnly={item.kind === 'info'}
-                />
-              ))}
+        <RelatedEvidence evidence={item.evidence} />
 
-            {isPause && item.status !== 'suggested' && (
-              <PauseOutcome
-                kind={item.kind === 'question' ? 'question' : 'approval'}
-                status={item.status}
-                result={item.result}
-              />
-            )}
-            {item.status === 'executed' && <ExecutionResult result={item.result} />}
-            {item.status === 'failed' && <ExecutionResult result={item.result} failed />}
+        {item.kind === 'approval' &&
+          (widgetPreview ? (
+            <ApprovalWidgetCard
+              tenantId={tenantId}
+              itemId={item.id}
+              resourceUri={widgetPreview.resourceUri}
+              structuredContent={widgetPreview.structuredContent}
+            />
+          ) : (
+            <ProposedCall suggestedAction={item.suggested_action} result={item.result} />
+          ))}
 
-            {item.status !== 'suggested' && !isPause && (
-              <ArchiveAction
-                tenantId={tenantId}
-                itemId={item.id}
-                archived={item.archived_at !== null}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
+        {isPause && item.run_id && item.agent_id ? (
+          <p className="mb-2 text-sm">
+            <Link
+              href={`/${slug}/agents/${item.agent_id}/runs/${item.run_id}`}
+              className="text-blue-600 hover:underline dark:text-blue-400"
+            >
+              View the paused run →
+            </Link>
+          </p>
+        ) : null}
+
+        {item.status === 'suggested' &&
+          (item.kind === 'approval' ? (
+            // No dismiss here: declining is the "no", and doing nothing
+            // lets the wait treat it as not approved.
+            <ApprovalActions
+              tenantId={tenantId}
+              itemId={item.id}
+              hideApprove={widgetPreview !== null}
+            />
+          ) : item.kind === 'question' ? (
+            <QuestionActions
+              tenantId={tenantId}
+              itemId={item.id}
+              form={questionFormFrom(item.suggested_action)}
+            />
+          ) : (
+            <CardActions tenantId={tenantId} itemId={item.id} dismissOnly={item.kind === 'info'} />
+          ))}
+
+        {isPause && item.status !== 'suggested' && (
+          <PauseOutcome
+            kind={item.kind === 'question' ? 'question' : 'approval'}
+            status={item.status}
+            result={item.result}
+          />
+        )}
+        {item.status === 'executed' && <ExecutionResult result={item.result} />}
+        {item.status === 'failed' && <ExecutionResult result={item.result} failed />}
+
+        {item.status !== 'suggested' && !isPause && (
+          <ArchiveAction
+            tenantId={tenantId}
+            itemId={item.id}
+            archived={item.archived_at !== null}
+          />
+        )}
+      </div>
+    );
+  }
+
+  return <div className="space-y-4">{cards}</div>;
 }
 
 /** The form an ask_person call snapshotted onto its card. */
@@ -223,31 +226,34 @@ function proposedCallOf(
  * than a still-interactive-looking Confirm button (decideApproval's own
  * status check makes a stray click harmless, but showing one at all on a
  * resolved card is just confusing).
+ *
+ * Awaits a live, best-effort Jira field-schema fetch (jiraIssueApprovalPreview
+ * → approval-field-schema.ts) so the card's fields render as typed controls
+ * — this is the one place a page render in this app calls out to a
+ * provider; a failed or slow fetch degrades to plain-text fields rather
+ * than failing the render.
  */
-function widgetPreviewFor(
+async function widgetPreviewFor(
   suggestedAction: unknown,
-  status: string
-): { resourceUri: string; structuredContent: Record<string, unknown> } | null {
+  status: string,
+  tenantId: string,
+  subject: string
+): Promise<{ resourceUri: string; structuredContent: Record<string, unknown> } | null> {
   if (status !== 'suggested') return null;
   const call = proposedCallOf(suggestedAction);
   if (!call) return null;
-  return jiraIssueApprovalPreview(call.tool, call.args);
+  return jiraIssueApprovalPreview(call.tool, call.args, tenantId, subject);
 }
 
 /** A decided card's own edit, if it has one (ApprovalWidgetCard's Confirm,
- * via `decideApproval`'s `argsOverride`) — the same two keys
- * `APPROVAL_ARG_OVERRIDE_KEYS` (approvals.ts) ever allows. */
-function argsOverrideOf(result: unknown): Record<string, string> {
+ * via `decideApproval`'s `argsOverride`) — already stripped server-side of
+ * anything the call's identity depends on (approvals.ts's
+ * `APPROVAL_IDENTITY_KEYS`), so trusted here as-is. */
+function argsOverrideOf(result: unknown): Record<string, unknown> {
   if (typeof result !== 'object' || result === null) return {};
   const record: { argsOverride?: unknown } = { ...result };
   if (typeof record.argsOverride !== 'object' || record.argsOverride === null) return {};
-  const override: Record<string, unknown> = { ...record.argsOverride };
-  const out: Record<string, string> = {};
-  for (const key of ['summary', 'description']) {
-    const value = override[key];
-    if (typeof value === 'string') out[key] = value;
-  }
-  return out;
+  return { ...record.argsOverride };
 }
 
 /**

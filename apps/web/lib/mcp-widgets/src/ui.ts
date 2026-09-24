@@ -66,7 +66,7 @@ body {
   font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--card-muted);
 }
-.field-value, .field input, .field textarea {
+.field-value, .field input:not([type="checkbox"]), .field textarea, .field select {
   font: inherit; color: inherit; width: 100%;
   background: var(--card-field-bg);
   border: 1px solid var(--card-border); border-radius: 6px;
@@ -79,9 +79,14 @@ body {
 .field-html > div > :last-child { margin-bottom: 0; }
 .field-html a { color: var(--card-accent); }
 .field textarea { resize: vertical; min-height: 72px; }
-.field input:focus, .field textarea:focus {
+.field input:not([type="checkbox"]):focus, .field textarea:focus, .field select:focus {
   outline: 2px solid var(--card-accent); outline-offset: -1px;
 }
+.checkbox-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; font-size: 13px; cursor: pointer;
+}
+.checkbox-row input { flex: none; cursor: pointer; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .status { margin-right: auto; font-size: 13px; }
 .status.error { color: var(--card-danger); }
@@ -225,6 +230,76 @@ export function textField(
   input.value = value;
   field.append(el('div', 'field-label', label), input);
   return { field, input };
+}
+
+/** Label + number input; returns both so callers can read the value back. */
+export function numberField(
+  label: string,
+  value: string
+): { field: HTMLElement; input: HTMLInputElement } {
+  const field = el('div', 'field');
+  const input = el('input');
+  input.type = 'number';
+  input.value = value;
+  field.append(el('div', 'field-label', label), input);
+  return { field, input };
+}
+
+/** One option a select/checkbox field offers. */
+export interface FieldOption {
+  label: string;
+  value: string;
+}
+
+/**
+ * Label + single-choice dropdown — a Jira `option` field (priority, a
+ * single-select custom field). `blankLabel` becomes an empty, unselected
+ * first entry when `value` matches none of `options` — clearing a field
+ * is a legitimate edit, and a dropdown needs somewhere to land for it.
+ */
+export function selectField(
+  label: string,
+  value: string,
+  options: readonly FieldOption[]
+): { field: HTMLElement; input: HTMLSelectElement } {
+  const field = el('div', 'field');
+  const input = el('select');
+  if (!options.some((option) => option.value === value)) {
+    input.append(new Option('—', '', true, true));
+  }
+  for (const option of options) {
+    input.append(new Option(option.label, option.value, false, option.value === value));
+  }
+  field.append(el('div', 'field-label', label), input);
+  return { field, input };
+}
+
+/**
+ * Label + a checkbox per option — a Jira `array` field whose members are
+ * themselves option-shaped (a multi-select custom field, components,
+ * versions). Returns a getter rather than one input, since the value is
+ * every checked box's value, not any single control's.
+ */
+export function checkboxGroupField(
+  label: string,
+  values: readonly string[],
+  options: readonly FieldOption[]
+): { field: HTMLElement; getValues: () => string[] } {
+  const field = el('div', 'field');
+  field.append(el('div', 'field-label', label));
+  const checked = new Set(values);
+  const boxes: HTMLInputElement[] = [];
+  for (const option of options) {
+    const row = el('label', 'checkbox-row');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.value = option.value;
+    box.checked = checked.has(option.value);
+    boxes.push(box);
+    row.append(box, document.createTextNode(option.label));
+    field.append(row);
+  }
+  return { field, getValues: () => boxes.filter((box) => box.checked).map((box) => box.value) };
 }
 
 /**

@@ -141,27 +141,34 @@ export async function listPendingApprovals(
 export type ApprovalDecision = 'approve' | 'decline';
 
 /**
- * The only proposed-call keys an approval's own edit can ever override —
- * the same two fields the issue/email preview widgets mark `editable`
- * (issue-preview.ts's `editable: {summaryKey, descriptionKey}`). Anything
- * else (project, type, recipients, custom fields…) a card shows is
- * reviewed but not rewritable: the person approving is trusted to decide
- * yes/no on the call as proposed, plus a wording tweak, not to substitute
- * an unrelated call the agent never proposed and nobody else reviewed.
- * Enforced here — the one function both the HTTP route and any MCP caller
- * go through — rather than trusted to whatever sent `argsOverride`.
+ * The proposed-call keys an approval's own edit may NEVER touch — the
+ * call's identity, not its content. A preview card's editable fields
+ * (issue-preview.ts) cover everything else — summary, description,
+ * priority, custom fields inside `fields`, whatever the call actually
+ * proposes doing — because the person approving is trusted to review and
+ * adjust what the call DOES. What they are not trusted to do from an edit
+ * box is redirect it: approve one issue and have a different one updated,
+ * or a different project's issue created, than what was actually shown
+ * and reviewed. Enforced here — the one function both the HTTP route and
+ * any MCP caller go through — rather than trusted to whatever sent
+ * `argsOverride`.
  */
-export const APPROVAL_ARG_OVERRIDE_KEYS = ['summary', 'description'] as const;
+export const APPROVAL_IDENTITY_KEYS = new Set(['projectKey', 'issueType', 'issueKey']);
 
-/** `argsOverride`, narrowed to the keys an approval is ever allowed to touch. */
-function sanitizeArgsOverride(value: unknown): Record<string, string> {
+/** A generous cap on an edit's size — room for a form's worth of fields,
+ * not for smuggling an unrelated payload through the decision route. */
+const MAX_ARGS_OVERRIDE_CHARS = 20_000;
+
+/** `argsOverride`, stripped of any key the call's identity depends on. */
+function sanitizeArgsOverride(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  if (JSON.stringify(value).length > MAX_ARGS_OVERRIDE_CHARS) return {};
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
   const record = value as Record<string, unknown>;
-  const out: Record<string, string> = {};
-  for (const key of APPROVAL_ARG_OVERRIDE_KEYS) {
-    const entry = record[key];
-    if (typeof entry === 'string' && entry.trim()) out[key] = entry.trim();
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (APPROVAL_IDENTITY_KEYS.has(key)) continue;
+    out[key] = entry;
   }
   return out;
 }

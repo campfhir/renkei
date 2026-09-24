@@ -8,39 +8,110 @@
  *   { kind: 'issue', title, subtitle?, confirmTool, confirmLabel,
  *     confirmArgs,                    // passed through verbatim on confirm
  *     editable?: { summaryKey?, descriptionKey? },   // keys into confirmArgs
- *     fields: [{ label, value, oldValue? }] }        // display rows
+ *     fields: [{ label, value, oldValue?, editable? }] }   // display rows
  *
  * — and this one card serves create, update, and JSM request alike. An
  * update's rows carry oldValue so the user sees what changes, not just the
- * end state. Only summary/description are editable on the card; anything
- * structural (project, type, priority) goes back through the model, which
- * can resolve it properly.
+ * end state. Summary/description are always editable via the top-level
+ * `editable` keys above; any OTHER row (priority, a custom field, …) is
+ * editable only when the preview tool resolved enough about it to say so —
+ * `row.editable` names the path into `confirmArgs` to write back to, what
+ * kind of control to render, and (for a picklist/checkbox row) the options.
+ * A row with no `editable` stays a plain value — project/type never carry
+ * one, so the card cannot be used to redirect the write structurally.
  */
 
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
+  checkboxGroupField,
   el,
   injectStyle,
   inputField,
+  numberField,
   parseLinks,
   recallDone,
   rememberDone,
   renderDone,
+  selectField,
   str,
   textField,
   type DoneState,
+  type FieldOption,
 } from './ui';
+
+interface FieldEdit {
+  path: string[];
+  kind: 'text' | 'text-array' | 'number' | 'select' | 'checkboxes';
+  value: string | string[];
+  options: FieldOption[];
+}
 
 interface FieldRow {
   label: string;
   value: string;
   oldValue?: string;
+  editable?: FieldEdit;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
+function fieldOptions(value: unknown): FieldOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = asRecord(entry);
+    const optionValue = str(record.value);
+    return optionValue ? [{ label: str(record.label) || optionValue, value: optionValue }] : [];
+  });
+}
+
+function fieldEditOf(record: Record<string, unknown>): FieldEdit | undefined {
+  const raw = asRecord(record.editable);
+  const path = strings(raw.path);
+  const kind = raw.kind;
+  if (
+    path.length === 0 ||
+    (kind !== 'text' &&
+      kind !== 'text-array' &&
+      kind !== 'number' &&
+      kind !== 'select' &&
+      kind !== 'checkboxes')
+  ) {
+    return undefined;
+  }
+  return {
+    path,
+    kind,
+    value: kind === 'checkboxes' ? strings(raw.value) : str(raw.value),
+    options: fieldOptions(raw.options),
+  };
+}
+
+/**
+ * Set `value` at `path` inside `obj`, copying each object the path passes
+ * through rather than mutating it in place — `confirmArgs` (and its nested
+ * `fields`) stays the object the bridge handed this render, untouched,
+ * even though several edits may each set a different path into it.
+ */
+function setPath(obj: Record<string, unknown>, path: readonly string[], value: unknown): void {
+  let target = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    const key = path[i]!;
+    const next = asRecord(target[key]);
+    const copy = { ...next };
+    target[key] = copy;
+    target = copy;
+  }
+  target[path[path.length - 1]!] = value;
 }
 
 function render(bridge: WidgetBridge, result: ToolResult): void {
@@ -96,20 +167,66 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   const rows: FieldRow[] = Array.isArray(preview.fields)
     ? preview.fields.map((row) => {
         const record = asRecord(row);
+        const editable = fieldEditOf(record);
         return {
           label: str(record.label),
           value: str(record.value),
           ...(str(record.oldValue) ? { oldValue: str(record.oldValue) } : {}),
+          ...(editable ? { editable } : {}),
         };
       })
     : [];
+  // One read() per editable row, gathered on confirm rather than per
+  // keystroke — the control IS the state, this just knows how to read it.
+  const fieldEdits: { path: string[]; read: () => unknown }[] = [];
   for (const row of rows) {
-    const field = el('div', 'field');
-    field.append(el('div', 'field-label', row.label));
-    const value = el('div', 'field-value', row.value);
-    field.append(value);
-    if (row.oldValue) field.append(el('div', 'card-subtitle', `was: ${row.oldValue}`));
-    card.append(field);
+    if (!row.editable) {
+      const field = el('div', 'field');
+      field.append(el('div', 'field-label', row.label));
+      field.append(el('div', 'field-value', row.value));
+      if (row.oldValue) field.append(el('div', 'card-subtitle', `was: ${row.oldValue}`));
+      card.append(field);
+      continue;
+    }
+    const edit = row.editable;
+    let built: { field: HTMLElement };
+    if (edit.kind === 'select') {
+      const control = selectField(row.label, str(edit.value), edit.options);
+      built = control;
+      fieldEdits.push({ path: edit.path, read: () => control.input.value });
+    } else if (edit.kind === 'checkboxes') {
+      const control = checkboxGroupField(
+        row.label,
+        Array.isArray(edit.value) ? edit.value : [],
+        edit.options
+      );
+      built = control;
+      fieldEdits.push({ path: edit.path, read: () => control.getValues() });
+    } else if (edit.kind === 'number') {
+      const control = numberField(row.label, str(edit.value));
+      built = control;
+      fieldEdits.push({
+        path: edit.path,
+        read: () => (control.input.value.trim() ? Number(control.input.value) : null),
+      });
+    } else if (edit.kind === 'text-array') {
+      const control = inputField(row.label, str(edit.value));
+      built = control;
+      fieldEdits.push({
+        path: edit.path,
+        read: () =>
+          control.input.value
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter(Boolean),
+      });
+    } else {
+      const control = inputField(row.label, str(edit.value));
+      built = control;
+      fieldEdits.push({ path: edit.path, read: () => control.input.value.trim() });
+    }
+    if (row.oldValue) built.field.append(el('div', 'card-subtitle', `was: ${row.oldValue}`));
+    card.append(built.field);
   }
 
   const descriptionInput = descriptionKey
@@ -133,6 +250,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       if (value) args[descriptionKey] = value;
       else delete args[descriptionKey];
     }
+    for (const edit of fieldEdits) setPath(args, edit.path, edit.read());
     const confirmed = await bridge.callTool(confirmTool, args);
     const text = resultText(confirmed);
     if (confirmed.isError) throw new Error(text || 'The write failed');

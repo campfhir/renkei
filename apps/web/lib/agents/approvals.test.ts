@@ -183,7 +183,7 @@ describe('decideApproval', () => {
     expect(stored.comment).toBe('wrong ticket');
   });
 
-  it('stores an approve-time argsOverride, narrowed to summary/description', async () => {
+  it('stores an approve-time argsOverride, stripped of the call identity keys only', async () => {
     const sets: Record<string, unknown>[] = [];
     await decideApproval(
       stubDb({
@@ -200,16 +200,27 @@ describe('decideApproval', () => {
         argsOverride: {
           summary: 'Edited summary',
           description: 'Edited description',
-          // Not one of the two overridable keys — must be dropped, not
-          // stored: an approval can reword the call, never redirect it.
+          // Not just text fields — a picklist, a number, a custom field
+          // inside `fields`, all pass through too.
+          priority: 'High',
+          storyPoints: 5,
+          fields: { 'Anti-Kickback Review': 'Required' },
+          // The call's identity, though — never stored, whatever sent it:
+          // an approval can reword what the call does, never redirect it
+          // to a different project or a different issue.
           projectKey: 'HACKED',
+          issueType: 'Bug',
+          issueKey: 'HACKED-1',
         },
       }
     );
-    const stored: { argsOverride?: Record<string, string> } = JSON.parse(String(sets[0]?.result));
+    const stored: { argsOverride?: Record<string, unknown> } = JSON.parse(String(sets[0]?.result));
     expect(stored.argsOverride).toEqual({
       summary: 'Edited summary',
       description: 'Edited description',
+      priority: 'High',
+      storyPoints: 5,
+      fields: { 'Anti-Kickback Review': 'Required' },
     });
   });
 
