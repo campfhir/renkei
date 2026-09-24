@@ -184,7 +184,11 @@ function instanceLine(connected: ConnectedInstance): string {
   return (
     `${connected.instance.name} [${connected.instance.environment}] — id ${connected.instance.id} — ` +
     `${connected.instance.baseUrl} — connected as ${connected.connection.technicianName} — permissions: ` +
-    permissionSummary(connected.connection.permissions)
+    permissionSummary(connected.connection.permissions) +
+    ' — reset-password template: ' +
+    (connected.instance.resetPasswordTemplateName
+      ? `"${connected.instance.resetPasswordTemplateName}"`
+      : 'none configured (resets cannot force a change at next logon)')
   );
 }
 
@@ -427,11 +431,15 @@ export function registerAdManagerTools(
     return { ok: true, response: answered.val };
   };
 
-  const instanceNameFor = async (instanceId: string): Promise<string> => {
+  /** The registered instance behind an id the caller has connected, or null. */
+  const instanceFor = async (instanceId: string): Promise<ConnectedInstance['instance'] | null> => {
     const connected = await auth.listConnected();
-    if (typeof connected === 'string') return instanceId;
-    return connected.find((entry) => entry.instance.id === instanceId)?.instance.name ?? instanceId;
+    if (typeof connected === 'string') return null;
+    return connected.find((entry) => entry.instance.id === instanceId)?.instance ?? null;
   };
+
+  const instanceNameFor = async (instanceId: string): Promise<string> =>
+    (await instanceFor(instanceId))?.name ?? instanceId;
 
   /** One user record by logon name, or an error string. */
   const getUserRecord = async (
@@ -683,16 +691,32 @@ export function registerAdManagerTools(
     mustChangePassword: z
       .boolean()
       .optional()
-      .describe('Force the user to change it at next logon (default true).'),
-    resetPasswordTemplateName: z
-      .string()
-      .optional()
       .describe(
-        'An ADManager Plus template name that forces "must change password at next logon" — ' +
-          'ADManager Plus can only set that flag through a template, so it is required whenever ' +
-          'mustChangePassword is true.'
+        'Force the user to change it at next logon (default true). ADManager Plus can only set ' +
+          'that flag through a template, so this needs the reset-password template an operator ' +
+          'configured on the instance (admanager_list_instances shows whether one is); with none ' +
+          'configured, pass false to reset without forcing a change.'
       ),
   });
+
+  const NO_RESET_TEMPLATE =
+    'Forcing a password change at next logon needs the reset-password template configured on ' +
+    'this instance, and none is: ADManager Plus can only set that flag through a template, and ' +
+    'an operator records its exact name on the instance (Admin → ADManager Plus). Pass ' +
+    'mustChangePassword: false to reset without forcing a change, or ask an operator to configure ' +
+    'the template.';
+
+  /** The instance's configured template, or a refusal when a forced change needs one and none exists. */
+  const resetTemplateFor = async (
+    instanceId: string,
+    mustChangePassword: boolean
+  ): Promise<{ ok: true; templateName: string | null } | { ok: false; message: string }> => {
+    const instance = await instanceFor(instanceId);
+    if (!instance) return { ok: false, message: NO_SUCH_INSTANCE };
+    const templateName = instance.resetPasswordTemplateName;
+    if (mustChangePassword && !templateName) return { ok: false, message: NO_RESET_TEMPLATE };
+    return { ok: true, templateName };
+  };
 
   const resetPasswordHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
     const instanceId = str(args.instanceId);
@@ -702,15 +726,13 @@ export function registerAdManagerTools(
     const domainName = str(args.domainName);
     const newPassword = str(args.newPassword) || generatePassword();
     const mustChangePassword = args.mustChangePassword !== false;
-    const templateName = str(args.resetPasswordTemplateName);
-    if (mustChangePassword && !templateName) {
-      return errText(
-        'Forcing a password change at next logon needs an ADManager Plus template name ' +
-          '(resetPasswordTemplateName) — ADManager Plus can only apply that setting through a ' +
-          'template. Pass mustChangePassword: false to reset without forcing a change, or supply ' +
-          'the template.'
-      );
-    }
+    // Resolved from the instance's own setting on EVERY call, never from
+    // an argument: the template lives in that server's configuration and
+    // an operator recorded its exact name, so a model has nothing to
+    // guess and no way to point the change at some other template.
+    const template = await resetTemplateFor(instanceId, mustChangePassword);
+    if (!template.ok) return errText(template.message);
+    const templateName = template.templateName;
 
     const reset = await call(instanceId, 'reset the password', {
       method: 'POST',
@@ -759,7 +781,9 @@ export function registerAdManagerTools(
       description:
         'Show the user an interactive card to confirm or cancel resetting an AD account’s ' +
         'password. When no password is given, a strong one is generated and shown on the card so ' +
-        'it can be relayed to the employee.',
+        'it can be relayed to the employee. Forcing a change at next logon (the default) applies ' +
+        'the reset-password template an operator configured on the instance — no template name ' +
+        'is taken here.',
       annotations: { readOnlyHint: false },
       _meta: previewToolMeta(DIRECTORY_ACTION_PREVIEW_URI),
       inputSchema: resetPasswordSchema,
@@ -771,14 +795,9 @@ export function registerAdManagerTools(
       const samAccountName = str(args.samAccountName);
       const domainName = str(args.domainName);
       const mustChangePassword = args.mustChangePassword !== false;
-      const templateName = str(args.resetPasswordTemplateName);
-      if (mustChangePassword && !templateName) {
-        return errText(
-          'Forcing a password change at next logon needs an ADManager Plus template name ' +
-            '(resetPasswordTemplateName) — pass mustChangePassword: false to reset without forcing ' +
-            'a change, or supply the template.'
-        );
-      }
+      const template = await resetTemplateFor(instanceId, mustChangePassword);
+      if (!template.ok) return errText(template.message);
+      const templateName = mustChangePassword ? template.templateName : null;
       const existing = await getUserRecord(instanceId, domainName, samAccountName, ['DISPLAY_NAME']);
       if (!existing.ok) return errText(existing.message);
       const newPassword = str(args.newPassword) || generatePassword();

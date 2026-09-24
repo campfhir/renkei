@@ -227,6 +227,12 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   await page.getByLabel('Name').fill('ADManager Plus prod');
   await page.getByLabel('Environment').fill('prod');
   await page.getByLabel('Server URL').fill('https://admp.example.com:8080');
+  // The reset-password template is an instance setting (the REST API
+  // cannot set "must change password at next logon" itself, so the tools
+  // apply this template after a reset — see the design doc).
+  await page
+    .getByLabel('Reset-password template (optional)')
+    .fill('Reset Password – must change at next logon');
   await shot(page, testInfo, 'admanager-admin-02-draft-filled');
 
   // No worker is configured in this environment (see the file header) —
@@ -245,12 +251,32 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   await page.getByRole('link', { name: 'Manage', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ADManager Plus prod' })).toBeVisible();
   await expect(page.getByLabel('Server URL')).toHaveValue('https://admp.example.com:8080');
+  // The template survived create → stored settings JSON → GET.
+  await expect(page.getByLabel('Reset-password template (optional)')).toHaveValue(
+    'Reset Password – must change at next logon'
+  );
 
-  // Edit and save through the real PATCH route.
+  // Edit and save through the real PATCH route — the template changes too.
   await page.getByLabel('Environment').fill('staging');
+  await page.getByLabel('Reset-password template (optional)').fill('Helpdesk Reset Template');
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
   await shot(page, testInfo, 'admanager-admin-05-edited');
+
+  // Reload and re-read from the real database: the PATCH merged the new
+  // template into the stored settings.
+  await page.reload();
+  await expect(page.getByLabel('Environment')).toHaveValue('staging');
+  await expect(page.getByLabel('Reset-password template (optional)')).toHaveValue(
+    'Helpdesk Reset Template'
+  );
+
+  // Clearing the field clears the stored template (blank → null → key removed).
+  await page.getByLabel('Reset-password template (optional)').fill('');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Saved.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Reset-password template (optional)')).toHaveValue('');
 
   // Mobile: a resized Chromium viewport, not a device descriptor — see
   // AGENTS.md and llm-models.spec.ts's note on why.

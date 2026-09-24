@@ -24,6 +24,7 @@ interface InstanceResponse {
     tlsVerify: boolean;
     hasCustomCa: boolean;
     allowInsecureHttp: boolean;
+    resetPasswordTemplateName: string | null;
     enabled: boolean;
   };
 }
@@ -56,6 +57,7 @@ export default function InstanceConfigForm({
       tlsVerify: data.instance.tlsVerify,
       hasCustomCa: data.instance.hasCustomCa,
       allowInsecureHttp: data.instance.allowInsecureHttp,
+      resetPasswordTemplateName: data.instance.resetPasswordTemplateName ?? '',
       enabled: data.instance.enabled,
     });
   }, [slug, instanceId]);
