@@ -396,6 +396,8 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
             tlsVerify: unsaved.tlsVerify !== false,
             hasCustomCa: typeof unsaved.caPem === 'string' && unsaved.caPem.trim() !== '',
             allowInsecureHttp,
+            // A probe only needs to reach the server; no reset happens here.
+            resetPasswordTemplateName: null,
             enabled: true,
           },
           caPem: typeof unsaved.caPem === 'string' && unsaved.caPem.trim() ? unsaved.caPem : null,
