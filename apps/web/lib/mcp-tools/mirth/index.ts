@@ -883,7 +883,6 @@ export function registerMirthTools(
         method: 'GET',
         path: `/channels/${encodeURIComponent(str(args.channelId))}/messages/count`,
         query: messageQuery(args),
-        accept: 'text/plain',
       });
       if (!counted.ok) return errText(counted.message);
       const raw = counted.response.body.trim();
