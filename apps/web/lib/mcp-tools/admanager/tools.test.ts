@@ -199,8 +199,8 @@ describe('unlock account: preview + confirm', () => {
     ).toBe('jdoe');
   });
 
-  it('confirm posts to unlockUserAccount and reports success', async () => {
-    admanagerApi.mockResolvedValueOnce(answer(200, { status: 'SUCCESS' }));
+  it('confirm posts to /RestAPI/UnlockUser with inputFormat and reports success', async () => {
+    admanagerApi.mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Unlocked.' }]));
     const handlers = register();
     const result = await handlers.get('admanager_unlock_account_confirm')!({
       instanceId: INSTANCE_ID,
@@ -212,10 +212,22 @@ describe('unlock account: preview + confirm', () => {
       { tenantId: 'tenant-1', subject: 'auth0|alice', instanceId: INSTANCE_ID },
       expect.objectContaining({
         method: 'POST',
-        path: '/api/v1/user/unlockUserAccount',
-        body: { domainName: 'corp.example', userName: 'jdoe' },
+        path: '/RestAPI/UnlockUser',
+        query: { domainName: 'corp.example', inputFormat: JSON.stringify([{ sAMAccountName: 'jdoe' }]) },
       })
     );
+  });
+
+  it('confirm treats a logical failure (HTTP 200, error envelope) as an error', async () => {
+    admanagerApi.mockResolvedValueOnce(answer(200, { SEVERITY: 'FAILURE', STATUS_MESSAGE: 'No such user' }));
+    const handlers = register();
+    const result = await handlers.get('admanager_unlock_account_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/No such user/);
   });
 
   it('phrases a permission-scope refusal from ADManager Plus itself (403)', async () => {
@@ -239,6 +251,7 @@ describe('reset password: the shown password is the one used', () => {
       instanceId: INSTANCE_ID,
       domainName: 'corp.example',
       samAccountName: 'jdoe',
+      resetPasswordTemplateName: 'Reset Password Template',
     });
     const confirmArgs = result.structuredContent?.confirmArgs as Record<string, unknown>;
     const secret = result.structuredContent?.secret as { label: string; value: string };
@@ -248,8 +261,23 @@ describe('reset password: the shown password is the one used', () => {
     expect((confirmArgs.newPassword as string).length).toBeGreaterThanOrEqual(16);
   });
 
-  it('confirm uses the caller-supplied password verbatim, not a new one', async () => {
-    admanagerApi.mockResolvedValueOnce(answer(200, { status: 'SUCCESS' }));
+  it('preview refuses when forcing a change is requested with no template', async () => {
+    const handlers = register();
+    const result = await handlers.get('admanager_reset_password_preview')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/resetPasswordTemplateName/);
+    expect(admanagerApi).not.toHaveBeenCalled();
+  });
+
+  it('confirm resets via /RestAPI/ResetPwd then forces the change via /RestAPI/ModifyUser, keyed by EMPLOYEE_ID', async () => {
+    admanagerApi
+      .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }]))
+      .mockResolvedValueOnce(usersResponse([{ EMPLOYEE_ID: 'CQU00123' }]))
+      .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Successfully modified.' }]));
     const handlers = register();
     const result = await handlers.get('admanager_reset_password_confirm')!({
       instanceId: INSTANCE_ID,
@@ -257,15 +285,63 @@ describe('reset password: the shown password is the one used', () => {
       samAccountName: 'jdoe',
       newPassword: 'Sup3r!Secret9000',
       mustChangePassword: true,
+      resetPasswordTemplateName: 'Reset Password Template',
     });
     expect(textOf(result)).toContain('Sup3r!Secret9000');
-    expect(admanagerApi).toHaveBeenCalledWith(
+    expect(admanagerApi).toHaveBeenNthCalledWith(
+      1,
       expect.anything(),
       expect.objectContaining({
-        path: '/api/v1/user/resetPassword',
-        body: expect.objectContaining({ newPassword: 'Sup3r!Secret9000', mustChangePassword: true }),
+        method: 'POST',
+        path: '/RestAPI/ResetPwd',
+        query: {
+          domainName: 'corp.example',
+          passwordType: 'password',
+          pwd: 'Sup3r!Secret9000',
+          inputFormat: JSON.stringify([{ sAMAccountName: 'jdoe' }]),
+        },
       })
     );
+    expect(admanagerApi).toHaveBeenNthCalledWith(
+      3,
+      expect.anything(),
+      expect.objectContaining({
+        method: 'POST',
+        path: '/RestAPI/ModifyUser',
+        query: {
+          inputFormat: JSON.stringify([
+            { employeeID: 'CQU00123', templateName: 'Reset Password Template' },
+          ]),
+        },
+      })
+    );
+  });
+
+  it('confirm refuses to force a change at next logon without a template', async () => {
+    const handlers = register();
+    const result = await handlers.get('admanager_reset_password_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      newPassword: 'Sup3r!Secret9000',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/resetPasswordTemplateName/);
+    expect(admanagerApi).not.toHaveBeenCalled();
+  });
+
+  it('confirm resets without forcing a change when mustChangePassword is false', async () => {
+    admanagerApi.mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }]));
+    const handlers = register();
+    const result = await handlers.get('admanager_reset_password_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      newPassword: 'Sup3r!Secret9000',
+      mustChangePassword: false,
+    });
+    expect(textOf(result)).toContain('Sup3r!Secret9000');
+    expect(admanagerApi).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -378,6 +454,222 @@ describe('group membership is additive only', () => {
     });
     expect(result.structuredContent).toBeUndefined();
     expect(textOf(result)).toMatch(/already has every group/);
+  });
+});
+
+describe('group membership: confirm PATCHes the two dedicated attribute keys', () => {
+  it('add confirm PATCHes memberOf and reports success', async () => {
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })
+    );
+    const handlers = register();
+    const result = await handlers.get('admanager_add_user_to_groups_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      groupNames: ['VPN Users'],
+    });
+    expect(textOf(result)).toMatch(/Added jdoe to: VPN Users/);
+    expect(admanagerApi).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        method: 'PATCH',
+        path: '/api/v2/users',
+        query: { domain: 'corp.example', filter: '(SAM_ACCOUNT_NAME eq "jdoe")' },
+        body: { data: { attributes: { memberOf: 'VPN Users' } } },
+      })
+    );
+  });
+
+  it('remove confirm PATCHes removememberOf, never memberOf', async () => {
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })
+    );
+    const handlers = register();
+    const result = await handlers.get('admanager_remove_user_from_groups_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      groupNames: ['VPN Users'],
+    });
+    expect(textOf(result)).toMatch(/Removed jdoe from: VPN Users/);
+    expect(admanagerApi).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        method: 'PATCH',
+        path: '/api/v2/users',
+        body: { data: { attributes: { removememberOf: 'VPN Users' } } },
+      })
+    );
+  });
+
+  it('includes a template when one is given', async () => {
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { data: [{ status: { status_code: 1, status_message: 'ok' } }] })
+    );
+    const handlers = register();
+    await handlers.get('admanager_add_user_to_groups_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      groupNames: ['VPN Users'],
+      templateName: 'AD Update Template',
+    });
+    expect(admanagerApi).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: {
+          template: { template_name: 'AD Update Template' },
+          data: { attributes: { memberOf: 'VPN Users' } },
+        },
+      })
+    );
+  });
+
+  it('surfaces a request-level ManageEngine rejection (IAM_ERROR_STATUS)', async () => {
+    admanagerApi.mockResolvedValueOnce(answer(200, { IAM_ERROR_STATUS: true, eSTATUS: 'Template not found' }));
+    const handlers = register();
+    const result = await handlers.get('admanager_add_user_to_groups_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      groupNames: ['VPN Users'],
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/Template not found/);
+  });
+
+  it('surfaces a per-item failure (status_code != 1) even though the HTTP call succeeded', async () => {
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { data: [{ status: { status_code: 0, status_message: 'No such group' } }] })
+    );
+    const handlers = register();
+    const result = await handlers.get('admanager_add_user_to_groups_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      groupNames: ['Nonexistent Group'],
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/No such group/);
+  });
+});
+
+describe('create user: /RestAPI/CreateUser', () => {
+  it('confirm sends a flat inputFormat entry and reports the password on success', async () => {
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, [{ status: 'SUCCESS', USER_EMAIL: 'jdoe@corp.example', 'SAM Account Name': 'jdoe' }])
+    );
+    const handlers = register();
+    const result = await handlers.get('admanager_create_user_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      ouPath: 'OU=Users,DC=corp,DC=example',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      sAMAccountName: 'jdoe',
+      userPrincipalName: 'jdoe@corp.example',
+      password: 'Sup3r!Secret9000',
+    });
+    expect(textOf(result)).toMatch(/Created jdoe in corp.example/);
+    expect(textOf(result)).toContain('Sup3r!Secret9000');
+    expect(admanagerApi).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        method: 'POST',
+        path: '/RestAPI/CreateUser',
+        query: {
+          domainName: 'corp.example',
+          inputFormat: JSON.stringify([
+            {
+              sAMAccountName: 'jdoe',
+              givenName: 'Jane',
+              sn: 'Doe',
+              name: 'Jane Doe',
+              userPrincipalName: 'jdoe@corp.example',
+              OUName: 'OU=Users,DC=corp,DC=example',
+              password: 'Sup3r!Secret9000',
+            },
+          ]),
+        },
+      })
+    );
+  });
+
+  it('reports a request-level failure (no success entry) as an error', async () => {
+    admanagerApi.mockResolvedValueOnce(answer(200, { STATUS_MESSAGE: 'Account already exists' }));
+    const handlers = register();
+    const result = await handlers.get('admanager_create_user_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      ouPath: 'OU=Users,DC=corp,DC=example',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      sAMAccountName: 'jdoe',
+      userPrincipalName: 'jdoe@corp.example',
+      password: 'Sup3r!Secret9000',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/Account already exists/);
+  });
+
+  it('disables the account after creation when enabled: false', async () => {
+    admanagerApi
+      .mockResolvedValueOnce(answer(200, [{ status: 'SUCCESS', 'SAM Account Name': 'jdoe' }]))
+      .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Disabled.' }]));
+    const handlers = register();
+    await handlers.get('admanager_create_user_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      ouPath: 'OU=Users,DC=corp,DC=example',
+      firstName: 'Jane',
+      lastName: 'Doe',
+      sAMAccountName: 'jdoe',
+      userPrincipalName: 'jdoe@corp.example',
+      password: 'Sup3r!Secret9000',
+      enabled: false,
+    });
+    expect(admanagerApi).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        method: 'POST',
+        path: '/RestAPI/DisableUser',
+        query: { domainName: 'corp.example', inputFormat: JSON.stringify([{ sAMAccountName: 'jdoe' }]) },
+      })
+    );
+  });
+});
+
+describe('update user: a logical PATCH failure is reported, not swallowed', () => {
+  it('reports success with the per-item status message', async () => {
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })
+    );
+    const handlers = register();
+    const result = await handlers.get('admanager_update_user_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      department: 'Finance',
+    });
+    expect(textOf(result)).toMatch(/Updated jdoe in corp.example/);
+    expect(textOf(result)).toContain('Successfully modified.');
+  });
+
+  it('reports a per-item failure as an error rather than "Updated"', async () => {
+    admanagerApi.mockResolvedValueOnce(
+      answer(200, { data: [{ status: { status_code: 0, status_message: 'Attribute rejected' } }] })
+    );
+    const handlers = register();
+    const result = await handlers.get('admanager_update_user_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      department: 'Finance',
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/Attribute rejected/);
   });
 });
 

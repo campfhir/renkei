@@ -43,13 +43,17 @@ export function parseBaseUrl(value: unknown, allowInsecureHttp: boolean): string
 
 /**
  * The one path filter between a caller and the ADManager Plus server.
- * Paths are absolute API routes (`/api/v1/user/unlockUserAccount`,
- * `/api/v2/users`): never climbing, never a second URL, and never a query
- * string — query parameters travel separately so they are encoded
- * exactly once.
+ * Paths are absolute API routes: the newer JSON API (`/api/v2/users`) or
+ * the legacy query-param-driven API (`/RestAPI/UnlockUser`,
+ * `/RestAPI/ResetPwd`, `/RestAPI/CreateUser`, `/RestAPI/ModifyUser`) that
+ * several of ADManager Plus's write operations actually live on — never
+ * climbing, never a second URL, and never a query string — query
+ * parameters travel separately so they are encoded exactly once.
  */
 export function validApiPath(path: string): boolean {
-  if (typeof path !== 'string' || !path.startsWith('/api/')) return false;
+  if (typeof path !== 'string' || (!path.startsWith('/api/') && !path.startsWith('/RestAPI/'))) {
+    return false;
+  }
   if (path.length > 2048) return false;
   if (path.includes('..') || path.includes('://') || path.startsWith('//')) return false;
   if (path.includes('?') || path.includes('#')) return false;
@@ -61,8 +65,10 @@ export function validApiPath(path: string): boolean {
 }
 
 /**
- * One clause of an ADManager Plus filter expression: `COLUMN op "value"`.
- * Quotes inside the value are escaped so a name like `O'Brien` cannot
+ * One clause of an ADManager Plus filter expression: `(COLUMN op "value")`.
+ * The outer parentheses aren't optional styling — every confirmed-working
+ * call against a real server wraps the whole clause this way, single or
+ * not. Quotes inside the value are escaped so a name like `O'Brien` cannot
  * break out of the clause.
  */
 export function filterClause(
@@ -71,13 +77,16 @@ export function filterClause(
   value: string
 ): string {
   const escaped = value.replace(/"/g, '\\"');
-  return `${column} ${op} "${escaped}"`;
+  return `(${column} ${op} "${escaped}")`;
 }
 
-/** Several clauses joined with `and`/`or`, parenthesized so precedence never surprises. */
+/**
+ * Several clauses joined with `and`/`or`. Callers pass clauses already
+ * wrapped by `filterClause`, so no further parenthesizing happens here —
+ * doing it again would double-wrap every clause for no benefit.
+ */
 export function combineFilters(clauses: readonly string[], join: 'and' | 'or' = 'and'): string {
   const nonEmpty = clauses.filter((clause) => clause.trim().length > 0);
   if (nonEmpty.length === 0) return '';
-  if (nonEmpty.length === 1) return nonEmpty[0];
-  return nonEmpty.map((clause) => `(${clause})`).join(` ${join} `);
+  return nonEmpty.join(` ${join} `);
 }

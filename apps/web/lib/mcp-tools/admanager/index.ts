@@ -224,16 +224,59 @@ function upstreamMessage(what: string, response: WireApiResponse): string {
   }
 }
 
-/** The per-item status_message ADManager Plus's v2 write endpoints report, when present. */
-function itemStatusMessages(parsed: unknown): string[] {
-  if (!isRecord(parsed) || !Array.isArray(parsed.data)) return [];
-  const messages: string[] = [];
-  for (const item of parsed.data) {
-    if (isRecord(item) && isRecord(item.status) && typeof item.status.status_message === 'string') {
-      messages.push(item.status.status_message);
-    }
+/**
+ * ADManager Plus's legacy `/RestAPI/*` write-endpoint response (unlock,
+ * reset-password, force-template): either a JSON array of per-account
+ * result entries, or a single `{SEVERITY, STATUS_MESSAGE}` request-level
+ * error envelope. Success is a status of `1`/`"1"`/`"SUCCESS"` or a
+ * success-shaped message; anything else with content is a failure. These
+ * endpoints answer HTTP 200 even on a logical failure, so this is the
+ * check that actually matters — `call()`'s ok:true only means the HTTP
+ * layer worked.
+ */
+function interpretV1Response(parsed: unknown): { ok: boolean; message: string } {
+  if (Array.isArray(parsed)) {
+    const entry = isRecord(parsed[0]) ? parsed[0] : undefined;
+    const status = entry?.status;
+    const message = str(entry?.statusMessage) || str(entry?.STATUS_MESSAGE);
+    const succeeded =
+      status === 1 ||
+      status === '1' ||
+      (typeof status === 'string' && status.toUpperCase() === 'SUCCESS') ||
+      /success/i.test(message);
+    if (succeeded) return { ok: true, message: message || 'success' };
+    if (message || status != null) return { ok: false, message: message || String(status) };
+    return { ok: true, message: 'success' };
   }
-  return messages;
+  if (isRecord(parsed)) {
+    const severity = str(parsed.SEVERITY);
+    if (severity && severity.toUpperCase() !== 'SUCCESS') {
+      return { ok: false, message: str(parsed.STATUS_MESSAGE) || severity };
+    }
+    return { ok: true, message: str(parsed.STATUS_MESSAGE) || 'success' };
+  }
+  return { ok: true, message: 'success' };
+}
+
+/**
+ * ADManager Plus's v2 `PATCH /api/v2/users` response: either a request-level
+ * `{IAM_ERROR_STATUS: true, eSTATUS}` rejection, or a per-item array whose
+ * `status.status_code` must be `1` for success. Like the v1 endpoints, a
+ * logical failure still answers HTTP 200 — this is the check that matters.
+ */
+function interpretV2PatchResponse(parsed: unknown): { ok: boolean; message: string } {
+  if (isRecord(parsed) && parsed.IAM_ERROR_STATUS === true) {
+    return { ok: false, message: str(parsed.eSTATUS) || 'ManageEngine rejected the request' };
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.data)) return { ok: true, message: 'success' };
+  const entry = parsed.data.find(isRecord);
+  const status = isRecord(entry?.status) ? entry.status : undefined;
+  const statusCode = status?.status_code;
+  const message = typeof status?.status_message === 'string' ? status.status_message : '';
+  if (statusCode !== 1 && statusCode !== '1') {
+    return { ok: false, message: message || 'Unknown ManageEngine error' };
+  }
+  return { ok: true, message };
 }
 
 const USER_FIELDS = [
@@ -495,14 +538,22 @@ export function registerAdManagerTools(
     const instanceId = str(args.instanceId);
     const refusal = await exposureRefusal(instanceId, 'accounts.unlock');
     if (refusal) return errText(refusal);
+    const samAccountName = str(args.samAccountName);
+    const domainName = str(args.domainName);
     const answered = await call(instanceId, 'unlock the account', {
       method: 'POST',
-      path: '/api/v1/user/unlockUserAccount',
-      body: { domainName: str(args.domainName), userName: str(args.samAccountName) },
+      path: '/RestAPI/UnlockUser',
+      query: {
+        domainName,
+        inputFormat: JSON.stringify([{ sAMAccountName: samAccountName }]),
+      },
     });
-    return answered.ok
-      ? textResult(`Unlocked ${str(args.samAccountName)} in ${str(args.domainName)}.`)
-      : errText(answered.message);
+    if (!answered.ok) return errText(answered.message);
+    const outcome = interpretV1Response(parseJson(answered.response.body));
+    if (!outcome.ok) {
+      return errText(`ADManager Plus could not unlock ${samAccountName}: ${outcome.message}`);
+    }
+    return textResult(`Unlocked ${samAccountName} in ${domainName}.`);
   };
 
   gated('accounts.unlock').registerTool(
@@ -578,28 +629,79 @@ export function registerAdManagerTools(
       .boolean()
       .optional()
       .describe('Force the user to change it at next logon (default true).'),
+    resetPasswordTemplateName: z
+      .string()
+      .optional()
+      .describe(
+        'An ADManager Plus template name that forces "must change password at next logon" — ' +
+          'ADManager Plus can only set that flag through a template, so it is required whenever ' +
+          'mustChangePassword is true.'
+      ),
   });
 
   const resetPasswordHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
     const instanceId = str(args.instanceId);
     const refusal = await exposureRefusal(instanceId, 'accounts.reset_password');
     if (refusal) return errText(refusal);
+    const samAccountName = str(args.samAccountName);
+    const domainName = str(args.domainName);
     const newPassword = str(args.newPassword) || generatePassword();
-    const answered = await call(instanceId, 'reset the password', {
+    const mustChangePassword = args.mustChangePassword !== false;
+    const templateName = str(args.resetPasswordTemplateName);
+    if (mustChangePassword && !templateName) {
+      return errText(
+        'Forcing a password change at next logon needs an ADManager Plus template name ' +
+          '(resetPasswordTemplateName) — ADManager Plus can only apply that setting through a ' +
+          'template. Pass mustChangePassword: false to reset without forcing a change, or supply ' +
+          'the template.'
+      );
+    }
+
+    const reset = await call(instanceId, 'reset the password', {
       method: 'POST',
-      path: '/api/v1/user/resetPassword',
-      body: {
-        domainName: str(args.domainName),
-        userName: str(args.samAccountName),
-        newPassword,
-        mustChangePassword: args.mustChangePassword !== false,
+      path: '/RestAPI/ResetPwd',
+      query: {
+        domainName,
+        passwordType: 'password',
+        pwd: newPassword,
+        inputFormat: JSON.stringify([{ sAMAccountName: samAccountName }]),
       },
     });
-    return answered.ok
-      ? textResult(
-          `Password reset for ${str(args.samAccountName)} in ${str(args.domainName)}. New password: ${newPassword}`
-        )
-      : errText(answered.message);
+    if (!reset.ok) return errText(reset.message);
+    const resetOutcome = interpretV1Response(parseJson(reset.response.body));
+    if (!resetOutcome.ok) {
+      return errText(`ADManager Plus could not reset the password for ${samAccountName}: ${resetOutcome.message}`);
+    }
+
+    if (mustChangePassword && templateName) {
+      // ResetPwd cannot touch pwdLastSet, so a template applied through
+      // ModifyUser is what actually forces the change — and ModifyUser
+      // locates the account by AD's own EMPLOYEE_ID, not sAMAccountName.
+      const lookup = await getUserRecord(instanceId, domainName, samAccountName, ['EMPLOYEE_ID']);
+      const employeeID = lookup.ok ? str(lookup.user.EMPLOYEE_ID) : '';
+      if (!employeeID) {
+        const reason = lookup.ok ? 'this account has no EMPLOYEE_ID in AD' : lookup.message;
+        return textResult(
+          `Password reset for ${samAccountName} in ${domainName}, but "must change at next logon" ` +
+            `could not be applied: ${reason}. New password: ${newPassword}`
+        );
+      }
+      const modify = await call(instanceId, 'force a password change at next logon', {
+        method: 'POST',
+        path: '/RestAPI/ModifyUser',
+        query: { inputFormat: JSON.stringify([{ employeeID, templateName }]) },
+      });
+      const modifyOutcome = modify.ok ? interpretV1Response(parseJson(modify.response.body)) : null;
+      if (!modify.ok || !modifyOutcome?.ok) {
+        const detail = modify.ok ? modifyOutcome?.message : modify.message;
+        return textResult(
+          `Password reset for ${samAccountName} in ${domainName}, but could not force a change at ` +
+            `next logon: ${detail}. New password: ${newPassword}`
+        );
+      }
+    }
+
+    return textResult(`Password reset for ${samAccountName} in ${domainName}. New password: ${newPassword}`);
   };
 
   gated('accounts.reset_password').registerTool(
@@ -620,10 +722,18 @@ export function registerAdManagerTools(
       if (refusal) return errText(refusal);
       const samAccountName = str(args.samAccountName);
       const domainName = str(args.domainName);
+      const mustChangePassword = args.mustChangePassword !== false;
+      const templateName = str(args.resetPasswordTemplateName);
+      if (mustChangePassword && !templateName) {
+        return errText(
+          'Forcing a password change at next logon needs an ADManager Plus template name ' +
+            '(resetPasswordTemplateName) — pass mustChangePassword: false to reset without forcing ' +
+            'a change, or supply the template.'
+        );
+      }
       const existing = await getUserRecord(instanceId, domainName, samAccountName, ['DISPLAY_NAME']);
       if (!existing.ok) return errText(existing.message);
       const newPassword = str(args.newPassword) || generatePassword();
-      const mustChangePassword = args.mustChangePassword !== false;
       const instanceName = await instanceNameFor(instanceId);
       const displayName = str(existing.user.DISPLAY_NAME) || samAccountName;
       // The password is resolved HERE and carried in confirmArgs, so confirm
@@ -644,6 +754,7 @@ export function registerAdManagerTools(
         },
         fields: [
           { label: 'Must change at next logon', value: mustChangePassword ? 'Yes' : 'No' },
+          ...(templateName ? [{ label: 'Template', value: templateName }] : []),
         ],
         confirmTool: 'admanager_reset_password_confirm',
         confirmLabel: 'Reset password',
@@ -698,52 +809,72 @@ export function registerAdManagerTools(
     enabled: z.boolean().optional().describe('Account enabled state (default true).'),
   });
 
+  /** The flat attribute object ADManager Plus's v1 CreateUser takes as one `inputFormat` entry. */
   function createUserBody(args: Record<string, unknown>, password: string): Record<string, unknown> {
-    const attributes: Record<string, unknown> = {
+    const body: Record<string, unknown> = {
       sAMAccountName: str(args.sAMAccountName),
       givenName: str(args.firstName),
       sn: str(args.lastName),
       name: `${str(args.firstName)} ${str(args.lastName)}`.trim(),
       userPrincipalName: str(args.userPrincipalName),
       OUName: str(args.ouPath),
+      password,
     };
-    if (args.email) attributes.mail = str(args.email);
-    if (args.department) attributes.department = str(args.department);
-    if (args.title) attributes.title = str(args.title);
-    if (args.telephoneNumber) attributes.telephoneNumber = str(args.telephoneNumber);
-
+    if (args.email) body.mail = str(args.email);
+    if (args.department) body.department = str(args.department);
+    if (args.title) body.title = str(args.title);
+    if (args.telephoneNumber) body.telephoneNumber = str(args.telephoneNumber);
     const templateName = str(args.templateName);
-    return {
-      data: [
-        {
-          ...(templateName ? { template: { template_name: templateName } } : {}),
-          attributes,
-          password,
-          enabled: args.enabled !== false,
-        },
-      ],
-    };
+    if (templateName) body.templateName = templateName;
+    return body;
   }
 
   const createUserHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
     const instanceId = str(args.instanceId);
     const refusal = await exposureRefusal(instanceId, 'accounts.create');
     if (refusal) return errText(refusal);
+    const domainName = str(args.domainName);
+    const samAccountName = str(args.sAMAccountName);
     const password = str(args.password) || generatePassword();
-    const answered = await call(instanceId, 'create the user', {
+    const created = await call(instanceId, 'create the user', {
       method: 'POST',
-      path: '/api/v2/users',
-      query: { domain: str(args.domainName) },
-      body: createUserBody(args, password),
+      path: '/RestAPI/CreateUser',
+      query: {
+        domainName,
+        inputFormat: JSON.stringify([createUserBody(args, password)]),
+      },
     });
-    if (!answered.ok) return errText(answered.message);
-    const messages = itemStatusMessages(parseJson(answered.response.body));
-    return textResult(
-      [
-        `Created ${str(args.sAMAccountName)} in ${str(args.domainName)}. Password: ${password}`,
-        ...messages,
-      ].join('\n')
-    );
+    if (!created.ok) return errText(created.message);
+
+    // Success is a JSONArray of per-user entries; a request-level failure
+    // (bad OU, duplicate account, …) comes back as a single error envelope.
+    const parsed = parseJson(created.response.body);
+    if (!Array.isArray(parsed)) {
+      const message = isRecord(parsed) ? str(parsed.STATUS_MESSAGE) : '';
+      return errText(`ADManager Plus could not create the user: ${message || 'unknown error'}`);
+    }
+    const entry = parsed.find(isRecord);
+    if (!entry || str(entry.status).toUpperCase() !== 'SUCCESS') {
+      const message = entry ? str(entry.statusMessage) || str(entry.STATUS_MESSAGE) : '';
+      return errText(`ADManager Plus could not create the user: ${message || 'no success entry in response'}`);
+    }
+
+    if (args.enabled === false) {
+      const disabled = await call(instanceId, 'disable the newly created account', {
+        method: 'POST',
+        path: '/RestAPI/DisableUser',
+        query: { domainName, inputFormat: JSON.stringify([{ sAMAccountName: samAccountName }]) },
+      });
+      const disableOutcome = disabled.ok ? interpretV1Response(parseJson(disabled.response.body)) : null;
+      if (!disabled.ok || !disableOutcome?.ok) {
+        return textResult(
+          `Created ${samAccountName} in ${domainName}, but could not leave the account disabled as ` +
+            `requested. Password: ${password}`
+        );
+      }
+    }
+
+    return textResult(`Created ${samAccountName} in ${domainName}. Password: ${password}`);
   };
 
   gated('accounts.create').registerTool(
@@ -863,8 +994,16 @@ export function registerAdManagerTools(
       body: updateUserBody(args),
     });
     if (!answered.ok) return errText(answered.message);
-    const messages = itemStatusMessages(parseJson(answered.response.body));
-    return textResult([`Updated ${samAccountName} in ${domainName}.`, ...messages].join('\n'));
+    const outcome = interpretV2PatchResponse(parseJson(answered.response.body));
+    if (!outcome.ok) {
+      return errText(`ADManager Plus could not update ${samAccountName}: ${outcome.message}`);
+    }
+    return textResult(
+      [
+        `Updated ${samAccountName} in ${domainName}.`,
+        ...(outcome.message && outcome.message !== 'success' ? [outcome.message] : []),
+      ].join('\n')
+    );
   };
 
   gated('accounts.edit').registerTool(
@@ -969,30 +1108,42 @@ export function registerAdManagerTools(
     .max(50)
     .describe('Security group names (not distinguished names), e.g. "Finance-ReadOnly".');
 
+  const groupTemplateNameField = z
+    .string()
+    .optional()
+    .describe('An ADManager Plus template to apply for this change, by name, if this instance requires one.');
+
   const addGroupsSchema = z.object({
     instanceId: instanceIdField,
     domainName: domainField,
     samAccountName: samField,
     groupNames: groupNamesField,
+    templateName: groupTemplateNameField,
   });
 
   const addGroupsHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
     const instanceId = str(args.instanceId);
     const refusal = await exposureRefusal(instanceId, 'groups.modify');
     if (refusal) return errText(refusal);
+    const samAccountName = str(args.samAccountName);
+    const domainName = str(args.domainName);
     const groupNames = dedupeGroupNames(toStringArray(args.groupNames));
+    const templateName = str(args.templateName);
     const answered = await call(instanceId, 'add the user to groups', {
-      method: 'POST',
-      path: '/api/v1/user/addUsersToGroups',
+      method: 'PATCH',
+      path: '/api/v2/users',
+      query: { domain: domainName, filter: filterClause('SAM_ACCOUNT_NAME', 'eq', samAccountName) },
       body: {
-        domainName: str(args.domainName),
-        userNames: [str(args.samAccountName)],
-        groupNames,
+        ...(templateName ? { template: { template_name: templateName } } : {}),
+        data: { attributes: { memberOf: groupNames.join(';') } },
       },
     });
-    return answered.ok
-      ? textResult(`Added ${str(args.samAccountName)} to: ${groupNames.join(', ')}.`)
-      : errText(answered.message);
+    if (!answered.ok) return errText(answered.message);
+    const outcome = interpretV2PatchResponse(parseJson(answered.response.body));
+    if (!outcome.ok) {
+      return errText(`ADManager Plus could not add ${samAccountName} to groups: ${outcome.message}`);
+    }
+    return textResult(`Added ${samAccountName} to: ${groupNames.join(', ')}.`);
   };
 
   gated('groups.modify').registerTool(
@@ -1065,25 +1216,32 @@ export function registerAdManagerTools(
     domainName: domainField,
     samAccountName: samField,
     groupNames: groupNamesField,
+    templateName: groupTemplateNameField,
   });
 
   const removeGroupsHandler = async (args: Record<string, unknown>): Promise<ToolResult> => {
     const instanceId = str(args.instanceId);
     const refusal = await exposureRefusal(instanceId, 'groups.modify');
     if (refusal) return errText(refusal);
+    const samAccountName = str(args.samAccountName);
+    const domainName = str(args.domainName);
     const groupNames = dedupeGroupNames(toStringArray(args.groupNames));
+    const templateName = str(args.templateName);
     const answered = await call(instanceId, 'remove the user from groups', {
-      method: 'POST',
-      path: '/api/v1/user/removeUsersFromGroups',
+      method: 'PATCH',
+      path: '/api/v2/users',
+      query: { domain: domainName, filter: filterClause('SAM_ACCOUNT_NAME', 'eq', samAccountName) },
       body: {
-        domainName: str(args.domainName),
-        userNames: [str(args.samAccountName)],
-        groupNames,
+        ...(templateName ? { template: { template_name: templateName } } : {}),
+        data: { attributes: { removememberOf: groupNames.join(';') } },
       },
     });
-    return answered.ok
-      ? textResult(`Removed ${str(args.samAccountName)} from: ${groupNames.join(', ')}.`)
-      : errText(answered.message);
+    if (!answered.ok) return errText(answered.message);
+    const outcome = interpretV2PatchResponse(parseJson(answered.response.body));
+    if (!outcome.ok) {
+      return errText(`ADManager Plus could not remove ${samAccountName} from groups: ${outcome.message}`);
+    }
+    return textResult(`Removed ${samAccountName} from: ${groupNames.join(', ')}.`);
   };
 
   gated('groups.modify').registerTool(
