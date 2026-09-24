@@ -269,6 +269,16 @@ const dateField = (description: string) =>
 const dateArg = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? toMirthDate(value) : undefined;
 
+/**
+ * A 32-bit signed integer argument. Some Mirth REST query parameters (event
+ * ids, user ids) bind to a Java `int`, not a `long`; a value outside its
+ * range fails that binding server-side and Mirth answers 404 rather than a
+ * useful error, which reads as "not found" instead of "out of range". This
+ * rejects it before the request ever goes out.
+ */
+const int32Field = () =>
+  z.number().int().min(-2147483648).max(2147483647);
+
 /** The message search filters Mirth's GET /channels/{id}/messages accepts, as a model sees them. */
 const messageFilterFields = {
   minMessageId: z.number().int().optional(),
@@ -973,13 +983,13 @@ export function registerMirthTools(
         name: z.string().optional().describe('Event name fragment (e.g. "Deploy").'),
         outcome: z.enum(['SUCCESS', 'FAILURE']).optional(),
         userId: z
-          .union([z.number().int(), z.string().min(1)])
+          .union([int32Field(), z.string().min(1)])
           .optional()
           .describe('The acting user, by id or username.'),
         startDate: dateField('On or after.'),
         endDate: dateField('On or before.'),
-        minEventId: z.number().int().optional(),
-        maxEventId: z.number().int().optional(),
+        minEventId: int32Field().optional(),
+        maxEventId: int32Field().optional(),
         limit: z.number().int().positive().max(500).optional().describe('Default 50.'),
         offset: z.number().int().nonnegative().optional(),
       }),
