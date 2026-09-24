@@ -266,6 +266,13 @@ up. If an instance turns out to accept these as `fields` values after
 all, this is safe to revert; there was no way to confirm short of trying
 it against a live server.
 
+`EMPLOYEE_ID` was added to `USER_FIELDS` alongside this — it's in the
+confirmed reference's column vocabulary, and useful on `admanager_get_user`
+precisely because it's populated only on accounts AD tracks as an actual
+employee record: a service account or shared mailbox won't have one, and
+`formatUser`'s blank-value filter already omits the line when it's empty,
+so the distinction shows up for free.
+
 ## The dedicated worker process, and why it's simpler than Mirth's
 
 ADManager Plus is on-prem, so the same SSRF-guard reasoning as OnBase,

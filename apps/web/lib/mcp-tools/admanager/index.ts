@@ -299,6 +299,10 @@ const USER_FIELDS = [
   'MANAGER',
   'OU_NAME',
   'DOMAIN_NAME',
+  // Populated only on accounts AD tracks as an employee record (not
+  // every account is); empty otherwise, and formatUser's blank-value
+  // filter already drops it when so.
+  'EMPLOYEE_ID',
 ];
 const USER_FIELDS_WITH_GROUPS = [...USER_FIELDS, 'MEMBER_OF'];
 
@@ -306,6 +310,7 @@ function formatUser(user: Record<string, unknown>): string {
   const fields: [string, string][] = [
     ['Logon name', str(user.SAM_ACCOUNT_NAME)],
     ['Display name', str(user.DISPLAY_NAME)],
+    ['Employee ID', str(user.EMPLOYEE_ID)],
     ['Status', str(user.ACCOUNT_STATUS)],
     ['Email', str(user.EMAIL_ADDRESS)],
     ['Department', str(user.DEPARTMENT)],
