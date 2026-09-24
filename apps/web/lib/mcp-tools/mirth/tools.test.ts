@@ -563,6 +563,44 @@ describe('messages', () => {
     });
   });
 
+  it('serializes metadata filters into the column/operator/value strings Mirth parses', async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, { list: '' }));
+    await register().get('mirth_search_messages')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      metadataFilters: [
+        { column: 'CHANNEL_NAME', operator: '=', value: 'Errors - Collector' },
+        { column: 'ERROR', operator: 'CONTAINS', value: 'timeout', caseInsensitive: true },
+        { column: 'ATTEMPTS', operator: '>', value: 3 },
+      ],
+    });
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/channels/c1/messages',
+      query: {
+        includeContent: false,
+        limit: 20,
+        metaDataSearch: ['CHANNEL_NAME = Errors - Collector', 'ATTEMPTS > 3'],
+        metaDataCaseInsensitiveSearch: ['ERROR CONTAINS timeout'],
+      },
+    });
+  });
+
+  it('forwards metadata filters to mirth_count_messages and reads the count back', async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, 7));
+    const result = await register().get('mirth_count_messages')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      metadataFilters: [{ column: 'ATTEMPTS', operator: '>=', value: 3 }],
+    });
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/channels/c1/messages/count',
+      query: { metaDataSearch: ['ATTEMPTS >= 3'] },
+    });
+    expect(textOf(result)).toBe('7 message(s) match.');
+  });
+
   it('sends a message as raw text with destination and sourceMap query params', async () => {
     mirthApi.mockResolvedValueOnce(answer(204, ''));
     await register().get('mirth_send_message')!({
