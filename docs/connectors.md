@@ -86,8 +86,9 @@ See [`mirth-connector-design.md`](./mirth-connector-design.md) for the decisions
 
 Wraps ManageEngine ADManager Plus (on-prem Active Directory management), scoped deliberately to
 **desktop/service-desk technician actions** rather than the whole product: account unlock,
-password reset, create/edit a user account (optionally from an ADManager Plus template), and
-security-group membership (add, remove, or copy another user's groups onto a target). Same
+password reset, create/edit a user account (an ADManager Plus template is a required argument —
+the real server rejects a create or modify without one), and security-group membership (add,
+remove, or copy another user's groups onto a target, also template-keyed). Same
 many-per-tenant shape as `connector-mirth` (an org may run more than one ADManager Plus instance —
 per domain, per site, or a separate test instance), an operator registers each instance's
 connection details, and every person connects it with their **own ADManager Plus authtoken**

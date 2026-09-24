@@ -137,9 +137,14 @@ pill lists instead of a diff string.
 
 Group changes go through `PATCH /api/v2/users`, targeting the account
 with the same `domain`/`filter` query pair `admanager_update_user` uses
-(`filterClause('SAM_ACCOUNT_NAME', 'eq', samAccountName)`), and an
-optional `template.template_name` in the body when the instance's setup
-requires one. What resolves the original ambiguity here — does a
+(`filterClause('SAM_ACCOUNT_NAME', 'eq', samAccountName)`), and a
+**required** `template.template_name` in the body — confirmed directly
+by an operator running this connector against a live server: ADManager
+Plus's real `PATCH /api/v2/users` rejects a create or modify without one,
+so `templateName` is a mandatory argument on `admanager_create_user`,
+`admanager_update_user`, `admanager_add_user_to_groups`, and
+`admanager_remove_user_from_groups` — never optional, unlike this doc's
+earlier guess. What resolves the original ambiguity here — does a
 `memberOf` PATCH replace the list or add to it? — is a confirmed-working
 reference implementation seen running the same API against a real
 ADManager Plus server: `data.attributes.memberOf` (a semicolon-joined
@@ -214,25 +219,34 @@ worker.
 Password reset is a two-step flow because `ResetPwd` cannot itself force
 "must change password at next logon" — `admanager_reset_password` calls
 `POST /RestAPI/ResetPwd` to set the password, then, when
-`mustChangePassword` is true, looks up the account's AD-side
-`EMPLOYEE_ID` (not `sAMAccountName` — `ModifyUser` targets by that field)
-and calls `POST /RestAPI/ModifyUser` applying a caller-supplied
-`resetPasswordTemplateName` template, which is what actually toggles
-`pwdLastSet`. There is no way to force that flag without a template, so
-the tool refuses up front rather than silently resetting the password
-without forcing a change.
+`mustChangePassword` is true, calls `POST /RestAPI/ModifyUser` applying a
+caller-supplied `resetPasswordTemplateName` template, which is what
+actually toggles `pwdLastSet`. There is no way to force that flag without
+a template, so the tool refuses up front rather than silently resetting
+the password without forcing a change.
+
+`ModifyUser` targets the account by whatever identifying field the
+instance's template is keyed on — it is not hardcoded to any one AD
+attribute. The confirmed-working reference this connector was diffed
+against keys on `EMPLOYEE_ID` specifically because that org shares that
+identifier between AD and its HRIS (Paycom) and uses it as the join key
+across both systems — an organization-specific choice, not an API
+requirement (an operator running this connector confirmed `sAMAccountName`
+works too, as would email). Renkei has no such cross-system identifier to
+share, so `admanager_reset_password` targets `ModifyUser` by
+`sAMAccountName`, the identifier every tool here already keys on.
 
 `admanager_create_user`'s `createUserBody` sends a flat object (no
 `template`/`data.attributes` v2 wrapper — the legacy `CreateUser` input
-format doesn't have one) as one `inputFormat` array entry; success is a
-JSONArray whose first entry has `status: "SUCCESS"`, matching the
-confirmed reference exactly. The exact set of extra attribute keys
-`CreateUser` accepts beyond the ones sent here is still not confirmed
-against a real server response (the reference implementation's own org
-creates users almost entirely through a template, populating very few
-explicit fields) — if an instance rejects a field, that is the
-remaining seam to verify against that instance's own REST API
-documentation.
+format doesn't have one) as one `inputFormat` array entry, always
+including `templateName`; success is a JSONArray whose first entry has
+`status: "SUCCESS"`, matching the confirmed reference exactly. What
+remains unconfirmed is the exact set of extra attribute keys `CreateUser`
+accepts beyond the ones sent here — and there is no ADManager Plus API to
+introspect which fields a given template supports, so extending
+`admanager_create_user`/`admanager_update_user` to cover more fields can
+only be done by trial against a real instance and that instance's own
+template configuration, field by field, not by reading a spec.
 
 ## The dedicated worker process, and why it's simpler than Mirth's
 
