@@ -17,6 +17,11 @@ import { useRefresh } from '@/lib/use-refresh';
  * A 502 still refreshes: the decision is durably recorded and the
  * worker's sweep resumes the run on its own — the warning is about
  * latency, not loss.
+ *
+ * A widget-hosted card (ApprovalWidgetCard) never renders this at all —
+ * its own Confirm/Cancel are the decision, Cancel doubling as decline
+ * (issue-preview.ts's `cancelTool`) — so there is exactly one place to
+ * decide from, not two.
  */
 export default function ApprovalActions({
   tenantId,

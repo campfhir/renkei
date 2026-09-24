@@ -376,6 +376,26 @@ describe('listAvailableTools', () => {
     expect(preview?.appOnly).toBe(false);
   });
 
+  it("classifies each preview tool's widget as an approval or a display card", async () => {
+    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const widgetKindOf = (name: string) => tools.find((tool) => tool.name === name)?.widgetKind;
+
+    // Confirm/cancel cards — a write awaiting the user's decision.
+    expect(widgetKindOf('jira_create_issue_preview')).toBe('approval');
+    expect(widgetKindOf('jira_update_issue_preview')).toBe('approval');
+
+    // Read-only results cards — nothing to confirm, same RESULTS_LIST_URI
+    // template as any other, but explicitly opted out of 'approval'.
+    expect(widgetKindOf('jira_search_issues_preview')).toBe('display');
+    expect(widgetKindOf('jira_list_comments_preview')).toBe('display');
+
+    // A tool with no card at all classifies as null, not 'approval' — and
+    // a confirm tool (its own card-invoked twin) has no card of its own to
+    // classify either, even though `visibility` sits in the same `ui` meta.
+    expect(widgetKindOf('jira_search_issues')).toBeNull();
+    expect(widgetKindOf('jira_create_issue_confirm')).toBeNull();
+  });
+
   it('drops the fileshare act tools in org read-only mode, keeps the reads', async () => {
     fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
     readOnly = true;

@@ -183,6 +183,64 @@ describe('decideApproval', () => {
     expect(stored.comment).toBe('wrong ticket');
   });
 
+  it('stores an approve-time argsOverride, stripped of the call identity keys only', async () => {
+    const sets: Record<string, unknown>[] = [];
+    await decideApproval(
+      stubDb({
+        row: { id: 'c', kind: 'approval', status: 'suggested', run_id: 'run-1' },
+        updated: 1,
+        sets,
+      }),
+      producer(true),
+      't',
+      'alice',
+      {
+        cardId: 'c',
+        decision: 'approve',
+        argsOverride: {
+          summary: 'Edited summary',
+          description: 'Edited description',
+          // Not just text fields — a picklist, a number, a custom field
+          // inside `fields`, all pass through too.
+          priority: 'High',
+          storyPoints: 5,
+          fields: { 'Anti-Kickback Review': 'Required' },
+          // The call's identity, though — never stored, whatever sent it:
+          // an approval can reword what the call does, never redirect it
+          // to a different project or a different issue.
+          projectKey: 'HACKED',
+          issueType: 'Bug',
+          issueKey: 'HACKED-1',
+        },
+      }
+    );
+    const stored: { argsOverride?: Record<string, unknown> } = JSON.parse(String(sets[0]?.result));
+    expect(stored.argsOverride).toEqual({
+      summary: 'Edited summary',
+      description: 'Edited description',
+      priority: 'High',
+      storyPoints: 5,
+      fields: { 'Anti-Kickback Review': 'Required' },
+    });
+  });
+
+  it('drops an argsOverride entirely on decline — nothing runs to edit', async () => {
+    const sets: Record<string, unknown>[] = [];
+    await decideApproval(
+      stubDb({
+        row: { id: 'c', kind: 'approval', status: 'suggested', run_id: 'run-1' },
+        updated: 1,
+        sets,
+      }),
+      producer(true),
+      't',
+      'alice',
+      { cardId: 'c', decision: 'decline', argsOverride: { summary: 'Edited summary' } }
+    );
+    const stored: { argsOverride?: unknown } = JSON.parse(String(sets[0]?.result));
+    expect(stored.argsOverride).toBeUndefined();
+  });
+
   it('refuses a comment past the cap before claiming anything', async () => {
     const wheres: [string, unknown][] = [];
     const result = await decideApproval(stubDb({ wheres }), producer(true), 't', 'alice', {

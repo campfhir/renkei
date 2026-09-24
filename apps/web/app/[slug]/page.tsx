@@ -96,6 +96,7 @@ export default async function HomePage({
           <ActionableCards
             items={items}
             tenantId={tenant.id}
+            subject={session.subject}
             slug={slug}
             showArchived={showArchived}
           />

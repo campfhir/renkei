@@ -133,6 +133,10 @@ const MAX_LLM_TURNS = 10;
  */
 const PREVIEW_CHARS = 2_000;
 const DETAIL_CHARS = 60_000;
+/** Mirrors approvals.ts's APPROVAL_IDENTITY_KEYS — the proposed-call keys
+ * an approval's own edit can never override, kept in sync by hand since
+ * engine.ts and the web app are separate deployables. */
+const IDENTITY_ARG_KEYS = new Set(['projectKey', 'issueType', 'issueKey']);
 const TOKEN_SLACK_SECONDS = 15 * 60;
 /**
  * The run-wide execution budget: total attempt rows a run may create.
@@ -2183,7 +2187,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const resolveDecision = async (status: string, result: unknown): Promise<StepResult> => {
         const decision = gateOutcomeOf(status);
-        const resultObj: { comment?: unknown } =
+        const resultObj: { comment?: unknown; argsOverride?: unknown } =
           typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
         const comment =
           typeof resultObj.comment === 'string' && resultObj.comment.trim()
@@ -2191,6 +2195,26 @@ export function createAgentRunHandler(deps: EngineDeps) {
             : null;
         vars['approval.outcome'] = decision;
         if (comment) vars['approval.comment'] = comment;
+        // Re-narrowed here, not just trusted from the stored row: the same
+        // identity keys a preview card's edit can never touch
+        // (approvals.ts's APPROVAL_IDENTITY_KEYS — kept in sync by hand,
+        // since engine.ts and the web app are separate deployables).
+        // Everything else about the call a person approved can be reworded
+        // by their edit; the call's identity (project, type, which issue)
+        // cannot be redirected to one nobody reviewed.
+        const argsOverride: Record<string, unknown> = {};
+        if (
+          typeof resultObj.argsOverride === 'object' &&
+          resultObj.argsOverride !== null &&
+          !Array.isArray(resultObj.argsOverride)
+        ) {
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+          const override = resultObj.argsOverride as Record<string, unknown>;
+          for (const [key, entry] of Object.entries(override)) {
+            if (IDENTITY_ARG_KEYS.has(key)) continue;
+            argsOverride[key] = entry;
+          }
+        }
 
         if (decision !== 'approved') {
           const wording =
@@ -2236,9 +2260,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           // Defensive: nothing recorded to execute.
           return { kind: 'advance' };
         }
+        const effectiveArgs =
+          Object.keys(argsOverride).length > 0
+            ? { ...proposedArgs, ...argsOverride }
+            : proposedArgs;
         let toolResult: McpToolResult;
         try {
-          toolResult = await mcp.callTool(proposedTool, proposedArgs);
+          toolResult = await mcp.callTool(proposedTool, effectiveArgs);
         } catch (error) {
           toolResult = {
             content: [
@@ -2267,7 +2295,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           toolCalls: [
             {
               tool: proposedTool,
-              argsPreview: clip(JSON.stringify(proposedArgs), PREVIEW_CHARS),
+              argsPreview: clip(JSON.stringify(effectiveArgs), PREVIEW_CHARS),
               resultPreview: clip(resultText, PREVIEW_CHARS),
               resultChars: resultText.length,
               isError: toolResult.isError,

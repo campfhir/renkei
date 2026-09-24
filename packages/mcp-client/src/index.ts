@@ -12,5 +12,6 @@ export {
   type McpClient,
   type McpToolInfo,
   type McpToolResult,
+  type WidgetKind,
 } from './client';
 export { ensureAgentRunnerClient, mintRunToken, revokeRunToken } from './token';

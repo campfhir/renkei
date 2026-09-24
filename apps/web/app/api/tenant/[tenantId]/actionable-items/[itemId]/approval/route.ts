@@ -41,6 +41,7 @@ export async function POST(
     return NextResponse.json({ error: "decision must be 'approve' or 'decline'" }, { status: 400 });
   }
   const comment = typeof body.comment === 'string' ? body.comment : '';
+  const argsOverride = isRecord(body.args) ? body.args : undefined;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -52,7 +53,7 @@ export async function POST(
     agentJobsQueue().producer,
     tenantId,
     session.subject,
-    { cardId: itemId, decision: body.decision, comment }
+    { cardId: itemId, decision: body.decision, comment, argsOverride }
   );
 
   switch (result.outcome) {

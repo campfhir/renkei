@@ -16,7 +16,7 @@ import {
   isJiraDuration,
   loadFieldSchema,
 } from './field-schema';
-import { renderFieldValue } from './fields';
+import { jiraIssueFieldRows, renderFieldValue } from './fields';
 import {
   unwrittenFieldsComment,
   writeWithFieldFallback,
@@ -609,38 +609,6 @@ export async function registerWriteTools(
   // card holds the request; its confirm button runs the SAME handler the
   // direct tools run, via the app-only *_confirm twins above each pair.
 
-  /** Display rows for the card out of the create/update arguments. */
-  const argFieldRows = (args: Record<string, unknown>): { label: string; value: string }[] => {
-    const rows: { label: string; value: string }[] = [];
-    if (isString(args.priority) && args.priority) {
-      rows.push({ label: 'Priority', value: args.priority });
-    }
-    if (isString(args.assignee) && args.assignee) {
-      rows.push({ label: 'Assignee', value: args.assignee });
-    }
-    if (isArray(args.labels) && args.labels.length > 0) {
-      rows.push({ label: 'Labels', value: args.labels.map(String).join(', ') });
-    }
-    if (isArray(args.components) && args.components.length > 0) {
-      rows.push({ label: 'Components', value: args.components.map(String).join(', ') });
-    }
-    if (isNumber(args.storyPoints)) {
-      rows.push({ label: 'Story points', value: String(args.storyPoints) });
-    }
-    if (isString(args.originalEstimate) && args.originalEstimate) {
-      rows.push({ label: 'Original estimate', value: args.originalEstimate });
-    }
-    if (isRecord(args.fields)) {
-      for (const [name, value] of Object.entries(args.fields)) {
-        rows.push({
-          label: name,
-          value: typeof value === 'string' ? value : JSON.stringify(value),
-        });
-      }
-    }
-    return rows;
-  };
-
   const previewGuidance = (what: string) =>
     `${what} is awaiting the user's decision on the preview card. Do not write it another ` +
     `way and do not repeat its contents in your reply; the user confirms or cancels from ` +
@@ -679,7 +647,7 @@ export async function registerWriteTools(
           confirmLabel: 'Create',
           confirmArgs: args,
           editable: { summaryKey: 'summary', descriptionKey: 'description' },
-          fields: argFieldRows(args),
+          fields: jiraIssueFieldRows(args),
         },
       };
     }
@@ -752,7 +720,7 @@ export async function registerWriteTools(
             .join(', ')
         : '';
 
-      const fields = argFieldRows(args).map((row) => {
+      const fields = jiraIssueFieldRows(args).map((row) => {
         if (row.label === 'Priority' && isString(priorityOld)) {
           return { ...row, oldValue: priorityOld };
         }

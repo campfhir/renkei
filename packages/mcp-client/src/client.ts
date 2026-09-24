@@ -10,6 +10,18 @@
  * server issues one, is echoed back on subsequent calls.
  */
 
+/**
+ * A widget's own declared purpose, from `_meta.ui.kind` (widgets.ts):
+ * `'approval'` — the card carries a confirm/cancel decision (a preview
+ * awaiting the user's send/create/discard); `'display'` — read-only,
+ * nothing to confirm (a results list). Absent (older registration, or a
+ * tool with no card at all) is not the same as either: a caller that needs
+ * to know should treat missing as "unclassified", not "safe to skip
+ * asking" — `'approval'` is the majority case and the safer assumption
+ * when a card exists at all.
+ */
+export type WidgetKind = 'approval' | 'display';
+
 export interface McpToolInfo {
   name: string;
   description: string;
@@ -20,6 +32,8 @@ export interface McpToolInfo {
    * for a tool with no card.
    */
   uiResourceUri?: string;
+  /** The card's own kind, from `_meta.ui.kind`. Present only alongside `uiResourceUri`. */
+  uiKind?: WidgetKind;
 }
 
 export interface McpToolResult {
@@ -185,12 +199,14 @@ export class HttpMcpClient implements McpClient {
       } = entry;
       if (typeof tool.name !== 'string') return [];
       const uiResourceUri = widgetResourceUriOf(tool._meta);
+      const uiKind = uiResourceUri ? widgetKindOf(tool._meta) : undefined;
       return [
         {
           name: tool.name,
           description: typeof tool.description === 'string' ? tool.description : '',
           inputSchema: plainObject(tool.inputSchema) ?? { type: 'object' },
           ...(uiResourceUri ? { uiResourceUri } : {}),
+          ...(uiKind ? { uiKind } : {}),
         },
       ];
     });
@@ -240,4 +256,11 @@ function widgetResourceUriOf(meta: unknown): string | undefined {
   const top = plainObject(meta);
   const ui = top ? plainObject(top.ui) : null;
   return typeof ui?.resourceUri === 'string' ? ui.resourceUri : undefined;
+}
+
+/** `_meta.ui.kind` off a tool's `tools/list` entry (widgets.ts's `previewToolMeta`). */
+function widgetKindOf(meta: unknown): WidgetKind | undefined {
+  const top = plainObject(meta);
+  const ui = top ? plainObject(top.ui) : null;
+  return ui?.kind === 'approval' || ui?.kind === 'display' ? ui.kind : undefined;
 }

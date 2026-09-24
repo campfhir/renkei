@@ -3289,6 +3289,147 @@ maybe('agent run engine', () => {
       expect(JSON.stringify(gateRow.detail)).toContain('Approved');
     });
 
+    it('on approval with an edited card, fires the call with every edit merged in except the call identity', async () => {
+      const { doc, gateId } = gatedDoc({});
+      const { runId } = await seedRun(doc);
+      const { mcp, calls } = recordingMcp([
+        'jira_add_comment',
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+      const proposedArgs = { issueKey: 'PROJ-42', body: 'Original body.' };
+      const handler = handlerWith(proposesThenNoMore(proposedArgs), mcp);
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          // A widget card's edit is not limited to text fields — a
+          // picklist, a number, a custom field, all round-trip — but
+          // never the call's own identity.
+          result: JSON.stringify({
+            decidedBy: 'owner@example.com',
+            argsOverride: {
+              description: 'Edited from the card.',
+              priority: 'High',
+              storyPoints: 5,
+              issueKey: 'HACKED-1',
+            },
+          }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const fired = calls.find((call) => call.name === 'jira_add_comment');
+      // `description`/`priority`/`storyPoints` (not part of the original
+      // args at all) are added; `issueKey` — the call's identity — is
+      // ignored, so the call still targets the issue that was reviewed.
+      expect(fired?.args).toEqual({
+        issueKey: 'PROJ-42',
+        body: 'Original body.',
+        description: 'Edited from the card.',
+        priority: 'High',
+        storyPoints: 5,
+      });
+
+      const gateRow = await db
+        .selectFrom('agent_run_steps')
+        .select(['status', 'outcome'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', gateId)
+        .executeTakeFirstOrThrow();
+      expect(gateRow.status).toBe('succeeded');
+      expect(gateRow.outcome).toBe('tool_ok');
+    });
+
+    it('a later step sees what the edited call actually did, not the original proposal', async () => {
+      // recordingMcp always answers the same canned text regardless of
+      // args, which is exactly wrong for proving THIS: the tool has to
+      // answer with something that depends on what it was actually called
+      // with, the way a real jira_add_comment reply would.
+      const mcp: McpClient = {
+        initialize: async () => undefined,
+        listTools: async () => [
+          { name: 'jira_add_comment', description: 'x', inputSchema: { type: 'object' } },
+        ],
+        callTool: async (_name, args) => ({
+          content: [{ type: 'text', text: `Commented: ${String(args.body)}` }],
+          isError: false,
+          meta: {},
+        }),
+      };
+      const prompts: string[] = [];
+      const after: AgentStepNode = {
+        id: randomUUID(),
+        name: 'Follow up',
+        instruction: [
+          { t: 'text', v: 'Follow up on the comment: ' },
+          { t: 'var', name: 'commentResult' },
+        ],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc, gateId } = gatedDoc({ saveAs: 'commentResult', after: [after] });
+      const { runId } = await seedRun(doc);
+      const llm = stubLlm((request, call) => {
+        if (call === 0) {
+          return useTool('jira_add_comment', { issueKey: 'PROJ-42', body: 'Original text.' });
+        }
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(llm, mcp);
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          result: JSON.stringify({
+            decidedBy: 'owner@example.com',
+            argsOverride: { body: 'Edited from the card.' },
+          }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+
+      // The gate's own saved value — what a later step's prompt carries
+      // forward — is built from the REAL call's reply, which is the reply
+      // to the EDITED body: the model reads what actually happened, not a
+      // stale echo of what it originally proposed.
+      const acted = prompts.join('\n');
+      expect(acted).toContain('Commented: Edited from the card.');
+      expect(acted).not.toContain('Original text.');
+
+      const gateRow = await db
+        .selectFrom('agent_run_steps')
+        .select(['detail'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', gateId)
+        .executeTakeFirstOrThrow();
+      expect(JSON.stringify(gateRow.detail)).toContain('Edited from the card.');
+      expect(JSON.stringify(gateRow.detail)).not.toContain('Original text.');
+    });
+
     it('on denial, skips the tool call and advances when there is no recovery path', async () => {
       const { doc, gateId } = gatedDoc({});
       const { runId } = await seedRun(doc);
