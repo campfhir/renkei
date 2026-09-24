@@ -370,7 +370,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       'A <rawMessage> document (rawData, destinationMetaDataIds, sourceMap).'
     ),
     kind: 'act',
-    accept: 'text/plain',
   },
   {
     tool: 'get_message_attachments',
@@ -429,7 +428,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     path: '/channels/{channelId}/messages/maxMessageId',
     params: [CHANNEL_ID],
     kind: 'read',
-    accept: 'text/plain',
   },
   {
     tool: 'delete_message',
@@ -546,7 +544,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       ),
     ],
     kind: 'act',
-    accept: 'text/plain',
   },
   {
     tool: 'export_message_attachment',
@@ -722,7 +719,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     path: '/server/status',
     params: [],
     kind: 'read',
-    accept: 'text/plain',
   },
   {
     tool: 'get_server_timezone',
@@ -1052,7 +1048,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     path: '/server/rhinoLanguageVersion',
     params: [],
     kind: 'read',
-    accept: 'text/plain',
   },
   // ---------------------------------------------------------------- users
   {
@@ -1157,7 +1152,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
       { name: 'userId', in: 'path', type: 'int', required: true, description: 'The user id.' },
     ],
     kind: 'read',
-    accept: 'text/plain',
   },
   {
     tool: 'get_user_preferences',
@@ -1388,7 +1382,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     params: [q('override', 'boolean', 'Apply even if a library changed since it was read.')],
     body: xml('libraries', 'An XML <list> of <codeTemplateLibrary> documents.'),
     kind: 'act',
-    accept: 'text/plain',
   },
   {
     tool: 'get_code_templates',
@@ -1426,7 +1419,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     ],
     body: xml('codeTemplate', 'The <codeTemplate> document.'),
     kind: 'act',
-    accept: 'text/plain',
   },
   {
     tool: 'delete_code_template',
@@ -1510,7 +1502,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     path: '/extensions/{extensionName}/enabled',
     params: [id('extensionName', 'The extension name.')],
     kind: 'read',
-    accept: 'text/plain',
   },
   {
     tool: 'set_extension_enabled',
@@ -1634,7 +1625,6 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     params: [],
     body: xml('clientStats', 'An XML map of client-side statistics; empty for none.', false),
     kind: 'act',
-    accept: 'text/plain',
   },
 ];
 

@@ -616,7 +616,6 @@ describe('messages', () => {
       query: { destinationMetaDataId: ['1'], sourceMapEntry: ['source=renkei'] },
       body: 'MSH|^~\\&|',
       contentType: 'text/plain',
-      accept: 'text/plain',
     });
   });
 

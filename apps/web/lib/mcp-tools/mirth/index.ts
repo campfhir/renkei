@@ -187,6 +187,20 @@ function parseJson(body: string): unknown {
   }
 }
 
+/**
+ * A route whose Mirth type is a bare number (a long or int count, id, or
+ * status code) answers either the number itself or, depending on the
+ * server, that number wrapped in its Java type name — {"long": N} or
+ * {"int": N}, XStream's usual JSON shape for a primitive root. Either way,
+ * this is the number as text.
+ */
+function numericBody(raw: string): string {
+  const parsed = parseJson(raw);
+  if (isRecord(parsed) && 'long' in parsed) return textOf(parsed.long);
+  if (isRecord(parsed) && 'int' in parsed) return textOf(parsed.int);
+  return raw;
+}
+
 /** A short table line from a channel dashboard status. */
 function statusLine(status: Record<string, unknown>): string {
   const stats = isRecord(status.statistics) ? unwrapMap(status.statistics) : {};
@@ -621,12 +635,11 @@ export function registerMirthTools(
       const status = await call(instanceId, 'read the server status', {
         method: 'GET',
         path: '/server/status',
-        accept: 'text/plain',
       });
       const map = unwrapMap(about.value);
       const lines = Object.entries(map).map(([key, value]) => `${key}: ${textOf(value)}`);
       if (status.ok) {
-        const code = status.response.body.trim();
+        const code = numericBody(status.response.body.trim());
         lines.push(
           `status: ${code === '0' ? 'RUNNING' : code === '1' ? 'STARTING' : code === '2' ? 'STOPPING' : code}`
         );
@@ -952,9 +965,7 @@ export function registerMirthTools(
         query: messageQuery(args),
       });
       if (!counted.ok) return errText(counted.message);
-      const raw = counted.response.body.trim();
-      const parsed = parseJson(raw);
-      const count = isRecord(parsed) && 'long' in parsed ? textOf(parsed.long) : raw;
+      const count = numericBody(counted.response.body.trim());
       return textResult(`${count} message(s) match.`);
     }
   );
@@ -1634,7 +1645,6 @@ export function registerMirthTools(
         }),
         body: str(args.content),
         contentType: 'text/plain',
-        accept: 'text/plain',
       });
       if (!answered.ok) return errText(answered.message);
       const detail = answered.response.body.trim();
@@ -2046,9 +2056,7 @@ export function registerMirthTools(
         query: args.all === true ? undefined : filter,
       });
       if (!counted.ok) return errText(counted.message);
-      const raw = counted.response.body.trim();
-      const parsed = parseJson(raw);
-      const count = isRecord(parsed) && 'long' in parsed ? textOf(parsed.long) : raw;
+      const count = numericBody(counted.response.body.trim());
       const scope = args.all === true ? 'every message' : `${count} matching message(s)`;
       return {
         content: [
