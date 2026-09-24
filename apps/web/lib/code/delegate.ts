@@ -292,7 +292,13 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
       const system = instructions
         ? `${SUB_AGENT_BRIEF}\n\nInstructions from the orchestrator:\n${instructions}`
         : SUB_AGENT_BRIEF;
-      const messages: LlmMessage[] = [{ role: 'user', content: [{ type: 'text', text: task }] }];
+      // The transcript kept for a person carries how long each model call
+      // took beside the message it produced (subagent-runs.ts reads it
+      // back); the provider adapters pick role and content off a message
+      // and never see the extra field.
+      const messages: (LlmMessage & { durationMs?: number })[] = [
+        { role: 'user', content: [{ type: 'text', text: task }] },
+      ];
       const deadline = Date.now() + DELEGATE_WALL_CLOCK_MS;
       const controller = new AbortController();
       const calls: string[] = [];
@@ -357,6 +363,7 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
         // thread), so retrying from scratch is exactly as safe as trying
         // once. Only a kind that describes the moment, not the request or
         // the credentials, is worth another attempt.
+        const callStartedAt = Date.now();
         let result = await callModel();
         for (
           let attempt = 1;
@@ -370,6 +377,8 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
           await sleep(MODEL_CALL_RETRY_DELAY_MS * attempt);
           result = await callModel();
         }
+        // Retries included: what the orchestrator waited for this step.
+        const callMs = Date.now() - callStartedAt;
         if (!result.ok) {
           const failure =
             `The sub-agent's model call failed: ${friendlyLlmError(result.err.type)}` +
@@ -377,8 +386,8 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
           return close('failed', failure, friendlyLlmError(result.err.type), step - 1);
         }
         const reply = result.val;
-        if (context.recordUsage) await context.recordUsage(reply.usage, model);
-        messages.push({ role: 'assistant', content: reply.content });
+        if (context.recordUsage) await context.recordUsage(reply.usage, model, callMs);
+        messages.push({ role: 'assistant', content: reply.content, durationMs: callMs });
         const text = reply.content
           .flatMap((block) => (block.type === 'text' ? [block.text] : []))
           .join('\n')
@@ -410,6 +419,7 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
         }
         const results: LlmContentBlock[] = [];
         for (const use of uses) {
+          const toolStartedAt = Date.now();
           const outcome = await set.run(use.name, use.input, {
             ...context,
             toolUseId: use.id,
@@ -425,6 +435,7 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
               RESULT_MAX_CHARS
             ).text,
             ...(outcome.isError ? { isError: true } : {}),
+            durationMs: Date.now() - toolStartedAt,
           });
         }
         messages.push({ role: 'user', content: results });

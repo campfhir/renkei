@@ -26,6 +26,7 @@ import type {
   MessageKind,
   MessageRole,
   MessageStatus,
+  MessageTiming,
   PendingToolPermission,
   ToolPermissionDecision,
   TurnStatus,
@@ -59,6 +60,8 @@ export type ChatStreamEvent =
       status: MessageStatus;
       stopReason: string | null;
       usage: LlmUsage | null;
+      /** The model call's timing, on an assistant row that finished normally. */
+      timing?: MessageTiming | null;
       error: string | null;
     }
   /** The runner is executing this tool call (between block_stop and the results message). */
@@ -203,6 +206,7 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         model: event.model,
         stopReason: null,
         usage: null,
+        timing: null,
         error: null,
         createdAt: event.createdAt,
         attachments: [],
@@ -282,6 +286,7 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
           status: event.status,
           stopReason: event.stopReason,
           usage: event.usage,
+          timing: event.timing ?? null,
           error: event.error,
         })),
       };

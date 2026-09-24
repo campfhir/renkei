@@ -20,6 +20,7 @@ function row(partial: Partial<StoredMessage> & Pick<StoredMessage, 'seq' | 'role
     model: 'x',
     stopReason: null,
     usage: null,
+    timing: null,
     error: null,
     summaryId: null,
     createdAt: new Date(0),

@@ -9,6 +9,7 @@
 import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
+import { formatDurationMs } from '@/lib/duration';
 
 function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
   if (isAgentStepsDoc(run.stepsSnapshot)) {
@@ -104,6 +105,7 @@ interface DetailShape {
   guidanceUsed?: unknown;
   saveValue?: unknown;
   toolCalls?: unknown;
+  modelCalls?: unknown;
   chosenPathName?: unknown;
   terminalMessage?: unknown;
   approvalMessage?: unknown;
@@ -153,6 +155,17 @@ function AttemptDetail({ attempt, endedRunHere }: { attempt: AttemptView; endedR
       ? attempt.detail
       : {};
   const toolCalls = Array.isArray(detail.toolCalls) ? detail.toolCalls : [];
+  // The attempt's model calls (engine.ts's ModelCallRecord, kept since
+  // migration 125): how many, and how long the engine waited on them in
+  // all — read against the tool calls' own durations below, a slow step
+  // shows whether the model or a tool was slow.
+  const modelCalls = (Array.isArray(detail.modelCalls) ? detail.modelCalls : []).flatMap(
+    (call: unknown) => {
+      const entry: { durationMs?: unknown } = typeof call === 'object' && call !== null ? call : {};
+      return typeof entry.durationMs === 'number' ? [entry.durationMs] : [];
+    }
+  );
+  const modelMs = modelCalls.reduce((sum, ms) => sum + ms, 0);
   return (
     <div className="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-400">
       {attempt.outcome === 'path_chosen' && typeof detail.chosenPathName === 'string' ? (
@@ -188,6 +201,12 @@ function AttemptDetail({ attempt, endedRunHere }: { attempt: AttemptView; endedR
       ) : null}
       {typeof detail.approvalMessage === 'string' && detail.approvalMessage ? (
         <ClampedText label="Asked" text={detail.approvalMessage} />
+      ) : null}
+      {modelCalls.length > 0 ? (
+        <p className="text-gray-500" data-model-calls>
+          {modelCalls.length} model call{modelCalls.length === 1 ? '' : 's'} ·{' '}
+          {formatDurationMs(modelMs)} waiting on the model
+        </p>
       ) : null}
       {toolCalls.length > 0 ? (
         <details>

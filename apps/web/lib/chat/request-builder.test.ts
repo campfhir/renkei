@@ -15,6 +15,7 @@ function row(
     model: 'x',
     stopReason: null,
     usage: null,
+    timing: null,
     error: null,
     summaryId: null,
     createdAt: new Date(0),
@@ -289,6 +290,37 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('plan.pdf');
     expect(prompt).toContain('sandbox_*');
     expect(prompt).toContain('2026-09-04T10:00Z');
+  });
+
+  it('tells a code chat to read the checkout with code_* tools, never the git host APIs', () => {
+    const prompt = buildSystemPrompt({
+      personName: null,
+      orgName: null,
+      project: {
+        name: 'Billing',
+        instructions: null,
+        memoryText: null,
+        files: [],
+        code: {
+          repoFullName: 'acme/billing',
+          branch: 'main',
+          ready: true,
+          notReady: null,
+          envNames: [],
+        },
+      },
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: true,
+      hasKnowledge: false,
+      hasSandbox: true,
+      filesAllowed: false,
+      now: new Date('2026-09-04T10:00:00Z'),
+    });
+    expect(prompt).toContain('the repository is already checked out here');
+    expect(prompt).toContain('never through the Bitbucket or GitHub file');
   });
 
   it('stamps the hour, not the second, so the cache prefix survives from turn to turn', () => {

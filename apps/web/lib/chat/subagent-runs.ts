@@ -41,8 +41,13 @@ export interface SubagentRunView {
   maxSteps: number;
   toolCalls: number;
   lastTool: string | null;
-  /** The sub-agent's own conversation, in order: the model's rows and the results fed back. */
-  transcript: { role: 'user' | 'assistant'; blocks: ChatBlock[] }[];
+  /**
+   * The sub-agent's own conversation, in order: the model's rows and the
+   * results fed back. An assistant row carries how long its model call
+   * took (delegate.ts stamps it on the message it keeps); a tool result's
+   * own duration rides on the block, as in a chat.
+   */
+  transcript: { role: 'user' | 'assistant'; blocks: ChatBlock[]; durationMs?: number }[];
   report: string | null;
   error: string | null;
   usage: { inputTokens: number; outputTokens: number };
@@ -108,13 +113,17 @@ export function parseTranscript(json: string): SubagentRunView['transcript'] {
   const out: SubagentRunView['transcript'] = [];
   for (const entry of parsed) {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
-    const record: { role?: unknown; content?: unknown } = entry;
+    const record: { role?: unknown; content?: unknown; durationMs?: unknown } = entry;
     if (record.role !== 'user' && record.role !== 'assistant') continue;
     if (!Array.isArray(record.content)) continue;
     const blocks = record.content
       .map(parseBlock)
       .filter((block): block is LlmContentBlock => block !== null);
-    out.push({ role: record.role, blocks: toChatBlocks(blocks) });
+    out.push({
+      role: record.role,
+      blocks: toChatBlocks(blocks),
+      ...(typeof record.durationMs === 'number' ? { durationMs: record.durationMs } : {}),
+    });
   }
   return out;
 }

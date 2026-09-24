@@ -13,7 +13,12 @@ export type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
 export type Segment =
   | { kind: 'text'; text: string }
   | { kind: 'note'; text: string }
-  | { kind: 'work'; steps: WorkStep[] }
+  /**
+   * `modelMs`: the model calls behind these steps, summed from the timing
+   * of each assistant row that put a step here (once per row, on its
+   * first step); 0 when no row carried timing.
+   */
+  | { kind: 'work'; steps: WorkStep[]; modelMs: number }
   /** A commit, a push, a word to Bitbucket — a card of its own, never folded. */
   | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
   /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
@@ -38,12 +43,20 @@ export type WorkStep =
 
 export function segment(messages: ChatMessageView[], results: Map<string, ToolResult>): Segment[] {
   const out: Segment[] = [];
-  const work = (): Extract<Segment, { kind: 'work' }> => {
+  // Each assistant row's model call is counted once, on the fold its
+  // first step lands in — a row that also wrote prose before its next
+  // step still made one call.
+  let countedRow: string | null = null;
+  const work = (message: ChatMessageView): Extract<Segment, { kind: 'work' }> => {
     const last = out[out.length - 1];
-    if (last && last.kind === 'work') return last;
-    const created: Extract<Segment, { kind: 'work' }> = { kind: 'work', steps: [] };
-    out.push(created);
-    return created;
+    const fold: Extract<Segment, { kind: 'work' }> =
+      last && last.kind === 'work' ? last : { kind: 'work', steps: [], modelMs: 0 };
+    if (fold !== last) out.push(fold);
+    if (countedRow !== message.id && message.timing) {
+      fold.modelMs += message.timing.durationMs;
+      countedRow = message.id;
+    }
+    return fold;
   };
   // A milestone or sub-agent card is never folded, so two of them for one
   // call — a stale, still-empty block beside the one the stream later
@@ -69,10 +82,10 @@ export function segment(messages: ChatMessageView[], results: Map<string, ToolRe
           if (block.text.trim()) out.push({ kind: 'text', text: block.text });
           break;
         case 'thinking':
-          work().steps.push({ kind: 'thinking', text: block.thinking });
+          work(message).steps.push({ kind: 'thinking', text: block.thinking });
           break;
         case 'redacted_thinking':
-          work().steps.push({ kind: 'redacted' });
+          work(message).steps.push({ kind: 'redacted' });
           break;
         case 'tool_use': {
           const step = { kind: 'call' as const, block, result: results.get(block.id) ?? null };
@@ -94,7 +107,7 @@ export function segment(messages: ChatMessageView[], results: Map<string, ToolRe
             out.push(card);
             cards.set(block.id, card);
           } else {
-            work().steps.push(step);
+            work(message).steps.push(step);
           }
           break;
         }

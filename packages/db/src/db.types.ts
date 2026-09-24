@@ -422,6 +422,7 @@ export interface ChatMessages {
   stop_reason: string | null;
   summary_id: string | null;
   tenant_id: string;
+  timing: Json | null;
   turn_id: string | null;
   updated_at: Generated<Timestamp>;
   usage: Json | null;
@@ -874,6 +875,7 @@ export interface LlmCalls {
   cache_read_input_tokens: number | null;
   cache_write_input_tokens: number | null;
   created_at: Generated<Timestamp>;
+  duration_ms: number | null;
   id: Generated<string>;
   input_tokens: Generated<number>;
   llm_model_id: string | null;

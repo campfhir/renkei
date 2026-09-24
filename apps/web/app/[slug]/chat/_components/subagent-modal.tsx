@@ -16,20 +16,28 @@ import { LoadingLine } from '@/components/skeleton';
 import { chatClient } from '@/lib/chat/client';
 import type { SubagentRunView } from '@/lib/chat/subagent-runs';
 import type { ChatBlock } from '@/lib/chat/views';
+import { formatDurationMs } from '@/lib/duration';
 import Markdown from './markdown';
 import { StepList, type WorkStep } from './message-list';
 
 const POLL_MS = 3_000;
 
+interface TranscriptTurn {
+  text: string;
+  steps: WorkStep[];
+  /** How long this model call took, when the run kept it. */
+  durationMs: number | null;
+}
+
 /** The transcript as the thread renders work: per model reply, its prose and its steps. */
-function turnsOf(transcript: SubagentRunView['transcript']): { text: string; steps: WorkStep[] }[] {
+function turnsOf(transcript: SubagentRunView['transcript']): TranscriptTurn[] {
   const results = new Map<string, Extract<ChatBlock, { type: 'tool_result' }>>();
   for (const message of transcript) {
     for (const block of message.blocks) {
       if (block.type === 'tool_result') results.set(block.toolUseId, block);
     }
   }
-  const out: { text: string; steps: WorkStep[] }[] = [];
+  const out: TranscriptTurn[] = [];
   for (const message of transcript) {
     if (message.role !== 'assistant') continue;
     const steps: WorkStep[] = [];
@@ -52,7 +60,7 @@ function turnsOf(transcript: SubagentRunView['transcript']): { text: string; ste
           break;
       }
     }
-    out.push({ text: texts.join('\n\n'), steps });
+    out.push({ text: texts.join('\n\n'), steps, durationMs: message.durationMs ?? null });
   }
   return out;
 }
@@ -190,6 +198,11 @@ export default function SubagentModal({
                   >
                     <p className="mb-1 text-[11px] font-semibold uppercase text-gray-400">
                       Model call {index + 1}
+                      {turn.durationMs !== null ? (
+                        <span className="ml-1 font-normal normal-case" data-model-call-duration>
+                          · {formatDurationMs(turn.durationMs)}
+                        </span>
+                      ) : null}
                     </p>
                     {turn.text ? <Markdown text={turn.text} /> : null}
                     {turn.steps.length > 0 ? (

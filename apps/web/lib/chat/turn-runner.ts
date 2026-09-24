@@ -60,7 +60,7 @@ import type { ChatStreamEvent } from './stream-events';
 import type { TurnChannel } from './turn-events';
 import type { AttachmentView, PendingToolPermission, ToolPermissionDecision } from './views';
 import { toChatBlock } from './views';
-import type { MessageStatus, TurnStatus } from './views';
+import type { MessageStatus, MessageTiming, TurnStatus } from './views';
 
 export interface TurnStore {
   /** Appends a row at the chat's next seq; returns its id, seq and time. */
@@ -77,6 +77,7 @@ export interface TurnStore {
       status?: MessageStatus;
       stopReason?: string | null;
       usage?: LlmUsage | null;
+      timing?: MessageTiming | null;
       error?: string | null;
     }
   ): Promise<void>;
@@ -89,7 +90,7 @@ export interface TurnStore {
   heartbeat(iterations: number, stage: string | null): Promise<boolean>;
   finishTurn(outcome: TurnOutcome): Promise<void>;
   /** `model` is what spent it when not the turn's own (a sub-agent's model); absent, the turn's. */
-  recordUsage(usage: LlmUsage, model?: LlmCallModel | null): Promise<void>;
+  recordUsage(usage: LlmUsage, model?: LlmCallModel | null, durationMs?: number): Promise<void>;
   /**
    * Keeps the files a tool round handed back, hung off the results row;
    * returns what was kept (an unconfigured store keeps nothing).
@@ -903,6 +904,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       });
       messages.push({ role: 'assistant', content: [use] });
       emit({ type: 'tool_call_start', messageId: assistant.id, toolUseId: use.id, name: use.name });
+      const stepStartedAt = now();
       let outcome: McpToolResult;
       try {
         outcome = await step.run();
@@ -924,6 +926,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
               limits.toolResultMaxChars
             ),
             ...(outcome.isError ? { isError: true } : {}),
+            durationMs: now() - stepStartedAt,
           },
         ],
         []
@@ -950,11 +953,16 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       }
       iterations += 1;
 
+      // When the first block of this call opened: the wait before it is
+      // the prefill-and-thinking pause the person sat through, kept on
+      // the row apart from the call's whole duration.
+      let firstTokenAt: number | null = null;
       // A block's final form (tool input parsed) is what the accumulator
       // holds; mirror it to the view on block_stop.
       const mirror = (event: LlmStreamEvent) => {
         switch (event.type) {
           case 'block_start':
+            if (firstTokenAt === null) firstTokenAt = now();
             blocks[event.index] = { ...event.block };
             emit({
               type: 'block_start',
@@ -1036,6 +1044,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       // Assigned unconditionally on every loop entry below, before any
       // break — never read until after that first assignment has run.
       let result!: Awaited<ReturnType<typeof streamOrComplete>>;
+      const callStartedAt = now();
       for (let attempt = 0; ; attempt += 1) {
         const controller = new AbortController();
         channel.onCancel(() => controller.abort());
@@ -1079,6 +1088,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         );
       }
       stage = null;
+      // A retry on a fresh connection counts too: this is what the person
+      // waited for the reply, not what the provider took once reached.
+      const timing: MessageTiming = {
+        durationMs: now() - callStartedAt,
+        firstTokenMs: firstTokenAt === null ? null : firstTokenAt - callStartedAt,
+      };
 
       if (!result.ok) {
         if (result.err.type === 'aborted' || cancelRequested) {
@@ -1113,7 +1128,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const reply = result.val;
       totals.inputTokens += reply.usage.inputTokens;
       totals.outputTokens += reply.usage.outputTokens;
-      await store.recordUsage(reply.usage);
+      await store.recordUsage(reply.usage, undefined, timing.durationMs);
       // The mirror's own blocks, one last time before they are replaced
       // below — its `partialJson` is the raw text `mirror` saw stream in
       // for each tool_use block, which is how a call cut off mid-argument
@@ -1144,6 +1159,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         status: 'complete',
         stopReason: reply.stopReason,
         usage: reply.usage,
+        timing,
         error: null,
       });
       emit({
@@ -1152,6 +1168,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         status: 'complete',
         stopReason: reply.stopReason,
         usage: reply.usage,
+        timing,
         error: null,
       });
       messages.push({ role: 'assistant', content: reply.content });
@@ -1392,10 +1409,19 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           });
         }
         stage = `tool:${group.map((use) => use.name).join(',')}`;
-        const outcomes = await Promise.all(group.map(runTool));
+        // Each call's own wall time, measured here rather than inside
+        // runTool so a group's concurrent calls are timed apart: the
+        // round waits for the slowest, and the line should say which.
+        const outcomes = await Promise.all(
+          group.map(async (use) => {
+            const startedAt = now();
+            const outcome = await runTool(use);
+            return { outcome, durationMs: now() - startedAt };
+          })
+        );
         stage = null;
         for (const [index, use] of group.entries()) {
-          const outcome = outcomes[index];
+          const { outcome, durationMs } = outcomes[index];
           if (deps.autoContinue && use.name === deps.autoContinue.doneTool && !outcome.isError) {
             taskDone = true;
           }
@@ -1419,6 +1445,8 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             ...(resourceUri && 'structuredContent' in outcome
               ? { structuredContent: outcome.structuredContent }
               : {}),
+            // A refused call never ran; its instant answer is not a duration.
+            ...(refused.has(use.id) ? {} : { durationMs }),
           });
           attachments.push(...attachmentBlocksOfMeta(outcome.meta, attachmentBudget, limits));
           produced.push(...artifactsOfMeta(outcome.meta, use.name, iterations));

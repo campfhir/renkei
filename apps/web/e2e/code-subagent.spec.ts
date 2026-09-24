@@ -200,6 +200,8 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
             input: { pattern: 'retryCount' },
           },
         ],
+        // How long this model call took, as delegate.ts keeps it beside the message.
+        durationMs: 4200,
       },
       {
         role: 'user',
@@ -208,6 +210,7 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
             type: 'tool_result',
             toolUseId: 'toolu_e2e_sub_grep',
             content: 'jobs/invoice.ts:41\njobs/invoice.ts:58\nlib/retry.ts:12',
+            durationMs: 310,
           },
         ],
       },
@@ -297,6 +300,12 @@ test.describe('code chat sub-agent model', () => {
     await expect(model).toHaveAttribute('title', 'anthropic claude-haiku-4-5');
     await expect(dialog.getByText('Searching for the retry count.')).toBeVisible();
     await expect(dialog.getByText(TASK)).toBeVisible();
+    // Where its time went: each model call's own duration on its heading,
+    // and the tool call's on its line — the second model call, recorded
+    // before durations were kept, carries none and says nothing.
+    await expect(dialog.locator('[data-model-call-duration]')).toHaveCount(1);
+    await expect(dialog.locator('[data-model-call-duration]')).toHaveText('· 4s');
+    await expect(dialog.locator('[data-call-duration]')).toHaveText('0.3s');
     await shot('code-chat-subagent-transcript.png');
     await dialog.getByRole('button', { name: 'Close' }).click();
     await expect(dialog).toHaveCount(0);
