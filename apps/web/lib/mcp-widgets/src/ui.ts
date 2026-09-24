@@ -170,7 +170,10 @@ button.link:hover { border-color: var(--card-accent); }
 .person-name { font-weight: 600; overflow-wrap: anywhere; }
 .person-detail { color: var(--card-muted); font-size: 12px; overflow-wrap: anywhere; }
 .avatar.lg { width: 36px; height: 36px; font-size: 13px; flex: none; }
-.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-row {
+  display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
+  max-height: 8em; overflow-y: auto; padding-right: 2px;
+}
 .secret-row { display: flex; align-items: center; gap: 8px; }
 .secret-row .field-value {
   flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

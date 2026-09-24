@@ -226,7 +226,17 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   for (const list of groupLists(preview.groupLists)) {
     if (list.groups.length === 0) continue;
     const field = el('div', 'field');
-    field.append(el('div', 'field-label', list.label), chipRow(list.groups, list.tone));
+    const label = el('div', 'field-label');
+    label.append(
+      document.createTextNode(list.label),
+      el('span', 'group-count', ` (${list.groups.length})`)
+    );
+    // Capped and scrollable (ui.ts's .chip-row), not just wrapping: a
+    // technician copying membership from a long-tenured account can be
+    // looking at dozens or hundreds of groups, and an unbounded pill grid
+    // would either blow the card past a reviewable height or, worse,
+    // silently truncate the list the confirm button is about to act on.
+    field.append(label, chipRow(list.groups, list.tone));
     card.append(field);
   }
 
