@@ -28,8 +28,20 @@ export interface UpstreamRequest {
   body?: Buffer;
   tls: TlsPolicy;
   timeoutMs: number;
-  /** The most bytes of response body accepted; beyond it the call fails 'too_large'. */
+  /** The most bytes of response body accepted; beyond it the call fails 'too_large'.
+   *  Ignored when `readBody` is false — nothing is read, so nothing can hit it. */
   maxBodyBytes: number;
+  /**
+   * false for a reachability check that only needs the status line — the
+   * body is never buffered or counted, so a response bigger than
+   * `maxBodyBytes` can't fail a call that was never going to look at it.
+   * A vendor's own idea of "the lightest read" doesn't always hold across
+   * every deployment (a domain-listing endpoint that's tiny on one org's
+   * server can stream megabytes on another's), so ops built around
+   * `status` alone should never be sized by the body cap at all.
+   * Defaults to true.
+   */
+  readBody?: boolean;
 }
 
 export interface UpstreamResponse {
@@ -75,6 +87,14 @@ export const dialUpstream: UpstreamDialer = (input) =>
     };
 
     const req = make(url, options, (res) => {
+      if (input.readBody === false) {
+        // The status line is the whole answer; abandon the socket rather
+        // than let a server that keeps streaming after it hold the
+        // connection open for no reason.
+        settle({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.alloc(0) });
+        req.destroy();
+        return;
+      }
       const chunks: Buffer[] = [];
       let received = 0;
       res.on('data', (chunk: Buffer) => {
