@@ -219,15 +219,21 @@ function noteLine(page: Page, text: string) {
  * messages the card posts after it renders, with its own 120ms CSS
  * transition on top — a check inside the iframe's own document (anything
  * through `frameLocator`) can be satisfied well before that outer element
- * has grown to fit, which raced a full-page screenshot ahead of the
- * host's resize and clipped the card. Poll the host element itself so a
- * shot only happens once it has actually caught up.
+ * has grown or shrunk to match, which raced a full-page screenshot ahead
+ * of the host's resize and clipped a still-growing card. Poll the host
+ * element itself so a shot only happens once it has actually caught up.
  */
-async function waitForCardHeight(page: Page, minHeight: number): Promise<void> {
-  const hostFrame = page.locator('iframe[title="Preview card"]');
-  await expect
-    .poll(async () => (await hostFrame.boundingBox())?.height ?? 0, COLD)
-    .toBeGreaterThanOrEqual(minHeight);
+function cardHeight(page: Page): Promise<number> {
+  return page
+    .locator('iframe[title="Preview card"]')
+    .boundingBox()
+    .then((box) => box?.height ?? 0);
+}
+async function waitForCardHeightAtLeast(page: Page, minHeight: number): Promise<void> {
+  await expect.poll(() => cardHeight(page), COLD).toBeGreaterThanOrEqual(minHeight);
+}
+async function waitForCardHeightBelow(page: Page, maxHeight: number): Promise<void> {
+  await expect.poll(() => cardHeight(page), COLD).toBeLessThan(maxHeight);
 }
 
 async function decisionTurn(
@@ -306,11 +312,17 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
 
     const confirmButton = frame.getByRole('button', { name: 'Copy groups' });
     await expect(confirmButton).toBeVisible();
-    await waitForCardHeight(page, 400);
+    await waitForCardHeightAtLeast(page, 400);
     await shot(page, testInfo, 'directory-action-preview-groups.png');
 
     await confirmButton.click();
     await expect(frame.locator('.done-headline')).toHaveText('Added Jane Doe to 120 groups.');
+    // The card collapses back down once it's decided, rather than leaving
+    // a tall iframe with a two-line receipt floating in blank space below
+    // it — bridge.ts's watchSize note documents exactly this failure mode
+    // and why it measures document.body's own rendered height (which
+    // shrinks with its content) instead of the frame's last-set size.
+    await waitForCardHeightBelow(page, 150);
     await shot(page, testInfo, 'directory-action-preview-done.png');
 
     // The confirm call still carries the full, unclipped list — the
@@ -354,7 +366,7 @@ test('the card still renders at phone width with a long group list', async ({
     );
     await expect(frame.locator('.chip-row .chip')).toHaveCount(120);
     await expect(frame.getByRole('button', { name: 'Copy groups' })).toBeVisible(COLD);
-    await waitForCardHeight(page, 400);
+    await waitForCardHeightAtLeast(page, 400);
     const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(bodyWidth).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
     await shot(page, testInfo, 'directory-action-preview-mobile.png');
