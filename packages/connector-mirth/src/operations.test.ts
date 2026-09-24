@@ -128,6 +128,7 @@ describe('the operation table against the OpenAPI spec', () => {
   interface SpecOperation {
     parameters?: SpecParam[];
     requestBody?: { content?: Record<string, unknown> };
+    responses?: Record<string, { content?: Record<string, unknown> }>;
   }
   interface Spec {
     info: { version: string };
@@ -273,6 +274,30 @@ describe('the operation table against the OpenAPI spec', () => {
       expect({ tool: operation.tool, sent, accepted: consumes.includes(sent) }).toEqual({
         tool: operation.tool,
         sent,
+        accepted: true,
+      });
+    }
+  });
+
+  /**
+   * Jersey answers 406 Not Acceptable for an Accept header its route has no
+   * writer for — not a helpful error, just a bare "Not Acceptable" that
+   * reads like a missing route. An operation's accept (default
+   * application/json) must be one of the media types the spec says the
+   * route actually produces.
+   */
+  it('requests a media type its route can actually produce', () => {
+    for (const operation of MIRTH_OPERATIONS) {
+      const responses = routeOf(operation)?.responses ?? {};
+      const produced = new Set<string>();
+      for (const status of ['default', '200']) {
+        for (const type of Object.keys(responses[status]?.content ?? {})) produced.add(type);
+      }
+      if (produced.size === 0) continue; // no response body to negotiate (e.g. 204)
+      const accept = operation.accept ?? 'application/json';
+      expect({ tool: operation.tool, accept, accepted: produced.has(accept) }).toEqual({
+        tool: operation.tool,
+        accept,
         accepted: true,
       });
     }

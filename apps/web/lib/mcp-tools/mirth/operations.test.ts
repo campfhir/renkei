@@ -116,7 +116,7 @@ describe('requestFor', () => {
     });
   });
 
-  it("sends an XML document with the XML content type and the operation's accept", () => {
+  it('sends an XML document with the XML content type', () => {
     const built = requestFor(byTool('update_code_template'), {
       instanceId: INSTANCE_ID,
       codeTemplateId: 't1',
@@ -129,7 +129,6 @@ describe('requestFor', () => {
         method: 'PUT',
         path: '/codeTemplates/t1',
         query: { override: true },
-        accept: 'text/plain',
         body: '<codeTemplate/>',
         contentType: 'application/xml',
       },

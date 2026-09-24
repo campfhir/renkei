@@ -187,6 +187,20 @@ function parseJson(body: string): unknown {
   }
 }
 
+/**
+ * A route whose Mirth type is a bare number (a long or int count, id, or
+ * status code) answers either the number itself or, depending on the
+ * server, that number wrapped in its Java type name — {"long": N} or
+ * {"int": N}, XStream's usual JSON shape for a primitive root. Either way,
+ * this is the number as text.
+ */
+function numericBody(raw: string): string {
+  const parsed = parseJson(raw);
+  if (isRecord(parsed) && 'long' in parsed) return textOf(parsed.long);
+  if (isRecord(parsed) && 'int' in parsed) return textOf(parsed.int);
+  return raw;
+}
+
 /** A short table line from a channel dashboard status. */
 function statusLine(status: Record<string, unknown>): string {
   const stats = isRecord(status.statistics) ? unwrapMap(status.statistics) : {};
@@ -269,6 +283,53 @@ const dateField = (description: string) =>
 const dateArg = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? toMirthDate(value) : undefined;
 
+/**
+ * A 32-bit signed integer argument. Some Mirth REST query parameters (event
+ * ids, user ids) bind to a Java `int`, not a `long`; a value outside its
+ * range fails that binding server-side and Mirth answers 404 rather than a
+ * useful error, which reads as "not found" instead of "out of range". This
+ * rejects it before the request ever goes out.
+ */
+const int32Field = () =>
+  z.number().int().min(-2147483648).max(2147483647);
+
+/**
+ * The operators Mirth's custom-metadata search recognises. On the wire each
+ * predicate is one string "COLUMN operator value" (Mirth's own
+ * MetaDataSearch query-param converter splits it back apart); a column name
+ * is a SQL-safe identifier, never containing the operator's own spaces, so
+ * that join is unambiguous.
+ */
+const METADATA_OPERATORS = [
+  '=',
+  '!=',
+  '<',
+  '<=',
+  '>',
+  '>=',
+  'CONTAINS',
+  'DOES NOT CONTAIN',
+  'STARTS WITH',
+  'DOES NOT START WITH',
+  'ENDS WITH',
+  'DOES NOT END WITH',
+] as const;
+
+/** One predicate on a channel's custom metadata column, as a model sees it. */
+const metadataFilterField = z.object({
+  column: z
+    .string()
+    .regex(/^\S+$/, 'A column name has no spaces.')
+    .describe(
+      'The custom metadata column name, e.g. "CHANNEL_NAME" (mirth_get_channel_metadata_columns lists a channel\'s columns).'
+    ),
+  operator: z.enum(METADATA_OPERATORS).describe('How to compare the column to value.'),
+  value: z
+    .union([z.string(), z.number()])
+    .describe('The value to compare against — a number for a Number column (e.g. ATTEMPTS), text otherwise.'),
+  caseInsensitive: z.boolean().optional().describe('Ignore case for a text column (default false).'),
+});
+
 /** The message search filters Mirth's GET /channels/{id}/messages accepts, as a model sees them. */
 const messageFilterFields = {
   minMessageId: z.number().int().optional(),
@@ -285,11 +346,29 @@ const messageFilterFields = {
     .optional()
     .describe('Only these connectors (0 = source, 1.. = destinations), by metaDataId or name.'),
   error: z.boolean().optional().describe('Only messages with an error.'),
+  metadataFilters: z
+    .array(metadataFilterField)
+    .optional()
+    .describe(
+      "Predicates on the channel's custom metadata columns (mirth_get_channel_metadata_columns lists " +
+        'what a channel stores) — e.g. column "CHANNEL_NAME", operator "=", value "Errors - Collector", ' +
+        'or column "ATTEMPTS", operator ">", value 3. All given predicates must match (AND).'
+    ),
 };
 
 function messageQuery(
   args: Record<string, unknown>
 ): Record<string, string | number | boolean | string[]> {
+  const metaDataSearch: string[] = [];
+  const metaDataCaseInsensitiveSearch: string[] = [];
+  for (const filter of Array.isArray(args.metadataFilters) ? args.metadataFilters : []) {
+    if (!isRecord(filter)) continue;
+    const column = str(filter.column);
+    const operator = str(filter.operator);
+    if (!column || !operator || (filter.value !== 0 && !filter.value)) continue;
+    const wire = `${column} ${operator} ${textOf(filter.value)}`;
+    (filter.caseInsensitive === true ? metaDataCaseInsensitiveSearch : metaDataSearch).push(wire);
+  }
   return queryOf({
     minMessageId: typeof args.minMessageId === 'number' ? args.minMessageId : undefined,
     maxMessageId: typeof args.maxMessageId === 'number' ? args.maxMessageId : undefined,
@@ -301,6 +380,8 @@ function messageQuery(
       ? args.includedMetaDataId.map(String)
       : undefined,
     error: typeof args.error === 'boolean' ? args.error : undefined,
+    metaDataSearch,
+    metaDataCaseInsensitiveSearch,
   });
 }
 
@@ -554,12 +635,11 @@ export function registerMirthTools(
       const status = await call(instanceId, 'read the server status', {
         method: 'GET',
         path: '/server/status',
-        accept: 'text/plain',
       });
       const map = unwrapMap(about.value);
       const lines = Object.entries(map).map(([key, value]) => `${key}: ${textOf(value)}`);
       if (status.ok) {
-        const code = status.response.body.trim();
+        const code = numericBody(status.response.body.trim());
         lines.push(
           `status: ${code === '0' ? 'RUNNING' : code === '1' ? 'STARTING' : code === '2' ? 'STOPPING' : code}`
         );
@@ -883,12 +963,9 @@ export function registerMirthTools(
         method: 'GET',
         path: `/channels/${encodeURIComponent(str(args.channelId))}/messages/count`,
         query: messageQuery(args),
-        accept: 'text/plain',
       });
       if (!counted.ok) return errText(counted.message);
-      const raw = counted.response.body.trim();
-      const parsed = parseJson(raw);
-      const count = isRecord(parsed) && 'long' in parsed ? textOf(parsed.long) : raw;
+      const count = numericBody(counted.response.body.trim());
       return textResult(`${count} message(s) match.`);
     }
   );
@@ -974,13 +1051,13 @@ export function registerMirthTools(
         name: z.string().optional().describe('Event name fragment (e.g. "Deploy").'),
         outcome: z.enum(['SUCCESS', 'FAILURE']).optional(),
         userId: z
-          .union([z.number().int(), z.string().min(1)])
+          .union([int32Field(), z.string().min(1)])
           .optional()
           .describe('The acting user, by id or username.'),
         startDate: dateField('On or after.'),
         endDate: dateField('On or before.'),
-        minEventId: z.number().int().optional(),
-        maxEventId: z.number().int().optional(),
+        minEventId: int32Field().optional(),
+        maxEventId: int32Field().optional(),
         limit: z.number().int().positive().max(500).optional().describe('Default 50.'),
         offset: z.number().int().nonnegative().optional(),
       }),
@@ -1568,7 +1645,6 @@ export function registerMirthTools(
         }),
         body: str(args.content),
         contentType: 'text/plain',
-        accept: 'text/plain',
       });
       if (!answered.ok) return errText(answered.message);
       const detail = answered.response.body.trim();
@@ -1978,12 +2054,9 @@ export function registerMirthTools(
         method: 'GET',
         path: `/channels/${encodeURIComponent(str(args.channelId))}/messages/count`,
         query: args.all === true ? undefined : filter,
-        accept: 'text/plain',
       });
       if (!counted.ok) return errText(counted.message);
-      const raw = counted.response.body.trim();
-      const parsed = parseJson(raw);
-      const count = isRecord(parsed) && 'long' in parsed ? textOf(parsed.long) : raw;
+      const count = numericBody(counted.response.body.trim());
       const scope = args.all === true ? 'every message' : `${count} matching message(s)`;
       return {
         content: [
