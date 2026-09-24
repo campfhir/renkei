@@ -21,7 +21,7 @@ export function compactionTools(): LocalTool[] {
       def: {
         name: 'chat_compact',
         description:
-          'Summarize the older part of this conversation into a compact summary so future turns stop resending it in full — use it once this chat has accumulated a lot of tool output, code or back-and-forth and continuing would otherwise crowd out useful context. The most recent messages always stay verbatim. Takes effect starting next turn, not this one.',
+          'Summarize the older part of this conversation into a compact summary so future turns stop resending it in full — use it once this chat has accumulated a lot of tool output, code or back-and-forth and continuing would otherwise crowd out useful context. The most recent messages stay verbatim; tool results, however recent, are folded into the summary too. Takes effect starting next turn, not this one.',
         inputSchema: { type: 'object', properties: {} },
       },
       async execute(_input, context) {

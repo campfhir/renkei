@@ -112,11 +112,51 @@ describe('foldCandidates', () => {
     );
   });
 
-  it('never cuts between a call and its results: the results row folds too', () => {
-    const picked = foldCandidates(rows('round'));
-    expect(picked.map((message) => message.seq)).toEqual(
-      Array.from({ length: cut + 1 }, (_, i) => i + 1)
+  it('folds a results row inside the window, and does not count it toward the window', () => {
+    // Rows cut+2..count are 19 conversation rows; the call at `cut` is the
+    // 20th and opens the window. Its results row sits inside the window and
+    // folds anyway; the call's own row stays (buildHistory drops the
+    // unanswered tool_use).
+    const picked = foldCandidates(rows('round')).map((message) => message.seq);
+    expect(picked).toEqual([...Array.from({ length: cut - 1 }, (_, i) => i + 1), cut + 1]);
+  });
+
+  it('folds every tool-results row in the window and keeps the conversation verbatim', () => {
+    // A tool-heavy recent stretch: prose, then rounds of call + results.
+    const messages: StoredMessage[] = [];
+    let seq = 0;
+    for (let i = 0; i < CHAT_COMPACT_KEEP_RECENT; i += 1) {
+      seq += 1;
+      messages.push(
+        row({
+          seq,
+          role: 'assistant',
+          blocks: [
+            { type: 'text', text: `checking ${i}` },
+            { type: 'tool_use', id: `c${i}`, name: 'mirth_list_events', input: {} },
+          ],
+        })
+      );
+      seq += 1;
+      messages.push(
+        row({
+          seq,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: `c${i}`, content: 'x'.repeat(50_000) }],
+        })
+      );
+    }
+    const picked = foldCandidates(messages);
+    expect(picked.length).toBe(CHAT_COMPACT_KEEP_RECENT);
+    expect(picked.every((message) => message.kind === 'tool_results')).toBe(true);
+    // Its total is all tool output, inside what used to be the untouchable window.
+    expect(needsCompaction(messages)).toBe(true);
+    // Once folded, what is left is small and does not trigger again.
+    const folded = messages.map((message) =>
+      message.kind === 'tool_results' ? { ...message, summaryId: 's1' } : message
     );
-    expect(picked[picked.length - 1].kind).toBe('tool_results');
+    expect(foldCandidates(folded.filter((message) => message.summaryId === null))).toEqual([]);
+    expect(needsCompaction(folded)).toBe(false);
   });
 });

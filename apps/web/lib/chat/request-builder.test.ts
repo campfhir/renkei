@@ -740,6 +740,43 @@ describe('buildHistory with elideEarlierToolResults', () => {
   });
 });
 
+describe('buildHistory after a pass folded a round’s results but kept its call row', () => {
+  it('drops the unanswered call and keeps the assistant’s text', () => {
+    const rows = [
+      row({ seq: 1, role: 'user', blocks: [{ type: 'text', text: 'look at mirth errors' }] }),
+      row({
+        seq: 2,
+        role: 'assistant',
+        blocks: [
+          { type: 'text', text: 'Checking events.' },
+          { type: 'tool_use', id: 'c1', name: 'mirth_list_events', input: {} },
+        ],
+      }),
+      row({
+        seq: 3,
+        role: 'user',
+        kind: 'tool_results',
+        summaryId: 's1',
+        blocks: [{ type: 'tool_result', toolUseId: 'c1', content: 'x'.repeat(10_000) }],
+      }),
+      row({ seq: 4, role: 'assistant', blocks: [{ type: 'text', text: 'No events.' }] }),
+      row({ seq: 5, role: 'user', turnId: 'now', blocks: [{ type: 'text', text: 'why?' }] }),
+    ];
+    const history = buildHistory(rows, target, null);
+    const blocks = history.flatMap((message) => message.content);
+    expect(blocks.some((block) => block.type === 'tool_use' || block.type === 'tool_result')).toBe(
+      false
+    );
+    expect(history.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(blocks.filter((block) => block.type === 'text').map((block) => block.text)).toEqual([
+      'look at mirth errors',
+      'Checking events.',
+      'No events.',
+      'why?',
+    ]);
+  });
+});
+
 describe('buildSystemPrompt’s code brief', () => {
   it('tells the orchestrator to delegate and that earlier results are trimmed', () => {
     const prompt = buildSystemPrompt({

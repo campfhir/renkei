@@ -5,7 +5,8 @@
  * instead of agent_memories.
  *
  * A pass folds the oldest messages that sit outside the always-verbatim
- * recent window into one new chat_summaries row, merging in the previous
+ * recent window — and every tool result inside it — into one new
+ * chat_summaries row, merging in the previous
  * summary's text (if any) so the chain never needs replaying — only the
  * newest summary is ever read back (latestChatSummary). The folded
  * messages are attributed to the summary that read them (summary_id) and
@@ -33,6 +34,15 @@
  * simulated one. Batches commit together, not one at a time: a failure
  * partway through throws and nothing is written, so a retry starts over
  * clean rather than compounding a half-applied summary.
+ *
+ * The recent window keeps the conversation, not the tool output: a pass
+ * folds every unfolded tool-results row, however recent, along with the
+ * older messages, so what stays verbatim is what the person and the model
+ * said. The assistant rows that made those calls stay, and buildHistory
+ * drops their now-unanswered tool_use blocks. Keeping the window's raw
+ * tool output instead is what made a tool-heavy chat compact sooner and
+ * sooner: that output alone could sit near the threshold, so every few
+ * new rows started another pass that could never bring the size down.
  *
  * Failure posture matches memory-compaction.ts: a failed or unavailable
  * model leaves every message as it was, for the next check to retry —
@@ -146,21 +156,52 @@ function unfoldedOf(messages: StoredMessage[]): StoredMessage[] {
     .sort((a, b) => a.seq - b.seq);
 }
 
+/** A row that carries tool output — folded by every pass, wherever it sits. */
+function isToolResults(message: StoredMessage): boolean {
+  return (
+    message.kind === 'tool_results' || message.blocks.some((block) => block.type === 'tool_result')
+  );
+}
+
 /**
- * The oldest messages outside the keep-recent window — this pass's fold
- * set. Never cut between a call and its results: a boundary that leaves
- * an assistant row's tool_use folded and the tool_results row after it
+ * Where the always-verbatim window starts: the CHAT_COMPACT_KEEP_RECENT-th
+ * newest row of conversation, tool-results rows not counted — they fold
+ * regardless, so counting them would let a tool-heavy turn crowd what the
+ * person and the model actually said out of the window.
+ */
+function keepFrom(unfolded: StoredMessage[]): number {
+  let kept = 0;
+  for (let i = unfolded.length - 1; i >= 0; i -= 1) {
+    if (isToolResults(unfolded[i])) continue;
+    kept += 1;
+    if (kept === CHAT_COMPACT_KEEP_RECENT) return i;
+  }
+  return 0;
+}
+
+/**
+ * This pass's fold set, in seq order: every row before the verbatim
+ * window, plus every tool-results row inside it (see file header).
+ *
+ * Capped at CHAT_COMPACT_MAX_FOLD_MESSAGES, oldest first, with a backlog
+ * draining over later passes. A cap that lands inside the older rows never
+ * cuts between a call and its results: a boundary that leaves an
+ * assistant row's tool_use folded and the tool_results row after it
  * unfolded hands the next request a result with no call before it, which
  * every provider rejects (request-builder.ts settles the head defensively
- * too; this keeps the boundary clean at the source). The fold set grows
- * by the results row instead, at the cost of one row of the recent window.
+ * too; this keeps the boundary clean at the source).
  */
 export function foldCandidates(unfolded: StoredMessage[]): StoredMessage[] {
-  const foldable = unfolded.length - CHAT_COMPACT_KEEP_RECENT;
-  if (foldable < CHAT_COMPACT_MIN_FOLD) return [];
-  let end = Math.min(foldable, CHAT_COMPACT_MAX_FOLD_MESSAGES);
-  while (end < unfolded.length && endsMidRound(unfolded, end)) end += 1;
-  return unfolded.slice(0, end);
+  const start = keepFrom(unfolded);
+  const older = unfolded.slice(0, start);
+  const toolOutput = unfolded.slice(start).filter(isToolResults);
+  if (older.length + toolOutput.length < CHAT_COMPACT_MIN_FOLD) return [];
+  if (older.length >= CHAT_COMPACT_MAX_FOLD_MESSAGES) {
+    let end = CHAT_COMPACT_MAX_FOLD_MESSAGES;
+    while (end < unfolded.length && endsMidRound(unfolded, end)) end += 1;
+    return unfolded.slice(0, end);
+  }
+  return [...older, ...toolOutput.slice(0, CHAT_COMPACT_MAX_FOLD_MESSAGES - older.length)];
 }
 
 /** The row before `end` made tool calls, and the row at `end` carries their results. */
@@ -183,7 +224,27 @@ export function needsCompaction(messages: StoredMessage[]): boolean {
   return chars > CHAT_COMPACT_CHAR_THRESHOLD;
 }
 
-function renderMessage(message: StoredMessage): string {
+/** A call, as a transcript names it next to its result. */
+function describeCall(block: Extract<LlmContentBlock, { type: 'tool_use' }>): string {
+  return `${block.name}(${clip(JSON.stringify(block.input ?? {}), 1_000)})`;
+}
+
+/**
+ * Every call among `messages`, by id — a tool-results row folded out of
+ * the recent window is summarized without the assistant row that made its
+ * calls, so its results name the call themselves.
+ */
+function callsById(messages: StoredMessage[]): Map<string, string> {
+  return new Map(
+    messages.flatMap((message) =>
+      message.blocks.flatMap((block) =>
+        block.type === 'tool_use' ? [[block.id, describeCall(block)] as const] : []
+      )
+    )
+  );
+}
+
+function renderMessage(message: StoredMessage, calls: Map<string, string>): string {
   const who =
     message.role === 'assistant'
       ? 'Assistant'
@@ -195,11 +256,13 @@ function renderMessage(message: StoredMessage): string {
       case 'text':
         return block.text.trim() ? [block.text] : [];
       case 'tool_use':
-        return [`called ${block.name}(${clip(JSON.stringify(block.input ?? {}), 1_000)})`];
-      case 'tool_result':
+        return [`called ${describeCall(block)}`];
+      case 'tool_result': {
+        const call = calls.get(block.toolUseId);
         return [
-          `${block.isError ? 'error result' : 'result'}: ${clip(block.content, CHAT_COMPACT_PER_MESSAGE_MAX_CHARS)}`,
+          `${block.isError ? 'error result' : 'result'}${call ? ` of ${call}` : ''}: ${clip(block.content, CHAT_COMPACT_PER_MESSAGE_MAX_CHARS)}`,
         ];
+      }
       case 'document':
         return [`[attached document: ${block.title ?? block.mediaType}]`];
       case 'image':
@@ -213,9 +276,9 @@ function renderMessage(message: StoredMessage): string {
   return `${who}: ${clip(parts.join('\n'), CHAT_COMPACT_PER_MESSAGE_MAX_CHARS)}`;
 }
 
-function renderTranscript(messages: StoredMessage[]): string {
+function renderTranscript(messages: StoredMessage[], calls: Map<string, string>): string {
   const text = messages
-    .map(renderMessage)
+    .map((message) => renderMessage(message, calls))
     .filter((line) => line.length > 0)
     .join('\n\n');
   return clip(text, CHAT_COMPACT_MAX_TRANSCRIPT_CHARS);
@@ -257,13 +320,14 @@ export interface CompactChatResult {
 async function foldBatch(
   llm: ResolvedLlm,
   runningSummary: string | null,
-  batch: StoredMessage[]
+  batch: StoredMessage[],
+  calls: Map<string, string>
 ): Promise<string> {
   const prompt =
     (runningSummary
       ? `Earlier summary:\n${runningSummary}\n\n`
       : 'Earlier summary: (none yet)\n\n') +
-    `Conversation to fold in, oldest first:\n${renderTranscript(batch)}`;
+    `Conversation to fold in, oldest first:\n${renderTranscript(batch, calls)}`;
   const completion = await llm.provider.complete({
     system: COMPACTION_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
@@ -294,7 +358,9 @@ export async function compactChat(
   input: CompactChatInput
 ): Promise<CompactChatResult | null> {
   const messages = input.messages ?? (await listMessages(db, input.tenantId, input.chatId));
-  const candidates = foldCandidates(unfoldedOf(messages));
+  const unfolded = unfoldedOf(messages);
+  const candidates = foldCandidates(unfolded);
+  const calls = callsById(unfolded);
   const total = candidates.length;
   // Reported even for a no-op pass, so a caller watching this turn's
   // channel (startCompactionTurn) always sees at least one update — "there
@@ -305,13 +371,14 @@ export async function compactChat(
   let runningSummary = (await latestChatSummary(db, input.tenantId, input.chatId))?.content ?? null;
   for (let start = 0; start < candidates.length; start += CHAT_COMPACT_BATCH_MESSAGES) {
     const batch = candidates.slice(start, start + CHAT_COMPACT_BATCH_MESSAGES);
-    runningSummary = await foldBatch(input.llm, runningSummary, batch);
+    runningSummary = await foldBatch(input.llm, runningSummary, batch, calls);
     input.onProgress?.({ foldedSoFar: Math.min(start + batch.length, total), totalToFold: total });
   }
 
   // candidates.length >= CHAT_COMPACT_MIN_FOLD (> 0) guarantees the loop
   // above ran at least once, so foldBatch's return replaced the null.
   if (runningSummary === null) throw new Error('unreachable: no batch ran');
+  // Candidates are in seq order, so the last is the highest folded.
   const throughSeq = candidates[candidates.length - 1].seq;
   const inserted = await db
     .insertInto('chat_summaries')

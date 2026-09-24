@@ -207,7 +207,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
 
   if (input.chatSummary) {
     sections.push(
-      `Earlier in this conversation (condensed to keep it within context — the original messages are no longer sent, only this summary):\n${input.chatSummary}`
+      `Earlier in this conversation (condensed to keep it within context — the original messages and the results of earlier tool calls are no longer sent, only this summary; call a tool again if you need its full output):\n${input.chatSummary}`
     );
   }
 
