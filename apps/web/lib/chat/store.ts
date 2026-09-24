@@ -201,6 +201,8 @@ export async function createChat(
     llmModelId: string | null;
     toolConfig: ChatToolConfig | null;
     thinkingEnabled: boolean;
+    /** See ChatRow.autoMode. Defaults to off — callers opt in. */
+    autoMode?: boolean;
   }
 ): Promise<string> {
   const inserted = await db
@@ -212,6 +214,7 @@ export async function createChat(
       llm_model_id: input.llmModelId,
       tool_config: input.toolConfig ? toolConfigJson(input.toolConfig) : null,
       thinking_enabled: input.thinkingEnabled,
+      auto_mode: input.autoMode ?? false,
     })
     .returning('id')
     .executeTakeFirstOrThrow();
