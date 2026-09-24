@@ -181,6 +181,11 @@ const SERVICES_BRIEF = `When the project's tests or commands need a service — 
  */
 const VOICE_BRIEF = `This is a voice conversation: what you write is read aloud to the person as it streams, and they cannot see the tools you call — a call is silence to them. Before each tool call, say in one short, plain sentence what you are about to do and with what, then call it: "Looking for a slot with Priya and Marcus on Thursday afternoon", "Checking OPS-41 in Jira", "Searching the last sprint for issues that slipped". After several calls in a row, say in a sentence what you have found so far before going on. Write the reply the way you would say it: short sentences, no headings, tables, bullet lists, code or links unless asked for them, names and numbers said plainly, and a question at the end only when you need an answer.`;
 
+/** `2026-09-04T10:00Z`: the ISO stamp with minutes and seconds dropped. */
+export function hourStamp(now: Date): string {
+  return `${now.toISOString().slice(0, 13)}:00Z`;
+}
+
 function fileLine(file: { id: string; filename: string; contentType: string; sizeBytes: number }) {
   return `- ${file.filename} (${file.contentType}, ${Math.round(file.sizeBytes / 1024)} KB, attachment id ${file.id})`;
 }
@@ -190,7 +195,12 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   const who: string[] = [];
   if (input.personName) who.push(`You are talking with ${input.personName}.`);
   if (input.orgName) who.push(`The organization is ${input.orgName}.`);
-  who.push(`The current date and time is ${input.now.toISOString()} (UTC).`);
+  // To the hour, not the second: the system prompt sits between the tool
+  // list and the history in the provider's cache prefix, so a stamp that
+  // differs every turn re-writes the whole conversation into the cache
+  // on every Send (full input price and prefill latency, no reads).
+  // resolve_date is always offered for the exact moment.
+  who.push(`The current date and time is ${hourStamp(input.now)} (UTC, to the hour).`);
   sections.push(who.join(' '));
 
   if (input.chatSummary) {

@@ -258,6 +258,46 @@ test('admin: reasoning effort is free text — no fixed value list — and round
   await expect(page.getByLabel('Reasoning effort')).toHaveValue('xhigh');
 });
 
+test('admin: reasoning effort is offered for a Claude row too, with its own hint, and round-trips', async ({
+  page,
+}, testInfo) => {
+  // Its own tenant, same reasoning as the spec above.
+  const fixture = fixtureFor(`${testInfo.project.name}-claude-effort`);
+  await seedTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.getByRole('button', { name: '+ Add a model' }).click();
+  // Anthropic is the default provider: the field is there without switching.
+  await expect(page.getByLabel('Provider')).toHaveValue('anthropic');
+  const reasoningEffort = page.getByLabel('Reasoning effort');
+  await expect(reasoningEffort).toBeVisible();
+  // The Claude hint, not the GPT one: on the adaptive generations this is
+  // the only dial on how long the model thinks (output_config.effort), and
+  // the chat's Thinking switch does not turn thinking off.
+  await expect(page.getByText('output_config.effort')).toBeVisible();
+  await expect(page.getByText('GPT-5 family')).toHaveCount(0);
+
+  await page.getByLabel('Display name').fill('Sonnet quick');
+  await page.getByLabel('Model id').fill('claude-sonnet-5');
+  await page.getByLabel('API key').fill('sk-ant-e2e-fake-key');
+  await reasoningEffort.fill('low');
+  await shot(page, testInfo, 'llm-models-reasoning-effort-claude');
+
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Sonnet quick')).toBeVisible();
+
+  // Round-trips through the real save route and DB — the payload parser
+  // never gated the setting on the provider, only the form did.
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Reasoning effort')).toHaveValue('low');
+
+  // Phone width: the field and its hint still fit the form.
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(page.getByLabel('Reasoning effort')).toBeVisible();
+  await shot(page, testInfo, 'llm-models-reasoning-effort-claude-mobile');
+});
+
 test('admin: API surface can opt an OpenAI-compatible model into the Responses API', async ({
   page,
 }, testInfo) => {
