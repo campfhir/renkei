@@ -756,10 +756,15 @@ export function registerAdManagerTools(
       // locate the account by whatever identifying field the instance's
       // template keys on (EMPLOYEE_ID, email, ...); sAMAccountName is
       // the one every account here already has, so that's what's used.
+      // domainName travels on every legacy call, this one included — the
+      // confirmed-working reference sends it as a v1 client default.
       const modify = await call(instanceId, 'force a password change at next logon', {
         method: 'POST',
         path: '/RestAPI/ModifyUser',
-        query: { inputFormat: JSON.stringify([{ sAMAccountName: samAccountName, templateName }]) },
+        query: {
+          domainName,
+          inputFormat: JSON.stringify([{ sAMAccountName: samAccountName, templateName }]),
+        },
       });
       const modifyOutcome = modify.ok ? interpretV1Response(parseJson(modify.response.body)) : null;
       if (!modify.ok || !modifyOutcome?.ok) {

@@ -387,6 +387,7 @@ describe('reset password: the shown password is the one used', () => {
         method: 'POST',
         path: '/RestAPI/ModifyUser',
         query: {
+          domainName: 'corp.example',
           inputFormat: JSON.stringify([
             { sAMAccountName: 'jdoe', templateName: 'Reset Password Template' },
           ]),
