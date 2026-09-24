@@ -164,6 +164,20 @@ describe('admanager_get_user', () => {
     expect(textOf(result)).toContain('Groups: VPN Users');
   });
 
+  it('never requests TELEPHONE_NUMBER or DESCRIPTION — ADManager Plus rejects both as invalid fields columns', async () => {
+    admanagerApi.mockResolvedValueOnce(usersResponse([{ SAM_ACCOUNT_NAME: 'jdoe' }]));
+    const handlers = register(connectionOf(['accounts.read']));
+    await handlers.get('admanager_get_user')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+    });
+    const fields = String(
+      (admanagerApi.mock.calls[0]?.[1] as { query?: { fields?: string } } | undefined)?.query?.fields
+    );
+    expect(fields).not.toMatch(/TELEPHONE_NUMBER|DESCRIPTION/);
+  });
+
   it('answers a clear error when no user matches', async () => {
     admanagerApi.mockResolvedValueOnce(usersResponse([]));
     const handlers = register(connectionOf(['accounts.read']));
@@ -632,6 +646,23 @@ describe('create user: /RestAPI/CreateUser', () => {
 });
 
 describe('update user: a logical PATCH failure is reported, not swallowed', () => {
+  it('preview never requests TELEPHONE_NUMBER or DESCRIPTION for the old-value lookup', async () => {
+    admanagerApi.mockResolvedValueOnce(usersResponse([{ DISPLAY_NAME: 'Jane Doe' }]));
+    const handlers = register();
+    await handlers.get('admanager_update_user_preview')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      telephoneNumber: '555-1234',
+      description: 'Updated bio',
+      templateName: 'AD Update Template',
+    });
+    const fields = String(
+      (admanagerApi.mock.calls[0]?.[1] as { query?: { fields?: string } } | undefined)?.query?.fields
+    );
+    expect(fields).not.toMatch(/TELEPHONE_NUMBER|DESCRIPTION/);
+  });
+
   it('reports success with the per-item status message', async () => {
     admanagerApi.mockResolvedValueOnce(
       answer(200, { data: [{ status: { status_code: 1, status_message: 'Successfully modified.' } }] })

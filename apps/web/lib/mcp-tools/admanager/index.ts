@@ -279,6 +279,14 @@ function interpretV2PatchResponse(parsed: unknown): { ok: boolean; message: stri
   return { ok: true, message };
 }
 
+// TELEPHONE_NUMBER and DESCRIPTION are deliberately absent: ADManager
+// Plus's `fields` query param on GET /api/v2/users rejects them on at
+// least one real deployment ("SOME COLUMNS SPECIFIED IN THE FIELDS
+// PARAMETER ARE INVALID"), and neither appears in the confirmed-working
+// reference implementation's read-column vocabulary — unlike every other
+// name below, which does. This is the read side only; PATCH's
+// `data.attributes.telephoneNumber`/`description` (EDITABLE_FIELDS,
+// below) are a different, LDAP-attribute-name vocabulary and unaffected.
 const USER_FIELDS = [
   'SAM_ACCOUNT_NAME',
   'DISPLAY_NAME',
@@ -288,9 +296,7 @@ const USER_FIELDS = [
   'ACCOUNT_STATUS',
   'DEPARTMENT',
   'TITLE',
-  'TELEPHONE_NUMBER',
   'MANAGER',
-  'DESCRIPTION',
   'OU_NAME',
   'DOMAIN_NAME',
 ];
@@ -304,11 +310,9 @@ function formatUser(user: Record<string, unknown>): string {
     ['Email', str(user.EMAIL_ADDRESS)],
     ['Department', str(user.DEPARTMENT)],
     ['Title', str(user.TITLE)],
-    ['Phone', str(user.TELEPHONE_NUMBER)],
     ['Manager', str(user.MANAGER)],
     ['OU', str(user.OU_NAME)],
     ['Domain', str(user.DOMAIN_NAME)],
-    ['Description', str(user.DESCRIPTION)],
   ];
   const lines = fields.filter(([, value]) => value).map(([label, value]) => `${label}: ${value}`);
   const groups = groupNamesFromDns(toStringArray(user.MEMBER_OF));
@@ -1020,13 +1024,15 @@ export function registerAdManagerTools(
       // template" with zero other changes is always a meaningful update —
       // nothing to refuse here.
       const changed = EDITABLE_FIELDS.filter(([argKey]) => typeof args[argKey] === 'string' && args[argKey]);
+      // TELEPHONE_NUMBER/DESCRIPTION aren't requested here — see the note
+      // on USER_FIELDS above; their old value shows as "(none)" below
+      // rather than a real comparison, since ADManager Plus's `fields`
+      // param rejects them on at least one real deployment.
       const existing = await getUserRecord(instanceId, domainName, samAccountName, [
         'DISPLAY_NAME',
         'DEPARTMENT',
         'TITLE',
-        'TELEPHONE_NUMBER',
         'EMAIL_ADDRESS',
-        'DESCRIPTION',
         'MANAGER',
       ]);
       if (!existing.ok) return errText(existing.message);
@@ -1043,9 +1049,7 @@ export function registerAdManagerTools(
       const columnFor: Record<string, string> = {
         department: 'DEPARTMENT',
         title: 'TITLE',
-        telephoneNumber: 'TELEPHONE_NUMBER',
         email: 'EMAIL_ADDRESS',
-        description: 'DESCRIPTION',
         manager: 'MANAGER',
       };
       const preview: DirectoryActionPreview = {
