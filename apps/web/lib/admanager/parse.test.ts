@@ -12,9 +12,44 @@ describe('parseInstancePayload', () => {
         tlsVerify: true,
         caPem: undefined,
         allowInsecureHttp: false,
+        resetPasswordTemplateName: null,
         enabled: true,
       });
     }
+  });
+
+  it('keeps a reset-password template name verbatim, blank as null, and refuses a multi-line one', () => {
+    const named = parseInstancePayload({
+      name: 'Prod',
+      baseUrl: 'https://admp.example',
+      resetPasswordTemplateName: '  Reset Password – must change  ',
+    });
+    if ('input' in named) {
+      expect(named.input.resetPasswordTemplateName).toBe('Reset Password – must change');
+    } else throw new Error(named.error);
+    for (const blank of [undefined, null, '', '   ']) {
+      const result = parseInstancePayload({
+        name: 'Prod',
+        baseUrl: 'https://admp.example',
+        resetPasswordTemplateName: blank,
+      });
+      if ('input' in result) expect(result.input.resetPasswordTemplateName).toBeNull();
+      else throw new Error(result.error);
+    }
+    expect(
+      parseInstancePayload({
+        name: 'Prod',
+        baseUrl: 'https://admp.example',
+        resetPasswordTemplateName: 'two\nlines',
+      })
+    ).toHaveProperty('error');
+    expect(
+      parseInstancePayload({
+        name: 'Prod',
+        baseUrl: 'https://admp.example',
+        resetPasswordTemplateName: 'x'.repeat(256),
+      })
+    ).toHaveProperty('error');
   });
 
   it('refuses a missing name or an unusable baseUrl', () => {

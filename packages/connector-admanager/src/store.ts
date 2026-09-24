@@ -15,11 +15,12 @@
  * does not.
  */
 
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { normalizePermissions, type AdManagerPermission } from './permissions';
+import { readInstanceSettings } from './types';
 import type { InstanceConnection, AdManagerInstanceSummary } from './types';
 
 export type StoreError = 'DB_ERROR' | 'MALFORMED_ROW';
@@ -41,6 +42,7 @@ interface RawInstance {
   tls_verify: boolean;
   ca_pem: string | null;
   allow_insecure_http: boolean;
+  settings: unknown;
   enabled: boolean;
 }
 
@@ -57,6 +59,7 @@ function summaryFromRow(row: RawInstance): AdManagerInstanceSummary {
     tlsVerify: row.tls_verify,
     hasCustomCa: typeof row.ca_pem === 'string' && row.ca_pem.trim().length > 0,
     allowInsecureHttp: row.allow_insecure_http,
+    resetPasswordTemplateName: readInstanceSettings(row.settings).resetPasswordTemplateName,
     enabled: row.enabled,
   };
 }
@@ -69,6 +72,7 @@ const INSTANCE_COLUMNS = [
   'admanager_instances.tls_verify',
   'admanager_instances.ca_pem',
   'admanager_instances.allow_insecure_http',
+  'admanager_instances.settings',
   'admanager_instances.enabled',
 ] as const;
 
@@ -351,9 +355,7 @@ export async function resolveToolExposure(
 // Admin accessors — used only behind ROLE_OPERATOR routes.
 // ---------------------------------------------------------------------------
 
-function rowFromRaw(
-  row: RawInstance & { settings: unknown; created_at: Date; updated_at: Date }
-): InstanceRow {
+function rowFromRaw(row: RawInstance & { created_at: Date; updated_at: Date }): InstanceRow {
   return {
     summary: summaryFromRow(row),
     caPem: typeof row.ca_pem === 'string' && row.ca_pem.trim() ? row.ca_pem : null,
@@ -409,7 +411,23 @@ export interface InstanceInput {
   /** Null clears a pinned CA; undefined keeps whatever is stored. */
   caPem: string | null | undefined;
   allowInsecureHttp: boolean;
+  /** Null records "no template" — the reset tool then cannot force a change at next logon. */
+  resetPasswordTemplateName: string | null;
   enabled: boolean;
+}
+
+/**
+ * The `settings` keys this input owns. Written as a whole object on
+ * create; merged over the stored JSON on update (a key set to null is
+ * removed rather than stored as null) so any setting a later migration
+ * adds under the same column survives an edit from an older form.
+ */
+const SETTINGS_KEYS = ['resetPasswordTemplateName'] as const;
+
+function settingsFromInput(input: InstanceInput): Record<string, string> {
+  return input.resetPasswordTemplateName === null
+    ? {}
+    : { resetPasswordTemplateName: input.resetPasswordTemplateName };
 }
 
 export async function createInstance(
@@ -430,7 +448,7 @@ export async function createInstance(
           ca_pem: input.caPem ?? null,
           allow_insecure_http: input.allowInsecureHttp,
           enabled: input.enabled,
-          settings: JSON.stringify({}),
+          settings: JSON.stringify(settingsFromInput(input)),
         })
         .returning('id')
         .executeTakeFirstOrThrow(),
@@ -459,6 +477,9 @@ export async function updateInstance(
           tls_verify: input.tlsVerify,
           ...(input.caPem === undefined ? {} : { ca_pem: input.caPem }),
           allow_insecure_http: input.allowInsecureHttp,
+          // jsonb - text[] drops the keys this form owns, then || lays the
+          // new values over what remains.
+          settings: sql`(settings - ARRAY[${sql.join(SETTINGS_KEYS.map((key) => sql.lit(key)))}]::text[]) || ${JSON.stringify(settingsFromInput(input))}::jsonb`,
           enabled: input.enabled,
           updated_at: new Date().toISOString(),
         })

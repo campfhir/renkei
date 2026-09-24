@@ -77,7 +77,7 @@ field instead of two.
 | ----------------------- | ---------------------------------------------------------------------- |
 | `accounts.read`         | Look up a user's attributes, account status and group membership; search users by name/department/etc. Needed before every write below, to resolve who is being acted on and preview it. |
 | `accounts.unlock`       | Unlock a locked-out account.                                            |
-| `accounts.reset_password` | Reset a user's password (with an optional "must change at next logon" flag). |
+| `accounts.reset_password` | Reset a user's password, by default forcing "must change at next logon" through the instance's configured reset-password template (see "Password reset is a two-step flow" below). |
 | `accounts.create`       | Create a new user account, optionally from an ADManager Plus template. |
 | `accounts.edit`         | Update an existing user's attributes (department, title, phone, manager, description, …), optionally reapplying a template. |
 | `groups.modify`         | Add or remove security-group membership, or copy another user's group memberships onto a target. |
@@ -220,10 +220,26 @@ Password reset is a two-step flow because `ResetPwd` cannot itself force
 "must change password at next logon" — `admanager_reset_password` calls
 `POST /RestAPI/ResetPwd` to set the password, then, when
 `mustChangePassword` is true, calls `POST /RestAPI/ModifyUser` applying a
-caller-supplied `resetPasswordTemplateName` template, which is what
-actually toggles `pwdLastSet`. There is no way to force that flag without
-a template, so the tool refuses up front rather than silently resetting
-the password without forcing a change.
+user-modification template that has that flag set, which is what actually
+toggles `pwdLastSet`. There is no way to force that flag without a
+template, so the tool refuses up front rather than silently resetting the
+password without forcing a change.
+
+**The template is an instance setting, not a tool argument.** The
+template exists in that ADManager Plus server's own configuration, under
+whatever name the org's AD team gave it, and `ModifyUser` matches it by
+exact name — so an operator records the name once on the instance
+(`Reset-password template` on the admin instance form, stored as
+`resetPasswordTemplateName` in `admanager_instances.settings` and
+surfaced on `AdManagerInstanceSummary`), and the tool reads it fresh on
+every preview and confirm. An earlier cut took the name as a per-call
+`resetPasswordTemplateName` argument; that asked a model to know a
+server-specific string it has no way to look up (there is no ADManager
+Plus API to list templates), and let a call point the change at any
+template the token could reach. With none configured, the tool still
+resets passwords but refuses to force a change, naming the admin setting
+that fixes it; `admanager_list_instances` reports per instance whether a
+template is configured so a model can tell in advance.
 
 `ModifyUser` targets the account by whatever identifying field the
 instance's template is keyed on — it is not hardcoded to any one AD

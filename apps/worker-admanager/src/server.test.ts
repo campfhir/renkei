@@ -29,6 +29,7 @@ const instance: InstanceRow = {
     tlsVerify: false,
     hasCustomCa: false,
     allowInsecureHttp: false,
+    resetPasswordTemplateName: null,
     enabled: true,
   },
   caPem: null,

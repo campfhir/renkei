@@ -9,6 +9,8 @@ import {
   DEFAULT_ADMANAGER_PERMISSIONS,
   isEnvironmentLabel,
   isAdManagerPermission,
+  isTemplateName,
+  MAX_TEMPLATE_NAME_LENGTH,
   normalizePermissions,
   parseBaseUrl,
 } from '@renkei/connector-admanager';
@@ -67,10 +69,30 @@ export function parseInstancePayload(body: unknown): { input: InstanceInput } | 
     caPem = pem;
   }
 
+  // Absent, null or blank all mean "no template": the reset tool can then
+  // reset a password but never force a change at next logon. Text must be
+  // a plain one-line name — it is sent to ADManager Plus verbatim.
+  const templateText = cleanString(body.resetPasswordTemplateName);
+  if (templateText && !isTemplateName(templateText)) {
+    return {
+      error: `resetPasswordTemplateName must be a one-line template name (max ${MAX_TEMPLATE_NAME_LENGTH} chars)`,
+    };
+  }
+  const resetPasswordTemplateName = templateText || null;
+
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
   return {
-    input: { name, environment, baseUrl, tlsVerify, caPem, allowInsecureHttp, enabled },
+    input: {
+      name,
+      environment,
+      baseUrl,
+      tlsVerify,
+      caPem,
+      allowInsecureHttp,
+      resetPasswordTemplateName,
+      enabled,
+    },
   };
 }
 

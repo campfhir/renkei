@@ -8,7 +8,11 @@
 
 export {
   isEnvironmentLabel,
+  isTemplateName,
   MAX_ENVIRONMENT_LENGTH,
+  MAX_TEMPLATE_NAME_LENGTH,
+  readInstanceSettings,
+  type AdManagerInstanceSettings,
   type InstanceConnection,
   type AdManagerInstanceSummary,
 } from './types';

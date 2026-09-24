@@ -42,7 +42,10 @@ function connectionOf(permissions: AdManagerPermission[] = ALL): InstanceConnect
   return { technicianName: 'alice', permissions };
 }
 
-function authOf(connection: InstanceConnection): AdManagerAuth {
+function authOf(
+  connection: InstanceConnection,
+  resetPasswordTemplateName: string | null = 'Reset Password Template'
+): AdManagerAuth {
   return {
     kind: 'user',
     target() {
@@ -59,6 +62,7 @@ function authOf(connection: InstanceConnection): AdManagerAuth {
             tlsVerify: true,
             hasCustomCa: false,
             allowInsecureHttp: false,
+            resetPasswordTemplateName,
             enabled: true,
           },
           connection,
@@ -74,7 +78,8 @@ function authOf(connection: InstanceConnection): AdManagerAuth {
 
 function register(
   connection: InstanceConnection = connectionOf(),
-  exposure: AdManagerToolExposure = { permissions: connection.permissions }
+  exposure: AdManagerToolExposure = { permissions: connection.permissions },
+  options: { resetPasswordTemplateName?: string | null } = {}
 ): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
   const server = {
@@ -82,9 +87,18 @@ function register(
       handlers.set(name, handler);
     },
   } as unknown as McpServer;
-  registerAdManagerTools(server, contextOf(), authOf(connection), exposure);
+  registerAdManagerTools(
+    server,
+    contextOf(),
+    authOf(connection, options.resetPasswordTemplateName),
+    exposure
+  );
   return handlers;
 }
+
+/** The tools with no reset-password template configured on the instance. */
+const registerWithoutResetTemplate = (): Map<string, Handler> =>
+  register(connectionOf(), { permissions: ALL }, { resetPasswordTemplateName: null });
 
 const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? '';
 
@@ -280,14 +294,13 @@ describe('unlock account: preview + confirm', () => {
 });
 
 describe('reset password: the shown password is the one used', () => {
-  it('preview generates a password once and carries it in confirmArgs', async () => {
+  it('preview generates a password once and carries it in confirmArgs, showing the configured template', async () => {
     admanagerApi.mockResolvedValueOnce(usersResponse([{ DISPLAY_NAME: 'Jane Doe' }]));
     const handlers = register();
     const result = await handlers.get('admanager_reset_password_preview')!({
       instanceId: INSTANCE_ID,
       domainName: 'corp.example',
       samAccountName: 'jdoe',
-      resetPasswordTemplateName: 'Reset Password Template',
     });
     const confirmArgs = result.structuredContent?.confirmArgs as Record<string, unknown>;
     const secret = result.structuredContent?.secret as { label: string; value: string };
@@ -295,21 +308,52 @@ describe('reset password: the shown password is the one used', () => {
     expect(confirmArgs.newPassword).toBe(secret.value);
     expect(typeof confirmArgs.newPassword).toBe('string');
     expect((confirmArgs.newPassword as string).length).toBeGreaterThanOrEqual(16);
+    const fields = result.structuredContent?.fields as { label: string; value: string }[];
+    expect(fields).toContainEqual({ label: 'Must change at next logon', value: 'Yes' });
+    expect(fields).toContainEqual({ label: 'Template', value: 'Reset Password Template' });
   });
 
-  it('preview refuses when forcing a change is requested with no template', async () => {
-    const handlers = register();
+  it('preview refuses to force a change when the instance has no reset-password template', async () => {
+    const handlers = registerWithoutResetTemplate();
     const result = await handlers.get('admanager_reset_password_preview')!({
       instanceId: INSTANCE_ID,
       domainName: 'corp.example',
       samAccountName: 'jdoe',
     });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/resetPasswordTemplateName/);
+    expect(textOf(result)).toMatch(/reset-password template/);
+    expect(textOf(result)).toMatch(/operator/);
     expect(admanagerApi).not.toHaveBeenCalled();
   });
 
-  it('confirm resets via /RestAPI/ResetPwd then forces the change via /RestAPI/ModifyUser, keyed by sAMAccountName', async () => {
+  it('preview with no template still previews a reset that does not force a change', async () => {
+    admanagerApi.mockResolvedValueOnce(usersResponse([{ DISPLAY_NAME: 'Jane Doe' }]));
+    const handlers = registerWithoutResetTemplate();
+    const result = await handlers.get('admanager_reset_password_preview')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      mustChangePassword: false,
+    });
+    expect(result.isError).toBeUndefined();
+    const fields = result.structuredContent?.fields as { label: string; value: string }[];
+    expect(fields).toEqual([{ label: 'Must change at next logon', value: 'No' }]);
+  });
+
+  it('a template name passed as an argument is ignored — only the instance setting counts', async () => {
+    const handlers = registerWithoutResetTemplate();
+    const result = await handlers.get('admanager_reset_password_confirm')!({
+      instanceId: INSTANCE_ID,
+      domainName: 'corp.example',
+      samAccountName: 'jdoe',
+      newPassword: 'Sup3r!Secret9000',
+      resetPasswordTemplateName: 'Some Other Template',
+    });
+    expect(result.isError).toBe(true);
+    expect(admanagerApi).not.toHaveBeenCalled();
+  });
+
+  it('confirm resets via /RestAPI/ResetPwd then forces the change via /RestAPI/ModifyUser with the instance template, keyed by sAMAccountName', async () => {
     admanagerApi
       .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }]))
       .mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Successfully modified.' }]));
@@ -320,7 +364,6 @@ describe('reset password: the shown password is the one used', () => {
       samAccountName: 'jdoe',
       newPassword: 'Sup3r!Secret9000',
       mustChangePassword: true,
-      resetPasswordTemplateName: 'Reset Password Template',
     });
     expect(textOf(result)).toContain('Sup3r!Secret9000');
     expect(admanagerApi).toHaveBeenNthCalledWith(
@@ -344,6 +387,7 @@ describe('reset password: the shown password is the one used', () => {
         method: 'POST',
         path: '/RestAPI/ModifyUser',
         query: {
+          domainName: 'corp.example',
           inputFormat: JSON.stringify([
             { sAMAccountName: 'jdoe', templateName: 'Reset Password Template' },
           ]),
@@ -352,8 +396,8 @@ describe('reset password: the shown password is the one used', () => {
     );
   });
 
-  it('confirm refuses to force a change at next logon without a template', async () => {
-    const handlers = register();
+  it('confirm refuses to force a change at next logon when the instance has no template', async () => {
+    const handlers = registerWithoutResetTemplate();
     const result = await handlers.get('admanager_reset_password_confirm')!({
       instanceId: INSTANCE_ID,
       domainName: 'corp.example',
@@ -361,13 +405,13 @@ describe('reset password: the shown password is the one used', () => {
       newPassword: 'Sup3r!Secret9000',
     });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/resetPasswordTemplateName/);
+    expect(textOf(result)).toMatch(/reset-password template/);
     expect(admanagerApi).not.toHaveBeenCalled();
   });
 
-  it('confirm resets without forcing a change when mustChangePassword is false', async () => {
+  it('confirm resets without forcing a change when mustChangePassword is false, template or not', async () => {
     admanagerApi.mockResolvedValueOnce(answer(200, [{ status: '1', statusMessage: 'Password Reset Successful.' }]));
-    const handlers = register();
+    const handlers = registerWithoutResetTemplate();
     const result = await handlers.get('admanager_reset_password_confirm')!({
       instanceId: INSTANCE_ID,
       domainName: 'corp.example',

@@ -9,7 +9,8 @@
  * authtoken from the connectors page.
  */
 
-import { parseBaseUrl } from '@renkei/connector-admanager/pure';
+import { useId } from 'react';
+import { MAX_TEMPLATE_NAME_LENGTH, parseBaseUrl } from '@renkei/connector-admanager/pure';
 
 export const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -25,6 +26,8 @@ export interface InstanceDraft {
   clearCa: boolean;
   hasCustomCa: boolean;
   allowInsecureHttp: boolean;
+  /** The ADManager Plus template the reset-password tool applies; empty means none. */
+  resetPasswordTemplateName: string;
   enabled: boolean;
 }
 
@@ -38,6 +41,7 @@ export function emptyDraft(): InstanceDraft {
     clearCa: false,
     hasCustomCa: false,
     allowInsecureHttp: false,
+    resetPasswordTemplateName: '',
     enabled: true,
   };
 }
@@ -52,6 +56,8 @@ export function draftPayload(draft: InstanceDraft): Record<string, unknown> {
     // Absent keeps the stored CA; null clears it; text replaces it.
     ...(draft.clearCa ? { caPem: null } : draft.caPem.trim() ? { caPem: draft.caPem } : {}),
     allowInsecureHttp: draft.allowInsecureHttp,
+    // Blank is sent as null so an edit can clear a stored template.
+    resetPasswordTemplateName: draft.resetPasswordTemplateName.trim() || null,
     enabled: draft.enabled,
   };
 }
@@ -81,6 +87,10 @@ export default function InstanceConfigFields({
 }) {
   const set = (patch: Partial<InstanceDraft>) => onChange({ ...draft, ...patch });
   const preview = urlPreview(draft);
+  // The template help is a description, not part of the field's name —
+  // kept outside the <label> so the accessible name stays the short
+  // label (and no other field's label is a substring of this help text).
+  const templateHelpId = useId();
 
   return (
     <div className="space-y-3">
@@ -168,6 +178,28 @@ export default function InstanceConfigFields({
           />
           Allow insecure HTTP (plaintext — lab servers only; authtokens travel unencrypted)
         </label>
+      </div>
+
+      <div className="space-y-2 rounded-md border border-gray-200 p-3 dark:border-gray-800">
+        <p className="text-sm font-medium">Password resets</p>
+        <label className="block text-sm font-medium">
+          Reset-password template (optional)
+          <input
+            className={`${inputClass} mt-1 block w-full`}
+            value={draft.resetPasswordTemplateName}
+            placeholder="e.g. Reset Password – must change at next logon"
+            maxLength={MAX_TEMPLATE_NAME_LENGTH}
+            aria-describedby={templateHelpId}
+            onChange={(event) => set({ resetPasswordTemplateName: event.target.value })}
+          />
+        </label>
+        <p id={templateHelpId} className="text-xs text-gray-500 dark:text-gray-400">
+          The exact name of a user-modification template on this ADManager Plus server with
+          &ldquo;User must change password at next logon&rdquo; set. The REST API cannot set that
+          flag directly, so after resetting a password the tools apply this template to force the
+          change. Leave blank and password resets can still run, but never force a change at next
+          logon.
+        </p>
       </div>
     </div>
   );

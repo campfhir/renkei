@@ -28,7 +28,50 @@ export interface AdManagerInstanceSummary {
   /** Whether an internal CA is pinned for this instance (the PEM itself is not in the summary). */
   hasCustomCa: boolean;
   allowInsecureHttp: boolean;
+  /**
+   * The ADManager Plus template the reset-password tool applies to force
+   * "must change password at next logon" — an instance setting an
+   * operator records, because the template is defined in that server's
+   * own configuration and the tools must use its exact name (see
+   * `readInstanceSettings`). Null when none is configured, in which case
+   * the tool can reset a password but never force a change.
+   */
+  resetPasswordTemplateName: string | null;
   enabled: boolean;
+}
+
+/**
+ * The typed view of an instance row's `settings` JSON — the operator
+ * choices that are neither connection details nor credentials. Reading
+ * is lenient (an unknown or malformed key is simply absent) so an old
+ * row never poisons a read; writing goes through `parse.ts`'s checks.
+ */
+export interface AdManagerInstanceSettings {
+  resetPasswordTemplateName: string | null;
+}
+
+/** Template names are what ADManager Plus shows in its own UI: short, plain text. */
+export const MAX_TEMPLATE_NAME_LENGTH = 255;
+
+export function isTemplateName(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.trim() === value &&
+    value.length <= MAX_TEMPLATE_NAME_LENGTH &&
+    !/[\r\n\t]/.test(value)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function readInstanceSettings(settings: unknown): AdManagerInstanceSettings {
+  const template = isRecord(settings) ? settings.resetPasswordTemplateName : undefined;
+  return {
+    resetPasswordTemplateName: isTemplateName(template) ? template : null,
+  };
 }
 
 /** One person's connection to one instance (credentials stored separately). */
