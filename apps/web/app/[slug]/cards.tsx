@@ -177,13 +177,21 @@ function ProposedCall({ suggestedAction }: { suggestedAction: unknown }): React.
         <ul className="mt-1 space-y-0.5 text-gray-600 dark:text-gray-400">
           {entries.map(([key, value]) => (
             <li key={key} className="break-words">
-              <span className="font-mono">{key}</span>: {String(value)}
+              <span className="font-mono">{key}</span>: {formatArgValue(value)}
             </li>
           ))}
         </ul>
       )}
     </div>
   );
+}
+
+/** An arg value for the "Wants to call" list — `String()` on an object or
+ * array gives "[object Object]"/comma-joined junk, so anything non-primitive
+ * gets JSON-stringified instead. */
+function formatArgValue(value: unknown): string {
+  if (value === null || typeof value !== 'object') return String(value);
+  return JSON.stringify(value);
 }
 
 /**
