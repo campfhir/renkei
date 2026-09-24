@@ -510,9 +510,9 @@ export const ATLASSIAN_BITBUCKET_SCOPE_OPTIONS: ScopeOption[] = [
  * current scopes with the granular ones still Beta. Classic scopes are
  * coarse, so even READING configuration takes a manage:* scope. Derivation:
  * docs/atlassian-admin-scopes.md. Only scopes a tool calls today are here —
- * manage:jira-project (screens, forms) and write:jira-work (Plans writes)
- * arrive with the tools that need them. Everything defaults on: the app
- * exists to be used, and only Jira admins connect it.
+ * write:jira-work (Plans writes) arrives with the tools that need it.
+ * Everything defaults on: the app exists to be used, and only Jira admins
+ * connect it.
  */
 export const ATLASSIAN_ADMIN_SCOPE_GROUPS: ScopeGroup[] = [
   { id: 'jira-admin', label: 'Jira administration' },
@@ -538,6 +538,16 @@ export const ATLASSIAN_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
     group: 'jira-admin',
     defaultChecked: true,
     scopes: ['manage:jira-configuration'],
+  },
+  {
+    id: 'jira-admin-spaces',
+    label: 'Space components, versions and screens',
+    hint: 'A new space’s components and versions (jira_admin_propose_space), and a space’s screens and their tabs (jira_admin_propose_space_field) — classic manage:jira-project, which even reading a screen’s tabs takes',
+    userHint:
+      'Give new spaces their components and versions, and put fields on a space’s screens. Nothing changes unless you apply it in Renkei.',
+    group: 'jira-admin',
+    defaultChecked: true,
+    scopes: ['manage:jira-project'],
   },
 ];
 

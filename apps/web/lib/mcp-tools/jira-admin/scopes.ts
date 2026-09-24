@@ -7,8 +7,8 @@
  * never sees the tools that needed it.
  *
  * Classic scopes are coarse: reading a field's contexts or a space's schemes
- * already takes manage:jira-configuration, and Plans reads take
- * read:jira-work.
+ * already takes manage:jira-configuration, reading a screen's tabs takes
+ * manage:jira-project, and Plans reads take read:jira-work.
  */
 export function jiraAdminScopeFor(toolName: string): string[] {
   switch (toolName) {
@@ -46,6 +46,33 @@ export function jiraAdminScopeFor(toolName: string): string[] {
     case 'jira_admin_propose_option_changes':
     case 'jira_admin_list_changes':
       return ['read:jira-work', 'manage:jira-configuration'];
+
+    // Templates: reading a space in full — the project, its roles and its
+    // permission, notification and security schemes (read:jira-work), and
+    // its work type, screen, workflow and field configuration schemes
+    // (manage:jira-configuration). Listing and deleting touch only Renkei's
+    // table, but live and die with saving.
+    case 'jira_admin_save_space_template':
+    case 'jira_admin_list_space_templates':
+    case 'jira_admin_delete_space_template':
+    case 'jira_admin_compare_space_to_template':
+      return ['read:jira-work', 'manage:jira-configuration'];
+
+    // A new space: everything saving a template reads, plus the lead and
+    // members (/user, /user/search, /group/bulk: read:jira-user), the key
+    // and name checks (read:jira-work) and the site's roles (/role:
+    // manage:jira-configuration) — and creating it and filling its roles,
+    // on apply, is manage:jira-configuration too.
+    case 'jira_admin_propose_space':
+      return ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'];
+
+    // A field for a space: the space and the field search (read:jira-work);
+    // contexts, options and the screens scheme mapping
+    // (manage:jira-configuration); screen schemes, screens, their tabs and
+    // which screens a field is on (manage:jira-project) — the same three
+    // its apply writes stand on.
+    case 'jira_admin_propose_space_field':
+      return ['read:jira-work', 'manage:jira-configuration', 'manage:jira-project'];
 
     // A tool nobody mapped stands on the whole admin set: registering it
     // for less could only produce 401s.

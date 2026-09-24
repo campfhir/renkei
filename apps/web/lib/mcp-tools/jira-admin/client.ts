@@ -165,7 +165,10 @@ interface JiraAdminLogScope {
   subject?: string;
 }
 
-export type JiraAdminResult = { ok: true; body: unknown } | { ok: false; error: string };
+export type JiraAdminResult =
+  | { ok: true; body: unknown }
+  /** `status` is Jira's answer when there was one; absent when Jira was unreachable. */
+  | { ok: false; error: string; status?: number };
 
 /** GET a path under the site's Jira gateway; any JSON shape comes back as `unknown`. */
 export async function jiraAdminGet(
@@ -175,6 +178,40 @@ export async function jiraAdminGet(
 ): Promise<JiraAdminResult> {
   return jiraAdminRequest(scope, access, 'GET', pathAndQuery);
 }
+
+/**
+ * Every record of a startAt-paged listing, page after page until Jira says
+ * the last one came back — `truncated` when there were more than `maxPages`
+ * pages, so a caller can say "and more" rather than pretend it saw all.
+ */
+export async function jiraAdminPages(
+  scope: JiraAdminLogScope,
+  access: JiraAdminAccess,
+  pathAndQuery: string,
+  maxPages = 10
+): Promise<
+  | { ok: true; values: Record<string, unknown>[]; truncated: boolean }
+  | { ok: false; error: string; status?: number }
+> {
+  const values: Record<string, unknown>[] = [];
+  const joiner = pathAndQuery.includes('?') ? '&' : '?';
+  for (let page = 0; page < maxPages; page++) {
+    const result = await jiraAdminGet(
+      scope,
+      access,
+      `${pathAndQuery}${joiner}startAt=${page * PAGE_SIZE}&maxResults=${PAGE_SIZE}`
+    );
+    if (!result.ok) return result;
+    const batch = records(result.body);
+    values.push(...batch);
+    if (rec(result.body).isLast !== false || batch.length === 0) {
+      return { ok: true, values, truncated: false };
+    }
+  }
+  return { ok: true, values, truncated: true };
+}
+
+const PAGE_SIZE = 100;
 
 /**
  * POST or PUT a JSON body. Only the change-request executor
@@ -250,7 +287,11 @@ async function jiraAdminRequest(
       status: response.status,
       responseBody: text ? secure(truncateForLog(text)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, jiraReasons(parsed)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, jiraReasons(parsed)),
+      status: response.status,
+    };
   }
   return { ok: true, body: parsed };
 }

@@ -1,9 +1,9 @@
 # Project management on Renkei — plan
 
 Written 2026-09-23. Stage 1a (the Jira Admin connector's foundation) shipped
-with this document, and stage 1b (change requests and the first writes)
-right after it; everything after that is the agreed direction, not code
-yet.
+with this document, stage 1b (change requests and the first writes) right
+after it, and then the first part of stage 1c (space templates and new
+spaces); everything after that is the agreed direction, not code yet.
 
 ## What this is solving
 
@@ -173,6 +173,18 @@ screen tab. **Blueprints**: capture a space's configuration as a
 declarative document, kept in a Renkei table, plan the difference against
 the live site, and apply it as one change request.
 
+The first part has shipped ("1c as built (first part)" below): templates in
+a Renkei table, a new space from a template or like another space, its
+roles, and a space compared against a template. It needed no new scope:
+creating a space and adding role members are `manage:jira-configuration`,
+which 1a already asks for. The second part brought `manage:jira-project`,
+and so one reconnect ("1c as built (second part)"): components and versions
+for new spaces, and a custom field placed on a space's screens. Still to
+come: copying a scheme so one space can differ from its family — its own
+screens above all, since a field on a shared screen shows in every space
+that shares it — and a board from a filter, which waits on the Jira Software
+scopes for boards, not yet confirmed to work on a classic-scope app.
+
 **1d — Plans.** Create and update plans from spaces, boards and filters;
 scheduling settings; plan-only teams with capacity and members;
 cross-project releases.
@@ -223,6 +235,92 @@ publish a form to issue create or to a request type.
 - **Nothing deletes.** Disabling keeps an option on the issues that carry
   it; there is no delete operation.
 
+### 1c as built (first part)
+
+- **Templates.** `jira_admin_space_templates` (migration 124): a name
+  (unique per site, ignoring case), a description, the space it was saved
+  from, and a document — the space's type, default assignee and category,
+  its seven schemes by id and name (work types, screens, workflows, field
+  configuration, permissions, notifications, issue security; field
+  configuration and issue security may be "none"), and the groups in each
+  role. Never the people: a template describes a kind of space, and who
+  works in the next one is named when it is proposed. Org-wide, shared by
+  the organization's Jira admins, and tied to the site it was saved from,
+  since scheme ids mean nothing on another. Store:
+  `apps/web/lib/jira-admin/space-templates.ts`.
+- **Reading a space** (`apps/web/lib/jira-admin/space-config.ts`) takes the
+  whole picture or nothing: a scheme that cannot be read fails the read,
+  since a template without its permission scheme would quietly build spaces
+  on the default one. Team-managed spaces are refused — they have no site
+  schemes — and so, for now, are service desk spaces.
+- **Tools.** `jira_admin_save_space_template` (with `overwrite` to replace
+  one), `jira_admin_list_space_templates`, `jira_admin_delete_space_template`
+  and `jira_admin_compare_space_to_template`, which reports each scheme,
+  default, category and role group that differs — never corrects it.
+  `jira_admin_propose_space` takes a key, name, lead and either `template`
+  or `likeSpace`, plus people and groups per role, and checks everything it
+  can before saving the proposal: the key and name are free, the lead and
+  every member resolve (an exact email wins; several matches are refused), a
+  template's schemes still exist. It writes nothing to Jira.
+- **The change** (`create_space`, `apps/web/lib/jira-admin/space-creation.ts`)
+  creates the space on the template's or source space's schemes — it runs ON
+  them, not on copies, which keeps a family of spaces in step and which the
+  review page says in so many words — then adds each role's groups and
+  people. Every operation is labelled as an access change. Applying checks
+  the key is still free, creates the space, and adds only the role members
+  Jira did not already put in; it stops at the first step Jira refuses, and
+  a space it created stays created.
+- **Pages.** `/[slug]/jira-admin/templates` lists the organization's
+  templates, read-only, linked from the Jira Administration card beside the
+  proposed changes.
+
+### 1c as built (second part)
+
+- **A new scope, one reconnect.** `manage:jira-project` is the connect
+  picker's "Space components, versions and screens" box — even reading a
+  screen's tabs takes it. An org that saved its scopes before holds a
+  ceiling without it until an admin ticks it under Connector setup; then
+  each Jira admin reconnects (`docs/atlassian-admin-scopes.md`). A grant
+  without it never sees `jira_admin_propose_space_field`, and a new space
+  with components or versions says on its review page that it needs the
+  reconnect, in place of an Apply button that would fail half-way:
+  `changeScopes` asks for what each change's writes stand on, operation by
+  operation.
+- **Components and versions.** A template keeps the space's components —
+  name, description and who their issues go to, never a lead, since a
+  template holds no people (a component-lead rule falls back to the space's
+  default). Templates saved before are read as "not kept", not as "none",
+  and are not compared on components. `jira_admin_propose_space` brings the
+  template's or source space's components, plus any more named in
+  `components`, and creates the `versions` it is given; applying adds each
+  one the new space does not have yet, by name.
+- **A field for a space** (`space_field`, `lib/jira-admin/space-field.ts`;
+  tool `jira_admin_propose_space_field`). A new field (`name`, `type`) or an
+  existing one (`field`), for every work type in the space or the ones
+  named. It reuses before it creates: a field of that name and type is
+  used, one of that name and another type is refused, and so are several of
+  the name. The space gets a context of its own only when it needs one — for
+  options of its own, or because nothing covers it — and options already
+  there are not asked for twice. Options on a context every space shares
+  are refused and pointed at `jira_admin_propose_option_changes`, whose
+  review page says "every space". Then the field goes on each screen the
+  space shows those work types (`lib/jira-admin/space-screens.ts`), on the
+  named tab or each screen's first.
+- **Reach, named before anyone applies.** Since April 2026 Jira will not
+  narrow or delete a field's context for every space (CHANGE-3019), and a
+  new field comes with one — so a field shows wherever it is on a screen.
+  The tool finds every other space that shows each screen, from the screen
+  up (every screen scheme naming it, every work type screen scheme using
+  those, their spaces), and refuses until the request says
+  `sharedScreens: true`; the review page then names those spaces in the
+  warning colour. "Could not tell" counts as shared, never as private.
+- **Applying** creates the field only if no field of its name has appeared
+  since, adds the context only if the space still has none of its own,
+  adds only the options not there yet, and puts the field on each screen
+  tab that is still there and does not already hold it — stopping at the
+  first thing that has changed or that Jira refuses. A field it created
+  stays created.
+
 ### Guardrails
 
 - **No deletes in phase 1.** Deleting a custom field, an option or a scheme
@@ -250,9 +348,12 @@ Most admin time is not the first setup; it is the trickle of changes after
 it. Two pieces go after that:
 
 1. **Propose in plain language, apply in one click.** "Add a Vendor option
-   to the Source field in OPS" becomes a change request. (1b)
-2. **Drift.** A space stood up from a blueprint is compared to it on a
-   schedule; a difference is reported, never auto-corrected. (After 1c.)
+   to the Source field in OPS" becomes a change request (1b), and so does
+   "put a Vendor field on OPS's screens" (1c).
+2. **Drift.** A space stood up from a template is compared to it; a
+   difference is reported, never auto-corrected. On demand today
+   (`jira_admin_compare_space_to_template`); on a schedule once agents can
+   run it.
 
 ## Phase 2 — getting status out of people
 

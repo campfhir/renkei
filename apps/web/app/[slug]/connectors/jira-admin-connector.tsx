@@ -25,6 +25,7 @@ export default function JiraAdminConnector({
   ceiling,
   priorScopes,
   changesHref,
+  templatesHref,
   pendingChanges,
   nested = false,
 }: {
@@ -37,6 +38,8 @@ export default function JiraAdminConnector({
   priorScopes: string[] | null;
   /** The review list for this person's proposed admin changes. */
   changesHref: string;
+  /** The organization's space templates. */
+  templatesHref: string;
   /** How many of them are waiting for review. */
   pendingChanges: number;
   /**
@@ -93,6 +96,16 @@ export default function JiraAdminConnector({
             {pendingChanges > 0
               ? `${pendingChanges} proposed ${pendingChanges === 1 ? 'change' : 'changes'} waiting for your review`
               : 'Proposed changes'}
+          </Link>
+          <span aria-hidden="true" className="px-2 text-gray-400">
+            ·
+          </span>
+          <Link
+            href={templatesHref}
+            data-testid="jira-admin-templates-link"
+            className="font-medium text-blue-700 hover:underline dark:text-blue-400"
+          >
+            Space templates
           </Link>
         </p>
       )}

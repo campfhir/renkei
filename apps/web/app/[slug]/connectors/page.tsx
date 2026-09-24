@@ -312,6 +312,7 @@ export default async function ConnectorsPage({
                     ceiling: jiraAdminCeiling,
                     priorScopes: jiraAdminGrant?.requestedScopes ?? null,
                     changesHref: `/${slug}/jira-admin/changes`,
+                    templatesHref: `/${slug}/jira-admin/templates`,
                     pendingChanges: pendingJiraAdminChanges,
                   }
                 : undefined

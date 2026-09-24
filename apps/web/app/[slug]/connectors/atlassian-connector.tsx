@@ -61,6 +61,8 @@ export default function AtlassianConnector({
     priorScopes: string[] | null;
     /** The review list for this person's proposed admin changes. */
     changesHref: string;
+    /** The organization's space templates. */
+    templatesHref: string;
     pendingChanges: number;
   };
   confluence?: {
@@ -132,6 +134,7 @@ export default function AtlassianConnector({
             ceiling={jiraAdmin.ceiling}
             priorScopes={jiraAdmin.priorScopes}
             changesHref={jiraAdmin.changesHref}
+            templatesHref={jiraAdmin.templatesHref}
             pendingChanges={jiraAdmin.pendingChanges}
           />
         )}

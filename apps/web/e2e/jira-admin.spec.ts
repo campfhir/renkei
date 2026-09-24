@@ -200,6 +200,11 @@ test('jira administration: register the app, connect with narrowed classic scope
   await expect(form.getByText(/Classic scopes/)).toBeVisible();
   await expect(form.getByText('Read access & space details')).toBeVisible();
   await expect(form.getByText('Site configuration')).toBeVisible();
+  // Every box starts ticked; this org holds the newest back, so its people
+  // cannot pick it (below) until an admin ticks it here.
+  const newest = form.getByRole('checkbox', { name: /Space components, versions and screens/ });
+  await expect(newest).toBeChecked();
+  await newest.uncheck();
 
   await form.getByLabel('Client ID').fill('e2e-admin-client');
   await form.getByLabel('Client secret').fill('e2e-admin-secret');
@@ -237,6 +242,10 @@ test('jira administration: register the app, connect with narrowed classic scope
   // leaving out site configuration drops manage:jira-configuration from
   // the authorize link.
   await panel.getByText(/What Renkei may do/).click();
+  // What the org held back is not even offered.
+  await expect(
+    panel.getByRole('checkbox', { name: /Space components, versions and screens/ })
+  ).toHaveCount(0);
   const connect = panel.getByRole('link', { name: 'Connect Jira Administration' });
   await expect(connect).toHaveAttribute('href', /manage%3Ajira-configuration/);
   await panel.getByRole('checkbox', { name: /Site configuration/ }).uncheck();
@@ -256,7 +265,8 @@ test('jira administration: register the app, connect with narrowed classic scope
     ['offline_access', 'read:jira-user', 'read:jira-work'].sort()
   );
 
-  // A scope beyond the org's ceiling is refused, not silently dropped.
+  // A scope beyond the org's ceiling — the box it held back — is refused,
+  // not silently dropped.
   const widened = await page.request.get(
     `/api/atlassian-admin/${fixture.tenantId}/authorize?scopes=read:jira-work+manage:jira-project`,
     { maxRedirects: 0 }

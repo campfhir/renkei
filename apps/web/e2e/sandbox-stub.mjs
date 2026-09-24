@@ -1165,11 +1165,323 @@ function jiraError(response, status, message) {
   json(response, status, { errorMessages: [message], errors: {} });
 }
 
+/**
+ * Spaces, per site: what creating one from a change request writes. A new
+ * space's Administrators role starts with the group Jira's defaults would
+ * put there, so applying has a member it must not add twice; components and
+ * versions are refused twice by name, as Jira refuses them.
+ */
+const JIRA_SPACES = new Map();
+let nextSpaceId = 30000;
+
+function jiraSpaces(cloudId) {
+  if (!JIRA_SPACES.has(cloudId)) JIRA_SPACES.set(cloudId, new Map());
+  return JIRA_SPACES.get(cloudId);
+}
+
+function handleJiraSpaces(request, url, response, cloudId, path) {
+  const spaces = jiraSpaces(cloudId);
+  if (request.method === 'GET' && path === '/rest/api/3/projectvalidate/key') {
+    const key = url.searchParams.get('key') ?? '';
+    return json(response, 200, {
+      errorMessages: [],
+      errors: spaces.has(key)
+        ? { projectKey: 'A project with that project key already exists.' }
+        : {},
+    });
+  }
+  if (path === '/rest/api/3/project' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      if (spaces.has(body.key)) {
+        return jiraError(response, 400, 'A project with that project key already exists.');
+      }
+      const space = {
+        id: String(nextSpaceId++),
+        key: body.key,
+        name: body.name,
+        created: body,
+        components: [],
+        versions: [],
+        roles: {
+          10002: [
+            {
+              type: 'atlassian-group-role-actor',
+              actorGroup: { name: 'ops-admins', displayName: 'ops-admins', groupId: 'g-admins' },
+            },
+          ],
+        },
+      };
+      spaces.set(body.key, space);
+      json(response, 201, { id: Number(space.id), key: space.key });
+    });
+    return;
+  }
+  const one = /^\/rest\/api\/3\/project\/([^/]+)$/.exec(path);
+  if (one && request.method === 'GET') {
+    const space = spaces.get(one[1]);
+    return space ? json(response, 200, space) : jiraError(response, 404, 'No project.');
+  }
+  const listing = /^\/rest\/api\/3\/project\/([^/]+)\/(components|versions)$/.exec(path);
+  if (listing && request.method === 'GET') {
+    const space = spaces.get(listing[1]);
+    return space ? json(response, 200, space[listing[2]]) : jiraError(response, 404, 'No project.');
+  }
+  if (
+    (path === '/rest/api/3/component' || path === '/rest/api/3/version') &&
+    request.method === 'POST'
+  ) {
+    void readBody(request).then((body) => {
+      const component = path.endsWith('/component');
+      const space = component
+        ? spaces.get(body.project)
+        : [...spaces.values()].find((candidate) => candidate.id === String(body.projectId));
+      if (!space) return jiraError(response, 404, 'No project.');
+      const list = component ? space.components : space.versions;
+      if (list.some((item) => item.name.toLowerCase() === String(body.name).toLowerCase())) {
+        return jiraError(response, 400, `${body.name} already exists in this project.`);
+      }
+      const row = { id: String(nextSpaceId++), ...body };
+      list.push(row);
+      json(response, 201, row);
+    });
+    return;
+  }
+  const role = /^\/rest\/api\/3\/project\/([^/]+)\/role\/(\d+)$/.exec(path);
+  if (role) {
+    const space = spaces.get(role[1]);
+    if (!space) return jiraError(response, 404, 'No project.');
+    const actors = (space.roles[role[2]] ??= []);
+    if (request.method === 'GET') return json(response, 200, { id: Number(role[2]), actors });
+    if (request.method === 'POST') {
+      void readBody(request).then((body) => {
+        const groups = [
+          ...(body.groupId ?? []).map((groupId) => ({ groupId, name: groupId })),
+          ...(body.group ?? []).map((name) => ({ groupId: '', name })),
+        ];
+        for (const group of groups) {
+          const held = actors.some(
+            (actor) =>
+              actor.actorGroup &&
+              ((group.groupId && actor.actorGroup.groupId === group.groupId) ||
+                actor.actorGroup.name === group.name)
+          );
+          // Jira refuses a member twice; so does the stub, so a double add fails loudly.
+          if (held) return jiraError(response, 400, `Group ${group.name} is already a member.`);
+          actors.push({ type: 'atlassian-group-role-actor', actorGroup: group });
+        }
+        for (const accountId of body.user ?? []) {
+          if (actors.some((actor) => actor.actorUser?.accountId === accountId)) {
+            return jiraError(response, 400, `User ${accountId} is already a member.`);
+          }
+          actors.push({ type: 'atlassian-user-role-actor', actorUser: { accountId } });
+        }
+        json(response, 200, { id: Number(role[2]), actors });
+      });
+      return;
+    }
+  }
+  return jiraError(response, 404, 'The stub does not answer that path.');
+}
+
+/**
+ * Custom fields and screens, per site, for putting a field on a space: a
+ * field search, creating a field (which, as Jira does since CHANGE-3019,
+ * comes with a context for every space), its contexts and their projects,
+ * and OPS's three screens and their tabs. A field is refused twice on a
+ * screen, as Jira refuses it.
+ */
+const JIRA_FIELDS = new Map();
+let nextFieldId = 10500;
+let nextContextId = 20000;
+
+function jiraFieldSite(cloudId) {
+  if (!JIRA_FIELDS.has(cloudId)) {
+    JIRA_FIELDS.set(cloudId, {
+      fields: [],
+      contexts: new Map(),
+      screens: new Map([
+        [
+          '40',
+          {
+            name: 'OPS: Edit/View',
+            tabs: [
+              { id: '400', name: 'Field Tab', fields: [] },
+              { id: '401', name: 'Details', fields: [] },
+            ],
+          },
+        ],
+        ['41', { name: 'OPS: Create', tabs: [{ id: '410', name: 'Field Tab', fields: [] }] }],
+        ['42', { name: 'Shared bug screen', tabs: [{ id: '420', name: 'Details', fields: [] }] }],
+      ]),
+    });
+  }
+  return JIRA_FIELDS.get(cloudId);
+}
+
+function paged(url, all) {
+  const startAt = Number(url.searchParams.get('startAt') ?? '0');
+  const maxResults = Number(url.searchParams.get('maxResults') ?? '50');
+  const values = all.slice(startAt, startAt + maxResults);
+  return {
+    startAt,
+    maxResults,
+    total: all.length,
+    isLast: startAt + values.length >= all.length,
+    values,
+  };
+}
+
+function handleJiraFields(request, url, response, cloudId, path) {
+  const site = jiraFieldSite(cloudId);
+  if (path === '/rest/api/3/field/search' && request.method === 'GET') {
+    const query = (url.searchParams.get('query') ?? '').toLowerCase();
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        site.fields.filter((field) => field.name.toLowerCase().includes(query))
+      )
+    );
+  }
+  if (path === '/rest/api/3/field' && request.method === 'POST') {
+    void readBody(request).then((body) => {
+      const field = {
+        id: `customfield_${nextFieldId++}`,
+        name: body.name,
+        description: body.description,
+        schema: { type: 'option', custom: body.type },
+        searcherKey: body.searcherKey,
+      };
+      site.fields.push(field);
+      site.contexts.set(field.id, [
+        {
+          id: String(nextContextId++),
+          name: `Default Configuration Scheme for ${body.name}`,
+          isGlobalContext: true,
+          isAnyIssueType: true,
+          projectIds: [],
+        },
+      ]);
+      json(response, 201, field);
+    });
+    return;
+  }
+  const contexts = /^\/rest\/api\/3\/field\/([^/]+)\/context(\/projectmapping)?$/.exec(path);
+  if (contexts) {
+    const list = site.contexts.get(contexts[1]);
+    if (!list) return jiraError(response, 404, 'The custom field was not found.');
+    if (request.method === 'GET' && contexts[2]) {
+      return json(
+        response,
+        200,
+        paged(
+          url,
+          list.flatMap((context) =>
+            context.isGlobalContext
+              ? [{ contextId: context.id, isGlobalContext: true }]
+              : context.projectIds.map((projectId) => ({ contextId: context.id, projectId }))
+          )
+        )
+      );
+    }
+    if (request.method === 'GET') {
+      return json(
+        response,
+        200,
+        paged(
+          url,
+          list.map(({ id, name, isGlobalContext, isAnyIssueType }) => ({
+            id,
+            name,
+            isGlobalContext,
+            isAnyIssueType,
+          }))
+        )
+      );
+    }
+    if (request.method === 'POST' && !contexts[2]) {
+      void readBody(request).then((body) => {
+        const projectIds = body.projectIds ?? [];
+        if (list.some((context) => context.projectIds.some((id) => projectIds.includes(id)))) {
+          return jiraError(
+            response,
+            400,
+            'A project is already assigned to a context of this field.'
+          );
+        }
+        const context = {
+          id: String(nextContextId++),
+          name: body.name,
+          isGlobalContext: projectIds.length === 0,
+          isAnyIssueType: (body.issueTypeIds ?? []).length === 0,
+          projectIds,
+          issueTypeIds: body.issueTypeIds ?? [],
+        };
+        list.push(context);
+        // A new context starts with no options (the 1b fixtures seed three).
+        JIRA_OPTIONS.set(`${cloudId}|${contexts[1]}|${context.id}`, []);
+        json(response, 201, context);
+      });
+      return;
+    }
+  }
+  const on = /^\/rest\/api\/3\/field\/([^/]+)\/screens$/.exec(path);
+  if (on && request.method === 'GET') {
+    const holding = [...site.screens.entries()].flatMap(([id, screen]) => {
+      const tab = screen.tabs.find((candidate) => candidate.fields.includes(on[1]));
+      return tab
+        ? [{ id: Number(id), name: screen.name, tab: { id: Number(tab.id), name: tab.name } }]
+        : [];
+    });
+    return json(response, 200, paged(url, holding));
+  }
+  const tabs = /^\/rest\/api\/3\/screens\/([^/]+)\/tabs(?:\/([^/]+)\/fields)?$/.exec(path);
+  if (tabs) {
+    const screen = site.screens.get(tabs[1]);
+    if (!screen) return jiraError(response, 404, 'The screen was not found.');
+    if (request.method === 'GET' && !tabs[2]) {
+      return json(
+        response,
+        200,
+        screen.tabs.map((tab) => ({ id: Number(tab.id), name: tab.name }))
+      );
+    }
+    const tab = screen.tabs.find((candidate) => candidate.id === tabs[2]);
+    if (!tab) return jiraError(response, 404, 'The screen tab was not found.');
+    if (request.method === 'GET') {
+      return json(
+        response,
+        200,
+        tab.fields.map((id) => ({ id, name: id }))
+      );
+    }
+    if (request.method === 'POST') {
+      void readBody(request).then((body) => {
+        if (screen.tabs.some((candidate) => candidate.fields.includes(body.fieldId))) {
+          return jiraError(response, 400, 'The field is already on the screen.');
+        }
+        tab.fields.push(body.fieldId);
+        json(response, 200, { id: body.fieldId, name: body.fieldId });
+      });
+      return;
+    }
+  }
+  return jiraError(response, 404, 'The stub does not answer that path.');
+}
+
 function handleJiraAdmin(request, url, response) {
+  const site =
+    /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:project|projectvalidate|component|version)(?:\/.*)?)$/.exec(
+      url.pathname
+    );
+  if (site) return handleJiraSpaces(request, url, response, site[1], site[2]);
   const match =
     /^\/jira\/([^/]+)\/rest\/api\/3\/field\/([^/]+)\/context\/([^/]+)\/option(\/move)?$/.exec(
       url.pathname
     );
+  const fields = /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:field|screens)(?:\/.*)?)$/.exec(url.pathname);
+  if (!match && fields) return handleJiraFields(request, url, response, fields[1], fields[2]);
   if (!match) return jiraError(response, 404, 'The stub does not answer that path.');
   const [, cloudId, fieldId, contextId, move] = match;
   const options = jiraOptions(`${cloudId}|${fieldId}|${contextId}`);

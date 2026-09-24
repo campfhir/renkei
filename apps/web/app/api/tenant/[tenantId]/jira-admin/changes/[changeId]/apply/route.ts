@@ -63,7 +63,7 @@ export async function POST(
     return NextResponse.json({ error: NOT_PENDING[state] ?? 'Not pending' }, { status: 409 });
   }
 
-  const gate = await applyGate(db, tenantId, session.subject, session.roles, change.kind);
+  const gate = await applyGate(db, tenantId, session.subject, session.roles, change);
   if (!gate.ok) {
     return NextResponse.json({ error: gate.reason }, { status: 403 });
   }

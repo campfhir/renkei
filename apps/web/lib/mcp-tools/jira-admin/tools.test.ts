@@ -95,7 +95,17 @@ describe('registration', () => {
     expect(names).not.toContain('jira_admin_get_space_configuration');
   });
 
-  it('marks every tool read-only but the proposal — and no tool can apply one', async () => {
+  it('holds the field tool back until the grant has manage:jira-project, which screens take', async () => {
+    const configuration = ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'];
+    const without = [...(await tools(configuration)).keys()];
+    expect(without).toContain('jira_admin_propose_space');
+    expect(without).not.toContain('jira_admin_propose_space_field');
+    expect([...(await tools([...configuration, 'manage:jira-project'])).keys()]).toContain(
+      'jira_admin_propose_space_field'
+    );
+  });
+
+  it('marks only the proposals and template writes as acts — and no tool can apply one', async () => {
     const configs: { name: string; readOnly: unknown }[] = [];
     const server = {
       registerTool: (name: string, config: { annotations?: { readOnlyHint?: boolean } }) => {
@@ -107,12 +117,23 @@ describe('registration', () => {
       { tenantId: 'tenant-1', subject: 'subject-1' } as MCPToolContext,
       stubAuth
     );
-    expect(configs.length).toBe(8);
-    // Proposing is an Act tool (read-only mode hides it) that writes only a
-    // Renkei change request; applying one is a signed-in browser click, so
-    // nothing on the MCP surface applies, confirms or approves anything.
-    expect(configs.filter((config) => config.readOnly !== true).map((c) => c.name)).toEqual([
+    expect(configs.length).toBe(14);
+    // The writes are proposals, which only store a Renkei change request,
+    // and templates, which are Renkei's own records — Act tools all the
+    // same, so read-only mode hides them. Applying a proposal is a
+    // signed-in browser click, so nothing on the MCP surface applies,
+    // confirms or approves anything.
+    expect(
+      configs
+        .filter((config) => config.readOnly !== true)
+        .map((c) => c.name)
+        .sort()
+    ).toEqual([
+      'jira_admin_delete_space_template',
       'jira_admin_propose_option_changes',
+      'jira_admin_propose_space',
+      'jira_admin_propose_space_field',
+      'jira_admin_save_space_template',
     ]);
     expect(configs.some((config) => /apply|confirm|approve/.test(config.name))).toBe(false);
   });
