@@ -129,12 +129,12 @@ export default async function ActionableCards({
         {item.status === 'suggested' &&
           (item.kind === 'approval' ? (
             // No dismiss here: declining is the "no", and doing nothing
-            // lets the wait treat it as not approved.
-            <ApprovalActions
-              tenantId={tenantId}
-              itemId={item.id}
-              hideApprove={widgetPreview !== null}
-            />
+            // lets the wait treat it as not approved. A widget-hosted card
+            // has its own Confirm/Cancel for that (ApprovalWidgetCard,
+            // above) — nothing left for this to add.
+            widgetPreview ? null : (
+              <ApprovalActions tenantId={tenantId} itemId={item.id} />
+            )
           ) : item.kind === 'question' ? (
             <QuestionActions
               tenantId={tenantId}

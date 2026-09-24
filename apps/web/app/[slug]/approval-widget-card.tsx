@@ -14,20 +14,38 @@
  *   gate's own snapshotted `{tool, args}` (jiraIssueApprovalPreview) — no
  *   live tool call, so nothing runs before a person decides, same
  *   invariant the plain-list card kept.
- * - The widget's Confirm button calls `tools/call` with (possibly edited)
- *   confirmArgs; this host does NOT proxy that to a live MCP tool call —
- *   it POSTS an approve decision (with those args as an override) to the
- *   actionable-item's own decision route. The real tool call happens later,
- *   inside the worker, exactly as an unedited approval already works.
- * - The widget's Cancel is local-only (it never calls back to a host — see
- *   issue-preview.ts), so it cannot record a decline; ApprovalActions,
- *   rendered alongside with `hideApprove`, is what Decline actually is.
+ * - Both Confirm and Cancel call `tools/call` (jiraIssueApprovalPreview
+ *   gives the card a `cancelTool`, which is what makes Cancel round-trip
+ *   instead of finishing locally — see issue-preview.ts). Neither becomes a
+ *   live MCP tool call here: this host POSTS a decision (with the button's
+ *   args as an override) to the actionable-item's own decision route —
+ *   approve for Confirm, decline for Cancel — and the real tool call, on
+ *   approval, happens later inside the worker. Which decision a given
+ *   `tools/call` means is read off `confirmOutcome`/`cancelOutcome` in
+ *   structuredContent, not off the tool name itself — this card is the
+ *   only place that needed to change to make Cancel BE the decline,
+ *   instead of a second "no" control duplicating it outside the widget.
  * - `ui/update-model-context` has no chat turn to open here — acknowledged
  *   and otherwise ignored.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+
+/** Which decision a `tools/call` means, from the preview's own outcome
+ * metadata — not from the tool name, which is free to be anything (or, for
+ * Confirm, the real gated tool's own name). Defaults to approve: a card
+ * that never set `cancelTool` never reaches here for anything but Confirm. */
+function decisionOf(
+  toolName: string,
+  structuredContent: Record<string, unknown>
+): 'approve' | 'decline' {
+  const outcome =
+    toolName === structuredContent.cancelTool
+      ? structuredContent.cancelOutcome
+      : structuredContent.confirmOutcome;
+  return outcome === 'declined' ? 'decline' : 'approve';
+}
 
 interface RpcMessage {
   jsonrpc: '2.0';
@@ -101,11 +119,13 @@ export default function ApprovalWidgetCard({
           return;
         case 'tools/call': {
           if (id === undefined) return;
+          const name = typeof params?.name === 'string' ? params.name : '';
+          const decision = decisionOf(name, structuredContent);
           const args = plainObject(params?.arguments) ?? {};
           void fetch(`/api/tenant/${tenantId}/actionable-items/${itemId}/approval`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ decision: 'approve', args }),
+            body: JSON.stringify({ decision, args }),
           })
             .then(async (response) => {
               const body: unknown = await response.json().catch(() => null);
@@ -121,7 +141,9 @@ export default function ApprovalWidgetCard({
                         text:
                           typeof record.warning === 'string'
                             ? record.warning
-                            : 'Approved — the run will continue.',
+                            : decision === 'approve'
+                              ? 'Approved — the run will continue.'
+                              : 'Declined.',
                       },
                     ],
                   },

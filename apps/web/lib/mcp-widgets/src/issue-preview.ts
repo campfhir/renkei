@@ -5,7 +5,9 @@
  * differ only in their field list and which confirm tool they run, so the
  * preview tool ships the whole contract in structuredContent —
  *
- *   { kind: 'issue', title, subtitle?, confirmTool, confirmLabel,
+ *   { kind: 'issue', title, subtitle?,
+ *     confirmTool, confirmLabel, confirmOutcome?,
+ *     cancelTool?, cancelLabel?, cancelOutcome?,
  *     confirmArgs,                    // passed through verbatim on confirm
  *     editable?: { summaryKey?, descriptionKey? },   // keys into confirmArgs
  *     fields: [{ label, value, oldValue?, editable? }] }   // display rows
@@ -19,6 +21,20 @@
  * kind of control to render, and (for a picklist/checkbox row) the options.
  * A row with no `editable` stays a plain value — project/type never carry
  * one, so the card cannot be used to redirect the write structurally.
+ *
+ * Cancel is local-only (nothing was written, so there is nothing to tell a
+ * host) UNLESS the preview sets `cancelTool` — then Cancel becomes a second
+ * confirm-shaped button: same field edits gathered, `cancelTool` called
+ * instead of `confirmTool`. This is what lets a host outside chat (an
+ * agent's approval card, never chat's own preview tools, which never set
+ * this) reuse Cancel AS its decline, instead of the card needing a second,
+ * redundant "no" control next to it. `confirmLabel`/`cancelLabel` are the
+ * button TEXT, free to read naturally in whatever surface hosts the card
+ * ("Create"/"Cancel" in chat); `confirmOutcome`/`cancelOutcome` are a
+ * separate, optional semantic tag ("approved"/"declined", or anything else
+ * a future host cares about) a generic chat host has no reason to read but
+ * a decision-shaped host can, without needing to know Jira- or
+ * email-specific tool names to tell two buttons apart.
  */
 
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
@@ -234,13 +250,20 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     : null;
   if (descriptionInput) card.append(descriptionInput.field);
 
-  const cancelButton = el('button', undefined, 'Cancel');
+  // Present only when a host wants Cancel to BE a real decision instead of
+  // a purely local dismissal — an approval card's Decline, leveraging the
+  // same button rather than duplicating it (see approval-preview.ts).
+  // Absent (every existing chat preview), Cancel keeps its original,
+  // unconditionally local behavior below — nothing about this changes for
+  // a card that never sets it.
+  const cancelTool = str(preview.cancelTool);
+  const cancelButton = el('button', undefined, str(preview.cancelLabel) || 'Cancel');
   const confirmButton = el('button', 'primary', str(preview.confirmLabel) || 'Confirm');
   const footer = cardActions([cancelButton, confirmButton]);
   card.append(footer.actions);
   root.append(card);
 
-  footer.run(confirmButton, async () => {
+  const gatherArgs = (): Record<string, unknown> => {
     const args = { ...confirmArgs };
     if (summaryInput && summaryKey) {
       args[summaryKey] = summaryInput.input.value.trim() || str(confirmArgs[summaryKey]);
@@ -251,7 +274,11 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       else delete args[descriptionKey];
     }
     for (const edit of fieldEdits) setPath(args, edit.path, edit.read());
-    const confirmed = await bridge.callTool(confirmTool, args);
+    return args;
+  };
+
+  footer.run(confirmButton, async () => {
+    const confirmed = await bridge.callTool(confirmTool, gatherArgs());
     const text = resultText(confirmed);
     if (confirmed.isError) throw new Error(text || 'The write failed');
     // First line only on the card ("Created issue SCRUM-42"); the model gets
@@ -272,9 +299,23 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   });
 
   footer.run(cancelButton, async () => {
-    finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing was written.' });
+    if (!cancelTool) {
+      finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing was written.' });
+      bridge.updateModelContext(
+        `The user cancelled "${str(preview.title)}" from the preview card. Nothing was written.`
+      );
+      return;
+    }
+    const declined = await bridge.callTool(cancelTool, gatherArgs());
+    const text = resultText(declined);
+    if (declined.isError) throw new Error(text || 'The request failed');
+    finishDone({
+      icon: 'cancelled',
+      headline: text.split('\n')[0] || 'Cancelled',
+      detail: str(preview.subtitle) || str(preview.title),
+    });
     bridge.updateModelContext(
-      `The user cancelled "${str(preview.title)}" from the preview card. Nothing was written.`
+      `The user declined "${str(preview.title)}" from the preview card. Result: ${text}`
     );
   });
 }

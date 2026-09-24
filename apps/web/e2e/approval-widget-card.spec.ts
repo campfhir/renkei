@@ -8,9 +8,11 @@
  * Drives the actual iframe: its Summary field is edited and its Create
  * button is clicked, which POSTs an approve decision (with that edit as an
  * argsOverride) to the real decision route — the real DB row is asserted
- * on afterward, not mocked. A second test drives Decline, which lives
- * OUTSIDE the iframe (ApprovalActions with hideApprove) since the widget's
- * own Cancel button has no way to report back to a host.
+ * on afterward, not mocked. A second test drives the widget's OWN Cancel
+ * button (relabeled "Decline" for this card, per approval-preview.ts's
+ * `cancelTool`/`cancelLabel`) and checks it — not a separate external
+ * control — is what records the decline; ApprovalActions never renders at
+ * all for a widget-hosted card.
  *
  * Its own tenant, agent and run (AGENTS.md's "isolate what you create"):
  * `actionable_items.run_id` is a real FK to `agent_runs`, so this seeds
@@ -180,9 +182,11 @@ test('confirming an edit on the widget approves the card with that edit as an ar
     await expect(widgetFrame.getByText('CIO · Project')).toBeVisible();
     await expect(widgetFrame.getByText('Anti-Kickback Review')).toBeVisible();
 
-    // No redundant unedited Approve outside the widget — Decline still is.
+    // No external Approve/Decline at all — the widget's own Confirm/Cancel
+    // are the only controls, Cancel relabeled "Decline" for this card.
     await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Decline' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Decline', exact: true })).toHaveCount(0);
+    await expect(widgetFrame.getByRole('button', { name: 'Decline' })).toBeVisible();
 
     const summaryInput = widgetFrame
       .locator('div')
@@ -223,7 +227,9 @@ test('confirming an edit on the widget approves the card with that edit as an ar
   }
 });
 
-test('declining still works from outside the widget', async ({ page }, testInfo) => {
+test("the widget's own Cancel button is the decline — no separate control outside it", async ({
+  page,
+}, testInfo) => {
   const fixture = fixtureFor(`decline-${testInfo.project.name}`);
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
@@ -236,11 +242,17 @@ test('declining still works from outside the widget', async ({ page }, testInfo)
     await signIn(page, fixture);
 
     await page.goto(`/${fixture.slug}`);
-    await expect(
-      page.frameLocator('iframe[title="Approval preview"]').getByText('Create Jira issue')
-    ).toBeVisible();
+    const widgetFrame = page.frameLocator('iframe[title="Approval preview"]');
+    await expect(widgetFrame.getByText('Create Jira issue')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Decline' }).click();
+    // No external Approve/Decline at all — the widget's own Confirm/Cancel
+    // (relabeled "Decline" for this card) are the only controls.
+    await expect(page.getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Decline', exact: true })).toHaveCount(0);
+    await expect(widgetFrame.getByRole('button', { name: 'Create' })).toBeVisible();
+    await expect(widgetFrame.getByRole('button', { name: 'Decline' })).toBeVisible();
+
+    await widgetFrame.getByRole('button', { name: 'Decline' }).click();
     await expect(page.getByText('Nothing suggested yet.')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('iframe[title="Approval preview"]')).toHaveCount(0);
 

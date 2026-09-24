@@ -157,8 +157,16 @@ describe('jiraIssueApprovalPreview', () => {
       subtitle: 'CIO · Project',
       confirmTool: 'jira_create_issue',
       confirmLabel: 'Create',
+      confirmOutcome: 'approved',
       editable: { summaryKey: 'summary', descriptionKey: 'description' },
     });
+    // Cancel doubles as decline — a distinct tool name (never a real MCP
+    // tool) so the host can tell it apart from Confirm, and an explicit
+    // outcome tag so it does not have to know that name to do so.
+    expect(preview?.structuredContent.cancelTool).toBeTruthy();
+    expect(preview?.structuredContent.cancelTool).not.toBe('jira_create_issue');
+    expect(preview?.structuredContent.cancelLabel).toBe('Decline');
+    expect(preview?.structuredContent.cancelOutcome).toBe('declined');
     // The confirm button's args are the call's own, verbatim — nothing
     // resolved or stripped, so a round-trip through the card changes only
     // what the person actually edited.

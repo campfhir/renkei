@@ -176,6 +176,15 @@ export function approvalFieldRows(
 const APPROVAL_WIDGET_TOOLS = new Set(['jira_create_issue', 'jira_update_issue']);
 
 /**
+ * Never a real MCP tool — just what the card's Cancel button calls instead
+ * of finishing locally (issue-preview.ts's `cancelTool`), so the host
+ * (ApprovalWidgetCard) sees a `tools/call` it can tell apart from Confirm's
+ * by name. What actually decides `decision: 'approve' | 'decline'` there is
+ * `confirmOutcome`/`cancelOutcome` below, not this string.
+ */
+const DECLINE_TOOL = 'renkei.approval.decline';
+
+/**
  * The issue-preview widget's `structuredContent`, built from a
  * `jira_create_issue`/`jira_update_issue` call's own arguments, enriched
  * with a live (but best-effort — never fatal) field-schema fetch so a
@@ -216,6 +225,12 @@ export async function jiraIssueApprovalPreview(
       ...(subtitle ? { subtitle } : {}),
       confirmTool: tool,
       confirmLabel: tool === 'jira_create_issue' ? 'Create' : 'Update',
+      confirmOutcome: 'approved',
+      // Cancel IS the decline here — one button, not a second "no" control
+      // duplicating it outside the card (see approval-widget-card.tsx).
+      cancelTool: DECLINE_TOOL,
+      cancelLabel: 'Decline',
+      cancelOutcome: 'declined',
       confirmArgs: args,
       // Create always shows both — summary is required, and description is
       // worth offering even when the call did not propose one. Update only
