@@ -360,6 +360,12 @@ export async function seed(client: Client): Promise<void> {
   await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM sessions WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM identities WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  // A chat turn that actually ran (widget-card.spec.ts) minted a run
+  // token, and that registers one synthetic OAuth client per tenant
+  // (packages/mcp-client/src/token.ts) — a row that does not cascade from
+  // the tenant, so an earlier run's would block the re-creation here.
+  await client.query('DELETE FROM oauth_access_tokens WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM oauth_clients WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM tenants WHERE id = $1', [E2E_TENANT_ID]);
 
   await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [E2E_TENANT_ID, E2E_SLUG]);

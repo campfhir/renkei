@@ -141,6 +141,9 @@ export type StartTurnError =
 export interface StartedTurn {
   turnId: string;
   userMessageId: string;
+  /** The user row's place in the chat, for a page that shows it before the stream opens. */
+  userMessageSeq: number;
+  userMessageCreatedAt: string;
   assistantMessageId: string;
 }
 
@@ -156,6 +159,14 @@ export interface StartTurnInput {
   llmModelId?: string | null;
   /** The message came from a voice conversation; the reply is written to be heard. */
   voice?: boolean;
+  /**
+   * How the user row is stored and shown: a 'prompt' is what the person
+   * typed, their bubble; a 'note' is what they did outside the composer —
+   * today, a decision on a preview card (widget-tools.ts) — shown as a
+   * small line in the margin, never as a bubble, but the model's cue to
+   * reply all the same.
+   */
+  kind?: 'prompt' | 'note';
   defer?: (task: () => Promise<void>) => void;
 }
 
@@ -221,7 +232,7 @@ export async function startChatTurn(
           chatId: chat.id,
           turnId: turn.val,
           role: 'user',
-          kind: 'prompt',
+          kind: input.kind ?? 'prompt',
           status: 'complete',
           blocks,
         });
@@ -260,6 +271,8 @@ export async function startChatTurn(
       return ok({
         turnId: turn.val,
         userMessageId: user.id,
+        userMessageSeq: user.seq,
+        userMessageCreatedAt: user.createdAt.toISOString(),
         assistantMessageId: assistant.id,
         assistantSeq: assistant.seq,
         assistantCreatedAt: assistant.createdAt,
@@ -277,6 +290,8 @@ export async function startChatTurn(
     started = {
       turnId: opened.val.turnId,
       userMessageId: opened.val.userMessageId,
+      userMessageSeq: opened.val.userMessageSeq,
+      userMessageCreatedAt: opened.val.userMessageCreatedAt,
       assistantMessageId: opened.val.assistantMessageId,
     };
     const assistantRow = {

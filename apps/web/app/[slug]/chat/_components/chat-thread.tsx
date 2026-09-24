@@ -40,6 +40,7 @@ import type {
   ModelOption,
   ToolPermissionDecision,
 } from '@/lib/chat/views';
+import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
 import type { VoicePrefs } from '@renkei/user-prefs/prefs';
 import type { VoiceAvailability } from '@/lib/voice/availability';
 import { voiceClient } from '@/lib/voice/client';
@@ -483,6 +484,33 @@ export default function ChatThread({
     },
     []
   );
+
+  /**
+   * A preview card's decision landed (widget-card.tsx): the note row goes
+   * in the thread where the person's message would, and when the server
+   * opened a turn on it, that turn streams like any reply — the same
+   * snapshot-then-listen as begin(), with the server's own row in place
+   * of an optimistic one. With no turn (no usable model), the note alone.
+   */
+  const beginWidgetTurn = useCallback((outcome: WidgetModelContextOutcome) => {
+    if (!outcome.turn) {
+      dispatch({ type: 'row', message: outcome.message });
+      return;
+    }
+    dispatch({
+      type: 'snapshot',
+      turn: {
+        id: outcome.turn.turnId,
+        status: 'running',
+        kind: 'reply',
+        error: null,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+      },
+      messages: [outcome.message],
+    });
+    setActiveTurnId(outcome.turn.turnId);
+  }, []);
 
   /**
    * Force a compaction pass: /compact, or "Compact this conversation" from
@@ -1088,6 +1116,7 @@ export default function ChatThread({
               }
               code={codeActions}
               subagents={state.subagents}
+              onWidgetDecision={isOwner ? beginWidgetTurn : null}
               speech={
                 voice && speechQueue
                   ? {
