@@ -371,7 +371,7 @@ export async function registerReadTools(
         'full rows to reason over. After calling, do not repeat the rows in your reply — ' +
         'reference issue keys only.',
       annotations: { readOnlyHint: true },
-      _meta: previewToolMeta(RESULTS_LIST_URI),
+      _meta: previewToolMeta(RESULTS_LIST_URI, 'display'),
       inputSchema: z.object({
         jql: z.string().describe(JQL_PARAMETER_DESCRIPTION),
         maxResults: z.number().describe('Maximum results (1-100, default 50)').optional(),

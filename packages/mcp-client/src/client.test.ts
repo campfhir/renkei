@@ -74,6 +74,52 @@ describe('HttpMcpClient', () => {
     ]);
   });
 
+  it("surfaces a widget-bound tool's resourceUri and kind, and omits both for a plain tool", async () => {
+    const client = new HttpMcpClient('http://app/api/mcp/t/mcp', 'tok');
+    fetchSpy.mockResolvedValueOnce(
+      jsonResponse({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          tools: [
+            {
+              name: 'jira_create_issue_preview',
+              description: 'preview',
+              inputSchema: { type: 'object' },
+              _meta: {
+                ui: { resourceUri: 'ui://widget/issue-preview.abc.html', kind: 'approval' },
+              },
+            },
+            {
+              name: 'jira_search_issues_preview',
+              description: 'preview',
+              inputSchema: { type: 'object' },
+              _meta: { ui: { resourceUri: 'ui://widget/results-list.abc.html', kind: 'display' } },
+            },
+            { name: 'whoami', description: 'Who am I', inputSchema: { type: 'object' } },
+          ],
+        },
+      })
+    );
+    expect(await client.listTools()).toEqual([
+      {
+        name: 'jira_create_issue_preview',
+        description: 'preview',
+        inputSchema: { type: 'object' },
+        uiResourceUri: 'ui://widget/issue-preview.abc.html',
+        uiKind: 'approval',
+      },
+      {
+        name: 'jira_search_issues_preview',
+        description: 'preview',
+        inputSchema: { type: 'object' },
+        uiResourceUri: 'ui://widget/results-list.abc.html',
+        uiKind: 'display',
+      },
+      { name: 'whoami', description: 'Who am I', inputSchema: { type: 'object' } },
+    ]);
+  });
+
   it('shapes a tool result and surfaces a JSON-RPC error as a thrown Error', async () => {
     const client = new HttpMcpClient('http://app/api/mcp/t/mcp', 'tok');
     fetchSpy.mockResolvedValueOnce(

@@ -305,7 +305,7 @@ export async function registerJsmTools(
         'you need the rows to reason over. After calling, do not repeat the rows in your ' +
         'reply — reference request keys only.',
       annotations: { readOnlyHint: true },
-      _meta: previewToolMeta(RESULTS_LIST_URI),
+      _meta: previewToolMeta(RESULTS_LIST_URI, 'display'),
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID (optional)').optional(),
         maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),

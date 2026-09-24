@@ -19,6 +19,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
+import type { WidgetKind } from '@renkei/mcp-client';
 import { EMAIL_COMPOSE_HTML, EMAIL_COMPOSE_HASH } from '@/lib/mcp-widgets/generated/email-compose';
 import { CHAT_MESSAGE_HTML, CHAT_MESSAGE_HASH } from '@/lib/mcp-widgets/generated/chat-message';
 import {
@@ -62,9 +63,24 @@ export function newPreviewId(): string {
 /**
  * `_meta` for a preview tool: binds its result to a widget template. Spread
  * into registerTool config as `_meta: previewToolMeta(EMAIL_COMPOSE_URI)`.
+ *
+ * `kind` says what the card IS, for a host deciding how to treat it —
+ * `'approval'` (the default: a confirm/cancel decision awaiting the user)
+ * or `'display'` (read-only, nothing to confirm — pass `'display'`
+ * explicitly, e.g. `previewToolMeta(RESULTS_LIST_URI, 'display')`). A
+ * results-list card is the one template used both ways depending on the
+ * tool: a search/list preview is display; a card built around a
+ * confirmTool is an approval regardless of which template renders it.
+ * Defaulting to 'approval' rather than requiring every call site to state
+ * it keeps the overwhelming-majority case (every write preview) silent,
+ * while the minority (read-only lists) opts in explicitly at its own
+ * call site instead of relying on a shared default to get it right.
  */
-export function previewToolMeta(resourceUri: string): Record<string, unknown> {
-  return { ui: { resourceUri } };
+export function previewToolMeta(
+  resourceUri: string,
+  kind: WidgetKind = 'approval'
+): Record<string, unknown> {
+  return { ui: { resourceUri, kind } };
 }
 
 /**

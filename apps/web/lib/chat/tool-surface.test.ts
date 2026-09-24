@@ -18,6 +18,7 @@ function descriptor(
     title: null,
     description: 'd',
     appOnly: false,
+    widgetKind: null,
     outcomes: { success: { label: 'ok' }, failures: [] },
     ...partial,
   };

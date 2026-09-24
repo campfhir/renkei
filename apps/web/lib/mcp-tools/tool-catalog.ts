@@ -27,6 +27,7 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
+import type { WidgetKind } from '@renkei/mcp-client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getDatabase } from '@renkei/db';
@@ -55,6 +56,14 @@ export interface ToolDescriptor {
    */
   appOnly: boolean;
   /**
+   * The card's own declared purpose (`_meta.ui.kind` — widgets.ts), for a
+   * caller deciding whether a tool's widget is a decision to host or just
+   * something to display: `'approval'` (confirm/cancel), `'display'`
+   * (read-only, e.g. a search-results list), or null for a tool with no
+   * widget at all (most tools) or one registered before this field existed.
+   */
+  widgetKind: WidgetKind | null;
+  /**
    * The enumerated ways this tool can succeed or fail — what the agent
    * builder offers failure handling for. Always present; resolution falls
    * back through registration-declared → curated → generic (see outcomes.ts).
@@ -67,7 +76,10 @@ interface RegisteredConfig {
   title?: unknown;
   description?: unknown;
   annotations?: { readOnlyHint?: unknown };
-  _meta?: { ui?: { visibility?: unknown }; outcomes?: unknown };
+  _meta?: {
+    ui?: { visibility?: unknown; resourceUri?: unknown; kind?: unknown };
+    outcomes?: unknown;
+  };
 }
 
 /**
@@ -91,6 +103,14 @@ function collectingServer(): { server: McpServer; tools: ToolDescriptor[] } {
         appOnly:
           Array.isArray(config?._meta?.ui?.visibility) &&
           !config._meta.ui.visibility.includes('model'),
+        widgetKind:
+          // Only meaningful alongside a resourceUri — a confirm tool has no
+          // card of its own to classify, even though its `visibility` meta
+          // sits in the same `ui` object.
+          typeof config?._meta?.ui?.resourceUri === 'string' &&
+          (config._meta.ui.kind === 'approval' || config._meta.ui.kind === 'display')
+            ? config._meta.ui.kind
+            : null,
         outcomes: resolveOutcomes(name, kind, config?._meta),
       });
     },

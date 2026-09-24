@@ -38,7 +38,12 @@ jest.mock('@renkei/agent-llm', () => ({
               ok: true,
               val: {
                 content: [
-                  { type: 'tool_use', id: `tu_${requests.length}`, name: reply.tool, input: reply.input ?? {} },
+                  {
+                    type: 'tool_use',
+                    id: `tu_${requests.length}`,
+                    name: reply.tool,
+                    input: reply.input ?? {},
+                  },
                 ],
                 stopReason: 'tool_use',
                 usage: { inputTokens: 10, outputTokens: 10 },
@@ -99,6 +104,7 @@ const TOOLS: ToolDescriptor[] = [
     title: 'Jira · Read — Search',
     description: 'search',
     appOnly: false,
+    widgetKind: null,
     outcomes: {
       success: { label: 'ok' },
       failures: [{ code: 'not-found', label: 'Nothing matched', description: '', retriable: true }],
@@ -959,7 +965,7 @@ describe('draftAgentFromProse retry loop', () => {
     expect(prompt).toContain('find_tools');
   });
 
-  it('find_tools renders a matched tool\'s description in FULL — never clipped', async () => {
+  it("find_tools renders a matched tool's description in FULL — never clipped", async () => {
     // The drafting model never sees input schemas, so the description is
     // its only account of a tool's requirements. This used to clip at 100
     // characters, cutting most descriptions mid-sentence — the part that
@@ -978,6 +984,7 @@ describe('draftAgentFromProse retry loop', () => {
         'whenever the target project is a service desk — a plain issue in a service desk ' +
         `project skips its request types and SLAs. ${longTail}`,
       appOnly: false,
+      widgetKind: null,
       outcomes: { success: { label: 'ok' }, failures: [] },
     };
     replies = [{ tool: 'find_tools', input: { query: 'jsm create request' } }, GOOD_REPLY];

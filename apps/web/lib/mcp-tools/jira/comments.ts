@@ -174,7 +174,7 @@ export async function registerCommentTools(
         'the discussion; use jira_list_comments when you need the comment bodies to reason ' +
         'over. After calling, do not repeat the comments in your reply.',
       annotations: { readOnlyHint: true },
-      _meta: previewToolMeta(RESULTS_LIST_URI),
+      _meta: previewToolMeta(RESULTS_LIST_URI, 'display'),
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
       }),
