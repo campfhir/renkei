@@ -317,6 +317,9 @@ describe('runChatTurn', () => {
         channel,
         store: fake.store,
         limits: { flushMs: 5 },
+        // A clock that does not move, so every durationMs below is 0 by
+        // construction rather than by a fast runner.
+        now: () => 0,
       },
       inputFor('turn-2')
     );
@@ -333,7 +336,7 @@ describe('runChatTurn', () => {
     ]);
     expect(rows[1].blocks).toEqual([
       // durationMs is the call's wall time by the runner's own clock — the
-      // fake clock here does not move, so it reads 0, and it is there.
+      // fixed clock above does not move, so it reads 0, and it is there.
       {
         type: 'tool_result',
         toolUseId: 'tu_jira_search',

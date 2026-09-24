@@ -20,6 +20,13 @@
  *     answers every browser verb "not enabled" — closed, never open.
  *   SANDBOX_BROWSER_EXECUTABLE — optional Chromium binary; by default
  *     playwright-core resolves its own installed headless shell.
+ *   SANDBOX_CHARTS_ENABLED — `true` to render charts (Mermaid text to an
+ *     SVG, PNG or PDF — see charts.ts) in that same Chromium, behind
+ *     sandbox_render_chart and the chat's chat_write_chart; unset answers
+ *     every chart verb "not enabled". Independent of the browser flag: a
+ *     chart page has no network at all.
+ *   SANDBOX_MERMAID_BUNDLE — optional path to Mermaid's browser bundle;
+ *     by default the one this package depends on.
  *   SANDBOX_WORKSPACES_ENABLED — `true` to serve code workspaces (a
  *     repository cloned here, commands run in it — see workspaces.ts);
  *     unset answers every workspace verb "not enabled". When enabled the
@@ -60,6 +67,7 @@ import { createSandboxServer } from './server';
 import { DockerClient, parseDockerHost, parseMemoryBytes } from './docker';
 import { ServiceManager } from './services';
 import { BrowserSessions } from './browser';
+import { ChartRenderer } from './charts';
 import { SecretVault } from './secret-vault';
 import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
@@ -267,21 +275,35 @@ async function main(): Promise<void> {
     browser = new BrowserSessions({ secrets: createSecretResolver(dbResult.val, vault), state });
   }
 
+  // Charts render in a Chromium of their own, launched on the first chart
+  // and closed when idle — with no network at all, unlike the browser.
+  let charts: ChartRenderer | null = null;
+  if (envFlag('SANDBOX_CHARTS_ENABLED')) {
+    charts = new ChartRenderer();
+    if (!charts.mermaidBundle) {
+      fatal(
+        'SANDBOX_CHARTS_ENABLED is set but the Mermaid bundle was not found: install this package’s dependencies (mermaid) or point SANDBOX_MERMAID_BUNDLE at mermaid.min.js.'
+      );
+    }
+  }
+
   const server = createSandboxServer({
     db: dbResult.val,
     apiKeys,
     browser,
     vault,
+    charts,
     workspaces: workspacesEnabled,
     services,
   });
   server.listen(port, '0.0.0.0', () => {
     logger.info(
-      'started {application} {version} on port {port} (browser {browser}, workspaces {workspaces}, services {services})',
+      'started {application} {version} on port {port} (browser {browser}, charts {charts}, workspaces {workspaces}, services {services})',
       {
         component: 'worker-sandbox/server',
         port,
         browser: browser ? 'enabled' : 'disabled',
+        charts: charts ? 'enabled' : 'disabled',
         workspaces: workspacesEnabled
           ? canIsolateByUid()
             ? 'enabled, per-caller uids'
@@ -297,6 +319,7 @@ async function main(): Promise<void> {
     server.close(() => {
       void (async () => {
         await browser?.shutdown();
+        await charts?.shutdown();
         vault.close();
         await logger.flush();
         await closeDatabase();

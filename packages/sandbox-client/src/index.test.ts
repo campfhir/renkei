@@ -16,6 +16,9 @@ import {
   sbWriteFile,
   sbDeleteFile,
   sbWorkspaceGitShow,
+  sbChartRender,
+  sbChartStage,
+  sandboxChartsEnabled,
   clientFailure,
 } from './index';
 
@@ -128,13 +131,11 @@ describe('sbFetchUrl / sbListFiles / sbStatFile / sbDeleteFile (JSON ops)', () =
   });
 
   it('maps a non-2xx response body to a typed op error', async () => {
-    fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify({ error: { type: 'not_found', message: 'gone' } }), {
-          status: 404,
-        })
-      );
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: 'not_found', message: 'gone' } }), {
+        status: 404,
+      })
+    );
 
     const result = await sbStatFile(TARGET, 'file-1');
 
@@ -253,13 +254,11 @@ describe('sbWriteFile', () => {
   });
 
   it('maps a non-2xx response to a typed op error', async () => {
-    fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify({ error: { type: 'quota_exceeded', message: 'full' } }), {
-          status: 429,
-        })
-      );
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: 'quota_exceeded', message: 'full' } }), {
+        status: 429,
+      })
+    );
 
     const result = await sbWriteFile(TARGET, { filename: 'x.md' }, new Uint8Array([1]));
 
@@ -817,5 +816,113 @@ describe('language server calls', () => {
       ok: false,
       err: { kind: 'unconfigured' },
     });
+  });
+});
+
+describe('sandboxChartsEnabled', () => {
+  it('needs the worker configured AND the flag set', () => {
+    delete process.env.SANDBOX_CHARTS_ENABLED;
+    expect(sandboxChartsEnabled()).toBe(false);
+    process.env.SANDBOX_CHARTS_ENABLED = 'true';
+    expect(sandboxChartsEnabled()).toBe(true);
+    delete process.env.SANDBOX_WORKER_URL;
+    expect(sandboxChartsEnabled()).toBe(false);
+  });
+});
+
+describe('sbChartRender', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('posts the request to charts/render and reads the bytes, type and size back', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: {
+          'content-type': 'image/png',
+          'x-chart-width': '132',
+          'x-chart-height': '82',
+          'x-chart-diagram': encodeURIComponent('flowchart-v2'),
+        },
+      })
+    );
+    const result = await sbChartRender(TARGET, { source: 'pie', format: 'png', scale: 2 });
+    if (!result.ok) throw new Error('expected success');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://sandbox.internal:8092/v1/charts/render',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ...TARGET, source: 'pie', format: 'png', scale: 2 }),
+      })
+    );
+    expect(Array.from(result.val.bytes)).toEqual([1, 2, 3]);
+    expect(result.val).toMatchObject({
+      mediaType: 'image/png',
+      width: 132,
+      height: 82,
+      diagramType: 'flowchart-v2',
+    });
+  });
+
+  it('maps a worker refusal to a typed op error with its message', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: { type: 'invalid_diagram', message: 'Parse error on line 2' } }),
+          { status: 400, headers: { 'content-type': 'application/json' } }
+        )
+      );
+    const result = await sbChartRender(TARGET, { source: 'pie' });
+    expect(result).toEqual({
+      ok: false,
+      err: { kind: 'op', type: 'invalid_diagram', message: 'Parse error on line 2', status: 400 },
+    });
+  });
+});
+
+describe('sbChartStage', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('posts to charts/stage and reads the file and its size back', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          file: { ...WIRE_FILE, filename: 'chart.png', contentType: 'image/png' },
+          width: 132,
+          height: 82,
+          diagramType: 'pie',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    );
+    const result = await sbChartStage(TARGET, { source: 'pie', filename: 'chart.png' });
+    if (!result.ok) throw new Error('expected success');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://sandbox.internal:8092/v1/charts/stage',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(result.val.file.filename).toBe('chart.png');
+    expect(result.val).toMatchObject({ width: 132, height: 82, diagramType: 'pie' });
+  });
+
+  it('refuses a body without a file as malformed', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ width: 1 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    const result = await sbChartStage(TARGET, { source: 'pie' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.err.kind).toBe('unreachable');
   });
 });

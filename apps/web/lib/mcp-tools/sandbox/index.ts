@@ -15,6 +15,10 @@
  * into an upload slot server-side. The model only ever sees filenames,
  * sizes, and ids.
  *
+ * sandbox_render_chart (./charts.ts) is the same door for a chart or a
+ * diagram: Mermaid text the model wrote, drawn by the worker's own Chromium
+ * into a PNG, an SVG or a PDF and staged here.
+ *
  * sandbox_render_document is how an agent authors a Word document, a slide
  * deck, a PDF or a workbook: write Markdown or tabular text, stage the
  * rendered file here, then move it anywhere a *_request_*_upload tool
@@ -54,6 +58,7 @@ import {
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { registerSandboxBrowserTools } from './browser';
+import { registerSandboxChartTools } from './charts';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
 import { completeUploadSlot, finalizeUploadSlot } from '@/lib/upload-executors';
 import { getDatabase } from '@renkei/db';
@@ -71,6 +76,7 @@ import {
   clientFailure,
   sandboxConfig,
   sandboxBrowserEnabled,
+  sandboxChartsEnabled,
 } from '@/lib/sandbox/service-client';
 
 /** The connector key the sandbox capabilities register under. */
@@ -98,6 +104,8 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
   // The browser verbs register only where the worker actually runs one
   // (SANDBOX_BROWSER_ENABLED on both sides) — see ./browser.ts.
   if (sandboxBrowserEnabled()) registerSandboxBrowserTools(server, context);
+  // Likewise the chart renderer (SANDBOX_CHARTS_ENABLED on both sides) — see ./charts.ts.
+  if (sandboxChartsEnabled()) registerSandboxChartTools(server, context);
 
   server.registerTool(
     'sandbox_download_url',

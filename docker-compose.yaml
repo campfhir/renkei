@@ -213,6 +213,10 @@ services:
   # reads to register those tools. The browser's every connection goes
   # through an in-process egress proxy that refuses private and internal
   # addresses, so it cannot reach the other compose services either.
+  # SANDBOX_CHARTS_ENABLED=true in .env (again read by both) draws charts
+  # from Mermaid text in that same Chromium, behind sandbox_render_chart
+  # and the chat's chat_write_chart — independent of the browser flag; a
+  # chart page has no network at all.
   #
   # SANDBOX_WORKSPACES_ENABLED=true in .env (again read by both) adds code
   # projects: a Bitbucket repository cloned onto the second volume below,
@@ -314,6 +318,8 @@ services:
       # don't register. SANDBOX_BROWSER_ENABLED=true in .env (read by this
       # service AND worker-sandbox) additionally registers the
       # sandbox_browser_* tools; unset, they don't exist. Likewise
+      # SANDBOX_CHARTS_ENABLED=true for sandbox_render_chart and the chat's
+      # chat_write_chart (Mermaid text drawn to PNG/SVG/PDF), and
       # SANDBOX_WORKSPACES_ENABLED=true for the Code section — code
       # projects, each a repository a chat works in with the code_* tools
       # — and SANDBOX_SERVICES_ENABLED=true on top for the code_service_*

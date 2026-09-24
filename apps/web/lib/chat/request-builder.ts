@@ -69,6 +69,8 @@ export interface SystemPromptInput {
   hasSandbox: boolean;
   /** The org has somewhere to keep files; false means none can be made or attached. */
   filesAllowed: boolean;
+  /** chat_write_chart is among the tools (a file store plus a chart renderer): the brief names it. */
+  chartsAllowed?: boolean;
   /**
    * Auto mode (auto-mode.ts): the turn works unattended, its tools run
    * unasked, and the model ends the task with task_complete — the brief
@@ -267,7 +269,10 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   }
   if (input.filesAllowed) {
     sections.push(
-      'To hand the person a file, write it with chat_write_file; it appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. You write text and the extension decides the file: .csv, .md, .txt, .json and other text formats are kept as written; .docx and .pdf are rendered from your Markdown; .pptx from Markdown with a # or ## heading per slide; .xlsx from CSV, JSON sheets or Markdown tables. So an Excel workbook, a Word document, a PDF or a slide deck is yours to make — write the content, never bytes or base64. A file another tool hands back (a screenshot, a mail attachment) is kept there the same way.'
+      'To hand the person a file, write it with chat_write_file; it appears under this chat’s Artifacts, where they can download it or copy it to a connected network share. You write text and the extension decides the file: .csv, .md, .txt, .json and other text formats are kept as written; .docx and .pdf are rendered from your Markdown; .pptx from Markdown with a # or ## heading per slide; .xlsx from CSV, JSON sheets or Markdown tables. So an Excel workbook, a Word document, a PDF or a slide deck is yours to make — write the content, never bytes or base64. A file another tool hands back (a screenshot, a mail attachment) is kept there the same way.' +
+        (input.chartsAllowed
+          ? ' For a chart or a diagram — a bar or line chart, a pie, a Gantt plan, a flowchart, a sequence diagram — write Mermaid text to chat_write_chart, which draws it as a PNG (or an SVG or a PDF) and keeps it the same way; never draw one in a code block when the person wants an image.'
+          : '')
     );
   } else {
     sections.push(

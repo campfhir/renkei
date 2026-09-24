@@ -28,7 +28,7 @@ import {
 } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
-import { sandboxConfig } from '@renkei/sandbox-client';
+import { sandboxChartsEnabled, sandboxConfig } from '@renkei/sandbox-client';
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
@@ -542,6 +542,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         surface.discoverable.some((entry) => entry.def.name === 'outlook_search_users'),
       hasSandbox: toolConfig.connectors.includes('sandbox') && sandboxConfig() !== null,
       filesAllowed,
+      chartsAllowed: filesAllowed && sandboxChartsEnabled(),
       autoMode: auto,
       now: new Date(),
     });

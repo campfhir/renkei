@@ -79,6 +79,16 @@ export function sandboxBrowserEnabled(): boolean {
 }
 
 /**
+ * Whether this deployment renders charts: the worker must be configured
+ * AND SANDBOX_CHARTS_ENABLED set (the same flag the worker reads to
+ * launch its renderer). Off unless said otherwise — closed, never open.
+ */
+export function sandboxChartsEnabled(): boolean {
+  if (!sandboxConfig()) return false;
+  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_CHARTS_ENABLED ?? '').trim());
+}
+
+/**
  * Whether this deployment offers code workspaces: the worker must be
  * configured AND SANDBOX_WORKSPACES_ENABLED set (the same flag the worker
  * reads to serve them). Off unless said otherwise — closed, never open.
@@ -1708,4 +1718,79 @@ export async function sbLspEvents(
   if (!response.ok) return opFailure(response);
   if (!response.body) return unreachable('The sandbox service answered without a stream.');
   return { ok: true, val: response.body };
+}
+
+// ─── Charts ─────────────────────────────────────────────────────────────────
+
+/** A chart render request as the worker takes it; see @renkei/connector-sandbox's parseChartRequest for the bounds. */
+export interface WireChartRequest {
+  source: string;
+  format?: 'png' | 'svg' | 'pdf';
+  theme?: string;
+  background?: string;
+  scale?: number;
+}
+
+export interface WireChartRendered {
+  bytes: Uint8Array;
+  mediaType: string;
+  width: number;
+  height: number;
+  diagramType: string;
+}
+
+function chartMeasure(headers: Headers): { width: number; height: number; diagramType: string } {
+  const width = Number(headers.get('x-chart-width') ?? '0');
+  const height = Number(headers.get('x-chart-height') ?? '0');
+  let diagramType = 'unknown';
+  try {
+    diagramType = decodeURIComponent(headers.get('x-chart-diagram') ?? '') || 'unknown';
+  } catch {
+    // A header nobody encoded; keep the default.
+  }
+  return {
+    width: Number.isFinite(width) ? width : 0,
+    height: Number.isFinite(height) ? height : 0,
+    diagramType,
+  };
+}
+
+/** Render a chart and answer its bytes — for a caller that keeps them itself (the chat). */
+export async function sbChartRender(
+  target: SandboxTarget,
+  input: WireChartRequest
+): Promise<ClientResult<WireChartRendered>> {
+  const called = await callOp('charts/render', { ...target, ...input });
+  if (!called.ok) return called;
+  try {
+    const mediaType = called.val.headers.get('content-type') ?? 'application/octet-stream';
+    const bytes = new Uint8Array(await called.val.arrayBuffer());
+    return { ok: true, val: { bytes, mediaType, ...chartMeasure(called.val.headers) } };
+  } catch (error) {
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** Render a chart and stage it as a scratch-space file — for sandbox_render_chart. */
+export async function sbChartStage(
+  target: SandboxTarget,
+  input: WireChartRequest & { filename?: string }
+): Promise<
+  ClientResult<{ file: WireSandboxFile; width: number; height: number; diagramType: string }>
+> {
+  const result = await callJson('charts/stage', { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  const file = fileOf(value.file);
+  if (!file) return malformed();
+  return {
+    ok: true,
+    val: {
+      file,
+      width: typeof value.width === 'number' ? value.width : 0,
+      height: typeof value.height === 'number' ? value.height : 0,
+      diagramType: str(value.diagramType) || 'unknown',
+    },
+  };
 }
