@@ -39,6 +39,8 @@ services:
       ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
       MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
       MIRTH_WORKER_API_KEY: ${MIRTH_WORKER_API_KEY:-renkei-dev-mirth-key}
+      ADMANAGER_WORKER_URL: http://renkei-worker-admanager:8095
+      ADMANAGER_WORKER_API_KEY: ${ADMANAGER_WORKER_API_KEY:-renkei-dev-admanager-key}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
       # On in dev so the sandbox_browser_* tools are there to try; must
@@ -251,6 +253,32 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       MIRTH_WORKER_API_KEY: ${MIRTH_WORKER_API_KEY:-renkei-dev-mirth-key}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The ADManager Plus egress worker — its own image (target `admanager`),
+  # the only container that dials an organization's ManageEngine
+  # ADManager Plus servers or decrypts a person's stored authtoken. The
+  # app reaches it via ADMANAGER_WORKER_URL above with the shared
+  # ADMANAGER_WORKER_API_KEY.
+  worker-admanager:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: admanager
+    image: renkei-admanager:latest
+    container_name: renkei-worker-admanager
+    # TOKEN_ENCRYPTION_KEY must match the app's — it opens the stored
+    # per-user ADManager Plus authtokens — so both read the same env file.
+    env_file:
+      - apps/web/.env.development
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      ADMANAGER_WORKER_API_KEY: ${ADMANAGER_WORKER_API_KEY:-renkei-dev-admanager-key}
       NODE_ENV: production
     depends_on:
       postgres:

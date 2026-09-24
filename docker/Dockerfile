@@ -337,6 +337,52 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker-mirth", "start"]
 
+# ADManager stage - the ManageEngine ADManager Plus egress service, its own
+# image on purpose: it is the only process that dials an organization's
+# ADManager Plus servers (typically on a private network the web app's SSRF
+# guard refuses by design) or decrypts a person's stored authtoken, and it
+# rolls out independently of the queue workers.
+FROM node:24-alpine AS admanager
+ARG PNPM_VERSION
+
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+
+# Created before anything it owns — see the runtime stage for why a trailing
+# chown -R would double the image.
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY --parents apps/*/package.json packages/*/package.json ./
+RUN pnpm install --frozen-lockfile --prod --no-optional \
+      --filter @renkei/worker-admanager... && \
+    rm -rf /root/.pnpm-store /root/.npm
+
+# tsx runs TypeScript source directly; workspace links need the package
+# sources present (only the filtered deps' node_modules were installed).
+COPY --chown=worker:nodejs --parents packages/*/src ./
+COPY --chown=worker:nodejs apps/worker-admanager/src ./apps/worker-admanager/src
+COPY --chown=worker:nodejs apps/worker-admanager/tsconfig.json ./apps/worker-admanager/
+
+USER worker
+
+ARG GIT_COMMIT
+ENV NODE_ENV=production \
+    GIT_COMMIT=${GIT_COMMIT}
+
+EXPOSE 8095
+
+# The service's own unauthenticated liveness endpoint (everything else on
+# the port requires the bearer key).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.ADMANAGER_WORKER_PORT || 8095) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["pnpm", "--filter", "@renkei/worker-admanager", "start"]
+
 # Sandbox stage - the agent scratch-space worker, its own image on purpose:
 # it is the first process that holds staged file bytes at rest, so it gets
 # the same isolation as the fileshares/onbase workers — its own container,

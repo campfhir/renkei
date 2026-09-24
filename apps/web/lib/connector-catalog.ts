@@ -361,6 +361,36 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    capabilityKey: 'admanager',
+    // No connector_configs row: instances are many-per-tenant rows in
+    // admanager_instances (per domain, per site…), and each person
+    // connects with their own ADManager Plus authtoken — the key exists
+    // so the identifier stays consistent.
+    configKey: 'admanager',
+    label: 'ADManager Plus',
+    summary:
+      'Account unlock, password reset, create/edit user accounts from a template, and ' +
+      'security-group membership on your ManageEngine ADManager Plus servers, with your own ' +
+      'technician authtoken.',
+    toolPrefix: 'admanager_*',
+    category: 'integration',
+    keywords: [
+      'admanager',
+      'ad manager plus',
+      'manageengine',
+      'active directory',
+      'ad',
+      'account unlock',
+      'password reset',
+      'security groups',
+      'service desk',
+      'helpdesk',
+    ],
+    grantProviders: [],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
     capabilityKey: 'cards',
     // No connector_configs row: cards are Renkei's own feed and need no
     // credentials — the key exists so the identifier stays consistent.

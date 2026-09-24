@@ -81,6 +81,10 @@ export const GLYPH_ONLY = new Set([
   // suitable was vetted for this connector) — the built-in glyph renders
   // until one is added the same way.
   'github',
+  // Same reasoning for ADManager Plus: no ManageEngine mark has been
+  // vetted for this connector yet — the built-in glyph renders until one
+  // is added the same way.
+  'admanager',
 ]);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */

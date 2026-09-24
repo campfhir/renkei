@@ -25,6 +25,7 @@
     "@renkei/batch-jobs-store": "workspace:*",
     "@renkei/blob-store": "workspace:*",
     "@renkei/capability-registry": "workspace:*",
+    "@renkei/connector-admanager": "workspace:*",
     "@renkei/connector-atlassian": "workspace:*",
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-fileshares": "workspace:*",

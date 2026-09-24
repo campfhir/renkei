@@ -10,6 +10,7 @@ Every provider integration lives in its own `packages/connector-*` package and f
 | `connector-fileshares`  | Org-registered SMB/SFTP shares                                   | Per-share, per-user credentials                                         | Not indexed — no `verifyAccess`, retrieval-only                          |
 | `connector-onbase`      | Hyland OnBase (on-prem)                                          | Auth Code + PKCE against the tenant's own IdP                           | Not indexed (deferred) — retrieval-only                                  |
 | `connector-mirth`       | Mirth Connect / NextGen Connect 4.5.2 (on-prem, N instances)     | Per-instance, per-user Mirth username + password                        | Not indexed — no `verifyAccess`, retrieval-only                          |
+| `connector-admanager`   | ManageEngine ADManager Plus (on-prem, N instances)               | Per-instance, per-user ADManager Plus authtoken                         | Not indexed — no `verifyAccess`, retrieval-only                          |
 | `connector-sandbox`     | Renkei's own agent scratch space (no external provider)          | The caller's own signed-in Renkei session                               | Not indexed — transient staging data                                     |
 | `connector-mistral-ocr` | Mistral Document AI (OCR 4) on Microsoft Foundry                 | One org-wide API key per tenant (`connector_configs`)                   | Not indexed — a document pipeline stage, not a source of truth           |
 | `connector-webex`       | WebEx messaging                                                  | Per-user OAuth; an optional bot token only for notes TO a person        | Live-verified (room membership)                                          |
@@ -80,6 +81,52 @@ The tool surface (`apps/web/lib/mcp-tools/mirth/`, prefix `mirth_*`, every tool 
 **Names and ids resolve both ways** (`apps/web/lib/mcp-tools/mirth/resolve.ts`). Every tool is registered through `withReferenceResolution`, so `instanceId` accepts the instance's id, name, or environment label (when unique), and every argument named as a reference — `channelId`/`channelIds`, `alertId`, `codeTemplateId`, `libraryId`, `userId`/`userIdOrName`, `resourceId`, `databaseTaskId`, and `metaDataId`/`destinationMetaDataIds` (a connector of the channel the same call names) — accepts the id or the name; handlers only ever see ids. Resolution is exact id, then exact name, then case-folded name, with one re-read of the listing on a miss; an unknown UUID passes through (it may be newer than any listing), an unknown or ambiguous name is refused with what exists. Successful answers that mention UUIDs get a legend (`id — kind "name"`) for the ones the directory knows whose name is not already in the text, so a raw Mirth document still reads; `mirth_list_events` names user ids inline. `mirth_resolve_ids` and `mirth_resolve_names` answer either direction explicitly for a list. The directory behind all of this is a 60-second cache per caller, instance and kind over the same listing routes the tools use.
 
 See [`mirth-connector-design.md`](./mirth-connector-design.md) for the decisions.
+
+## connector-admanager
+
+Wraps ManageEngine ADManager Plus (on-prem Active Directory management), scoped deliberately to
+**desktop/service-desk technician actions** rather than the whole product: account unlock,
+password reset, create/edit a user account (optionally from an ADManager Plus template), and
+security-group membership (add, remove, or copy another user's groups onto a target). Same
+many-per-tenant shape as `connector-mirth` (an org may run more than one ADManager Plus instance —
+per domain, per site, or a separate test instance), an operator registers each instance's
+connection details, and every person connects it with their **own ADManager Plus authtoken**
+(`admanager_instance_connections`, sealed under `TOKEN_ENCRYPTION_KEY`) — simpler than Mirth in
+one real way: the authtoken is a bearer credential taken directly as the `Authorization` header on
+every request, with no login call or session to hold, so the worker carries no cookie jar. Named
+permissions (`accounts.read`, `accounts.unlock`, `accounts.reset_password`, `accounts.create`,
+`accounts.edit`, `groups.modify`) are the `connector-mirth` post-migration-107 shape from the
+start — no read/write/destructive ladder ever existed here. Unlike Mirth, **every** write is
+preview + confirm on the shared issue-preview card regardless of which permission gates it (not
+just permanent operations): these are identity/access actions against a real employee's account
+with no version history in ADManager Plus's UI to catch a model's mistake after the fact. Group
+membership changes route through the explicit, additive `addUsersToGroups`/`removeUsersFromGroups`
+v1 endpoints rather than the ambiguous `memberOf` attribute on the v2 PATCH — see the design doc's
+"Group membership: additive verbs, not a replace-the-list PATCH."
+
+The package itself (`packages/connector-admanager`) is I/O-free apart from the Kysely store: pure
+API helpers (`parseBaseUrl`, `validApiPath`, `filterClause`/`combineFilters` for building
+ADManager Plus's SCIM-like filter expressions) and pure group-membership diffing (`groupsToAdd`,
+`groupsPresent`, `groupNamesFromDns` — turning `MEMBER_OF` distinguished names into plain group
+names), the credential envelope, the store, and `resolveTarget`. All HTTP happens in
+**`apps/worker-admanager`**, a dedicated egress process (ADManager Plus is on-prem, the same SSRF
+reasoning as OnBase/Mirth/file shares) — stateless relative to Mirth's worker: no session/cookie
+jar, no login/logout ops, just decrypt-and-forward with the authtoken as `Authorization`.
+
+The tool surface (`apps/web/lib/mcp-tools/admanager/`, prefix `admanager_*`) is curated only — no
+operation-table codegen the way Mirth covers its ~200 routes, since this connector's scope is
+intentionally ~16 tools: instance listing, two read tools (`admanager_get_user`,
+`admanager_search_users`), and a preview/confirm pair each for unlock, reset password, create
+user, update user, add-to-groups and remove-from-groups, plus a copy-group-membership preview that
+reuses the add-to-groups confirm tool directly (its groups-to-add list is fully resolved by the
+time a human clicks confirm). Every tool names exactly one permission, registers when some
+connected instance grants it, and re-checks it on the instance named per call — the Mirth
+discipline.
+
+See [`admanager-connector-design.md`](./admanager-connector-design.md) for the decisions,
+including a documented open assumption about the create/update attribute payload shape (the
+vendor's own v2 Postman export has no worked "Create AD Users" example) that should be verified
+against a live instance before relying on it.
 
 ## connector-sandbox
 

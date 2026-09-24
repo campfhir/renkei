@@ -23,6 +23,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { getConnectorPrefs } from '@renkei/user-prefs';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
 import { listInstancesWithConnection } from '@renkei/connector-mirth';
+import { listInstancesWithConnection as listAdManagerInstancesWithConnection } from '@renkei/connector-admanager';
 import {
   CONNECTOR_CATALOG,
   userConnectableConnectors,
@@ -64,6 +65,7 @@ export function availableEntries(input: {
   enabledConfigKeys: ReadonlySet<string>;
   anyShares: boolean;
   anyMirthInstances?: boolean;
+  anyAdManagerInstances?: boolean;
   disabledConnectors: readonly string[];
   audienceAllows?: (capabilityKey: string) => boolean;
 }): ConnectorEntry[] {
@@ -74,15 +76,17 @@ export function availableEntries(input: {
     if (!allows(entry.capabilityKey)) return false;
     if (entry.capabilityKey === 'fileshares') return input.anyShares;
     if (entry.capabilityKey === 'mirth') return input.anyMirthInstances === true;
+    if (entry.capabilityKey === 'admanager') return input.anyAdManagerInstances === true;
     return input.enabledConfigKeys.has(entry.configKey);
   });
 }
 
-/** Which capability keys a set of grant providers (and share / Mirth connections) means are connected. */
+/** Which capability keys a set of grant providers (and share / Mirth / ADManager Plus connections) means are connected. */
 export function connectedKeys(
   grantProviders: ReadonlySet<string>,
   anyShareConnected: boolean,
-  anyMirthConnected = false
+  anyMirthConnected = false,
+  anyAdManagerConnected = false
 ): Set<string> {
   const keys = new Set<string>();
   for (const entry of CONNECTOR_CATALOG) {
@@ -92,6 +96,7 @@ export function connectedKeys(
   }
   if (anyShareConnected) keys.add('fileshares');
   if (anyMirthConnected) keys.add('mirth');
+  if (anyAdManagerConnected) keys.add('admanager');
   return keys;
 }
 
@@ -150,26 +155,30 @@ export async function resolveUserCatalog(
     fresh?: boolean;
   } = {}
 ): Promise<UserCatalog> {
-  const [configs, settings, shares, mirthInstances, grants, prefs] = await Promise.all([
-    db
-      .selectFrom('connector_configs')
-      .select('connector')
-      .where('tenant_id', '=', tenantId)
-      .where('enabled', '=', true)
-      .execute(),
-    getOrgSettings(tenantId),
-    listSharesWithConnection(db, tenantId, subject),
-    listInstancesWithConnection(db, tenantId, subject),
-    grantsFor(db, tenantId, subject),
-    getConnectorPrefs(tenantId, subject, { fresh: options.fresh }),
-  ]);
+  const [configs, settings, shares, mirthInstances, admanagerInstances, grants, prefs] =
+    await Promise.all([
+      db
+        .selectFrom('connector_configs')
+        .select('connector')
+        .where('tenant_id', '=', tenantId)
+        .where('enabled', '=', true)
+        .execute(),
+      getOrgSettings(tenantId),
+      listSharesWithConnection(db, tenantId, subject),
+      listInstancesWithConnection(db, tenantId, subject),
+      listAdManagerInstancesWithConnection(db, tenantId, subject),
+      grantsFor(db, tenantId, subject),
+      getConnectorPrefs(tenantId, subject, { fresh: options.fresh }),
+    ]);
 
   const shareRows = shares.ok ? shares.val : [];
   const mirthRows = mirthInstances.ok ? mirthInstances.val : [];
+  const admanagerRows = admanagerInstances.ok ? admanagerInstances.val : [];
   const available = availableEntries({
     enabledConfigKeys: new Set(configs.map((row) => row.connector)),
     anyShares: shareRows.length > 0,
     anyMirthInstances: mirthRows.length > 0,
+    anyAdManagerInstances: admanagerRows.length > 0,
     // Unreadable settings read as nothing disabled: the projection, which
     // gates the tools, makes its own read and fails its own way.
     disabledConnectors: settings.ok ? settings.val.disabledConnectors : [],
@@ -178,7 +187,8 @@ export async function resolveUserCatalog(
   const connected = connectedKeys(
     new Set(grants.keys()),
     shareRows.some((row) => row.connection !== null),
-    mirthRows.some((row) => row.connection !== null)
+    mirthRows.some((row) => row.connection !== null),
+    admanagerRows.some((row) => row.connection !== null)
   );
 
   return {
