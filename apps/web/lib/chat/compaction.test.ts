@@ -69,39 +69,6 @@ describe('needsCompaction', () => {
     expect(needsCompaction(messages)).toBe(false);
   });
 
-  it('measures rows from before the last pass with their tool results trimmed, as they are sent', () => {
-    // The kept window of a tool-heavy chat: every results row carries far
-    // more output than the threshold allows in total. Measured raw, it
-    // would re-trigger a pass every few rows forever.
-    const compactedAt = new Date(1_000);
-    const perResult = Math.ceil(CHAT_COMPACT_CHAR_THRESHOLD / 10);
-    const count = CHAT_COMPACT_KEEP_RECENT + CHAT_COMPACT_MIN_FOLD;
-    const messages = Array.from({ length: count }, (_, i) => {
-      const seq = i + 1;
-      return seq % 2 === 0
-        ? row({
-            seq,
-            role: 'assistant',
-            createdAt: new Date(500),
-            blocks: [{ type: 'tool_use', id: `u${seq}`, name: 'mirth_list_events', input: {} }],
-          })
-        : row({
-            seq,
-            role: 'user',
-            kind: 'tool_results',
-            createdAt: new Date(500),
-            blocks: [
-              { type: 'tool_result', toolUseId: `u${seq - 1}`, content: 'x'.repeat(perResult) },
-            ],
-          });
-    });
-    expect(needsCompaction(messages)).toBe(true);
-    expect(needsCompaction(messages, compactedAt)).toBe(false);
-    // Rows written after the pass count whole.
-    const after = messages.map((message) => ({ ...message, createdAt: new Date(2_000) }));
-    expect(needsCompaction(after, compactedAt)).toBe(true);
-  });
-
   it('ignores failed rows', () => {
     const count = CHAT_COMPACT_KEEP_RECENT + CHAT_COMPACT_MIN_FOLD;
     const perMessage = Math.ceil(CHAT_COMPACT_CHAR_THRESHOLD / count) + 1;
@@ -145,11 +112,51 @@ describe('foldCandidates', () => {
     );
   });
 
-  it('never cuts between a call and its results: the results row folds too', () => {
-    const picked = foldCandidates(rows('round'));
-    expect(picked.map((message) => message.seq)).toEqual(
-      Array.from({ length: cut + 1 }, (_, i) => i + 1)
+  it('folds a results row inside the window, and does not count it toward the window', () => {
+    // Rows cut+2..count are 19 conversation rows; the call at `cut` is the
+    // 20th and opens the window. Its results row sits inside the window and
+    // folds anyway; the call's own row stays (buildHistory drops the
+    // unanswered tool_use).
+    const picked = foldCandidates(rows('round')).map((message) => message.seq);
+    expect(picked).toEqual([...Array.from({ length: cut - 1 }, (_, i) => i + 1), cut + 1]);
+  });
+
+  it('folds every tool-results row in the window and keeps the conversation verbatim', () => {
+    // A tool-heavy recent stretch: prose, then rounds of call + results.
+    const messages: StoredMessage[] = [];
+    let seq = 0;
+    for (let i = 0; i < CHAT_COMPACT_KEEP_RECENT; i += 1) {
+      seq += 1;
+      messages.push(
+        row({
+          seq,
+          role: 'assistant',
+          blocks: [
+            { type: 'text', text: `checking ${i}` },
+            { type: 'tool_use', id: `c${i}`, name: 'mirth_list_events', input: {} },
+          ],
+        })
+      );
+      seq += 1;
+      messages.push(
+        row({
+          seq,
+          role: 'user',
+          kind: 'tool_results',
+          blocks: [{ type: 'tool_result', toolUseId: `c${i}`, content: 'x'.repeat(50_000) }],
+        })
+      );
+    }
+    const picked = foldCandidates(messages);
+    expect(picked.length).toBe(CHAT_COMPACT_KEEP_RECENT);
+    expect(picked.every((message) => message.kind === 'tool_results')).toBe(true);
+    // Its total is all tool output, inside what used to be the untouchable window.
+    expect(needsCompaction(messages)).toBe(true);
+    // Once folded, what is left is small and does not trigger again.
+    const folded = messages.map((message) =>
+      message.kind === 'tool_results' ? { ...message, summaryId: 's1' } : message
     );
-    expect(picked[picked.length - 1].kind).toBe('tool_results');
+    expect(foldCandidates(folded.filter((message) => message.summaryId === null))).toEqual([]);
+    expect(needsCompaction(folded)).toBe(false);
   });
 });

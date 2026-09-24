@@ -740,73 +740,40 @@ describe('buildHistory with elideEarlierToolResults', () => {
   });
 });
 
-describe('buildHistory with compactedAt', () => {
-  const long = 'x'.repeat(2_000);
-  const before = new Date(1_000);
-  const compactedAt = new Date(2_000);
-  const later = new Date(3_000);
-  const rows = [
-    row({ seq: 1, role: 'user', createdAt: before, blocks: [{ type: 'text', text: 'hi' }] }),
-    row({
-      seq: 2,
-      role: 'assistant',
-      createdAt: before,
-      blocks: [{ type: 'tool_use', id: 'old', name: 'mirth_list_events', input: {} }],
-    }),
-    row({
-      seq: 3,
-      role: 'user',
-      kind: 'tool_results',
-      createdAt: before,
-      blocks: [{ type: 'tool_result', toolUseId: 'old', content: long }],
-    }),
-    row({ seq: 4, role: 'assistant', createdAt: before, blocks: [{ type: 'text', text: 'ok' }] }),
-    row({ seq: 5, role: 'user', createdAt: later, blocks: [{ type: 'text', text: 'more' }] }),
-    row({
-      seq: 6,
-      role: 'assistant',
-      createdAt: later,
-      blocks: [{ type: 'tool_use', id: 'new', name: 'mirth_list_events', input: {} }],
-    }),
-    row({
-      seq: 7,
-      role: 'user',
-      kind: 'tool_results',
-      createdAt: later,
-      blocks: [{ type: 'tool_result', toolUseId: 'new', content: long }],
-    }),
-  ];
-  const result = (history: ReturnType<typeof buildHistory>, id: string) => {
-    const block = history
-      .flatMap((message) => message.content)
-      .find((b) => b.type === 'tool_result' && b.toolUseId === id);
-    return block && block.type === 'tool_result' ? block.content : '';
-  };
-
-  it('trims tool results written before the last compaction pass, in any chat, and keeps later ones whole', () => {
-    const history = buildHistory(rows, target, null, { compactedAt });
-    expect(result(history, 'old').length).toBeLessThan(800);
-    expect(result(history, 'old')).toContain('trimmed from context');
-    expect(result(history, 'new')).toBe(long);
-    // The call and its trimmed result still pair up; the text is untouched.
-    expect(
-      history.flatMap((m) => m.content).some((b) => b.type === 'tool_use' && b.id === 'old')
-    ).toBe(true);
-  });
-
-  it('keeps the current turn whole even when it predates the pass', () => {
-    const history = buildHistory(
-      rows.map((message) => ({ ...message, turnId: target.turnId })),
-      target,
-      null,
-      { compactedAt }
+describe('buildHistory after a pass folded a round’s results but kept its call row', () => {
+  it('drops the unanswered call and keeps the assistant’s text', () => {
+    const rows = [
+      row({ seq: 1, role: 'user', blocks: [{ type: 'text', text: 'look at mirth errors' }] }),
+      row({
+        seq: 2,
+        role: 'assistant',
+        blocks: [
+          { type: 'text', text: 'Checking events.' },
+          { type: 'tool_use', id: 'c1', name: 'mirth_list_events', input: {} },
+        ],
+      }),
+      row({
+        seq: 3,
+        role: 'user',
+        kind: 'tool_results',
+        summaryId: 's1',
+        blocks: [{ type: 'tool_result', toolUseId: 'c1', content: 'x'.repeat(10_000) }],
+      }),
+      row({ seq: 4, role: 'assistant', blocks: [{ type: 'text', text: 'No events.' }] }),
+      row({ seq: 5, role: 'user', turnId: 'now', blocks: [{ type: 'text', text: 'why?' }] }),
+    ];
+    const history = buildHistory(rows, target, null);
+    const blocks = history.flatMap((message) => message.content);
+    expect(blocks.some((block) => block.type === 'tool_use' || block.type === 'tool_result')).toBe(
+      false
     );
-    expect(result(history, 'old')).toBe(long);
-  });
-
-  it('changes nothing before the first pass', () => {
-    const history = buildHistory(rows, target, null, { compactedAt: null });
-    expect(result(history, 'old')).toBe(long);
+    expect(history.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(blocks.filter((block) => block.type === 'text').map((block) => block.text)).toEqual([
+      'look at mirth errors',
+      'Checking events.',
+      'No events.',
+      'why?',
+    ]);
   });
 });
 

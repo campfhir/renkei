@@ -431,8 +431,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     // unavailable model leaves every message as it was for the next turn's
     // check to retry — never a reason to fail the turn that triggered it.
     let rows = initialRows;
-    let chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id);
-    if (needsCompaction(rows, chatSummary?.createdAt ?? null)) {
+    if (needsCompaction(rows)) {
       try {
         const compacted = await compactChat(db, {
           tenantId: input.tenantId,
@@ -443,12 +442,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
           onProgress: (progress) =>
             channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
-        if (compacted) {
-          [rows, chatSummary] = await Promise.all([
-            listMessages(db, input.tenantId, input.chat.id),
-            latestChatSummary(db, input.tenantId, input.chat.id),
-          ]);
-        }
+        if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id);
         // The pass's own end, so the thread's card does not take a reply
         // that fails later for a fold that did not.
         channel.emit({
@@ -471,6 +465,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         });
       }
     }
+    const chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id);
     const localContext = {
       db,
       tenantId: input.tenantId,
@@ -536,12 +531,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       // A code chat's context is for coordinating: earlier turns' tool
       // results are trimmed to their head (request-builder.ts), and the
       // brief says to call again rather than recall.
-      // Tool output from before the last compaction pass is trimmed too, in
-      // every chat, so a pass actually shrinks what the next one measures.
-      {
-        elideEarlierToolResults: project?.kind === 'code',
-        compactedAt: chatSummary?.createdAt ?? null,
-      }
+      { elideEarlierToolResults: project?.kind === 'code' }
     );
     // What earlier turns found through find_tools stays offered: the model
     // calls a tool it remembers whether or not its schema is in the request,
