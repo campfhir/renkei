@@ -65,19 +65,29 @@ export function validApiPath(path: string): boolean {
 }
 
 /**
- * One clause of an ADManager Plus filter expression: `(COLUMN op "value")`.
+ * One clause of an ADManager Plus filter expression: `(COLUMN op (value))`.
  * The outer parentheses aren't optional styling — every confirmed-working
  * call against a real server wraps the whole clause this way, single or
- * not. Quotes inside the value are escaped so a name like `O'Brien` cannot
- * break out of the clause.
+ * not. The *value* is wrapped in its own parens too, unquoted — that is
+ * the confirmed-working form; Renkei's original quoted-string form
+ * (`(COLUMN op "value")`, modeled on the vendor's general REST API doc
+ * rather than a confirmed caller) is accepted syntactically but evaluated
+ * literally, so a filter for `"jdoe"` — quotes included — never matches a
+ * real `jdoe` and silently returns zero rows instead of erroring. That
+ * turned out to be why every filtered lookup and search against a real
+ * server came back empty. A value's own `(`/`)` would prematurely close
+ * (or reopen) the value's parens below; there is no confirmed escape for a
+ * literal paren in this dialect, so they're stripped rather than guessed
+ * at — none of the identifiers this is used for (logon names, emails,
+ * group names, search text) legitimately need one.
  */
 export function filterClause(
   column: string,
   op: 'eq' | 'ne' | 'co' | 'sw' | 'ew',
   value: string
 ): string {
-  const escaped = value.replace(/"/g, '\\"');
-  return `(${column} ${op} "${escaped}")`;
+  const safe = value.replace(/[()]/g, '');
+  return `(${column} ${op} (${safe}))`;
 }
 
 /**

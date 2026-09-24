@@ -273,6 +273,21 @@ employee record: a service account or shared mailbox won't have one, and
 `formatUser`'s blank-value filter already omits the line when it's empty,
 so the distinction shows up for free.
 
+**A filter clause's value is wrapped in its own parens, unquoted — not quoted.** Renkei's
+original `filterClause` built `(COLUMN op "value")`, modeled on the vendor's general REST API doc
+rather than a confirmed caller. Diffed against the same confirmed-working reference implementation
+cited throughout this doc — running against this exact production domain — every one of its filter
+clauses is instead `(COLUMN op (value))`: the value in its own parens, no quotes. The quoted form
+isn't rejected by the server; it's accepted and evaluated *literally*, so a filter for `"jdoe"`
+(quotes included) never matches a real `jdoe` and silently returns zero rows rather than erroring.
+That is why `admanager_get_user` and `admanager_search_users` both came back empty for every input
+tried, including accounts and searches confirmed to exist — nothing was wrong with the columns or
+the domain, every filtered request built by this connector was silently unmatchable. `filterClause`
+now wraps the value in parens; since the value's own `(`/`)` would prematurely close it and there is
+no confirmed escape for a literal paren in this dialect, either character is stripped from the value
+rather than guessed at — none of the identifiers filtered on here (logon names, emails, group names,
+free-text search terms) legitimately need one.
+
 **Query values with a space need `%20`, not `+`.** The worker's
 `withQuery()` originally built query strings with `URLSearchParams`
 alone, which serializes as `application/x-www-form-urlencoded` — spaces

@@ -52,23 +52,23 @@ describe('validApiPath', () => {
 });
 
 describe('filterClause / combineFilters', () => {
-  it('quotes the value, escapes embedded quotes, and wraps the whole clause', () => {
-    expect(filterClause('SAM_ACCOUNT_NAME', 'eq', 'jdoe')).toBe('(SAM_ACCOUNT_NAME eq "jdoe")');
-    expect(filterClause('LAST_NAME', 'co', 'O"Brien')).toBe('(LAST_NAME co "O\\"Brien")');
+  it('wraps the value in its own unquoted parens, stripping any literal parens, and wraps the whole clause', () => {
+    expect(filterClause('SAM_ACCOUNT_NAME', 'eq', 'jdoe')).toBe('(SAM_ACCOUNT_NAME eq (jdoe))');
+    expect(filterClause('LAST_NAME', 'co', 'O(Brien)')).toBe('(LAST_NAME co (OBrien))');
   });
 
   it('joins already-wrapped clauses without adding another layer of parens', () => {
-    expect(combineFilters(['(FIRST_NAME eq "A")'])).toBe('(FIRST_NAME eq "A")');
-    expect(combineFilters(['(FIRST_NAME eq "A")', '(LAST_NAME eq "B")'], 'and')).toBe(
-      '(FIRST_NAME eq "A") and (LAST_NAME eq "B")'
+    expect(combineFilters(['(FIRST_NAME eq (A))'])).toBe('(FIRST_NAME eq (A))');
+    expect(combineFilters(['(FIRST_NAME eq (A))', '(LAST_NAME eq (B))'], 'and')).toBe(
+      '(FIRST_NAME eq (A)) and (LAST_NAME eq (B))'
     );
-    expect(combineFilters(['(FIRST_NAME eq "A")', '(FIRST_NAME eq "B")'], 'or')).toBe(
-      '(FIRST_NAME eq "A") or (FIRST_NAME eq "B")'
+    expect(combineFilters(['(FIRST_NAME eq (A))', '(FIRST_NAME eq (B))'], 'or')).toBe(
+      '(FIRST_NAME eq (A)) or (FIRST_NAME eq (B))'
     );
   });
 
   it('drops empty clauses and returns empty for none', () => {
     expect(combineFilters(['', '  '])).toBe('');
-    expect(combineFilters(['', '(FIRST_NAME eq "A")'])).toBe('(FIRST_NAME eq "A")');
+    expect(combineFilters(['', '(FIRST_NAME eq (A))'])).toBe('(FIRST_NAME eq (A))');
   });
 });

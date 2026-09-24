@@ -511,7 +511,7 @@ describe('group membership: confirm PATCHes the two dedicated attribute keys', (
       expect.objectContaining({
         method: 'PATCH',
         path: '/api/v2/users',
-        query: { domain: 'corp.example', filter: '(SAM_ACCOUNT_NAME eq "jdoe")' },
+        query: { domain: 'corp.example', filter: '(SAM_ACCOUNT_NAME eq (jdoe))' },
         body: {
           template: { template_name: 'AD Update Template' },
           data: { attributes: { memberOf: 'VPN Users' } },
