@@ -19,6 +19,7 @@ import type { ConnectorOption } from './tool-surface';
 import type { GrantView, GrantRole, ResourceKind } from './access';
 import type { StartedTurn } from './start-turn';
 import type { ChatSearchHit } from './search-text';
+import type { WidgetModelContextOutcome } from './widget-tools';
 
 const base = (tenantId: string) => `/api/tenant/${tenantId}/chat`;
 
@@ -262,9 +263,14 @@ export const chatClient = {
       { name, arguments: args }
     ),
 
-  /** A card's `ui/update-model-context` — recorded as a note the next turn reads. */
+  /**
+   * A card's `ui/update-model-context` — recorded as a note and, when the
+   * chat can take one, the user row of a new turn the model answers at
+   * once (`turn` carries the ids to stream from; null when only the note
+   * was written).
+   */
   appendWidgetModelContext: (tenantId: string, chatId: string, text: string) =>
-    sendJsonFull<{ message: ChatMessageView }>(
+    sendJsonFull<WidgetModelContextOutcome>(
       `${base(tenantId)}/chats/${chatId}/widget/model-context`,
       'POST',
       { text }

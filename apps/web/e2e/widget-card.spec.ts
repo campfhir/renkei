@@ -5,12 +5,15 @@
  * of the raw JSON `structuredContent` a plain tool result would show.
  *
  * Seeded straight into the tables, sealed the way the app seals them, same
- * as chat.spec.ts and chat-permission.spec.ts — no model round-trip. The
- * widget HTML itself is real (served by the real
- * /api/tenant/.../chat/widgets route from the real built bundle) and the
- * `ui/update-model-context` note is a real write to the real database;
- * only the confirm button's `tools/call` is mocked at the browser edge,
- * since for real it would reach Jira (AGENTS.md's "mock it with
+ * as chat.spec.ts and chat-permission.spec.ts. The widget HTML itself is
+ * real (served by the real /api/tenant/.../chat/widgets route from the
+ * real built bundle), and the `ui/update-model-context` a decision sends
+ * is a real write to the real database that opens a real turn — the
+ * model's reply to the decision is what a person waits for after the
+ * card, so the turn actually runs here, against the stub Anthropic
+ * endpoint in sandbox-stub.mjs (the seeded model's base_url points at
+ * it). Only the confirm button's `tools/call` is mocked at the browser
+ * edge, since for real it would reach Jira (AGENTS.md's "mock it with
  * page.route when it would hit a real vendor/provider").
  */
 
@@ -43,16 +46,32 @@ function widgetUri(generatedFile: string, name: string): string {
 }
 const ISSUE_PREVIEW_URI = widgetUri('issue-preview.ts', 'issue-preview');
 
-/** Ids per Playwright project: the projects share one database. */
-function idsFor(project: string) {
+/** The stub model's base URL (sandbox-stub.mjs's handleAnthropic). */
+const STUB_MODEL_BASE_URL = 'http://127.0.0.1:8092/anthropic';
+
+/**
+ * The first hit on a route compiles it (`next dev` builds lazily), and the
+ * widget's iframe, the model-context route and the turn's stream are each
+ * a first hit in a fresh dev server — the 5s default is not enough for
+ * the step that lands on one (code-active-chat.spec.ts's allowance).
+ */
+const COLD = { timeout: 30_000 };
+
+/**
+ * Ids per Playwright project and per test: the projects share one
+ * database, and each test here drives a decision that opens a turn on
+ * its chat, so two tests on one chat would race on the one running turn
+ * a chat allows (AGENTS.md's "isolate what you create").
+ */
+function idsFor(project: string, variant: '1' | '2' | '3') {
   const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
   return {
-    chatId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}1`,
-    turnId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}2`,
-    modelId: `cccccccc-cccc-4ccc-8ccc-cccccccccc${digit}3`,
-    toolUseId: `toolu_widget_${digit}`,
-    title: `Rotate the webhook secret (${digit})`,
-    modelLabel: `Widget model ${digit}`,
+    chatId: `cccccccc-cccc-4ccc-8ccc-ccccccccc${variant}${digit}1`,
+    turnId: `cccccccc-cccc-4ccc-8ccc-ccccccccc${variant}${digit}2`,
+    modelId: `cccccccc-cccc-4ccc-8ccc-ccccccccc${variant}${digit}3`,
+    toolUseId: `toolu_widget_${variant}${digit}`,
+    title: `Rotate the webhook secret (${variant}${digit})`,
+    modelLabel: `Widget model ${variant}${digit}`,
   };
 }
 type Ids = ReturnType<typeof idsFor>;
@@ -108,10 +127,18 @@ function structuredContent(previewId: string) {
 async function seedChat(client: Client, ids: Ids, previewId: string): Promise<void> {
   await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
+  // base_url points the app's Anthropic adapter at the stub, so the turn
+  // a decision opens gets a reply without the network.
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, true, false)`,
-    [ids.modelId, E2E_TENANT_ID, ids.modelLabel, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
+    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
+     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, $5, true, false)`,
+    [
+      ids.modelId,
+      E2E_TENANT_ID,
+      ids.modelLabel,
+      STUB_MODEL_BASE_URL,
+      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
+    ]
   );
   await client.query(
     `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
@@ -196,13 +223,42 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test('a preview tool renders its card, and confirming it runs the real tool call', async ({
+/**
+ * The note line the decision became (message-list.tsx's PersonNote): a
+ * small `<p>` carrying the whole text as its title — which is what tells
+ * it apart from the model's reply quoting the same sentence back.
+ */
+function noteLine(page: Page, text: string) {
+  return page.locator('p[title]', { hasText: text });
+}
+
+/**
+ * The turn a decision opened, once it has run its course: the note row
+ * the decision became, on that turn, and the turn's status.
+ */
+async function decisionTurn(
+  client: Client,
+  chatId: string
+): Promise<{ status: string; noteTurnId: string | null } | null> {
+  const { rows } = await client.query<{ status: string; note_turn_id: string | null }>(
+    `SELECT t.status, m.turn_id AS note_turn_id
+       FROM chat_messages m
+       LEFT JOIN chat_turns t ON t.id = m.turn_id
+      WHERE m.chat_id = $1 AND m.kind = 'note'
+      ORDER BY m.seq DESC LIMIT 1`,
+    [chatId]
+  );
+  const row = rows[0];
+  return row ? { status: row.status, noteTurnId: row.note_turn_id } : null;
+}
+
+test('a preview tool renders its card, and confirming it runs the real tool call and the model replies', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
-  const ids = idsFor(testInfo.project.name);
+  const ids = idsFor(testInfo.project.name, '1');
   const previewId = randomUUID();
   try {
     await seedChat(client, ids, previewId);
@@ -240,7 +296,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
     // The card, not a folded raw-JSON block: the widget iframe with its own
     // rendered title, subtitle and fields inside.
     const frame = page.frameLocator('iframe[title="Preview card"]');
-    await expect(frame.locator('.card-title')).toHaveText('Create Jira issue');
+    await expect(frame.locator('.card-title')).toHaveText('Create Jira issue', COLD);
     await expect(frame.locator('.card-subtitle').first()).toHaveText('OPS · Task');
     await expect(frame.getByText('Project')).toBeVisible();
     await expect(frame.locator('.field-value', { hasText: 'OPS' })).toBeVisible();
@@ -264,20 +320,26 @@ test('a preview tool renders its card, and confirming it runs the real tool call
       summary: 'Rotate the Zoom webhook secret',
     });
 
-    // ui/update-model-context is NOT mocked — a real note row, so the next
-    // turn's model would actually see what the person decided.
+    // ui/update-model-context is NOT mocked — a real note row that is
+    // ALSO the user row of a new turn, so the model takes its turn on
+    // the decision right away instead of waiting for the person to type
+    // something. The thread shows the note as a small line (never a
+    // bubble) and streams the reply under it; the stub model quotes what
+    // it was handed, so the reply proves the decision reached it.
+    const note = noteLine(page, 'The user confirmed "Create Jira issue" on the preview card');
+    await expect(note).toBeVisible(COLD);
+    const reply = page.getByText('Stub model: I saw');
+    await expect(reply).toBeVisible(COLD);
+    await expect(reply).toContainText('The user confirmed "Create Jira issue"');
+    await expect(reply).toContainText('Created issue OPS-99');
+    await shot(page, testInfo, 'widget-card-replied.png');
+
+    // The rows behind it: the note carries the turn it opened, and that
+    // turn ran to completion — the composer is the person's again.
     await expect
-      .poll(
-        async () => {
-          const { rows } = await client.query(
-            `SELECT content FROM chat_messages WHERE chat_id = $1 AND kind = 'note' ORDER BY seq DESC LIMIT 1`,
-            [ids.chatId]
-          );
-          return rows.length;
-        },
-        { timeout: 10_000 }
-      )
-      .toBe(1);
+      .poll(() => decisionTurn(client, ids.chatId), COLD)
+      .toEqual({ status: 'completed', noteTurnId: expect.any(String) });
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
 
     // The card's "already decided" receipt is localStorage-backed
     // (ui.ts's rememberDone/recallDone), and this sandbox is deliberately
@@ -291,6 +353,52 @@ test('a preview tool renders its card, and confirming it runs the real tool call
     await page.reload();
     await expect(frame.locator('.card-title')).toHaveText('Create Jira issue');
     await expect(frame.getByRole('button', { name: 'Create' })).toBeVisible();
+    // The note and the reply are rows now, so they are still there.
+    await expect(
+      noteLine(page, 'The user confirmed "Create Jira issue" on the preview card')
+    ).toBeVisible();
+    await expect(page.getByText('Stub model: I saw')).toBeVisible();
+  } finally {
+    await client.end();
+  }
+});
+
+test('cancelling the card is a decision too: the model replies to it', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const ids = idsFor(testInfo.project.name, '2');
+  try {
+    await seedChat(client, ids, randomUUID());
+    // Cancel never calls a tool; a hit here would be a bug.
+    const confirmCalls: unknown[] = [];
+    await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
+      confirmCalls.push(route.request().postDataJSON());
+      await route.fulfill({ status: 500, json: { error: 'not expected' } });
+    });
+
+    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+    const frame = page.frameLocator('iframe[title="Preview card"]');
+    const cancelButton = frame.getByRole('button', { name: 'Cancel' });
+    await expect(cancelButton).toBeVisible(COLD);
+
+    await cancelButton.click();
+    await expect(frame.locator('.done-headline')).toHaveText('Cancelled');
+    expect(confirmCalls).toEqual([]);
+
+    // The cancellation is what the model is told, and it answers that.
+    const note = noteLine(page, 'The user cancelled "Create Jira issue" from the preview card');
+    await expect(note).toBeVisible(COLD);
+    const reply = page.getByText('Stub model: I saw');
+    await expect(reply).toBeVisible(COLD);
+    await expect(reply).toContainText('The user cancelled "Create Jira issue"');
+    await expect
+      .poll(() => decisionTurn(client, ids.chatId), COLD)
+      .toEqual({ status: 'completed', noteTurnId: expect.any(String) });
+    await shot(page, testInfo, 'widget-card-cancelled.png');
   } finally {
     await client.end();
   }
@@ -300,7 +408,7 @@ test('the card still renders at phone width', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
-  const ids = idsFor(testInfo.project.name);
+  const ids = idsFor(testInfo.project.name, '3');
   try {
     await seedChat(client, ids, randomUUID());
     await page.setViewportSize(MOBILE_VIEWPORT);
@@ -308,7 +416,7 @@ test('the card still renders at phone width', async ({ page }, testInfo) => {
     await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
 
     const frame = page.frameLocator('iframe[title="Preview card"]');
-    await expect(frame.locator('.card-title')).toHaveText('Create Jira issue');
+    await expect(frame.locator('.card-title')).toHaveText('Create Jira issue', COLD);
     // No horizontal scroll: the card's iframe wrapper is capped, not fixed-width.
     const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(bodyWidth).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);

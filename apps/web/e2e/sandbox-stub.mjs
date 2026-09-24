@@ -9,6 +9,9 @@
  *
  * Started by playwright.config.ts as a second webServer, on the port the
  * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
+ * The same process also stands in for Bitbucket, Jira administration's
+ * option endpoints and — for a spec whose chat turn has to actually run
+ * — an Anthropic Messages endpoint (handleAnthropic below).
  */
 
 /* global process, Buffer, setTimeout, URL, URLSearchParams, console */
@@ -440,7 +443,6 @@ function handleServices(op, body, response) {
       return error(response, 404, 'unknown_operation');
   }
 }
-
 
 /**
  * A language server, scripted: `lsp/languages` says the worker has a
@@ -1553,10 +1555,62 @@ function handleJiraAdmin(request, url, response) {
   });
 }
 
+/**
+ * An Anthropic Messages endpoint, stood in for: a spec that needs a chat
+ * turn to actually run (a preview card's decision opening the model's
+ * reply, widget-card.spec.ts) seeds its model config with
+ * `base_url = http://127.0.0.1:8092/anthropic`, and the app's adapter
+ * (packages/agent-llm/src/anthropic.ts) streams from here instead of the
+ * network. The reply is one text block that quotes the last user
+ * message's first line, so a spec can assert the model was handed what
+ * it expects. The frames are the ones the adapter parses — message_start,
+ * content_block_start/delta/stop, message_delta, message_stop — and
+ * nothing more.
+ */
+function handleAnthropic(request, url, response) {
+  if (request.method !== 'POST' || url.pathname !== '/anthropic/v1/messages') {
+    return json(response, 404, { type: 'error', error: { type: 'not_found_error' } });
+  }
+  void readBody(request).then((body) => {
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const lastUser = [...messages].reverse().find((message) => message?.role === 'user');
+    const content = lastUser?.content;
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+              .map((block) => block.text)
+              .join('\n')
+          : '';
+    const firstLine = text.split('\n').find((line) => line.trim()) ?? '';
+    const reply = `Stub model: I saw “${firstLine.trim()}”`;
+    const frames = [
+      { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 8 } },
+      { type: 'message_stop' },
+    ];
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+    });
+    for (const frame of frames) {
+      response.write(`event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`);
+    }
+    response.end();
+  });
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
   if (request.method === 'GET' && url.pathname === '/health')
     return json(response, 200, { ok: true });
+  // The model, stood in for: a seeded model config points its base_url here.
+  if (url.pathname.startsWith('/anthropic/')) return handleAnthropic(request, url, response);
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.

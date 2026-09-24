@@ -33,6 +33,7 @@ import type {
   ToolPermissionDecision,
   TurnView,
 } from '@/lib/chat/views';
+import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
 import { formatDurationMs } from '@/lib/duration';
 import { parseNote } from '@/lib/code/note-text';
@@ -172,6 +173,7 @@ export default function MessageList({
   permission = null,
   code = null,
   subagents = {},
+  onWidgetDecision = null,
 }: {
   tenantId: string;
   chatId: string;
@@ -189,6 +191,8 @@ export default function MessageList({
   code?: CodeActions | null;
   /** Sub-agents' live state by delegating call, from the stream (stream-events.ts). */
   subagents?: Record<string, SubagentProgress>;
+  /** A preview card's decision landed (widget-card.tsx): the note to show and the turn to stream. */
+  onWidgetDecision?: ((outcome: WidgetModelContextOutcome) => void) | null;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -260,6 +264,7 @@ export default function MessageList({
                 permission={running && group.key === lastTurnKey ? permission : null}
                 code={code}
                 subagents={subagents}
+                onWidgetDecision={onWidgetDecision}
               />
             ) : null}
           </div>
@@ -458,6 +463,7 @@ function Reply({
   permission,
   code,
   subagents,
+  onWidgetDecision,
 }: {
   tenantId: string;
   chatId: string;
@@ -470,6 +476,7 @@ function Reply({
   permission: PermissionPrompt | null;
   code: CodeActions | null;
   subagents: Record<string, SubagentProgress>;
+  onWidgetDecision: ((outcome: WidgetModelContextOutcome) => void) | null;
 }) {
   const segments = useMemo(() => segment(messages, results), [messages, results]);
   // The call the ask is about, for the card to show its input.
@@ -579,6 +586,7 @@ function Reply({
                 resourceUri={resourceUri}
                 toolInput={part.step.block.input}
                 result={result}
+                onModelContext={onWidgetDecision}
               />
             ) : null;
           }

@@ -9,8 +9,10 @@
  * sandboxed iframe and speaks the host half of the protocol the card's own
  * bridge.ts speaks: answer its `ui/initialize` handshake, hand it the
  * call's input and result, proxy its `tools/call` (the confirm button) to
- * a real MCP call scoped to app-only tools, open links, record
- * `ui/update-model-context` as a note the next turn reads, and follow its
+ * a real MCP call scoped to app-only tools, open links, hand
+ * `ui/update-model-context` to the server — which records it as a note
+ * and opens the model's turn on it — and tell the thread (`onModelContext`)
+ * so it shows the note and streams that reply, and follow its
  * `size-changed` reports.
  *
  * Every message is checked against `event.source` — the iframe has no
@@ -22,6 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatBlock } from '@/lib/chat/views';
+import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
 
 type ToolResultBlock = Extract<ChatBlock, { type: 'tool_result' }>;
 
@@ -70,6 +73,7 @@ export default function WidgetCard({
   resourceUri,
   toolInput,
   result,
+  onModelContext = null,
 }: {
   tenantId: string;
   chatId: string;
@@ -77,6 +81,11 @@ export default function WidgetCard({
   toolInput: unknown;
   /** The tool_result block the call finished with — only rendered once one exists. */
   result: ToolResultBlock;
+  /**
+   * The card's decision landed: the note row to show and, when one
+   * started, the turn to stream — the thread's to act on (chat-thread.tsx).
+   */
+  onModelContext?: ((outcome: WidgetModelContextOutcome) => void) | null;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
@@ -158,7 +167,10 @@ export default function WidgetCard({
           const text = joinedText(params?.content);
           // Best-effort, same as the card's own bridge treats it: a turn
           // running right now (409) means this update is simply lost.
-          if (text) void chatClient.appendWidgetModelContext(tenantId, chatId, text);
+          if (!text) return;
+          void chatClient.appendWidgetModelContext(tenantId, chatId, text).then(({ data }) => {
+            if (data?.message) onModelContext?.(data);
+          });
           return;
         }
         case 'ui/notifications/size-changed': {
@@ -175,7 +187,7 @@ export default function WidgetCard({
     window.addEventListener('message', onMessage);
     setReady(true);
     return () => window.removeEventListener('message', onMessage);
-  }, [post, toolInput, result, tenantId, chatId]);
+  }, [post, toolInput, result, tenantId, chatId, onModelContext]);
 
   return (
     <div className="my-2 max-w-md overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
