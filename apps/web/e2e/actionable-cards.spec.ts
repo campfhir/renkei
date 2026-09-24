@@ -1,21 +1,30 @@
 /**
- * The card feed's "Wants to call …" block (cards.tsx's ProposedCall): an
- * approval card renders every arg of the proposed tool call as `key: value`.
- * Bug: an object-valued arg — `jira_create_issue`'s `fields` escape hatch is
- * the one that bit — went through bare `String(value)`, so it rendered as
- * the literal text "[object Object]" instead of the JSON it actually holds.
+ * The card feed's "Wants to call …" block (cards.tsx's ProposedCall).
  *
- * Seeded straight into `actionable_items` (no UI writes it), the same way
- * widget-card.spec.ts seeds its chat rows: a real row in the shared `e2e`
- * tenant, its own id per project so the three Playwright projects running
- * concurrently against one database never collide or race on cleanup.
+ * Started as a fix for one bug — an object-valued arg (`jira_create_issue`'s
+ * `fields` escape hatch) rendering as the literal text "[object Object]"
+ * because the generic arg list ran every value through bare `String()`.
+ * Grew from there into dedicated cards for the two tool families common
+ * enough to be worth it, mirroring the chat-side MCP Apps preview cards
+ * (issue-preview.ts, email-compose.ts) instead of dumping raw args:
+ *   - a Jira/JSM issue call gets a project/type header, summary,
+ *     description, and its extra fields as rows (IssueProposedCall);
+ *   - an Outlook send/reply/forward call gets To/Cc/Bcc, subject, and body
+ *     (EmailProposedCall);
+ *   - anything else still falls back to a plain, but now JSON-safe, arg
+ *     list (GenericProposedCall).
+ *
+ * Each test gets its own tenant (AGENTS.md's rule for a spec that creates
+ * rows, not just reads seeded fixtures): the three Playwright projects run
+ * concurrently against one database, and the home feed shows every
+ * unarchived card for a tenant, so two tests sharing one would each see the
+ * other's "Wants to call …" card too.
  */
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID } from './seed';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -39,32 +48,80 @@ function uuidFrom(seed: string): string {
   ].join('-');
 }
 
-const FIELDS_ARG = {
-  'Anti-Kickback Review': 'Required',
-  reviewers: ['scott', 'dr.jew'],
-};
+/** This test's own tenant/session/slug — isolated from every other test and project. */
+function fixtureFor(name: string): {
+  tenantId: string;
+  sessionId: string;
+  slug: string;
+  subject: string;
+} {
+  return {
+    tenantId: uuidFrom(`actionable-cards-e2e-tenant:${name}`),
+    sessionId: uuidFrom(`actionable-cards-e2e-session:${name}`),
+    slug: `e2e-actionable-cards-${name}`,
+    subject: `e2e-actionable-cards-${name}@example.com`,
+  };
+}
 
-async function seedCard(client: Client, itemId: string): Promise<void> {
-  await client.query('DELETE FROM actionable_items WHERE id = $1', [itemId]);
+async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
+  await client.query('DELETE FROM actionable_items WHERE tenant_id = $1', [fixture.tenantId]);
+  await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
+  await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
+  await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
+  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
+    fixture.tenantId,
+    fixture.slug,
+  ]);
+  await client.query(
+    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      fixture.sessionId,
+      fixture.tenantId,
+      fixture.subject,
+      ['renkei-user', 'renkei-operator'],
+      new Date(Date.now() + 24 * 3_600_000),
+    ]
+  );
+  await client.query(
+    `INSERT INTO identities (tenant_id, subject, email, display_name)
+     VALUES ($1, $2, $3, $4)`,
+    [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+  );
+  // No welcome-tour overlay stealing focus mid-screenshot (coach-marks.spec.ts).
+  await client.query(
+    `INSERT INTO user_preferences (tenant_id, subject, key, value)
+     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
+    [fixture.tenantId, fixture.subject]
+  );
+}
+
+async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
+  await page.context().addCookies([
+    {
+      name: `renkei_session_${fixture.tenantId}`,
+      value: fixture.sessionId,
+      domain: '127.0.0.1',
+      path: '/',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+    },
+  ]);
+}
+
+async function seedCard(
+  client: Client,
+  tenantId: string,
+  itemId: string,
+  title: string,
+  suggestedAction: unknown
+): Promise<void> {
   await client.query(
     `INSERT INTO actionable_items
        (id, tenant_id, source, kind, status, title, summary, evidence, suggested_action)
-     VALUES ($1, $2, 'jira', 'approval', 'suggested', $3, $4, '{}'::jsonb, $5::jsonb)`,
-    [
-      itemId,
-      E2E_TENANT_ID,
-      'Portfolio Updater — Create the approved issue',
-      'Wants to call Create issue.',
-      JSON.stringify({
-        tool: 'jira_create_issue',
-        args: {
-          projectKey: 'CIO',
-          issueType: 'Project',
-          summary: 'Salesforce Incentive-Program Tracking',
-          fields: FIELDS_ARG,
-        },
-      }),
-    ]
+     VALUES ($1, $2, 'jira', 'approval', 'suggested', $3, 'Wants to call a tool.', '{}'::jsonb, $4::jsonb)`,
+    [itemId, tenantId, title, JSON.stringify(suggestedAction)]
   );
 }
 
@@ -75,41 +132,118 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test('an object-valued arg in "Wants to call" renders as JSON, not "[object Object]"', async ({
-  page,
-}, testInfo) => {
-  const itemId = uuidFrom(`actionable-cards-e2e:${testInfo.project.name}`);
+test('a Jira issue call renders as a structured issue card', async ({ page }, testInfo) => {
+  const fixture = fixtureFor(`issue-${testInfo.project.name}`);
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await seedCard(client, itemId);
+    await seedTenant(client, fixture);
+    await signIn(page, fixture);
+    const itemId = uuidFrom(`actionable-cards-e2e-issue-item:${testInfo.project.name}`);
+    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Create the approved issue', {
+      tool: 'jira_create_issue',
+      args: {
+        projectKey: 'CIO',
+        issueType: 'Project',
+        summary: 'Salesforce Incentive-Program Tracking',
+        description: 'Evidence: Scott + Dr. Jew/June meeting note.',
+        fields: {
+          'Anti-Kickback Review': 'Required',
+          reviewers: ['scott', 'dr.jew'],
+        },
+      },
+    });
 
-    await page.goto(`/${E2E_SLUG}`);
-    const card = page.locator('div', { has: page.getByText('Wants to call Create issue') });
-    await expect(card.first()).toBeVisible();
+    await page.goto(`/${fixture.slug}`);
+    await expect(page.getByText('Wants to call Create issue')).toBeVisible();
 
-    // The primitive args still print plainly.
-    await expect(page.getByText('projectKey: CIO')).toBeVisible();
-    await expect(page.getByText('issueType: Project')).toBeVisible();
+    // Project/type header instead of raw "projectKey: CIO" / "issueType:
+    // Project" rows — the same header shape the chat preview card shows.
+    await expect(page.getByText('CIO · Project')).toBeVisible();
+    await expect(page.getByText('Salesforce Incentive-Program Tracking')).toBeVisible();
+    await expect(page.getByText('Evidence: Scott + Dr. Jew/June meeting note.')).toBeVisible();
 
-    // The object-valued `fields` arg used to print as "[object Object]" — it
-    // must now be its actual JSON, keys and all. (jsonb round-trips through
-    // Postgres key-reordered, so match the fields item's text rather than a
-    // literal JSON.stringify of the object as sent.)
-    const fieldsItem = page.getByText(/^fields: \{.*\}$/);
+    // The `fields` escape hatch used to collapse to one "[object Object]"
+    // line; each of its entries is now its own labelled row.
     await expect(page.getByText('[object Object]')).toHaveCount(0);
-    await expect(fieldsItem).toBeVisible();
-    await expect(fieldsItem).toContainText('Anti-Kickback Review');
-    await expect(fieldsItem).toContainText('reviewers');
-    await expect(fieldsItem).toContainText('dr.jew');
-    await shot(page, testInfo, 'actionable-cards-fields-json');
+    await expect(page.getByText('Anti-Kickback Review:')).toBeVisible();
+    await expect(page.getByText('Required')).toBeVisible();
+    await expect(page.getByText('reviewers:')).toBeVisible();
+    await expect(page.getByText('scott, dr.jew')).toBeVisible();
+    await shot(page, testInfo, 'actionable-cards-issue');
 
     await page.setViewportSize(MOBILE_VIEWPORT);
+    await expect(page.getByText('CIO · Project')).toBeVisible();
     await expect(page.getByText('[object Object]')).toHaveCount(0);
-    await expect(fieldsItem).toBeVisible();
-    await shot(page, testInfo, 'actionable-cards-fields-json-mobile');
+    await shot(page, testInfo, 'actionable-cards-issue-mobile');
   } finally {
-    await client.query('DELETE FROM actionable_items WHERE id = $1', [itemId]);
+    await client.end();
+  }
+});
+
+test('an Outlook send-mail call renders as a structured email card', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(`email-${testInfo.project.name}`);
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await seedTenant(client, fixture);
+    await signIn(page, fixture);
+    const itemId = uuidFrom(`actionable-cards-e2e-email-item:${testInfo.project.name}`);
+    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Send the weekly digest', {
+      tool: 'outlook_send_mail',
+      args: {
+        to: ['scott@example.com', 'dr.jew@example.com'],
+        cc: ['rebecca@example.com'],
+        subject: 'Weekly incentive-tracking digest',
+        body: 'Salesforce remains the preferred long-term option.',
+      },
+    });
+
+    await page.goto(`/${fixture.slug}`);
+    await expect(page.getByText('Wants to call Send mail')).toBeVisible();
+
+    await expect(page.getByText('To:')).toBeVisible();
+    await expect(page.getByText('scott@example.com, dr.jew@example.com')).toBeVisible();
+    await expect(page.getByText('Cc:')).toBeVisible();
+    await expect(page.getByText('rebecca@example.com')).toBeVisible();
+    await expect(page.getByText('Weekly incentive-tracking digest')).toBeVisible();
+    await expect(page.getByText('Salesforce remains the preferred long-term option.')).toBeVisible();
+    await shot(page, testInfo, 'actionable-cards-email');
+  } finally {
+    await client.end();
+  }
+});
+
+test('a tool outside the dedicated cards still falls back to a JSON-safe arg list', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(`generic-${testInfo.project.name}`);
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await seedTenant(client, fixture);
+    await signIn(page, fixture);
+    const itemId = uuidFrom(`actionable-cards-e2e-generic-item:${testInfo.project.name}`);
+    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Deploy the channel', {
+      tool: 'mirth_deploy_channels',
+      args: {
+        channelIds: ['channel-a', 'channel-b'],
+        options: { force: true },
+      },
+    });
+
+    await page.goto(`/${fixture.slug}`);
+    await expect(page.getByText('Wants to call Deploy channels')).toBeVisible();
+
+    await expect(page.getByText('[object Object]')).toHaveCount(0);
+    await expect(page.getByText('channelIds:')).toBeVisible();
+    await expect(page.getByText('["channel-a","channel-b"]')).toBeVisible();
+    await expect(page.getByText('options:')).toBeVisible();
+    await expect(page.getByText('{"force":true}')).toBeVisible();
+    await shot(page, testInfo, 'actionable-cards-generic');
+  } finally {
     await client.end();
   }
 });

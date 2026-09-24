@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { friendlyToolName, parseFormNodes, type FormNode } from '@renkei/agents';
+import { jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
 import { Icon, ICONS } from '@/components/icons';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
@@ -155,11 +156,41 @@ function questionFormFrom(suggestedAction: unknown): FormNode[] {
   return parseFormNodes(record.form);
 }
 
+/** Tools whose args are a Jira/JSM issue — same shape the issue-preview
+ * MCP widget renders (jira/write.ts, jsm.ts), so the approval card can show
+ * the same project/type header, summary, description and field rows
+ * instead of a raw arg dump. */
+const ISSUE_ARG_TOOLS = new Set([
+  'jira_create_issue',
+  'jira_create_issue_confirm',
+  'jira_update_issue',
+  'jira_update_issue_confirm',
+  'jsm_create_request',
+  'jsm_create_request_confirm',
+]);
+
+/** Tools whose args are an outgoing email — same fields the email-compose
+ * MCP widget renders (outlook/index.ts). */
+const EMAIL_ARG_TOOLS = new Set([
+  'outlook_send_mail',
+  'outlook_send_mail_confirm',
+  'outlook_reply_message',
+  'outlook_reply_confirm',
+  'outlook_reply_all_message',
+  'outlook_reply_all_confirm',
+  'outlook_forward_message',
+  'outlook_forward_confirm',
+]);
+
 /**
  * The proposed call a `needsApproval` gate's card shows — never an
  * authored message, since there is nothing to author: the point of the
  * flag is "gate whatever this step is about to do." Shown only while the
  * card is still undecided; a decided one's outcome line below covers it.
+ *
+ * Rendered the way the chat-side MCP Apps preview cards render the same
+ * calls (issue-preview.ts, email-compose.ts) for the tool families common
+ * enough to be worth it — everything else falls back to a plain arg list.
  */
 function ProposedCall({ suggestedAction }: { suggestedAction: unknown }): React.ReactNode {
   if (typeof suggestedAction !== 'object' || suggestedAction === null) return null;
@@ -169,29 +200,151 @@ function ProposedCall({ suggestedAction }: { suggestedAction: unknown }): React.
     typeof record.args === 'object' && record.args !== null && !Array.isArray(record.args)
       ? { ...record.args }
       : {};
-  const entries = Object.entries(args);
+  const toolLabel = friendlyToolName(record.tool, null);
+
+  if (ISSUE_ARG_TOOLS.has(record.tool)) {
+    return <IssueProposedCall toolLabel={toolLabel} args={args} />;
+  }
+  if (EMAIL_ARG_TOOLS.has(record.tool)) {
+    return <EmailProposedCall toolLabel={toolLabel} args={args} />;
+  }
+  return <GenericProposedCall toolLabel={toolLabel} args={args} />;
+}
+
+/** Shared shell every "Wants to call …" card variant renders inside. */
+function ProposedCallShell({
+  toolLabel,
+  children,
+}: {
+  toolLabel: string;
+  children: React.ReactNode;
+}): React.ReactNode {
   return (
-    <div className="my-2 rounded-md bg-gray-100 p-2 text-xs dark:bg-gray-900">
-      <strong>Wants to call {friendlyToolName(record.tool, null)}</strong>
-      {entries.length > 0 && (
-        <ul className="mt-1 space-y-0.5 text-gray-600 dark:text-gray-400">
-          {entries.map(([key, value]) => (
-            <li key={key} className="break-words">
-              <span className="font-mono">{key}</span>: {formatArgValue(value)}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="my-2 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-800 dark:bg-gray-900">
+      <strong>Wants to call {toolLabel}</strong>
+      {children}
     </div>
   );
 }
 
-/** An arg value for the "Wants to call" list — `String()` on an object or
- * array gives "[object Object]"/comma-joined junk, so anything non-primitive
- * gets JSON-stringified instead. */
-function formatArgValue(value: unknown): string {
-  if (value === null || typeof value !== 'object') return String(value);
-  return JSON.stringify(value);
+/** `label: value` rows, the shape both the issue and email cards below
+ * reduce their args to — mirrors an MCP preview card's own field list. */
+function FieldRows({ rows }: { rows: { label: string; value: string }[] }): React.ReactNode {
+  if (rows.length === 0) return null;
+  return (
+    <dl className="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">
+      {rows.map((row) => (
+        <div key={row.label} className="flex gap-1 break-words">
+          <dt className="shrink-0 font-mono">{row.label}:</dt>
+          <dd>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** A Jira/JSM issue create-or-update call — project/type header (or the
+ * issue key, on an update), summary, description, and everything else
+ * jiraIssueFieldRows already knows how to lay out. No live Jira fetch: this
+ * is the call as written, the same way the preview card shows it before a
+ * person confirms. */
+function IssueProposedCall({
+  toolLabel,
+  args,
+}: {
+  toolLabel: string;
+  args: Record<string, unknown>;
+}): React.ReactNode {
+  const str = (value: unknown) => (typeof value === 'string' ? value : '');
+  const projectKey = str(args.projectKey);
+  const issueType = str(args.issueType);
+  const issueKey = str(args.issueKey);
+  const subtitle = [projectKey, issueType].filter(Boolean).join(' · ') || issueKey;
+  const summary = str(args.summary);
+  const description = str(args.description);
+  return (
+    <ProposedCallShell toolLabel={toolLabel}>
+      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+        {summary && <p className="min-w-0 break-words font-medium">{summary}</p>}
+        {subtitle && (
+          <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 font-mono text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+            {subtitle}
+          </span>
+        )}
+      </div>
+      {description && (
+        <p className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
+          {description}
+        </p>
+      )}
+      <FieldRows rows={jiraIssueFieldRows(args)} />
+    </ProposedCallShell>
+  );
+}
+
+/** An outgoing email — recipients, subject, and body, the same fields the
+ * email-compose card shows. Reply/reply-all/forward auto-populate their
+ * primary recipient(s) server-side (Graph fills them from the message
+ * being replied to), so `additionalTo` stands in for `to` when that's all
+ * the call carries. */
+function EmailProposedCall({
+  toolLabel,
+  args,
+}: {
+  toolLabel: string;
+  args: Record<string, unknown>;
+}): React.ReactNode {
+  const addresses = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+  const to = addresses(args.to);
+  const additionalTo = addresses(args.additionalTo);
+  const cc = addresses(args.cc);
+  const bcc = addresses(args.bcc);
+  const subject = typeof args.subject === 'string' ? args.subject : '';
+  const body =
+    typeof args.body === 'string' ? args.body : typeof args.comment === 'string' ? args.comment : '';
+
+  const rows: { label: string; value: string }[] = [];
+  if (to.length > 0) rows.push({ label: 'To', value: to.join(', ') });
+  else if (additionalTo.length > 0) {
+    rows.push({ label: 'Also to', value: `(auto-populated) ${additionalTo.join(', ')}` });
+  }
+  if (cc.length > 0) rows.push({ label: 'Cc', value: cc.join(', ') });
+  if (bcc.length > 0) rows.push({ label: 'Bcc', value: bcc.join(', ') });
+
+  return (
+    <ProposedCallShell toolLabel={toolLabel}>
+      <FieldRows rows={rows} />
+      {subject && <p className="mt-2 break-words font-medium">{subject}</p>}
+      {body && (
+        <p className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
+          {body}
+        </p>
+      )}
+    </ProposedCallShell>
+  );
+}
+
+/** The fallback for any tool without a dedicated card above — every arg,
+ * `key: value`. `String()` on an object or array gives "[object
+ * Object]"/comma-joined junk, so anything non-primitive is JSON-stringified
+ * instead. */
+function GenericProposedCall({
+  toolLabel,
+  args,
+}: {
+  toolLabel: string;
+  args: Record<string, unknown>;
+}): React.ReactNode {
+  const formatValue = (value: unknown): string =>
+    value === null || typeof value !== 'object' ? String(value) : JSON.stringify(value);
+  return (
+    <ProposedCallShell toolLabel={toolLabel}>
+      <FieldRows
+        rows={Object.entries(args).map(([key, value]) => ({ label: key, value: formatValue(value) }))}
+      />
+    </ProposedCallShell>
+  );
 }
 
 /**

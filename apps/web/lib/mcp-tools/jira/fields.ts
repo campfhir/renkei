@@ -78,6 +78,40 @@ export function renderFieldValue(value: unknown): string {
 }
 
 /**
+ * Display rows for a `jira_create_issue`/`jira_update_issue` call, out of
+ * its own arguments — no live Jira fetch, just what the call already
+ * carries. Shared by the MCP preview card (write.ts's `*_preview` tools,
+ * which add `oldValue` for an update) and the agent approval card
+ * (cards.tsx), which show the very same call two different ways.
+ */
+export function jiraIssueFieldRows(
+  args: Record<string, unknown>
+): { label: string; value: string }[] {
+  const rows: { label: string; value: string }[] = [];
+  const asString = (value: unknown) => (typeof value === 'string' ? value : '');
+  if (asString(args.priority)) rows.push({ label: 'Priority', value: asString(args.priority) });
+  if (asString(args.assignee)) rows.push({ label: 'Assignee', value: asString(args.assignee) });
+  if (Array.isArray(args.labels) && args.labels.length > 0) {
+    rows.push({ label: 'Labels', value: args.labels.map(String).join(', ') });
+  }
+  if (Array.isArray(args.components) && args.components.length > 0) {
+    rows.push({ label: 'Components', value: args.components.map(String).join(', ') });
+  }
+  if (typeof args.storyPoints === 'number') {
+    rows.push({ label: 'Story points', value: String(args.storyPoints) });
+  }
+  if (asString(args.originalEstimate)) {
+    rows.push({ label: 'Original estimate', value: asString(args.originalEstimate) });
+  }
+  if (isRecord(args.fields)) {
+    for (const [name, value] of Object.entries(args.fields)) {
+      rows.push({ label: name, value: renderFieldValue(value) || JSON.stringify(value) });
+    }
+  }
+  return rows;
+}
+
+/**
  * Accept the several ways a custom field gets referred to.
  *
  * A bare `12013` and the JQL spelling `cf[12013]` both become
