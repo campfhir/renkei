@@ -17,13 +17,22 @@ import { useRefresh } from '@/lib/use-refresh';
  * A 502 still refreshes: the decision is durably recorded and the
  * worker's sweep resumes the run on its own — the warning is about
  * latency, not loss.
+ *
+ * `hideApprove`: a widget-hosted card (ApprovalWidgetCard) has its own
+ * Confirm button, which can carry an edited summary/description — a second,
+ * unedited Approve button next to it would just be a second, confusing way
+ * to do the same thing. The widget has no way to signal a decline, though
+ * (its own Cancel is local-only), so Decline — and the comment box — stay
+ * here regardless.
  */
 export default function ApprovalActions({
   tenantId,
   itemId,
+  hideApprove = false,
 }: {
   tenantId: string;
   itemId: string;
+  hideApprove?: boolean;
 }): React.ReactNode {
   const { refresh, pending } = useRefresh();
   const [comment, setComment] = useState('');
@@ -73,13 +82,15 @@ export default function ApprovalActions({
         className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
       />
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={() => void decide('approve')}
-          disabled={busy || pending}
-          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          Approve
-        </button>
+        {!hideApprove && (
+          <button
+            onClick={() => void decide('approve')}
+            disabled={busy || pending}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            Approve
+          </button>
+        )}
         <button
           onClick={() => void decide('decline')}
           disabled={busy || pending}

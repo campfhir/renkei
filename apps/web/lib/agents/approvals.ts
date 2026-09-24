@@ -140,6 +140,32 @@ export async function listPendingApprovals(
 
 export type ApprovalDecision = 'approve' | 'decline';
 
+/**
+ * The only proposed-call keys an approval's own edit can ever override —
+ * the same two fields the issue/email preview widgets mark `editable`
+ * (issue-preview.ts's `editable: {summaryKey, descriptionKey}`). Anything
+ * else (project, type, recipients, custom fields…) a card shows is
+ * reviewed but not rewritable: the person approving is trusted to decide
+ * yes/no on the call as proposed, plus a wording tweak, not to substitute
+ * an unrelated call the agent never proposed and nobody else reviewed.
+ * Enforced here — the one function both the HTTP route and any MCP caller
+ * go through — rather than trusted to whatever sent `argsOverride`.
+ */
+export const APPROVAL_ARG_OVERRIDE_KEYS = ['summary', 'description'] as const;
+
+/** `argsOverride`, narrowed to the keys an approval is ever allowed to touch. */
+function sanitizeArgsOverride(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+  const record = value as Record<string, unknown>;
+  const out: Record<string, string> = {};
+  for (const key of APPROVAL_ARG_OVERRIDE_KEYS) {
+    const entry = record[key];
+    if (typeof entry === 'string' && entry.trim()) out[key] = entry.trim();
+  }
+  return out;
+}
+
 export type DecideApprovalResult =
   | { outcome: 'not-found' }
   | { outcome: 'not-approval' }
@@ -167,12 +193,21 @@ export async function decideApproval(
     decision: ApprovalDecision;
     /** What the person typed alongside their decision, if anything. */
     comment?: string | undefined;
+    /**
+     * An edit to the proposed call's summary/description, from a preview
+     * card's editable fields — ignored on a decline (nothing runs to edit)
+     * and narrowed to `APPROVAL_ARG_OVERRIDE_KEYS` regardless of what this
+     * carries, so a tampered or over-eager caller cannot smuggle in any
+     * other field.
+     */
+    argsOverride?: Record<string, unknown> | undefined;
   }
 ): Promise<DecideApprovalResult> {
   const comment = typeof input.comment === 'string' ? input.comment.trim() : '';
   if (comment.length > MAX_QUESTION_ANSWER_CHARS) {
     return { outcome: 'comment-too-long', max: MAX_QUESTION_ANSWER_CHARS };
   }
+  const argsOverride = input.decision === 'approve' ? sanitizeArgsOverride(input.argsOverride) : {};
 
   // Owner-scoped: someone else's card reads as not-found, never as
   // forbidden — the same rule every agents read follows.
@@ -192,7 +227,11 @@ export async function decideApproval(
     .updateTable('actionable_items')
     .set({
       status: input.decision === 'approve' ? 'approved' : 'declined',
-      result: JSON.stringify({ ...(comment ? { comment } : {}), decidedBy: subject }),
+      result: JSON.stringify({
+        ...(comment ? { comment } : {}),
+        ...(Object.keys(argsOverride).length > 0 ? { argsOverride } : {}),
+        decidedBy: subject,
+      }),
       decided_by: subject,
       decided_at: sql`NOW()`,
       archived_at: sql`NOW()`,

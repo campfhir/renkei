@@ -140,22 +140,33 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
     await seedTenant(client, fixture);
     await signIn(page, fixture);
     const itemId = uuidFrom(`actionable-cards-e2e-issue-item:${testInfo.project.name}`);
-    await seedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — Create the approved issue', {
-      tool: 'jira_create_issue',
-      args: {
-        projectKey: 'CIO',
-        issueType: 'Project',
-        summary: 'Salesforce Incentive-Program Tracking',
-        description: 'Evidence: Scott + Dr. Jew/June meeting note.',
-        fields: {
-          'Anti-Kickback Review': 'Required',
-          reviewers: ['scott', 'dr.jew'],
+    // jira_create_issue_confirm, not jira_create_issue: the plain tool now
+    // hosts the real issue-preview widget instead of this native card
+    // while suggested (approval-widget-card.spec.ts covers that) — this
+    // spec is about the fallback rendering every OTHER Jira-issue-shaped
+    // tool still gets, and _confirm shares the exact same args contract.
+    await seedCard(
+      client,
+      fixture.tenantId,
+      itemId,
+      'Portfolio Updater — Create the approved issue',
+      {
+        tool: 'jira_create_issue_confirm',
+        args: {
+          projectKey: 'CIO',
+          issueType: 'Project',
+          summary: 'Salesforce Incentive-Program Tracking',
+          description: 'Evidence: Scott + Dr. Jew/June meeting note.',
+          fields: {
+            'Anti-Kickback Review': 'Required',
+            reviewers: ['scott', 'dr.jew'],
+          },
         },
-      },
-    });
+      }
+    );
 
     await page.goto(`/${fixture.slug}`);
-    await expect(page.getByText('Wants to call Create issue')).toBeVisible();
+    await expect(page.getByText('Wants to call Create issue confirm')).toBeVisible();
 
     // Project/type header instead of raw "projectKey: CIO" / "issueType:
     // Project" rows — the same header shape the chat preview card shows.
@@ -181,9 +192,7 @@ test('a Jira issue call renders as a structured issue card', async ({ page }, te
   }
 });
 
-test('an Outlook send-mail call renders as a structured email card', async ({
-  page,
-}, testInfo) => {
+test('an Outlook send-mail call renders as a structured email card', async ({ page }, testInfo) => {
   const fixture = fixtureFor(`email-${testInfo.project.name}`);
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
@@ -209,7 +218,9 @@ test('an Outlook send-mail call renders as a structured email card', async ({
     await expect(page.getByText('Cc:')).toBeVisible();
     await expect(page.getByText('rebecca@example.com')).toBeVisible();
     await expect(page.getByText('Weekly incentive-tracking digest')).toBeVisible();
-    await expect(page.getByText('Salesforce remains the preferred long-term option.')).toBeVisible();
+    await expect(
+      page.getByText('Salesforce remains the preferred long-term option.')
+    ).toBeVisible();
     await shot(page, testInfo, 'actionable-cards-email');
   } finally {
     await client.end();

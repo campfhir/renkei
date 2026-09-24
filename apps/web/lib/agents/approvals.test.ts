@@ -183,6 +183,53 @@ describe('decideApproval', () => {
     expect(stored.comment).toBe('wrong ticket');
   });
 
+  it('stores an approve-time argsOverride, narrowed to summary/description', async () => {
+    const sets: Record<string, unknown>[] = [];
+    await decideApproval(
+      stubDb({
+        row: { id: 'c', kind: 'approval', status: 'suggested', run_id: 'run-1' },
+        updated: 1,
+        sets,
+      }),
+      producer(true),
+      't',
+      'alice',
+      {
+        cardId: 'c',
+        decision: 'approve',
+        argsOverride: {
+          summary: 'Edited summary',
+          description: 'Edited description',
+          // Not one of the two overridable keys — must be dropped, not
+          // stored: an approval can reword the call, never redirect it.
+          projectKey: 'HACKED',
+        },
+      }
+    );
+    const stored: { argsOverride?: Record<string, string> } = JSON.parse(String(sets[0]?.result));
+    expect(stored.argsOverride).toEqual({
+      summary: 'Edited summary',
+      description: 'Edited description',
+    });
+  });
+
+  it('drops an argsOverride entirely on decline — nothing runs to edit', async () => {
+    const sets: Record<string, unknown>[] = [];
+    await decideApproval(
+      stubDb({
+        row: { id: 'c', kind: 'approval', status: 'suggested', run_id: 'run-1' },
+        updated: 1,
+        sets,
+      }),
+      producer(true),
+      't',
+      'alice',
+      { cardId: 'c', decision: 'decline', argsOverride: { summary: 'Edited summary' } }
+    );
+    const stored: { argsOverride?: unknown } = JSON.parse(String(sets[0]?.result));
+    expect(stored.argsOverride).toBeUndefined();
+  });
+
   it('refuses a comment past the cap before claiming anything', async () => {
     const wheres: [string, unknown][] = [];
     const result = await decideApproval(stubDb({ wheres }), producer(true), 't', 'alice', {

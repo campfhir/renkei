@@ -1,10 +1,11 @@
 import React from 'react';
 import Link from 'next/link';
 import { friendlyToolName, parseFormNodes, type FormNode } from '@renkei/agents';
-import { jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
+import { jiraIssueApprovalPreview, jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
 import { Icon, ICONS } from '@/components/icons';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
+import ApprovalWidgetCard from './approval-widget-card';
 import QuestionActions from './question-actions';
 import ArchiveAction from './archive-action';
 
@@ -70,6 +71,8 @@ export default function ActionableCards({
     <div className="space-y-4">
       {items.map((item) => {
         const isPause = item.kind === 'approval' || item.kind === 'question';
+        const widgetPreview =
+          item.kind === 'approval' ? widgetPreviewFor(item.suggested_action, item.status) : null;
         return (
           <div
             key={item.id}
@@ -93,7 +96,17 @@ export default function ActionableCards({
 
             <RelatedEvidence evidence={item.evidence} />
 
-            {item.kind === 'approval' && <ProposedCall suggestedAction={item.suggested_action} />}
+            {item.kind === 'approval' &&
+              (widgetPreview ? (
+                <ApprovalWidgetCard
+                  tenantId={tenantId}
+                  itemId={item.id}
+                  resourceUri={widgetPreview.resourceUri}
+                  structuredContent={widgetPreview.structuredContent}
+                />
+              ) : (
+                <ProposedCall suggestedAction={item.suggested_action} result={item.result} />
+              ))}
 
             {isPause && item.run_id && item.agent_id ? (
               <p className="mb-2 text-sm">
@@ -110,7 +123,11 @@ export default function ActionableCards({
               (item.kind === 'approval' ? (
                 // No dismiss here: declining is the "no", and doing nothing
                 // lets the wait treat it as not approved.
-                <ApprovalActions tenantId={tenantId} itemId={item.id} />
+                <ApprovalActions
+                  tenantId={tenantId}
+                  itemId={item.id}
+                  hideApprove={widgetPreview !== null}
+                />
               ) : item.kind === 'question' ? (
                 <QuestionActions
                   tenantId={tenantId}
@@ -182,6 +199,57 @@ const EMAIL_ARG_TOOLS = new Set([
   'outlook_forward_confirm',
 ]);
 
+/** The `{tool, args}` a `needsApproval` gate snapshotted onto a card, or
+ * null for anything that does not even look like a proposed call. */
+function proposedCallOf(
+  suggestedAction: unknown
+): { tool: string; args: Record<string, unknown> } | null {
+  if (typeof suggestedAction !== 'object' || suggestedAction === null) return null;
+  const record: { tool?: unknown; args?: unknown } = { ...suggestedAction };
+  if (typeof record.tool !== 'string') return null;
+  const args =
+    typeof record.args === 'object' && record.args !== null && !Array.isArray(record.args)
+      ? { ...record.args }
+      : {};
+  return { tool: record.tool, args };
+}
+
+/**
+ * The real MCP Apps widget for this proposed call, when one exists — the
+ * same issue-preview card the chat-side `jira_create_issue_preview`/
+ * `jira_update_issue_preview` tools use, hosted outside chat
+ * (ApprovalWidgetCard). Only while the card is still undecided: an
+ * already-decided card keeps the plain historical rendering below rather
+ * than a still-interactive-looking Confirm button (decideApproval's own
+ * status check makes a stray click harmless, but showing one at all on a
+ * resolved card is just confusing).
+ */
+function widgetPreviewFor(
+  suggestedAction: unknown,
+  status: string
+): { resourceUri: string; structuredContent: Record<string, unknown> } | null {
+  if (status !== 'suggested') return null;
+  const call = proposedCallOf(suggestedAction);
+  if (!call) return null;
+  return jiraIssueApprovalPreview(call.tool, call.args);
+}
+
+/** A decided card's own edit, if it has one (ApprovalWidgetCard's Confirm,
+ * via `decideApproval`'s `argsOverride`) — the same two keys
+ * `APPROVAL_ARG_OVERRIDE_KEYS` (approvals.ts) ever allows. */
+function argsOverrideOf(result: unknown): Record<string, string> {
+  if (typeof result !== 'object' || result === null) return {};
+  const record: { argsOverride?: unknown } = { ...result };
+  if (typeof record.argsOverride !== 'object' || record.argsOverride === null) return {};
+  const override: Record<string, unknown> = { ...record.argsOverride };
+  const out: Record<string, string> = {};
+  for (const key of ['summary', 'description']) {
+    const value = override[key];
+    if (typeof value === 'string') out[key] = value;
+  }
+  return out;
+}
+
 /**
  * The proposed call a `needsApproval` gate's card shows — never an
  * authored message, since there is nothing to author: the point of the
@@ -191,21 +259,33 @@ const EMAIL_ARG_TOOLS = new Set([
  * Rendered the way the chat-side MCP Apps preview cards render the same
  * calls (issue-preview.ts, email-compose.ts) for the tool families common
  * enough to be worth it — everything else falls back to a plain arg list.
+ * The Jira-issue case actually hosts that same widget bundle instead
+ * (ApprovalWidgetCard, above this in the parent) while the card is
+ * decidable; this is what a decided one keeps showing, and what any other
+ * Jira-issue-shaped call falls back to before this file grows a widget for
+ * every family (email included, for now).
+ *
+ * `result` is only ever read for its `argsOverride` — a decided card whose
+ * widget edited the summary/description should keep showing what was
+ * actually approved, not the pre-edit snapshot everything else here still
+ * reads from `suggested_action`.
  */
-function ProposedCall({ suggestedAction }: { suggestedAction: unknown }): React.ReactNode {
-  if (typeof suggestedAction !== 'object' || suggestedAction === null) return null;
-  const record: { tool?: unknown; args?: unknown } = { ...suggestedAction };
-  if (typeof record.tool !== 'string') return null;
-  const args =
-    typeof record.args === 'object' && record.args !== null && !Array.isArray(record.args)
-      ? { ...record.args }
-      : {};
-  const toolLabel = friendlyToolName(record.tool, null);
+function ProposedCall({
+  suggestedAction,
+  result,
+}: {
+  suggestedAction: unknown;
+  result?: unknown;
+}): React.ReactNode {
+  const call = proposedCallOf(suggestedAction);
+  if (!call) return null;
+  const toolLabel = friendlyToolName(call.tool, null);
+  const args = { ...call.args, ...argsOverrideOf(result) };
 
-  if (ISSUE_ARG_TOOLS.has(record.tool)) {
+  if (ISSUE_ARG_TOOLS.has(call.tool)) {
     return <IssueProposedCall toolLabel={toolLabel} args={args} />;
   }
-  if (EMAIL_ARG_TOOLS.has(record.tool)) {
+  if (EMAIL_ARG_TOOLS.has(call.tool)) {
     return <EmailProposedCall toolLabel={toolLabel} args={args} />;
   }
   return <GenericProposedCall toolLabel={toolLabel} args={args} />;
@@ -302,7 +382,11 @@ function EmailProposedCall({
   const bcc = addresses(args.bcc);
   const subject = typeof args.subject === 'string' ? args.subject : '';
   const body =
-    typeof args.body === 'string' ? args.body : typeof args.comment === 'string' ? args.comment : '';
+    typeof args.body === 'string'
+      ? args.body
+      : typeof args.comment === 'string'
+        ? args.comment
+        : '';
 
   const rows: { label: string; value: string }[] = [];
   if (to.length > 0) rows.push({ label: 'To', value: to.join(', ') });
@@ -341,7 +425,10 @@ function GenericProposedCall({
   return (
     <ProposedCallShell toolLabel={toolLabel}>
       <FieldRows
-        rows={Object.entries(args).map(([key, value]) => ({ label: key, value: formatValue(value) }))}
+        rows={Object.entries(args).map(([key, value]) => ({
+          label: key,
+          value: formatValue(value),
+        }))}
       />
     </ProposedCallShell>
   );

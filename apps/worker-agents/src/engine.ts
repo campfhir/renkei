@@ -2183,7 +2183,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const resolveDecision = async (status: string, result: unknown): Promise<StepResult> => {
         const decision = gateOutcomeOf(status);
-        const resultObj: { comment?: unknown } =
+        const resultObj: { comment?: unknown; argsOverride?: unknown } =
           typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
         const comment =
           typeof resultObj.comment === 'string' && resultObj.comment.trim()
@@ -2191,6 +2191,26 @@ export function createAgentRunHandler(deps: EngineDeps) {
             : null;
         vars['approval.outcome'] = decision;
         if (comment) vars['approval.comment'] = comment;
+        // Re-narrowed here, not just trusted from the stored row: the same
+        // two fields a preview card's own editable inputs cover
+        // (approvals.ts's APPROVAL_ARG_OVERRIDE_KEYS — kept in sync by
+        // hand, since engine.ts and the web app are separate deployables).
+        // Everything else about the call (tool, project, recipients,
+        // custom fields…) is exactly what the card showed and a person
+        // approved — an override can reword it, never redirect it.
+        const argsOverride: Record<string, string> = {};
+        if (
+          typeof resultObj.argsOverride === 'object' &&
+          resultObj.argsOverride !== null &&
+          !Array.isArray(resultObj.argsOverride)
+        ) {
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+          const override = resultObj.argsOverride as Record<string, unknown>;
+          for (const key of ['summary', 'description'] as const) {
+            const entry = override[key];
+            if (typeof entry === 'string' && entry.trim()) argsOverride[key] = entry.trim();
+          }
+        }
 
         if (decision !== 'approved') {
           const wording =
@@ -2236,9 +2256,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           // Defensive: nothing recorded to execute.
           return { kind: 'advance' };
         }
+        const effectiveArgs =
+          Object.keys(argsOverride).length > 0
+            ? { ...proposedArgs, ...argsOverride }
+            : proposedArgs;
         let toolResult: McpToolResult;
         try {
-          toolResult = await mcp.callTool(proposedTool, proposedArgs);
+          toolResult = await mcp.callTool(proposedTool, effectiveArgs);
         } catch (error) {
           toolResult = {
             content: [
@@ -2267,7 +2291,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           toolCalls: [
             {
               tool: proposedTool,
-              argsPreview: clip(JSON.stringify(proposedArgs), PREVIEW_CHARS),
+              argsPreview: clip(JSON.stringify(effectiveArgs), PREVIEW_CHARS),
               resultPreview: clip(resultText, PREVIEW_CHARS),
               resultChars: resultText.length,
               isError: toolResult.isError,

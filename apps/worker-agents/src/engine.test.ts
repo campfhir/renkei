@@ -3289,6 +3289,55 @@ maybe('agent run engine', () => {
       expect(JSON.stringify(gateRow.detail)).toContain('Approved');
     });
 
+    it('on approval with an edited summary/description, fires the call with the edit merged in — everything else untouched', async () => {
+      const { doc, gateId } = gatedDoc({});
+      const { runId } = await seedRun(doc);
+      const { mcp, calls } = recordingMcp([
+        'jira_add_comment',
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+      const proposedArgs = { issueKey: 'PROJ-42', body: 'Original body.' };
+      const handler = handlerWith(proposesThenNoMore(proposedArgs), mcp);
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          // A widget card's edit round-trips through summary/description
+          // only — the approval decided the CALL, not a substitute one.
+          result: JSON.stringify({
+            decidedBy: 'owner@example.com',
+            argsOverride: { description: 'Edited from the card.', issueKey: 'HACKED-1' },
+          }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const fired = calls.find((call) => call.name === 'jira_add_comment');
+      // `description` (not part of the original args at all) is added;
+      // `issueKey` — not one of the two overridable keys — is ignored, so
+      // the call still targets the issue that was actually reviewed.
+      expect(fired?.args).toEqual({
+        issueKey: 'PROJ-42',
+        body: 'Original body.',
+        description: 'Edited from the card.',
+      });
+
+      const gateRow = await db
+        .selectFrom('agent_run_steps')
+        .select(['status', 'outcome'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', gateId)
+        .executeTakeFirstOrThrow();
+      expect(gateRow.status).toBe('succeeded');
+      expect(gateRow.outcome).toBe('tool_ok');
+    });
+
     it('on denial, skips the tool call and advances when there is no recovery path', async () => {
       const { doc, gateId } = gatedDoc({});
       const { runId } = await seedRun(doc);
