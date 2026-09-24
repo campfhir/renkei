@@ -376,6 +376,11 @@ export function registerAdManagerTools(
         : typeof request.body === 'string'
           ? request.body
           : JSON.stringify(request.body);
+    // request.query can carry a model-built filter clause (combineFilters
+    // chains an AND/OR per search term) with no bound on how long that gets
+    // — same truncation cap as the body fields below, so one wide search
+    // can't blow up a log row.
+    const query = request.query ? truncateForLog(JSON.stringify(request.query)) : undefined;
     const answered = await admanagerApi(full, request);
     if (!answered.ok) {
       // Every failure logs the full outbound request (path/method/query and
@@ -392,7 +397,7 @@ export function registerAdManagerTools(
         instanceId,
         path: request.path,
         method: request.method,
-        query: request.query,
+        query,
         requestBody: requestBody === undefined ? undefined : secure(truncateForLog(requestBody)),
         errorKind: answered.err.kind,
         errorType: answered.err.kind === 'op' ? answered.err.type : undefined,
@@ -408,7 +413,7 @@ export function registerAdManagerTools(
         instanceId,
         path: request.path,
         method: request.method,
-        query: request.query,
+        query,
         status: answered.val.status,
         requestBody: requestBody === undefined ? undefined : secure(truncateForLog(requestBody)),
         responseBody: answered.val.body ? secure(truncateForLog(answered.val.body)) : undefined,
