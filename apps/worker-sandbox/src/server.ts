@@ -46,6 +46,9 @@ import {
   LSP_MESSAGE_MAX_BYTES,
   UPLOAD_MAX_BYTES,
   validateFilename,
+  parseChartRequest,
+  chartFilename,
+  chartMediaType,
   type SandboxFileSummary,
 } from '@renkei/connector-sandbox';
 import {
@@ -67,6 +70,7 @@ import * as disk from './disk';
 import * as store from './store';
 import * as secretsStore from './secrets-store';
 import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './browser';
+import { ChartRenderError, type ChartErrorType, type ChartVerbs } from './charts';
 import { SecretVault } from './secret-vault';
 import { secretSummary } from './secrets';
 import { orphanedByNow } from './workspaces';
@@ -121,6 +125,8 @@ export interface SandboxServerDeps {
   browser?: BrowserVerbs | null;
   /** The secret vault; the server makes its own (in-memory) when not given (tests share one with the browser). */
   vault?: SecretVault;
+  /** The chart renderer (SANDBOX_CHARTS_ENABLED); null/absent answers every chart verb 503. */
+  charts?: ChartVerbs | null;
   /** Code workspaces (SANDBOX_WORKSPACES_ENABLED); off answers every workspace and env verb 503. */
   workspaces?: boolean;
   /**
@@ -222,6 +228,14 @@ function targetOf(body: Record<string, unknown>): store.SandboxTarget | null {
   if (!tenantId || !subject) return null;
   return { tenantId, subject };
 }
+
+const CHART_ERROR_STATUS: Record<ChartErrorType, number> = {
+  charts_unavailable: 503,
+  invalid_diagram: 400,
+  render_failed: 500,
+  timeout: 504,
+  too_large: 413,
+};
 
 const BROWSER_ERROR_STATUS: Record<BrowserErrorType, number> = {
   browser_unavailable: 503,
@@ -676,6 +690,82 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
   }
 
   /**
+   * Charts: Mermaid text rendered in this worker's own Chromium
+   * (charts.ts). `render` answers the bytes themselves — the chat's
+   * chat_write_chart attaches them to the chat directly — and `stage`
+   * keeps them as a scratch-space file for sandbox_render_chart, under the
+   * same quota, cap and TTL as any other staged file. Both take the
+   * caller's (tenantId, subject) so a render is always somebody's.
+   */
+  async function handleCharts(
+    op: string,
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
+    const charts = deps.charts ?? null;
+    if (!charts) {
+      return sendError(
+        response,
+        503,
+        'charts_unavailable',
+        'Charts are not enabled on this deployment (SANDBOX_CHARTS_ENABLED).'
+      );
+    }
+    const target = targetOf(body);
+    if (!target) return sendError(response, 400, 'bad_request');
+    const parsed = parseChartRequest(body);
+    if (!parsed.ok) return sendError(response, 400, parsed.type, parsed.message);
+    try {
+      switch (op) {
+        case 'render': {
+          const rendered = await charts.render(parsed.request);
+          response.writeHead(200, {
+            'content-type': rendered.mediaType,
+            'content-length': rendered.bytes.byteLength,
+            'x-chart-width': String(rendered.width),
+            'x-chart-height': String(rendered.height),
+            'x-chart-diagram': encodeURIComponent(rendered.diagramType),
+          });
+          response.end(rendered.bytes);
+          return;
+        }
+        case 'stage': {
+          const named = validateFilename(chartFilename(body.filename, parsed.request.format));
+          if (!named.ok) return sendError(response, 400, 'bad_filename');
+          let size: { width: number; height: number; diagramType: string } | null = null;
+          const staged = await stageProduced(
+            target,
+            { filename: named.filename, contentType: chartMediaType(parsed.request.format) },
+            async () => {
+              const rendered = await charts.render(parsed.request);
+              size = {
+                width: rendered.width,
+                height: rendered.height,
+                diagramType: rendered.diagramType,
+              };
+              return { bytes: rendered.bytes, source: `chart:${rendered.diagramType}` };
+            },
+            response
+          );
+          if (!staged || !size) return;
+          const measured: { width: number; height: number; diagramType: string } = size;
+          return sendJson(response, 200, {
+            file: summaryWire(staged),
+            ...measured,
+          });
+        }
+        default:
+          return sendError(response, 404, 'unknown_operation');
+      }
+    } catch (error) {
+      if (error instanceof ChartRenderError) {
+        return sendError(response, CHART_ERROR_STATUS[error.type], error.type, error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Browser secrets: sealed here, under a passphrase this process sees
    * only for the length of the request; the derived key is held by the
    * vault until its window closes (on the shared disk, sealed, when the
@@ -838,12 +928,14 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     const workspacesOp = op.startsWith('workspaces/') ? op.slice('workspaces/'.length) : null;
     const envOp = op.startsWith('env/') ? op.slice('env/'.length) : null;
     const servicesOp = op.startsWith('services/') ? op.slice('services/'.length) : null;
+    const chartsOp = op.startsWith('charts/') ? op.slice('charts/'.length) : null;
     const prefixed =
       browserOp !== null ||
       secretsOp !== null ||
       workspacesOp !== null ||
       envOp !== null ||
-      servicesOp !== null;
+      servicesOp !== null ||
+      chartsOp !== null;
     const jsonHandler = prefixed ? null : jsonHandlers[op];
     if (!prefixed && !jsonHandler) {
       return sendError(response, 404, 'unknown_operation');
@@ -868,6 +960,7 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       return workspaces.handleWorkspaces(workspacesOp, parsedBody, response);
     if (envOp !== null) return workspaces.handleEnv(envOp, parsedBody, response);
     if (servicesOp !== null) return services.handleServices(servicesOp, parsedBody, response);
+    if (chartsOp !== null) return handleCharts(chartsOp, parsedBody, response);
     await jsonHandler!(parsedBody, response);
   }
 

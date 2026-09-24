@@ -220,7 +220,14 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   the worker's own egress proxy, which refuses private and internal
   addresses, so the browser cannot reach the other compose services.
   `SANDBOX_BROWSER_EXECUTABLE` optionally names a different Chromium
-  binary. Memory: a busy browser session runs 300–500MB (at most eight at
+  binary. The same Chromium draws **charts** — Mermaid text from the model
+  (a bar or line chart, a pie, a Gantt plan, a flowchart) rendered to a
+  PNG, an SVG or a PDF behind `sandbox_render_chart` and the chat's
+  `chat_write_chart`: set `SANDBOX_CHARTS_ENABLED=true` in `.env`, again
+  read by BOTH sides, independent of the browser flag (a chart page has
+  no network at all). The worker refuses to start with the flag set and
+  no Mermaid bundle installed; `SANDBOX_MERMAID_BUNDLE` points at one
+  elsewhere. Memory: a busy browser session runs 300–500MB (at most eight at
   once), so both compose files give this service a 1GB reservation, a
   `SANDBOX_WORKER_MEMORY` limit (default `4g` — raise it in `.env` for a
   deployment that drives many sessions), a 1GB `/dev/shm` (Docker's 64MB
@@ -269,7 +276,7 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   the `code_language_gaps` table (extension, language, whether the
   registry has no server or the worker lacks it, opens, last path) —
   there is no UI; `SELECT * FROM code_language_gaps ORDER BY open_count
-  DESC` says which server to add next.
+DESC` says which server to add next.
   Checkouts live on a second named volume
   (`renkei-sandbox-workspaces` / `sandbox_workspaces`) at
   `SANDBOX_WORKSPACES_DIR` (default `/workspaces`), a week since last use.

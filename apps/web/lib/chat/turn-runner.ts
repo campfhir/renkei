@@ -336,6 +336,7 @@ const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'imag
 const EXTENSION_BY_MEDIA_TYPE: Record<string, string> = {
   'application/pdf': '.pdf',
   'image/png': '.png',
+  'image/svg+xml': '.svg',
   'image/jpeg': '.jpg',
   'image/gif': '.gif',
   'image/webp': '.webp',

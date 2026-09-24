@@ -129,6 +129,52 @@ argument is text either way — Markdown, CSV, JSON — never base64, so this
 does not reopen the no-bytes-as-arguments rule; it is what makes the rule
 possible for authored documents at all.
 
+## `sandbox_render_chart` — a chart from Mermaid text
+
+The third authored source, beside `sandbox_render_document`: a chart or
+a diagram. A bar or line chart, a pie, a Gantt plan, a flowchart, a
+sequence diagram, a mind map, a timeline — every one of these is Mermaid
+text the model can write, and Mermaid draws it. What Mermaid needs to do
+that is a real DOM and real font metrics, which nothing in Node has, so
+the worker draws it in its own headless Chromium — the binary the
+`sandbox_browser_*` tools already bake into the image — and answers a
+PNG (default; `scale` 1–4 device pixels per CSS pixel), an SVG (as
+Mermaid drew it, pinned to its own size, with an XML declaration), or a
+one-page PDF the chart's own size (`apps/worker-sandbox/src/charts.ts`).
+The request vocabulary — source bounded at 50k characters, `format`,
+`theme`, `background` (transparent or a hex color; a PDF is always
+painted), `scale` — is the pure `parseChartRequest` in
+`packages/connector-sandbox/src/charts.ts`, so both tools and the worker
+refuse a bad request the same way. A diagram Mermaid cannot parse is
+refused with Mermaid's own message — the line, a caret, the expected
+tokens — so the model corrects the text and calls again.
+
+What keeps this narrower than the browser: the chart page has **no
+network at all**. The page is authored by the worker (`setContent`),
+Mermaid's bundle is injected from the worker's own dependencies, the
+context is created offline and a catch-all route aborts anything the
+page could still name (an image in a label, a font a theme asks for), so
+there is nothing for an egress proxy to guard. Mermaid runs at its
+`strict` security level (HTML in labels sanitized, scripts and click
+bindings dropped). One browser is launched on the first chart and closed
+after five idle minutes; each render gets a context of its own, closed
+when the bytes are in hand; at most two renders run at once and one past
+thirty seconds is abandoned; a drawing wider or taller than 8000 px is
+refused rather than rasterized. All of it is behind
+`SANDBOX_CHARTS_ENABLED=true` on both the worker (to build the renderer,
+and refuse to start without the bundle) and the web app (to register the
+tools) — independent of the browser flag, since an organization may want
+charts without agents browsing the web, or the reverse.
+
+Two verbs on the worker, one render behind both: `charts/stage` keeps
+the bytes as a scratch-space file for `sandbox_render_chart` (under the
+same quota, cap and TTL as any other staged file, checked before the
+chart is drawn), and `charts/render` answers the bytes themselves for the
+chat's own `chat_write_chart` (`apps/web/lib/chat/chart-tools.ts`), which
+attaches them to the chat through `_meta.renkeiDocuments` exactly as
+`chat_write_file` does — the chart lands under the chat's Artifacts, and
+the model is told to describe it rather than read it back.
+
 ## `sandbox_send_to_upload` and slot ownership
 
 Completing a `*_request_*_upload` normally requires the slot's opaque
@@ -362,32 +408,34 @@ none exists or it is locked.
 
 ## Tool inventory
 
-| Tool                           | Kind | What it does                                                                                                                                                                               |
-| ------------------------------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `sandbox_download_url`         | Act  | Fetch an `https://` URL into the scratch space (SSRF-guarded, byte-capped).                                                                                                                |
-| `sandbox_fetch_page`           | Read | Fetch an `https://` URL through the same guard and answer its readable text — a page's title, main content and links, or a PDF/Office file's extracted text — keeping nothing.             |
-| `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                                 |
-| `sandbox_render_document`      | Act  | Render Markdown/CSV/JSON text (never bytes) into a `.docx`/`.pptx`/`.pdf`/`.xlsx` — or stage a text format as written — with `@renkei/document-render` (also what `chat_write_file` uses). |
-| `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                                         |
-| `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                             |
-| `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                                  |
-| `sandbox_read_file`            | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`).                                                                                                                 |
-| `sandbox_delete_file`          | Act  | Remove a staged file ahead of its TTL.                                                                                                                                                     |
-| `sandbox_send_to_upload`       | Act  | Forward a staged file's bytes into a pending `*_request_*_upload` slot.                                                                                                                    |
-| `sandbox_browser_navigate`     | Act  | Open an `https://` URL in the caller's browser session; answers a snapshot.                                                                                                                |
-| `sandbox_browser_snapshot`     | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls).                                                                                                                           |
-| `sandbox_browser_click`        | Act  | Click an element by ref; answers the snapshot of wherever that led.                                                                                                                        |
-| `sandbox_browser_type`         | Act  | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter.                                                                          |
-| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values.                                                                                                                     |
-| `sandbox_browser_select`       | Act  | Choose option(s) of a `<select>` by ref.                                                                                                                                                   |
-| `sandbox_browser_press_key`    | Act  | Press one key (Escape, Tab, PageDown, ...) in the page.                                                                                                                                    |
-| `sandbox_browser_scroll`       | Act  | Scroll the page up/down by pixels, or bring one ref into view.                                                                                                                             |
-| `sandbox_browser_run`          | Act  | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip.                                                                                                         |
-| `sandbox_browser_back`         | Act  | Browser history back.                                                                                                                                                                      |
-| `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                                      |
-| `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                                      |
+| Tool                           | Kind | What it does                                                                                                                                                                                                   |
+| ------------------------------ | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sandbox_download_url`         | Act  | Fetch an `https://` URL into the scratch space (SSRF-guarded, byte-capped).                                                                                                                                    |
+| `sandbox_fetch_page`           | Read | Fetch an `https://` URL through the same guard and answer its readable text — a page's title, main content and links, or a PDF/Office file's extracted text — keeping nothing.                                 |
+| `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                                                     |
+| `sandbox_render_document`      | Act  | Render Markdown/CSV/JSON text (never bytes) into a `.docx`/`.pptx`/`.pdf`/`.xlsx` — or stage a text format as written — with `@renkei/document-render` (also what `chat_write_file` uses).                     |
+| `sandbox_render_chart`         | Act  | Draw Mermaid text (a bar/line chart, pie, Gantt, flowchart, sequence diagram, …) as a PNG, SVG or one-page PDF in the worker's own Chromium, staged here (the chat's `chat_write_chart` renders the same way). |
+| `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                                                             |
+| `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                                                 |
+| `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                                                      |
+| `sandbox_read_file`            | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`).                                                                                                                                     |
+| `sandbox_delete_file`          | Act  | Remove a staged file ahead of its TTL.                                                                                                                                                                         |
+| `sandbox_send_to_upload`       | Act  | Forward a staged file's bytes into a pending `*_request_*_upload` slot.                                                                                                                                        |
+| `sandbox_browser_navigate`     | Act  | Open an `https://` URL in the caller's browser session; answers a snapshot.                                                                                                                                    |
+| `sandbox_browser_snapshot`     | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls).                                                                                                                                               |
+| `sandbox_browser_click`        | Act  | Click an element by ref; answers the snapshot of wherever that led.                                                                                                                                            |
+| `sandbox_browser_type`         | Act  | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter.                                                                                              |
+| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values.                                                                                                                                         |
+| `sandbox_browser_select`       | Act  | Choose option(s) of a `<select>` by ref.                                                                                                                                                                       |
+| `sandbox_browser_press_key`    | Act  | Press one key (Escape, Tab, PageDown, ...) in the page.                                                                                                                                                        |
+| `sandbox_browser_scroll`       | Act  | Scroll the page up/down by pixels, or bring one ref into view.                                                                                                                                                 |
+| `sandbox_browser_run`          | Act  | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip.                                                                                                                             |
+| `sandbox_browser_back`         | Act  | Browser history back.                                                                                                                                                                                          |
+| `sandbox_browser_screenshot`   | Act  | PNG of the open page, staged as a scratch-space file.                                                                                                                                                          |
+| `sandbox_browser_close`        | Act  | Close the caller's session (pages, cookies, history).                                                                                                                                                          |
 
-The browser tools exist only when `SANDBOX_BROWSER_ENABLED=true` on both
+`sandbox_render_chart` exists only when `SANDBOX_CHARTS_ENABLED=true` on
+both the web app and the worker. The browser tools exist only when `SANDBOX_BROWSER_ENABLED=true` on both
 the web app and the worker.
 
 ## Deployment

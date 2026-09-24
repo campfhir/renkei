@@ -8,15 +8,18 @@
  * project memory tools; a chat in a project, no personal memory or recall
  * tools either, since a project is self-contained and does not reach
  * outside itself; no attachments, no attachment tools; no file store, no
- * writing — so the model is never offered a verb that can only fail.
+ * writing; no chart renderer, no charts — so the model is never offered a
+ * verb that can only fail.
  */
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { LocalTool, LocalToolContext } from './local-tools';
 import type { ChatToolConfig } from './tool-config';
+import { sandboxChartsEnabled } from '@renkei/sandbox-client';
 import { attachmentTools } from './attachment-tools';
 import { compactionTools } from './compaction-tools';
+import { chartTools } from './chart-tools';
 import { fileTools } from './file-tools';
 import { memoryTools } from './memory-tools';
 import { userMemoryTools } from './user-memory-tools';
@@ -46,7 +49,11 @@ export async function chatLocalTools(
     .limit(1)
     .executeTakeFirst();
   if (hasFiles) tools.push(...attachmentTools(toolConfig));
-  if (filesAllowed) tools.push(...fileTools());
+  if (filesAllowed) {
+    tools.push(...fileTools());
+    // A chart needs the worker's Chromium as well as somewhere to keep the file.
+    if (sandboxChartsEnabled()) tools.push(...chartTools());
+  }
   if (context.projectId) {
     if (!context.readOnly) tools.push(...memoryTools());
   } else if (!context.readOnly) {
