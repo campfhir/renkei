@@ -273,6 +273,21 @@ employee record: a service account or shared mailbox won't have one, and
 `formatUser`'s blank-value filter already omits the line when it's empty,
 so the distinction shows up for free.
 
+**Query values with a space need `%20`, not `+`.** The worker's
+`withQuery()` originally built query strings with `URLSearchParams`
+alone, which serializes as `application/x-www-form-urlencoded` — spaces
+become `+`. A confirmed production caller of this same API instead builds
+its query strings with the `qs` library, whose default (RFC 3986)
+percent-encodes spaces as `%20`, and that caller's convention is the one
+ADManager Plus's own parser actually expects. `withQuery()` now runs a
+`+` → `%20` replace over `URLSearchParams`' output as a final step — safe
+because URLSearchParams itself escapes any literal `+` in a value to
+`%2B` first, so every bare `+` left in the encoded string is one it put
+there to mean a space, never a real plus sign. Left as `+`, any value
+with a space in it — a template name (`AD Update Template`), a filter
+clause on a display name, a group name (`Finance ReadOnly`) — would have
+reached ADManager Plus with literal plus signs instead of spaces.
+
 ## The dedicated worker process, and why it's simpler than Mirth's
 
 ADManager Plus is on-prem, so the same SSRF-guard reasoning as OnBase,
