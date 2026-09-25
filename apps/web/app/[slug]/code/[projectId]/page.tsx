@@ -7,7 +7,6 @@ import { resolveResourceAccess } from '@/lib/chat/access';
 import { loadCodeProjectView } from '@/lib/code/project-view';
 import ProjectView from '../../chat/_components/project-view';
 import CodeSections from '../_components/code-sections';
-import RepoTree from '../_components/repo-tree';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 
 /**
@@ -55,7 +54,6 @@ export default async function CodeProjectPage({
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
       readme={view.code.readme}
       usage={view.code.usage}
-      aside={<RepoTree key="tree" tenantId={tenant.id} projectId={projectId} />}
       before={
         <CodeSections
           key="code"

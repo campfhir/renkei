@@ -434,12 +434,10 @@ test.describe('code projects', () => {
       'href',
       'https://bitbucket.org/acme/billing-service'
     );
-    // The tree is there before any checkout, read from Bitbucket.
-    if (mobile) await main.getByText('Files', { exact: true }).click();
-    const tree = main.getByRole('tree', { name: 'Files' });
-    await expect(tree.getByText('package.json')).toBeVisible();
-    await expect(main.getByText('origin/main')).toBeVisible();
-    await expect(main.getByText('not cloned yet', { exact: true })).toBeVisible();
+    // The project screen carries no file browser — that lives in the code
+    // pane beside a chat (see 'the code pane: read, edit, save, commit and
+    // push beside the chat', below).
+    await expect(main.getByRole('tree', { name: 'Files' })).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     await shot('code-project-not-cloned.png');
 
@@ -449,23 +447,12 @@ test.describe('code projects', () => {
     await seededRow.click();
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
 
-    // ── With a checkout (as a first chat would leave it): Ready, the tree ──
+    // ── With a checkout (as a first chat would leave it): Ready ──
     await seedCheckout(ids);
     await page.reload();
     await expect(repository.getByText('Ready')).toBeVisible();
     await expect(repository.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
     await shot('code-project-ready.png');
-
-    // ── The repository tree, now from the checkout: beside the sections on
-    //    a wide screen, folded above them on a narrow one; folders open as
-    //    they are clicked ──
-    if (mobile) await main.getByText('Files', { exact: true }).click();
-    await expect(tree.getByText('package.json')).toBeVisible();
-    await expect(main.getByText('working branch', { exact: true })).toBeVisible();
-    await expect(main.getByText('origin/main')).toHaveCount(0);
-    await tree.getByRole('button', { name: 'src' }).click();
-    await expect(tree.getByText('billing.ts')).toBeVisible();
-    await shot('code-project-tree.png');
 
     // ── Instructions: a project made without any shows the developer's
     //    brief, unsaved until Save; then it is the project's own ──

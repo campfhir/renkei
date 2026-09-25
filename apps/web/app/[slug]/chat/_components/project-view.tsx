@@ -13,7 +13,6 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useMediaQuery } from '@/lib/use-media-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
@@ -51,7 +50,6 @@ export default function ProjectView({
   initial,
   variant = 'chat',
   before = null,
-  aside = null,
   defaultInstructions = null,
   readme = null,
   usage = null,
@@ -67,11 +65,6 @@ export default function ProjectView({
    */
   variant?: 'chat' | 'code';
   before?: ReactNode;
-  /**
-   * A second column on a wide screen, to the left of the sections — a
-   * code project's repository tree; folded above them on a narrow one.
-   */
-  aside?: ReactNode;
   /**
    * What the instructions field starts as when the project has none —
    * shown so it can be read and changed, kept the moment Save is pressed.
@@ -104,8 +97,6 @@ export default function ProjectView({
   const [instructions, setInstructions] = useState(
     project.instructions ?? defaultInstructions ?? ''
   );
-  // Wide first: the column layout is the usual one, and a phone flips.
-  const wide = useMediaQuery('(min-width: 1024px)', true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -453,28 +444,8 @@ export default function ProjectView({
         </p>
       ) : null}
 
-      <div
-        className={
-          aside
-            ? 'mx-auto max-w-6xl p-4 lg:grid lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:items-start lg:gap-4'
-            : 'mx-auto max-w-3xl p-4'
-        }
-      >
-        {aside && wide ? (
-          <aside
-            className={`${sectionClass} sticky top-4 max-h-[calc(100vh-6rem)] overflow-y-auto`}
-          >
-            <h2 className="mb-1 text-sm font-semibold">Files</h2>
-            {aside}
-          </aside>
-        ) : null}
+      <div className="mx-auto max-w-3xl p-4">
         <div className="space-y-4">
-          {aside && !wide ? (
-            <details className={sectionClass}>
-              <summary className="cursor-pointer text-sm font-semibold">Files</summary>
-              <div className="mt-2">{aside}</div>
-            </details>
-          ) : null}
           {before}
           {variant === 'code' ? chatsSection : null}
           {variant === 'code' ? (
