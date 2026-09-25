@@ -212,18 +212,22 @@ test.describe('branch switcher', () => {
     await expect(repository.getByRole('button', { name: /feature\/x/ })).toBeVisible();
     await shot(page, testInfo, 'branch-switcher-project-switched.png');
 
-    // ── The active chat's title bar: the same control ──
+    // ── The active chat's title bar: the same control (wide screens only —
+    //    below `lg` the title bar has no room for it; see the mobile
+    //    block below for the overflow-menu path it takes instead) ──
     await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
-    const chatSwitcher = chatBranch.getByRole('button');
-    await expect(chatSwitcher).toBeVisible();
-    await chatSwitcher.click();
-    const chatListbox = page.getByRole('listbox', { name: 'Switch branch' });
-    await expect(chatListbox.getByRole('option', { name: 'feature/x' })).toBeVisible();
-    await chatListbox.getByRole('option', { name: 'feature/x' }).click();
-    await expect(chatBranch.getByText('feature/x')).toBeVisible();
-    await shot(page, testInfo, 'branch-switcher-chat-switched.png');
+    if (!mobile) {
+      const chatSwitcher = chatBranch.getByRole('button');
+      await expect(chatSwitcher).toBeVisible();
+      await chatSwitcher.click();
+      const chatListbox = page.getByRole('listbox', { name: 'Switch branch' });
+      await expect(chatListbox.getByRole('option', { name: 'feature/x' })).toBeVisible();
+      await chatListbox.getByRole('option', { name: 'feature/x' }).click();
+      await expect(chatBranch.getByText('feature/x')).toBeVisible();
+      await shot(page, testInfo, 'branch-switcher-chat-switched.png');
+    }
 
     // ── A history chat: the plain read-only label, no switcher ──
     await page.goto(`/${E2E_SLUG}/chat/${ids.historyChatId}`);
@@ -242,5 +246,29 @@ test.describe('branch switcher', () => {
     await repository.getByRole('button', { name: /feature\/x|main/ }).click();
     await expect(page.getByRole('listbox', { name: 'Switch branch' })).toBeVisible();
     await shot(page, testInfo, 'branch-switcher-mobile.png');
+
+    // ── Mobile: the active chat's title bar shows the plain label (no
+    //    button — no room for the anchored dropdown), and "Switch branch"
+    //    in the "⋯" overflow menu opens the same picker as a modal ──
+    await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
+    await page.setViewportSize(MOBILE_VIEWPORT);
+    await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
+    // Both the `lg:` and sub-`lg:` variants sit in the DOM at once (one
+    // display:none'd by CSS) — textContent includes a hidden element's
+    // text even though the accessibility tree (what getByRole reads)
+    // correctly excludes it, so text assertions scope to the one
+    // CSS-visible wrapper the same way a mobile/desktop layout pair
+    // elsewhere in this suite does.
+    const chatBranchVisible = chatBranch.locator(':scope > div').filter({ visible: true });
+    await expect(chatBranch.getByRole('button')).toHaveCount(0);
+    await expect(chatBranchVisible).toContainText(/feature\/x|main/);
+    await page.getByRole('button', { name: 'More' }).click();
+    await page.getByRole('menuitem', { name: 'Switch branch' }).click();
+    const branchModal = page.getByRole('dialog', { name: 'Switch branch' });
+    await expect(branchModal.getByRole('option', { name: 'feature/x' })).toBeVisible();
+    await branchModal.getByRole('option', { name: 'feature/x' }).click();
+    await expect(branchModal).toHaveCount(0);
+    await expect(chatBranchVisible).toContainText('feature/x');
+    await shot(page, testInfo, 'branch-switcher-chat-mobile-overflow.png');
   });
 });

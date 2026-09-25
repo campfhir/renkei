@@ -9,16 +9,69 @@
  * is pointless). Both call the same route
  * (…/code/projects/[projectId]/branch), which refuses mid-turn and
  * dirty-tree switches with a clear reason.
+ *
+ * The chat title bar is too cramped on a phone for this component's own
+ * anchored dropdown — a long branch name there forced the trigger past
+ * the header's bounds, rendering over the transcript beneath it. Below
+ * `lg`, chat-thread.tsx swaps this for the plain read-only label plus a
+ * "Switch branch" entry in the title bar's overflow menu, which opens
+ * `BranchPickerModal` (also exported here) — the same list and POST,
+ * inside the shared `Modal`, portalled to `<body>` so it answers only to
+ * the viewport (modal.tsx's own header comment has this exact class of
+ * clipping/overlap bug, and why the portal fixes it).
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
+import Modal from '@/components/modal';
 
 interface HostBranch {
   name: string;
   headSha: string;
+}
+
+/** The branch list + switch mechanics, shared by the inline dropdown and the modal picker. */
+function useBranchSwitch(base: string, branch: string | null) {
+  const router = useRouter();
+  const [branches, setBranches] = useState<HostBranch[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  // Shown immediately on a successful switch, rather than waiting on the
+  // server round-trip a router.refresh() triggers — the person just
+  // watched it happen. Re-synced whenever the project's own idea of the
+  // branch moves for some other reason (a new chat cloning fresh, say).
+  const [shown, setShown] = useState(branch);
+  useEffect(() => setShown(branch), [branch]);
+
+  const load = () => {
+    if (branches !== null) return;
+    void (async () => {
+      const result = await getJson<{ branches: HostBranch[] }>(base);
+      if (result.data) setBranches(result.data.branches);
+      else setLoadError(result.error ?? 'Branches could not be read.');
+    })();
+  };
+
+  const pick = async (name: string): Promise<boolean> => {
+    if (name === shown || switching) return false;
+    setSwitching(true);
+    setSwitchError(null);
+    const result = await sendJsonFull<{ branch: string }>(base, 'POST', { branch: name });
+    setSwitching(false);
+    if (result.error) {
+      setSwitchError(result.error);
+      return false;
+    }
+    setShown(result.data?.branch ?? name);
+    setBranches(null);
+    router.refresh();
+    return true;
+  };
+
+  return { branches, loadError, switching, switchError, shown, load, pick };
 }
 
 export default function BranchSwitcher({
@@ -39,29 +92,17 @@ export default function BranchSwitcher({
    * missing (no checkout yet, no edit access) instead of staying silent. */
   reason?: string;
 }) {
-  const router = useRouter();
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}/branch`;
   const [open, setOpen] = useState(false);
-  const [branches, setBranches] = useState<HostBranch[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
-  const [switchError, setSwitchError] = useState<string | null>(null);
+  const { branches, loadError, switching, switchError, shown, load, pick } = useBranchSwitch(
+    base,
+    branch
+  );
   const rootRef = useRef<HTMLDivElement>(null);
-  // Shown immediately on a successful switch, rather than waiting on the
-  // server round-trip a router.refresh() triggers — the person just
-  // watched it happen. Re-synced whenever the project's own idea of the
-  // branch moves for some other reason (a new chat cloning fresh, say).
-  const [shown, setShown] = useState(branch);
-  useEffect(() => setShown(branch), [branch]);
 
   useEffect(() => {
-    if (!open || branches !== null) return;
-    void (async () => {
-      const result = await getJson<{ branches: HostBranch[] }>(base);
-      if (result.data) setBranches(result.data.branches);
-      else setLoadError(result.error ?? 'Branches could not be read.');
-    })();
-  }, [open, branches, base]);
+    if (open) load();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -78,47 +119,32 @@ export default function BranchSwitcher({
     return () => document.removeEventListener('mousedown', onOutside);
   }, [open]);
 
-  const pick = async (name: string) => {
-    if (name === shown || switching) return;
-    setSwitching(true);
-    setSwitchError(null);
-    const result = await sendJsonFull<{ branch: string }>(base, 'POST', { branch: name });
-    setSwitching(false);
-    if (result.error) {
-      setSwitchError(result.error);
-      return;
-    }
-    setShown(result.data?.branch ?? name);
-    setOpen(false);
-    setBranches(null);
-    router.refresh();
+  const pickAndClose = async (name: string) => {
+    if (await pick(name)) setOpen(false);
   };
 
   if (!canSwitch) {
     return (
-      <span
-        className={`inline-flex items-center gap-1 font-mono ${className}`}
-        title={reason}
-      >
+      <span className={`inline-flex min-w-0 items-center gap-1 font-mono ${className}`} title={reason}>
         <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0" />
-        {shown || 'default branch'}
+        <span className="truncate">{shown || 'default branch'}</span>
       </span>
     );
   }
 
   return (
-    <div ref={rootRef} className={`relative inline-block ${className}`}>
+    <div ref={rootRef} className={`relative inline-block min-w-0 ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((was) => !was)}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={switching}
-        className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 font-mono text-xs hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+        className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 font-mono text-xs hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
         title="Switch branch"
       >
         <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0" />
-        {shown || 'default branch'}
+        <span className="min-w-0 truncate">{shown || 'default branch'}</span>
         <Icon path={ICONS.chevron} className="h-3 w-3 shrink-0 rotate-90" />
       </button>
       {open ? (
@@ -140,7 +166,7 @@ export default function BranchSwitcher({
                 type="button"
                 role="option"
                 aria-selected={option.name === shown}
-                onClick={() => void pick(option.name)}
+                onClick={() => void pickAndClose(option.name)}
                 className={`block w-full truncate px-3 py-1 text-left font-mono text-xs hover:bg-gray-100 dark:hover:bg-gray-800 ${
                   option.name === shown ? 'font-semibold' : ''
                 }`}
@@ -157,5 +183,86 @@ export default function BranchSwitcher({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The same branch list and POST, inside the shared Modal — for the
+ * chat title bar's overflow menu on a narrow screen, where the inline
+ * dropdown above has no room (see this file's header comment).
+ */
+export function BranchPickerModal({
+  tenantId,
+  projectId,
+  branch,
+  onClose,
+  onSwitched,
+}: {
+  tenantId: string;
+  projectId: string;
+  branch: string | null;
+  onClose: () => void;
+  /**
+   * The modal unmounts on close, taking its own optimistic `shown` state
+   * with it — unlike the inline dropdown, which updates itself in place.
+   * The caller uses this to update whatever `branch` it passes to the
+   * title bar's other, still-mounted label immediately, rather than
+   * waiting on a full router.refresh() round-trip to reach it.
+   */
+  onSwitched?: (branch: string) => void;
+}) {
+  const base = `/api/tenant/${tenantId}/code/projects/${projectId}/branch`;
+  const { branches, loadError, switching, switchError, shown, load, pick } = useBranchSwitch(
+    base,
+    branch
+  );
+  // Mount-once: the modal is unmounted (not just hidden) on close, so
+  // there is no "reopened" case to re-key this on.
+  useEffect(() => {
+    load();
+  }, []);
+
+  const pickAndClose = async (name: string) => {
+    if (await pick(name)) {
+      onSwitched?.(name);
+      onClose();
+    }
+  };
+
+  return (
+    <Modal title="Switch branch" onClose={onClose}>
+      <div role="listbox" aria-label="Switch branch" className="max-h-80 space-y-0.5 overflow-y-auto">
+        {loadError ? (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {loadError}
+          </p>
+        ) : branches === null ? (
+          <p className="text-sm text-gray-500">Loading branches…</p>
+        ) : branches.length === 0 ? (
+          <p className="text-sm text-gray-500">No branches.</p>
+        ) : (
+          branches.map((option) => (
+            <button
+              key={option.name}
+              type="button"
+              role="option"
+              aria-selected={option.name === shown}
+              disabled={switching}
+              onClick={() => void pickAndClose(option.name)}
+              className={`block w-full truncate rounded-md px-3 py-2 text-left font-mono text-sm hover:bg-gray-100 disabled:opacity-60 dark:hover:bg-gray-900 ${
+                option.name === shown ? 'font-semibold' : ''
+              }`}
+            >
+              {option.name}
+            </button>
+          ))
+        )}
+      </div>
+      {switchError ? (
+        <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
+          {switchError}
+        </p>
+      ) : null}
+    </Modal>
   );
 }

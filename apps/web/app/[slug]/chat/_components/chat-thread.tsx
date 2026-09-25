@@ -58,7 +58,7 @@ import {
 import Modal from '@/components/modal';
 import ArtifactsMenu from './artifacts-menu';
 import ChatTitle from './chat-title';
-import BranchSwitcher from '../../code/_components/branch-switcher';
+import BranchSwitcher, { BranchPickerModal } from '../../code/_components/branch-switcher';
 import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
@@ -180,7 +180,7 @@ export default function ChatThread({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [share, setShare] = useState(false);
-  const [manageDialog, setManageDialog] = useState<'rename' | 'delete' | null>(null);
+  const [manageDialog, setManageDialog] = useState<'rename' | 'delete' | 'branch' | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [manageBusy, setManageBusy] = useState(false);
   const [manageError, setManageError] = useState<string | null>(null);
@@ -910,7 +910,16 @@ export default function ChatThread({
   const [subagent, setSubagent] = useState<string | null>(null);
   // The branch under the title: the page's word until the first look at
   // the checkout, then whatever the last look said.
-  const branch = codeProjectId ? (codeTools.branch ?? chat.projectBranch) : null;
+  // BranchPickerModal (the overflow menu's mobile picker) unmounts on a
+  // successful switch, taking its own optimistic state with it — this
+  // override stands in until router.refresh() lands fresh data,
+  // matching what the inline dropdown does for itself in place.
+  const [branchOverride, setBranchOverride] = useState<string | null>(null);
+  const liveBranch = codeProjectId ? (codeTools.branch ?? chat.projectBranch) : null;
+  // Once the live source catches up (router.refresh() landed, or a tool
+  // call moved the branch some other way), it wins again.
+  useEffect(() => setBranchOverride(null), [liveBranch]);
+  const branch = branchOverride ?? liveBranch;
   const overflow: OverflowItem[] = [
     { label: 'New chat', icon: ICONS.plus, onSelect: () => void startNewChat() },
   ];
@@ -927,6 +936,16 @@ export default function ChatThread({
           <ChangesBadge tools={codeTools} />
         ) : undefined,
     });
+    // The title bar's own inline switcher (below) hides below `lg` for
+    // want of room — this is its only path on a narrow screen, and works
+    // at every width, the same way Rename lives beside the pencil below.
+    if (!history && isOwner) {
+      overflow.push({
+        label: 'Switch branch',
+        icon: ICONS.gitBranch,
+        onSelect: () => setManageDialog('branch'),
+      });
+    }
   }
   if (isOwner) {
     overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
@@ -1085,14 +1104,40 @@ export default function ChatThread({
             onRename={rename}
             branchSwitcher={
               codeProjectId && !history ? (
-                <BranchSwitcher
-                  tenantId={tenantId}
-                  projectId={codeProjectId}
-                  branch={branch}
-                  canSwitch={isOwner}
-                  reason={isOwner ? undefined : 'Only the person who owns this chat can switch branches.'}
-                  className="text-xs text-gray-500"
-                />
+                <>
+                  {/* The anchored dropdown needs room the title bar doesn't
+                      have below `lg` (a long branch name there rendered
+                      past the header's bounds, over the transcript) —
+                      display:contents wrappers swap it for the plain
+                      label, whose "Switch branch" lives in the overflow
+                      menu instead (see the `overflow` items above). */}
+                  <div className="hidden lg:contents">
+                    <BranchSwitcher
+                      tenantId={tenantId}
+                      projectId={codeProjectId}
+                      branch={branch}
+                      canSwitch={isOwner}
+                      reason={
+                        isOwner ? undefined : 'Only the person who owns this chat can switch branches.'
+                      }
+                      className="text-xs text-gray-500"
+                    />
+                  </div>
+                  <div className="contents lg:hidden">
+                    <BranchSwitcher
+                      tenantId={tenantId}
+                      projectId={codeProjectId}
+                      branch={branch}
+                      canSwitch={false}
+                      reason={
+                        isOwner
+                          ? 'Use the ⋯ menu to switch branches on a small screen.'
+                          : 'Only the person who owns this chat can switch branches.'
+                      }
+                      className="text-xs text-gray-500"
+                    />
+                  </div>
+                </>
               ) : null
             }
           />
@@ -1471,6 +1516,15 @@ export default function ChatThread({
             onConfirm={deleteChat}
           />
         </Modal>
+      ) : null}
+      {manageDialog === 'branch' && codeProjectId ? (
+        <BranchPickerModal
+          tenantId={tenantId}
+          projectId={codeProjectId}
+          branch={branch}
+          onClose={() => setManageDialog(null)}
+          onSwitched={setBranchOverride}
+        />
       ) : null}
     </div>
   );
