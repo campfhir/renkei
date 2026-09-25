@@ -1374,6 +1374,147 @@ describe('runChatTurn on a tool call cut off by the output-token ceiling', () =>
   });
 });
 
+describe('runChatTurn on a tool call whose arguments never started streaming', () => {
+  it('refuses it as cut off instead of calling the tool with {} when the reply ran out of room', async () => {
+    // The Responses API opens a function_call item (id and name) before any
+    // argument fragment arrives; a reasoning model can spend the whole
+    // output budget before the first one, so the reply stops on
+    // max_output_tokens with the call open and its arguments empty. The
+    // raw partialJson is then '' — which parses fine — and the call used
+    // to be made with `{}`, failing the tool's own input validation with a
+    // message that hid the real cause ("spaceId: expected string, received
+    // undefined" on confluence_create_page).
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-truncated-2');
+    const calls: string[] = [];
+    let replies = 0;
+    const cutOffBeforeArgs: LlmProvider = {
+      async complete() {
+        throw new Error('not used — this test drives stream() directly');
+      },
+      async stream(_request, options) {
+        replies += 1;
+        if (replies === 1) {
+          const usage = { inputTokens: 10, outputTokens: 4096 };
+          options.onEvent({ type: 'message_start' });
+          options.onEvent({
+            type: 'block_start',
+            index: 0,
+            block: { type: 'thinking', thinking: '', signature: '' },
+          });
+          options.onEvent({ type: 'thinking_delta', index: 0, thinking: 'planning the page…' });
+          options.onEvent({ type: 'block_stop', index: 0 });
+          options.onEvent({
+            type: 'block_start',
+            index: 1,
+            block: { type: 'tool_use', id: 'tu_page', name: 'confluence_create_page', input: {} },
+          });
+          // No input_json_delta and no block_stop: the budget ran out here.
+          options.onEvent({ type: 'message_end', stopReason: 'max_tokens', usage });
+          return ok({
+            content: [
+              { type: 'thinking', thinking: 'planning the page…', signature: '' },
+              { type: 'tool_use', id: 'tu_page', name: 'confluence_create_page', input: {} },
+            ],
+            stopReason: 'max_tokens' as const,
+            usage,
+          });
+        }
+        const usage = { inputTokens: 10, outputTokens: 5 };
+        options.onEvent({ type: 'message_start' });
+        options.onEvent({ type: 'block_start', index: 0, block: { type: 'text', text: '' } });
+        options.onEvent({ type: 'text_delta', index: 0, text: 'Retrying smaller.' });
+        options.onEvent({ type: 'block_stop', index: 0 });
+        options.onEvent({ type: 'message_end', stopReason: 'end_turn', usage });
+        return ok({
+          content: [{ type: 'text', text: 'Retrying smaller.' }],
+          stopReason: 'end_turn' as const,
+          usage,
+        });
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(cutOffBeforeArgs),
+        tools: [{ name: 'confluence_create_page', description: '', inputSchema: {} }],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-truncated-2')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(calls).toEqual([]);
+    const results = [...fake.rows.values()].find((row) => row.kind === 'tool_results');
+    expect(results?.blocks[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseId: 'tu_page',
+      isError: true,
+      content: expect.stringContaining('cut off'),
+    });
+  });
+
+  it('still runs a genuinely argument-less call when the reply finished normally', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-noargs-1');
+    const calls: string[] = [];
+    let replies = 0;
+    const noArgs: LlmProvider = {
+      async complete() {
+        throw new Error('not used — this test drives stream() directly');
+      },
+      async stream(_request, options) {
+        replies += 1;
+        if (replies === 1) {
+          const usage = { inputTokens: 10, outputTokens: 5 };
+          options.onEvent({ type: 'message_start' });
+          options.onEvent({
+            type: 'block_start',
+            index: 0,
+            block: { type: 'tool_use', id: 'tu_who', name: 'whoami', input: {} },
+          });
+          options.onEvent({ type: 'block_stop', index: 0 });
+          options.onEvent({ type: 'message_end', stopReason: 'tool_use', usage });
+          return ok({
+            content: [{ type: 'tool_use', id: 'tu_who', name: 'whoami', input: {} }],
+            stopReason: 'tool_use' as const,
+            usage,
+          });
+        }
+        const usage = { inputTokens: 10, outputTokens: 5 };
+        options.onEvent({ type: 'message_start' });
+        options.onEvent({ type: 'block_start', index: 0, block: { type: 'text', text: '' } });
+        options.onEvent({ type: 'text_delta', index: 0, text: 'Done.' });
+        options.onEvent({ type: 'block_stop', index: 0 });
+        options.onEvent({ type: 'message_end', stopReason: 'end_turn', usage });
+        return ok({
+          content: [{ type: 'text', text: 'Done.' }],
+          stopReason: 'end_turn' as const,
+          usage,
+        });
+      },
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(noArgs),
+        tools: [{ name: 'whoami', description: '', inputSchema: {} }],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-noargs-1')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(calls).toEqual(['whoami:{}']);
+  });
+});
+
 describe('runChatTurn logs every tool call attempt', () => {
   it('logs the attempt and outcome at debug, whether the call ran or was refused', async () => {
     const fake = fakeStore();

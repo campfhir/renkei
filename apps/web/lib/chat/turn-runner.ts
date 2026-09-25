@@ -548,9 +548,16 @@ function clip(text: string, max: number): string {
  * text `mirror` kept as input_json_delta events arrived (see its
  * `partialJson` doc below).
  */
-function isTruncatedToolInput(raw: string | undefined): boolean {
+function isTruncatedToolInput(raw: string | undefined, ranOutOfRoom: boolean): boolean {
   const trimmed = (raw ?? '').trim();
-  if (!trimmed) return false;
+  // No argument text at all: a call the provider opened (its id and name
+  // arrive first, on the Responses API before any argument fragment) and
+  // then never filled in because the reply hit its output ceiling — the
+  // reasoning ahead of it can eat the whole budget. It looks exactly like
+  // a genuinely argument-less call, so only the stop reason tells them
+  // apart; a no-argument call in a reply that ran out of room is the rarer
+  // of the two by far, and refusing it costs one retry.
+  if (!trimmed) return ranOutOfRoom;
   try {
     JSON.parse(trimmed);
     return false;
@@ -1135,17 +1142,20 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       // for each tool_use block, which is how a call cut off mid-argument
       // (ran out of output room) is told apart from one that legitimately
       // took no arguments: both parse to the assembled reply's `{}`, but
-      // only the cut-off one fails to parse here. See `truncatedToolIds`.
+      // only the cut-off one fails to parse here — or, when the cut came
+      // before the first fragment, never streamed anything at all in a
+      // reply that stopped on max_tokens. See `truncatedToolIds`.
       const streamedBlocks = blocks;
       // The assembled response is canonical: tool input parsed, nothing
       // the mirror might have missed.
       blocks = reply.content;
+      const ranOutOfRoom = reply.stopReason === 'max_tokens';
       const truncatedToolIds = new Set(
         reply.content
           .filter(
             (block, index): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
               block.type === 'tool_use' &&
-              isTruncatedToolInput(mirroredPartialJson(streamedBlocks[index]))
+              isTruncatedToolInput(mirroredPartialJson(streamedBlocks[index]), ranOutOfRoom)
           )
           .map((block) => block.id)
       );
