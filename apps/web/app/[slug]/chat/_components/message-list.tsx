@@ -38,14 +38,10 @@ import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
 import { formatDurationMs } from '@/lib/duration';
 import { parseNote } from '@/lib/code/note-text';
 import { parseCommitResult } from '@/lib/code/chat-commits';
-import {
-  milestoneKindOf,
-  milestoneSentence,
-  milestoneSummary,
-  type MilestoneState,
-} from '@/lib/code/milestones';
+import { milestoneSentence, milestoneSummary, type MilestoneState } from '@/lib/code/milestones';
 import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
 import { parseTaskCompletion, TASK_COMPLETE_TOOL } from '@/lib/chat/auto-mode';
+import { CHAT_DELEGATE_TOOL, isSubagentTool } from '@/lib/chat/subagent-tools';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
 import CodePane from './code-pane';
@@ -82,7 +78,7 @@ function toolIconFor(name: string): string {
   if (git) return GIT_ICONS[git];
   if (name === 'code_write_file' || name === 'code_edit_file') return ICONS.diff;
   if (name === 'code_run') return ICONS.terminal;
-  if (name === 'code_delegate') return ICONS.group;
+  if (isSubagentTool(name)) return ICONS.group;
   if (name.startsWith('code_')) return ICONS.file;
   if (name === 'chat_recall_chats') return ICONS.history;
   return ICONS.tool;
@@ -141,8 +137,6 @@ export interface PromptActions {
 export interface CodeActions {
   /** Open the Changes panel on this commit's diff. */
   onShowCommit: (sha: string) => void;
-  /** Open a sub-agent's run — progress, report, transcript — by its delegating call. */
-  onShowSubagent: (toolUseId: string) => void;
   /** Open a file in the code pane — the Open link on a tool result's diff. Absent when the pane is not there. */
   onOpenFile?: ((path: string) => void) | null;
 }
@@ -173,6 +167,7 @@ export default function MessageList({
   permission = null,
   code = null,
   subagents = {},
+  onShowSubagent = null,
   onWidgetDecision = null,
 }: {
   tenantId: string;
@@ -191,6 +186,8 @@ export default function MessageList({
   code?: CodeActions | null;
   /** Sub-agents' live state by delegating call, from the stream (stream-events.ts). */
   subagents?: Record<string, SubagentProgress>;
+  /** Open a sub-agent's run — progress, report, transcript — by its delegating call. */
+  onShowSubagent?: ((toolUseId: string) => void) | null;
   /** A preview card's decision landed (widget-card.tsx): the note to show and the turn to stream. */
   onWidgetDecision?: ((outcome: WidgetModelContextOutcome) => void) | null;
 }) {
@@ -264,6 +261,7 @@ export default function MessageList({
                 permission={running && group.key === lastTurnKey ? permission : null}
                 code={code}
                 subagents={subagents}
+                onShowSubagent={onShowSubagent}
                 onWidgetDecision={onWidgetDecision}
               />
             ) : null}
@@ -463,6 +461,7 @@ function Reply({
   permission,
   code,
   subagents,
+  onShowSubagent,
   onWidgetDecision,
 }: {
   tenantId: string;
@@ -476,9 +475,15 @@ function Reply({
   permission: PermissionPrompt | null;
   code: CodeActions | null;
   subagents: Record<string, SubagentProgress>;
+  onShowSubagent: ((toolUseId: string) => void) | null;
   onWidgetDecision: ((outcome: WidgetModelContextOutcome) => void) | null;
 }) {
-  const segments = useMemo(() => segment(messages, results), [messages, results]);
+  // Milestone cards are a code project's: `code` is there exactly then.
+  const codeProject = code !== null;
+  const segments = useMemo(
+    () => segment(messages, results, { codeProject }),
+    [messages, results, codeProject]
+  );
   // The call the ask is about, for the card to show its input.
   const askedCall = useMemo(() => {
     if (!permission) return null;
@@ -544,7 +549,7 @@ function Reply({
                           : 'failed'
                 }
                 progress={subagents[step.block.id] ?? null}
-                code={code}
+                onShow={onShowSubagent}
               />
             );
           }
@@ -874,12 +879,13 @@ function SubagentCard({
   step,
   state,
   progress,
-  code,
+  onShow,
 }: {
   step: Extract<WorkStep, { kind: 'call' }>;
   state: MilestoneState;
   progress: SubagentProgress | null;
-  code: CodeActions | null;
+  /** Open the run's transcript; absent where the thread cannot show one. */
+  onShow: ((toolUseId: string) => void) | null;
 }) {
   const input =
     typeof step.block.input === 'object' && step.block.input !== null ? step.block.input : {};
@@ -888,7 +894,9 @@ function SubagentCard({
   const task = typeof record.task === 'string' ? record.task.trim() : '';
   const taskLine = task.split('\n').find((line) => line.trim()) ?? '';
   const instructions = typeof record.instructions === 'string' ? record.instructions.trim() : '';
-  const readOnly = record.readOnly === true;
+  // An ordinary chat's sub-agent only ever reads (chat-delegate.ts); a
+  // code project's says so per task.
+  const readOnly = record.readOnly === true || step.block.name === CHAT_DELEGATE_TOOL;
   // The model the orchestrator picked for this task, when it picked one;
   // absent, the sub-agent ran on the chat's own (the transcript says which).
   const model = typeof record.model === 'string' ? record.model.trim() : '';
@@ -959,10 +967,10 @@ function SubagentCard({
             <CodePane text={step.result.content} />
           </div>
         ) : null}
-        {code ? (
+        {onShow ? (
           <button
             type="button"
-            onClick={() => code.onShowSubagent(step.block.id)}
+            onClick={() => onShow(step.block.id)}
             className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
           >
             <Icon path={ICONS.history} className="h-3.5 w-3.5" />
@@ -1082,7 +1090,6 @@ function MilestoneCard({
   const name = step.block.name;
   const isTaskEnd = name === TASK_COMPLETE_TOOL;
   const completion = isTaskEnd ? parseTaskCompletion(step.block.input) : null;
-  const kind = isTaskEnd ? 'act' : (milestoneKindOf(name) ?? 'read');
   const resultText = step.result?.content ?? '';
   const summary = step.result && !step.result.isError ? milestoneSummary(resultText) : null;
   const commit =
@@ -1113,9 +1120,7 @@ function MilestoneCard({
           ? completion?.outcome === 'needs_input'
             ? 'text-amber-600 dark:text-amber-400'
             : 'text-green-600 dark:text-green-400'
-          : kind === 'act'
-            ? 'text-blue-600 dark:text-blue-400'
-            : 'text-gray-400';
+          : 'text-blue-600 dark:text-blue-400';
   const failLine = step.result?.isError
     ? (resultText.split('\n').find((line) => line.trim()) ?? 'The call failed.')
     : null;

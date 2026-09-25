@@ -36,6 +36,15 @@ describe('segment', () => {
     expect(out.filter((part) => part.kind === 'subagent')).toHaveLength(1);
   });
 
+  it('gives an ordinary chat’s chat_delegate call the same subagent card', () => {
+    const messages = [
+      assistantMessage('m1', [toolUse('d1', 'chat_delegate', { task: 'read the tickets' })]),
+    ];
+    const out = segment(messages, new Map());
+    expect(out.filter((part) => part.kind === 'subagent')).toHaveLength(1);
+    expect(out.filter((part) => part.kind === 'work')).toHaveLength(0);
+  });
+
   it('folds a second sighting of the same call id into the first card', () => {
     // The same tool_use id at two positions — the shape a streaming index
     // that does not line up with the final response's would produce: a
@@ -71,8 +80,53 @@ describe('segment', () => {
         toolUse('p1', 'code_git_push', { branch: 'main' }),
       ]),
     ];
-    const out = segment(messages, new Map());
+    const out = segment(messages, new Map(), { codeProject: true });
     expect(out.filter((part) => part.kind === 'milestone')).toHaveLength(1);
+  });
+
+  it('lifts a host act on a pull request, a commit or a branch as a milestone in a code chat', () => {
+    const messages = [
+      assistantMessage('m1', [
+        toolUse('b1', 'bitbucket_create_branch', { name: 'feat/x' }),
+        toolUse('c1', 'github_commit_files', { branch: 'feat/x' }),
+        toolUse('p1', 'github_create_pull_request', { title: 'Fix' }),
+      ]),
+    ];
+    const out = segment(messages, new Map(), { codeProject: true });
+    expect(out.filter((part) => part.kind === 'milestone')).toHaveLength(3);
+    expect(out.filter((part) => part.kind === 'work')).toHaveLength(0);
+  });
+
+  it('outside a code project, a word to the host folds like any other call', () => {
+    const messages = [
+      assistantMessage('m1', [
+        toolUse('p1', 'github_create_pull_request', { title: 'Fix' }),
+        toolUse('c1', 'bitbucket_commit_files', { branch: 'feat/x' }),
+        toolUse('r1', 'jira_get_issue', { key: 'OPS-1' }),
+      ]),
+    ];
+    const out = segment(messages, new Map());
+    expect(out.filter((part) => part.kind === 'milestone')).toHaveLength(0);
+    const work = out.filter((part) => part.kind === 'work');
+    expect(work).toHaveLength(1);
+    expect(work[0]?.kind === 'work' && work[0].steps).toHaveLength(3);
+  });
+
+  it('folds the host’s reads and quieter acts with the rest of the work, in a code chat too', () => {
+    const messages = [
+      assistantMessage('m1', [
+        toolUse('r1', 'bitbucket_read_file', { path: 'a.ts' }),
+        toolUse('r2', 'github_list_branches', {}),
+        toolUse('r3', 'bitbucket_list_pipelines', {}),
+        toolUse('r4', 'github_add_pr_comment', { body: 'ok' }),
+        toolUse('r5', 'jira_get_issue', { key: 'OPS-1' }),
+      ]),
+    ];
+    const out = segment(messages, new Map(), { codeProject: true });
+    expect(out.filter((part) => part.kind === 'milestone')).toHaveLength(0);
+    const work = out.filter((part) => part.kind === 'work');
+    expect(work).toHaveLength(1);
+    expect(work[0]?.kind === 'work' && work[0].steps).toHaveLength(5);
   });
 
   it('gives two genuinely different calls two cards', () => {

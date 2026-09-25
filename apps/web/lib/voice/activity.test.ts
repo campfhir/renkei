@@ -9,6 +9,7 @@ import { spokenActivity, spokenAsk } from './activity';
 describe('spokenActivity', () => {
   it('turns a connector tool into what it is doing, naming the connector', () => {
     expect(spokenActivity('jira_search_issues')).toBe('Searching Jira issues');
+    expect(spokenActivity('chat_delegate')).toBe('Handing a task to a sub-agent');
     expect(spokenActivity('outlook_find_meeting_times')).toBe('Finding Outlook meeting times');
     expect(spokenActivity('confluence_create_page')).toBe('Creating Confluence page');
     expect(spokenActivity('jsm_ops_list_alerts')).toBe('Listing Jira operations alerts');

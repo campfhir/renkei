@@ -60,6 +60,15 @@ export interface SystemPromptInput {
    */
   voice?: boolean;
   /**
+   * chat_delegate is among the tools (chat-delegate.ts): the chat can hand
+   * reading work to a sub-agent, and the brief says to — so the
+   * conversation stays a conversation, and in voice mode the person is
+   * not left listening to silence while the main model works through
+   * a dozen calls. Absent in a code project's chat, where code_delegate
+   * and CODE_BRIEF cover delegating.
+   */
+  hasDelegate?: boolean;
+  /**
    * outlook_search_users is among the tools: there is a live employee
    * directory, so the prompt says to use it — not search_knowledge or a
    * file — for who someone is. Optional so existing callers/fixtures that
@@ -183,6 +192,24 @@ const SERVICES_BRIEF = `When the project's tests or commands need a service — 
  */
 const VOICE_BRIEF = `This is a voice conversation: what you write is read aloud to the person as it streams, and they cannot see the tools you call — a call is silence to them. Before each tool call, say in one short, plain sentence what you are about to do and with what, then call it: "Looking for a slot with Priya and Marcus on Thursday afternoon", "Checking OPS-41 in Jira", "Searching the last sprint for issues that slipped". After several calls in a row, say in a sentence what you have found so far before going on. Write the reply the way you would say it: short sentences, no headings, tables, bullet lists, code or links unless asked for them, names and numbers said plainly, and a question at the end only when you need an answer.`;
 
+/**
+ * In a voice conversation the person is on the line while the model
+ * works, and every call the main model makes is silence to them. With a
+ * sub-agent to hand work to, the main model's job is the conversation:
+ * one or two quick calls of its own, and everything longer handed off
+ * in a sentence.
+ */
+const VOICE_DELEGATE_BRIEF = `The person is waiting on the line while you work, so keep your own tool calls to the one or two that are quick, and hand anything that takes more than that — reading several tickets or pages, searching across systems, comparing documents — to a sub-agent with chat_delegate: say in a sentence what you have handed off ("I'm having the last three sprints looked through — one moment"), and answer from its report when it comes back.`;
+
+/**
+ * An ordinary chat with chat_delegate (chat-delegate.ts): the chat is a
+ * conversation, and its context is for the conversation — the reading
+ * behind an answer is the sub-agent's, and only the report comes back.
+ * What creates, changes or sends stays with the chat, where the person
+ * is asked.
+ */
+const DELEGATE_BRIEF = `Keep this conversation for the conversation. Anything that takes more than a call or two — reading several tickets or pages, searching across systems, comparing documents, pulling together what a summary needs — goes to a sub-agent with chat_delegate: give it a complete, self-contained task with what to report, one sub-agent per piece, and answer from its report. Its own calls and results never enter this conversation; only its report does, and it is kept for you. Read reports critically — you own the answer — and keep for yourself what is quick (one lookup, a check of what a report claims) and everything that creates, changes or sends something, which only you do, with the person's say-so.`;
+
 /** `2026-09-04T10:00Z`: the ISO stamp with minutes and seconds dropped. */
 export function hourStamp(now: Date): string {
   return `${now.toISOString().slice(0, 13)}:00Z`;
@@ -249,7 +276,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     );
   }
   if (input.voice) {
-    sections.push(VOICE_BRIEF);
+    sections.push(input.hasDelegate ? `${VOICE_BRIEF}\n\n${VOICE_DELEGATE_BRIEF}` : VOICE_BRIEF);
   }
   if (input.hasTools) {
     sections.push(
@@ -257,6 +284,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
         ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches; to read a public web page or a document at a URL, sandbox_fetch_page is one call and needs no browser."
         : "Tools act with this person's own permissions in the organization's systems."
     );
+  }
+  if (input.hasDelegate) {
+    sections.push(DELEGATE_BRIEF);
   }
   if (input.hasDiscoverableTools) {
     sections.push(DISCOVERY_BRIEF);
@@ -318,7 +348,7 @@ function nonEmpty(blocks: LlmContentBlock[]): LlmContentBlock[] {
 export const ELIDED_RESULT_KEEP_CHARS = 600;
 
 /** Tools whose results are kept whole across turns: a sub-agent's report IS the context. */
-const NEVER_ELIDED = new Set(['code_delegate']);
+const NEVER_ELIDED = new Set(['code_delegate', 'chat_delegate']);
 
 export interface HistoryOptions {
   /**

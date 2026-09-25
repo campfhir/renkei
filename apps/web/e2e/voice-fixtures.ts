@@ -474,7 +474,14 @@ function askingStream(): { events: Record<string, unknown>[]; stages: number[] }
   return { events, stages: [4, 7, events.length] };
 }
 
-export async function mockVendor(page: Page, options: { asks?: boolean } = {}): Promise<void> {
+export async function mockVendor(
+  page: Page,
+  options: {
+    asks?: boolean;
+    /** How long the model "takes" before the plain reply streams; the default is long enough for "Thinking…" to be seen. */
+    replyDelayMs?: number;
+  } = {}
+): Promise<void> {
   await page.route(/\/api\/tenant\/[^/]+\/voice$/, (route) =>
     route.fulfill({
       json: {
@@ -519,7 +526,7 @@ export async function mockVendor(page: Page, options: { asks?: boolean } = {}): 
   if (!options.asks) {
     await page.route(/\/turns\/[^/]+\/stream$/, async (route) => {
       // A model takes a moment: long enough for "Thinking…" to be seen.
-      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      await new Promise((resolve) => setTimeout(resolve, options.replyDelayMs ?? 4_000));
       await route.fulfill({
         status: 200,
         headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },

@@ -1,17 +1,40 @@
 import { milestoneKindOf, milestoneSentence, milestoneSummary } from './milestones';
 
 describe('milestoneKindOf', () => {
-  it('lifts the chat’s own git verbs and every Bitbucket tool, by kind', () => {
+  it('lifts the chat’s own git verbs and the host acts on pull requests, commits and branches', () => {
     expect(milestoneKindOf('code_git_commit')).toBe('act');
     expect(milestoneKindOf('code_git_push')).toBe('act');
     expect(milestoneKindOf('code_git_pull')).toBe('act');
     expect(milestoneKindOf('bitbucket_create_pull_request')).toBe('act');
     expect(milestoneKindOf('bitbucket_create_pull_request_preview')).toBe('act');
     expect(milestoneKindOf('bitbucket_merge_pull_request_confirm')).toBe('act');
-    expect(milestoneKindOf('bitbucket_trigger_pipeline')).toBe('act');
-    expect(milestoneKindOf('bitbucket_get_pull_request')).toBe('read');
-    expect(milestoneKindOf('bitbucket_list_pipelines')).toBe('read');
-    expect(milestoneKindOf('bitbucket_read_file')).toBe('read');
+    expect(milestoneKindOf('bitbucket_decline_pull_request')).toBe('act');
+    expect(milestoneKindOf('bitbucket_commit_files')).toBe('act');
+    expect(milestoneKindOf('bitbucket_create_branch')).toBe('act');
+    expect(milestoneKindOf('github_create_pull_request')).toBe('act');
+    expect(milestoneKindOf('github_merge_pull_request_preview')).toBe('act');
+    expect(milestoneKindOf('github_close_pull_request')).toBe('act');
+    expect(milestoneKindOf('github_commit_file')).toBe('act');
+    expect(milestoneKindOf('github_delete_branch')).toBe('act');
+  });
+
+  it('folds every host read like any other tool call', () => {
+    expect(milestoneKindOf('bitbucket_get_pull_request')).toBeNull();
+    expect(milestoneKindOf('bitbucket_list_pipelines')).toBeNull();
+    expect(milestoneKindOf('bitbucket_read_file')).toBeNull();
+    expect(milestoneKindOf('bitbucket_list_branches')).toBeNull();
+    expect(milestoneKindOf('bitbucket_get_repository')).toBeNull();
+    expect(milestoneKindOf('github_list_commits')).toBeNull();
+    expect(milestoneKindOf('github_read_file')).toBeNull();
+    expect(milestoneKindOf('github_get_workflow_run')).toBeNull();
+  });
+
+  it('folds the host’s quieter acts too: comments, pipelines, permissions', () => {
+    expect(milestoneKindOf('bitbucket_add_pr_comment')).toBeNull();
+    expect(milestoneKindOf('bitbucket_trigger_pipeline')).toBeNull();
+    expect(milestoneKindOf('bitbucket_grant_repository_permission')).toBeNull();
+    expect(milestoneKindOf('github_trigger_workflow_preview')).toBeNull();
+    expect(milestoneKindOf('github_cancel_workflow_run')).toBeNull();
   });
 
   it('leaves the file tools, the clone step and other connectors in the fold', () => {

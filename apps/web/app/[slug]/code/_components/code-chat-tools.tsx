@@ -35,7 +35,6 @@ import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { ChatMessageView } from '@/lib/chat/views';
 import { commitsInTranscript, type ChatCommit } from '@/lib/code/chat-commits';
 import LocalTime from '@/components/local-time';
-import SubagentModal from '../../chat/_components/subagent-modal';
 import DiffView, { Counts } from './diff-view';
 import { LoadingLine, Spinner } from '@/components/skeleton';
 
@@ -92,8 +91,6 @@ export interface CodeChatToolsHandle {
   /** The branch the checkout is on, as of the last look at it; null before the first. */
   branch: string | null;
   openEnvironment: () => void;
-  /** Open a sub-agent's run — its progress, report and transcript — by its delegating call. */
-  openSubagent: (toolUseId: string) => void;
   openFiles: () => void;
   /** Open the panel — on one commit's diff when a hash is given. */
   openChanges: (commitSha?: string) => void;
@@ -110,7 +107,6 @@ export interface CodeChatToolsHandle {
  */
 export function useCodeChatTools({
   tenantId,
-  chatId,
   projectId,
   canEdit,
   running,
@@ -118,7 +114,6 @@ export function useCodeChatTools({
   onAsk,
 }: {
   tenantId: string;
-  chatId: string;
   projectId: string | null;
   /** The person may change the environment and ask the chat to act. */
   canEdit: boolean;
@@ -138,7 +133,6 @@ export function useCodeChatTools({
   });
   const [envOpen, setEnvOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
-  const [subagent, setSubagent] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const commits = useMemo(
     () => (projectId ? commitsInTranscript(messages) : []),
@@ -202,14 +196,6 @@ export function useCodeChatTools({
           }}
         />
       ) : null}
-      {subagent ? (
-        <SubagentModal
-          tenantId={tenantId}
-          chatId={chatId}
-          toolUseId={subagent}
-          onClose={() => setSubagent(null)}
-        />
-      ) : null}
     </>
   ) : null;
 
@@ -219,14 +205,11 @@ export function useCodeChatTools({
     []
   );
 
-  const openSubagent = useCallback((toolUseId: string) => setSubagent(toolUseId), []);
-
   return {
     stat,
     commits,
     branch,
     openEnvironment: () => setEnvOpen(true),
-    openSubagent,
     openFiles: () => setFilesOpen(true),
     openChanges,
     modals,

@@ -8,9 +8,13 @@
  * first syllable is not clipped.
  *
  * `onSpeechStart` fires the moment speech is detected — before the
- * utterance is complete — which is what lets the person interrupt a reply
- * mid-sentence: the thread silences the voice and cancels the turn on that
- * signal, and sends the utterance when it closes.
+ * utterance is complete. `onSpeechHeld` fires once the utterance has
+ * carried a few words' worth of sound (HELD_FRAMES), with that sound so
+ * far encoded as WAV: loudness alone cannot tell a cough or a "mm-hm"
+ * from a person actually talking, so voice mode has the snippet
+ * transcribed and interrupts a reply mid-sentence only when the
+ * recognizer heard words (lib/voice/barge-in.ts). The utterance itself
+ * is sent when it closes.
  *
  * In `manual` mode (the walkie-talkie preference) the detector decides
  * nothing: `beginTake()` opens an utterance and `endTake()` closes it, so
@@ -51,6 +55,14 @@ export interface RecorderOptions {
    */
   mode?: RecorderMode;
   onSpeechStart: () => void;
+  /**
+   * The open utterance has carried enough sound to be worth judging
+   * (HELD_FRAMES of loud frames): here it is so far, as 16 kHz mono WAV,
+   * for the recognizer to say whether it is words. Once per utterance,
+   * in auto mode only: a manual take is words by definition — a button
+   * was pressed for it — and interrupts on `beginTake()` instead.
+   */
+  onSpeechHeld?: (wav: ArrayBuffer) => void;
   onUtterance: (wav: ArrayBuffer, durationMs: number) => void;
   /**
    * The utterance closed, however it closed — sent, or too short to be
@@ -72,6 +84,14 @@ const FRAME_SAMPLES = 800;
 const PRE_ROLL_FRAMES = 6;
 /** Consecutive loud frames that count as speech starting. */
 const START_FRAMES = 3;
+/**
+ * Loud frames in an utterance before its sound so far is handed over to
+ * be judged: ~0.8 s. Short enough that talking over a reply still cuts
+ * it within a couple of seconds, recognition included; long enough to
+ * hold a word or two for the recognizer to find, and for a cough or a
+ * chair scraping to have ended already.
+ */
+const HELD_FRAMES = 16;
 /**
  * Quiet frames that close an utterance: ~1.6 s of silence. Long enough
  * that a breath, or a pause to find the next word, is not taken for the
@@ -108,6 +128,8 @@ export class UtteranceRecorder {
   private quietRun = 0;
   /** Loud frames in the open utterance: what was actually said, pre-roll and pauses aside. */
   private loudFrames = 0;
+  /** `onSpeechHeld` has fired for the open utterance. */
+  private held = false;
   private speaking = false;
   private noiseFloor = 0.004;
   private muted = false;
@@ -161,6 +183,7 @@ export class UtteranceRecorder {
     this.quietRun = 0;
     this.loudRun = 0;
     this.loudFrames = 0;
+    this.held = false;
     this.utterance = [...this.preRoll];
     this.preRoll = [];
     this.options.onSpeechStart();
@@ -284,6 +307,7 @@ export class UtteranceRecorder {
     this.loudRun = 0;
     this.quietRun = 0;
     this.loudFrames = 0;
+    this.held = false;
     this.speaking = false;
   }
 
@@ -334,6 +358,7 @@ export class UtteranceRecorder {
         this.speaking = true;
         this.quietRun = 0;
         this.loudFrames = this.loudRun;
+        this.held = false;
         this.utterance = [...this.preRoll];
         this.preRoll = [];
         this.options.onSpeechStart();
@@ -344,6 +369,10 @@ export class UtteranceRecorder {
     this.utterance.push(frame);
     this.quietRun = loud ? 0 : this.quietRun + 1;
     if (loud) this.loudFrames += 1;
+    if (!this.manual && !this.held && this.loudFrames >= HELD_FRAMES) {
+      this.held = true;
+      this.options.onSpeechHeld?.(encodeWav(concat(this.utterance)));
+    }
     const durationMs = this.durationMs();
     if (this.manual) {
       if (this.quietRun >= SILENCE_FLOOR_FRAMES) this.close(durationMs, 'silence');
@@ -366,6 +395,7 @@ export class UtteranceRecorder {
     this.loudRun = 0;
     this.quietRun = 0;
     this.loudFrames = 0;
+    this.held = false;
     if (spokenMs >= MIN_UTTERANCE_MS) {
       this.options.onUtterance(encodeWav(concat(frames)), Math.round(durationMs));
     }
