@@ -53,11 +53,17 @@ export default function PrSubscribe({
   projectId,
   prNumber,
   prUrl,
+  compact = false,
 }: {
   tenantId: string;
   projectId: string;
   prNumber: number;
   prUrl?: string;
+  /** The project page's own card shows one PR at a time — a single
+   * flex-wrapped row with short labels, in place of the full page's
+   * stacked checkboxes, so subscribing never requires leaving the
+   * project screen for the common case. */
+  compact?: boolean;
 }) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}/pr-subscriptions`;
   const [state, setState] = useState<SubscriptionView | null>(null);
@@ -101,6 +107,84 @@ export default function PrSubscribe({
 
   if (state === null) return null;
 
+  const toggleWatch = (checked: boolean) =>
+    void save({
+      ...state,
+      watchPipelines: checked,
+      ...(checked ? {} : { autoFix: false, autoMerge: false }),
+    });
+  const toggleAutoFix = (checked: boolean) => void save({ ...state, autoFix: checked });
+  const toggleAutoMerge = (checked: boolean) => void save({ ...state, autoMerge: checked });
+
+  const outcome =
+    state.watchPipelines && lastEvent ? (
+      <>
+        {outcomeLine(lastEvent)}
+        {prUrl ? (
+          <>
+            {' '}
+            <a
+              href={prUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline dark:text-blue-400"
+            >
+              View
+            </a>
+          </>
+        ) : null}
+      </>
+    ) : null;
+
+  if (compact) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
+        <label
+          className="flex items-center gap-1.5"
+          title="Subscribe to this pull request's pipeline outcomes"
+        >
+          <input
+            type="checkbox"
+            checked={state.watchPipelines}
+            disabled={busy}
+            onChange={(e) => toggleWatch(e.target.checked)}
+          />
+          Subscribe
+        </label>
+        <label
+          className={`flex items-center gap-1.5 ${state.watchPipelines ? '' : 'text-gray-400'}`}
+          title="Note a failure in this chat"
+        >
+          <input
+            type="checkbox"
+            checked={state.autoFix}
+            disabled={busy || !state.watchPipelines}
+            onChange={(e) => toggleAutoFix(e.target.checked)}
+          />
+          Fix
+        </label>
+        <label
+          className={`flex items-center gap-1.5 ${state.watchPipelines ? '' : 'text-gray-400'}`}
+          title="Merge automatically on success"
+        >
+          <input
+            type="checkbox"
+            checked={state.autoMerge}
+            disabled={busy || !state.watchPipelines}
+            onChange={(e) => toggleAutoMerge(e.target.checked)}
+          />
+          Merge
+        </label>
+        {outcome ? <span className="w-full text-gray-500 dark:text-gray-400">{outcome}</span> : null}
+        {error ? (
+          <span role="alert" className="w-full text-red-600 dark:text-red-400">
+            {error}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-1 text-xs">
       <label className="flex items-center gap-1.5">
@@ -108,9 +192,7 @@ export default function PrSubscribe({
           type="checkbox"
           checked={state.watchPipelines}
           disabled={busy}
-          onChange={(e) =>
-            void save({ ...state, watchPipelines: e.target.checked, ...(e.target.checked ? {} : { autoFix: false, autoMerge: false }) })
-          }
+          onChange={(e) => toggleWatch(e.target.checked)}
         />
         Subscribe to pipeline outcomes
       </label>
@@ -119,7 +201,7 @@ export default function PrSubscribe({
           type="checkbox"
           checked={state.autoFix}
           disabled={busy || !state.watchPipelines}
-          onChange={(e) => void save({ ...state, autoFix: e.target.checked })}
+          onChange={(e) => toggleAutoFix(e.target.checked)}
         />
         Note a failure in this chat
       </label>
@@ -128,28 +210,11 @@ export default function PrSubscribe({
           type="checkbox"
           checked={state.autoMerge}
           disabled={busy || !state.watchPipelines}
-          onChange={(e) => void save({ ...state, autoMerge: e.target.checked })}
+          onChange={(e) => toggleAutoMerge(e.target.checked)}
         />
         Merge automatically on success
       </label>
-      {state.watchPipelines && lastEvent ? (
-        <p className="pl-5 text-gray-500 dark:text-gray-400">
-          {outcomeLine(lastEvent)}
-          {prUrl ? (
-            <>
-              {' '}
-              <a
-                href={prUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline dark:text-blue-400"
-              >
-                View
-              </a>
-            </>
-          ) : null}
-        </p>
-      ) : null}
+      {outcome ? <p className="pl-5 text-gray-500 dark:text-gray-400">{outcome}</p> : null}
       {error ? (
         <p role="alert" className="text-red-600 dark:text-red-400">
           {error}

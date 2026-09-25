@@ -1,9 +1,10 @@
 /**
- * A person's own opt-in to a pull request's pipeline outcome, from the
- * Pulls page's "Subscribe" disclosure (pr-subscribe.tsx) — checkboxes
- * disabled until "subscribe" itself is on, real POST/DELETE against
- * .../pr-subscriptions (no external host call in that route, so nothing
- * to mock there), and the outcome line rendering from a seeded
+ * A person's own opt-in to a pull request's pipeline outcome: the
+ * project page's own condensed row (pr-subscribe.tsx's `compact`
+ * layout, on the Pulls card's most-recent PR) and the full Pulls
+ * page's per-row disclosure — both backed by the same real POST/DELETE
+ * against .../pr-subscriptions (no external host call in that route, so
+ * nothing to mock there), and the outcome line rendering from a seeded
  * pr_pipeline_events row. Only the project's own `pulls` route is mocked
  * (AGENTS.md: a call that would hit a real vendor — GitHub here — is
  * mocked at the browser edge).
@@ -201,36 +202,41 @@ test.describe('PR pipeline subscriptions', () => {
     const mobile = testInfo.project.name === 'mobile';
     await mockPulls(page, ids);
 
+    // ── The project page's own condensed row, on the Pulls card's
+    // most-recent PR (#90) — no trip to the full Pulls page needed. ──
+    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    const main = page.getByRole('main');
+    const pullsCard = main.locator('section', {
+      has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
+    });
+    await expect(pullsCard.getByText(`#${OPEN_PR.number} No opt-in yet`)).toBeVisible();
+    const subscribeCompact = pullsCard.getByLabel('Subscribe', { exact: true });
+    const fixCompact = pullsCard.getByLabel('Fix', { exact: true });
+    const mergeCompact = pullsCard.getByLabel('Merge', { exact: true });
+    await expect(subscribeCompact).not.toBeChecked();
+    await expect(fixCompact).toBeDisabled();
+    await expect(mergeCompact).toBeDisabled();
+
+    await subscribeCompact.check();
+    await expect(fixCompact).toBeEnabled();
+    await expect(mergeCompact).toBeEnabled();
+    await fixCompact.check();
+    await shot(page, testInfo, 'pr-subscribe-compact.png');
+
+    // ── The full Pulls page reports the same subscription back — one
+    // opt-in, read from either place. ──
     await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/pulls`);
     await expect(page.getByRole('heading', { level: 1, name: 'Pull requests' })).toBeVisible();
-
-    // ── PR #90: nothing subscribed yet ──
     const row90 = subscribeBlock(page, OPEN_PR.number);
     await row90.getByText('Subscribe', { exact: true }).click();
-    const subscribeBox90 = row90.getByLabel('Subscribe to pipeline outcomes');
-    const autoFixBox90 = row90.getByLabel('Note a failure in this chat');
-    const autoMergeBox90 = row90.getByLabel('Merge automatically on success');
-    await expect(subscribeBox90).not.toBeChecked();
-    await expect(autoFixBox90).toBeDisabled();
-    await expect(autoMergeBox90).toBeDisabled();
-
-    await subscribeBox90.check();
-    await expect(autoFixBox90).toBeEnabled();
-    await expect(autoMergeBox90).toBeEnabled();
-    await autoFixBox90.check();
+    await expect(row90.getByLabel('Subscribe to pipeline outcomes')).toBeChecked();
+    await expect(row90.getByLabel('Note a failure in this chat')).toBeChecked();
+    await expect(row90.getByLabel('Merge automatically on success')).not.toBeChecked();
     await shot(page, testInfo, 'pr-subscribe-checked.png');
 
-    // Reload: the real GET route reports what the real POSTs above wrote.
-    await page.reload();
-    const row90Again = subscribeBlock(page, OPEN_PR.number);
-    await row90Again.getByText('Subscribe', { exact: true }).click();
-    await expect(row90Again.getByLabel('Subscribe to pipeline outcomes')).toBeChecked();
-    await expect(row90Again.getByLabel('Note a failure in this chat')).toBeChecked();
-    await expect(row90Again.getByLabel('Merge automatically on success')).not.toBeChecked();
-
     // Unsubscribing clears the auto-fix/auto-merge state too.
-    await row90Again.getByLabel('Subscribe to pipeline outcomes').uncheck();
-    await expect(row90Again.getByLabel('Note a failure in this chat')).toBeDisabled();
+    await row90.getByLabel('Subscribe to pipeline outcomes').uncheck();
+    await expect(row90.getByLabel('Note a failure in this chat')).toBeDisabled();
 
     // ── PR #91: already subscribed, with a recorded outcome ──
     const row91 = subscribeBlock(page, SEEDED_PR.number);
@@ -246,7 +252,16 @@ test.describe('PR pipeline subscriptions', () => {
 
     if (!mobile) return;
 
-    // ── Mobile: the disclosure and its outcome line still work at phone width ──
+    // ── Mobile: the project page's condensed row still works at phone width ──
+    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await page.setViewportSize(MOBILE_VIEWPORT);
+    const mobilePullsCard = page.getByRole('main').locator('section', {
+      has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
+    });
+    await expect(mobilePullsCard.getByLabel('Subscribe', { exact: true })).toBeVisible();
+    await shot(page, testInfo, 'pr-subscribe-compact-mobile.png');
+
+    // ── Mobile: the full Pulls page's disclosure and outcome line too ──
     await page.goto(`/${E2E_SLUG}/code/${ids.projectId}/pulls`);
     await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(page.getByRole('heading', { level: 1, name: 'Pull requests' })).toBeVisible();
