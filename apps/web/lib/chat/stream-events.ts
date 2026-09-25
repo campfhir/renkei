@@ -104,7 +104,7 @@ export type ChatStreamEvent =
       status?: 'done' | 'failed';
     }
   /**
-   * A sub-agent (code_delegate) reporting how far it is — raised at its
+   * A sub-agent (code_delegate, chat_delegate) reporting how far it is — raised at its
    * start, after every model call, and at its end — keyed by the
    * delegating call's tool_use id, which is the card in the thread.
    */

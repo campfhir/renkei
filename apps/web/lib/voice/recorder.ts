@@ -8,8 +8,11 @@
  * first syllable is not clipped.
  *
  * `onSpeechStart` fires the moment speech is detected — before the
- * utterance is complete — which is what lets the person interrupt a reply
- * mid-sentence: the thread silences the voice and cancels the turn on that
+ * utterance is complete. `onSpeechHeld` fires once the utterance has
+ * carried a few words' worth of voice (HELD_FRAMES): the difference
+ * between a cough, a "mm-hm" or a door and a person actually talking,
+ * which is what lets voice mode interrupt a reply mid-sentence on the
+ * second and never on the first — the thread silences the voice on that
  * signal, and sends the utterance when it closes.
  *
  * In `manual` mode (the walkie-talkie preference) the detector decides
@@ -51,6 +54,13 @@ export interface RecorderOptions {
    */
   mode?: RecorderMode;
   onSpeechStart: () => void;
+  /**
+   * The open utterance has carried enough voice to be words rather than
+   * a sound (HELD_FRAMES of loud frames). Once per utterance, in auto
+   * mode only: a manual take is words by definition — a button was
+   * pressed for it — and interrupts on `beginTake()` instead.
+   */
+  onSpeechHeld?: () => void;
   onUtterance: (wav: ArrayBuffer, durationMs: number) => void;
   /**
    * The utterance closed, however it closed — sent, or too short to be
@@ -72,6 +82,13 @@ const FRAME_SAMPLES = 800;
 const PRE_ROLL_FRAMES = 6;
 /** Consecutive loud frames that count as speech starting. */
 const START_FRAMES = 3;
+/**
+ * Loud frames in an utterance before it counts as a few words rather
+ * than a sound: ~0.8 s of voice. Short enough that talking over a reply
+ * still cuts it within about a second; long enough that a cough, a
+ * laugh, a "yeah" or a chair scraping never does.
+ */
+const HELD_FRAMES = 16;
 /**
  * Quiet frames that close an utterance: ~1.6 s of silence. Long enough
  * that a breath, or a pause to find the next word, is not taken for the
@@ -108,6 +125,8 @@ export class UtteranceRecorder {
   private quietRun = 0;
   /** Loud frames in the open utterance: what was actually said, pre-roll and pauses aside. */
   private loudFrames = 0;
+  /** `onSpeechHeld` has fired for the open utterance. */
+  private held = false;
   private speaking = false;
   private noiseFloor = 0.004;
   private muted = false;
@@ -161,6 +180,7 @@ export class UtteranceRecorder {
     this.quietRun = 0;
     this.loudRun = 0;
     this.loudFrames = 0;
+    this.held = false;
     this.utterance = [...this.preRoll];
     this.preRoll = [];
     this.options.onSpeechStart();
@@ -284,6 +304,7 @@ export class UtteranceRecorder {
     this.loudRun = 0;
     this.quietRun = 0;
     this.loudFrames = 0;
+    this.held = false;
     this.speaking = false;
   }
 
@@ -334,6 +355,7 @@ export class UtteranceRecorder {
         this.speaking = true;
         this.quietRun = 0;
         this.loudFrames = this.loudRun;
+        this.held = false;
         this.utterance = [...this.preRoll];
         this.preRoll = [];
         this.options.onSpeechStart();
@@ -344,6 +366,10 @@ export class UtteranceRecorder {
     this.utterance.push(frame);
     this.quietRun = loud ? 0 : this.quietRun + 1;
     if (loud) this.loudFrames += 1;
+    if (!this.manual && !this.held && this.loudFrames >= HELD_FRAMES) {
+      this.held = true;
+      this.options.onSpeechHeld?.();
+    }
     const durationMs = this.durationMs();
     if (this.manual) {
       if (this.quietRun >= SILENCE_FLOOR_FRAMES) this.close(durationMs, 'silence');
@@ -366,6 +392,7 @@ export class UtteranceRecorder {
     this.loudRun = 0;
     this.quietRun = 0;
     this.loudFrames = 0;
+    this.held = false;
     if (spokenMs >= MIN_UTTERANCE_MS) {
       this.options.onUtterance(encodeWav(concat(frames)), Math.round(durationMs));
     }

@@ -7,6 +7,7 @@
 import type { ChatBlock, ChatMessageView } from './views';
 import { milestoneKindOf } from '@/lib/code/milestones';
 import { TASK_COMPLETE_TOOL } from './auto-mode';
+import { isSubagentTool } from './subagent-tools';
 
 export type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
 
@@ -19,7 +20,7 @@ export type Segment =
    * first step); 0 when no row carried timing.
    */
   | { kind: 'work'; steps: WorkStep[]; modelMs: number }
-  /** A commit, a push, a word to Bitbucket — a card of its own, never folded. */
+  /** A commit, a push, a pull request opened or merged — a card of its own, never folded. */
   | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
   /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
   | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
@@ -94,7 +95,7 @@ export function segment(messages: ChatMessageView[], results: Map<string, ToolRe
             already.step = step;
             break;
           }
-          if (block.name === 'code_delegate') {
+          if (isSubagentTool(block.name)) {
             const card: Extract<Segment, { kind: 'subagent' }> = { kind: 'subagent', step };
             out.push(card);
             cards.set(block.id, card);

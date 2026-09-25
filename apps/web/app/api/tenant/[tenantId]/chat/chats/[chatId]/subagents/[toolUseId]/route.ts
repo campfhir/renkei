@@ -1,6 +1,6 @@
 /**
- * One sub-agent run of this chat, by the code_delegate call that started
- * it: its task and instructions, how far it got, its report, and its
+ * One sub-agent run of this chat, by the code_delegate or chat_delegate
+ * call that started it: its task and instructions, how far it got, its report, and its
  * whole transcript — the conversation the chat itself never carried
  * (lib/chat/subagent-runs.ts). Anyone who may read the chat may read it.
  */

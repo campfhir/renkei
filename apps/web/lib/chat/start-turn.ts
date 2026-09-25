@@ -32,6 +32,8 @@ import { sandboxChartsEnabled, sandboxConfig } from '@renkei/sandbox-client';
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { CODE_TURN_LIMITS, codeProjectContext } from '@/lib/code/turn';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
+import { chatDelegateTool } from './chat-delegate';
+import { listChatModels } from './models';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -479,20 +481,16 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         store.recordUsage(usage, model),
       emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>
         channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
-      // A code chat's sub-agents keep their runs (subagent-runs.ts) and
-      // report progress on the turn's stream; nothing of theirs enters
-      // this turn's history but the report.
-      ...(project?.kind === 'code'
-        ? {
-            subagents: createSubagentRecorder(
-              db,
-              { tenantId: input.tenantId, chatId: input.chat.id, turnId: input.turnId },
-              (subagent) =>
-                channel.emit({ type: 'subagent_progress', turnId: input.turnId, subagent }),
-              log
-            ),
-          }
-        : {}),
+      // A chat's sub-agents — code_delegate in a code project, chat_delegate
+      // anywhere else — keep their runs (subagent-runs.ts) and report
+      // progress on the turn's stream; nothing of theirs enters this
+      // turn's history but the report.
+      subagents: createSubagentRecorder(
+        db,
+        { tenantId: input.tenantId, chatId: input.chat.id, turnId: input.turnId },
+        (subagent) => channel.emit({ type: 'subagent_progress', turnId: input.turnId, subagent }),
+        log
+      ),
     };
     const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
     // A code project's checkout, when it is there to work in: the code_*
@@ -506,11 +504,34 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     // Read off the chat row the turn started from, so a switch flipped
     // mid-turn takes effect on the next Send, never halfway through.
     const auto = project?.kind === 'code' && input.chat.autoMode && !readOnly;
+    // An ordinary chat's sub-agent (chat-delegate.ts): over the turn's
+    // reading tools, connector and local alike, on a model picked from
+    // the org's roster. A code project's chat has code_delegate instead,
+    // over its checkout, and is not offered a second way to delegate.
+    const chatTools =
+      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed));
+    const delegate =
+      input.localTools || project?.kind === 'code'
+        ? null
+        : chatDelegateTool({
+            surface,
+            localTools: chatTools,
+            models: (await listChatModels(db, input.tenantId)).map(
+              ({ id, label, provider, model, isDefault }) => ({
+                id,
+                label,
+                provider,
+                model,
+                isDefault,
+              })
+            ),
+          });
     // A blocked local tool is withheld the same way a blocked connector
     // tool is: the model is never offered a verb it may not use.
     const baseLocalTools = (
       input.localTools ?? [
-        ...(await chatLocalTools(db, localContext, toolConfig, filesAllowed)),
+        ...chatTools,
+        ...(delegate ? [delegate] : []),
         ...(code?.tools ?? []),
         ...(auto ? [taskCompleteTool()] : []),
       ]
@@ -549,6 +570,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       hasDiscoverableTools: discoveryTool !== null,
       hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
       voice: input.voice === true,
+      hasDelegate: delegate !== null,
       // outlook_search_users is a `microsoft` tool, not a core connector, so
       // it is almost always in `discoverable` rather than offered up front —
       // the brief has to work whichever bucket it is in.

@@ -7,11 +7,16 @@
  * exactly as typing it would (so it lands in the same chat, with the same
  * tools, model and project), and reads the reply as it streams.
  *
- * Interruptions are the point. The moment the person starts speaking
- * while a reply is being read — or still being written — the voice stops
- * and the turn is cancelled; what they said is sent once they pause. The
- * thread underneath keeps every message, so leaving voice mode leaves a
- * chat that reads exactly like the conversation went.
+ * Interruptions are the point, and so is not interrupting on a cough.
+ * The rules are lib/voice/barge-in.ts's: once the person has said a few
+ * words over a reply being read aloud, the voice stops and the turn is
+ * cancelled, and what they said is sent once they pause; while a reply
+ * is still being worked out — the model thinking, a tool call running,
+ * nothing of the answer read yet — talking cancels nothing, and what is
+ * said queues as the next message, sent when the reply is done; and a
+ * short sound under the voice is dropped, not sent. The thread
+ * underneath keeps every message, so leaving voice mode leaves a chat
+ * that reads exactly like the conversation went.
  *
  * With the walkie-talkie preference (`pushToTalk`) the microphone waits
  * for a press instead of a voice: Talk opens the microphone and the
@@ -34,6 +39,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import type { ToolPermissionDecision } from '@/lib/chat/views';
 import { spokenActivity, spokenAsk } from '@/lib/voice/activity';
+import {
+  beginUtterance,
+  holdUtterance,
+  utteranceIsMessage,
+  type AssistantState,
+  type Utterance,
+} from '@/lib/voice/barge-in';
 import { localeLabel } from '@/lib/voice/catalog';
 import { UtteranceRecorder } from '@/lib/voice/recorder';
 import { spokenDecision } from '@/lib/voice/spoken-decision';
@@ -83,6 +95,7 @@ export default function VoiceMode({
   activity,
   thinking,
   permission,
+  queued,
   onSend,
   onInterrupt,
   onClose,
@@ -120,6 +133,8 @@ export default function VoiceMode({
   thinking: boolean;
   /** The ask the running turn is parked behind, if any: shown, spoken, and answerable by voice. */
   permission: PermissionPrompt | null;
+  /** Messages waiting behind the running reply (the thread's queue), sent when it is done. */
+  queued: number;
   /** Send an utterance as a message; false when it could not be sent. */
   onSend: (text: string) => Promise<boolean>;
   /** Stop the reply: silence the voice and cancel the turn. */
@@ -141,9 +156,31 @@ export default function VoiceMode({
   const [heard, setHeard] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const recorder = useRef<UtteranceRecorder | null>(null);
+  // The assistant is reading its answer: words of the reply are sounding
+  // (or queued to), with no tool call in flight. Not a narration — "still
+  // working on it", the sentence before a call — and not the model
+  // thinking: those are the reply being worked out, which talking over
+  // does not cut (lib/voice/barge-in.ts).
+  const spokenReply = replyText ? speakableText(replyText) : '';
+  const responding = queueState !== 'idle' && spokenReply.length > 0 && activity.length === 0;
   // The latest values, for callbacks the recorder holds across renders.
-  const latest = useRef({ running, queueState, onInterrupt, onSend, onHeard, permission });
-  latest.current = { running, queueState, onInterrupt, onSend, onHeard, permission };
+  const latest = useRef({
+    running,
+    queueState,
+    responding,
+    onInterrupt,
+    onSend,
+    onHeard,
+    permission,
+  });
+  latest.current = { running, queueState, responding, onInterrupt, onSend, onHeard, permission };
+  const assistantState = (): AssistantState => ({
+    responding: latest.current.responding,
+    asking: latest.current.permission !== null,
+  });
+  // The utterance being heard, from its first sound: what it started over,
+  // and whether it cut the reply.
+  const utterance = useRef<Utterance>(beginUtterance({ responding: false, asking: false }));
   // What the assistant is doing, as last announced; and when the voice
   // last had something to say, for the dead-air check.
   const [activityLine, setActivityLine] = useState<string | null>(null);
@@ -197,19 +234,20 @@ export default function VoiceMode({
           setRecording(true);
           return;
         }
-        const {
-          running: busy,
-          queueState: state,
-          onInterrupt: interrupt,
-          permission: ask,
-        } = latest.current;
-        // An answer to the ask is not an interruption: the turn is parked
-        // waiting for it, and cancelling it would throw the reply away.
-        if (ask) return;
-        // Talking over the assistant: silence it and drop the reply.
-        if (busy || state !== 'idle') interrupt();
+        // A sound. Nothing is cut yet: a cough is not an interruption.
+        utterance.current = beginUtterance(assistantState());
+      },
+      onSpeechHeld: () => {
+        // A few words. Over a reply being read they silence it and drop
+        // the turn; over one still being worked out, nothing — what is
+        // said will queue behind it. An answer to an ask cuts nothing
+        // either: the turn is parked waiting for it.
+        if (holdUtterance(utterance.current, assistantState())) latest.current.onInterrupt();
       },
       onUtterance: (wav) => {
+        // A sound under the assistant's voice that never grew into words
+        // — a "yeah", a cough — is not a message. (A take is always one.)
+        if (!pushToTalk && !utteranceIsMessage(utterance.current, assistantState())) return;
         void (async () => {
           setTranscribing(true);
           const result = await voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
@@ -370,8 +408,10 @@ export default function VoiceMode({
   }, [queue, onClose]);
 
   /**
-   * Push-to-talk: Talk interrupts a reply, opens the microphone and a
-   * take; Done closes and sends it, and the microphone closes with it.
+   * Push-to-talk: Talk interrupts a reply being read, opens the
+   * microphone and a take; Done closes and sends it, and the microphone
+   * closes with it. Over a reply still being worked out Talk interrupts
+   * nothing: the take queues behind it, as spoken words would.
    */
   const toggleTake = useCallback(() => {
     const instance = recorder.current;
@@ -380,13 +420,8 @@ export default function VoiceMode({
       instance.endTake();
       return;
     }
-    const {
-      running: turn,
-      queueState: state,
-      onInterrupt: interrupt,
-      permission: ask,
-    } = latest.current;
-    if (!ask && (turn || state !== 'idle')) interrupt();
+    const { responding: reading, onInterrupt: interrupt, permission: ask } = latest.current;
+    if (!ask && reading) interrupt();
     setError(null);
     setOpening(true);
     void instance.start().then((ok) => {
@@ -450,7 +485,11 @@ export default function VoiceMode({
           : 'idle';
   // Whose sound the wave follows: the speaker's, the microphone's, or none.
   const waveLevels = tone === 'speaking' ? queue : tone === 'listening' ? micLevels.current : null;
-  const spokenReply = replyText ? speakableText(replyText) : '';
+  // What waits behind this reply, said once so the person knows they were heard.
+  const queuedLine =
+    queued === 1
+      ? 'Your next message is queued — it goes out when this reply is done.'
+      : `${queued} messages are queued — they go out one at a time when this reply is done.`;
 
   return (
     <div
@@ -491,6 +530,11 @@ export default function VoiceMode({
         {running && !permission && (activityLine || phase === 'thinking') ? (
           <p className="-mt-4 text-sm text-gray-500" aria-live="polite">
             {activityLine ? `${activityLine}…` : thinking ? 'Thinking it through…' : 'Working…'}
+          </p>
+        ) : null}
+        {queued > 0 && busy ? (
+          <p className="-mt-4 text-sm text-gray-500" aria-live="polite" data-voice-queued>
+            {queuedLine}
           </p>
         ) : null}
         {permission ? (
@@ -571,8 +615,8 @@ export default function VoiceMode({
           {!transcript && !spokenReply && phase === 'listening' ? (
             <p className="text-center text-gray-500">
               {pushToTalk
-                ? 'Press Talk, say what you want, then press Done. Ten seconds of silence ends it too. Press Talk over a reply to interrupt it.'
-                : 'Say something. Pause when you are done, and the reply is read to you. Speak over it to interrupt.'}
+                ? 'Press Talk, say what you want, then press Done. Ten seconds of silence ends it too. Press Talk over a reply to interrupt it; while the reply is still being worked out, a take waits its turn.'
+                : 'Say something. Pause when you are done, and the reply is read to you. A few words over it interrupt it; while it is still being worked out, what you say waits its turn.'}
             </p>
           ) : null}
         </div>

@@ -73,6 +73,7 @@ import AutoModeToggle from './auto-mode-toggle';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import VoiceMenu from './voice-menu';
 import VoiceMode, { type VoiceActivity } from './voice-mode';
+import SubagentModal from './subagent-modal';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useElementWidth } from '@/lib/use-element-width';
 import { sendJsonFull } from '@/lib/fetch-json';
@@ -591,13 +592,28 @@ export default function ChatThread({
   const removeQueued = useCallback((id: number) => {
     setQueue((current) => current.filter((item) => item.id !== id));
   }, []);
+  // A reply still being read aloud counts as running for the queue: a
+  // turn that starts while the voice is mid-sentence would silence it
+  // (use-reply-speech.ts begins a fresh stream), and a person who spoke
+  // over a reply still being worked out asked for their words to wait,
+  // not to cut the answer short.
+  const readingReply = speech.owner === LIVE_REPLY_OWNER && speech.state !== 'idle';
   useEffect(() => {
     if (running || queue.length === 0) return;
+    // Asked of the queue itself, not of the state mirrored from it: the
+    // reply's reading begins in an effect of this same commit
+    // (useReplySpeech, declared above), one render before the mirror
+    // knows — and the turn's end and its last words arrive together.
+    // `readingReply` is in the dependencies so the reading's end runs
+    // this again.
+    if (speechQueue && speechQueue.owner === LIVE_REPLY_OWNER && speechQueue.state !== 'idle') {
+      return;
+    }
     const [next, ...rest] = queue;
     setQueue(rest);
     if (next.kind === 'compact') void forceCompact();
     else void submit(next.input);
-  }, [running, queue, submit, forceCompact]);
+  }, [running, readingReply, speechQueue, queue, submit, forceCompact]);
   const queueView = queue.map((item) => ({
     id: item.id,
     isCompact: item.kind === 'compact',
@@ -776,7 +792,6 @@ export default function ChatThread({
   // a button away in the title bar.
   const codeTools = useCodeChatTools({
     tenantId,
-    chatId: chat.id,
     projectId: codeProjectId,
     canEdit: isOwner && !history,
     running,
@@ -803,18 +818,20 @@ export default function ChatThread({
     router.push(`/${slug}/chat/${created.data.chatId}`);
   }, [chat.projectId, router, slug, tenantId]);
   const openCommit = codeTools.openChanges;
-  const openSubagent = codeTools.openSubagent;
   const codeActions = useMemo(
     () =>
       codeProjectId
         ? {
             onShowCommit: (sha: string) => openCommit(sha),
-            onShowSubagent: openSubagent,
             onOpenFile: openInPane,
           }
         : null,
-    [codeProjectId, openCommit, openSubagent, openInPane]
+    [codeProjectId, openCommit, openInPane]
   );
+  // A sub-agent's transcript, open from its card — in any chat, since any
+  // chat may delegate (code_delegate over a checkout, chat_delegate over
+  // the chat's reading tools).
+  const [subagent, setSubagent] = useState<string | null>(null);
   // The branch under the title: the page's word until the first look at
   // the checkout, then whatever the last look said.
   const branch = codeProjectId ? (codeTools.branch ?? chat.projectBranch) : null;
@@ -1080,6 +1097,14 @@ export default function ChatThread({
           <OverflowMenu items={overflow} />
         </header>
         {codeTools.modals}
+        {subagent ? (
+          <SubagentModal
+            tenantId={tenantId}
+            chatId={chat.id}
+            toolUseId={subagent}
+            onClose={() => setSubagent(null)}
+          />
+        ) : null}
 
         {codePane && paneMode === 'tabs' && paneTab === 'code' ? (
           <div className="flex min-h-0 flex-1 flex-col">{codePane}</div>
@@ -1116,6 +1141,7 @@ export default function ChatThread({
               }
               code={codeActions}
               subagents={state.subagents}
+              onShowSubagent={setSubagent}
               onWidgetDecision={isOwner ? beginWidgetTurn : null}
               speech={
                 voice && speechQueue
@@ -1278,6 +1304,7 @@ export default function ChatThread({
               ? { pending: state.pendingPermission, canDecide: isOwner, onDecide: decidePermission }
               : null
           }
+          queued={queue.length}
           onSend={(text) => queueOrSend({ text, attachments: [], voice: true })}
           onInterrupt={() => void stop()}
           onClose={() => setVoiceMode(false)}

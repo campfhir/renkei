@@ -364,6 +364,33 @@ describe('buildSystemPrompt', () => {
     expect(buildSystemPrompt(base)).not.toContain('read aloud');
   });
 
+  it('tells a chat with chat_delegate to keep the conversation for the conversation', () => {
+    const base = {
+      personName: null,
+      orgName: null,
+      project: null,
+      userMemoryText: null,
+      chatSummary: null,
+      chatFiles: [],
+      hasTools: true,
+      hasDiscoverableTools: false,
+      hasKnowledge: false,
+      hasSandbox: false,
+      filesAllowed: false,
+      now: new Date('2026-09-04T10:00:00Z'),
+    };
+    const withDelegate = buildSystemPrompt({ ...base, hasDelegate: true });
+    expect(withDelegate).toContain('goes to a sub-agent with chat_delegate');
+    expect(withDelegate).toContain('creates, changes or sends something, which only you do');
+    expect(buildSystemPrompt(base)).not.toContain('chat_delegate');
+    // A voice turn with a sub-agent to hand work to is told to keep its own
+    // calls to the quick ones — the person is waiting on the line.
+    const voice = buildSystemPrompt({ ...base, voice: true, hasDelegate: true });
+    expect(voice).toContain('waiting on the line');
+    expect(voice).toContain('hand anything that takes more than that');
+    expect(buildSystemPrompt({ ...base, voice: true })).not.toContain('waiting on the line');
+  });
+
   it('describes a code project’s repository and how to work in it', () => {
     const base = {
       personName: null,

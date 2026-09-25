@@ -1,20 +1,21 @@
 /**
- * The calls a code chat makes that a person actually waits for — a
- * commit, a push, a pull request opened or merged, a pipeline or
- * workflow started, a branch made — and, more quietly, every other
- * exchange with the project's git host (Bitbucket or GitHub). The
- * thread folds a reply's tool calls into one collapsed line so that ten
- * file reads read as a line, not a wall; these are the calls that must
- * NOT disappear into that line. They are lifted out of the fold as
- * milestone cards, in order, with a sentence, the headline the tool
- * answered with, and the link it gave. Pure; the icons and the cards
- * live in message-list.tsx.
+ * The calls a chat makes that a person actually waits for — a commit, a
+ * push, a pull request opened, merged or closed, a branch made or
+ * removed. The thread folds a reply's tool calls into one collapsed line
+ * so that ten file reads read as a line, not a wall; these are the calls
+ * that must NOT disappear into that line. They are lifted out of the
+ * fold as milestone cards, in order, with a sentence, the headline the
+ * tool answered with, and the link it gave. Every other exchange with
+ * the git host — reading a file, listing branches or pipelines, a
+ * comment on a pull request — folds like any other tool call, in a code
+ * chat and an ordinary one alike. Pure; the icons and the cards live in
+ * message-list.tsx.
  */
 
 import { friendlyToolName } from '@/lib/tool-name';
 
-/** An act changes something on the git host or in git's history; a read only looks. */
-export type MilestoneKind = 'act' | 'read';
+/** A milestone changes the repository's history or its host: there is no other kind. */
+export type MilestoneKind = 'act';
 
 export type MilestoneState = 'pending' | 'done' | 'failed' | 'waiting';
 
@@ -308,27 +309,28 @@ const SENTENCES: Record<string, Sentences> = {
   },
 };
 
-/** The prefixes of the git-host tool families a code chat's milestones cover. */
+/** The prefixes of the git-host tool families whose acts are milestones. */
 const HOST_TOOL_PREFIXES = ['bitbucket_', 'github_'];
 
-/** The verbs a git-host tool's name carries when it changes something. */
-const ACT_VERBS = new Set([
-  'create',
-  'update',
-  'delete',
-  'merge',
-  'approve',
-  'decline',
-  'close',
-  'request',
-  'add',
-  'resolve',
-  'trigger',
-  'stop',
-  'cancel',
-  'grant',
-  'revoke',
-  'commit',
+/**
+ * The git-host verbs a person waits on: a pull request opened, changed,
+ * approved, merged, declined or closed; a commit; a branch made or
+ * removed. Reads (a file, a diff, a list of branches or pipelines) and
+ * the quieter acts (a comment, a task, a pipeline run, a permission
+ * grant) are ordinary tool calls and fold with the rest.
+ */
+const MILESTONE_ACTIONS = new Set([
+  'create_pull_request',
+  'update_pull_request',
+  'merge_pull_request',
+  'approve_pull_request',
+  'decline_pull_request',
+  'close_pull_request',
+  'request_pr_changes',
+  'commit_file',
+  'commit_files',
+  'create_branch',
+  'delete_branch',
 ]);
 
 /** A `_preview` or `_confirm` variant reads as its plain tool. */
@@ -337,9 +339,10 @@ function baseName(name: string): string {
 }
 
 /**
- * Whether this call is a milestone, and of which kind: the chat's own
- * git verbs that reach the repository's history or its host, and every
- * `bitbucket_*`/`github_*` tool — acts by their verb, the rest reads.
+ * Whether this call is a milestone: the chat's own git verbs that reach
+ * the repository's history or its host, and the `bitbucket_*`/`github_*`
+ * acts on pull requests, commits and branches. Everything else — every
+ * read, and the host's other acts — is null, and folds.
  */
 export function milestoneKindOf(name: string): MilestoneKind | null {
   const base = baseName(name);
@@ -348,8 +351,7 @@ export function milestoneKindOf(name: string): MilestoneKind | null {
   }
   const prefix = HOST_TOOL_PREFIXES.find((candidate) => base.startsWith(candidate));
   if (!prefix) return null;
-  const verb = base.slice(prefix.length).split('_')[0] ?? '';
-  return ACT_VERBS.has(verb) ? 'act' : 'read';
+  return MILESTONE_ACTIONS.has(base.slice(prefix.length)) ? 'act' : null;
 }
 
 /** The card's own line for a call in this state. */
