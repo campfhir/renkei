@@ -90,7 +90,12 @@ export const chatClient = {
     tenantId: string,
     chatId: string,
     messageId: string,
-    input: { text: string | null; attachmentIds: string[]; llmModelId?: string | null }
+    input: {
+      text: string | null;
+      attachmentIds: string[];
+      llmModelId?: string | null;
+      voice?: boolean;
+    }
   ) =>
     sendJsonFull<StartedTurn & { fromSeq: number; removedArtifactIds: string[]; code?: string }>(
       `${base(tenantId)}/chats/${chatId}/messages/${messageId}/resend`,

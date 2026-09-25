@@ -7,6 +7,15 @@
  * natural sentence break (gapless.ts) — so the sound never stops between
  * sentences. Only a piece the vendor has not yet delivered leaves a gap.
  *
+ * A piece with nothing ahead of it — the first of a reply, or the first
+ * after a tool call's silence — is the one the person is waiting on, so
+ * it is not waited for whole: it is asked for as raw samples
+ * (`format: 'pcm'`, PCM_SAMPLE_RATE) and each segment goes on the clock
+ * as it arrives, right behind the last (pcm-stream.ts). The context runs
+ * at that rate so the segments need no resampling and join without a
+ * seam. A piece behind another is fetched whole as MP3 (an eighth of the
+ * bytes) while the one before it plays, which is early enough.
+ *
  * Playback is Web Audio throughout: decoded buffers through one gain and
  * one analyser (the level behind the wave) to the output. One `<audio>`
  * element plays a loop of silence alongside for as long as a stream is
@@ -27,9 +36,11 @@
  * it, wants silence now.
  */
 
+import { PCM_SAMPLE_RATE } from '@renkei/voice';
 import { playbackSession } from './audio-session';
-import { voiceClient, type SpeechRequest } from './client';
-import { FADE_S, nextStart, soundBounds, type SoundBounds } from './gapless';
+import { voiceClient, type SpeechRequest, type SpeechStream } from './client';
+import { FADE_S, nextStart, soundBounds, soundEnd, soundStart, type SoundBounds } from './gapless';
+import { PcmSegmenter } from './pcm-stream';
 import { speakableText } from './speech-text';
 import { encodeWav } from './wav';
 
@@ -37,14 +48,24 @@ export type SpeechQueueState = 'idle' | 'loading' | 'speaking' | 'paused';
 
 type Settings = Omit<SpeechRequest, 'text'>;
 
+/** A piece fetched whole, decoded and cut to its sound. */
 interface DecodedPiece {
+  kind: 'whole';
   buffer: AudioBuffer;
   bounds: SoundBounds;
 }
 
+/** A piece arriving: the vendor has begun answering, the samples follow. */
+interface StreamedPiece {
+  kind: 'streamed';
+  stream: SpeechStream;
+}
+
+type Piece = DecodedPiece | StreamedPiece;
+
 interface QueuedPiece {
   text: string;
-  audio: Promise<DecodedPiece | null>;
+  audio: Promise<Piece | null>;
   controller: AbortController;
 }
 
@@ -55,6 +76,12 @@ interface Playing {
 
 /** How far ahead of the clock a piece is placed when it starts now. */
 const SCHEDULE_LEAD_S = 0.03;
+/**
+ * A streamed piece's samples go on the clock in segments at least this
+ * long: short enough that the first sounds as soon as the vendor's first
+ * chunk lands, long enough not to make a source node of every packet.
+ */
+const STREAM_SEGMENT_S = 0.1;
 
 export class SpeechQueue {
   private queue: QueuedPiece[] = [];
@@ -125,12 +152,23 @@ export class SpeechQueue {
 
   /* ---------------------------------------------------------------- output */
 
-  /** The context, made on demand; it runs from prime(), which a click calls. */
+  /**
+   * The context, made on demand; it runs from prime(), which a click
+   * calls. Made at the vendor's sample rate, so a streamed piece's raw
+   * samples play as they are and a decoded MP3 (the same rate) needs no
+   * resampling either; a device that refuses the rate gets the default,
+   * and every piece is then fetched whole.
+   */
   private ensureContext(): AudioContext | null {
     if (this.context) return this.context;
     if (typeof AudioContext === 'undefined') return null;
     try {
-      const context = new AudioContext();
+      let context: AudioContext;
+      try {
+        context = new AudioContext({ sampleRate: PCM_SAMPLE_RATE });
+      } catch {
+        context = new AudioContext();
+      }
       const master = context.createGain();
       const analyser = context.createAnalyser();
       analyser.fftSize = 1024;
@@ -292,18 +330,38 @@ export class SpeechQueue {
     if (!text) return;
     const controller = new AbortController();
     const generation = this.generation;
-    const audio = voiceClient
-      .synthesize(this.tenantId, { text, ...this.settings }, controller.signal)
-      .then(async (result) => {
-        if (generation !== this.generation) return null;
-        if (result.error) this.onError(result.error);
-        if (!result.data) return null;
-        return this.decode(result.data);
-      })
-      .catch(() => null);
+    // Nothing ahead of it: the person is waiting on this piece, so it
+    // plays as it arrives. Anything behind another piece is fetched whole
+    // while that one plays.
+    const streamed = this.queue.length === 0 && this.playing.size === 0 && this.canStream();
+    const audio: Promise<Piece | null> = (
+      streamed
+        ? voiceClient
+            .synthesizeStream(this.tenantId, { text, ...this.settings }, controller.signal)
+            .then((result): Piece | null => {
+              if (generation !== this.generation) return null;
+              if (result.error) this.onError(result.error);
+              return result.data ? { kind: 'streamed', stream: result.data } : null;
+            })
+        : voiceClient
+            .synthesize(this.tenantId, { text, ...this.settings }, controller.signal)
+            .then(async (result): Promise<Piece | null> => {
+              if (generation !== this.generation) return null;
+              if (result.error) this.onError(result.error);
+              if (!result.data) return null;
+              return this.decode(result.data);
+            })
+    ).catch(() => null);
     this.queue.push({ text, audio, controller });
     this.refreshState();
     void this.pump();
+  }
+
+  /** Raw samples can be played as they come only at the rate they come at. */
+  private canStream(): boolean {
+    if (typeof ReadableStream === 'undefined') return false;
+    const context = this.ensureContext();
+    return context !== null && context.sampleRate === PCM_SAMPLE_RATE;
   }
 
   /** The piece as samples, cut to its sound. Decoding needs no gesture. */
@@ -315,7 +373,11 @@ export class SpeechQueue {
     }
     try {
       const buffer = await context.decodeAudioData(await blob.arrayBuffer());
-      return { buffer, bounds: soundBounds(buffer.getChannelData(0), buffer.sampleRate) };
+      return {
+        kind: 'whole',
+        buffer,
+        bounds: soundBounds(buffer.getChannelData(0), buffer.sampleRate),
+      };
     } catch {
       this.onError('The audio could not be decoded.');
       return null;
@@ -383,8 +445,16 @@ export class SpeechQueue {
         const next = this.queue[0];
         const piece = await next.audio;
         if (generation !== this.generation) return;
+        if (piece?.kind === 'streamed') {
+          // Kept at the head of the queue while it arrives: a piece
+          // enqueued meanwhile sees something ahead of it and is fetched
+          // whole, and the state never reads as nothing left.
+          await this.scheduleStreamed(piece.stream, generation);
+          if (generation !== this.generation) return;
+        } else if (piece) {
+          this.schedule(piece);
+        }
         this.queue.shift();
-        if (piece) this.schedule(piece);
         this.refreshState();
       }
     } finally {
@@ -405,24 +475,119 @@ export class SpeechQueue {
     gain.gain.linearRampToValueAtTime(1, start + fade);
     gain.gain.setValueAtTime(1, end - fade);
     gain.gain.linearRampToValueAtTime(0, end);
+    gain.connect(this.master);
+    this.place(context, buffer, bounds, start, gain);
+    this.lastEnd = end;
+  }
+
+  /**
+   * A streamed piece: each segment of samples goes on the clock as it
+   * lands, right behind the one before, under one gain that fades in at
+   * the piece's first sound and out at its last. Silent segments before
+   * the first sound are the vendor's padding, not played; the padding
+   * after the last is cut once the stream ends, where the next piece
+   * then follows (as gapless.ts does for a whole piece). A segment that
+   * arrives after its slot has passed — the network fell behind the
+   * voice — starts as soon as it can, the one gap streaming allows.
+   * Resolves when everything has been placed; a stop mid-way ends it.
+   */
+  private async scheduleStreamed(stream: SpeechStream, generation: number): Promise<void> {
+    const context = this.ensureContext();
+    const reader = stream.getReader();
+    if (!context || !this.master) {
+      this.onError('This browser cannot play speech.');
+      await reader.cancel().catch(() => undefined);
+      return;
+    }
+    void context.resume().catch(() => undefined);
+    const segmenter = new PcmSegmenter(Math.round(STREAM_SEGMENT_S * PCM_SAMPLE_RATE));
+    const gain = context.createGain();
+    gain.connect(this.master);
+    // Where the next segment goes, once the piece has started; and the
+    // last segment placed, whose padding is cut when the stream ends.
+    let at: number | null = null;
+    const tail: {
+      last: { samples: Float32Array<ArrayBuffer>; start: number; entry: Playing } | null;
+    } = { last: null };
+    const place = (samples: Float32Array<ArrayBuffer>) => {
+      let offset = 0;
+      if (at === null) {
+        const first = soundStart(samples, PCM_SAMPLE_RATE);
+        if (first === null) return;
+        offset = first;
+        at = nextStart(this.lastEnd, context.currentTime, SCHEDULE_LEAD_S);
+        gain.gain.setValueAtTime(0, at);
+        gain.gain.linearRampToValueAtTime(1, at + FADE_S);
+      }
+      const duration = samples.length / PCM_SAMPLE_RATE - offset;
+      if (duration <= 0) return;
+      const start = Math.max(at, context.currentTime + SCHEDULE_LEAD_S);
+      const buffer = context.createBuffer(1, samples.length, PCM_SAMPLE_RATE);
+      buffer.copyToChannel(samples, 0);
+      const entry = this.place(context, buffer, { offset, duration }, start, gain);
+      at = start + duration;
+      this.lastEnd = at;
+      tail.last = { samples, start, entry };
+    };
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (generation !== this.generation) return;
+        const segment = done ? segmenter.flush() : value ? segmenter.push(value) : null;
+        if (segment) place(segment);
+        if (done) break;
+      }
+    } catch {
+      // Aborted by stop(), or the connection dropped: what was placed
+      // plays out, and the next piece follows it.
+    } finally {
+      reader.releaseLock();
+    }
+    const placed = tail.last;
+    if (generation !== this.generation || at === null || placed === null) return;
+    // The end of the piece is the end of its sound, not of the vendor's
+    // trailing silence: the last source stops there, and so the next piece
+    // starts there.
+    const { samples, start, entry } = placed;
+    const soundsUntil = soundEnd(samples, PCM_SAMPLE_RATE);
+    const end = soundsUntil === null ? at : Math.min(at, start + soundsUntil);
+    if (end < at) {
+      try {
+        entry.source.stop(end);
+      } catch {
+        // Already over.
+      }
+    }
+    this.lastEnd = end;
+    gain.gain.setValueAtTime(1, Math.max(context.currentTime, end - FADE_S));
+    gain.gain.linearRampToValueAtTime(0, end);
+  }
+
+  /** One buffer on the clock through `gain`, tracked until it ends. */
+  private place(
+    context: AudioContext,
+    buffer: AudioBuffer,
+    bounds: SoundBounds,
+    start: number,
+    gain: GainNode
+  ): Playing {
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.connect(gain);
-    gain.connect(this.master);
     const entry: Playing = { source, gain };
     const generation = this.generation;
     source.onended = () => {
       if (generation !== this.generation) return;
       source.disconnect();
-      gain.disconnect();
       this.playing.delete(entry);
+      if (![...this.playing].some((other) => other.gain === gain)) gain.disconnect();
       this.refreshState();
     };
     source.start(start, bounds.offset, bounds.duration);
     this.playing.add(entry);
-    this.lastEnd = end;
     this.refreshState();
     this.startLevelLoop();
+    return entry;
   }
 
   /** Release everything; for unmount. */

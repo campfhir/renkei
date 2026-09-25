@@ -32,6 +32,16 @@ export interface VoiceInfo {
   multilingual: boolean;
 }
 
+/**
+ * How the audio comes back. `mp3` is small and played once it has all
+ * arrived; `pcm` is the raw samples (PCM_SAMPLE_RATE, 16-bit, mono) the
+ * browser can play from the first chunk, for a piece the person is
+ * waiting on — eight times the bytes, so only for that piece.
+ */
+export type SpeechFormat = 'mp3' | 'pcm';
+/** The rate of `pcm` audio, every vendor's: what the browser plays it at. */
+export const PCM_SAMPLE_RATE = 24_000;
+
 export interface SynthesisRequest {
   text: string;
   /** A `VoiceInfo.id`; the vendor chooses when null. */
@@ -40,6 +50,8 @@ export interface SynthesisRequest {
   rate: number;
   /** The text's language, for vendors that need it beside the voice. */
   locale: string;
+  /** See SpeechFormat; `mp3` when absent. */
+  format?: SpeechFormat;
   signal?: AbortSignal;
 }
 

@@ -19,7 +19,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { clampRate, normalizeLocale } from '@renkei/voice';
+import { clampRate, normalizeLocale, type SpeechFormat } from '@renkei/voice';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { voiceForLocale } from '@/lib/voice/catalog';
@@ -75,6 +75,9 @@ export async function POST(
   const asked =
     typeof body.voice === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(body.voice) ? body.voice : null;
   const locale = normalizeLocale(body.locale) ?? resolved.config.defaultLocale;
+  // Raw samples, playable from the first chunk, for the piece the person
+  // is waiting on (lib/voice/speech-queue.ts); MP3 for the rest.
+  const format: SpeechFormat = body.format === 'pcm' ? 'pcm' : 'mp3';
   // A catalog that cannot be read leaves the voice as asked.
   const catalog = await listVoicesCached(tenantId, resolved);
   const voice = catalog.ok
@@ -86,6 +89,7 @@ export async function POST(
     voice,
     rate: clampRate(body.rate),
     locale,
+    format,
     signal: request.signal,
   });
   if (!result.ok) {

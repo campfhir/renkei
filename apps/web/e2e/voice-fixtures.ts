@@ -46,17 +46,22 @@ export function wav(samples: Float32Array, sampleRate: number): Buffer {
  * low tone swelling and fading like speech, so the wave and its glow have
  * an output level to follow in the shots.
  */
-function spokenPiece(): Buffer {
-  const rate = 16_000;
+function spokenSamples(rate: number): Float32Array {
   const samples = new Float32Array(rate * 4);
   for (let index = 0; index < samples.length; index += 1) {
     const t = index / rate;
     const syllables = 0.55 + 0.45 * Math.sin(2 * Math.PI * 3.1 * t);
     samples[index] = 0.35 * syllables * Math.sin(2 * Math.PI * 180 * t);
   }
-  return wav(samples, rate);
+  return samples;
 }
-export const SPOKEN_PIECE = spokenPiece();
+export const SPOKEN_PIECE = wav(spokenSamples(16_000), 16_000);
+/**
+ * The same four seconds as the raw 24 kHz samples a piece played as it
+ * arrives is asked for (`format: 'pcm'`, lib/voice/speech-queue.ts): a
+ * WAV's data chunk without its header.
+ */
+export const SPOKEN_PIECE_PCM = wav(spokenSamples(24_000), 24_000).subarray(44);
 
 export const CHAT_ID = '78787878-7878-4787-8787-787878787871';
 export const TURN_ID = '78787878-7878-4787-8787-787878787872';
@@ -480,6 +485,12 @@ export async function mockVendor(
     asks?: boolean;
     /** How long the model "takes" before the plain reply streams; the default is long enough for "Thinking…" to be seen. */
     replyDelayMs?: number;
+    /**
+     * What the recognizer says the utterance was when asked which
+     * language it was in (`?detect=1`), a moment after the quick answer
+     * in the set language has already gone out as a message.
+     */
+    heard?: { locale: string; text: string };
   } = {}
 ): Promise<void> {
   await page.route(/\/api\/tenant\/[^/]+\/voice$/, (route) =>
@@ -503,12 +514,22 @@ export async function mockVendor(
       },
     })
   );
-  await page.route(/\/api\/tenant\/[^/]+\/voice\/speech$/, (route) =>
-    route.fulfill({ status: 200, contentType: 'audio/wav', body: SPOKEN_PIECE })
-  );
-  await page.route(/\/api\/tenant\/[^/]+\/voice\/transcribe/, (route) =>
-    route.fulfill({ json: { text: UTTERANCE } })
-  );
+  await page.route(/\/api\/tenant\/[^/]+\/voice\/speech$/, (route) => {
+    const body: unknown = route.request().postDataJSON();
+    const pcm = typeof body === 'object' && body !== null && Reflect.get(body, 'format') === 'pcm';
+    return pcm
+      ? route.fulfill({ status: 200, contentType: 'audio/pcm', body: SPOKEN_PIECE_PCM })
+      : route.fulfill({ status: 200, contentType: 'audio/wav', body: SPOKEN_PIECE });
+  });
+  await page.route(/\/api\/tenant\/[^/]+\/voice\/transcribe/, async (route) => {
+    const detecting = route.request().url().includes('detect=1');
+    if (detecting && options.heard) {
+      // The slower answer: behind the quick one, as the vendor's is.
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      return route.fulfill({ json: options.heard });
+    }
+    return route.fulfill({ json: { text: UTTERANCE } });
+  });
   await page.route(/\/api\/admin\/[^/]+\/connectors\/voice\/test$/, (route) =>
     route.fulfill({ json: { ok: true, voices: 612, locales: 153, defaultVoiceKnown: true } })
   );
@@ -523,6 +544,21 @@ export async function mockVendor(
     })
   );
   await page.route(/\/turns\/[^/]+\/cancel$/, (route) => route.fulfill({ json: { ok: true } }));
+  // A corrected utterance is resent from its message: the same new turn
+  // again, with the wrong words' row (seq 3, after the two seeded) and
+  // everything after it removed.
+  await page.route(/\/messages\/[^/]+\/resend$/, (route) =>
+    route.fulfill({
+      status: 202,
+      json: {
+        turnId: NEW_TURN_ID,
+        userMessageId: NEW_USER_MESSAGE_ID,
+        assistantMessageId: NEW_ASSISTANT_MESSAGE_ID,
+        fromSeq: 3,
+        removedArtifactIds: [],
+      },
+    })
+  );
   if (!options.asks) {
     await page.route(/\/turns\/[^/]+\/stream$/, async (route) => {
       // A model takes a moment: long enough for "Thinking…" to be seen.

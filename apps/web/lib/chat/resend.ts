@@ -39,6 +39,8 @@ export interface ResendInput {
   /** Uploads made while editing, on top of the prompt's own. */
   extraAttachmentIds?: string[];
   llmModelId?: string | null;
+  /** See StartTurnInput.voice: the corrected words of a voice utterance. */
+  voice?: boolean;
   defer?: (task: () => Promise<void>) => void;
 }
 
@@ -207,6 +209,7 @@ export async function resendFromMessage(
     extraBlocks,
     attachmentIds,
     llmModelId: input.llmModelId ?? null,
+    voice: input.voice === true,
     defer: input.defer,
   });
   if (!started.ok) return started;

@@ -16,6 +16,14 @@
  * recognizer heard words (lib/voice/barge-in.ts). The utterance itself
  * is sent when it closes.
  *
+ * The close waits END_FRAMES of quiet, long enough that a pause for
+ * breath is not the end. Most of that wait would be dead time, so at
+ * PAUSE_FRAMES of quiet — well before the close — `onSpeechPause` hands
+ * over the sound so far: voice mode has it transcribed then, and when
+ * the utterance closes on that same quiet the words are already back
+ * (or nearly), and the reply starts a recognition earlier. Sound after
+ * the pause makes the hand-off stale; `onUtterance` says whether it is.
+ *
  * In `manual` mode (the walkie-talkie preference) the detector decides
  * nothing: `beginTake()` opens an utterance and `endTake()` closes it, so
  * a pause to think is never mistaken for the end of a sentence. The only
@@ -63,7 +71,20 @@ export interface RecorderOptions {
    * was pressed for it — and interrupts on `beginTake()` instead.
    */
   onSpeechHeld?: (wav: ArrayBuffer) => void;
-  onUtterance: (wav: ArrayBuffer, durationMs: number) => void;
+  /**
+   * The open utterance has gone quiet for PAUSE_FRAMES — likely its end,
+   * with the close END_FRAMES away: here it is so far, as 16 kHz mono
+   * WAV, for a recognition that starts now rather than then. Fired once
+   * per stretch of quiet, and again after more speech; auto mode only,
+   * and only for an utterance long enough to be sent.
+   */
+  onSpeechPause?: (wav: ArrayBuffer) => void;
+  /**
+   * `sameAsPause`: nothing loud since `onSpeechPause` last fired, so the
+   * words in `wav` are the words in what it handed over — a recognition
+   * of that is a recognition of this.
+   */
+  onUtterance: (wav: ArrayBuffer, durationMs: number, sameAsPause: boolean) => void;
   /**
    * The utterance closed, however it closed — sent, or too short to be
    * worth sending; in manual mode, by the button, by silence, or by the
@@ -93,12 +114,20 @@ const START_FRAMES = 3;
  */
 const HELD_FRAMES = 16;
 /**
- * Quiet frames that close an utterance: ~1.6 s of silence. Long enough
+ * Quiet frames that close an utterance: ~1.2 s of silence. Long enough
  * that a breath, or a pause to find the next word, is not taken for the
  * end of what the person meant to say; the reply is that much later to
- * start, which is the trade.
+ * start, which is the trade. (It was 1.6 s; the early hand-off below is
+ * what let it come down.)
  */
-const END_FRAMES = 32;
+const END_FRAMES = 24;
+/**
+ * Quiet frames before the sound so far is handed over for an early
+ * recognition: ~0.6 s. Past most breaths, so the hand-off is usually the
+ * end of the utterance and its recognition is not wasted; short enough
+ * of END_FRAMES that the recognizer has half a second's head start.
+ */
+const PAUSE_FRAMES = 12;
 /** In manual mode, this much silence closes the take unasked: ten seconds. */
 const SILENCE_FLOOR_FRAMES = 200;
 /** Less sound than this in an utterance is a click or a cough, not a sentence. */
@@ -130,6 +159,8 @@ export class UtteranceRecorder {
   private loudFrames = 0;
   /** `onSpeechHeld` has fired for the open utterance. */
   private held = false;
+  /** `onSpeechPause` has fired for the quiet the open utterance is in. */
+  private paused = false;
   private speaking = false;
   private noiseFloor = 0.004;
   private muted = false;
@@ -184,6 +215,7 @@ export class UtteranceRecorder {
     this.loudRun = 0;
     this.loudFrames = 0;
     this.held = false;
+    this.paused = false;
     this.utterance = [...this.preRoll];
     this.preRoll = [];
     this.options.onSpeechStart();
@@ -308,6 +340,7 @@ export class UtteranceRecorder {
     this.quietRun = 0;
     this.loudFrames = 0;
     this.held = false;
+    this.paused = false;
     this.speaking = false;
   }
 
@@ -359,6 +392,7 @@ export class UtteranceRecorder {
         this.quietRun = 0;
         this.loudFrames = this.loudRun;
         this.held = false;
+        this.paused = false;
         this.utterance = [...this.preRoll];
         this.preRoll = [];
         this.options.onSpeechStart();
@@ -368,7 +402,11 @@ export class UtteranceRecorder {
 
     this.utterance.push(frame);
     this.quietRun = loud ? 0 : this.quietRun + 1;
-    if (loud) this.loudFrames += 1;
+    if (loud) {
+      this.loudFrames += 1;
+      // Speech after a hand-off: what was handed over is not the whole.
+      this.paused = false;
+    }
     if (!this.manual && !this.held && this.loudFrames >= HELD_FRAMES) {
       this.held = true;
       this.options.onSpeechHeld?.(encodeWav(concat(this.utterance)));
@@ -378,6 +416,16 @@ export class UtteranceRecorder {
       if (this.quietRun >= SILENCE_FLOOR_FRAMES) this.close(durationMs, 'silence');
       else if (durationMs >= MAX_TAKE_MS) this.close(durationMs, 'length');
       return;
+    }
+    // The likely end, with the close still most of a second off: hand
+    // the sound over now, if there is enough of it to ever be sent.
+    if (
+      !this.paused &&
+      this.quietRun >= PAUSE_FRAMES &&
+      this.loudFrames * FRAME_MS >= MIN_UTTERANCE_MS
+    ) {
+      this.paused = true;
+      this.options.onSpeechPause?.(encodeWav(concat(this.utterance)));
     }
     if (this.quietRun >= END_FRAMES) this.close(durationMs, 'pause');
     else if (durationMs >= MAX_UTTERANCE_MS) this.close(durationMs, 'length');
@@ -390,14 +438,16 @@ export class UtteranceRecorder {
   private close(durationMs: number, reason: SpeechEndReason): void {
     const frames = this.utterance;
     const spokenMs = this.loudFrames * FRAME_MS;
+    const sameAsPause = this.paused;
     this.utterance = [];
     this.speaking = false;
     this.loudRun = 0;
     this.quietRun = 0;
     this.loudFrames = 0;
     this.held = false;
+    this.paused = false;
     if (spokenMs >= MIN_UTTERANCE_MS) {
-      this.options.onUtterance(encodeWav(concat(frames)), Math.round(durationMs));
+      this.options.onUtterance(encodeWav(concat(frames)), Math.round(durationMs), sameAsPause);
     }
     // The last word: a listener may stop the recorder on it.
     this.options.onSpeechEnd?.(reason);

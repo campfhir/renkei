@@ -367,6 +367,13 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     });
 
   let release: () => Promise<void> = async () => {};
+  // The turn is over (or never got going): a tool surface still resolving
+  // then releases itself rather than handing a release to nobody.
+  let released = false;
+  // Everything before the model's first token is time the person waits
+  // in silence (a voice turn most of all), so the reads below run side by
+  // side wherever one does not feed another, and the whole is logged.
+  const preparingSince = Date.now();
   try {
     const project = input.chat.projectId
       ? await getProjectRow(db, input.tenantId, input.chat.projectId)
@@ -376,12 +383,14 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     // toolset, so a cache miss here never costs a chat that already has
     // one. A code project's chat reads the person's code-project default,
     // never their chat default (tool-prefs.ts keeps the two apart).
-    const userDefault =
+    // fresh: "always allow" clicked in another chat a moment ago, or a tool
+    // just blocked on the Preferences page, must hold for this turn too.
+    const [userDefault, permissionPrefs] = await Promise.all([
       input.chat.toolConfig || project?.toolConfig
         ? null
-        : await getDefaultChatTools(input.tenantId, input.session.subject, {
-            kind: defaultsKind,
-          });
+        : getDefaultChatTools(input.tenantId, input.session.subject, { kind: defaultsKind }),
+      getChatToolPermissionPrefs(input.tenantId, input.session.subject, { fresh: true }),
+    ]);
     // A code project's chats always carry the Bitbucket connector on top
     // of whatever was chosen (tool-config.ts): the code_* tools push, the
     // connector's tools open the pull request.
@@ -402,15 +411,12 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     // The token must outlive the longest the turn can run: its wall clock
     // plus every minute it may spend parked behind a permission ask.
     const permissionWaitMs = limits?.permissionWaitMs ?? DEFAULT_TURN_LIMITS.permissionWaitMs;
-    // fresh: "always allow" clicked in another chat a moment ago, or a tool
-    // just blocked on the Preferences page, must hold for this turn too.
-    const permissionPrefs = await getChatToolPermissionPrefs(
-      input.tenantId,
-      input.session.subject,
-      { fresh: true }
-    );
     const denied = new Set(permissionPrefs.alwaysDeny);
-    const surface = await resolveChatToolSurface(db, {
+    // The slowest read of the lot — a token minted, then the app's own MCP
+    // endpoint asked three times over HTTP — so it runs while the rest of
+    // the turn's context is read. The release is taken the moment it is
+    // known, so a failure among the other reads still revokes the token.
+    const surfacing = resolveChatToolSurface(db, {
       tenantId: input.tenantId,
       subject: input.session.subject,
       roles: input.session.roles,
@@ -420,13 +426,28 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       // A code chat is told to open the pull request by name: those tools
       // are offered up front rather than behind find_tools.
       ...(defaultsKind === 'code' ? { eager: { tools: CODE_PROJECT_EAGER_TOOLS } } : {}),
+    }).then((surface) => {
+      if (released) void surface.release();
+      else release = surface.release;
+      return surface;
     });
-    release = surface.release;
 
     const readOnly = input.settings?.readOnly ?? false;
-    const [initialRows, person] = await Promise.all([
+    const [initialRows, person, filesAllowed, code, context, models, surface] = await Promise.all([
       listMessages(db, input.tenantId, input.chat.id),
       getIdentityDisplay(input.tenantId, input.session.subject),
+      tenantBlobStoreConfigured(input.tenantId),
+      // A code project's checkout, when it is there to work in: the code_*
+      // tools bound to it, and what the prompt says about it either way.
+      project?.kind === 'code'
+        ? codeProjectContext(db, project, { subject: input.session.subject })
+        : null,
+      chatPromptContext(db, input.tenantId, input.chat, project),
+      // The roster a chat's sub-agent picks from; a code project's chat has
+      // no such sub-agent (see `delegate` below), nor does a caller with
+      // its own local tools.
+      input.localTools || project?.kind === 'code' ? null : listChatModels(db, input.tenantId),
+      surfacing,
     ]);
     // Compaction runs before history is built, not as a background sweep:
     // the guarantee is that THIS turn's request stays bounded. A failed or
@@ -492,13 +513,6 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         log
       ),
     };
-    const filesAllowed = await tenantBlobStoreConfigured(input.tenantId);
-    // A code project's checkout, when it is there to work in: the code_*
-    // tools bound to it, and what the prompt says about it either way.
-    const code =
-      project?.kind === 'code'
-        ? await codeProjectContext(db, project, { subject: input.session.subject })
-        : null;
     // Auto mode (auto-mode.ts) is a code project's way of working: its
     // tools run unasked and the turn carries on until task_complete.
     // Read off the chat row the turn started from, so a switch flipped
@@ -511,20 +525,18 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     const chatTools =
       input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed));
     const delegate =
-      input.localTools || project?.kind === 'code'
+      models === null
         ? null
         : chatDelegateTool({
             surface,
             localTools: chatTools,
-            models: (await listChatModels(db, input.tenantId)).map(
-              ({ id, label, provider, model, isDefault }) => ({
-                id,
-                label,
-                provider,
-                model,
-                isDefault,
-              })
-            ),
+            models: models.map(({ id, label, provider, model, isDefault }) => ({
+              id,
+              label,
+              provider,
+              model,
+              isDefault,
+            })),
           });
     // A blocked local tool is withheld the same way a blocked connector
     // tool is: the model is never offered a verb it may not use.
@@ -558,7 +570,6 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     // calls a tool it remembers whether or not its schema is in the request,
     // and only with the schema does it call it right.
     const recalled = recallDiscoveredTools(history, surface.discoverable);
-    const context = await chatPromptContext(db, input.tenantId, input.chat, project);
     const system = buildSystemPrompt({
       personName: person?.displayName ?? person?.email ?? null,
       orgName: null,
@@ -583,6 +594,11 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       autoMode: auto,
       now: new Date(),
     });
+    log(
+      'chat turn prepared in {preparedMs} ms',
+      { preparedMs: Date.now() - preparingSince, tools: surface.tools.length, voice: input.voice },
+      'debug'
+    );
 
     const outcome = await runChatTurn(
       {
@@ -667,6 +683,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     });
     channel.close();
   } finally {
+    released = true;
     await release();
   }
 }

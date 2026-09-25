@@ -10,6 +10,14 @@
  * ride together with their neighbour, and a very long one is split at a
  * space so no single request exceeds the route's cap.
  *
+ * The first piece of a reply is the exception to "sentences are the
+ * unit": until it is heard the person is waiting on silence, and a
+ * model's opening sentence is often its longest. So while nothing of the
+ * reply has been spoken yet and no sentence has closed, a clause is
+ * enough — the text up to a comma, a colon, a semicolon or a dash, once
+ * it is MIN_CHUNK_CHARS long — and the rest of the sentence follows as
+ * the next piece, joined gapless (speech-queue.ts).
+ *
  * Works on the raw Markdown so a fenced block is never cut mid-way (an
  * open fence holds everything after it until it closes); `speakableText`
  * then turns each cut into words.
@@ -24,6 +32,12 @@ export const MAX_CHUNK_CHARS = 2_000;
 
 /** A sentence end: terminal punctuation (with closers), then whitespace or a newline. */
 const SENTENCE_END = /[.!?…]["'”’)\]]*(?:\s+|$)|\n\s*\n/g;
+/**
+ * A clause end, for a reply's first piece: a comma, colon or semicolon
+ * followed by whitespace (so "1,000" is never cut), or a dash between
+ * spaces.
+ */
+const CLAUSE_END = /[,;:]\s+|\s[—–-]\s+/g;
 
 function fenceOpen(text: string): boolean {
   const fences = text.match(/^\s{0,3}```/gm);
@@ -45,13 +59,30 @@ function hardSplit(piece: string): string[] {
 }
 
 /**
+ * The first clause of `buffer` long enough to be worth saying on its own,
+ * and what follows it; null when there is no such clause yet.
+ */
+function takeFirstClause(buffer: string): { clause: string; rest: string } | null {
+  CLAUSE_END.lastIndex = 0;
+  for (const match of buffer.matchAll(CLAUSE_END)) {
+    const end = match.index + match[0].length;
+    if (buffer.slice(0, end).trim().length < MIN_CHUNK_CHARS) continue;
+    if (fenceOpen(buffer.slice(0, end))) continue;
+    return { clause: buffer.slice(0, end), rest: buffer.slice(end) };
+  }
+  return null;
+}
+
+/**
  * The complete pieces in `buffer`, oldest first, and what remains after
  * them. With `final`, the remainder is a piece too — the turn has ended
- * and nothing more is coming.
+ * and nothing more is coming. With `first`, nothing of the reply has been
+ * spoken yet: if no sentence has closed, its first clause goes out alone
+ * rather than waiting for the sentence's end.
  */
 export function takeSpeakable(
   buffer: string,
-  options: { final?: boolean } = {}
+  options: { final?: boolean; first?: boolean } = {}
 ): { chunks: string[]; rest: string } {
   const sentences: string[] = [];
   let consumed = 0;
@@ -65,6 +96,10 @@ export function takeSpeakable(
     if (fenceOpen(buffer.slice(0, end))) continue;
     if (sentence.trim()) sentences.push(sentence);
     consumed = end;
+  }
+  if (sentences.length === 0 && options.first && !options.final) {
+    const opening = takeFirstClause(buffer);
+    if (opening) return { chunks: [opening.clause.trim()], rest: opening.rest };
   }
   let rest = buffer.slice(consumed);
   if (options.final && rest.trim()) {

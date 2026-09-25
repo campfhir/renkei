@@ -155,10 +155,22 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   await shot(page, testInfo, 'voice-07-mode-listening', false);
 
   // The fake microphone speaks at three seconds; the utterance is cut,
-  // transcribed and sent, and the reply takes a moment to arrive.
+  // transcribed and sent, and the reply takes a moment to arrive. The
+  // recognition is asked for once: at the utterance's first pause, ahead
+  // of the recorder closing it (lib/voice/recorder.ts's onSpeechPause),
+  // and the close takes that answer rather than asking again — in the
+  // set language, and (language detection being on) once more to hear
+  // which language it was, behind that.
+  const recognitions = { quick: 0, detect: 0 };
+  page.on('request', (request) => {
+    if (!/\/voice\/transcribe/.test(request.url())) return;
+    if (request.url().includes('detect=1')) recognitions.detect += 1;
+    else recognitions.quick += 1;
+  });
   await expect(dialog.getByText(UTTERANCE)).toBeVisible({ timeout: 30_000 });
   await expect(dialog.getByText('Thinking…')).toBeVisible({ timeout: 10_000 });
   await shot(page, testInfo, 'voice-08-mode-heard-thinking', false);
+  expect(recognitions).toEqual({ quick: 1, detect: 1 });
 
   await expect(dialog.getByText('Speaking — talk to interrupt')).toBeVisible({ timeout: 20_000 });
   await expect(dialog.getByText(/Two issues slipped out of the last sprint/)).toBeVisible();
@@ -170,6 +182,37 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   await expect(page.getByText(UTTERANCE)).toBeVisible();
   await expect(page.getByText(/Two issues slipped out of the last sprint/)).toBeVisible();
   await shot(page, testInfo, 'voice-10-after-conversation', false);
+});
+
+test('chat: an utterance heard in another language is resent in its words', async ({ page }) => {
+  const HEARD = { locale: 'fr-FR', text: 'Quels tickets ont glissé du dernier sprint ?' };
+  await mockVendor(page, { heard: HEARD });
+  const resends: { text?: unknown; voice?: unknown }[] = [];
+  page.on('request', (request) => {
+    if (/\/resend$/.test(request.url())) resends.push(request.postDataJSON());
+  });
+  await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
+  await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
+  await page.getByRole('button', { name: 'Voice', exact: true }).click();
+  await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'Voice conversation' });
+  await expect(dialog.getByText('Listening', { exact: true })).toBeVisible({ timeout: 15_000 });
+
+  // The quick answer, in the set language, goes out at once…
+  await expect(dialog.getByText(UTTERANCE)).toBeVisible({ timeout: 30_000 });
+  // …and the slower one, in French, replaces it: the words heard in
+  // French stand in the dialog, the reply is said to be read in it, and
+  // the message is resent with those words (once the reply to the wrong
+  // ones has been stopped), still as a voice turn.
+  await expect(dialog.getByText(HEARD.text)).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByText(/Heard in French/)).toBeVisible();
+  await expect.poll(() => resends.length, { timeout: 30_000 }).toBe(1);
+  expect(resends[0]).toMatchObject({ text: HEARD.text, voice: true });
+  await expect(dialog.getByText('Speaking — talk to interrupt')).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByText(UTTERANCE)).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Type instead' }).click();
+  await expect(page.getByText(HEARD.text)).toBeVisible();
+  await expect(page.getByText(UTTERANCE)).toHaveCount(0);
 });
 
 test('chat: a voice conversation says what it is doing, and asks before it acts', async ({

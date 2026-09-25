@@ -43,6 +43,7 @@ export async function POST(
     text,
     extraAttachmentIds,
     llmModelId,
+    voice: body.voice === true,
   });
   if (!resent.ok) {
     switch (resent.err.type) {

@@ -25,6 +25,9 @@ export interface SpeechRequest {
   locale: string | null;
 }
 
+/** The route's answer for a piece played as it arrives: raw samples, chunk by chunk. */
+export type SpeechStream = ReadableStream<Uint8Array>;
+
 const base = (tenantId: string) => `/api/tenant/${tenantId}/voice`;
 
 async function errorOf(response: Response, fallback: string): Promise<string> {
@@ -39,7 +42,7 @@ async function errorOf(response: Response, fallback: string): Promise<string> {
 export const voiceClient = {
   status: (tenantId: string) => getJson<VoiceStatus>(base(tenantId)),
 
-  /** One piece of text as audio. Aborting the signal drops the request. */
+  /** One piece of text as audio, whole (MP3). Aborting the signal drops the request. */
   synthesize: async (
     tenantId: string,
     request: SpeechRequest,
@@ -49,13 +52,44 @@ export const voiceClient = {
       const response = await fetch(`${base(tenantId)}/speech`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(request),
+        body: JSON.stringify({ ...request, format: 'mp3' }),
         signal,
       });
       if (!response.ok) {
         return { data: null, error: await errorOf(response, 'Speech failed') };
       }
       return { data: await response.blob(), error: null };
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { data: null, error: null };
+      }
+      return { data: null, error: 'Could not reach the server' };
+    }
+  },
+
+  /**
+   * One piece of text as raw samples (PCM_SAMPLE_RATE, 16-bit, mono),
+   * handed over as they arrive, for a piece the person is waiting on.
+   * Resolves once the vendor has started answering; the stream is the
+   * rest. Aborting the signal drops the request and ends the stream.
+   */
+  synthesizeStream: async (
+    tenantId: string,
+    request: SpeechRequest,
+    signal?: AbortSignal
+  ): Promise<{ data: SpeechStream | null; error: string | null }> => {
+    try {
+      const response = await fetch(`${base(tenantId)}/speech`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...request, format: 'pcm' }),
+        signal,
+      });
+      if (!response.ok) {
+        return { data: null, error: await errorOf(response, 'Speech failed') };
+      }
+      if (!response.body) return { data: null, error: 'The voice service sent no audio' };
+      return { data: response.body, error: null };
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         return { data: null, error: null };

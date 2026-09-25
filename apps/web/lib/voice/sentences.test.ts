@@ -52,6 +52,35 @@ describe('takeSpeakable', () => {
     expect(result.rest).toBe('');
   });
 
+  it('starts a reply on its first clause rather than waiting for the sentence', () => {
+    const opening =
+      'A Palo Alto firewall sits at the boundary of a network — between your internal systems and the outside';
+    expect(takeSpeakable(opening, { first: true })).toEqual({
+      chunks: ['A Palo Alto firewall sits at the boundary of a network —'],
+      rest: 'between your internal systems and the outside',
+    });
+    // Only the first piece: after it, sentences are the unit again.
+    expect(takeSpeakable(opening)).toEqual({ chunks: [], rest: opening });
+  });
+
+  it('waits for a clause long enough to be worth saying, and never cuts a number', () => {
+    expect(takeSpeakable('Yes, of course, it is', { first: true })).toEqual({
+      chunks: [],
+      rest: 'Yes, of course, it is',
+    });
+    const figures = 'The budget for the quarter came to 1,250,000 across the three teams, which';
+    expect(takeSpeakable(figures, { first: true })).toEqual({
+      chunks: ['The budget for the quarter came to 1,250,000 across the three teams,'],
+      rest: 'which',
+    });
+  });
+
+  it('prefers a closed sentence to a clause when the reply opens with one', () => {
+    const result = takeSpeakable(`${LONG} Then, after that`, { first: true });
+    expect(result.chunks).toEqual([LONG]);
+    expect(result.rest).toBe('Then, after that');
+  });
+
   it('splits one enormous sentence at spaces under the cap', () => {
     const words = Array.from({ length: 900 }, (_, index) => `word${index}`).join(' ');
     const result = takeSpeakable(`${words}.`);

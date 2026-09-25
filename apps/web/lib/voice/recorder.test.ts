@@ -16,13 +16,19 @@ const HELD = 16; // loud frames before an utterance counts as words
 function harness(over: Partial<RecorderOptions> = {}) {
   const starts: number[] = [];
   const held: number[] = [];
+  const pauses: number[] = [];
   const ends: SpeechEndReason[] = [];
   const utterances: number[] = [];
+  const sameAsPause: boolean[] = [];
   const recorder = new UtteranceRecorder({
     onSpeechStart: () => starts.push(1),
     onSpeechHeld: (wav) => held.push(wav.byteLength),
+    onSpeechPause: (wav) => pauses.push(wav.byteLength),
     onSpeechEnd: (reason) => ends.push(reason),
-    onUtterance: (_wav, durationMs) => utterances.push(durationMs),
+    onUtterance: (_wav, durationMs, same) => {
+      utterances.push(durationMs);
+      sameAsPause.push(same);
+    },
     onError: () => undefined,
     ...over,
   });
@@ -33,7 +39,7 @@ function harness(over: Partial<RecorderOptions> = {}) {
       recorder.ingest(frame, 16_000);
     }
   };
-  return { recorder, feed, starts, held, ends, utterances };
+  return { recorder, feed, starts, held, pauses, ends, utterances, sameAsPause };
 }
 
 describe('UtteranceRecorder (auto)', () => {
@@ -48,7 +54,10 @@ describe('UtteranceRecorder (auto)', () => {
     expect(ends).toHaveLength(0);
     expect(utterances).toHaveLength(0);
     feed(SECOND, true);
-    feed(32, false);
+    // 1.2 s of quiet is the end.
+    feed(23, false);
+    expect(ends).toHaveLength(0);
+    feed(1, false);
     expect(ends).toEqual(['pause']);
     expect(utterances).toHaveLength(1);
     // Pre-roll, the speech and the closing silence are all in the take.
@@ -83,6 +92,57 @@ describe('UtteranceRecorder (auto)', () => {
     expect(held).toHaveLength(2);
   });
 
+  it('hands the sound over at a pause, and the close says it is the same sound', () => {
+    const { feed, pauses, ends, utterances, sameAsPause } = harness();
+    feed(SECOND, false);
+    feed(SECOND, true);
+    // Eleven quiet frames are a breath; the twelfth is a pause, and
+    // everything so far goes out for an early recognition: the six
+    // pre-roll frames (three quiet, the three loud that started it),
+    // the seventeen loud after those, and the twelve quiet.
+    feed(11, false);
+    expect(pauses).toHaveLength(0);
+    feed(1, false);
+    expect(pauses).toHaveLength(1);
+    expect(pauses[0]).toBe(44 + 2 * FRAME * (6 + 17 + 12));
+    // The quiet goes on to the close, which sends the utterance and says
+    // its words are the ones already handed over.
+    feed(12, false);
+    expect(pauses).toHaveLength(1);
+    expect(ends).toEqual(['pause']);
+    expect(utterances).toHaveLength(1);
+    expect(sameAsPause).toEqual([true]);
+  });
+
+  it('speech after the pause makes the hand-off stale, and a later pause hands over again', () => {
+    const { feed, pauses, ends, utterances, sameAsPause } = harness();
+    feed(SECOND, false);
+    feed(SECOND, true);
+    feed(12, false);
+    expect(pauses).toHaveLength(1);
+    // More words: what was handed over is no longer the whole.
+    feed(SECOND, true);
+    feed(12, false);
+    expect(pauses).toHaveLength(2);
+    feed(SECOND, true);
+    feed(24, false);
+    expect(ends).toEqual(['pause']);
+    expect(utterances).toHaveLength(1);
+    // The close came 1.2 s after the last words: the pause fired at 0.6 s
+    // of that same quiet, so the hand-off is current.
+    expect(pauses).toHaveLength(3);
+    expect(sameAsPause).toEqual([true]);
+  });
+
+  it('a click too short to send is never handed over either', () => {
+    const { feed, pauses, utterances } = harness();
+    feed(SECOND, false);
+    feed(4, true);
+    feed(32, false);
+    expect(pauses).toHaveLength(0);
+    expect(utterances).toHaveLength(0);
+  });
+
   it('a cough: long enough to send, never long enough to hold', () => {
     const { feed, held, ends, utterances } = harness();
     feed(SECOND, false);
@@ -105,7 +165,7 @@ describe('UtteranceRecorder (auto)', () => {
 
 describe('UtteranceRecorder (manual)', () => {
   it('never starts on its own; Talk starts and Done sends', () => {
-    const { recorder, feed, starts, held, ends, utterances } = harness({ mode: 'manual' });
+    const { recorder, feed, starts, held, pauses, ends, utterances } = harness({ mode: 'manual' });
     feed(SECOND, false);
     feed(2 * SECOND, true);
     expect(starts).toHaveLength(0);
@@ -116,9 +176,11 @@ describe('UtteranceRecorder (manual)', () => {
     feed(SECOND, true);
     // A take is words by definition; the button already interrupted.
     expect(held).toHaveLength(0);
-    // A long pause to think is not the end of the take.
+    // A long pause to think is not the end of the take — and nothing is
+    // handed over early: the button decides when the take is whole.
     feed(5 * SECOND, false);
     expect(ends).toHaveLength(0);
+    expect(pauses).toHaveLength(0);
     feed(SECOND, true);
     recorder.endTake();
     expect(recorder.taking).toBe(false);
