@@ -32,6 +32,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { Icon, ICONS } from '@/components/icons';
 import Modal from '@/components/modal';
 
 interface HostBranch {
@@ -218,7 +219,7 @@ export function BranchPickerModal({
 
   return (
     <Modal title="Switch branch" onClose={onClose}>
-      <div role="listbox" aria-label="Switch branch" className="max-h-80 space-y-0.5 overflow-y-auto">
+      <div role="listbox" aria-label="Switch branch" className="max-h-80 space-y-1 overflow-y-auto">
         {loadError ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             {loadError}
@@ -236,11 +237,17 @@ export function BranchPickerModal({
               aria-selected={option.name === shown}
               disabled={switching}
               onClick={() => void pickAndClose(option.name)}
-              className={`block w-full truncate rounded-md px-3 py-2 text-left font-mono text-sm hover:bg-gray-100 disabled:opacity-60 dark:hover:bg-gray-900 ${
-                option.name === shown ? 'font-semibold' : ''
+              className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left font-mono text-sm disabled:opacity-60 ${
+                option.name === shown
+                  ? 'border-blue-200 bg-blue-50 font-semibold text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200'
+                  : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700 dark:hover:bg-gray-900'
               }`}
             >
-              {option.name}
+              <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0 opacity-60" />
+              <span className="min-w-0 flex-1 truncate">{option.name}</span>
+              {option.name === shown ? (
+                <Icon path={ICONS.check} className="h-3.5 w-3.5 shrink-0" />
+              ) : null}
             </button>
           ))
         )}
