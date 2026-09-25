@@ -12,6 +12,7 @@
  * `{ok: true, ...}` or `{ok: false, error}`, never a thrown exception.
  */
 
+import { GITHUB, ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
 import { githubHostAdapter } from './repo-host-github';
 import { bitbucketHostAdapter } from './repo-host-bitbucket';
 
@@ -91,12 +92,22 @@ export interface RepoHostAdapter {
   ): Promise<{ ok: true; runs: HostPipelineRun[] } | { ok: false; error: string }>;
 }
 
-/** The adapter for one project's host, given the caller's own identity. */
+/**
+ * The adapter for one project's host, given the caller's own identity.
+ * `provider` is `chat_projects.repo_provider`, which the project-creation
+ * route (api/tenant/[tenantId]/code/projects/route.ts) writes as the
+ * provider-grants constant itself — GITHUB ('github') or
+ * ATLASSIAN_BITBUCKET ('atlassian-bitbucket'), never the bare word
+ * 'bitbucket'. Matching against a literal 'bitbucket' here made every
+ * real Bitbucket project's Pulls/Commits card read "host not
+ * supported": PipelinesSummary/pipelines-access.ts already checked
+ * ATLASSIAN_BITBUCKET directly and worked, which is what hid this.
+ */
 export function hostAdapterFor(
   provider: string,
   context: RepoHostContext
 ): RepoHostAdapter | null {
-  if (provider === 'github') return githubHostAdapter(context);
-  if (provider === 'bitbucket') return bitbucketHostAdapter(context);
+  if (provider === GITHUB) return githubHostAdapter(context);
+  if (provider === ATLASSIAN_BITBUCKET) return bitbucketHostAdapter(context);
   return null;
 }
