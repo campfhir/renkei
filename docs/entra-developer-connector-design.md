@@ -73,16 +73,20 @@ is a live Graph call with the caller's own token.
 
 ## Graph surface used
 
-| Operation                   | Call                                                                            |
-| --------------------------- | ------------------------------------------------------------------------------- |
-| List / search registrations | `GET /applications` (`$search` with `ConsistencyLevel: eventual`)               |
-| Get a registration          | `GET /applications/{id}`, `GET /applications(appId='…')`                        |
-| Create a registration       | `POST /applications`                                                            |
-| Change a registration       | `PATCH /applications/{id}` (name, web/spa/publicClient, URIs)                   |
-| App roles                   | `PATCH /applications/{id}` with the full `appRoles` list                        |
-| Enterprise applications     | `GET /servicePrincipals`, `POST /servicePrincipals { appId }`                   |
-| Assignments                 | `GET/POST /servicePrincipals/{id}/appRoleAssignedTo`, `DELETE …/{assignmentId}` |
-| People and groups           | `GET /users`, `GET /groups` (`$filter` exact, `$search` partial)                |
+| Operation                       | Call                                                                                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| List / search registrations     | `GET /applications` (`$search` with `ConsistencyLevel: eventual`)                                                                       |
+| Get a registration              | `GET /applications/{id}`, `GET /applications(appId='…')`                                                                                |
+| Create a registration           | `POST /applications`                                                                                                                    |
+| Change a registration           | `PATCH /applications/{id}` (name, web/spa/publicClient, URIs)                                                                           |
+| App roles                       | `PATCH /applications/{id}` with the full `appRoles` list                                                                                |
+| Enterprise applications         | `GET /servicePrincipals`, `POST /servicePrincipals { appId }`                                                                           |
+| Assignments                     | `GET/POST /servicePrincipals/{id}/appRoleAssignedTo`, `DELETE …/{assignmentId}`                                                         |
+| People and groups               | `GET /users`, `GET /groups` (`$filter` exact, `$search` partial)                                                                        |
+| API permissions requested       | `PATCH /applications/{id}` with the full `requiredResourceAccess`                                                                       |
+| What a resource API offers      | `GET /servicePrincipals` (`oauth2PermissionScopes`, `appRoles` for applications)                                                        |
+| Application permissions granted | `GET /servicePrincipals/{id}/appRoleAssignments` on the client's enterprise application                                                 |
+| Scopes exposed                  | `PATCH /applications/{id}` with `api` sent whole, `oauth2PermissionScopes` extended; `identifierUris` set to `api://<appId>` when empty |
 
 App roles are replaced wholesale on PATCH, so an addition sends the existing roles as Graph
 returned them plus the new ones (fresh ids, `isEnabled: true`), and a removal sends two PATCHes —
@@ -90,10 +94,41 @@ the role disabled, then the list without it — because Entra refuses to drop an
 application that defines no roles takes assignments on the default role
 `00000000-0000-0000-0000-000000000000`.
 
+### API permissions: request and expose, never consent
+
+An app's API permissions (the portal's "API permissions" blade) are `requiredResourceAccess`, a
+list per resource API of permission ids. The tools name permissions by their value on the resource
+("User.Read", "Mail.Send") and resolve them against the resource's service principal, which is
+where the ids and the delegated/application distinction live — Microsoft Graph by default, any
+API with an enterprise application in the directory otherwise, including the org's own apps.
+Adding is a merge; a value of the wrong type is refused naming the right one.
+
+Requesting is not consenting. Granting admin consent writes `oauth2PermissionGrants` and
+`appRoleAssignments` on the enterprise application and needs `DelegatedPermissionGrant.ReadWrite.All`
+and directory-wide assignment rights this connector does not ask for — and it is a tenant-wide
+decision a person should make on Microsoft's own screen. So the preview and the result say which
+permissions will need it, and link the blade where an admin grants it. What Graph does expose to
+`Application.Read.All` — the application permissions already granted, as the client's
+`appRoleAssignments` — is reported on the listing as "granted"; delegated consent status is
+left to the portal.
+
+Exposing an API is the other direction: `api.oauth2PermissionScopes` on the app, sent back whole
+so the api block's other settings survive, with `api://<client id>` set as the Application ID URI
+when the app has none (Graph refuses a scope without one). Application permissions an app exposes
+are app roles for applications, which the app-role tools already cover.
+
+### Links for what stays on the portal
+
+`portal.ts` builds deep links into the Entra admin center (the same blade ids portal.azure.com
+uses) for the things Renkei deliberately does not do: certificates and secrets, admin consent,
+owners, and the enterprise application's users and permissions. They appear on
+`entra_get_application`, on a create's result, on a permission addition that will need consent,
+and on `entra_portal_links` for a model answering "where do I add a secret?".
+
 ## Not in this version
 
 - Client secrets and certificates (`addPassword`): the value is minted by Graph and would have to
-  travel back through the model's transcript; left out until there is a safer place to put it.
-- API permissions (`requiredResourceAccess`) and exposing scopes (`api.oauth2PermissionScopes`).
+  travel back through the model's transcript; the portal link stands in for now.
+- Granting admin consent (see above); pre-authorized client applications on an exposed API.
 - Owners, and deleting or disabling applications.
 - Assigning an application (service principal) to a role, as opposed to users and groups.

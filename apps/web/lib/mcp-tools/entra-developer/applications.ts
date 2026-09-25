@@ -13,6 +13,7 @@ import {
   errText,
   odataString,
   rec,
+  recs,
   searchClause,
   str,
   strings,
@@ -20,6 +21,7 @@ import {
   values,
   EVENTUAL,
 } from './client';
+import { applicationLinks, enterpriseApplicationLinks, linkLines } from './portal';
 import {
   APPLICATION_SELECT,
   SERVICE_PRINCIPAL_SELECT,
@@ -90,6 +92,33 @@ export function describeApplication(app: Record<string, unknown>): string[] {
       ? 'App roles: none defined (assignments use the default access role).'
       : `App roles (${roles.length}):`,
     ...roles.map((role) => `  • ${describeRole(role)}`),
+    ...exposedScopeLines(app),
+    ...requestedPermissionLines(app),
+  ];
+}
+
+/** The delegated scopes the app exposes ("Expose an API"). */
+function exposedScopeLines(app: Record<string, unknown>): string[] {
+  const scopes = recs(rec(app.api).oauth2PermissionScopes);
+  if (scopes.length === 0) return ['Exposed API scopes: none.'];
+  return [
+    `Exposed API scopes (${scopes.length}):`,
+    ...scopes.map(
+      (scope) =>
+        `  • ${str(scope.value)} — ${str(scope.adminConsentDisplayName) || str(scope.userConsentDisplayName)}` +
+        ` (${str(scope.type) === 'Admin' ? 'admin consent' : 'user consent'}${scope.isEnabled === false ? ', disabled' : ''}; id ${str(scope.id)})`
+    ),
+  ];
+}
+
+/** A count per resource of what the app requests; entra_list_api_permissions names them. */
+function requestedPermissionLines(app: Record<string, unknown>): string[] {
+  const resources = recs(app.requiredResourceAccess);
+  if (resources.length === 0) return ['API permissions requested: none.'];
+  const total = resources.reduce((n, r) => n + recs(r.resourceAccess).length, 0);
+  return [
+    `API permissions requested: ${total} across ${resources.length} API${resources.length === 1 ? '' : 's'} ` +
+      `(${resources.map((r) => `${recs(r.resourceAccess).length} on ${str(r.resourceAppId)}`).join(', ')}) — entra_list_api_permissions names them.`,
   ];
 }
 
@@ -227,6 +256,7 @@ export async function registerReadTools(
             'creates one, which is what app roles are assigned on.'
         );
       }
+      lines.push(...linkLines('Portal:', applicationLinks(str(app.appId))));
       return textResult(lines.join('\n'));
     }
   );
@@ -345,6 +375,46 @@ export async function registerReadTools(
               `${roleLabel(roles, a.appRoleId)} — assignment id ${a.id}`
           );
         }
+      }
+      lines.push(...linkLines('Portal:', enterpriseApplicationLinks(str(sp.id), str(sp.appId))));
+      return textResult(lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'entra_portal_links',
+    {
+      title: 'Entra Developer · Read — Portal links for an application',
+      description:
+        'Deep links into the Entra admin center for an application — where to add a client ' +
+        'secret or certificate, grant admin consent for API permissions, edit authentication ' +
+        'settings, and manage its enterprise application’s users and permissions. For what ' +
+        'this connector deliberately leaves to the portal (secrets, consent), send the person here.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({ application: applicationRefField }),
+    },
+    async (args) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const found = await findApplication(context, access, args.application);
+      if (!found.ok) return errText(found.error);
+      const app = found.value;
+      const lines = linkLines(
+        `${str(app.displayName)} — app registration (appId ${str(app.appId)}):`,
+        applicationLinks(str(app.appId))
+      );
+      const sp = await servicePrincipalForAppId(context, access, str(app.appId));
+      if (sp.ok && sp.value) {
+        lines.push(
+          ...linkLines(
+            'Enterprise application:',
+            enterpriseApplicationLinks(str(sp.value.id), str(app.appId))
+          )
+        );
+      } else if (sp.ok) {
+        lines.push(
+          'Enterprise application: none yet (entra_create_enterprise_application_preview).'
+        );
       }
       return textResult(lines.join('\n'));
     }

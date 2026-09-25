@@ -28,8 +28,9 @@ export const ENTRA_DEVELOPER_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'entra_list_applications, entra_get_application, entra_list_enterprise_applications, ' +
       'entra_get_enterprise_application (app registrations, enterprise applications, their ' +
-      'app roles and who is assigned to each), entra_check_access. Requires admin consent on ' +
-      'the Entra app.',
+      'app roles and who is assigned to each), entra_list_api_permissions, ' +
+      'entra_search_api_permissions (what Microsoft Graph or another API offers), ' +
+      'entra_portal_links, entra_check_access. Requires admin consent on the Entra app.',
     userHint:
       'Read the organisation’s app registrations and enterprise applications, their app roles, ' +
       'and who is assigned to them.',
@@ -43,13 +44,17 @@ export const ENTRA_DEVELOPER_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'entra_create_application (an app registration, optionally with its enterprise ' +
       'application and app roles), entra_update_application (name, redirect URIs, identifier ' +
-      'URIs), entra_create_enterprise_application, entra_add_app_roles, entra_remove_app_role — ' +
+      'URIs), entra_create_enterprise_application, entra_add_app_roles, entra_remove_app_role, ' +
+      'entra_add_api_permissions / entra_remove_api_permissions (what the app requests of ' +
+      'Graph or another API — requesting only; admin consent stays on the portal), ' +
+      'entra_add_api_scope / entra_remove_api_scope (the delegated scopes it exposes) — ' +
       'every one preview + confirm on a card. Carries Application.Read.All. Requires admin ' +
       'consent on the Entra app; Entra still checks that the person may create or owns the ' +
       'application on every call.',
     userHint:
       'Create app registrations and enterprise applications, and change their names, redirect ' +
-      'URIs and app roles — each change confirmed by you on a card first.',
+      'URIs, app roles, API permissions and exposed scopes — each change confirmed by you on a ' +
+      'card first.',
     group: 'applications',
     defaultChecked: true,
   },

@@ -36,6 +36,7 @@ import {
   type AppRole,
 } from './resolve';
 import { applicationRefField, describeApplication } from './applications';
+import { apiPermissionsLink, secretsLink } from './portal';
 
 /** The directory_action_preview card's structuredContent (see mcp-widgets). */
 export interface DirectoryActionPreview {
@@ -250,6 +251,10 @@ export async function registerProvisionTools(
     } else {
       lines.push('Enterprise application: not created, as asked.');
     }
+    lines.push(
+      `Next, on the portal: add a client secret or certificate at ${secretsLink(str(app.appId))}; ` +
+        `request API permissions with entra_add_api_permissions_preview and grant admin consent at ${apiPermissionsLink(str(app.appId))}.`
+    );
     return textResult(lines.join('\n'));
   }
 

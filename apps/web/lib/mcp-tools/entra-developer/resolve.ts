@@ -25,7 +25,7 @@ import {
 
 export const APPLICATION_SELECT =
   '$select=id,appId,displayName,description,signInAudience,createdDateTime,identifierUris,' +
-  'web,spa,publicClient,appRoles,tags,notes';
+  'web,spa,publicClient,appRoles,tags,notes,api,requiredResourceAccess';
 
 export const SERVICE_PRINCIPAL_SELECT =
   '$select=id,appId,displayName,accountEnabled,servicePrincipalType,appOwnerOrganizationId,' +

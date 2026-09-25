@@ -8,10 +8,13 @@
  * ./scopes.ts).
  *
  * What it covers: app registrations and enterprise applications (create,
- * read, change), app roles (add, remove), and who holds each role (assign
- * users and groups, remove them) — the provisioning a developer or app
- * owner does in the Entra portal, with every write preview + confirm on
- * the directory_action_preview card. Entra remains the authority: who may
+ * read, change), app roles (add, remove), who holds each role (assign
+ * users and groups, remove them), and API permissions both ways (what an
+ * app requests of Graph or another API, and the scopes it exposes) — the
+ * provisioning a developer or app owner does in the Entra portal, with
+ * every write preview + confirm on the directory_action_preview card.
+ * Secrets and admin consent stay on the portal, one deep link away
+ * (./portal.ts). Entra remains the authority: who may
  * create applications and who owns one are checked by Graph on every call.
  */
 
@@ -23,6 +26,7 @@ import type { EntraAuth } from './entra-auth';
 import { registerReadTools } from './applications';
 import { registerProvisionTools } from './provision';
 import { registerAssignmentTools } from './assignments';
+import { registerPermissionTools } from './permissions';
 
 export const ENTRA_DEVELOPER_MCP_CONNECTOR = 'entra-developer';
 
@@ -38,4 +42,5 @@ export async function registerEntraDeveloperTools(
   await registerReadTools(server, context, auth);
   await registerProvisionTools(server, context, auth);
   await registerAssignmentTools(server, context, auth);
+  await registerPermissionTools(server, context, auth);
 }

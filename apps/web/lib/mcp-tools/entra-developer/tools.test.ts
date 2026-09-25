@@ -150,7 +150,7 @@ const payrollSp = {
 };
 
 const APP_SELECT =
-  '$select=id,appId,displayName,description,signInAudience,createdDateTime,identifierUris,web,spa,publicClient,appRoles,tags,notes';
+  '$select=id,appId,displayName,description,signInAudience,createdDateTime,identifierUris,web,spa,publicClient,appRoles,tags,notes,api,requiredResourceAccess';
 const SP_SELECT =
   '$select=id,appId,displayName,accountEnabled,servicePrincipalType,appOwnerOrganizationId,appRoleAssignmentRequired,appRoles,tags,loginUrl,replyUrls,homepage';
 const USER_SELECT = '$select=id,displayName,mail,userPrincipalName,jobTitle,department';
@@ -261,7 +261,7 @@ describe('registration', () => {
     expect(assigner).not.toContain('entra_create_application_preview');
 
     // An older grant with no recorded scopes registers everything.
-    expect((await tools(undefined)).handlers.size).toBe(21);
+    expect((await tools(undefined)).handlers.size).toBe(32);
   });
 
   it('makes every write a preview card whose confirm only the card may call', async () => {
@@ -269,6 +269,10 @@ describe('registration', () => {
     const writes = [...configs.entries()].filter(([, c]) => c.annotations?.readOnlyHint !== true);
     expect(writes.map(([name]) => name).sort()).toEqual(
       [
+        'entra_add_api_permissions_confirm',
+        'entra_add_api_permissions_preview',
+        'entra_add_api_scope_confirm',
+        'entra_add_api_scope_preview',
         'entra_add_app_roles_confirm',
         'entra_add_app_roles_preview',
         'entra_assign_app_role_confirm',
@@ -277,6 +281,10 @@ describe('registration', () => {
         'entra_create_application_preview',
         'entra_create_enterprise_application_confirm',
         'entra_create_enterprise_application_preview',
+        'entra_remove_api_permissions_confirm',
+        'entra_remove_api_permissions_preview',
+        'entra_remove_api_scope_confirm',
+        'entra_remove_api_scope_preview',
         'entra_remove_app_role_assignment_confirm',
         'entra_remove_app_role_assignment_preview',
         'entra_remove_app_role_confirm',
@@ -361,6 +369,11 @@ describe('reads', () => {
       '• Administrator [Admin] — Runs the app (User; id ' + ROLE_ADMIN + ')'
     );
     expect(answer).toContain(`Enterprise application: yes — object id ${SP_ID}`);
+    expect(answer).toContain('Exposed API scopes: none.');
+    expect(answer).toContain('API permissions requested: none.');
+    expect(answer).toContain(
+      `Certificates & secrets (add a client secret): https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Credentials/appId/${CLIENT_ID}`
+    );
   });
 
   it('falls back from object id to application (client) id for a pasted GUID', async () => {
@@ -818,5 +831,281 @@ describe('assignments', () => {
       1
     );
     expect(answer).toBe('Removed Reader on "Payroll" from: Jane Doe (jane@contoso.com).');
+  });
+});
+
+describe('API permissions', () => {
+  const GRAPH_APP = '00000003-0000-0000-c000-000000000000';
+  const GRAPH_SP = '99999999-9999-4999-8999-999999999999';
+  const USER_READ = 'e1fe6dd8-ba31-4d61-89e7-88639da4683d';
+  const MAIL_READ_APP = '810c84a8-4a9e-49e6-bf7d-12d183f40d01';
+  const REQUIRED_SELECT = '$select=id,appId,displayName,requiredResourceAccess';
+  const RESOURCE_SELECT = '$select=id,appId,displayName,oauth2PermissionScopes,appRoles';
+  const graphSp = {
+    id: GRAPH_SP,
+    appId: GRAPH_APP,
+    displayName: 'Microsoft Graph',
+    oauth2PermissionScopes: [
+      {
+        id: USER_READ,
+        value: 'User.Read',
+        type: 'User',
+        isEnabled: true,
+        adminConsentDisplayName: 'Sign in and read user profile',
+      },
+      {
+        id: 'df021288-0000-4000-8000-000000000001',
+        value: 'User.Read.All',
+        type: 'Admin',
+        isEnabled: true,
+        adminConsentDisplayName: 'Read all users’ full profiles',
+      },
+    ],
+    appRoles: [
+      {
+        id: MAIL_READ_APP,
+        value: 'Mail.Read',
+        allowedMemberTypes: ['Application'],
+        isEnabled: true,
+        displayName: 'Read mail in all mailboxes',
+      },
+      {
+        id: 'ignored-user-role',
+        value: 'NotAPermission',
+        allowedMemberTypes: ['User'],
+        isEnabled: true,
+        displayName: 'A user role',
+      },
+    ],
+  };
+
+  function seedGraph() {
+    seedPayroll();
+    graph[
+      `GET /servicePrincipals?$filter=${encodeURIComponent(`appId eq '${GRAPH_APP}'`)}&$top=1&${RESOURCE_SELECT}`
+    ] = [200, { value: [graphSp] }];
+    graph[
+      `GET /servicePrincipals?$filter=${encodeURIComponent("displayName eq 'Microsoft Graph'")}&$top=5&${RESOURCE_SELECT}`
+    ] = [200, { value: [graphSp] }];
+  }
+
+  it('finds what an API offers, telling delegated from application and who must consent', async () => {
+    seedGraph();
+    const answer = text(await call('entra_search_api_permissions', { query: 'read' }));
+    expect(answer).toContain(
+      'Microsoft Graph (appId 00000003-0000-0000-c000-000000000000) — 3 permissions:'
+    );
+    expect(answer).toContain('• User.Read — delegated — Sign in and read user profile');
+    expect(answer).toContain('• User.Read.All — delegated, admin consent required');
+    expect(answer).toContain('• Mail.Read — application, admin consent required');
+    expect(answer).not.toContain('NotAPermission');
+  });
+
+  it('adds requested permissions by value, keeping what is there, and says who must consent', async () => {
+    seedGraph();
+    graph[`GET /applications/${APP_ID}?${REQUIRED_SELECT}`] = [
+      200,
+      {
+        ...payroll,
+        requiredResourceAccess: [
+          { resourceAppId: GRAPH_APP, resourceAccess: [{ id: USER_READ, type: 'Scope' }] },
+        ],
+      },
+    ];
+    const preview = await call('entra_add_api_permissions_preview', {
+      application: 'Payroll',
+      permissions: [{ name: 'User.Read' }, { name: 'mail.read', type: 'application' }],
+    });
+    expect(preview.structuredContent).toMatchObject({
+      action: 'Add API permissions',
+      secondaryPerson: { label: 'API', name: 'Microsoft Graph' },
+      fields: [{ label: 'Admin consent needed afterwards', value: 'Mail.Read' }],
+      groupLists: [
+        {
+          label: 'Will be requested',
+          groups: ['Mail.Read — application, admin consent required — Read mail in all mailboxes'],
+          tone: 'add',
+        },
+        { label: 'Already requested (skipped)', groups: ['User.Read'], tone: 'muted' },
+      ],
+      confirmArgs: {
+        application: APP_ID,
+        resource: GRAPH_APP,
+        permissions: [{ name: MAIL_READ_APP, type: 'application' }],
+      },
+    });
+
+    graph[`PATCH /applications/${APP_ID}`] = [204, null];
+    const answer = text(
+      await call('entra_add_api_permissions_confirm', {
+        application: APP_ID,
+        resource: GRAPH_APP,
+        permissions: [{ name: MAIL_READ_APP, type: 'application' }],
+      })
+    );
+    expect(sent('PATCH', `/applications/${APP_ID}`)[0].body).toEqual({
+      requiredResourceAccess: [
+        {
+          resourceAppId: GRAPH_APP,
+          resourceAccess: [
+            { id: USER_READ, type: 'Scope' },
+            { id: MAIL_READ_APP, type: 'Role' },
+          ],
+        },
+      ],
+    });
+    expect(answer).toContain('Requested Mail.Read (application) on Microsoft Graph for "Payroll".');
+    expect(answer).toContain(
+      `Mail.Read needs an admin to grant consent before the app can use it: https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/${CLIENT_ID}`
+    );
+  });
+
+  it('refuses a permission of the wrong type, naming the right one', async () => {
+    seedGraph();
+    const result = await call('entra_add_api_permissions_preview', {
+      application: 'Payroll',
+      permissions: [{ name: 'Mail.Read' }],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toContain(
+      'offers "Mail.Read" as an application permission, not a delegated one'
+    );
+  });
+
+  it('lists what an app requests, marking granted application permissions', async () => {
+    seedGraph();
+    graph[`GET /applications/${APP_ID}?${REQUIRED_SELECT}`] = [
+      200,
+      {
+        ...payroll,
+        requiredResourceAccess: [
+          {
+            resourceAppId: GRAPH_APP,
+            resourceAccess: [
+              { id: USER_READ, type: 'Scope' },
+              { id: MAIL_READ_APP, type: 'Role' },
+            ],
+          },
+        ],
+      },
+    ];
+    graph[`GET /servicePrincipals/${SP_ID}/appRoleAssignments?$top=100`] = [
+      200,
+      { value: [{ id: 'grant-1', appRoleId: MAIL_READ_APP, resourceId: GRAPH_SP }] },
+    ];
+    const answer = text(await call('entra_list_api_permissions', { application: 'Payroll' }));
+    expect(answer).toContain('Microsoft Graph (appId 00000003-0000-0000-c000-000000000000):');
+    expect(answer).toContain('• User.Read — delegated — Sign in and read user profile');
+    expect(answer).toContain('• Mail.Read — application, admin consent required — granted');
+    expect(answer).toContain('Delegated consent status is shown on the portal.');
+  });
+
+  it('removes requested permissions and drops a resource left empty', async () => {
+    seedGraph();
+    graph[`GET /applications/${APP_ID}?${REQUIRED_SELECT}`] = [
+      200,
+      {
+        ...payroll,
+        requiredResourceAccess: [
+          { resourceAppId: GRAPH_APP, resourceAccess: [{ id: USER_READ, type: 'Scope' }] },
+        ],
+      },
+    ];
+    graph[`PATCH /applications/${APP_ID}`] = [204, null];
+    const answer = text(
+      await call('entra_remove_api_permissions_confirm', {
+        application: APP_ID,
+        permissions: [{ name: 'User.Read' }],
+      })
+    );
+    expect(sent('PATCH', `/applications/${APP_ID}`)[0].body).toEqual({
+      requiredResourceAccess: [],
+    });
+    expect(answer).toContain('no longer requests User.Read on Microsoft Graph');
+  });
+
+  it('exposes a scope, setting the Application ID URI when the app has none, and sends api whole', async () => {
+    seedPayroll();
+    const bare = {
+      ...payroll,
+      identifierUris: [],
+      api: { requestedAccessTokenVersion: 2, oauth2PermissionScopes: [] },
+    };
+    graph[`GET /applications/${APP_ID}?${APP_SELECT}`] = [200, bare];
+    graph[
+      `GET /applications?$filter=${encodeURIComponent("displayName eq 'Payroll'")}&$top=5&${APP_SELECT}`
+    ] = [200, { value: [bare] }];
+    const args = {
+      application: 'Payroll',
+      value: 'Tasks.Read',
+      adminConsentDisplayName: 'Read tasks',
+      adminConsentDescription: 'Lets the app read tasks.',
+    };
+    const preview = await call('entra_add_api_scope_preview', args);
+    expect(preview.structuredContent?.fields).toEqual(
+      expect.arrayContaining([
+        { label: 'Full scope', value: `api://${CLIENT_ID}/Tasks.Read` },
+        { label: 'Application ID URI', value: `api://${CLIENT_ID} (set now — the app has none)` },
+        { label: 'Who can consent', value: 'Any user, for themselves' },
+      ])
+    );
+
+    graph[`PATCH /applications/${APP_ID}`] = [204, null];
+    const answer = text(
+      await call('entra_add_api_scope_confirm', { ...args, application: APP_ID })
+    );
+    const body = sent('PATCH', `/applications/${APP_ID}`)[0].body as {
+      identifierUris: string[];
+      api: {
+        requestedAccessTokenVersion: number;
+        oauth2PermissionScopes: Record<string, unknown>[];
+      };
+    };
+    expect(body.identifierUris).toEqual([`api://${CLIENT_ID}`]);
+    expect(body.api.requestedAccessTokenVersion).toBe(2);
+    expect(body.api.oauth2PermissionScopes[0]).toMatchObject({
+      value: 'Tasks.Read',
+      type: 'User',
+      isEnabled: true,
+      userConsentDisplayName: 'Read tasks',
+    });
+    expect(answer).toContain(
+      `now exposes api://${CLIENT_ID}/Tasks.Read (Application ID URI set to api://${CLIENT_ID})`
+    );
+  });
+
+  it('removes an exposed scope by disabling it first', async () => {
+    seedPayroll();
+    const scope = {
+      id: 'scope-1',
+      value: 'Tasks.Read',
+      type: 'User',
+      isEnabled: true,
+      adminConsentDisplayName: 'Read tasks',
+    };
+    const exposing = { ...payroll, api: { oauth2PermissionScopes: [scope] } };
+    graph[`GET /applications/${APP_ID}?${APP_SELECT}`] = [200, exposing];
+    graph[`PATCH /applications/${APP_ID}`] = [204, null];
+    const answer = text(
+      await call('entra_remove_api_scope_confirm', { application: APP_ID, value: 'tasks.read' })
+    );
+    const patches = sent('PATCH', `/applications/${APP_ID}`).map(
+      (r) =>
+        (r.body as { api: { oauth2PermissionScopes: Record<string, unknown>[] } }).api
+          .oauth2PermissionScopes
+    );
+    expect(patches).toEqual([[{ ...scope, isEnabled: false }], []]);
+    expect(answer).toBe('Removed exposed scope Tasks.Read from "Payroll".');
+  });
+
+  it('answers the portal links for a registration and its enterprise application', async () => {
+    seedPayroll();
+    const answer = text(await call('entra_portal_links', { application: 'Payroll' }));
+    expect(answer).toContain(
+      `API permissions (grant admin consent): https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/${CLIENT_ID}`
+    );
+    expect(answer).toContain(
+      `Users and groups: https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Users/objectId/${SP_ID}/appId/${CLIENT_ID}`
+    );
   });
 });

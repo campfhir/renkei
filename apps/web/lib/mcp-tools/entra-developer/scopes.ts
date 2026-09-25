@@ -16,10 +16,16 @@ export function entraScopeFor(toolName: string): string[] {
     case 'entra_check_access':
       return [];
 
+    // Resource APIs' scopes and roles are read off their service
+    // principals, an app's granted application permissions off its own —
+    // all Application.Read.All.
     case 'entra_list_applications':
     case 'entra_get_application':
     case 'entra_list_enterprise_applications':
     case 'entra_get_enterprise_application':
+    case 'entra_portal_links':
+    case 'entra_search_api_permissions':
+    case 'entra_list_api_permissions':
       return ['Application.Read.All'];
 
     case 'entra_search_users':
@@ -39,6 +45,14 @@ export function entraScopeFor(toolName: string): string[] {
     case 'entra_add_app_roles_confirm':
     case 'entra_remove_app_role_preview':
     case 'entra_remove_app_role_confirm':
+    case 'entra_add_api_permissions_preview':
+    case 'entra_add_api_permissions_confirm':
+    case 'entra_remove_api_permissions_preview':
+    case 'entra_remove_api_permissions_confirm':
+    case 'entra_add_api_scope_preview':
+    case 'entra_add_api_scope_confirm':
+    case 'entra_remove_api_scope_preview':
+    case 'entra_remove_api_scope_confirm':
       return ['Application.ReadWrite.All'];
 
     // Assignments read the enterprise application's roles (Application.Read.All)
