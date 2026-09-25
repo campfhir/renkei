@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
+import ExternalLink from '@/components/external-link';
 import { getJson } from '@/lib/fetch-json';
 import type { PipelineSummary } from '@/lib/code/bitbucket-pipelines';
 import { RunStatePill, StatusPill } from './pipelines-page';
@@ -107,14 +108,9 @@ export default function PipelinesSummary({
           {summary.lastRun ? (
             <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="text-gray-500">Last run</span>
-              <a
-                href={summary.lastRun.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium hover:underline"
-              >
+              <ExternalLink href={summary.lastRun.url} className="font-medium hover:underline">
                 #{summary.lastRun.buildNumber}
-              </a>
+              </ExternalLink>
               <RunStatePill state={summary.lastRun.state} />
               <span className="font-mono text-xs">{summary.lastRun.ref}</span>
               {summary.lastRun.createdOn ? (

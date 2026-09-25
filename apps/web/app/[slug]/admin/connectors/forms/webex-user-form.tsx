@@ -7,6 +7,7 @@ import {
   WEBEX_REQUIRED_SCOPES,
 } from '@/lib/webex-scopes';
 import ScopePicker from '@/components/scope-picker';
+import ExternalLink from '@/components/external-link';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import {
   useConnectorConfig,
@@ -119,14 +120,12 @@ export function WebexUserForm({ slug, origin }: { slug: string; origin: string |
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         An{' '}
-        <a
+        <ExternalLink
           href="https://developer.webex.com/my-apps"
           className="text-blue-600 hover:underline dark:text-blue-400"
-          target="_blank"
-          rel="noreferrer"
         >
           Integration
-        </a>{' '}
+        </ExternalLink>{' '}
         (not the bot) through which each person grants Renkei access to their own WebEx — rooms they
         are in, messages they can see. Its redirect URI must be <CallbackUrl origin={origin} />.
       </p>

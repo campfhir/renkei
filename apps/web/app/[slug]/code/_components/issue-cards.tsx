@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import ExternalLink from '@/components/external-link';
 import { getJson } from '@/lib/fetch-json';
 import Pill from './pill';
 
@@ -35,7 +36,13 @@ interface IssuesResponse {
   github: GitHubIssueCard | null;
 }
 
-function Card({ icon, label, title, sub, url }: {
+function Card({
+  icon,
+  label,
+  title,
+  sub,
+  url,
+}: {
   icon: string;
   label: string;
   title: string;
@@ -43,10 +50,8 @@ function Card({ icon, label, title, sub, url }: {
   url: string;
 }) {
   return (
-    <a
+    <ExternalLink
       href={url}
-      target="_blank"
-      rel="noopener noreferrer"
       className="flex min-w-0 items-center gap-2 rounded-md border border-gray-200 px-2.5 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900"
     >
       <Icon path={icon} className="h-4 w-4 shrink-0 text-gray-400" />
@@ -56,7 +61,7 @@ function Card({ icon, label, title, sub, url }: {
         </span>
       </span>
       {sub ? <Pill tone="gray">{sub}</Pill> : null}
-    </a>
+    </ExternalLink>
   );
 }
 

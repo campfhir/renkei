@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import ExternalLink from '@/components/external-link';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 
 interface SubscriptionView {
@@ -123,14 +124,9 @@ export default function PrSubscribe({
         {prUrl ? (
           <>
             {' '}
-            <a
-              href={prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline dark:text-blue-400"
-            >
+            <ExternalLink href={prUrl} className="text-blue-600 hover:underline dark:text-blue-400">
               View
-            </a>
+            </ExternalLink>
           </>
         ) : null}
       </>
@@ -175,7 +171,9 @@ export default function PrSubscribe({
           />
           Merge
         </label>
-        {outcome ? <span className="w-full text-gray-500 dark:text-gray-400">{outcome}</span> : null}
+        {outcome ? (
+          <span className="w-full text-gray-500 dark:text-gray-400">{outcome}</span>
+        ) : null}
         {error ? (
           <span role="alert" className="w-full text-red-600 dark:text-red-400">
             {error}
@@ -196,7 +194,9 @@ export default function PrSubscribe({
         />
         Subscribe to pipeline outcomes
       </label>
-      <label className={`flex items-center gap-1.5 pl-5 ${state.watchPipelines ? '' : 'text-gray-400'}`}>
+      <label
+        className={`flex items-center gap-1.5 pl-5 ${state.watchPipelines ? '' : 'text-gray-400'}`}
+      >
         <input
           type="checkbox"
           checked={state.autoFix}
@@ -205,7 +205,9 @@ export default function PrSubscribe({
         />
         Note a failure in this chat
       </label>
-      <label className={`flex items-center gap-1.5 pl-5 ${state.watchPipelines ? '' : 'text-gray-400'}`}>
+      <label
+        className={`flex items-center gap-1.5 pl-5 ${state.watchPipelines ? '' : 'text-gray-400'}`}
+      >
         <input
           type="checkbox"
           checked={state.autoMerge}

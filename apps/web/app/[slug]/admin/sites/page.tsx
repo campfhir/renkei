@@ -6,6 +6,7 @@ import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { readAtlassianMetadata } from '@renkei/provider-grants';
 import CoachTarget from '@/components/coach-marks/anchor';
+import ExternalLink from '@/components/external-link';
 
 /**
  * Every external place this org's Renkei reaches, in two kinds:
@@ -137,14 +138,12 @@ export default async function SitesPage({
               >
                 <div className="flex flex-wrap items-center gap-2">
                   {site.siteUrl ? (
-                    <a
+                    <ExternalLink
                       href={site.siteUrl}
-                      target="_blank"
-                      rel="noreferrer"
                       className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
                     >
                       {site.siteUrl.replace(/^https?:\/\//, '')}
-                    </a>
+                    </ExternalLink>
                   ) : (
                     <span className="font-semibold">{site.cloudId}</span>
                   )}

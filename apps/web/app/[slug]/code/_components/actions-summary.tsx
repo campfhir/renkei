@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
+import ExternalLink from '@/components/external-link';
 import { getJson } from '@/lib/fetch-json';
 import type { HostPipelineRun } from '@/lib/code/repo-host';
 import Pill, { type PillTone } from './pill';
@@ -88,9 +89,9 @@ export default function ActionsSummary({
         <p className="text-sm text-gray-500">Reading from GitHub…</p>
       ) : lastRun ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-          <a href={lastRun.url} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline">
+          <ExternalLink href={lastRun.url} className="font-medium hover:underline">
             Last run
-          </a>
+          </ExternalLink>
           <Pill tone={STATE_TONE[lastRun.state]}>{STATE_LABEL[lastRun.state]}</Pill>
           <span className="font-mono text-xs">{lastRun.ref}</span>
           {lastRun.startedAt ? (

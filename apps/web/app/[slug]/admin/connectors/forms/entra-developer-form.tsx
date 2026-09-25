@@ -7,6 +7,7 @@ import {
   ENTRA_DEVELOPER_REQUIRED_SCOPES,
 } from '@/lib/entra-developer-scopes';
 import ScopePicker from '@/components/scope-picker';
+import ExternalLink from '@/components/external-link';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import {
   useConnectorConfig,
@@ -133,14 +134,12 @@ export function EntraDeveloperForm({ slug, origin }: { slug: string; origin: str
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         A <strong>separate</strong>{' '}
-        <a
+        <ExternalLink
           href="https://entra.microsoft.com"
           className="text-blue-600 hover:underline dark:text-blue-400"
-          target="_blank"
-          rel="noreferrer"
         >
           Entra app registration
-        </a>{' '}
+        </ExternalLink>{' '}
         from the Microsoft 365 one, through which a developer lets Renkei provision applications as
         them: app registrations, enterprise applications, app roles, and which users and groups hold
         each role. Register a <strong>Web</strong> platform whose redirect URI is{' '}

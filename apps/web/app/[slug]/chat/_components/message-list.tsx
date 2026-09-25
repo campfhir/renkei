@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { friendlyToolName } from '@/lib/tool-name';
 import { Icon, ICONS } from '@/components/icons';
+import ExternalLink from '@/components/external-link';
 import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
 import { segment, type Segment, type ToolResult, type WorkStep } from '@/lib/chat/segment';
 import type {
@@ -1161,15 +1162,13 @@ function MilestoneCard({
               </button>
             ) : null}
             {summary?.link ? (
-              <a
+              <ExternalLink
                 href={summary.link.url}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
               >
                 <Icon path={ICONS.externalLink} className="h-3.5 w-3.5" />
                 {summary.link.label}
-              </a>
+              </ExternalLink>
             ) : null}
           </div>
         ) : null}

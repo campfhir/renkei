@@ -4,6 +4,7 @@ import { friendlyToolName, parseFormNodes, type FormNode } from '@renkei/agents'
 import { jiraIssueApprovalPreview } from '@/lib/mcp-tools/jira/approval-preview';
 import { jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
 import { Icon, ICONS } from '@/components/icons';
+import ExternalLink from '@/components/external-link';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
 import ApprovalWidgetCard from './approval-widget-card';
@@ -555,14 +556,12 @@ function ExecutionResult({
     return (
       <p className="text-sm">
         Created{' '}
-        <a
+        <ExternalLink
           href={record.url}
-          target="_blank"
-          rel="noopener noreferrer"
           className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
         >
           {record.issueKey}
-        </a>
+        </ExternalLink>
       </p>
     );
   }

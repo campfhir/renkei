@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
+import ExternalLink from '@/components/external-link';
 import PipelinesSummary from './pipelines-summary';
 import ActionsSummary from './actions-summary';
 import ServicesSummaryCard from './services-summary';
@@ -148,14 +149,12 @@ export default function CodeSections({
             <h2 className="text-sm font-semibold">Repository</h2>
             {statusPill}
             {hostUrl ? (
-              <a
+              <ExternalLink
                 href={hostUrl}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
               >
                 Open on {hostLabel}
-              </a>
+              </ExternalLink>
             ) : null}
           </div>
           <p className="text-xs text-gray-500">

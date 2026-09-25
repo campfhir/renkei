@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import BackLink from '@/components/back-link';
+import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson } from '@/lib/fetch-json';
 import type { HostCommit } from '@/lib/code/repo-host';
@@ -92,14 +93,12 @@ export default function CommitsPage({
               {commits.map((commit) => (
                 <li key={commit.sha} className="space-y-1 py-2">
                   <div className="flex items-center gap-2">
-                    <a
+                    <ExternalLink
                       href={commit.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       className="font-mono text-xs font-medium hover:underline"
                     >
                       {commit.sha.slice(0, 12)}
-                    </a>
+                    </ExternalLink>
                     <span className="min-w-0 truncate">{commit.message}</span>
                   </div>
                   <div className="text-xs text-gray-500">

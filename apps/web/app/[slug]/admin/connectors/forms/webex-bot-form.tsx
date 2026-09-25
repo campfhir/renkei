@@ -12,6 +12,7 @@ import {
   SaveRow,
 } from './shared';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
+import ExternalLink from '@/components/external-link';
 
 interface WebexBotConfig {
   configured: boolean;
@@ -90,14 +91,12 @@ export function WebexBotForm({ slug }: { slug: string }) {
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         Optional. A{' '}
-        <a
+        <ExternalLink
           href="https://developer.webex.com/my-apps/new/bot"
           className="text-blue-600 hover:underline dark:text-blue-400"
-          target="_blank"
-          rel="noreferrer"
         >
           Bot
-        </a>{' '}
+        </ExternalLink>{' '}
         that leaves people their notes — digests, reminders, an agent&rsquo;s &ldquo;I did
         this&rdquo; — as a direct message. A note a person posts to themself is theirs, so WebEx
         marks it read as it lands and shows no badge; a message from the bot arrives unread, with

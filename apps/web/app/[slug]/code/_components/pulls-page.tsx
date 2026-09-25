@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import BackLink from '@/components/back-link';
+import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson } from '@/lib/fetch-json';
 import type { HostPullRequest } from '@/lib/code/repo-host';
@@ -87,14 +88,12 @@ export default function PullsPage({
               {pullRequests.map((pr) => (
                 <li key={pr.number} className="space-y-1 py-2 text-sm">
                   <div className="flex items-center gap-2">
-                    <a
+                    <ExternalLink
                       href={pr.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       className="min-w-0 truncate font-medium hover:underline"
                     >
                       #{pr.number} {pr.title}
-                    </a>
+                    </ExternalLink>
                     <span className="ml-auto shrink-0">
                       <StatePill state={pr.state} />
                     </span>
@@ -150,15 +149,13 @@ export default function PullsPage({
                 {pullRequests.map((pr) => (
                   <tr key={pr.number}>
                     <td className="py-1.5 pr-2">
-                      <a
+                      <ExternalLink
                         href={pr.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="block max-w-[24rem] truncate font-medium hover:underline"
                         title={pr.title}
                       >
                         #{pr.number} {pr.title}
-                      </a>
+                      </ExternalLink>
                     </td>
                     <td className="py-1.5 pr-2">
                       <StatePill state={pr.state} />
