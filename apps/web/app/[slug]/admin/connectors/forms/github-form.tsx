@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { GITHUB_SCOPE_OPTIONS, GITHUB_SCOPE_GROUPS } from '@/lib/github-scopes';
 import ScopePicker from '@/components/scope-picker';
+import ExternalLink from '@/components/external-link';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import {
   useConnectorConfig,
@@ -130,14 +131,12 @@ export function GitHubForm({ slug, origin }: { slug: string; origin: string | nu
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         A GitHub App from{' '}
-        <a
+        <ExternalLink
           href="https://github.com/settings/apps"
           className="text-blue-600 hover:underline dark:text-blue-400"
-          target="_blank"
-          rel="noreferrer"
         >
           github.com/settings/apps
-        </a>{' '}
+        </ExternalLink>{' '}
         (or your organization&apos;s own Developer settings). Its &quot;Callback URL&quot; must be{' '}
         <CallbackUrl origin={origin} />, with &quot;Request user authorization (OAuth) during
         installation&quot; checked — that is what lets one Connect click both install the App on an
@@ -209,8 +208,7 @@ export function GitHubForm({ slug, origin }: { slug: string; origin: string | nu
             <p className={hintClass}>
               Set this to the same value as the App&apos;s own Webhook secret to turn on pull
               request pipeline subscriptions — without it, deliveries to{' '}
-              <code className="font-mono">/api/webhooks/github/&lt;tenant id&gt;</code> are
-              refused.
+              <code className="font-mono">/api/webhooks/github/&lt;tenant id&gt;</code> are refused.
             </p>
           )}
         </div>

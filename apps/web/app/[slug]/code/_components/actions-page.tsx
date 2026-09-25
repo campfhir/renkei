@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import BackLink from '@/components/back-link';
+import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson } from '@/lib/fetch-json';
 import type { HostPipelineRun } from '@/lib/code/repo-host';
@@ -80,14 +81,12 @@ export default function ActionsPage({
         >
           Refresh
         </button>
-        <a
+        <ExternalLink
           href={`https://github.com/${repoFullName}/actions`}
-          target="_blank"
-          rel="noopener noreferrer"
           className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
         >
           Open on GitHub
-        </a>
+        </ExternalLink>
       </header>
 
       <div className="mx-auto max-w-3xl space-y-4 p-4">
@@ -108,14 +107,9 @@ export default function ActionsPage({
               {runs.map((run) => (
                 <li key={run.id} className="space-y-1 py-2 text-sm">
                   <div className="flex items-center gap-2">
-                    <a
-                      href={run.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium hover:underline"
-                    >
+                    <ExternalLink href={run.url} className="font-medium hover:underline">
                       Run {run.id}
-                    </a>
+                    </ExternalLink>
                     <span className="ml-auto shrink-0">
                       <Pill tone={STATE_TONE[run.state]}>{STATE_LABEL[run.state]}</Pill>
                     </span>
@@ -150,14 +144,9 @@ export default function ActionsPage({
                 {runs.map((run) => (
                   <tr key={run.id}>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
-                      <a
-                        href={run.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-medium hover:underline"
-                      >
+                      <ExternalLink href={run.url} className="font-medium hover:underline">
                         Run {run.id}
-                      </a>
+                      </ExternalLink>
                     </td>
                     <td className="py-1.5 pr-2">
                       <Pill tone={STATE_TONE[run.state]}>{STATE_LABEL[run.state]}</Pill>

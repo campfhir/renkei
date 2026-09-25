@@ -7,6 +7,7 @@ import {
   MICROSOFT_REQUIRED_SCOPES,
 } from '@/lib/microsoft-scopes';
 import ScopePicker from '@/components/scope-picker';
+import ExternalLink from '@/components/external-link';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import {
   useConnectorConfig,
@@ -127,14 +128,12 @@ export function MicrosoftForm({ slug, origin }: { slug: string; origin: string |
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         An{' '}
-        <a
+        <ExternalLink
           href="https://entra.microsoft.com"
           className="text-blue-600 hover:underline dark:text-blue-400"
-          target="_blank"
-          rel="noreferrer"
         >
           Entra app registration
-        </a>{' '}
+        </ExternalLink>{' '}
         through which each person grants Renkei read access to their own Microsoft 365 — Outlook
         mail, calendar, To&nbsp;Do tasks. Register a <strong>Web</strong> platform whose redirect
         URI is <CallbackUrl origin={origin} />, and grant the app delegated Microsoft Graph

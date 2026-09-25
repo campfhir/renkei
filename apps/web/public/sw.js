@@ -16,6 +16,96 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Shared origin storage with the page (push-subscription.ts's
+// rememberTenantForPush) — a worker woken only for `pushsubscriptionchange`
+// has no page open to ask, so the tenant id has to already be sitting
+// somewhere this worker can read.
+const PUSH_DB_NAME = 'renkei-push';
+const PUSH_DB_STORE = 'config';
+
+function idbGetTenantId() {
+  return new Promise((resolve) => {
+    const openRequest = indexedDB.open(PUSH_DB_NAME, 1);
+    openRequest.onupgradeneeded = () => openRequest.result.createObjectStore(PUSH_DB_STORE);
+    openRequest.onerror = () => resolve(null);
+    openRequest.onsuccess = () => {
+      const db = openRequest.result;
+      const getRequest = db
+        .transaction(PUSH_DB_STORE, 'readonly')
+        .objectStore(PUSH_DB_STORE)
+        .get('tenantId');
+      getRequest.onerror = () => resolve(null);
+      getRequest.onsuccess = () => resolve(getRequest.result || null);
+    };
+  });
+}
+
+/** VAPID keys travel base64url; `applicationServerKey` wants raw bytes — same
+ *  decode as push-subscription.ts's urlBase64ToUint8Array. */
+function urlBase64ToUint8Array(base64url) {
+  const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
+  const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+// A browser can silently rotate or drop a subscription on its own (iOS in
+// particular churns these more than desktop browsers) — without this, the
+// only recovery was DesktopNotifications' mount-time `ensurePushSubscription`
+// call, which only runs if and when the PWA is next opened. This lets a
+// worker that is woken for exactly this event recover immediately instead.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    (async () => {
+      const tenantId = await idbGetTenantId();
+      if (!tenantId) return;
+
+      // Reuse the key the old subscription was minted with when the browser
+      // still has it; only fall back to the tenant's public-key endpoint
+      // (an extra round trip, and one more thing that can fail) when it doesn't.
+      let applicationServerKey =
+        event.oldSubscription && event.oldSubscription.options
+          ? event.oldSubscription.options.applicationServerKey
+          : null;
+
+      if (!applicationServerKey) {
+        try {
+          const keyResponse = await fetch(`/api/tenant/${tenantId}/push/public-key`);
+          if (!keyResponse.ok) return;
+          const body = await keyResponse.json();
+          if (typeof body.publicKey !== 'string') return;
+          applicationServerKey = urlBase64ToUint8Array(body.publicKey);
+        } catch {
+          return;
+        }
+      }
+
+      let subscription;
+      try {
+        subscription = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        });
+      } catch {
+        // Nothing left to try from inside the worker — the app's own
+        // mount-time check is the remaining fallback.
+        return;
+      }
+
+      const json = subscription.toJSON();
+      if (typeof json.endpoint !== 'string' || !json.keys) return;
+
+      await fetch(`/api/tenant/${tenantId}/push/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+      }).catch(() => undefined);
+    })()
+  );
+});
+
 // The payload is whatever @renkei/notifications' sendPush encoded — see
 // packages/notifications/src/send.ts (PushWirePayload) for the shape.
 self.addEventListener('push', (event) => {

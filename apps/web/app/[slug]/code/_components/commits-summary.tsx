@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
+import ExternalLink from '@/components/external-link';
 import { getJson } from '@/lib/fetch-json';
 import type { HostCommit } from '@/lib/code/repo-host';
 
@@ -69,14 +70,12 @@ export default function CommitsSummary({
         <p className="text-sm text-gray-500">Reading…</p>
       ) : mostRecent ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-          <a
+          <ExternalLink
             href={mostRecent.url}
-            target="_blank"
-            rel="noopener noreferrer"
             className="font-mono text-xs font-medium hover:underline"
           >
             {mostRecent.sha.slice(0, 12)}
-          </a>
+          </ExternalLink>
           <span className="min-w-0 truncate">{mostRecent.message}</span>
           <span className="text-xs text-gray-500">{mostRecent.author}</span>
           <LocalTime at={mostRecent.date} className="text-xs text-gray-500" />

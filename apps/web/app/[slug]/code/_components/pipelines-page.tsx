@@ -27,6 +27,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import BackLink from '@/components/back-link';
+import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type {
@@ -283,14 +284,12 @@ export default function PipelinesPage({
           Refresh
         </button>
         {pipelinesUrl ? (
-          <a
+          <ExternalLink
             href={pipelinesUrl}
-            target="_blank"
-            rel="noopener noreferrer"
             className="text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
           >
             Open on Bitbucket
-          </a>
+          </ExternalLink>
         ) : null}
       </header>
 
@@ -486,14 +485,9 @@ export default function PipelinesPage({
                 {committed ? (
                   <p role="status" className="mt-2 text-sm text-green-700 dark:text-green-400">
                     Committed bitbucket-pipelines.yml to {committed.ref}.{' '}
-                    <a
-                      href={committed.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline"
-                    >
+                    <ExternalLink href={committed.url} className="underline">
                       Open on Bitbucket
-                    </a>
+                    </ExternalLink>
                     {setup.enabled === false ? ' Turn Pipelines on above to run it.' : ''}
                   </p>
                 ) : null}
@@ -657,9 +651,9 @@ function RunsCard({
       {started ? (
         <p role="status" className="mt-2 text-sm text-green-700 dark:text-green-400">
           Run #{started.buildNumber} started on {started.ref}.{' '}
-          <a href={started.url} target="_blank" rel="noopener noreferrer" className="underline">
+          <ExternalLink href={started.url} className="underline">
             Open on Bitbucket
-          </a>
+          </ExternalLink>
         </p>
       ) : null}
       {error ? (
@@ -673,14 +667,9 @@ function RunsCard({
             {runs.map((run) => (
               <li key={run.uuid} className="space-y-1 py-2 text-sm">
                 <div className="flex items-center gap-2">
-                  <a
-                    href={run.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium hover:underline"
-                  >
+                  <ExternalLink href={run.url} className="font-medium hover:underline">
                     #{run.buildNumber}
-                  </a>
+                  </ExternalLink>
                   <RunStatePill state={run.state} />
                   <span className="ml-auto text-xs whitespace-nowrap text-gray-500">
                     {run.durationSeconds === null ? '' : duration(run.durationSeconds)}
@@ -723,14 +712,9 @@ function RunsCard({
               {runs.map((run) => (
                 <tr key={run.uuid}>
                   <td className="py-1.5 pr-2 whitespace-nowrap">
-                    <a
-                      href={run.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium hover:underline"
-                    >
+                    <ExternalLink href={run.url} className="font-medium hover:underline">
                       #{run.buildNumber}
-                    </a>
+                    </ExternalLink>
                   </td>
                   <td className="py-1.5 pr-2">
                     <RunStatePill state={run.state} />

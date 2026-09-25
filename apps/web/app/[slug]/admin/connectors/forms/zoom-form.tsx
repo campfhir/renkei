@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { ZOOM_SCOPE_GROUPS, ZOOM_SCOPE_OPTIONS, ZOOM_REQUIRED_SCOPES } from '@/lib/zoom-scopes';
 import ScopePicker from '@/components/scope-picker';
+import ExternalLink from '@/components/external-link';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import {
   useConnectorConfig,
@@ -126,14 +127,12 @@ export function ZoomForm({
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         A user-managed General app from the{' '}
-        <a
+        <ExternalLink
           href="https://marketplace.zoom.us/user/build"
           className="text-blue-600 hover:underline dark:text-blue-400"
-          target="_blank"
-          rel="noreferrer"
         >
           Zoom Marketplace
-        </a>{' '}
+        </ExternalLink>{' '}
         through which each person grants Renkei access to their own Zoom — meetings, recordings,
         transcripts, AI Companion summaries. Its redirect URL must be{' '}
         <CallbackUrl origin={origin} />.

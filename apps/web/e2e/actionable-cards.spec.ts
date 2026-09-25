@@ -125,6 +125,22 @@ async function seedCard(
   );
 }
 
+/** An already-executed card (cards.tsx's ExecutionResult), result-only — no suggested_action. */
+async function seedExecutedCard(
+  client: Client,
+  tenantId: string,
+  itemId: string,
+  title: string,
+  result: unknown
+): Promise<void> {
+  await client.query(
+    `INSERT INTO actionable_items
+       (id, tenant_id, source, kind, status, title, summary, evidence, result)
+     VALUES ($1, $2, 'jira', 'info', 'executed', $3, 'Created a tool.', '{}'::jsonb, $4::jsonb)`,
+    [itemId, tenantId, title, JSON.stringify(result)]
+  );
+}
+
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
     path: path.join(RESULTS, 'screens', testInfo.project.name, `${name}.png`),
@@ -254,6 +270,38 @@ test('a tool outside the dedicated cards still falls back to a JSON-safe arg lis
     await expect(page.getByText('options:')).toBeVisible();
     await expect(page.getByText('{"force":true}')).toBeVisible();
     await shot(page, testInfo, 'actionable-cards-generic');
+  } finally {
+    await client.end();
+  }
+});
+
+test('an executed Jira issue card links out through a new tab, not the PWA webview', async ({
+  page,
+}, testInfo) => {
+  // apps/web/lib/app-manifest.ts sets display: 'standalone' for the iOS
+  // home-screen install; a same-frame link to an external host (here,
+  // Jira's own domain) would open trapped inside that standalone webview
+  // with no Safari chrome, so cards.tsx's ExecutionResult must render the
+  // issue link with target="_blank" rel="noopener noreferrer".
+  const fixture = fixtureFor(`executed-${testInfo.project.name}`);
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await seedTenant(client, fixture);
+    await signIn(page, fixture);
+    const itemId = uuidFrom(`actionable-cards-e2e-executed-item:${testInfo.project.name}`);
+    await seedExecutedCard(client, fixture.tenantId, itemId, 'Portfolio Updater — File the task', {
+      issueKey: 'OPS-42',
+      url: 'https://example.atlassian.net/browse/OPS-42',
+    });
+
+    await page.goto(`/${fixture.slug}`);
+    const link = page.getByRole('link', { name: 'OPS-42' });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('href', 'https://example.atlassian.net/browse/OPS-42');
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    await shot(page, testInfo, 'actionable-cards-executed');
   } finally {
     await client.end();
   }

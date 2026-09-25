@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
+import ExternalLink from '@/components/external-link';
 import { getJson } from '@/lib/fetch-json';
 import type { HostPullRequest } from '@/lib/code/repo-host';
 import Pill from './pill';
@@ -89,14 +90,9 @@ export default function PullsSummary({
       ) : summary.mostRecent ? (
         <div className="space-y-1.5">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-            <a
-              href={summary.mostRecent.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium hover:underline"
-            >
+            <ExternalLink href={summary.mostRecent.url} className="font-medium hover:underline">
               #{summary.mostRecent.number} {summary.mostRecent.title}
-            </a>
+            </ExternalLink>
             <span className="font-mono text-xs text-gray-500">
               {summary.mostRecent.sourceBranch} → {summary.mostRecent.destinationBranch}
             </span>

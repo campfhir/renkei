@@ -17,6 +17,7 @@ import {
 } from '@/lib/atlassian-scopes';
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 import ScopePicker from '@/components/scope-picker';
+import ExternalLink from '@/components/external-link';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import {
   useConnectorConfig,
@@ -94,14 +95,12 @@ export function AtlassianAdminForm({ slug, origin }: { slug: string; origin: str
       intro={
         <>
           A separate OAuth 2.0 (3LO) app from{' '}
-          <a
+          <ExternalLink
             href="https://developer.atlassian.com/console/myapps/"
             className="text-blue-600 hover:underline dark:text-blue-400"
-            target="_blank"
-            rel="noreferrer"
           >
             developer.atlassian.com
-          </a>
+          </ExternalLink>
           , holding Jira&apos;s <strong>classic</strong> scopes (Permissions → Jira API → Classic
           scopes) — the Plans and Forms APIs accept no others, and one app cannot mix classic with
           the granular scopes the Jira app uses. Its callback URL must be{' '}
@@ -281,14 +280,12 @@ function AtlassianAppForm({
         {intro ?? (
           <>
             The OAuth 2.0 (3LO) app from{' '}
-            <a
+            <ExternalLink
               href="https://developer.atlassian.com/console/myapps/"
               className="text-blue-600 hover:underline dark:text-blue-400"
-              target="_blank"
-              rel="noreferrer"
             >
               developer.atlassian.com
-            </a>
+            </ExternalLink>
             . Its callback URL must be <CallbackUrl origin={origin} />.
           </>
         )}
@@ -337,7 +334,9 @@ function AtlassianAppForm({
               className={`${inputClass} font-mono`}
             />
             {config?.hasWebhookSecret ? (
-              <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
+              <p className={hintClass}>
+                A secret is stored but never shown; leave blank to keep it.
+              </p>
             ) : (
               <p className={hintClass}>
                 Set this to the same value as a repo webhook&apos;s own secret query parameter

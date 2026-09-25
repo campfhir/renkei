@@ -10,6 +10,7 @@ import { LoadingLine } from '@/components/skeleton';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import ExternalLink from '@/components/external-link';
 
 const K_OPTIONS = [10, 20, 30];
 
@@ -373,14 +374,12 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
           {showDetails ? 'Hide details' : 'Show details'}
         </button>
         {webLink && (
-          <a
+          <ExternalLink
             href={webLink}
-            target="_blank"
-            rel="noreferrer"
             className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
           >
             Open source
-          </a>
+          </ExternalLink>
         )}
       </div>
 
