@@ -24,7 +24,22 @@ export interface OverflowItem {
   danger?: boolean;
 }
 
-export default function OverflowMenu({ items }: { items: OverflowItem[] }) {
+export default function OverflowMenu({
+  items,
+  label = 'More',
+  anchored = true,
+}: {
+  items: OverflowItem[];
+  /** The button's accessible name and tooltip — several of these can sit
+   * on one page (a file tree's per-row menu, say), so a caller with more
+   * than one gives each a distinct label. */
+  label?: string;
+  /** Registers this button as the "chat-more" coach-mark tour step —
+   * true only for the title bar's own menu, the one the tour means;
+   * every other caller passes false so the tour does not latch onto
+   * whichever instance happened to mount last. */
+  anchored?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const moreAnchor = useCoachAnchor('chat-more');
@@ -35,11 +50,11 @@ export default function OverflowMenu({ items }: { items: OverflowItem[] }) {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        aria-label="More"
+        aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="More"
-        {...moreAnchor}
+        title={label}
+        {...(anchored ? moreAnchor : null)}
         className="flex items-center rounded-md border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
       >
         <Icon path={ICONS.moreHorizontal} className="h-4 w-4" />

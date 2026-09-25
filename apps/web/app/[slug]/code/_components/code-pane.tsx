@@ -22,6 +22,7 @@ import Link from 'next/link';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
+import { sendJsonFull } from '@/lib/fetch-json';
 import type { ChatNote } from '@/lib/code/note-text';
 import { unifiedDiff } from '@/lib/code/text-diff';
 import { highlighterLanguageFor } from '@/lib/code/language';
@@ -120,7 +121,12 @@ export default function CodePane({
 
   const marks = useMemo(() => {
     const map = new Map<string, FileMark>();
-    for (const file of pane.changed) map.set(file.path, file.status === 'untracked' ? 'A' : 'M');
+    for (const file of pane.changed) {
+      map.set(
+        file.path,
+        file.status === 'untracked' ? 'A' : file.status === 'deleted' ? 'D' : 'M'
+      );
+    }
     return map;
   }, [pane.changed]);
 
@@ -135,6 +141,58 @@ export default function CodePane({
   const openFile = (path: string) => {
     pane.open(path);
     setShowList(false);
+  };
+
+  // The tree renamed or deleted a file that happened to be open: the tab
+  // it was in no longer points at anything real, so close it (and for a
+  // rename, open the file at its new path in its place) rather than
+  // leaving a stale tab showing text that no longer lives there.
+  const renamedOpen = (from: string, to: string) => {
+    if (pane.tabs.includes(from)) {
+      pane.close(from);
+      pane.open(to);
+    }
+    pane.refresh();
+  };
+  const deletedOpen = (path: string) => {
+    if (pane.tabs.includes(path)) pane.close(path);
+    pane.refresh();
+  };
+
+  const renameActive = async () => {
+    if (!active) return;
+    const currentName = nameOf(active.path);
+    const nextName = window.prompt('Rename to:', currentName);
+    const trimmed = nextName?.trim();
+    if (!trimmed || trimmed === currentName) return;
+    const folder = folderOf(active.path);
+    const to = folder ? `${folder}/${trimmed}` : trimmed;
+    const result = await sendJsonFull<{ from: string; to: string }>(`${base}/files`, 'PATCH', {
+      from: active.path,
+      to,
+    });
+    if (result.error) {
+      window.alert(result.error);
+      return;
+    }
+    pane.close(active.path);
+    pane.open(to);
+    pane.refresh();
+  };
+
+  const deleteActive = async () => {
+    if (!active) return;
+    if (!window.confirm(`Delete “${nameOf(active.path)}”? This can't be undone.`)) return;
+    const result = await sendJsonFull(
+      `${base}/files?path=${encodeURIComponent(active.path)}`,
+      'DELETE'
+    );
+    if (result.error) {
+      window.alert(result.error);
+      return;
+    }
+    pane.close(active.path);
+    pane.refresh();
   };
 
   const commitButton = (
@@ -200,7 +258,12 @@ export default function CodePane({
               <li key={file.path}>
                 <button
                   type="button"
-                  onClick={() => openFile(file.path)}
+                  // A deleted file has nothing left to open in the editor
+                  // — its diff (against what it used to be) is the useful
+                  // thing to show instead.
+                  onClick={() =>
+                    file.status === 'deleted' ? setDiffFor(file.path) : openFile(file.path)
+                  }
                   aria-current={pane.active === file.path ? 'true' : undefined}
                   title={file.path}
                   className={`flex w-full items-center gap-1.5 rounded px-1 text-left text-xs ${touch ? 'min-h-10 py-1.5' : 'py-0.5'} ${
@@ -215,17 +278,25 @@ export default function CodePane({
                         ? 'bg-amber-500'
                         : file.status === 'untracked'
                           ? 'bg-green-500'
-                          : 'bg-gray-300 dark:bg-gray-600'
+                          : file.status === 'deleted'
+                            ? 'bg-red-500'
+                            : 'bg-gray-300 dark:bg-gray-600'
                     }`}
                     title={
                       dirty.has(file.path)
                         ? 'Unsaved edits here'
                         : file.status === 'untracked'
                           ? 'New file'
-                          : 'Changed'
+                          : file.status === 'deleted'
+                            ? 'Deleted, not committed'
+                            : 'Changed'
                     }
                   />
-                  <span className="min-w-0 flex-1 truncate">{file.path}</span>
+                  <span
+                    className={`min-w-0 flex-1 truncate ${file.status === 'deleted' ? 'text-gray-400 line-through dark:text-gray-600' : ''}`}
+                  >
+                    {file.path}
+                  </span>
                   <Counts added={file.added} deleted={file.deleted} />
                 </button>
               </li>
@@ -251,6 +322,9 @@ export default function CodePane({
         refreshKey={refreshKey}
         touch={touch}
         showBranch={false}
+        canEdit={canEdit}
+        onRenamed={renamedOpen}
+        onDeleted={deletedOpen}
       />
     </div>
   );
@@ -349,6 +423,28 @@ export default function CodePane({
               Diff
             </button>
           ) : null}
+          {canEdit && active.source === 'checkout' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void renameActive()}
+                aria-label={`Rename ${nameOf(active.path)}`}
+                title="Rename"
+                className={iconButton}
+              >
+                <Icon path={ICONS.pencil} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteActive()}
+                aria-label={`Delete ${nameOf(active.path)}`}
+                title="Delete"
+                className={`${iconButton} hover:text-red-600 dark:hover:text-red-400`}
+              >
+                <Icon path={ICONS.trash} className="h-4 w-4" />
+              </button>
+            </>
+          ) : null}
         </div>
         <div className="min-h-0 flex-1">{editor}</div>
         {active.state === 'ready' && active.editable && canEdit ? (
@@ -432,6 +528,28 @@ export default function CodePane({
               <Icon path={ICONS.diff} className="h-3.5 w-3.5" />
               Diff
             </button>
+          ) : null}
+          {active && canEdit && active.source === 'checkout' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void renameActive()}
+                aria-label={`Rename ${nameOf(active.path)}`}
+                title="Rename"
+                className={iconButton}
+              >
+                <Icon path={ICONS.pencil} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteActive()}
+                aria-label={`Delete ${nameOf(active.path)}`}
+                title="Delete"
+                className={`${iconButton} hover:text-red-600 dark:hover:text-red-400`}
+              >
+                <Icon path={ICONS.trash} className="h-4 w-4" />
+              </button>
+            </>
           ) : null}
           {saveButtons}
           {canEdit ? commitButton : null}

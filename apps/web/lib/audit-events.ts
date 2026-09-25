@@ -81,9 +81,17 @@ export type AuditAction =
   | 'code.files.uploaded'
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'
+  /** An empty file created from the tree's "New file", uncommitted. */
+  | 'code.files.created'
+  /** A file or folder removed from the checkout's working tree. */
+  | 'code.files.deleted'
+  /** A file or folder renamed or moved within the checkout's working tree. */
+  | 'code.files.renamed'
   | 'code.commit'
   | 'code.push'
   | 'code.branch_switch'
+  /** Every uncommitted change on the checkout discarded (git reset --hard + clean -fd). */
+  | 'code.discard_changes'
   /**
    * A Jira admin change request was applied from its review page — what
    * Renkei changed in Jira's configuration, and on whose click. Recorded

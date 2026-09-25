@@ -26,10 +26,15 @@ const CLONE_MS = Number(process.env.SANDBOX_STUB_CLONE_MS ?? '1500');
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 const RESERVED = new Set(['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS']);
 
-/** A checkout's shape, for the tree on the project page. */
+/**
+ * A checkout's shape, for the tree on the project page — `ignored: true`
+ * on `node_modules` gives the tree's ghost-outline styling something to
+ * dim in every seeded checkout, the way a real `.gitignore` would.
+ */
 const TREE = {
   '': [
     { path: 'src', kind: 'dir', sizeBytes: null },
+    { path: 'node_modules', kind: 'dir', sizeBytes: null, ignored: true },
     { path: 'package.json', kind: 'file', sizeBytes: 812 },
     { path: 'README.md', kind: 'file', sizeBytes: 1204 },
   ],
@@ -37,7 +42,47 @@ const TREE = {
     { path: 'src/billing.ts', kind: 'file', sizeBytes: 4410 },
     { path: 'src/index.ts', kind: 'file', sizeBytes: 302 },
   ],
+  node_modules: [{ path: 'node_modules/.keep', kind: 'file', sizeBytes: 0, ignored: true }],
 };
+
+/**
+ * The tree's create/rename/delete verbs (rm, mv, write of a new path)
+ * only ever touch a per-workspace overlay on top of the static `TREE`
+ * above — entries added, and paths hidden — so every workspace still
+ * starts from the same fixed shape. `pathsIn(dirPath, workspace)` reads
+ * the overlay back in; `entryAt` finds one entry anywhere, for `rm`/`mv`
+ * to say whether a path exists without the caller repeating the same
+ * merge.
+ */
+function pathsIn(dirPath, workspace) {
+  const base = TREE[dirPath] ?? [];
+  const extra = workspace.extraEntries?.get(dirPath) ?? [];
+  const removed = workspace.removed;
+  return [...base, ...extra].filter((entry) => !removed?.has(entry.path));
+}
+
+function entryAt(path, workspace) {
+  if (workspace.removed?.has(path)) return null;
+  for (const dirPath of new Set([...Object.keys(TREE), ...(workspace.extraEntries?.keys() ?? [])])) {
+    const found = pathsIn(dirPath, workspace).find((entry) => entry.path === path);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Was `path` there at HEAD (the static fixture), rather than something
+ * `write`/`mv` only ever added to a workspace's own overlay? A path that
+ * never existed at HEAD reads as "deleted" nowhere — removing it is the
+ * same as it never having happened, just like a real `git diff` never
+ * lists an untracked file's removal. */
+function wasTracked(path) {
+  return (TREE[folderOf(path)] ?? []).some((entry) => entry.path === path);
+}
+
+function folderOf(path) {
+  const index = path.lastIndexOf('/');
+  return index < 0 ? '' : path.slice(0, index);
+}
 
 /** What the checkout has uncommitted, for the Changes button and its diff. */
 const SAMPLE_DIFF = `diff --git a/src/billing.ts b/src/billing.ts
@@ -656,19 +701,76 @@ function handleWorkspaces(op, body, response) {
       if (workspace.status !== 'ready')
         return error(response, 409, 'not_ready', 'That workspace is still cloning.');
       const path = body.path ?? '';
-      const listing = TREE[path];
-      if (!listing) return error(response, 404, 'not_found', `${path} is not a directory.`);
-      return json(response, 200, { path, entries: listing });
+      if (!TREE[path] && !workspace.extraEntries?.has(path)) {
+        return error(response, 404, 'not_found', `${path} is not a directory.`);
+      }
+      const entries = pathsIn(path, workspace).map((entry) => ({
+        ...entry,
+        ignored: entry.ignored === true,
+      }));
+      return json(response, 200, { path, entries });
+    }
+    case 'rm': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      const path = body.path ?? '';
+      const entry = entryAt(path, workspace);
+      if (!entry) return error(response, 404, 'not_found', `No such file or folder: ${path}`);
+      workspace.removed = workspace.removed ?? new Set();
+      workspace.removed.add(path);
+      workspace.files.delete(path);
+      return json(response, 200, { path, deleted: true });
+    }
+    case 'mv': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      const from = body.from ?? '';
+      const to = body.to ?? '';
+      const entry = entryAt(from, workspace);
+      if (!entry) return error(response, 404, 'not_found', `No such file or folder: ${from}`);
+      if (entryAt(to, workspace)) return error(response, 409, 'move_conflict', `${to} already exists.`);
+      workspace.removed = workspace.removed ?? new Set();
+      workspace.removed.add(from);
+      workspace.extraEntries = workspace.extraEntries ?? new Map();
+      const toDir = folderOf(to);
+      if (!workspace.extraEntries.has(toDir)) workspace.extraEntries.set(toDir, []);
+      workspace.extraEntries.get(toDir).push({ path: to, kind: entry.kind, sizeBytes: entry.sizeBytes });
+      if (workspace.files.has(from)) {
+        workspace.files.set(to, workspace.files.get(from));
+        workspace.files.delete(from);
+      } else if (FILES[from] !== undefined) {
+        workspace.files.set(to, Buffer.from(FILES[from], 'utf8'));
+      }
+      return json(response, 200, { from, to });
+    }
+    case 'git-discard': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      workspace.removed = new Set();
+      workspace.extraEntries = new Map();
+      workspace.files = new Map();
+      return json(response, 200, { branch: workspace.branch });
     }
     case 'git-diff': {
       const workspace = scope.workspaces.get(body.id ?? '');
       if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
       if (workspace.status !== 'ready')
         return error(response, 409, 'not_ready', 'That workspace is still cloning.');
+      const files = [{ path: 'src/billing.ts', added: 3, deleted: 1, status: 'modified' }];
+      // A path the tree's own rm/mv removed reads as deleted here too,
+      // same as the real worker's undetected-rename behaviour (no -M
+      // passed to `git diff`, so a rename shows as a delete of the old
+      // path plus a new untracked one) — but only for a path HEAD
+      // actually had; removing one only ever created through this same
+      // overlay (write, or mv's destination) leaves no trace, same as a
+      // real `git diff` never lists an untracked file's removal.
+      for (const path of workspace.removed ?? []) {
+        if (wasTracked(path)) files.push({ path, added: 0, deleted: 1, status: 'deleted' });
+      }
       return json(response, 200, {
         branch: workspace.branch,
         diff: body.statOnly ? '' : SAMPLE_DIFF,
-        files: [{ path: 'src/billing.ts', added: 3, deleted: 1, status: 'modified' }],
+        files,
         truncated: false,
       });
     }
@@ -678,6 +780,7 @@ function handleWorkspaces(op, body, response) {
       if (workspace.status !== 'ready')
         return error(response, 409, 'not_ready', 'That workspace is still cloning.');
       const path = body.path ?? '';
+      if (workspace.removed?.has(path)) return error(response, 404, 'not_found', `No such file: ${path}`);
       const uploaded = workspace.files.get(path);
       const text = uploaded ? uploaded.toString('utf8') : FILES[path];
       if (text === undefined) return error(response, 404, 'not_found', `No such file: ${path}`);
@@ -694,10 +797,18 @@ function handleWorkspaces(op, body, response) {
     case 'write': {
       const workspace = scope.workspaces.get(body.id ?? '');
       if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
-      const created = !workspace.files.has(body.path) && FILES[body.path] === undefined;
+      const path = body.path ?? '';
+      const created = !entryAt(path, workspace);
       const bytes = Buffer.from(body.content ?? '', 'utf8');
-      workspace.files.set(body.path, bytes);
-      return json(response, 200, { path: body.path, created, sizeBytes: bytes.byteLength });
+      workspace.files.set(path, bytes);
+      if (created) {
+        workspace.removed?.delete(path);
+        workspace.extraEntries = workspace.extraEntries ?? new Map();
+        const dir = folderOf(path);
+        if (!workspace.extraEntries.has(dir)) workspace.extraEntries.set(dir, []);
+        workspace.extraEntries.get(dir).push({ path, kind: 'file', sizeBytes: bytes.byteLength });
+      }
+      return json(response, 200, { path, created, sizeBytes: bytes.byteLength });
     }
     case 'git-status': {
       const workspace = scope.workspaces.get(body.id ?? '');

@@ -86,6 +86,8 @@ import {
   readWorkspaceFile,
   orphanedByNow,
   removeWorkspace,
+  removeWorkspaceFile,
+  renameWorkspaceFile,
   workerInstance,
   workerUptime,
   runGit,
@@ -415,6 +417,40 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
 
   // ─── Files ────────────────────────────────────────────────────────────
 
+  /**
+   * The listed directory's own immediate entries .gitignore excludes —
+   * shown dimmed by the tree, never hidden outright (a node_modules/
+   * nobody wants browsed into is still there to see, the way an IDE's
+   * own explorer greys it rather than pretending it doesn't exist).
+   * `--ignored=matching` reports an ignored directory as itself, one
+   * line, rather than descending into it — exactly the shallow, one-
+   * level answer a directory listing needs. A quiet best-effort: a repo
+   * with no `git` on this box, or any other git failure, just answers
+   * no ignored paths rather than failing the listing over it.
+   */
+  async function ignoredPaths(
+    workspace: store.StoredWorkspace,
+    env: OpenedEnv,
+    relativePath: string
+  ): Promise<Set<string>> {
+    const input = runInputFor(workspace, env, 15_000);
+    const result = await runGit(input, [
+      'status',
+      '--porcelain',
+      '--ignored=matching',
+      '--',
+      relativePath || '.',
+    ]);
+    const paths = new Set<string>();
+    if (result.exitCode !== 0) return paths;
+    for (const line of result.stdout.split('\n')) {
+      // A directory line carries a trailing slash ("ignored-dir/") that a
+      // listing's own bare entry path never has.
+      if (line.startsWith('!! ')) paths.add(line.slice(3).replace(/\/$/, ''));
+    }
+    return paths;
+  }
+
   async function ls(
     workspace: store.StoredWorkspace,
     env: OpenedEnv,
@@ -425,9 +461,14 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     if (!path.ok) return sendError(response, 400, 'bad_path', path.message);
     const listed = await listDirectory(workspaceDir(workspace.storageKey), path.path);
     if ('error' in listed) return sendError(response, 404, 'not_found', listed.error);
+    const ignored = await ignoredPaths(workspace, env, path.path);
     sendJson(response, 200, {
       path: path.path,
-      entries: listed.map((entry) => ({ ...entry, path: scrubEnv(entry.path, env) })),
+      entries: listed.map((entry) => ({
+        ...entry,
+        path: scrubEnv(entry.path, env),
+        ignored: ignored.has(entry.path),
+      })),
     });
   }
 
@@ -639,6 +680,84 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     });
   }
 
+  /** A file or folder removed from the checkout — recursive for a folder. */
+  async function removeFile(
+    workspace: store.StoredWorkspace,
+    env: OpenedEnv,
+    body: Body,
+    response: ServerResponse
+  ) {
+    const path = validateWorkspacePath(body.path, { forWrite: true });
+    if (!path.ok || !path.path)
+      return sendError(
+        response,
+        400,
+        'bad_path',
+        path.ok ? 'A path is required.' : path.message
+      );
+    let outcome;
+    try {
+      outcome = await removeWorkspaceFile(workspaceDir(workspace.storageKey), path.path);
+    } catch (error) {
+      if (error instanceof WorkspacePathError)
+        return sendError(response, 400, 'bad_path', error.message);
+      throw error;
+    }
+    if (!outcome.existed) {
+      return sendError(response, 404, 'not_found', `No such file or folder: ${path.path}`);
+    }
+    const sizeBytes = await refreshSize(workspace);
+    await store.touchWorkspace(db, workspace.id, { sizeBytes });
+    sendJson(response, 200, { path: path.path, deleted: true });
+  }
+
+  /** A file or folder renamed or moved within the checkout. */
+  async function moveFile(
+    workspace: store.StoredWorkspace,
+    env: OpenedEnv,
+    body: Body,
+    response: ServerResponse
+  ) {
+    const from = validateWorkspacePath(body.from, { forWrite: true });
+    if (!from.ok || !from.path)
+      return sendError(
+        response,
+        400,
+        'bad_path',
+        from.ok ? 'A source path is required.' : from.message
+      );
+    const to = validateWorkspacePath(body.to, { forWrite: true });
+    if (!to.ok || !to.path)
+      return sendError(
+        response,
+        400,
+        'bad_path',
+        to.ok ? 'A destination path is required.' : to.message
+      );
+    if (workspace.sizeBytes > WORKSPACE_MAX_BYTES) {
+      return sendError(
+        response,
+        413,
+        'quota_exceeded',
+        'The workspace is over its size limit; remove some files first.'
+      );
+    }
+    try {
+      await renameWorkspaceFile(
+        workspaceDir(workspace.storageKey),
+        from.path,
+        to.path,
+        identityFor(workspace)
+      );
+    } catch (error) {
+      if (error instanceof WorkspacePathError)
+        return sendError(response, 409, 'move_conflict', error.message);
+      throw error;
+    }
+    await store.touchWorkspace(db, workspace.id);
+    sendJson(response, 200, { from: from.path, to: to.path });
+  }
+
   // ─── Commands ─────────────────────────────────────────────────────────
 
   async function exec(
@@ -754,6 +873,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       ? null
       : await runGit(input, ['diff', `-U${context}`, 'HEAD', '--', ...scope]);
     const numstat = await runGit(input, ['diff', '--numstat', 'HEAD', '--', ...scope]);
+    // numstat alone can't tell a deletion from an ordinary edit — both are
+    // just "some lines changed" to it. name-status's one-letter code per
+    // path (M/A/D, or R for a detected rename — rare without `diff.renames`
+    // configured, and folded into 'modified' below like any other line
+    // this parse doesn't specially handle) is what actually says which.
+    const nameStatus = await runGit(input, ['diff', '--name-status', 'HEAD', '--', ...scope]);
     const untrackedList = await runGit(input, [
       'ls-files',
       '--others',
@@ -761,16 +886,24 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       '--',
       ...scope,
     ]);
+    const statusByPath = new Map<string, string>();
+    for (const line of nameStatus.stdout.split('\n')) {
+      if (!line) continue;
+      const [code, ...rest] = line.split('\t');
+      const path = rest[rest.length - 1];
+      if (code && path) statusByPath.set(path, code[0] ?? 'M');
+    }
     const files: { path: string; added: number; deleted: number; status: string }[] = [];
     for (const line of numstat.stdout.split('\n')) {
       const [added, deleted, ...rest] = line.split('\t');
       const path = rest.join('\t');
       if (!path) continue;
+      const code = statusByPath.get(path);
       files.push({
         path,
         added: added === '-' ? 0 : Number(added) || 0,
         deleted: deleted === '-' ? 0 : Number(deleted) || 0,
-        status: 'modified',
+        status: code === 'D' ? 'deleted' : code === 'A' ? 'untracked' : 'modified',
       });
     }
     const pieces = [tracked?.stdout ?? ''];
@@ -1036,6 +1169,32 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     sendJson(response, 200, { branch, output: scrubEnv(output, env) });
   }
 
+  /**
+   * Every uncommitted change on the checkout discarded: `git reset --hard
+   * HEAD` for tracked files, then `git clean -fd` for untracked ones —
+   * the two together match everything `git status --porcelain` would
+   * call dirty. Irreversible; the caller (the branch-switch route, or a
+   * person's own "discard changes" action) is expected to have confirmed.
+   */
+  async function gitDiscard(
+    workspace: store.StoredWorkspace,
+    env: OpenedEnv,
+    body: Body,
+    response: ServerResponse
+  ) {
+    const input = runInputFor(workspace, env, 60_000);
+    const reset = await runGit(input, ['reset', '--hard', 'HEAD']);
+    if (reset.exitCode !== 0)
+      return sendError(response, 409, 'git_failed', scrubEnv(gitText(reset), env));
+    const cleaned = await runGit(input, ['clean', '-fd']);
+    if (cleaned.exitCode !== 0)
+      return sendError(response, 409, 'git_failed', scrubEnv(gitText(cleaned), env));
+    const branch = await currentBranch(workspace, env);
+    const sizeBytes = await refreshSize(workspace);
+    await store.touchWorkspace(db, workspace.id, { branch, sizeBytes });
+    sendJson(response, 200, { branch });
+  }
+
   // ─── Environment secrets ──────────────────────────────────────────────
 
   async function handleEnv(op: string, body: Body, response: ServerResponse): Promise<void> {
@@ -1149,6 +1308,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     read,
     write,
     edit,
+    rm: removeFile,
+    mv: moveFile,
     exec,
     'git-status': gitStatus,
     'git-diff': gitDiff,
@@ -1156,6 +1317,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     'git-commit': gitCommit,
     'git-push': gitPush,
     'git-pull': gitPull,
+    'git-discard': gitDiscard,
   };
 
   /**

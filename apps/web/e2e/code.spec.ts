@@ -757,12 +757,14 @@ test.describe('code projects', () => {
     expect((await back.boundingBox())!.x).toBeLessThan((await tree.boundingBox())!.x);
     expect((await back.boundingBox())!.x).toBeLessThan((await openFiles.boundingBox())!.x);
     // The chat column is narrow beside the pane: its title bar folds.
-    await expect(main.getByRole('button', { name: 'More' })).toBeVisible();
+    await expect(main.getByRole('button', { name: 'More', exact: true })).toBeVisible();
     await expect(main.getByRole('button', { name: 'Changes' })).toHaveCount(0);
 
     // ── A file from the tree opens in Monaco, read as the checkout has it ──
-    await tree.getByRole('button', { name: 'src' }).click();
-    await tree.getByRole('button', { name: /billing\.ts/ }).click();
+    // (each row's own "More for <name>" button also matches on a loose
+    // name — anchoring at the start keeps this the row's own button)
+    await tree.getByRole('button', { name: 'src', exact: true }).click();
+    await tree.getByRole('button', { name: /^billing\.ts/ }).click();
     await expect(openFiles.getByRole('tab', { name: /billing\.ts/ })).toHaveAttribute(
       'aria-selected',
       'true'
@@ -873,8 +875,10 @@ test.describe('code projects', () => {
     //    pane starts and names in the status line ──
     const tree = main.getByRole('tree', { name: 'Files' });
     await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
-    await tree.getByRole('button', { name: 'src' }).click();
-    await tree.getByRole('button', { name: /billing\.ts/ }).click();
+    // (each row's own "More for <name>" button also matches on a loose
+    // name — anchoring at the start keeps this the row's own button)
+    await tree.getByRole('button', { name: 'src', exact: true }).click();
+    await tree.getByRole('button', { name: /^billing\.ts/ }).click();
     const editor = main.locator('.monaco-editor');
     await expect(editor).toBeVisible({ timeout: 20_000 });
     await expect(editor.getByText('MAX_ATTEMPTS').first()).toBeVisible();
@@ -942,7 +946,7 @@ test.describe('code projects', () => {
 
     // ── A file whose language has no server is counted in
     //    code_language_gaps (no UI; an operator's query) ──
-    await tree.getByRole('button', { name: /package\.json/ }).click();
+    await tree.getByRole('button', { name: /^package\.json/ }).click();
     await expect(openFiles.getByRole('tab', { name: /package\.json/ })).toHaveAttribute(
       'aria-selected',
       'true'

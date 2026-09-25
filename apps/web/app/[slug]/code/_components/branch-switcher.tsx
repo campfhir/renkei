@@ -19,6 +19,14 @@
  * inside the shared `Modal`, portalled to `<body>` so it answers only to
  * the viewport (modal.tsx's own header comment has this exact class of
  * clipping/overlap bug, and why the portal fixes it).
+ *
+ * A switch refused for a dirty tree (branch/route.ts's 409 'dirty') used
+ * to leave a person stuck — an error line with no way to actually clean
+ * the tree short of asking a chat to run git. `useBranchSwitch` now
+ * tracks the failure's own `code` and, on 'dirty', offers
+ * "Discard changes and switch" — …/code/projects/[id]/discard
+ * (git reset --hard + git clean -fd on the sandbox), then the same
+ * switch retried automatically.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -32,13 +40,22 @@ interface HostBranch {
   headSha: string;
 }
 
+function errorCodeOf(data: unknown): string | null {
+  return data && typeof data === 'object' && 'code' in data && typeof data.code === 'string'
+    ? data.code
+    : null;
+}
+
 /** The branch list + switch mechanics, shared by the inline dropdown and the modal picker. */
-function useBranchSwitch(base: string, branch: string | null) {
+function useBranchSwitch(base: string, discardBase: string, branch: string | null) {
   const router = useRouter();
   const [branches, setBranches] = useState<HostBranch[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [switchErrorCode, setSwitchErrorCode] = useState<string | null>(null);
+  const [pendingBranch, setPendingBranch] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState(false);
   // Shown immediately on a successful switch, rather than waiting on the
   // server round-trip a router.refresh() triggers — the person just
   // watched it happen. Re-synced whenever the project's own idea of the
@@ -59,19 +76,98 @@ function useBranchSwitch(base: string, branch: string | null) {
     if (name === shown || switching) return false;
     setSwitching(true);
     setSwitchError(null);
+    setSwitchErrorCode(null);
     const result = await sendJsonFull<{ branch: string }>(base, 'POST', { branch: name });
     setSwitching(false);
     if (result.error) {
       setSwitchError(result.error);
+      const code = errorCodeOf(result.data);
+      setSwitchErrorCode(code);
+      setPendingBranch(code === 'dirty' ? name : null);
       return false;
     }
     setShown(result.data?.branch ?? name);
     setBranches(null);
+    setPendingBranch(null);
     router.refresh();
     return true;
   };
 
-  return { branches, loadError, switching, switchError, shown, load, pick };
+  const discardAndRetry = async (): Promise<boolean> => {
+    if (!pendingBranch) return false;
+    setDiscarding(true);
+    const result = await sendJsonFull(discardBase, 'POST');
+    setDiscarding(false);
+    if (result.error) {
+      setSwitchError(result.error);
+      setSwitchErrorCode(errorCodeOf(result.data));
+      return false;
+    }
+    return pick(pendingBranch);
+  };
+
+  const clearSwitchError = () => {
+    setSwitchError(null);
+    setSwitchErrorCode(null);
+    setPendingBranch(null);
+  };
+
+  return {
+    branches,
+    loadError,
+    switching,
+    switchError,
+    switchErrorCode,
+    pendingBranch,
+    discarding,
+    shown,
+    load,
+    pick,
+    discardAndRetry,
+    clearSwitchError,
+  };
+}
+
+/**
+ * A switch's failure, and — on a dirty tree — the way through: the
+ * caller wraps this in whatever chrome fits (a Modal for the inline
+ * dropdown, an inline bordered block for the already-modal mobile
+ * picker).
+ */
+function SwitchBlockedNotice({
+  code,
+  message,
+  branchName,
+  discarding,
+  onDiscard,
+}: {
+  code: string;
+  message: string | null;
+  branchName: string | null;
+  discarding: boolean;
+  onDiscard: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-gray-700 dark:text-gray-300">{message}</p>
+      {code === 'dirty' && branchName ? (
+        <>
+          <p className="text-xs text-gray-500">
+            Discarding resets every tracked file to its last commit and removes every new,
+            uncommitted file — anything not committed is lost. This can’t be undone.
+          </p>
+          <button
+            type="button"
+            onClick={onDiscard}
+            disabled={discarding}
+            className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {discarding ? 'Discarding…' : `Discard changes and switch to ${branchName}`}
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 export default function BranchSwitcher({
@@ -93,11 +189,22 @@ export default function BranchSwitcher({
   reason?: string;
 }) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}/branch`;
+  const discardBase = `/api/tenant/${tenantId}/code/projects/${projectId}/discard`;
   const [open, setOpen] = useState(false);
-  const { branches, loadError, switching, switchError, shown, load, pick } = useBranchSwitch(
-    base,
-    branch
-  );
+  const {
+    branches,
+    loadError,
+    switching,
+    switchError,
+    switchErrorCode,
+    pendingBranch,
+    discarding,
+    shown,
+    load,
+    pick,
+    discardAndRetry,
+    clearSwitchError,
+  } = useBranchSwitch(base, discardBase, branch);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -177,10 +284,16 @@ export default function BranchSwitcher({
           )}
         </div>
       ) : null}
-      {switchError ? (
-        <p role="alert" className="absolute top-full left-0 z-20 mt-1 w-64 text-xs text-red-600 dark:text-red-400">
-          {switchError}
-        </p>
+      {switchErrorCode ? (
+        <Modal title="Can’t switch branches" onClose={clearSwitchError}>
+          <SwitchBlockedNotice
+            code={switchErrorCode}
+            message={switchError}
+            branchName={pendingBranch}
+            discarding={discarding}
+            onDiscard={() => void discardAndRetry()}
+          />
+        </Modal>
       ) : null}
     </div>
   );
@@ -212,10 +325,20 @@ export function BranchPickerModal({
   onSwitched?: (branch: string) => void;
 }) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}/branch`;
-  const { branches, loadError, switching, switchError, shown, load, pick } = useBranchSwitch(
-    base,
-    branch
-  );
+  const discardBase = `/api/tenant/${tenantId}/code/projects/${projectId}/discard`;
+  const {
+    branches,
+    loadError,
+    switching,
+    switchError,
+    switchErrorCode,
+    pendingBranch,
+    discarding,
+    shown,
+    load,
+    pick,
+    discardAndRetry,
+  } = useBranchSwitch(base, discardBase, branch);
   // Mount-once: the modal is unmounted (not just hidden) on close, so
   // there is no "reopened" case to re-key this on.
   useEffect(() => {
@@ -225,6 +348,14 @@ export function BranchPickerModal({
   const pickAndClose = async (name: string) => {
     if (await pick(name)) {
       onSwitched?.(name);
+      onClose();
+    }
+  };
+
+  const discardAndClose = async () => {
+    const name = pendingBranch;
+    if (await discardAndRetry()) {
+      if (name) onSwitched?.(name);
       onClose();
     }
   };
@@ -258,10 +389,19 @@ export function BranchPickerModal({
           ))
         )}
       </div>
-      {switchError ? (
-        <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
-          {switchError}
-        </p>
+      {switchErrorCode ? (
+        <div
+          role="alert"
+          className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/60 dark:bg-red-950/40"
+        >
+          <SwitchBlockedNotice
+            code={switchErrorCode}
+            message={switchError}
+            branchName={pendingBranch}
+            discarding={discarding}
+            onDiscard={() => void discardAndClose()}
+          />
+        </div>
       ) : null}
     </Modal>
   );

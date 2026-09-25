@@ -169,6 +169,62 @@ async function mockBranchRoute(page: Page, projectId: string): Promise<void> {
   });
 }
 
+/**
+ * The branch route, mocked so the first switch attempt is refused for a
+ * dirty tree (branch/route.ts's real 409 'dirty') and …/discard clears
+ * it — the same shapes those routes actually return, exercised here
+ * against the branch-switcher.tsx UI they drive (the modal, and
+ * "Discard changes and switch to <branch>"), same as `mockBranchRoute`
+ * mocks the ordinary switch it's built on.
+ */
+async function mockDirtyThenCleanBranchRoute(page: Page, projectId: string): Promise<void> {
+  let attempted = 0;
+  await page.route(`**/api/tenant/**/code/projects/${projectId}/branch`, async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          branches: [
+            { name: 'main', headSha: 'aaaaaaaaaaaa' },
+            { name: 'feature/x', headSha: 'bbbbbbbbbbbb' },
+          ],
+        }),
+      });
+      return;
+    }
+    attempted += 1;
+    if (attempted === 1) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'There are uncommitted changes on the checkout. Commit or discard them before switching branches.',
+          code: 'dirty',
+        }),
+      });
+      return;
+    }
+    const body: unknown = route.request().postDataJSON();
+    const branch =
+      body && typeof body === 'object' && 'branch' in body && typeof body.branch === 'string'
+        ? body.branch
+        : 'feature/x';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ branch }),
+    });
+  });
+  await page.route(`**/api/tenant/**/code/projects/${projectId}/discard`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ branch: 'main' }),
+    });
+  });
+}
+
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
     path: path.join(import.meta.dirname, '..', 'test-results', 'screens', testInfo.project.name, name),
@@ -270,5 +326,44 @@ test.describe('branch switcher', () => {
     await expect(branchModal).toHaveCount(0);
     await expect(chatBranchVisible).toContainText('feature/x');
     await shot(page, testInfo, 'branch-switcher-chat-mobile-overflow.png');
+  });
+
+  test('a dirty checkout is refused with a clear reason, and discarding lets the switch through', async ({
+    page,
+  }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const mobile = testInfo.project.name === 'mobile';
+    await mockDirtyThenCleanBranchRoute(page, ids.projectId);
+    if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
+    const main = page.getByRole('main');
+
+    // ── Picking a branch on a dirty checkout: a modal names the problem,
+    //    not an overlapping inline error, with a way through ──
+    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+    await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
+    const repository = main.locator('section', {
+      has: page.getByRole('heading', { level: 2, name: 'Repository' }),
+    });
+    await repository.getByRole('button', { name: /main/ }).click();
+    await page.getByRole('listbox', { name: 'Switch branch' }).getByRole('option', { name: 'feature/x' }).click();
+    const modal = page.getByRole('dialog', { name: /Can.t switch branches/ });
+    await expect(modal).toBeVisible();
+    await expect(
+      modal.getByText(
+        'There are uncommitted changes on the checkout. Commit or discard them before switching branches.'
+      )
+    ).toBeVisible();
+    // The reason and the way out sit inside the modal's own panel, not as
+    // an overlay floating over the rest of the page.
+    await expect(modal.getByText(/anything not committed is lost/)).toBeVisible();
+    const discard = modal.getByRole('button', { name: 'Discard changes and switch to feature/x' });
+    await expect(discard).toBeVisible();
+    await shot(page, testInfo, 'branch-switcher-dirty-modal.png');
+
+    // ── Discarding retries the same switch, which now goes through ──
+    await discard.click();
+    await expect(modal).toHaveCount(0);
+    await expect(repository.getByRole('button', { name: /feature\/x/ })).toBeVisible();
+    await shot(page, testInfo, 'branch-switcher-dirty-discarded.png');
   });
 });

@@ -309,6 +309,64 @@ describe('editing', () => {
   });
 });
 
+describe('removing and renaming', () => {
+  it('removes a file, then answers 404 for a second removal', async () => {
+    await writeFile(join(workspaceDir(STORAGE_KEY), 'gone.txt'), 'bye\n');
+    const removed = await post(enabledBase, 'workspaces/rm', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'gone.txt',
+    });
+    expect(removed.status).toBe(200);
+    expect(removed.json).toEqual({ path: 'gone.txt', deleted: true });
+    const again = await post(enabledBase, 'workspaces/rm', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'gone.txt',
+    });
+    expect(again.status).toBe(404);
+  });
+
+  it('refuses to remove .git', async () => {
+    const result = await post(enabledBase, 'workspaces/rm', {
+      ...TARGET,
+      id: 'ws-1',
+      path: '.git/config',
+    });
+    expect(result.status).toBe(400);
+  });
+
+  it('renames a file into a new folder', async () => {
+    await writeFile(join(workspaceDir(STORAGE_KEY), 'before.txt'), 'stays the same\n');
+    const moved = await post(enabledBase, 'workspaces/mv', {
+      ...TARGET,
+      id: 'ws-1',
+      from: 'before.txt',
+      to: 'moved/after.txt',
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.json).toEqual({ from: 'before.txt', to: 'moved/after.txt' });
+    const read = await post(enabledBase, 'workspaces/read', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'moved/after.txt',
+    });
+    expect(read.json.text).toBe('stays the same\n');
+  });
+
+  it('refuses to rename onto an existing file', async () => {
+    await writeFile(join(workspaceDir(STORAGE_KEY), 'one.txt'), '1\n');
+    await writeFile(join(workspaceDir(STORAGE_KEY), 'two.txt'), '2\n');
+    const result = await post(enabledBase, 'workspaces/mv', {
+      ...TARGET,
+      id: 'ws-1',
+      from: 'one.txt',
+      to: 'two.txt',
+    });
+    expect(result.status).toBe(409);
+  });
+});
+
 describe('git-diff', () => {
   it('diffs tracked changes and untracked files against HEAD with counts', async () => {
     const dir = workspaceDir(STORAGE_KEY);
@@ -326,10 +384,12 @@ describe('git-diff', () => {
       });
     git('init', '-q', '-b', 'main');
     await writeFile(join(dir, 'tracked.txt'), 'one\ntwo\nthree\n');
-    git('add', 'tracked.txt');
+    await writeFile(join(dir, 'gone.txt'), 'bye\n');
+    git('add', 'tracked.txt', 'gone.txt');
     git('commit', '-q', '-m', 'base');
     await writeFile(join(dir, 'tracked.txt'), 'one\n2\nthree\nfour\n');
     await writeFile(join(dir, 'fresh.txt'), 'new\n');
+    await rm(join(dir, 'gone.txt'));
     // Under root the worker drops git to the caller's uid, which must be
     // able to reach the checkout the way a real clone (owned by it) is.
     const identity = identityFor(TARGET);
@@ -351,6 +411,7 @@ describe('git-diff', () => {
       expect.arrayContaining([
         { path: 'tracked.txt', added: 2, deleted: 1, status: 'modified' },
         { path: 'fresh.txt', added: 1, deleted: 0, status: 'untracked' },
+        { path: 'gone.txt', added: 0, deleted: 1, status: 'deleted' },
       ])
     );
     expect(result.json.diff).toContain('+++ b/tracked.txt');
@@ -447,6 +508,75 @@ describe('git-show', () => {
       (await post(enabledBase, 'workspaces/git-show', { ...TARGET, id: 'ws-1', commit: 'abcdef0' }))
         .status
     ).toBe(404);
+  });
+});
+
+describe('git-discard', () => {
+  it('resets tracked changes and removes untracked files', async () => {
+    // Reuses the repository git-diff/git-show set up above: branch main,
+    // HEAD at "change two lines", a clean working tree.
+    const dir = workspaceDir(STORAGE_KEY);
+    const identity = identityFor(TARGET);
+    await writeFile(join(dir, 'tracked.txt'), 'one\n2\nthree\nfour\nFIVE\n');
+    await writeFile(join(dir, 'scratch-untracked.txt'), 'oops\n');
+    if (identity) {
+      execFileSync('chown', ['-R', `${identity.uid}:${identity.gid}`, dir], { stdio: 'pipe' });
+    }
+    const before = await post(enabledBase, 'workspaces/git-status', { ...TARGET, id: 'ws-1' });
+    expect(before.json.status).toContain('tracked.txt');
+    expect(before.json.status).toContain('scratch-untracked.txt');
+
+    const discarded = await post(enabledBase, 'workspaces/git-discard', {
+      ...TARGET,
+      id: 'ws-1',
+    });
+    expect(discarded.status).toBe(200);
+    expect(discarded.json.branch).toBe('main');
+
+    const after = await post(enabledBase, 'workspaces/git-status', { ...TARGET, id: 'ws-1' });
+    expect(after.json.status).not.toContain('tracked.txt');
+    expect(after.json.status).not.toContain('scratch-untracked.txt');
+    const read = await post(enabledBase, 'workspaces/read', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'tracked.txt',
+    });
+    expect(read.json.text).toBe('one\n2\nthree\nfour\n');
+    await expect(readFile(join(dir, 'scratch-untracked.txt'), 'utf8')).rejects.toThrow();
+  });
+});
+
+describe('ls', () => {
+  it('marks entries the checkout ignores, without leaving them out', async () => {
+    // Reuses the repository set up above: branch main, a clean working
+    // tree at "change two lines".
+    const dir = workspaceDir(STORAGE_KEY);
+    const identity = identityFor(TARGET);
+    await writeFile(join(dir, '.gitignore'), 'ignored-file.txt\nignored-dir/\n');
+    await writeFile(join(dir, 'ignored-file.txt'), 'shh\n');
+    await mkdir(join(dir, 'ignored-dir'), { recursive: true });
+    await writeFile(join(dir, 'ignored-dir', 'inside.txt'), 'shh\n');
+    if (identity) {
+      execFileSync('chown', ['-R', `${identity.uid}:${identity.gid}`, dir], { stdio: 'pipe' });
+    }
+    try {
+      const result = await post(enabledBase, 'workspaces/ls', { ...TARGET, id: 'ws-1' });
+      expect(result.status).toBe(200);
+      const byPath = new Map<string, { ignored?: boolean }>(
+        result.json.entries.map((entry: { path: string; ignored?: boolean }) => [
+          entry.path,
+          entry,
+        ])
+      );
+      expect(byPath.get('ignored-file.txt')?.ignored).toBe(true);
+      expect(byPath.get('ignored-dir')?.ignored).toBe(true);
+      expect(byPath.get('tracked.txt')?.ignored).toBe(false);
+      expect(byPath.get('.gitignore')?.ignored).toBe(false);
+    } finally {
+      await rm(join(dir, '.gitignore'), { force: true });
+      await rm(join(dir, 'ignored-file.txt'), { force: true });
+      await rm(join(dir, 'ignored-dir'), { recursive: true, force: true });
+    }
   });
 });
 

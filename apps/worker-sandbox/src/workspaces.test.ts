@@ -26,6 +26,8 @@ import {
   newWorkspaceStorageKey,
   readWorkspaceFile,
   removeWorkspace,
+  removeWorkspaceFile,
+  renameWorkspaceFile,
   runProcess,
   runShell,
   setWorkspacesRootForTests,
@@ -253,6 +255,7 @@ describe('a cloned workspace', () => {
     expect(Array.isArray(listed) && listed.map((entry) => entry.path)).toEqual(
       expect.arrayContaining(['README.md', 'src', '.gitignore'])
     );
+    expect(Array.isArray(listed) && listed.map((entry) => entry.path)).not.toContain('.git');
     const found = await findFiles({
       dir,
       home: homeDir(storageKey),
@@ -288,6 +291,56 @@ describe('a cloned workspace', () => {
     expect(await readFile(join(dir, 'docs', 'notes', 'todo.md'), 'utf8')).toBe('- one\n');
     const again = await writeWorkspaceFile(dir, 'docs/notes/todo.md', '- two\n', null);
     expect(again.created).toBe(false);
+  });
+
+  it('removes a file, then reports it already gone', async () => {
+    const dir = workspaceDir(storageKey);
+    await writeWorkspaceFile(dir, 'scratch/drop-me.txt', 'x', null);
+    await expect(removeWorkspaceFile(dir, 'scratch/drop-me.txt')).resolves.toEqual({
+      existed: true,
+    });
+    await expect(stat(join(dir, 'scratch', 'drop-me.txt'))).rejects.toThrow();
+    await expect(removeWorkspaceFile(dir, 'scratch/drop-me.txt')).resolves.toEqual({
+      existed: false,
+    });
+  });
+
+  it('removes a folder recursively', async () => {
+    const dir = workspaceDir(storageKey);
+    await writeWorkspaceFile(dir, 'scratch/nested/a.txt', 'a', null);
+    await writeWorkspaceFile(dir, 'scratch/nested/b.txt', 'b', null);
+    await expect(removeWorkspaceFile(dir, 'scratch/nested')).resolves.toEqual({ existed: true });
+    await expect(stat(join(dir, 'scratch', 'nested'))).rejects.toThrow();
+  });
+
+  it('refuses to remove the checkout root itself', async () => {
+    const dir = workspaceDir(storageKey);
+    await expect(removeWorkspaceFile(dir, '')).rejects.toBeInstanceOf(WorkspacePathError);
+    await expect(removeWorkspaceFile(dir, '.')).rejects.toBeInstanceOf(WorkspacePathError);
+  });
+
+  it('renames a file, creating a new parent directory as needed', async () => {
+    const dir = workspaceDir(storageKey);
+    await writeWorkspaceFile(dir, 'scratch/old-name.txt', 'content', null);
+    await renameWorkspaceFile(dir, 'scratch/old-name.txt', 'scratch/moved/new-name.txt', null);
+    await expect(stat(join(dir, 'scratch', 'old-name.txt'))).rejects.toThrow();
+    expect(await readFile(join(dir, 'scratch', 'moved', 'new-name.txt'), 'utf8')).toBe('content');
+  });
+
+  it('refuses to rename onto an existing destination', async () => {
+    const dir = workspaceDir(storageKey);
+    await writeWorkspaceFile(dir, 'scratch/source.txt', 's', null);
+    await writeWorkspaceFile(dir, 'scratch/taken.txt', 't', null);
+    await expect(
+      renameWorkspaceFile(dir, 'scratch/source.txt', 'scratch/taken.txt', null)
+    ).rejects.toBeInstanceOf(WorkspacePathError);
+  });
+
+  it('refuses to rename a file that does not exist', async () => {
+    const dir = workspaceDir(storageKey);
+    await expect(
+      renameWorkspaceFile(dir, 'scratch/nope.txt', 'scratch/elsewhere.txt', null)
+    ).rejects.toBeInstanceOf(WorkspacePathError);
   });
 
   it('refuses a path that a symlink would carry outside', async () => {

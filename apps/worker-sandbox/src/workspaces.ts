@@ -55,6 +55,7 @@ import {
   readdir,
   readFile as readFileBytes,
   realpath,
+  rename,
   rm,
   stat,
   writeFile as writeFileBytes,
@@ -650,6 +651,36 @@ export async function readWorkspaceFile(
   return { bytes: await readFileBytes(path), sizeBytes: info.size };
 }
 
+/**
+ * Every ancestor directory between `path` and `root` that does not exist
+ * yet, created and owned like the file/entry landing under them — the
+ * write and the rename below share this, since both can land a path
+ * under a folder that is not there yet.
+ */
+async function ensureParentDirs(
+  path: string,
+  root: string,
+  identity: ExecIdentity | null
+): Promise<void> {
+  const parents: string[] = [];
+  for (
+    let parent = dirname(path);
+    parent !== root && parent.startsWith(root);
+    parent = dirname(parent)
+  ) {
+    try {
+      await stat(parent);
+      break;
+    } catch {
+      parents.unshift(parent);
+    }
+  }
+  for (const parent of parents) {
+    await mkdir(parent, { mode: 0o755 });
+    await chownIf(parent, identity);
+  }
+}
+
 export async function writeWorkspaceFile(
   dir: string,
   relativePath: string,
@@ -671,27 +702,66 @@ export async function writeWorkspaceFile(
   }
   // Parent directories the write creates belong to the caller like the file.
   const root = await realpath(dir);
-  const parents: string[] = [];
-  for (
-    let parent = dirname(path);
-    parent !== root && parent.startsWith(root);
-    parent = dirname(parent)
-  ) {
-    try {
-      await stat(parent);
-      break;
-    } catch {
-      parents.unshift(parent);
-    }
-  }
-  for (const parent of parents) {
-    await mkdir(parent, { mode: 0o755 });
-    await chownIf(parent, identity);
-  }
+  await ensureParentDirs(path, root, identity);
   const bytes = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
   await writeFileBytes(path, bytes, { mode: 0o644 });
   await chownIf(path, identity);
   return { created, sizeBytes: bytes.byteLength };
+}
+
+/**
+ * A file or folder removed from the checkout — recursively for a
+ * directory. `{existed: false}` rather than an error when there was
+ * nothing there: the tree's own idea of the checkout can be a beat
+ * stale (a turn just ran), and re-deleting an already-gone path is not
+ * a failure.
+ */
+export async function removeWorkspaceFile(
+  dir: string,
+  relativePath: string
+): Promise<{ existed: boolean }> {
+  const path = await containedPath(dir, relativePath);
+  const root = await realpath(dir);
+  if (path === root) throw new WorkspacePathError('Refusing to remove the checkout itself.');
+  try {
+    await lstat(path);
+  } catch {
+    return { existed: false };
+  }
+  await rm(path, { recursive: true, force: false });
+  return { existed: true };
+}
+
+/**
+ * A file or folder renamed or moved within the checkout — `fromRelative`
+ * must already exist, `toRelative` must not (no silent overwrite), and
+ * every missing ancestor directory `toRelative` needs is created first,
+ * the same as a write landing under a new folder.
+ */
+export async function renameWorkspaceFile(
+  dir: string,
+  fromRelative: string,
+  toRelative: string,
+  identity: ExecIdentity | null
+): Promise<void> {
+  const from = await containedPath(dir, fromRelative);
+  try {
+    await lstat(from);
+  } catch {
+    throw new WorkspacePathError(`No such file or folder: ${fromRelative || '.'}`);
+  }
+  const to = await containedPath(dir, toRelative);
+  if (to === from) return;
+  try {
+    await lstat(to);
+    throw new WorkspacePathError(`${toRelative} already exists.`);
+  } catch (error) {
+    if (error instanceof WorkspacePathError) throw error;
+    // ENOENT — the destination is free, which is what a rename needs.
+  }
+  const root = await realpath(dir);
+  await ensureParentDirs(to, root, identity);
+  await rename(from, to);
 }
 
 export interface FileEntry {
@@ -714,6 +784,9 @@ export async function listDirectory(
   }
   const listed: FileEntry[] = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    // Git's own — never browsed, edited or listed here; a chat's own git
+    // tools are the way in, on the rare occasion one is needed at all.
+    if (entry.name === '.git') continue;
     const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
     if (entry.isDirectory()) listed.push({ path: entryPath, kind: 'dir', sizeBytes: null });
     else if (entry.isSymbolicLink())
