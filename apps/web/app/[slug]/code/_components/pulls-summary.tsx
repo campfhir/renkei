@@ -6,10 +6,12 @@
  * pipeline-subscribe row (pr-subscribe.tsx's `compact` layout), so
  * subscribing to the PR that's actually current doesn't require a trip
  * to the full Pulls page. Read once on open, with the person's own
- * grant on whichever host the repository is on (repo-host.ts) — hidden
- * entirely rather than shown broken when there's no usable token,
- * matching lib/code/github-browse.ts's hide-on-failure pattern (a
- * project screen never fails for want of a PR list).
+ * grant on whichever host the repository is on (repo-host.ts) — on no
+ * usable token or an API failure, the card stays and shows the reason
+ * (matching pipelines-summary.tsx's own error-surfacing card, not
+ * hiding it: "GitHub is not connected. Connect it on the Connectors
+ * page, then try again." is exactly the thing a person needs to see,
+ * not silence).
  */
 
 import Link from 'next/link';
@@ -40,7 +42,7 @@ export default function PullsSummary({
   projectId: string;
 }) {
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [hidden, setHidden] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,17 +52,15 @@ export default function PullsSummary({
       );
       if (cancelled) return;
       if (result.data) setSummary(result.data);
-      else setHidden(true);
+      else setError(result.error ?? 'Pull requests could not be read.');
     })();
     return () => {
       cancelled = true;
     };
   }, [tenantId, projectId]);
 
-  if (hidden) return null;
-
   return (
-    <section className={sectionClass} aria-busy={summary === null}>
+    <section className={sectionClass} aria-busy={summary === null && !error}>
       <div className="mb-2">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold">Pull requests</h2>
@@ -80,7 +80,11 @@ export default function PullsSummary({
         </div>
         <p className="text-xs text-gray-500">Open on the project's repository.</p>
       </div>
-      {summary === null ? (
+      {error ? (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      ) : summary === null ? (
         <p className="text-sm text-gray-500">Reading…</p>
       ) : summary.mostRecent ? (
         <div className="space-y-1.5">

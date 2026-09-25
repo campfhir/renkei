@@ -42,6 +42,21 @@ function idsFor(project: string) {
   };
 }
 
+/**
+ * A project whose owner has no GitHub grant — the e2e tenant's own
+ * default state (only a Jira grant is seeded). No page.route mocking
+ * needed: resolveGitHubAccess (lib/mcp-tools/github/client.ts) returns
+ * its "not connected" string before ever reaching GitHub, so this
+ * exercises the real failure path with no vendor call in it at all.
+ */
+function noAccessIdsFor(project: string) {
+  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
+  return {
+    projectId: `66666666-6666-4666-8666-6666666667${digit}1`,
+    projectName: `No GitHub access project (${digit})`,
+  };
+}
+
 async function db(): Promise<Client> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
@@ -77,6 +92,30 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
+    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
+  } finally {
+    await client.end();
+  }
+}
+
+async function seedNoAccessFixture(ids: ReturnType<typeof noAccessIdsFor>): Promise<void> {
+  const client = await db();
+  try {
+    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
+    await client.query(
+      `INSERT INTO chat_projects
+         (id, tenant_id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)
+       VALUES ($1, $2, $3, $4, 'code', 'github', 'acme/no-access-repo', 'main')`,
+      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+async function cleanNoAccessFixture(ids: ReturnType<typeof noAccessIdsFor>): Promise<void> {
+  const client = await db();
+  try {
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
   } finally {
     await client.end();
@@ -261,5 +300,35 @@ test.describe('project pulls, commits and actions', () => {
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     await expect(page.getByText('#42 Fix the timeout')).toBeVisible();
     await shot(page, testInfo, 'project-pulls-commits-mobile.png');
+  });
+
+  test('the cards stay visible with the actual reason, not hidden, on no GitHub access', async ({
+    page,
+  }, testInfo) => {
+    const ids = noAccessIdsFor(testInfo.project.name);
+    await seedNoAccessFixture(ids);
+    try {
+      const main = page.getByRole('main');
+      await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
+      await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
+
+      const pulls = main.locator('section', {
+        has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
+      });
+      const commits = main.locator('section', {
+        has: page.getByRole('heading', { level: 2, name: 'Commits' }),
+      });
+      const actions = main.locator('section', {
+        has: page.getByRole('heading', { level: 2, name: 'Actions' }),
+      });
+      // The cards stay on the page — not hidden entirely — and each
+      // names the actual reason a person can act on.
+      await expect(pulls.getByRole('alert')).toContainText('GitHub is not connected');
+      await expect(commits.getByRole('alert')).toContainText('GitHub is not connected');
+      await expect(actions.getByRole('alert')).toContainText('GitHub is not connected');
+      await shot(page, testInfo, 'project-pulls-commits-no-access.png');
+    } finally {
+      await cleanNoAccessFixture(ids);
+    }
   });
 });

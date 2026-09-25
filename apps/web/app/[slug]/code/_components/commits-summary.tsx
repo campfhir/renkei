@@ -4,9 +4,9 @@
  * The Commits card on a code project's page: the newest commit on the
  * project's branch, with its own scrolling Commits page a click away.
  * Read once on open, with the person's own grant on whichever host the
- * repository is on (repo-host.ts) — hidden entirely on no usable token
- * or an API failure, the same hide-on-failure pattern pulls-summary.tsx
- * follows.
+ * repository is on (repo-host.ts) — on no usable token or an API
+ * failure, the card stays and shows the reason (pulls-summary.tsx's own
+ * pattern; pipelines-summary.tsx did this first).
  */
 
 import Link from 'next/link';
@@ -29,7 +29,7 @@ export default function CommitsSummary({
   projectId: string;
 }) {
   const [mostRecent, setMostRecent] = useState<HostCommit | null | undefined>(undefined);
-  const [hidden, setHidden] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,17 +39,15 @@ export default function CommitsSummary({
       );
       if (cancelled) return;
       if (result.data) setMostRecent(result.data.mostRecent);
-      else setHidden(true);
+      else setError(result.error ?? 'Commits could not be read.');
     })();
     return () => {
       cancelled = true;
     };
   }, [tenantId, projectId]);
 
-  if (hidden) return null;
-
   return (
-    <section className={sectionClass} aria-busy={mostRecent === undefined}>
+    <section className={sectionClass} aria-busy={mostRecent === undefined && !error}>
       <div className="mb-2">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold">Commits</h2>
@@ -63,7 +61,11 @@ export default function CommitsSummary({
         </div>
         <p className="text-xs text-gray-500">The most recent commit on the project's branch.</p>
       </div>
-      {mostRecent === undefined ? (
+      {error ? (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      ) : mostRecent === undefined ? (
         <p className="text-sm text-gray-500">Reading…</p>
       ) : mostRecent ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">

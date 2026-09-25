@@ -8,7 +8,8 @@
  * one is deliberately smaller: GitHub Actions is configured on GitHub
  * itself (workflow YAML in the repo, secrets in the repo's own
  * settings), so there's nothing to set up from here, only runs to
- * watch.
+ * watch. On no usable token or an API failure, the card stays and
+ * shows the reason, matching pipelines-summary.tsx's own card.
  */
 
 import Link from 'next/link';
@@ -47,7 +48,7 @@ export default function ActionsSummary({
   projectId: string;
 }) {
   const [lastRun, setLastRun] = useState<HostPipelineRun | null | undefined>(undefined);
-  const [hidden, setHidden] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,17 +58,15 @@ export default function ActionsSummary({
       );
       if (cancelled) return;
       if (result.data) setLastRun(result.data.lastRun);
-      else setHidden(true);
+      else setError(result.error ?? 'Actions could not be read.');
     })();
     return () => {
       cancelled = true;
     };
   }, [tenantId, projectId]);
 
-  if (hidden) return null;
-
   return (
-    <section className={sectionClass} aria-busy={lastRun === undefined}>
+    <section className={sectionClass} aria-busy={lastRun === undefined && !error}>
       <div className="mb-2">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold">Actions</h2>
@@ -81,7 +80,11 @@ export default function ActionsSummary({
         </div>
         <p className="text-xs text-gray-500">How GitHub Actions builds this repository.</p>
       </div>
-      {lastRun === undefined ? (
+      {error ? (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      ) : lastRun === undefined ? (
         <p className="text-sm text-gray-500">Reading from GitHub…</p>
       ) : lastRun ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">

@@ -27,12 +27,17 @@ export default function BranchSwitcher({
   branch,
   canSwitch,
   className = '',
+  reason,
 }: {
   tenantId: string;
   projectId: string;
   branch: string | null;
   canSwitch: boolean;
   className?: string;
+  /** Shown as a tooltip when `canSwitch` is false, so the plain label
+   * doesn't read as "this feature doesn't exist" — it explains what's
+   * missing (no checkout yet, no edit access) instead of staying silent. */
+  reason?: string;
 }) {
   const router = useRouter();
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}/branch`;
@@ -91,7 +96,10 @@ export default function BranchSwitcher({
 
   if (!canSwitch) {
     return (
-      <span className={`inline-flex items-center gap-1 font-mono ${className}`}>
+      <span
+        className={`inline-flex items-center gap-1 font-mono ${className}`}
+        title={reason}
+      >
         <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0" />
         {shown || 'default branch'}
       </span>

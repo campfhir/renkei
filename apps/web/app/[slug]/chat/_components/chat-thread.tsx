@@ -998,6 +998,7 @@ export default function ChatThread({
                   projectId={codeProjectId}
                   branch={branch}
                   canSwitch={isOwner}
+                  reason={isOwner ? undefined : 'Only the person who owns this chat can switch branches.'}
                   className="text-xs text-gray-500"
                 />
               ) : null

@@ -170,6 +170,17 @@ export default function CodeSections({
             projectId={projectId}
             branch={workspace?.branch || code.branch || null}
             canSwitch={canEdit && workspace?.status === 'ready'}
+            reason={
+              !canEdit
+                ? 'Only editors can switch branches.'
+                : !workspace
+                  ? 'Start a chat to clone the repository, then you can switch branches.'
+                  : workspace.status === 'cloning'
+                    ? 'Cloning — branch switching will be available once it’s ready.'
+                    : workspace.status === 'failed'
+                      ? 'The last clone failed; branch switching isn’t available until it’s re-cloned.'
+                      : undefined
+            }
             className="text-gray-500"
           />
         </div>
