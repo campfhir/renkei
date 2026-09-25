@@ -72,7 +72,7 @@ import {
 import AutoModeToggle from './auto-mode-toggle';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import VoiceMenu from './voice-menu';
-import VoiceMode, { type VoiceActivity } from './voice-mode';
+import VoiceMode, { type VoiceActivity, type VoiceSendTicket } from './voice-mode';
 import SubagentModal from './subagent-modal';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useElementWidth } from '@/lib/use-element-width';
@@ -536,12 +536,15 @@ export default function ChatThread({
     return true;
   }, [chat.id, tenantId]);
 
-  const submit = useCallback(
-    async (input: ComposerSubmit): Promise<boolean> => {
+  /** Send, and the message it became — for a voice correction to name later; null when it could not be sent. */
+  const send = useCallback(
+    async (input: ComposerSubmit): Promise<{ userMessageId: string } | null> => {
       // A slash command, not a message — /compact runs the same fold a
       // person could ask the model for in plain language, directly rather
       // than waiting on the model to decide to call the tool.
-      if (input.text.trim().toLowerCase() === '/compact') return forceCompact();
+      if (input.text.trim().toLowerCase() === '/compact') {
+        return (await forceCompact()) ? { userMessageId: '' } : null;
+      }
       setError(null);
       setSending(true);
       const started = await chatClient.sendTurn(tenantId, chat.id, {
@@ -553,13 +556,17 @@ export default function ChatThread({
       setSending(false);
       if (started.error || !started.data) {
         setError(started.error ?? 'The message could not be sent.');
-        return false;
+        return null;
       }
       lastPrompt.current = input;
       begin(started.data, input, (state.messages[state.messages.length - 1]?.seq ?? 0) + 1);
-      return true;
+      return { userMessageId: started.data.userMessageId };
     },
     [forceCompact, tenantId, modelId, state.messages, chat.id, begin]
+  );
+  const submit = useCallback(
+    async (input: ComposerSubmit): Promise<boolean> => (await send(input)) !== null,
+    [send]
   );
 
   /**
@@ -574,6 +581,9 @@ export default function ChatThread({
     { id: number; kind: 'message'; input: ComposerSubmit } | { id: number; kind: 'compact' };
   const [queue, setQueue] = useState<QueuedItem[]>([]);
   const nextQueueId = useRef(0);
+  // What each queued message became once it went out, for a voice
+  // correction that names the queue place (correctVoiceSend below).
+  const queuedSent = useRef(new Map<number, string>());
   const queueOrSend = useCallback(
     (input: ComposerSubmit): Promise<boolean> => {
       if (!running) return submit(input);
@@ -612,8 +622,12 @@ export default function ChatThread({
     const [next, ...rest] = queue;
     setQueue(rest);
     if (next.kind === 'compact') void forceCompact();
-    else void submit(next.input);
-  }, [running, readingReply, speechQueue, queue, submit, forceCompact]);
+    else {
+      void send(next.input).then((started) => {
+        if (started) queuedSent.current.set(next.id, started.userMessageId);
+      });
+    }
+  }, [running, readingReply, speechQueue, queue, send, forceCompact]);
   const queueView = queue.map((item) => ({
     id: item.id,
     isCompact: item.kind === 'compact',
@@ -639,6 +653,7 @@ export default function ChatThread({
         text: input ? input.text : null,
         attachmentIds: input ? input.attachments.map((attachment) => attachment.id) : [],
         llmModelId: modelId,
+        ...(input?.voice ? { voice: true } : {}),
       });
       setSending(false);
       if (resent.error || !resent.data) {
@@ -748,6 +763,66 @@ export default function ChatThread({
     if (!activeTurnId) return;
     await chatClient.cancelTurn(tenantId, chat.id, activeTurnId);
   }, [chat.id, activeTurnId, tenantId, speechQueue]);
+
+  /**
+   * A voice utterance: sent as any message is, or queued behind a running
+   * reply — and either way named by a ticket, because its words may yet
+   * be corrected. Voice mode recognises an utterance in the set language
+   * first and asks which language it was behind that; when the answer is
+   * another language, the words heard in it replace what went out:
+   * the queued text, or the message itself, resent (as an edit is) with
+   * the reply to the wrong words removed — after that reply is stopped,
+   * if it is still running.
+   */
+  const voiceSend = useCallback(
+    async (text: string): Promise<VoiceSendTicket | null> => {
+      const input: ComposerSubmit = { text, attachments: [], voice: true };
+      if (running) {
+        nextQueueId.current += 1;
+        const id = nextQueueId.current;
+        setQueue((current) => [...current, { id, kind: 'message', input }]);
+        return { queued: id };
+      }
+      const started = await send(input);
+      return started ? { message: started.userMessageId } : null;
+    },
+    [running, send]
+  );
+  const [correction, setCorrection] = useState<{ messageId: string; text: string } | null>(null);
+  const correctVoiceSend = useCallback(
+    (ticket: VoiceSendTicket, text: string) => {
+      let messageId: string;
+      if ('queued' in ticket) {
+        const sentAs = queuedSent.current.get(ticket.queued);
+        if (!sentAs) {
+          // Still waiting its turn: only the words change.
+          setQueue((current) =>
+            current.map((item) =>
+              item.id === ticket.queued && item.kind === 'message'
+                ? { ...item, input: { ...item.input, text } }
+                : item
+            )
+          );
+          return;
+        }
+        messageId = sentAs;
+      } else {
+        messageId = ticket.message;
+      }
+      setCorrection({ messageId, text });
+      if (running) void stop();
+    },
+    [running, stop]
+  );
+  useEffect(() => {
+    // The resend waits for the reply to the wrong words to be over: the
+    // server refuses a resend while a turn runs.
+    if (!correction || running) return;
+    setCorrection(null);
+    const message = state.messages.find((row) => row.id === correction.messageId);
+    if (!message) return;
+    void resend(message, { text: correction.text, attachments: [], voice: true });
+  }, [correction, running, state.messages, resend]);
 
   const changeModel = useCallback(
     async (id: string) => {
@@ -1305,7 +1380,8 @@ export default function ChatThread({
               : null
           }
           queued={queue.length}
-          onSend={(text) => queueOrSend({ text, attachments: [], voice: true })}
+          onSend={voiceSend}
+          onCorrect={correctVoiceSend}
           onInterrupt={() => void stop()}
           onClose={() => setVoiceMode(false)}
         />

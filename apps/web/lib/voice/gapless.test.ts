@@ -4,7 +4,15 @@
  * whole, and a late piece starts now rather than in the past.
  */
 
-import { LEAD_MARGIN_S, PIECE_GAP_S, TAIL_MARGIN_S, nextStart, soundBounds } from './gapless';
+import {
+  LEAD_MARGIN_S,
+  PIECE_GAP_S,
+  TAIL_MARGIN_S,
+  nextStart,
+  soundBounds,
+  soundEnd,
+  soundStart,
+} from './gapless';
 
 const RATE = 24_000;
 
@@ -39,6 +47,20 @@ describe('soundBounds', () => {
     const samples = padded(0.5, 1);
     for (let index = 0; index < samples.length; index += 7) samples[index] += 0.005;
     expect(soundBounds(samples, RATE).offset).toBeCloseTo(0.5 - LEAD_MARGIN_S, 3);
+  });
+});
+
+describe('soundStart and soundEnd', () => {
+  it('find the sound in a segment, with the margins, and nothing in a silent one', () => {
+    expect(soundStart(padded(0.5, 1), RATE)).toBeCloseTo(0.5 - LEAD_MARGIN_S, 3);
+    expect(soundEnd(padded(0.5, 1), RATE)).toBeCloseTo(1.5 + TAIL_MARGIN_S, 3);
+    expect(soundStart(new Float32Array(RATE), RATE)).toBeNull();
+    expect(soundEnd(new Float32Array(RATE), RATE)).toBeNull();
+  });
+
+  it('never reach before the start or past the end', () => {
+    expect(soundStart(padded(0.01, 1, 0.02), RATE)).toBe(0);
+    expect(soundEnd(padded(0.01, 1, 0.02), RATE)).toBeCloseTo(1.03, 3);
   });
 });
 

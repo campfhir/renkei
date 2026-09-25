@@ -31,6 +31,7 @@ import {
   clampRate,
   errorKindOf,
   fetchFailure,
+  PCM_SAMPLE_RATE,
   type FetchLike,
   type SynthesisRequest,
   type SynthesisResult,
@@ -46,6 +47,11 @@ export const AZURE_OUTPUT_FORMAT = 'audio-24khz-48kbitrate-mono-mp3';
 export const AZURE_OUTPUT_CONTENT_TYPE = 'audio/mpeg';
 /** The format above is constant-rate: 48 kbit of MP3 is one second of audio. */
 export const AZURE_OUTPUT_BITRATE_KBPS = 48;
+/** Raw 16-bit mono samples at PCM_SAMPLE_RATE, playable from the first chunk. */
+export const AZURE_PCM_OUTPUT_FORMAT = 'raw-24khz-16bit-mono-pcm';
+export const AZURE_PCM_CONTENT_TYPE = 'audio/pcm';
+/** 24 000 samples of 16 bits a second. */
+export const AZURE_PCM_BITRATE_KBPS = (PCM_SAMPLE_RATE * 16) / 1000;
 
 /** Azure's own ceiling on the short-audio recognition endpoint. */
 export const AZURE_MAX_UTTERANCE_SECONDS = 60;
@@ -317,12 +323,13 @@ export class AzureSpeechProvider implements VoiceProvider {
 
   async synthesize(request: SynthesisRequest): Promise<VoiceOutcome<SynthesisResult>> {
     const timeout = withTimeout(SPEECH_TIMEOUT_MS, request.signal);
+    const pcm = request.format === 'pcm';
     try {
       const response = await this.fetchImpl(this.urls.speech, {
         method: 'POST',
         headers: this.headers({
           'Content-Type': 'application/ssml+xml',
-          'X-Microsoft-OutputFormat': AZURE_OUTPUT_FORMAT,
+          'X-Microsoft-OutputFormat': pcm ? AZURE_PCM_OUTPUT_FORMAT : AZURE_OUTPUT_FORMAT,
         }),
         body: buildSsml(request, this.config.defaultVoice),
         signal: timeout.signal,
@@ -341,9 +348,9 @@ export class AzureSpeechProvider implements VoiceProvider {
       return {
         ok: true,
         val: {
-          contentType: AZURE_OUTPUT_CONTENT_TYPE,
+          contentType: pcm ? AZURE_PCM_CONTENT_TYPE : AZURE_OUTPUT_CONTENT_TYPE,
           body: untilDrained(response.body, timeout.clear),
-          bitrateKbps: AZURE_OUTPUT_BITRATE_KBPS,
+          bitrateKbps: pcm ? AZURE_PCM_BITRATE_KBPS : AZURE_OUTPUT_BITRATE_KBPS,
         },
       };
     } catch (error) {

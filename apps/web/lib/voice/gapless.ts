@@ -38,19 +38,40 @@ export interface SoundBounds {
  */
 export function soundBounds(samples: Float32Array, sampleRate: number): SoundBounds {
   const whole = { offset: 0, duration: samples.length / sampleRate };
-  let first = -1;
+  const start = soundStart(samples, sampleRate);
+  if (start === null) return whole;
+  const end = soundEnd(samples, sampleRate) ?? whole.duration;
+  return { offset: start, duration: end - start };
+}
+
+/**
+ * Seconds into `samples` where playback should start — the first sound
+ * less the lead margin — or null when there is no sound in them at all.
+ * For a piece arriving in segments (speech-queue.ts), asked of each
+ * segment until one has sound: the silent ones before it are the
+ * vendor's padding, not played.
+ */
+export function soundStart(samples: Float32Array, sampleRate: number): number | null {
   for (let index = 0; index < samples.length; index += 1) {
     if (Math.abs(samples[index]) > SILENCE) {
-      first = index;
-      break;
+      return Math.max(0, index / sampleRate - LEAD_MARGIN_S);
     }
   }
-  if (first < 0) return whole;
-  let last = samples.length - 1;
-  while (last > first && Math.abs(samples[last]) <= SILENCE) last -= 1;
-  const start = Math.max(0, first / sampleRate - LEAD_MARGIN_S);
-  const end = Math.min(whole.duration, (last + 1) / sampleRate + TAIL_MARGIN_S);
-  return { offset: start, duration: end - start };
+  return null;
+}
+
+/**
+ * Seconds into `samples` where playback should end — the last sound plus
+ * the tail margin, capped at the end — or null when there is no sound.
+ * Asked of a streamed piece's last segment, to cut the padding after it.
+ */
+export function soundEnd(samples: Float32Array, sampleRate: number): number | null {
+  for (let last = samples.length - 1; last >= 0; last -= 1) {
+    if (Math.abs(samples[last]) > SILENCE) {
+      return Math.min(samples.length / sampleRate, (last + 1) / sampleRate + TAIL_MARGIN_S);
+    }
+  }
+  return null;
 }
 
 /**

@@ -262,6 +262,30 @@ describe('AzureSpeechProvider', () => {
     expect(calls[0].init.body).toContain('<voice name="en-US-AvaMultilingualNeural">');
   });
 
+  it('asks for raw PCM when the piece is to be played as it arrives', async () => {
+    const { fetch, calls } = fakeFetch(
+      () =>
+        new Response(new Uint8Array([0, 0, 1, 0]), {
+          status: 200,
+          headers: { 'content-type': 'audio/pcm' },
+        })
+    );
+    const provider = new AzureSpeechProvider(config, fetch);
+    const result = await provider.synthesize({
+      text: 'Hello there',
+      voice: null,
+      rate: 1,
+      locale: 'en-US',
+      format: 'pcm',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.val.contentType).toBe('audio/pcm');
+    // 24 000 sixteen-bit samples a second: what the ledger turns bytes into seconds with.
+    expect(result.val.bitrateKbps).toBe(384);
+    expect(headerOf(calls[0].init, 'X-Microsoft-OutputFormat')).toBe('raw-24khz-16bit-mono-pcm');
+  });
+
   it('transcribes an utterance and reads the display text', async () => {
     const { fetch, calls } = fakeFetch(() =>
       Response.json({ RecognitionStatus: 'Success', DisplayText: 'Book the room.' })

@@ -8,7 +8,10 @@
  * tools, model and project), and reads the reply as it streams. The
  * recognition starts at the utterance's first real pause, before the
  * recorder has decided it is over, so the words are usually back by then
- * and the turn goes out the moment it is.
+ * and the turn goes out the moment it is. It is asked in the set language
+ * first, from the endpoint that answers fastest; when the person may be
+ * speaking another, which language it was is asked behind that, and a
+ * different answer corrects what was sent (see Recognition).
  *
  * Interruptions are the point, and so is not interrupting on a cough.
  * The rules are lib/voice/barge-in.ts's, and the recognizer is the
@@ -64,6 +67,31 @@ import { LevelEmitter } from '@/lib/voice/levels';
 import VoiceWave, { type WaveAccent, type WaveTone } from './voice-wave';
 import type { PermissionPrompt } from './message-list';
 
+/**
+ * What a sent utterance can later be corrected by: the message it became,
+ * or its place in the thread's queue while a reply was still running.
+ */
+export type VoiceSendTicket = { message: string } | { queued: number };
+
+/**
+ * The recognizer's two answers to an utterance. `quick` is the words in
+ * the set language, from the endpoint that answers fastest — what is
+ * sent. `detection`, when the person may be speaking another language,
+ * is the slower answer that says which language it was, and the words
+ * in it: it arrives behind the first and, when the language differs,
+ * corrects what was sent (the recorder in one language hears another as
+ * noise). Null when the language is not in question.
+ */
+interface Recognition {
+  quick: ReturnType<typeof voiceClient.transcribe>;
+  detection: ReturnType<typeof voiceClient.transcribe> | null;
+}
+
+/** The language of a locale, so `en-GB` and `en-US` are the same one. */
+function languageOf(locale: string): string {
+  return locale.split('-')[0].toLowerCase();
+}
+
 /** A tool call in flight, for the activity line and its announcement. */
 export interface VoiceActivity {
   id: string;
@@ -104,6 +132,7 @@ export default function VoiceMode({
   permission,
   queued,
   onSend,
+  onCorrect,
   onInterrupt,
   onClose,
 }: {
@@ -142,8 +171,14 @@ export default function VoiceMode({
   permission: PermissionPrompt | null;
   /** Messages waiting behind the running reply (the thread's queue), sent when it is done. */
   queued: number;
-  /** Send an utterance as a message; false when it could not be sent. */
-  onSend: (text: string) => Promise<boolean>;
+  /** Send an utterance as a message; null when it could not be sent. */
+  onSend: (text: string) => Promise<VoiceSendTicket | null>;
+  /**
+   * The utterance was heard in another language, and these are its
+   * words: replace what was sent — the queued text, or the message
+   * itself, resent with every reply after it removed.
+   */
+  onCorrect: (ticket: VoiceSendTicket, text: string) => void;
   /** Stop the reply: silence the voice and cancel the turn. */
   onInterrupt: () => void;
   onClose: () => void;
@@ -170,10 +205,11 @@ export default function VoiceMode({
   // The recognition started at the utterance's pause (recorder.ts's
   // onSpeechPause), for the close to take rather than start its own —
   // numbered with the utterance it is of, so a stale one is never taken.
-  const early = useRef<{
-    seq: number;
-    result: ReturnType<typeof voiceClient.transcribe>;
-  } | null>(null);
+  const early = useRef<{ seq: number; result: Recognition } | null>(null);
+  // The last utterance sent, so a language correction arriving after a
+  // newer one went out corrects nothing: resending the older would drop
+  // the newer.
+  const lastSentSeq = useRef<number | null>(null);
   // The assistant is reading its answer: words of the reply are sounding
   // (or queued to), with no tool call in flight. Not a narration — "still
   // working on it", the sentence before a call — and not the model
@@ -188,6 +224,7 @@ export default function VoiceMode({
     spokenReply,
     onInterrupt,
     onSend,
+    onCorrect,
     onHeard,
     permission,
   });
@@ -197,6 +234,7 @@ export default function VoiceMode({
     spokenReply,
     onInterrupt,
     onSend,
+    onCorrect,
     onHeard,
     permission,
   };
@@ -252,6 +290,14 @@ export default function VoiceMode({
   );
 
   useEffect(() => {
+    // Ask at once in the set language; with the language in question,
+    // ask which it was as well, behind that (see Recognition).
+    const recognise = (wav: ArrayBuffer): Recognition => ({
+      quick: voiceClient.transcribe(tenantId, wav, { locale, detectLanguage: false }),
+      detection: detectLanguage
+        ? voiceClient.transcribe(tenantId, wav, { locale, detectLanguage: true })
+        : null,
+    });
     const instance = new UtteranceRecorder({
       echoCancellation,
       deviceId: microphone,
@@ -277,7 +323,12 @@ export default function VoiceMode({
         const current = utterance.current;
         const seq = utteranceSeq.current;
         void (async () => {
-          const result = await voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
+          // Words or not is the question, in whichever language: the
+          // quick answer is enough.
+          const result = await voiceClient.transcribe(tenantId, wav, {
+            locale,
+            detectLanguage: false,
+          });
           // Closed meanwhile: the close judges the whole of it instead.
           if (seq !== utteranceSeq.current || result.error) return;
           const heard = result.data?.text ?? '';
@@ -292,23 +343,18 @@ export default function VoiceMode({
         // back by the time the close asks for them. Speech after this
         // makes it stale, and the close (told so) recognises afresh.
         if (pushToTalk) return;
-        early.current = {
-          seq: utteranceSeq.current,
-          result: voiceClient.transcribe(tenantId, wav, { locale, detectLanguage }),
-        };
+        early.current = { seq: utteranceSeq.current, result: recognise(wav) };
       },
       onUtterance: (wav, _durationMs, sameAsPause) => {
         const closed = utterance.current;
         const seq = utteranceSeq.current;
         utteranceSeq.current += 1;
         const pending =
-          sameAsPause && early.current?.seq === seq
-            ? early.current.result
-            : voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
+          sameAsPause && early.current?.seq === seq ? early.current.result : recognise(wav);
         early.current = null;
         void (async () => {
           setTranscribing(true);
-          const result = await pending;
+          const result = await pending.quick;
           setTranscribing(false);
           if (result.error) {
             setError(result.error);
@@ -338,12 +384,33 @@ export default function VoiceMode({
             return;
           }
           setSending(true);
+          let ticket: VoiceSendTicket | null;
           try {
-            const sent = await latest.current.onSend(text);
-            if (!sent) setError('The message could not be sent.');
+            ticket = await latest.current.onSend(text);
           } finally {
             setSending(false);
           }
+          if (!ticket) {
+            setError('The message could not be sent.');
+            return;
+          }
+          lastSentSeq.current = seq;
+          if (!pending.detection) return;
+          // The slower answer: which language it was. The same language
+          // (whatever the region) leaves the words sent as they are;
+          // another means they were heard wrong, and the words heard in
+          // that language replace them — unless something newer has
+          // gone out since. An error here is no one's problem: the
+          // words went out already, in the set language.
+          const detected = await pending.detection;
+          const detectedIn = detected.data?.locale ?? null;
+          const words = detected.data?.text.trim() ?? '';
+          if (!detectedIn || !words || lastSentSeq.current !== seq) return;
+          latest.current.onHeard(detectedIn);
+          if (languageOf(detectedIn) === languageOf(locale)) return;
+          setTranscript(words);
+          setHeard(detectedIn);
+          latest.current.onCorrect(ticket, words);
         })();
       },
       onSpeechEnd: () => {

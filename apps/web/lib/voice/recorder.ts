@@ -114,19 +114,20 @@ const START_FRAMES = 3;
  */
 const HELD_FRAMES = 16;
 /**
- * Quiet frames that close an utterance: ~1.6 s of silence. Long enough
+ * Quiet frames that close an utterance: ~1.2 s of silence. Long enough
  * that a breath, or a pause to find the next word, is not taken for the
  * end of what the person meant to say; the reply is that much later to
- * start, which is the trade.
+ * start, which is the trade. (It was 1.6 s; the early hand-off below is
+ * what let it come down.)
  */
-const END_FRAMES = 32;
+const END_FRAMES = 24;
 /**
  * Quiet frames before the sound so far is handed over for an early
- * recognition: ~0.7 s. Past most breaths, so the hand-off is usually the
+ * recognition: ~0.6 s. Past most breaths, so the hand-off is usually the
  * end of the utterance and its recognition is not wasted; short enough
- * of END_FRAMES that the recognizer has most of a second's head start.
+ * of END_FRAMES that the recognizer has half a second's head start.
  */
-const PAUSE_FRAMES = 14;
+const PAUSE_FRAMES = 12;
 /** In manual mode, this much silence closes the take unasked: ten seconds. */
 const SILENCE_FLOOR_FRAMES = 200;
 /** Less sound than this in an utterance is a click or a cough, not a sentence. */

@@ -54,7 +54,10 @@ describe('UtteranceRecorder (auto)', () => {
     expect(ends).toHaveLength(0);
     expect(utterances).toHaveLength(0);
     feed(SECOND, true);
-    feed(32, false);
+    // 1.2 s of quiet is the end.
+    feed(23, false);
+    expect(ends).toHaveLength(0);
+    feed(1, false);
     expect(ends).toEqual(['pause']);
     expect(utterances).toHaveLength(1);
     // Pre-roll, the speech and the closing silence are all in the take.
@@ -93,18 +96,18 @@ describe('UtteranceRecorder (auto)', () => {
     const { feed, pauses, ends, utterances, sameAsPause } = harness();
     feed(SECOND, false);
     feed(SECOND, true);
-    // Thirteen quiet frames are a breath; the fourteenth is a pause, and
+    // Eleven quiet frames are a breath; the twelfth is a pause, and
     // everything so far goes out for an early recognition: the six
     // pre-roll frames (three quiet, the three loud that started it),
-    // the seventeen loud after those, and the fourteen quiet.
-    feed(13, false);
+    // the seventeen loud after those, and the twelve quiet.
+    feed(11, false);
     expect(pauses).toHaveLength(0);
     feed(1, false);
     expect(pauses).toHaveLength(1);
-    expect(pauses[0]).toBe(44 + 2 * FRAME * (6 + 17 + 14));
+    expect(pauses[0]).toBe(44 + 2 * FRAME * (6 + 17 + 12));
     // The quiet goes on to the close, which sends the utterance and says
     // its words are the ones already handed over.
-    feed(18, false);
+    feed(12, false);
     expect(pauses).toHaveLength(1);
     expect(ends).toEqual(['pause']);
     expect(utterances).toHaveLength(1);
@@ -115,17 +118,17 @@ describe('UtteranceRecorder (auto)', () => {
     const { feed, pauses, ends, utterances, sameAsPause } = harness();
     feed(SECOND, false);
     feed(SECOND, true);
-    feed(14, false);
+    feed(12, false);
     expect(pauses).toHaveLength(1);
     // More words: what was handed over is no longer the whole.
     feed(SECOND, true);
-    feed(14, false);
+    feed(12, false);
     expect(pauses).toHaveLength(2);
     feed(SECOND, true);
-    feed(32, false);
+    feed(24, false);
     expect(ends).toEqual(['pause']);
     expect(utterances).toHaveLength(1);
-    // The close came 1.6 s after the last words: the pause fired at 0.7 s
+    // The close came 1.2 s after the last words: the pause fired at 0.6 s
     // of that same quiet, so the hand-off is current.
     expect(pauses).toHaveLength(3);
     expect(sameAsPause).toEqual([true]);
