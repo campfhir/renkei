@@ -1083,6 +1083,33 @@ export interface PipelineTemplates {
   updated_at: Generated<Timestamp>;
 }
 
+export interface PrPipelineEvents {
+  action_taken: string | null;
+  conclusion: string;
+  id: Generated<string>;
+  observed_at: Generated<Timestamp>;
+  provider_run_id: string;
+  raw_payload: Generated<Json>;
+  subscription_id: string;
+}
+
+export interface PrSubscriptions {
+  auto_fix: Generated<boolean>;
+  auto_merge: Generated<boolean>;
+  chat_id: string | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  pr_number: number;
+  project_id: string;
+  provider: string;
+  repo_full_name: string;
+  status: Generated<string>;
+  subscriber_subject: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  watch_pipelines: Generated<boolean>;
+}
+
 export interface PendingOidcSignin {
   code_verifier: string | null;
   created_at: Generated<Timestamp>;
@@ -1475,6 +1502,8 @@ export interface DB {
   pipeline_templates: PipelineTemplates;
   platform_audit_log: PlatformAuditLog;
   platform_settings: PlatformSettings;
+  pr_pipeline_events: PrPipelineEvents;
+  pr_subscriptions: PrSubscriptions;
   prompt_libraries: PromptLibraries;
   prompts: Prompts;
   provider_grants: ProviderGrants;

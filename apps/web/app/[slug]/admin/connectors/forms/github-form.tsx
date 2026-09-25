@@ -25,6 +25,7 @@ interface GitHubConfig {
   scopes: string | null;
   redirectUri: string | null;
   hasClientSecret: boolean;
+  hasWebhookSecret: boolean;
 }
 
 /**
@@ -40,6 +41,7 @@ export function GitHubForm({ slug, origin }: { slug: string; origin: string | nu
   const [state, reload] = useConnectorConfig<GitHubConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
   const [appSlug, setAppSlug] = useState('');
   const [checkedIds, setCheckedIds] = useState<Set<string>>(
     () =>
@@ -85,6 +87,7 @@ export function GitHubForm({ slug, origin }: { slug: string; origin: string | nu
       clientId: clientId.trim(),
       // Blank means keep the stored secret — omit it from the payload.
       ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
+      ...(webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
       enabled,
       scopes,
       ...(appSlug.trim() ? { appSlug: appSlug.trim() } : {}),
@@ -96,6 +99,7 @@ export function GitHubForm({ slug, origin }: { slug: string; origin: string | nu
       return;
     }
     setClientSecret('');
+    setWebhookSecret('');
     setNotice('Saved');
     reload();
   }
@@ -186,6 +190,29 @@ export function GitHubForm({ slug, origin }: { slug: string; origin: string | nu
             Only used to link people to the App&apos;s own install page when they need to add more
             repositories.
           </p>
+        </div>
+        <div>
+          <label htmlFor="github-webhook-secret" className={labelClass}>
+            Webhook secret <span className="font-normal text-gray-500">(optional)</span>
+          </label>
+          <input
+            id="github-webhook-secret"
+            type="password"
+            value={webhookSecret}
+            onChange={(e) => setWebhookSecret(e.target.value)}
+            placeholder={config?.hasWebhookSecret ? 'Stored — leave blank to keep' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          {config?.hasWebhookSecret ? (
+            <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
+          ) : (
+            <p className={hintClass}>
+              Set this to the same value as the App&apos;s own Webhook secret to turn on pull
+              request pipeline subscriptions — without it, deliveries to{' '}
+              <code className="font-mono">/api/webhooks/github/&lt;tenant id&gt;</code> are
+              refused.
+            </p>
+          )}
         </div>
         <div>
           <fieldset>

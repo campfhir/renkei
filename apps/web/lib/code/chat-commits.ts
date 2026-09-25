@@ -20,6 +20,7 @@
  */
 
 import type { ChatBlock, ChatMessageView } from '@/lib/chat/views';
+import { milestoneSummary } from './milestones';
 
 export interface ChatCommit {
   /** The hash as the commit tool answered it — usually the short form. */
@@ -58,6 +59,90 @@ export function parsePushResult(content: string): { branch: string; remoteBranch
 
 type ToolUse = Extract<ChatBlock, { type: 'tool_use' }>;
 type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
+
+export type ChatPullRequestState = 'open' | 'merged';
+
+export interface ChatPullRequest {
+  number: number;
+  /** Known from the create call's own result; null on a merge-only match. */
+  title: string | null;
+  state: ChatPullRequestState;
+  host: 'github' | 'bitbucket';
+  /** The tool's own "[Open on GitHub/Bitbucket]" link, when it gave one. */
+  url: string | null;
+  toolUseId: string;
+  turnId: string | null;
+  at: string;
+}
+
+const PR_CREATED = /^Created pull request #(\d+): (.*)$/;
+const PR_MERGED = /^Merged pull request #(\d+)\b/;
+const PR_TOOL_NAMES = new Set([
+  'github_create_pull_request',
+  'github_merge_pull_request',
+  'bitbucket_create_pull_request',
+  'bitbucket_merge_pull_request',
+]);
+
+/**
+ * A pull-request create/merge tool's result, parsed the same way
+ * parseCommitResult/parsePushResult read their own tools' first line —
+ * plus the tool's own "[Open on GitHub/Bitbucket]" link
+ * (milestones.ts's milestoneSummary already extracts it generically).
+ */
+function parsePrResult(
+  toolName: string,
+  content: string
+): { number: number; title: string | null; state: ChatPullRequestState; url: string | null } | null {
+  const first = content.split('\n').find((line) => line.trim() !== '')?.trim() ?? '';
+  const created = PR_CREATED.exec(first);
+  const merged = created ? null : PR_MERGED.exec(first);
+  const match = created ?? merged;
+  if (!match) return null;
+  const number = Number(match[1]);
+  if (!Number.isFinite(number)) return null;
+  return {
+    number,
+    title: created ? (created[2] ?? '').trim() || null : null,
+    state: created ? 'open' : 'merged',
+    url: milestoneSummary(content).link?.url ?? null,
+  };
+}
+
+/**
+ * This chat's most recent pull request — the last create or merge call
+ * to succeed, newest first, whichever PR it names. Chats can touch
+ * several PRs over time; this is deliberately just the one to show
+ * inline, not a full history (the project screen's Pulls page is that).
+ */
+export function latestPrInTranscript(messages: ChatMessageView[]): ChatPullRequest | null {
+  const ordered = [...messages].sort((a, b) => b.seq - a.seq);
+  const results = new Map<string, ToolResult>();
+  for (const message of ordered) {
+    for (const block of message.blocks) {
+      if (block.type === 'tool_result') results.set(block.toolUseId, block);
+    }
+  }
+  for (const message of ordered) {
+    if (message.role !== 'assistant') continue;
+    for (const block of [...message.blocks].reverse()) {
+      if (block.type !== 'tool_use' || !PR_TOOL_NAMES.has(block.name)) continue;
+      const use: ToolUse = block;
+      const result = results.get(use.id);
+      if (!result || result.isError) continue;
+      const parsed = parsePrResult(use.name, result.content);
+      if (!parsed) continue;
+      return {
+        ...parsed,
+        host: use.name.startsWith('github_') ? 'github' : 'bitbucket',
+        toolUseId: use.id,
+        turnId: message.turnId,
+        at: message.createdAt,
+      };
+    }
+  }
+  return null;
+}
 
 /**
  * The commits this chat made, oldest first. A commit counts once its

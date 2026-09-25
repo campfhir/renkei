@@ -156,6 +156,7 @@ export const EXPECTED_MIGRATIONS = [
   '124-jira-admin-space-templates',
   '125-call-timing',
   '126-admanager-instances',
+  '127-pr-pipeline-subscriptions',
 ];
 
 export interface MigrationStatus {

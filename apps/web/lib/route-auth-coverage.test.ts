@@ -71,6 +71,10 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/webhooks/webex/[tenantId]/user/[accountId]/route.ts':
     'x-spark-signature HMAC over raw bytes, per-user grant secret',
   'api/webhooks/zoom/[tenantId]/route.ts': 'x-zm-signature HMAC over raw bytes',
+  'api/webhooks/github/[tenantId]/route.ts':
+    'x-hub-signature-256 HMAC over raw bytes, the GitHub App Webhook secret (verifyGitHubSignature)',
+  'api/webhooks/bitbucket/[tenantId]/route.ts':
+    'shared ?secret= query parameter matched against the Bitbucket connector config (verifyBitbucketSecret)',
 };
 
 /**

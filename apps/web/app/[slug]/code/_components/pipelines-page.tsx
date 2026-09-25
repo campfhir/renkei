@@ -37,6 +37,7 @@ import type {
 } from '@/lib/code/bitbucket-pipelines';
 import { renderVariableText } from '@/lib/code/pipeline-variables-text';
 import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
+import Pill from './pill';
 
 const cardClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -938,21 +939,5 @@ function VariableGroup({
         </div>
       ) : null}
     </section>
-  );
-}
-
-function Pill({ tone, children }: { tone: 'green' | 'gray' | 'red' | 'blue'; children: string }) {
-  const tones = {
-    green: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
-    gray: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-    red: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
-    blue: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
-  };
-  return (
-    <span
-      className={`rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${tones[tone]}`}
-    >
-      {children}
-    </span>
   );
 }

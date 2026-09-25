@@ -40,6 +40,7 @@ interface AtlassianConfig {
   scopes: string | null;
   redirectUri: string | null;
   hasClientSecret: boolean;
+  hasWebhookSecret?: boolean;
 }
 
 export function AtlassianForm({ slug, origin }: { slug: string; origin: string | null }) {
@@ -142,6 +143,7 @@ export function AtlassianBitbucketForm({ slug, origin }: { slug: string; origin:
           old choices until they reconnect.
         </>
       }
+      showWebhookSecret
     />
   );
 }
@@ -163,6 +165,7 @@ function AtlassianAppForm({
   alwaysScope = ATLASSIAN_OFFLINE_SCOPE,
   intro,
   scopeHint,
+  showWebhookSecret = false,
 }: {
   slug: string;
   origin: string | null;
@@ -176,11 +179,19 @@ function AtlassianAppForm({
   intro?: ReactNode;
   /** Replaces the default ceiling hint under the scope picker. */
   scopeHint?: ReactNode;
+  /**
+   * Bitbucket only: a shared secret checked against a `?secret=` query
+   * parameter on a repo webhook someone registers by hand pointing at
+   * app/api/webhooks/bitbucket/[tenantId]/route.ts — Bitbucket Cloud has
+   * no HMAC-signed delivery the way a GitHub App does.
+   */
+  showWebhookSecret?: boolean;
 }) {
   const url = `/api/admin/${slug}/connectors/${connector}`;
   const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
   // Checked capability bundles, offline_access excluded — it is always sent,
   // never a choice.
   const [checkedIds, setCheckedIds] = useState<Set<string>>(
@@ -226,6 +237,7 @@ function AtlassianAppForm({
       clientId: clientId.trim(),
       // Blank means keep the stored secret — omit it from the payload.
       ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
+      ...(showWebhookSecret && webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
       enabled,
       scopes,
       ...(redirectUri.trim() ? { redirectUri: redirectUri.trim() } : {}),
@@ -236,6 +248,7 @@ function AtlassianAppForm({
       return;
     }
     setClientSecret('');
+    setWebhookSecret('');
     setNotice('Saved');
     reload();
   }
@@ -310,6 +323,33 @@ function AtlassianAppForm({
             <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
           )}
         </div>
+        {showWebhookSecret && (
+          <div>
+            <label htmlFor={`${connector}-webhook-secret`} className={labelClass}>
+              Webhook secret <span className="font-normal text-gray-500">(optional)</span>
+            </label>
+            <input
+              id={`${connector}-webhook-secret`}
+              type="password"
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              placeholder={config?.hasWebhookSecret ? 'Stored — leave blank to keep' : ''}
+              className={`${inputClass} font-mono`}
+            />
+            {config?.hasWebhookSecret ? (
+              <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
+            ) : (
+              <p className={hintClass}>
+                Set this to the same value as a repo webhook&apos;s own secret query parameter
+                (Repository settings → Webhooks → add one pointing at{' '}
+                <code className="font-mono">
+                  /api/webhooks/bitbucket/&lt;tenant id&gt;?secret=&lt;this value&gt;
+                </code>
+                ) to turn on pull request pipeline subscriptions for Bitbucket repositories.
+              </p>
+            )}
+          </div>
+        )}
         <div>
           <fieldset>
             <legend className={labelClass}>What users may grant</legend>

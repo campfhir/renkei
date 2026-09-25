@@ -13,7 +13,6 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useMediaQuery } from '@/lib/use-media-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
@@ -30,6 +29,11 @@ import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import Markdown from './markdown';
 import { formatTokens } from '@/lib/format-tokens';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import ChatPrBadge from '../../code/_components/chat-pr-badge';
+import IssueCards from '../../code/_components/issue-cards';
+
+/** Previous chats a row bothers asking for a PR badge — the rest just don't show one. */
+const PR_BADGE_ROW_LIMIT = 10;
 
 /** A code project's own token spend — this component stays generic to chat/chat_project too. */
 interface ChatTokenUsage {
@@ -51,7 +55,6 @@ export default function ProjectView({
   initial,
   variant = 'chat',
   before = null,
-  aside = null,
   defaultInstructions = null,
   readme = null,
   usage = null,
@@ -67,11 +70,6 @@ export default function ProjectView({
    */
   variant?: 'chat' | 'code';
   before?: ReactNode;
-  /**
-   * A second column on a wide screen, to the left of the sections — a
-   * code project's repository tree; folded above them on a narrow one.
-   */
-  aside?: ReactNode;
   /**
    * What the instructions field starts as when the project has none —
    * shown so it can be read and changed, kept the moment Save is pressed.
@@ -104,8 +102,6 @@ export default function ProjectView({
   const [instructions, setInstructions] = useState(
     project.instructions ?? defaultInstructions ?? ''
   );
-  // Wide first: the column layout is the usual one, and a phone flips.
-  const wide = useMediaQuery('(min-width: 1024px)', true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -243,7 +239,7 @@ export default function ProjectView({
   const aboutAnchor = useCoachAnchor('project-about');
   const filesAnchor = useCoachAnchor('project-files');
   const memoryAnchor = useCoachAnchor('project-memory');
-  const chatRow = (chat: (typeof chats)[number]) => {
+  const chatRow = (chat: (typeof chats)[number], showPrBadge = false) => {
     const chatSpend = usage?.byChat[chat.id];
     const tokens = chatSpend ? chatSpend.inputTokens + chatSpend.outputTokens : 0;
     return (
@@ -257,6 +253,7 @@ export default function ProjectView({
             className="h-4 w-4 shrink-0 text-gray-400"
           />
           <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
+          {showPrBadge ? <ChatPrBadge tenantId={tenantId} chatId={chat.id} /> : null}
           {tokens > 0 ? (
             <span
               className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400"
@@ -300,12 +297,17 @@ export default function ProjectView({
             Active chat
           </h3>
           {activeChat ? (
-            <ul
-              className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
-              data-testid="project-active-chat"
-            >
-              {chatRow(activeChat)}
-            </ul>
+            <>
+              <ul
+                className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
+                data-testid="project-active-chat"
+              >
+                {chatRow(activeChat, true)}
+              </ul>
+              <div className="mt-2">
+                <IssueCards tenantId={tenantId} projectId={project.id} chatId={activeChat.id} />
+              </div>
+            </>
           ) : (
             <p className="text-sm text-gray-500" data-testid="project-active-chat">
               No active chat. Start a new chat to work in the checkout.
@@ -320,7 +322,7 @@ export default function ProjectView({
                 className="divide-y divide-gray-200 text-sm text-gray-600 dark:divide-gray-800 dark:text-gray-400"
                 data-testid="project-previous-chats"
               >
-                {previousChats.map(chatRow)}
+                {previousChats.map((chat, index) => chatRow(chat, index < PR_BADGE_ROW_LIMIT))}
               </ul>
             </>
           ) : null}
@@ -329,7 +331,7 @@ export default function ProjectView({
         <p className="text-sm text-gray-500">No chats yet.</p>
       ) : (
         <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-          {previousChats.map(chatRow)}
+          {previousChats.map((chat) => chatRow(chat))}
         </ul>
       )}
     </section>
@@ -453,28 +455,8 @@ export default function ProjectView({
         </p>
       ) : null}
 
-      <div
-        className={
-          aside
-            ? 'mx-auto max-w-6xl p-4 lg:grid lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:items-start lg:gap-4'
-            : 'mx-auto max-w-3xl p-4'
-        }
-      >
-        {aside && wide ? (
-          <aside
-            className={`${sectionClass} sticky top-4 max-h-[calc(100vh-6rem)] overflow-y-auto`}
-          >
-            <h2 className="mb-1 text-sm font-semibold">Files</h2>
-            {aside}
-          </aside>
-        ) : null}
+      <div className="mx-auto max-w-3xl p-4">
         <div className="space-y-4">
-          {aside && !wide ? (
-            <details className={sectionClass}>
-              <summary className="cursor-pointer text-sm font-semibold">Files</summary>
-              <div className="mt-2">{aside}</div>
-            </details>
-          ) : null}
           {before}
           {variant === 'code' ? chatsSection : null}
           {variant === 'code' ? (

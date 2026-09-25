@@ -58,6 +58,7 @@ import {
 import Modal from '@/components/modal';
 import ArtifactsMenu from './artifacts-menu';
 import ChatTitle from './chat-title';
+import BranchSwitcher from '../../code/_components/branch-switcher';
 import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
@@ -1082,6 +1083,18 @@ export default function ChatThread({
             tag={history ? 'history' : null}
             canRename={isOwner}
             onRename={rename}
+            branchSwitcher={
+              codeProjectId && !history ? (
+                <BranchSwitcher
+                  tenantId={tenantId}
+                  projectId={codeProjectId}
+                  branch={branch}
+                  canSwitch={isOwner}
+                  reason={isOwner ? undefined : 'Only the person who owns this chat can switch branches.'}
+                  className="text-xs text-gray-500"
+                />
+              ) : null
+            }
           />
           {codePane ? (
             paneMode === 'tabs' ? (
