@@ -1,18 +1,24 @@
 'use client';
 
 /**
- * The two sections that make a project a code project, at the top of
- * its page: the repository (fixed when the project was made) and the
- * state of its checkout on the sandbox — none until the first chat
- * clones it, then ready, cloning, or failed with why — and the
- * environment: the names of the variables the project's commands run
- * with, replaced by pasting a `.env` again. Values are never shown; the
- * worker sealed them and only a command ever sees them. A Bitbucket
- * project gets a third: a card summarizing its Pipelines, which opens
- * the project's Pipelines page (pipelines-summary.tsx, pipelines-page.tsx);
- * and every project a card summarizing its services — the containers
- * beside the checkout — opening its Services page
- * (services-summary.tsx, services-page.tsx).
+ * The sections that make a project a code project, at the top of its
+ * page: the repository (fixed when the project was made, its branch now
+ * a BranchSwitcher) and the state of its checkout on the sandbox — none
+ * until the first chat clones it, then ready, cloning, or failed with
+ * why — and the environment: the names of the variables the project's
+ * commands run with, replaced by pasting a `.env` again. Values are
+ * never shown; the worker sealed them and only a command ever sees
+ * them. Every project also gets: a card summarizing its open pull
+ * requests (pulls-summary.tsx / pulls-page.tsx) and its recent commits
+ * (commits-summary.tsx / commits-page.tsx), both read through the
+ * host-agnostic RepoHostAdapter (lib/code/repo-host.ts); a card for its
+ * CI — the rich Bitbucket Pipelines page (pipelines-summary.tsx /
+ * pipelines-page.tsx: the switch, the config file, the variables) or,
+ * for a GitHub project, the smaller Actions counterpart
+ * (actions-summary.tsx / actions-page.tsx: recent runs only, since
+ * GitHub's own UI already owns configuring them); and a card summarizing
+ * its services — the containers beside the checkout — opening its
+ * Services page (services-summary.tsx, services-page.tsx).
  */
 
 import { useEffect, useState } from 'react';
@@ -20,8 +26,12 @@ import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
 import PipelinesSummary from './pipelines-summary';
+import ActionsSummary from './actions-summary';
 import ServicesSummaryCard from './services-summary';
 import BranchSwitcher from './branch-switcher';
+import PullsSummary from './pulls-summary';
+import CommitsSummary from './commits-summary';
+import Pill from './pill';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -269,14 +279,30 @@ export default function CodeSections({
           {error}
         </p>
       ) : null}
-      {!isGitHub ? (
+      <PullsSummary
+        href={`/${slug}/code/${projectId}/pulls`}
+        tenantId={tenantId}
+        projectId={projectId}
+      />
+      <CommitsSummary
+        href={`/${slug}/code/${projectId}/commits`}
+        tenantId={tenantId}
+        projectId={projectId}
+      />
+      {isGitHub ? (
+        <ActionsSummary
+          href={`/${slug}/code/${projectId}/actions`}
+          tenantId={tenantId}
+          projectId={projectId}
+        />
+      ) : (
         <PipelinesSummary
           href={`/${slug}/code/${projectId}/pipelines`}
           tenantId={tenantId}
           projectId={projectId}
           branch={code.branch}
         />
-      ) : null}
+      )}
       {code.enabled ? (
         <ServicesSummaryCard
           href={`/${slug}/code/${projectId}/services`}
@@ -285,28 +311,5 @@ export default function CodeSections({
         />
       ) : null}
     </>
-  );
-}
-
-function Pill({
-  tone,
-  children,
-}: {
-  tone: 'green' | 'blue' | 'red' | 'gray' | 'amber';
-  children: string;
-}) {
-  const tones = {
-    green: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
-    blue: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
-    red: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
-    gray: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-    amber: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
-  };
-  return (
-    <span
-      className={`rounded px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap ${tones[tone]}`}
-    >
-      {children}
-    </span>
   );
 }

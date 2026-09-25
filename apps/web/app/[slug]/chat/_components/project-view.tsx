@@ -29,6 +29,10 @@ import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import Markdown from './markdown';
 import { formatTokens } from '@/lib/format-tokens';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import ChatPrBadge from '../../code/_components/chat-pr-badge';
+
+/** Previous chats a row bothers asking for a PR badge — the rest just don't show one. */
+const PR_BADGE_ROW_LIMIT = 10;
 
 /** A code project's own token spend — this component stays generic to chat/chat_project too. */
 interface ChatTokenUsage {
@@ -234,7 +238,7 @@ export default function ProjectView({
   const aboutAnchor = useCoachAnchor('project-about');
   const filesAnchor = useCoachAnchor('project-files');
   const memoryAnchor = useCoachAnchor('project-memory');
-  const chatRow = (chat: (typeof chats)[number]) => {
+  const chatRow = (chat: (typeof chats)[number], showPrBadge = false) => {
     const chatSpend = usage?.byChat[chat.id];
     const tokens = chatSpend ? chatSpend.inputTokens + chatSpend.outputTokens : 0;
     return (
@@ -248,6 +252,7 @@ export default function ProjectView({
             className="h-4 w-4 shrink-0 text-gray-400"
           />
           <span className="min-w-0 flex-1 truncate">{chat.title ?? 'New chat'}</span>
+          {showPrBadge ? <ChatPrBadge tenantId={tenantId} chatId={chat.id} /> : null}
           {tokens > 0 ? (
             <span
               className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400"
@@ -295,7 +300,7 @@ export default function ProjectView({
               className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
               data-testid="project-active-chat"
             >
-              {chatRow(activeChat)}
+              {chatRow(activeChat, true)}
             </ul>
           ) : (
             <p className="text-sm text-gray-500" data-testid="project-active-chat">
@@ -311,7 +316,7 @@ export default function ProjectView({
                 className="divide-y divide-gray-200 text-sm text-gray-600 dark:divide-gray-800 dark:text-gray-400"
                 data-testid="project-previous-chats"
               >
-                {previousChats.map(chatRow)}
+                {previousChats.map((chat, index) => chatRow(chat, index < PR_BADGE_ROW_LIMIT))}
               </ul>
             </>
           ) : null}
@@ -320,7 +325,7 @@ export default function ProjectView({
         <p className="text-sm text-gray-500">No chats yet.</p>
       ) : (
         <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-          {previousChats.map(chatRow)}
+          {previousChats.map((chat) => chatRow(chat))}
         </ul>
       )}
     </section>

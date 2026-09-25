@@ -1,5 +1,10 @@
 import type { ChatMessageView } from '@/lib/chat/views';
-import { commitsInTranscript, parseCommitResult, parsePushResult } from './chat-commits';
+import {
+  commitsInTranscript,
+  latestPrInTranscript,
+  parseCommitResult,
+  parsePushResult,
+} from './chat-commits';
 
 function row(
   id: string,
@@ -133,5 +138,113 @@ describe('commitsInTranscript with the code pane’s notes', () => {
         pushedInChat: true,
       }),
     ]);
+  });
+});
+
+describe('latestPrInTranscript', () => {
+  it('is null when the chat never touched a pull request', () => {
+    const messages: ChatMessageView[] = [
+      row('a1', 1, 'assistant', [
+        { type: 'tool_use', id: 'c1', name: 'code_git_commit', input: { message: 'one' } },
+      ]),
+      row('r1', 2, 'user', [
+        { type: 'tool_result', toolUseId: 'c1', content: 'Committed on feat/x: aaaaaaa one' },
+      ]),
+    ];
+    expect(latestPrInTranscript(messages)).toBeNull();
+  });
+
+  it('reads a created pull request, with its number, title and link', () => {
+    const messages: ChatMessageView[] = [
+      row('a1', 1, 'assistant', [
+        {
+          type: 'tool_use',
+          id: 'pr1',
+          name: 'github_create_pull_request',
+          input: { sourceBranch: 'feat/x' },
+        },
+      ]),
+      row('r1', 2, 'user', [
+        {
+          type: 'tool_result',
+          toolUseId: 'pr1',
+          content:
+            'Created pull request #12: Fix the timeout\nfeat/x → main\n\n' +
+            '[Open on GitHub](https://github.com/acme/billing-service/pull/12)',
+        },
+      ]),
+    ];
+    expect(latestPrInTranscript(messages)).toEqual(
+      expect.objectContaining({
+        number: 12,
+        title: 'Fix the timeout',
+        state: 'open',
+        host: 'github',
+        url: 'https://github.com/acme/billing-service/pull/12',
+        toolUseId: 'pr1',
+      })
+    );
+  });
+
+  it('prefers the most recent PR event — a later merge of the same PR reads as merged', () => {
+    const messages: ChatMessageView[] = [
+      row('a1', 1, 'assistant', [
+        {
+          type: 'tool_use',
+          id: 'pr1',
+          name: 'bitbucket_create_pull_request',
+          input: { sourceBranch: 'feat/x' },
+        },
+      ]),
+      row('r1', 2, 'user', [
+        {
+          type: 'tool_result',
+          toolUseId: 'pr1',
+          content: 'Created pull request #7: Fix the timeout\nfeat/x → main',
+        },
+      ]),
+      row('a2', 3, 'assistant', [
+        { type: 'tool_use', id: 'pr2', name: 'bitbucket_merge_pull_request', input: { id: 7 } },
+      ]),
+      row('r2', 4, 'user', [
+        {
+          type: 'tool_result',
+          toolUseId: 'pr2',
+          content: 'Merged pull request #7.\n\n[Open in Bitbucket](https://bitbucket.org/acme/billing-service/pull-requests/7)',
+        },
+      ]),
+    ];
+    expect(latestPrInTranscript(messages)).toEqual(
+      expect.objectContaining({
+        number: 7,
+        title: null,
+        state: 'merged',
+        host: 'bitbucket',
+        url: 'https://bitbucket.org/acme/billing-service/pull-requests/7',
+        toolUseId: 'pr2',
+      })
+    );
+  });
+
+  it('ignores a failed pull-request call', () => {
+    const messages: ChatMessageView[] = [
+      row('a1', 1, 'assistant', [
+        {
+          type: 'tool_use',
+          id: 'pr1',
+          name: 'github_create_pull_request',
+          input: { sourceBranch: 'feat/x' },
+        },
+      ]),
+      row('r1', 2, 'user', [
+        {
+          type: 'tool_result',
+          toolUseId: 'pr1',
+          content: 'GitHub API 422: Validation failed',
+          isError: true,
+        },
+      ]),
+    ];
+    expect(latestPrInTranscript(messages)).toBeNull();
   });
 });
