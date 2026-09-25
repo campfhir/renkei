@@ -30,6 +30,7 @@ import Markdown from './markdown';
 import { formatTokens } from '@/lib/format-tokens';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import ChatPrBadge from '../../code/_components/chat-pr-badge';
+import IssueCards from '../../code/_components/issue-cards';
 
 /** Previous chats a row bothers asking for a PR badge — the rest just don't show one. */
 const PR_BADGE_ROW_LIMIT = 10;
@@ -296,12 +297,17 @@ export default function ProjectView({
             Active chat
           </h3>
           {activeChat ? (
-            <ul
-              className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
-              data-testid="project-active-chat"
-            >
-              {chatRow(activeChat, true)}
-            </ul>
+            <>
+              <ul
+                className="divide-y divide-gray-200 text-sm dark:divide-gray-800"
+                data-testid="project-active-chat"
+              >
+                {chatRow(activeChat, true)}
+              </ul>
+              <div className="mt-2">
+                <IssueCards tenantId={tenantId} projectId={project.id} chatId={activeChat.id} />
+              </div>
+            </>
           ) : (
             <p className="text-sm text-gray-500" data-testid="project-active-chat">
               No active chat. Start a new chat to work in the checkout.
