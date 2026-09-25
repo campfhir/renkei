@@ -9,32 +9,33 @@
  * at without cloning anything. `.git` itself is never listed — the
  * checkout's own bookkeeping, not something to browse or edit here.
  *
- * On the project page it is a look. In the code pane it is the way to a
- * file: `onOpen` makes every file a button, `selected` marks the one
- * open, `marks` puts an M, A or D beside files the working tree has
- * changed, and a change of `refreshKey` (a turn ended) reads every open
- * folder again, since that is when the checkout changes. A file the
- * working tree no longer has (`marks` says D) does not vanish from the
- * tree — a live directory listing can only show what is still on disk —
- * it is drawn in as a struck-through "ghost" row alongside whatever the
- * listing did return, so a folder with a lot of uncommitted change
- * still reads as one tree rather than a diff to puzzle over separately.
- * An entry the host reports as gitignored is drawn dimmed for the same
+ * The code pane is its only caller: `onOpen` makes every file a button,
+ * `selected` marks the one open, `marks` puts an M, A or D beside files
+ * the working tree has changed, and a change of `refreshKey` (a turn
+ * ended) reads every open folder again, since that is when the checkout
+ * changes. A file the working tree no longer has (`marks` says D) does
+ * not vanish from the tree — a live directory listing can only show
+ * what is still on disk — it is drawn in as a struck-through "ghost" row
+ * alongside whatever the listing did return, so a folder with a lot of
+ * uncommitted change still reads as one tree rather than a diff to
+ * puzzle over separately; the pane wires `onDeletedClick` so clicking one
+ * opens its diff, the only thing left to look at once a file is gone. An
+ * entry the host reports as gitignored is drawn dimmed for the same
  * reason: still there, never hidden, but visually out of the way.
  *
- * `canEdit` (the code pane only — the project page's read-only look
- * never passes it) adds a per-row "⋯" for New file (folders)/Rename/
- * Delete, plus a "New file" at the root, against
- * …/code/projects/[id]/files (POST create, PATCH rename, DELETE
+ * `canEdit` adds a per-row "⋯" for New file (folders)/Rename/Delete
+ * against …/code/projects/[id]/files (POST create, PATCH rename, DELETE
  * remove) — only once there is a checkout to edit (`source ===
  * 'checkout'`; before a clone the tree is the git host's own read-only
  * view, nothing here to change). Renaming or deleting the file open in
  * the pane needs the pane's own tab state updated too, so those two
  * ride up through `onRenamed`/`onDeleted` rather than being handled
- * here alone.
+ * here alone. The root-level "New file" action has no button of its
+ * own here — the pane puts one inline with its "Files" heading instead
+ * — so it rides a ref handle (`newFile()`) rather than a prop.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { LoadingLine } from '@/components/skeleton';
@@ -54,13 +55,14 @@ type Listing =
 
 type Source = 'checkout' | 'bitbucket' | 'github';
 
-/** The repository's host, for the source-not-cloned copy below. */
-function hostLabel(source: Source | null): string {
-  return source === 'github' ? 'GitHub' : 'Bitbucket';
-}
-
 /** How the working tree has a file: modified against HEAD, added (untracked), or gone. */
 export type FileMark = 'M' | 'A' | 'D';
+
+export interface RepoTreeHandle {
+  /** Opens the "New file" dialog for the root folder — the pane's own
+   * header button triggers this rather than rendering a button here. */
+  newFile: () => void;
+}
 
 type Dialog =
   | { kind: 'new-file'; folder: string; name: string }
@@ -82,45 +84,52 @@ function size(value: number): string {
   return `${(value / 1_048_576).toFixed(1)} MB`;
 }
 
-export default function RepoTree({
-  tenantId,
-  projectId,
-  onOpen = null,
-  selected = null,
-  marks,
-  refreshKey = 0,
-  touch = false,
-  showBranch = true,
-  canEdit = false,
-  onRenamed,
-  onDeleted,
-}: {
-  tenantId: string;
-  projectId: string;
-  /** Open a file; without it the tree is a look. */
-  onOpen?: ((path: string) => void) | null;
-  /** The file open in the pane, highlighted. */
-  selected?: string | null;
-  /** Files the working tree has changed, by path. */
-  marks?: ReadonlyMap<string, FileMark>;
-  /** Read every open folder again when this changes. */
-  refreshKey?: number;
-  /** Taller rows for a finger. */
-  touch?: boolean;
-  showBranch?: boolean;
-  /** New file / rename / delete, once there is a checkout to edit. */
-  canEdit?: boolean;
-  /** The open file was renamed — old path, new path. */
-  onRenamed?: (from: string, to: string) => void;
-  /** The open file was deleted. */
-  onDeleted?: (path: string) => void;
-}) {
+const RepoTree = forwardRef<
+  RepoTreeHandle,
+  {
+    tenantId: string;
+    projectId: string;
+    /** Open a file; without it the tree is a look. */
+    onOpen?: ((path: string) => void) | null;
+    /** The file open in the pane, highlighted. */
+    selected?: string | null;
+    /** Files the working tree has changed, by path. */
+    marks?: ReadonlyMap<string, FileMark>;
+    /** Read every open folder again when this changes. */
+    refreshKey?: number;
+    /** Taller rows for a finger. */
+    touch?: boolean;
+    /** New file / rename / delete, once there is a checkout to edit. */
+    canEdit?: boolean;
+    /** The open file was renamed — old path, new path. */
+    onRenamed?: (from: string, to: string) => void;
+    /** The open file was deleted. */
+    onDeleted?: (path: string) => void;
+    /** A ghost (deleted, uncommitted) row was clicked — there is nothing
+     * left to open, so the pane shows its diff instead. */
+    onDeletedClick?: (path: string) => void;
+  }
+>(function RepoTree(
+  {
+    tenantId,
+    projectId,
+    onOpen = null,
+    selected = null,
+    marks,
+    refreshKey = 0,
+    touch = false,
+    canEdit = false,
+    onRenamed,
+    onDeleted,
+    onDeletedClick,
+  },
+  ref
+) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}/tree`;
   const filesBase = `/api/tenant/${tenantId}/code/projects/${projectId}/files`;
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [source, setSource] = useState<Source | null>(null);
-  const [branch, setBranch] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -136,10 +145,7 @@ export default function RepoTree({
         source: Source;
         branch: string;
       }>(`${base}?path=${encodeURIComponent(path)}`);
-      if (result.data) {
-        setSource(result.data.source);
-        setBranch(result.data.branch);
-      }
+      if (result.data) setSource(result.data.source);
       setListings((current) => ({
         ...current,
         [path]: result.data
@@ -193,6 +199,8 @@ export default function RepoTree({
     setDialogError(null);
     setDialog({ kind: 'rename', path, name: nameOf(path) });
   };
+
+  useImperativeHandle(ref, () => ({ newFile: () => openNewFileDialog('') }));
 
   const submitDialog = async () => {
     if (!dialog) return;
@@ -255,13 +263,8 @@ export default function RepoTree({
 
   const renderGhost = (path: string, depth: number) => {
     const indent = { paddingLeft: `${depth * 12 + 4}px` };
-    return (
-      <li
-        key={`ghost:${path}`}
-        style={indent}
-        title={`${path} — deleted, not committed`}
-        className={`flex items-center gap-1.5 pr-2 text-xs text-gray-400 dark:text-gray-600 ${rowClass}`}
-      >
+    const body = (
+      <>
         <span className="inline-block h-3 w-3 shrink-0" />
         <Icon path={ICONS.file} className="h-3.5 w-3.5 shrink-0 text-gray-300 dark:text-gray-700" />
         <span className="min-w-0 flex-1 truncate line-through">{nameOf(path)}</span>
@@ -271,6 +274,31 @@ export default function RepoTree({
         >
           D
         </span>
+      </>
+    );
+    if (onDeletedClick) {
+      return (
+        <li key={`ghost:${path}`}>
+          <button
+            type="button"
+            onClick={() => onDeletedClick(path)}
+            style={indent}
+            title={`${path} — deleted, not committed. See its diff.`}
+            className={`flex w-full items-center gap-1.5 rounded pr-2 text-left text-xs text-gray-400 hover:bg-gray-100 dark:text-gray-600 dark:hover:bg-gray-900 ${rowClass}`}
+          >
+            {body}
+          </button>
+        </li>
+      );
+    }
+    return (
+      <li
+        key={`ghost:${path}`}
+        style={indent}
+        title={`${path} — deleted, not committed`}
+        className={`flex items-center gap-1.5 pr-2 text-xs text-gray-400 dark:text-gray-600 ${rowClass}`}
+      >
+        {body}
       </li>
     );
   };
@@ -286,6 +314,7 @@ export default function RepoTree({
         <OverflowMenu
           label={`More for ${name}`}
           anchored={false}
+          compact
           items={[
             {
               label: 'New file',
@@ -370,6 +399,7 @@ export default function RepoTree({
       <OverflowMenu
         label={`More for ${name}`}
         anchored={false}
+        compact
         items={[
           {
             label: 'Rename',
@@ -451,42 +481,8 @@ export default function RepoTree({
     );
   };
 
-  // The branch the tree shows: the checkout's working branch once a chat
-  // has cloned; before that the branch the project was pointed at, as it
-  // is on the repository's host — origin/<branch>.
-  const branchLine =
-    showBranch && branch ? (
-      <p
-        className="mb-2 flex items-center gap-1.5 text-xs text-gray-500"
-        title={
-          source === 'checkout'
-            ? 'The working branch of the checkout on the sandbox, uncommitted changes included.'
-            : `As it is on ${hostLabel(source)} — nothing is cloned yet.`
-        }
-      >
-        <Icon path={ICONS.gitBranch} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-        <span className="truncate font-mono">
-          {source === 'checkout' ? branch : `origin/${branch}`}
-        </span>
-        <span className="shrink-0 text-[11px] text-gray-400">
-          {source === 'checkout' ? 'working branch' : 'not cloned yet'}
-        </span>
-      </p>
-    ) : null;
-
   return (
     <div>
-      {branchLine}
-      {canWrite ? (
-        <button
-          type="button"
-          onClick={() => openNewFileDialog('')}
-          className="mb-1.5 flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-        >
-          <Icon path={ICONS.plus} className="h-3 w-3" />
-          New file
-        </button>
-      ) : null}
       <ul role="tree" aria-label="Files" className="font-mono">
         {renderDir('', 0)}
       </ul>
@@ -526,4 +522,6 @@ export default function RepoTree({
       ) : null}
     </div>
   );
-}
+});
+
+export default RepoTree;

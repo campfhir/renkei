@@ -28,6 +28,7 @@ export default function OverflowMenu({
   items,
   label = 'More',
   anchored = true,
+  compact = false,
 }: {
   items: OverflowItem[];
   /** The button's accessible name and tooltip — several of these can sit
@@ -39,6 +40,10 @@ export default function OverflowMenu({
    * every other caller passes false so the tour does not latch onto
    * whichever instance happened to mount last. */
   anchored?: boolean;
+  /** A borderless, icon-sized button that fits inline with a line of
+   * text without stretching the row to its own height — a file tree's
+   * per-row menu, say, beside a name at text-xs. */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -55,9 +60,13 @@ export default function OverflowMenu({
         aria-expanded={open}
         title={label}
         {...(anchored ? moreAnchor : null)}
-        className="flex items-center rounded-md border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+        className={
+          compact
+            ? 'flex items-center rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200'
+            : 'flex items-center rounded-md border border-gray-300 px-2 py-1 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900'
+        }
       >
-        <Icon path={ICONS.moreHorizontal} className="h-4 w-4" />
+        <Icon path={ICONS.moreHorizontal} className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
       </button>
       {open ? (
         <div

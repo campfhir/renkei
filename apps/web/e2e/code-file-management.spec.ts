@@ -1,13 +1,16 @@
 /**
  * The code pane's tree: creating, renaming and deleting a file (the
- * per-row "⋯" menu and the root "New file" button, against …/files —
- * POST create, PATCH rename, DELETE remove), a deleted file staying in
- * the tree as a struck-through "ghost" row tagged D rather than
- * vanishing, and a gitignored entry (node_modules, seeded by the stub)
- * drawn dimmed rather than hidden. Real routes and the real (stubbed)
- * sandbox worker throughout — sandbox-stub.mjs's ls/rm/mv/git-diff verbs
- * carry the same overlay a real checkout would, so this exercises the
- * whole path, not a page.route double of it.
+ * per-row "⋯" menu and the "New file" button inline with the tree's own
+ * "Files" heading, against …/files — POST create, PATCH rename, DELETE
+ * remove), a deleted file staying in the tree as a struck-through
+ * "ghost" row tagged D rather than vanishing (clicking it opens its
+ * diff — there is nothing left to open in the editor, and the working
+ * tree's changes are marks in the tree itself, not a list of their
+ * own), and a gitignored entry (node_modules, seeded by the stub) drawn
+ * dimmed rather than hidden. Real routes and the real (stubbed) sandbox
+ * worker throughout — sandbox-stub.mjs's ls/rm/mv/git-diff verbs carry
+ * the same overlay a real checkout would, so this exercises the whole
+ * path, not a page.route double of it.
  *
  * Own tenant fixtures under the shared e2e/seed.ts tenant, with
  * project/chat ids distinct from code.spec.ts's and
@@ -207,27 +210,29 @@ test.describe('code pane file management', () => {
     await expect(tree.getByRole('button', { name: /^notes-renamed\.md/ })).toHaveCount(0);
 
     // ── Deleting a tracked file instead leaves a struck-through "D" ghost
-    //    row in its place, and the pane's own Changed list picks it up ──
+    //    row in its place — the working tree's changes are marks in the
+    //    tree, not a separate list ──
     await tree.getByRole('button', { name: 'More for README.md' }).click();
     page.once('dialog', (dialog) => void dialog.accept());
     await page.getByRole('menu').getByRole('menuitem', { name: 'Delete' }).click();
-    // The live row and its ghost both key off README.md's name, so wait
-    // for the (now stale) live listing's own row to clear the tree
-    // before looking for the ghost that replaces it — the two refresh
-    // independently (the tree's own reload vs. the pane's Changed list)
-    // and can briefly overlap.
-    await expect(tree.getByRole('button', { name: /^README\.md/ })).toHaveCount(0);
+    // The live row and its ghost both key off README.md's name (and the
+    // ghost is a button too, once clickable), so wait for the (now
+    // stale) live listing's own row — named with its size, not the
+    // ghost's "D" tag — to clear the tree before looking for the ghost
+    // that replaces it: the two refresh independently (the tree's own
+    // reload vs. the working-tree marks) and can briefly overlap.
+    await expect(tree.getByRole('button', { name: /^README\.md 1 KB$/ })).toHaveCount(0, {
+      timeout: 10_000,
+    });
     const ghost = tree.getByText('README.md', { exact: true });
     await expect(ghost).toBeVisible();
     await expect(ghost).toHaveCSS('text-decoration-line', 'line-through');
     await expect(tree.getByText('D', { exact: true })).toBeVisible();
-    await expect(main.getByText('Changed · not committed')).toBeVisible();
-    const changedRow = main.getByRole('button', { name: /README\.md/ }).first();
-    await expect(changedRow).toBeVisible();
-    await expect(changedRow.locator('span').first()).toHaveAttribute(
-      'title',
-      'Deleted, not committed'
-    );
     await shot(page, testInfo, 'code-tree-deleted-ghost.png');
+
+    // ── A ghost row has nothing left to open in the editor — clicking it
+    //    opens its diff instead ──
+    await ghost.click();
+    await expect(page.getByRole('dialog', { name: 'Changes to README.md' })).toBeVisible();
   });
 });

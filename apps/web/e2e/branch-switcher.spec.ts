@@ -1,12 +1,14 @@
 /**
- * Switching a code project's checkout branch, from the project screen's
- * Repository card and from the active chat's title bar — the same
- * control (branch-switcher.tsx) in both places, backed by
- * …/code/projects/[projectId]/branch. The branch list and the switch
- * itself are mocked with page.route (AGENTS.md: a call that would hit a
- * real vendor/provider — GitHub/Bitbucket here — is mocked at the
- * browser edge, not against the real host); a history chat gets the
- * plain read-only label instead, since it can no longer send turns.
+ * Switching a code project's checkout branch — the active chat's title
+ * bar, through "Switch branch" in its overflow menu, which opens
+ * branch-switcher.tsx's `BranchPickerModal`. There is no other picker:
+ * the title bar has no reliable room for an inline one (a wide viewport
+ * still narrows this column when the code pane sits beside it), so the
+ * modal is the one path at every width, and the project screen carries
+ * no branch picker, or mention of a branch, at all — it is about the
+ * repository as a whole. A history chat keeps the plain read-only
+ * label with no "Switch branch" entry, since it can no longer send
+ * turns.
  *
  * Own tenant fixtures under the shared e2e/seed.ts tenant (AGENTS.md:
  * fine to share the tenant when nothing races on uniqueness or an
@@ -244,88 +246,56 @@ test.describe('branch switcher', () => {
     await cleanFixtures(idsFor(testInfo.project.name));
   });
 
-  test('switches from the project screen and the active chat, stays read-only on history', async ({
+  test('the project screen carries no branch mention; the active chat switches through its overflow menu, a history chat stays read-only', async ({
     page,
   }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const mobile = testInfo.project.name === 'mobile';
+    if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     await mockBranchRoute(page, ids.projectId);
     const main = page.getByRole('main');
 
-    // ── The project screen: the Repository card's branch is a switcher ──
+    // ── The project screen: about the repository as a whole, no branch
+    //    picker or mention of one in the Repository card ──
     await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const repository = main.locator('section', {
       has: page.getByRole('heading', { level: 2, name: 'Repository' }),
     });
-    const projectSwitcher = repository.getByRole('button', { name: /main/ });
-    await expect(projectSwitcher).toBeVisible();
-    await projectSwitcher.click();
-    const projectListbox = page.getByRole('listbox', { name: 'Switch branch' });
-    await expect(projectListbox.getByRole('option', { name: 'feature/x' })).toBeVisible();
-    await shot(page, testInfo, 'branch-switcher-project-open.png');
-    await projectListbox.getByRole('option', { name: 'feature/x' }).click();
-    await expect(repository.getByRole('button', { name: /feature\/x/ })).toBeVisible();
-    await shot(page, testInfo, 'branch-switcher-project-switched.png');
+    await expect(repository).toContainText('acme/billing-service');
+    await expect(repository.getByRole('button')).toHaveCount(0);
+    await expect(repository.getByText(/main|feature/)).toHaveCount(0);
+    await shot(page, testInfo, 'branch-switcher-project-no-mention.png');
 
-    // ── The active chat's title bar: the same control (wide screens only —
-    //    below `lg` the title bar has no room for it; see the mobile
-    //    block below for the overflow-menu path it takes instead) ──
+    // ── The active chat's title bar: a plain read-only label, and
+    //    "Switch branch" in the overflow menu opens the picker as a
+    //    modal — the only path, at any width ──
     await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
     await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
     const chatBranch = main.locator('[data-testid="chat-branch"]');
-    if (!mobile) {
-      const chatSwitcher = chatBranch.getByRole('button');
-      await expect(chatSwitcher).toBeVisible();
-      await chatSwitcher.click();
-      const chatListbox = page.getByRole('listbox', { name: 'Switch branch' });
-      await expect(chatListbox.getByRole('option', { name: 'feature/x' })).toBeVisible();
-      await chatListbox.getByRole('option', { name: 'feature/x' }).click();
-      await expect(chatBranch.getByText('feature/x')).toBeVisible();
-      await shot(page, testInfo, 'branch-switcher-chat-switched.png');
-    }
+    await expect(chatBranch).toBeVisible();
+    await expect(chatBranch).toContainText('main');
+    await expect(chatBranch.getByRole('button')).toHaveCount(0);
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Switch branch' }).click();
+    const branchModal = page.getByRole('dialog', { name: 'Switch branch' });
+    await expect(branchModal.getByRole('option', { name: 'feature/x' })).toBeVisible();
+    await shot(page, testInfo, 'branch-switcher-chat-modal.png');
+    await branchModal.getByRole('option', { name: 'feature/x' }).click();
+    await expect(branchModal).toHaveCount(0);
+    await expect(chatBranch).toContainText('feature/x');
+    await shot(page, testInfo, 'branch-switcher-chat-switched.png');
 
-    // ── A history chat: the plain read-only label, no switcher ──
+    // ── A history chat: the plain read-only label, no switcher and no
+    //    "Switch branch" entry — it can no longer send turns ──
     await page.goto(`/${E2E_SLUG}/chat/${ids.historyChatId}`);
     await expect(page.getByRole('heading', { name: ids.historyChatTitle })).toBeVisible();
     const historyBranch = main.locator('[data-testid="chat-branch"]');
     await expect(historyBranch).toBeVisible();
     await expect(historyBranch.getByRole('button')).toHaveCount(0);
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: 'Switch branch' })).toHaveCount(0);
     await shot(page, testInfo, 'branch-switcher-history-readonly.png');
-
-    if (!mobile) return;
-
-    // ── Mobile: the same picker, at phone width ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
-    await page.setViewportSize(MOBILE_VIEWPORT);
-    await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
-    await repository.getByRole('button', { name: /feature\/x|main/ }).click();
-    await expect(page.getByRole('listbox', { name: 'Switch branch' })).toBeVisible();
-    await shot(page, testInfo, 'branch-switcher-mobile.png');
-
-    // ── Mobile: the active chat's title bar shows the plain label (no
-    //    button — no room for the anchored dropdown), and "Switch branch"
-    //    in the "⋯" overflow menu opens the same picker as a modal ──
-    await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
-    await page.setViewportSize(MOBILE_VIEWPORT);
-    await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
-    // Both the `lg:` and sub-`lg:` variants sit in the DOM at once (one
-    // display:none'd by CSS) — textContent includes a hidden element's
-    // text even though the accessibility tree (what getByRole reads)
-    // correctly excludes it, so text assertions scope to the one
-    // CSS-visible wrapper the same way a mobile/desktop layout pair
-    // elsewhere in this suite does.
-    const chatBranchVisible = chatBranch.locator(':scope > div').filter({ visible: true });
-    await expect(chatBranch.getByRole('button')).toHaveCount(0);
-    await expect(chatBranchVisible).toContainText(/feature\/x|main/);
-    await page.getByRole('button', { name: 'More' }).click();
-    await page.getByRole('menuitem', { name: 'Switch branch' }).click();
-    const branchModal = page.getByRole('dialog', { name: 'Switch branch' });
-    await expect(branchModal.getByRole('option', { name: 'feature/x' })).toBeVisible();
-    await branchModal.getByRole('option', { name: 'feature/x' }).click();
-    await expect(branchModal).toHaveCount(0);
-    await expect(chatBranchVisible).toContainText('feature/x');
-    await shot(page, testInfo, 'branch-switcher-chat-mobile-overflow.png');
   });
 
   test('a dirty checkout is refused with a clear reason, and discarding lets the switch through', async ({
@@ -333,37 +303,36 @@ test.describe('branch switcher', () => {
   }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const mobile = testInfo.project.name === 'mobile';
-    await mockDirtyThenCleanBranchRoute(page, ids.projectId);
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
+    await mockDirtyThenCleanBranchRoute(page, ids.projectId);
     const main = page.getByRole('main');
 
     // ── Picking a branch on a dirty checkout: a modal names the problem,
     //    not an overlapping inline error, with a way through ──
-    await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
-    await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
-    const repository = main.locator('section', {
-      has: page.getByRole('heading', { level: 2, name: 'Repository' }),
-    });
-    await repository.getByRole('button', { name: /main/ }).click();
-    await page.getByRole('listbox', { name: 'Switch branch' }).getByRole('option', { name: 'feature/x' }).click();
-    const modal = page.getByRole('dialog', { name: /Can.t switch branches/ });
-    await expect(modal).toBeVisible();
+    await page.goto(`/${E2E_SLUG}/chat/${ids.activeChatId}`);
+    await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
+    const chatBranch = main.locator('[data-testid="chat-branch"]');
+    await expect(chatBranch).toContainText('main');
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Switch branch' }).click();
+    const branchModal = page.getByRole('dialog', { name: 'Switch branch' });
+    await branchModal.getByRole('option', { name: 'feature/x' }).click();
+    const blocked = branchModal.getByRole('alert');
+    await expect(blocked).toBeVisible();
     await expect(
-      modal.getByText(
+      blocked.getByText(
         'There are uncommitted changes on the checkout. Commit or discard them before switching branches.'
       )
     ).toBeVisible();
-    // The reason and the way out sit inside the modal's own panel, not as
-    // an overlay floating over the rest of the page.
-    await expect(modal.getByText(/anything not committed is lost/)).toBeVisible();
-    const discard = modal.getByRole('button', { name: 'Discard changes and switch to feature/x' });
+    await expect(blocked.getByText(/anything not committed is lost/)).toBeVisible();
+    const discard = blocked.getByRole('button', { name: 'Discard changes and switch to feature/x' });
     await expect(discard).toBeVisible();
     await shot(page, testInfo, 'branch-switcher-dirty-modal.png');
 
     // ── Discarding retries the same switch, which now goes through ──
     await discard.click();
-    await expect(modal).toHaveCount(0);
-    await expect(repository.getByRole('button', { name: /feature\/x/ })).toBeVisible();
+    await expect(branchModal).toHaveCount(0);
+    await expect(chatBranch).toContainText('feature/x');
     await shot(page, testInfo, 'branch-switcher-dirty-discarded.png');
   });
 });

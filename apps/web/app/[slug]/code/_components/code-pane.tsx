@@ -8,16 +8,18 @@
  *
  * Beside the chat: a header with the file tree's toggle, the open files
  * as tabs, Save, Commit with the count of changed files, and a close;
- * a rail with the working tree's **Changed** files above the tree; the
- * editor; and a status line saying the one thing that matters — saved
- * to the checkout but not committed, or unsaved. As a tab: the rail's
- * content full width with Commit along the bottom, and a file opened
- * over it with Save above the keyboard. Every read and write goes
- * through the same routes the chat's tools' work is seen through, so
- * what is here is what the chat sees.
+ * a rail with the checkout's branch above the file tree — "New file" sits
+ * inline with the tree's own heading rather than as a button of its own
+ * — the editor; and a status line saying the one thing that matters —
+ * saved to the checkout but not committed, or unsaved. As a tab: the
+ * rail's content full width with Commit along the bottom, and a file
+ * opened over it with Save above the keyboard. What the working tree has
+ * changed is marks (M/A/D) in the tree itself, not a list of its own —
+ * every read and write goes through the same routes the chat's tools'
+ * work is seen through, so what is here is what the chat sees.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
@@ -31,7 +33,7 @@ import { highlightedTokens } from '@/components/code-tokens';
 import CodeEditor from './code-editor';
 import CommitDialog, { FileDiffInline } from './commit-dialog';
 import DiffView, { Counts } from './diff-view';
-import RepoTree, { type FileMark } from './repo-tree';
+import RepoTree, { type FileMark, type RepoTreeHandle } from './repo-tree';
 import type { CodePaneFile, CodePaneHandle } from './use-code-pane';
 import type { LanguageServersHandle, LanguageServerStatus } from './use-language-servers';
 
@@ -95,6 +97,7 @@ export default function CodePane({
   onClose: () => void;
 }) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
+  const repoTreeRef = useRef<RepoTreeHandle>(null);
   const [treeOpen, setTreeOpen] = useState(true);
   const [showList, setShowList] = useState(pane.active === null);
   const [commitOpen, setCommitOpen] = useState(false);
@@ -247,73 +250,30 @@ export default function CodePane({
 
   const rail = (
     <div className={layout === 'tab' ? 'px-2 py-3' : 'p-2'}>
-      {pane.changed.length > 0 ? (
-        <section className="mb-3">
-          <h3 className="mb-1 flex items-center px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-            <span className="flex-1">Changed · not committed</span>
-            <Counts added={totals.added} deleted={totals.deleted} />
-          </h3>
-          <ul className="font-mono">
-            {pane.changed.map((file) => (
-              <li key={file.path}>
-                <button
-                  type="button"
-                  // A deleted file has nothing left to open in the editor
-                  // — its diff (against what it used to be) is the useful
-                  // thing to show instead.
-                  onClick={() =>
-                    file.status === 'deleted' ? setDiffFor(file.path) : openFile(file.path)
-                  }
-                  aria-current={pane.active === file.path ? 'true' : undefined}
-                  title={file.path}
-                  className={`flex w-full items-center gap-1.5 rounded px-1 text-left text-xs ${touch ? 'min-h-10 py-1.5' : 'py-0.5'} ${
-                    pane.active === file.path
-                      ? 'bg-blue-50 dark:bg-blue-950/40'
-                      : 'hover:bg-gray-100 dark:hover:bg-gray-900'
-                  }`}
-                >
-                  <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${
-                      dirty.has(file.path)
-                        ? 'bg-amber-500'
-                        : file.status === 'untracked'
-                          ? 'bg-green-500'
-                          : file.status === 'deleted'
-                            ? 'bg-red-500'
-                            : 'bg-gray-300 dark:bg-gray-600'
-                    }`}
-                    title={
-                      dirty.has(file.path)
-                        ? 'Unsaved edits here'
-                        : file.status === 'untracked'
-                          ? 'New file'
-                          : file.status === 'deleted'
-                            ? 'Deleted, not committed'
-                            : 'Changed'
-                    }
-                  />
-                  <span
-                    className={`min-w-0 flex-1 truncate ${file.status === 'deleted' ? 'text-gray-400 line-through dark:text-gray-600' : ''}`}
-                  >
-                    {file.path}
-                  </span>
-                  <Counts added={file.added} deleted={file.deleted} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {pane.branch ? (
+        <h3
+          data-testid="pane-branch"
+          className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500"
+        >
+          <Icon path={ICONS.gitBranch} className="h-3 w-3 shrink-0" />
+          <span className="truncate font-mono normal-case tracking-normal">{pane.branch}</span>
+        </h3>
       ) : null}
       <h3 className="mb-1 flex items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
         <span className="flex-1">Files</span>
-        {pane.branch ? (
-          <span className="flex min-w-0 items-center gap-1 font-mono text-[11px] normal-case tracking-normal text-gray-500">
-            <Icon path={ICONS.gitBranch} className="h-3 w-3 shrink-0" />
-            <span className="truncate">{pane.branch}</span>
-          </span>
+        {canEdit && pane.available ? (
+          <button
+            type="button"
+            onClick={() => repoTreeRef.current?.newFile()}
+            className="flex items-center gap-1 text-[11px] font-medium normal-case tracking-normal text-blue-600 hover:underline dark:text-blue-400"
+          >
+            <Icon path={ICONS.plus} className="h-3 w-3" />
+            New file
+          </button>
         ) : null}
       </h3>
       <RepoTree
+        ref={repoTreeRef}
         tenantId={tenantId}
         projectId={projectId}
         onOpen={openFile}
@@ -321,10 +281,10 @@ export default function CodePane({
         marks={marks}
         refreshKey={refreshKey}
         touch={touch}
-        showBranch={false}
         canEdit={canEdit}
         onRenamed={renamedOpen}
         onDeleted={deletedOpen}
+        onDeletedClick={setDiffFor}
       />
     </div>
   );
