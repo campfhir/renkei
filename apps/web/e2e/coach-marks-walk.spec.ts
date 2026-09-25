@@ -114,6 +114,7 @@ const WALKS: Record<string, Walk> = {
   'connect-bitbucket': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-github': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-microsoft': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
+  'connect-entra-developer': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-webex': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-zoom': { path: `/${E2E_SLUG}/connectors`, spotlight: false },
   'connect-onbase': { path: `/${E2E_SLUG}/connectors`, spotlight: false },

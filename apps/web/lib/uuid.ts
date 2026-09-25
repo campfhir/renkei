@@ -20,6 +20,7 @@ const UUID_SEGMENT_PREFIXES = [
   '/api/mcp/',
   '/api/tenant/',
   '/api/microsoft/',
+  '/api/entra-developer/',
   '/api/webex/',
   '/api/zoom/',
   '/api/atlassian-jsm/',

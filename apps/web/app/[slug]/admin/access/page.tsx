@@ -31,6 +31,7 @@ const PROVIDER_ICON_KEY: Record<string, string> = {
   'atlassian-bitbucket': 'atlassian-bitbucket',
   'atlassian-admin': 'jira-admin',
   microsoft: 'microsoft',
+  'entra-developer': 'entra-developer',
   webex: 'webex',
   zoom: 'zoom',
   onbase: 'onbase',

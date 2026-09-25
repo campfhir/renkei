@@ -14,13 +14,26 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
 
 export const MICROSOFT = 'microsoft';
+/**
+ * A second Entra app registration ("Renkei Entra Developer"): application
+ * provisioning — app registrations, enterprise applications, app roles and
+ * who is assigned to them — on its own grant, the jira-admin/onbase-admin
+ * arrangement. Its delegated permissions (Application.ReadWrite.All,
+ * AppRoleAssignment.ReadWrite.All) are directory-wide and admin-consented,
+ * far too much to ride the everyday Microsoft 365 grant, so an org admin
+ * can switch it off or limit its audience without touching anyone's mail.
+ * Same token endpoint and refresh mechanics; only the rows differ.
+ */
+export const ENTRA_DEVELOPER = 'entra-developer';
 
 export class MicrosoftAdapter implements ProviderAdapter {
-  readonly provider = MICROSOFT;
-
+  // The provider key is a parameter because every Entra app registration
+  // (MICROSOFT, ENTRA_DEVELOPER) refreshes identically — only the rows
+  // differ, the AtlassianAdapter arrangement.
   constructor(
     private readonly clientSecret: string,
-    private readonly directoryTenantId: string
+    private readonly directoryTenantId: string,
+    readonly provider: string = MICROSOFT
   ) {}
 
   async refreshTokens(

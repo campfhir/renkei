@@ -8,6 +8,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import AtlassianConnector from './atlassian-connector';
 import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
+import EntraDeveloperConnector from './entra-developer-connector';
 import ZoomConnector from './zoom-connector';
 import GitHubConnector from './github-connector';
 import HylandConnector from './hyland-connector';
@@ -30,6 +31,7 @@ import {
   ATLASSIAN_BITBUCKET,
   ATLASSIAN_ADMIN,
   MICROSOFT,
+  ENTRA_DEVELOPER,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -37,10 +39,12 @@ import {
 } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
+import { ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-developer-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { GITHUB_CONNECTOR } from '@/lib/github-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
+import { DEFAULT_ENTRA_DEVELOPER_SCOPES } from '@/lib/entra-developer-scopes';
 import { DEFAULT_ZOOM_SCOPES } from '@/lib/zoom-scopes';
 import { DEFAULT_GITHUB_SCOPES } from '@/lib/github-scopes';
 import {
@@ -228,6 +232,10 @@ export default async function ConnectorsPage({
   const jiraAdminCeiling = usableAtlassianAdminCeiling(storedScopes(settingsOf('atlassian-admin')));
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
   const microsoftCeiling = ceilingFrom(settingsOf(MICROSOFT_CONNECTOR), DEFAULT_MICROSOFT_SCOPES);
+  const entraDeveloperCeiling = ceilingFrom(
+    settingsOf(ENTRA_DEVELOPER_CONNECTOR),
+    DEFAULT_ENTRA_DEVELOPER_SCOPES
+  );
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
   const githubCeiling = ceilingFrom(settingsOf(GITHUB_CONNECTOR), DEFAULT_GITHUB_SCOPES);
 
@@ -245,6 +253,7 @@ export default async function ConnectorsPage({
     ? await countPendingChangeRequests(db, tenant.id, session.subject)
     : 0;
   const microsoftGrant = grants.get(MICROSOFT);
+  const entraDeveloperGrant = grants.get(ENTRA_DEVELOPER);
   const zoomGrant = grants.get(ZOOM);
   const githubGrant = grants.get(GITHUB);
   const onbaseGrant = grants.get(ONBASE);
@@ -274,6 +283,7 @@ export default async function ConnectorsPage({
     atlassianShown ||
     shown.has('webex') ||
     microsoftKeys.length > 0 ||
+    shown.has('entra-developer') ||
     shown.has('zoom') ||
     shown.has('github') ||
     hylandShown ||
@@ -418,6 +428,30 @@ export default async function ConnectorsPage({
             shownKeys={microsoftKeys}
           />
           <RemovableProducts tenantId={tenant.id} products={removable(catalog, microsoftKeys)} />
+        </>
+      ),
+    });
+  }
+
+  if (shown.has('entra-developer')) {
+    // Its own card, not a panel in the Microsoft 365 one: a second Entra
+    // app registration and a second consent (entra-developer-connector.tsx).
+    cards.push({
+      key: 'entra-developer',
+      needsAttention: entraDeveloperGrant === undefined,
+      node: (
+        <>
+          <EntraDeveloperConnector
+            tenantId={tenant.id}
+            connected={entraDeveloperGrant !== undefined}
+            displayName={entraDeveloperGrant?.displayName ?? null}
+            ceiling={entraDeveloperCeiling}
+            priorScopes={entraDeveloperGrant?.requestedScopes ?? null}
+          />
+          <RemovableProducts
+            tenantId={tenant.id}
+            products={removable(catalog, ['entra-developer'])}
+          />
         </>
       ),
     });

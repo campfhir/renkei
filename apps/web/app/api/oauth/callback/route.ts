@@ -2,7 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAtlassianApp } from '@/lib/atlassian-app';
 import { getWebexUserApp } from '@/lib/webex-app';
-import { getMicrosoftApp } from '@/lib/microsoft-app';
+import { getMicrosoftApp, type MicrosoftApp } from '@/lib/microsoft-app';
+import { getEntraDeveloperApp } from '@/lib/entra-developer-app';
 import { getZoomApp } from '@/lib/zoom-app';
 import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
@@ -17,6 +18,7 @@ import {
   ATLASSIAN_ADMIN,
   WEBEX_USER,
   MICROSOFT,
+  ENTRA_DEVELOPER,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -248,6 +250,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     if (pendingSignIn.provider === 'microsoft') {
       return handleMicrosoftCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
+    }
+    if (pendingSignIn.provider === 'entra-developer') {
+      // A SEPARATE Entra app registration from 'microsoft' above — see
+      // lib/entra-developer-app.ts — so it rides the same token exchange
+      // with a different app, grant provider and label, and none of the
+      // Microsoft 365 grant's indexing bootstrap.
+      return handleEntraDeveloperCallback(
         request,
         tenant,
         pendingSignIn.subject,
@@ -888,75 +903,10 @@ async function handleMicrosoftCallback(
     );
   }
 
-  const tokenResponse = await fetch(
-    `https://login.microsoftonline.com/${encodeURIComponent(app.directoryTenantId)}/oauth2/v2.0/token`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: app.clientId,
-        client_secret: app.clientSecret,
-        code,
-        redirect_uri: app.redirectUri,
-        scope: requestedScopes || app.scopes,
-      }),
-    }
-  );
-  if (!tokenResponse.ok) {
-    const body = await tokenResponse.text().catch(() => '');
-    logger.error('Microsoft token exchange failed', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-      status: tokenResponse.status,
-      body: body.slice(0, 300),
-    });
-    return NextResponse.json({ error: 'Microsoft token exchange failed' }, { status: 502 });
-  }
-  const tokenData: unknown = await tokenResponse.json().catch(() => null);
-  const tokens = tokenData as Record<string, unknown> | null;
-  const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
-  if (!accessToken) {
-    logger.error('Microsoft token response carried no access_token', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-    });
-    return NextResponse.json({ error: 'Malformed Microsoft token response' }, { status: 502 });
-  }
-  const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
-  const expiresIn = typeof tokens?.expires_in === 'number' ? tokens.expires_in : 3600;
-  const scopeEcho = typeof tokens?.scope === 'string' ? tokens.scope : null;
-  const idToken = typeof tokens?.id_token === 'string' ? tokens.id_token : null;
-
-  // Who granted this. The id_token claims answer directly; /me is the
-  // fallback when a claim is missing (some Entra configs omit email).
-  const claims = idToken ? decodeJwtPayload(idToken) : null;
-  let oid = typeof claims?.oid === 'string' ? claims.oid : null;
-  const tid = typeof claims?.tid === 'string' ? claims.tid : app.directoryTenantId;
-  let upn = typeof claims?.preferred_username === 'string' ? claims.preferred_username : null;
-  let displayName = typeof claims?.name === 'string' ? claims.name : null;
-  let email = typeof claims?.email === 'string' ? claims.email : null;
-
-  if (!oid || !upn || !email) {
-    const meResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const meData: unknown = await meResponse.json().catch(() => null);
-    const me = meData as Record<string, unknown> | null;
-    if (meResponse.ok && me) {
-      oid = oid ?? (typeof me.id === 'string' ? me.id : null);
-      upn = upn ?? (typeof me.userPrincipalName === 'string' ? me.userPrincipalName : null);
-      displayName = displayName ?? (typeof me.displayName === 'string' ? me.displayName : null);
-      email = email ?? (typeof me.mail === 'string' ? me.mail : null);
-    }
-  }
-  if (!oid || !upn) {
-    logger.error('Could not identify Microsoft user from id_token claims or /me', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-    });
-    return NextResponse.json({ error: 'Could not identify Microsoft user' }, { status: 502 });
-  }
+  const exchanged = await exchangeMicrosoftCode(app, tenant.id, code, requestedScopes);
+  if (exchanged instanceof NextResponse) return exchanged;
+  const { accessToken, refreshToken, expiresIn, scopeEcho, oid, tid, upn, displayName, email } =
+    exchanged;
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
@@ -1051,6 +1001,199 @@ async function handleMicrosoftCallback(
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: MICROSOFT,
+  });
+  invalidateToolCatalogCache(tenant.id, subject);
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/** What a Microsoft authorization code becomes, for either Entra app registration. */
+interface MicrosoftExchange {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  scopeEcho: string | null;
+  oid: string;
+  tid: string;
+  upn: string;
+  displayName: string | null;
+  email: string | null;
+}
+
+/**
+ * Exchange an authorization code at the org's own tenant token endpoint and
+ * identify who granted — the id_token claims (oid, tid, preferred_username)
+ * with GET /me as fallback. Shared by the Microsoft 365 and Entra Developer
+ * callbacks: two app registrations, one exchange. A NextResponse is the
+ * failure already phrased for the browser.
+ */
+async function exchangeMicrosoftCode(
+  app: MicrosoftApp,
+  tenantId: string,
+  code: string,
+  requestedScopes: string | null
+): Promise<MicrosoftExchange | NextResponse> {
+  const tokenResponse = await fetch(
+    `https://login.microsoftonline.com/${encodeURIComponent(app.directoryTenantId)}/oauth2/v2.0/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: app.clientId,
+        client_secret: app.clientSecret,
+        code,
+        redirect_uri: app.redirectUri,
+        scope: requestedScopes || app.scopes,
+      }),
+    }
+  );
+  if (!tokenResponse.ok) {
+    const body = await tokenResponse.text().catch(() => '');
+    logger.error('Microsoft token exchange failed', {
+      component: 'auth/oauth',
+      tenantId,
+      status: tokenResponse.status,
+      body: body.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'Microsoft token exchange failed' }, { status: 502 });
+  }
+  const tokenData: unknown = await tokenResponse.json().catch(() => null);
+  const tokens = tokenData as Record<string, unknown> | null;
+  const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
+  if (!accessToken) {
+    logger.error('Microsoft token response carried no access_token', {
+      component: 'auth/oauth',
+      tenantId,
+    });
+    return NextResponse.json({ error: 'Malformed Microsoft token response' }, { status: 502 });
+  }
+  const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
+  const expiresIn = typeof tokens?.expires_in === 'number' ? tokens.expires_in : 3600;
+  const scopeEcho = typeof tokens?.scope === 'string' ? tokens.scope : null;
+  const idToken = typeof tokens?.id_token === 'string' ? tokens.id_token : null;
+
+  // Who granted this. The id_token claims answer directly; /me is the
+  // fallback when a claim is missing (some Entra configs omit email).
+  const claims = idToken ? decodeJwtPayload(idToken) : null;
+  let oid = typeof claims?.oid === 'string' ? claims.oid : null;
+  const tid = typeof claims?.tid === 'string' ? claims.tid : app.directoryTenantId;
+  let upn = typeof claims?.preferred_username === 'string' ? claims.preferred_username : null;
+  let displayName = typeof claims?.name === 'string' ? claims.name : null;
+  let email = typeof claims?.email === 'string' ? claims.email : null;
+
+  if (!oid || !upn || !email) {
+    const meResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const meData: unknown = await meResponse.json().catch(() => null);
+    const me = meData as Record<string, unknown> | null;
+    if (meResponse.ok && me) {
+      oid = oid ?? (typeof me.id === 'string' ? me.id : null);
+      upn = upn ?? (typeof me.userPrincipalName === 'string' ? me.userPrincipalName : null);
+      displayName = displayName ?? (typeof me.displayName === 'string' ? me.displayName : null);
+      email = email ?? (typeof me.mail === 'string' ? me.mail : null);
+    }
+  }
+  if (!oid || !upn) {
+    logger.error('Could not identify Microsoft user from id_token claims or /me', {
+      component: 'auth/oauth',
+      tenantId,
+    });
+    return NextResponse.json({ error: 'Could not identify Microsoft user' }, { status: 502 });
+  }
+
+  return { accessToken, refreshToken, expiresIn, scopeEcho, oid, tid, upn, displayName, email };
+}
+
+/**
+ * Complete the OAuth flow for the Entra Developer app — the SECOND Entra
+ * app registration (lib/entra-developer-app.ts). Same exchange as the
+ * Microsoft 365 callback, stored under its own grant provider; no
+ * `grant.connected` event, since this connector indexes nothing and holds
+ * no Graph subscriptions for the worker to bootstrap.
+ */
+async function handleEntraDeveloperCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error('Entra Developer pending flow has no subject; cannot assign grant owner', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json(
+      { error: 'Sign in again before connecting Entra Developer' },
+      { status: 400 }
+    );
+  }
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const app = await getEntraDeveloperApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'Entra Developer integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const exchanged = await exchangeMicrosoftCode(app, tenant.id, code, requestedScopes);
+  if (exchanged instanceof NextResponse) return exchanged;
+  const { accessToken, refreshToken, expiresIn, scopeEcho, oid, tid, upn, displayName, email } =
+    exchanged;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store Entra Developer grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    ENTRA_DEVELOPER,
+    tenant.id,
+    {
+      accountId: oid,
+      clientId: app.clientId,
+      displayName: displayName ?? upn,
+      accessToken,
+      refreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+      // tid keeps refresh pointed at the right authority; upn names the
+      // person on the card and in the tools' "connected as" line.
+      metadata: { tid, upn, email: email ?? null },
+      subject,
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store Entra Developer grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Failed to store Entra Developer grant' }, { status: 500 });
+  }
+
+  logger.info('Entra Developer grant stored', {
+    component: 'auth/oauth',
+    tenantId: tenant.id,
+    subject,
+  });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: ENTRA_DEVELOPER,
   });
   invalidateToolCatalogCache(tenant.id, subject);
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));

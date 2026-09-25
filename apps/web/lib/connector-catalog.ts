@@ -238,6 +238,40 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     togglable: true,
   },
   {
+    // Its own key, config row and grant, not a fourth panel on the
+    // Microsoft 365 card: application provisioning takes directory-wide,
+    // admin-consented permissions that must be switchable and
+    // audience-limited (developers, say) without touching anyone's mail —
+    // the jira-admin arrangement, on a second Entra app registration.
+    capabilityKey: 'entra-developer',
+    configKey: 'entra-developer',
+    label: 'Entra Developer',
+    summary:
+      'Provision Microsoft Entra applications: create app registrations and enterprise ' +
+      'applications, define their app roles, and assign users and groups to those roles — ' +
+      'each change confirmed on a card. For developers and app owners — a separate connection ' +
+      'from Microsoft 365 above (its own Entra app registration), so connecting one does not ' +
+      'connect the other.',
+    toolPrefix: 'entra_*',
+    category: 'microsoft',
+    keywords: [
+      'entra',
+      'azure ad',
+      'app registration',
+      'enterprise application',
+      'service principal',
+      'app roles',
+      'role assignment',
+      'oauth',
+      'sso',
+      'redirect uri',
+      'developer',
+    ],
+    grantProviders: ['entra-developer'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
     capabilityKey: 'webex',
     configKey: 'webex-user',
     label: 'WebEx',

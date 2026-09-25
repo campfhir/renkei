@@ -117,6 +117,14 @@ export interface MCPToolContext {
    */
   jiraAdminScopes?: string[];
   /**
+   * Same, for the caller's grant on the Entra Developer app registration —
+   * the SECOND Entra app, its own grant (ENTRA_DEVELOPER): its delegated
+   * Graph scopes, for the registration-time gate. The entra_ tools resolve
+   * their token fresh per call (entra-developer/client.ts), never from the
+   * Microsoft 365 grant's graphScopes.
+   */
+  entraDeveloperScopes?: string[];
+  /**
    * Present when the caller is an agent run (an agent-runner token,
    * migration 040). `subject`/`userEmail` still name the run OWNER — every
    * gate applies as if the owner called — this only says an agent is doing

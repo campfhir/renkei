@@ -14,6 +14,7 @@ export const GRANT_PROVIDER_LABELS: Record<string, string> = {
   'atlassian-bitbucket': 'Bitbucket',
   'atlassian-admin': 'Jira Administration',
   microsoft: 'Microsoft 365',
+  'entra-developer': 'Entra Developer',
   webex: 'WebEx',
   zoom: 'Zoom',
   onbase: 'OnBase',
