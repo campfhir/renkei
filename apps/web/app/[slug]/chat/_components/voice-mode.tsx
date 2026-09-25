@@ -8,15 +8,18 @@
  * tools, model and project), and reads the reply as it streams.
  *
  * Interruptions are the point, and so is not interrupting on a cough.
- * The rules are lib/voice/barge-in.ts's: once the person has said a few
- * words over a reply being read aloud, the voice stops and the turn is
- * cancelled, and what they said is sent once they pause; while a reply
- * is still being worked out — the model thinking, a tool call running,
- * nothing of the answer read yet — talking cancels nothing, and what is
- * said queues as the next message, sent when the reply is done; and a
- * short sound under the voice is dropped, not sent. The thread
- * underneath keeps every message, so leaving voice mode leaves a chat
- * that reads exactly like the conversation went.
+ * The rules are lib/voice/barge-in.ts's, and the recognizer is the
+ * judge, not the microphone's loudness: once the person has made enough
+ * sound over a reply being read aloud, that sound is transcribed, and
+ * only if it reads as words — not a cough, not a "mm-hm", not the
+ * reply's own echo — does the voice stop and the turn get cancelled,
+ * what they said being sent once they pause; while a reply is still
+ * being worked out — the model thinking, a tool call running, nothing
+ * of the answer read yet — talking cancels nothing, and what is said
+ * queues as the next message, sent when the reply is done; and a sound
+ * under the voice that never became words is dropped, not sent. The
+ * thread underneath keeps every message, so leaving voice mode leaves a
+ * chat that reads exactly like the conversation went.
  *
  * With the walkie-talkie preference (`pushToTalk`) the microphone waits
  * for a press instead of a voice: Talk opens the microphone and the
@@ -41,8 +44,9 @@ import type { ToolPermissionDecision } from '@/lib/chat/views';
 import { spokenActivity, spokenAsk } from '@/lib/voice/activity';
 import {
   beginUtterance,
+  closeUtterance,
   holdUtterance,
-  utteranceIsMessage,
+  holdWorthJudging,
   type AssistantState,
   type Utterance,
 } from '@/lib/voice/barge-in';
@@ -165,22 +169,32 @@ export default function VoiceMode({
   const responding = queueState !== 'idle' && spokenReply.length > 0 && activity.length === 0;
   // The latest values, for callbacks the recorder holds across renders.
   const latest = useRef({
-    running,
     queueState,
     responding,
+    spokenReply,
     onInterrupt,
     onSend,
     onHeard,
     permission,
   });
-  latest.current = { running, queueState, responding, onInterrupt, onSend, onHeard, permission };
+  latest.current = {
+    queueState,
+    responding,
+    spokenReply,
+    onInterrupt,
+    onSend,
+    onHeard,
+    permission,
+  };
   const assistantState = (): AssistantState => ({
     responding: latest.current.responding,
     asking: latest.current.permission !== null,
   });
   // The utterance being heard, from its first sound: what it started over,
-  // and whether it cut the reply.
+  // and whether it cut the reply. Numbered, so a judgement of its sound
+  // that comes back after it has closed is left to the close.
   const utterance = useRef<Utterance>(beginUtterance({ responding: false, asking: false }));
+  const utteranceSeq = useRef(0);
   // What the assistant is doing, as last announced; and when the voice
   // last had something to say, for the dead-air check.
   const [activityLine, setActivityLine] = useState<string | null>(null);
@@ -235,19 +249,32 @@ export default function VoiceMode({
           return;
         }
         // A sound. Nothing is cut yet: a cough is not an interruption.
+        utteranceSeq.current += 1;
         utterance.current = beginUtterance(assistantState());
       },
-      onSpeechHeld: () => {
-        // A few words. Over a reply being read they silence it and drop
-        // the turn; over one still being worked out, nothing — what is
-        // said will queue behind it. An answer to an ask cuts nothing
-        // either: the turn is parked waiting for it.
-        if (holdUtterance(utterance.current, assistantState())) latest.current.onInterrupt();
+      onSpeechHeld: (wav) => {
+        // Enough sound to judge. Only over a reply being read is there
+        // anything to decide — over one still being worked out nothing is
+        // ever cut, what is said queues; an answer to an ask cuts nothing
+        // either — so only then is the sound so far sent to be recognised.
+        // Words silence the reply and drop the turn; anything else waits
+        // for the utterance to close and be judged whole.
+        if (pushToTalk || !holdWorthJudging(assistantState())) return;
+        const current = utterance.current;
+        const seq = utteranceSeq.current;
+        void (async () => {
+          const result = await voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
+          // Closed meanwhile: the close judges the whole of it instead.
+          if (seq !== utteranceSeq.current || result.error) return;
+          const heard = result.data?.text ?? '';
+          if (holdUtterance(current, assistantState(), heard, latest.current.spokenReply)) {
+            latest.current.onInterrupt();
+          }
+        })();
       },
       onUtterance: (wav) => {
-        // A sound under the assistant's voice that never grew into words
-        // — a "yeah", a cough — is not a message. (A take is always one.)
-        if (!pushToTalk && !utteranceIsMessage(utterance.current, assistantState())) return;
+        const closed = utterance.current;
+        utteranceSeq.current += 1;
         void (async () => {
           setTranscribing(true);
           const result = await voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
@@ -258,6 +285,15 @@ export default function VoiceMode({
           }
           const text = result.data?.text.trim() ?? '';
           if (!text) return;
+          // Under the assistant's voice, only words are a message: a
+          // "yeah" or the reply's own echo is dropped, and words that
+          // became words only now cut the reply here. (A take is always
+          // a message: a button was pressed for it.)
+          const decision = pushToTalk
+            ? 'send'
+            : closeUtterance(closed, assistantState(), text, latest.current.spokenReply);
+          if (decision === 'drop') return;
+          if (decision === 'interrupt') latest.current.onInterrupt();
           setError(null);
           setTranscript(text);
           const heardIn = result.data?.locale ?? null;

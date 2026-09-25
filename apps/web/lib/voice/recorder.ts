@@ -9,11 +9,12 @@
  *
  * `onSpeechStart` fires the moment speech is detected — before the
  * utterance is complete. `onSpeechHeld` fires once the utterance has
- * carried a few words' worth of voice (HELD_FRAMES): the difference
- * between a cough, a "mm-hm" or a door and a person actually talking,
- * which is what lets voice mode interrupt a reply mid-sentence on the
- * second and never on the first — the thread silences the voice on that
- * signal, and sends the utterance when it closes.
+ * carried a few words' worth of sound (HELD_FRAMES), with that sound so
+ * far encoded as WAV: loudness alone cannot tell a cough or a "mm-hm"
+ * from a person actually talking, so voice mode has the snippet
+ * transcribed and interrupts a reply mid-sentence only when the
+ * recognizer heard words (lib/voice/barge-in.ts). The utterance itself
+ * is sent when it closes.
  *
  * In `manual` mode (the walkie-talkie preference) the detector decides
  * nothing: `beginTake()` opens an utterance and `endTake()` closes it, so
@@ -55,12 +56,13 @@ export interface RecorderOptions {
   mode?: RecorderMode;
   onSpeechStart: () => void;
   /**
-   * The open utterance has carried enough voice to be words rather than
-   * a sound (HELD_FRAMES of loud frames). Once per utterance, in auto
-   * mode only: a manual take is words by definition — a button was
-   * pressed for it — and interrupts on `beginTake()` instead.
+   * The open utterance has carried enough sound to be worth judging
+   * (HELD_FRAMES of loud frames): here it is so far, as 16 kHz mono WAV,
+   * for the recognizer to say whether it is words. Once per utterance,
+   * in auto mode only: a manual take is words by definition — a button
+   * was pressed for it — and interrupts on `beginTake()` instead.
    */
-  onSpeechHeld?: () => void;
+  onSpeechHeld?: (wav: ArrayBuffer) => void;
   onUtterance: (wav: ArrayBuffer, durationMs: number) => void;
   /**
    * The utterance closed, however it closed — sent, or too short to be
@@ -83,10 +85,11 @@ const PRE_ROLL_FRAMES = 6;
 /** Consecutive loud frames that count as speech starting. */
 const START_FRAMES = 3;
 /**
- * Loud frames in an utterance before it counts as a few words rather
- * than a sound: ~0.8 s of voice. Short enough that talking over a reply
- * still cuts it within about a second; long enough that a cough, a
- * laugh, a "yeah" or a chair scraping never does.
+ * Loud frames in an utterance before its sound so far is handed over to
+ * be judged: ~0.8 s. Short enough that talking over a reply still cuts
+ * it within a couple of seconds, recognition included; long enough to
+ * hold a word or two for the recognizer to find, and for a cough or a
+ * chair scraping to have ended already.
  */
 const HELD_FRAMES = 16;
 /**
@@ -368,7 +371,7 @@ export class UtteranceRecorder {
     if (loud) this.loudFrames += 1;
     if (!this.manual && !this.held && this.loudFrames >= HELD_FRAMES) {
       this.held = true;
-      this.options.onSpeechHeld?.();
+      this.options.onSpeechHeld?.(encodeWav(concat(this.utterance)));
     }
     const durationMs = this.durationMs();
     if (this.manual) {

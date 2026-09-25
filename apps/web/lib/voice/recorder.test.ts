@@ -20,7 +20,7 @@ function harness(over: Partial<RecorderOptions> = {}) {
   const utterances: number[] = [];
   const recorder = new UtteranceRecorder({
     onSpeechStart: () => starts.push(1),
-    onSpeechHeld: () => held.push(1),
+    onSpeechHeld: (wav) => held.push(wav.byteLength),
     onSpeechEnd: (reason) => ends.push(reason),
     onUtterance: (_wav, durationMs) => utterances.push(durationMs),
     onError: () => undefined,
@@ -65,9 +65,14 @@ describe('UtteranceRecorder (auto)', () => {
     // A pause inside the utterance counts for nothing: only voice does.
     feed(8, false);
     expect(held).toHaveLength(0);
-    // Sixteen loud frames in all — 0.8 s of voice — and it is words.
+    // Sixteen loud frames in all — 0.8 s of sound — and it is handed
+    // over to be judged, the whole utterance so far as WAV (a 44-byte
+    // header, two bytes a sample): the six pre-roll frames (three quiet,
+    // the three loud ones that started it), the seven loud after those,
+    // the eight-frame pause, and these six.
     feed(6, true);
     expect(held).toHaveLength(1);
+    expect(held[0]).toBe(44 + 2 * FRAME * (6 + 7 + 8 + 6));
     feed(SECOND, true);
     expect(held).toHaveLength(1);
     feed(32, false);
