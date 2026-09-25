@@ -22,6 +22,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/modal';
+import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
 import { sendJsonFull } from '@/lib/fetch-json';
@@ -98,6 +99,7 @@ export default function CodePane({
 }) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
   const repoTreeRef = useRef<RepoTreeHandle>(null);
+  const newFileAnchor = useCoachAnchor('code-tree-new-file');
   const [treeOpen, setTreeOpen] = useState(true);
   const [showList, setShowList] = useState(pane.active === null);
   const [commitOpen, setCommitOpen] = useState(false);
@@ -265,6 +267,7 @@ export default function CodePane({
           <button
             type="button"
             onClick={() => repoTreeRef.current?.newFile()}
+            {...newFileAnchor}
             className="flex items-center gap-1 text-[11px] font-medium normal-case tracking-normal text-blue-600 hover:underline dark:text-blue-400"
           >
             <Icon path={ICONS.plus} className="h-3 w-3" />

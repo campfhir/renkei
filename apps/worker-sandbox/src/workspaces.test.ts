@@ -23,6 +23,7 @@ import {
   homeDir,
   isCheckoutStorageKey,
   listDirectory,
+  mkdirWorkspaceFile,
   newWorkspaceStorageKey,
   readWorkspaceFile,
   removeWorkspace,
@@ -291,6 +292,23 @@ describe('a cloned workspace', () => {
     expect(await readFile(join(dir, 'docs', 'notes', 'todo.md'), 'utf8')).toBe('- one\n');
     const again = await writeWorkspaceFile(dir, 'docs/notes/todo.md', '- two\n', null);
     expect(again.created).toBe(false);
+  });
+
+  it('creates an empty folder with its missing parent directories', async () => {
+    const dir = workspaceDir(storageKey);
+    const made = await mkdirWorkspaceFile(dir, 'some_dir/some_other_dir', null);
+    expect(made).toEqual({ created: true });
+    expect((await stat(join(dir, 'some_dir', 'some_other_dir'))).isDirectory()).toBe(true);
+    const again = await mkdirWorkspaceFile(dir, 'some_dir/some_other_dir', null);
+    expect(again).toEqual({ created: false });
+  });
+
+  it('refuses to create a folder where a file already is', async () => {
+    const dir = workspaceDir(storageKey);
+    await writeWorkspaceFile(dir, 'scratch/taken.txt', 'x', null);
+    await expect(mkdirWorkspaceFile(dir, 'scratch/taken.txt', null)).rejects.toBeInstanceOf(
+      WorkspacePathError
+    );
   });
 
   it('removes a file, then reports it already gone', async () => {

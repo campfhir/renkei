@@ -39,6 +39,7 @@ it in passing (a step in the welcome tour, say) but nothing walks through it.
 | Sharing a chat               | thread title bar        | everyone | `chat-composer-more`                 | Covered |
 | Projects                     | `/[slug]/chat/projects` | everyone | `projects`, `project`                | Covered |
 | Code projects                | `/[slug]/code`          | everyone | `code`, `code-new`                   | Covered |
+| Code pane file tree          | code pane, tree heading | everyone | `code-tree`                          | Covered |
 | Prompt libraries             | `/[slug]/chat/prompts`  | everyone | `prompt-libraries`, `prompt-library` | Covered |
 | Memory                       | `/[slug]/chat/memory`   | everyone | `memory`                             | Covered |
 

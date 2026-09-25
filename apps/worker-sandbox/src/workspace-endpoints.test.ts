@@ -365,6 +365,51 @@ describe('removing and renaming', () => {
     });
     expect(result.status).toBe(409);
   });
+
+  it('creates a folder with mkdir -p semantics, idempotent on a second call', async () => {
+    const made = await post(enabledBase, 'workspaces/mkdir', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'some_dir/some_other_dir',
+    });
+    expect(made.status).toBe(200);
+    expect(made.json).toEqual({ path: 'some_dir/some_other_dir', created: true });
+    const listed = await post(enabledBase, 'workspaces/ls', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'some_dir',
+    });
+    expect(listed.json.entries).toContainEqual(
+      expect.objectContaining({ path: 'some_dir/some_other_dir', kind: 'dir' })
+    );
+    const again = await post(enabledBase, 'workspaces/mkdir', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'some_dir/some_other_dir',
+    });
+    expect(again.status).toBe(200);
+    expect(again.json).toEqual({ path: 'some_dir/some_other_dir', created: false });
+  });
+
+  it('refuses a folder path that traverses outside the workspace', async () => {
+    const result = await post(enabledBase, 'workspaces/mkdir', {
+      ...TARGET,
+      id: 'ws-1',
+      path: '../escape',
+    });
+    expect(result.status).toBe(400);
+    expect(result.json.error.type).toBe('bad_path');
+  });
+
+  it('refuses to create a folder where a file already exists', async () => {
+    await writeFile(join(workspaceDir(STORAGE_KEY), 'already-a-file.txt'), 'x\n');
+    const result = await post(enabledBase, 'workspaces/mkdir', {
+      ...TARGET,
+      id: 'ws-1',
+      path: 'already-a-file.txt',
+    });
+    expect(result.status).toBe(409);
+  });
 });
 
 describe('git-diff', () => {

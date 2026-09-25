@@ -83,6 +83,8 @@ export type AuditAction =
   | 'code.files.saved'
   /** An empty file created from the tree's "New file", uncommitted. */
   | 'code.files.created'
+  /** An empty folder created from the tree's "New file" — a trailing "/". */
+  | 'code.files.folder-created'
   /** A file or folder removed from the checkout's working tree. */
   | 'code.files.deleted'
   /** A file or folder renamed or moved within the checkout's working tree. */

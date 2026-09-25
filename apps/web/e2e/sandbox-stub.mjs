@@ -42,7 +42,19 @@ const TREE = {
     { path: 'src/billing.ts', kind: 'file', sizeBytes: 4410 },
     { path: 'src/index.ts', kind: 'file', sizeBytes: 302 },
   ],
-  node_modules: [{ path: 'node_modules/.keep', kind: 'file', sizeBytes: 0, ignored: true }],
+  // `left-pad` and its own file are deliberately NOT flagged `ignored`
+  // themselves — a real per-directory `git status` query does not
+  // reliably re-flag every descendant of an already-ignored directory,
+  // so this fixture is what the tree's own ignored-inheritance (an
+  // ignored ancestor dims everything under it, regardless of the
+  // listing's own flags) has to get right on its own.
+  node_modules: [
+    { path: 'node_modules/.keep', kind: 'file', sizeBytes: 0, ignored: true },
+    { path: 'node_modules/left-pad', kind: 'dir', sizeBytes: null },
+  ],
+  'node_modules/left-pad': [
+    { path: 'node_modules/left-pad/index.js', kind: 'file', sizeBytes: 90 },
+  ],
 };
 
 /**
@@ -68,6 +80,30 @@ function entryAt(path, workspace) {
     if (found) return found;
   }
   return null;
+}
+
+/**
+ * mkdir -p, for the stub's own tree: every ancestor of `dirPath` that
+ * is not already an entry somewhere gets one, in its own parent's
+ * listing, and every ancestor (this one included) gets a listing of
+ * its own registered — even empty — so `ls` can open it rather than
+ * 404. Mirrors what `write`/`mkdir` create server-side for a nested
+ * path whose intermediate folders do not exist yet.
+ */
+function ensureDirChain(workspace, dirPath) {
+  if (!dirPath) return;
+  workspace.extraEntries = workspace.extraEntries ?? new Map();
+  let parent = '';
+  for (const segment of dirPath.split('/')) {
+    const current = parent ? `${parent}/${segment}` : segment;
+    if (!entryAt(current, workspace)) {
+      if (!workspace.extraEntries.has(parent)) workspace.extraEntries.set(parent, []);
+      workspace.extraEntries.get(parent).push({ path: current, kind: 'dir', sizeBytes: null });
+    }
+    if (!workspace.extraEntries.has(current)) workspace.extraEntries.set(current, []);
+    workspace.removed?.delete(current);
+    parent = current;
+  }
 }
 
 /** Was `path` there at HEAD (the static fixture), rather than something
@@ -803,12 +839,26 @@ function handleWorkspaces(op, body, response) {
       workspace.files.set(path, bytes);
       if (created) {
         workspace.removed?.delete(path);
-        workspace.extraEntries = workspace.extraEntries ?? new Map();
         const dir = folderOf(path);
+        ensureDirChain(workspace, dir);
+        workspace.extraEntries = workspace.extraEntries ?? new Map();
         if (!workspace.extraEntries.has(dir)) workspace.extraEntries.set(dir, []);
         workspace.extraEntries.get(dir).push({ path, kind: 'file', sizeBytes: bytes.byteLength });
       }
       return json(response, 200, { path, created, sizeBytes: bytes.byteLength });
+    }
+    case 'mkdir': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      const path = body.path ?? '';
+      if (!path) return error(response, 400, 'bad_path', 'A folder path is required.');
+      const existing = entryAt(path, workspace);
+      if (existing) {
+        if (existing.kind !== 'dir') return error(response, 409, 'bad_path', `${path} already exists.`);
+        return json(response, 200, { path, created: false });
+      }
+      ensureDirChain(workspace, path);
+      return json(response, 200, { path, created: true });
     }
     case 'git-status': {
       const workspace = scope.workspaces.get(body.id ?? '');

@@ -82,6 +82,7 @@ import {
   identityFor,
   listDirectory,
   measureWorkspace,
+  mkdirWorkspaceFile,
   newWorkspaceStorageKey,
   readWorkspaceFile,
   orphanedByNow,
@@ -619,6 +620,37 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       created: written.created,
       sizeBytes: written.sizeBytes,
     });
+  }
+
+  /** An empty directory created in the checkout — the trailing-`/` convention. */
+  async function mkdirFile(
+    workspace: store.StoredWorkspace,
+    env: OpenedEnv,
+    body: Body,
+    response: ServerResponse
+  ) {
+    const path = validateWorkspacePath(body.path, { forWrite: true });
+    if (!path.ok || !path.path)
+      return sendError(
+        response,
+        400,
+        'bad_path',
+        path.ok ? 'A folder path is required.' : path.message
+      );
+    let outcome;
+    try {
+      outcome = await mkdirWorkspaceFile(
+        workspaceDir(workspace.storageKey),
+        path.path,
+        identityFor(workspace)
+      );
+    } catch (error) {
+      if (error instanceof WorkspacePathError)
+        return sendError(response, 409, 'bad_path', error.message);
+      throw error;
+    }
+    await store.touchWorkspace(db, workspace.id);
+    sendJson(response, 200, { path: path.path, created: outcome.created });
   }
 
   async function edit(
@@ -1307,6 +1339,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     grep,
     read,
     write,
+    mkdir: mkdirFile,
     edit,
     rm: removeFile,
     mv: moveFile,
