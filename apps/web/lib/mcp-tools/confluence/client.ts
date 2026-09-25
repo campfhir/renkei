@@ -29,12 +29,8 @@ import { getDatabase } from '@renkei/db';
 import { getAtlassianConfluenceApp } from '@/lib/atlassian-app';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
-import {
-  REQUEST_TIMEOUT_MS,
-  UPLOAD_TIMEOUT_MS,
-  isTimeoutError,
-  timeoutSignal,
-} from '../fetch-guard';
+import { UPLOAD_TIMEOUT_MS, isTimeoutError, timeoutSignal, writeTimeoutFor } from '../fetch-guard';
+import { describeConfluenceError } from './errors';
 
 /** Refresh when the token is inside this window of expiry. */
 const REFRESH_MARGIN_MS = 2 * 60 * 1000;
@@ -117,18 +113,6 @@ export async function resolveConfluenceAccess(
   };
 }
 
-function describeStatus(status: number): string {
-  if (status === 403) {
-    return (
-      'Confluence refused (403) — the grant likely lacks the needed scope, or the Atlassian ' +
-      'app registration is missing the permission. Reconnect Confluence after the admin fixes ' +
-      'the app.'
-    );
-  }
-  if (status === 429) return 'Confluence is rate limiting (429); try again shortly.';
-  return `Confluence API answered ${status}`;
-}
-
 /** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
 function truncateForLog(text: string): string {
   return text.length > 1300 ? `${text.slice(0, 1300)}… (${text.length} chars total)` : text;
@@ -148,8 +132,12 @@ async function confluenceRequest(
   const jsonBody = init?.json !== undefined ? JSON.stringify(init.json) : undefined;
   const body = jsonBody ?? init?.body;
   // Uploads (FormData) get the long budget; a missing deadline here used to
-  // turn a stalled upstream into a tool call that never returned.
-  const timeoutMs = body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+  // turn a stalled upstream into a tool call that never returned. A large
+  // JSON write (a long page body) gets it too — see writeTimeoutFor.
+  const timeoutMs =
+    body instanceof FormData
+      ? UPLOAD_TIMEOUT_MS
+      : writeTimeoutFor(jsonBody === undefined ? 0 : Buffer.byteLength(jsonBody, 'utf8'));
   let response: Response;
   try {
     response = await fetch(
@@ -195,7 +183,7 @@ async function confluenceRequest(
       requestBody: jsonBody === undefined ? undefined : secure(truncateForLog(jsonBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status) };
+    return { ok: false, error: describeConfluenceError(response.status, responseBody) };
   }
   return { ok: true, response };
 }

@@ -6,11 +6,14 @@
  */
 
 import {
+  LARGE_WRITE_BYTES,
   REQUEST_TIMEOUT_MS,
+  UPLOAD_TIMEOUT_MS,
   base64LengthFor,
   decodeBase64Attachment,
   isTimeoutError,
   timeoutSignal,
+  writeTimeoutFor,
 } from './fetch-guard';
 
 describe('decodeBase64Attachment', () => {
@@ -84,5 +87,17 @@ describe('isTimeoutError', () => {
     expect(isTimeoutError(Object.assign(new Error('t'), { name: 'TimeoutError' }))).toBe(true);
     expect(isTimeoutError(Object.assign(new Error('a'), { name: 'AbortError' }))).toBe(false);
     expect(isTimeoutError(new TypeError('fetch failed'))).toBe(false);
+  });
+});
+
+describe('writeTimeoutFor', () => {
+  it('gives an ordinary JSON write the 15s deadline', () => {
+    expect(writeTimeoutFor(0)).toBe(REQUEST_TIMEOUT_MS);
+    expect(writeTimeoutFor(LARGE_WRITE_BYTES)).toBe(REQUEST_TIMEOUT_MS);
+  });
+
+  it('gives a multi-megabyte body the upload budget', () => {
+    expect(writeTimeoutFor(LARGE_WRITE_BYTES + 1)).toBe(UPLOAD_TIMEOUT_MS);
+    expect(writeTimeoutFor(10 * 1024 * 1024)).toBe(UPLOAD_TIMEOUT_MS);
   });
 });

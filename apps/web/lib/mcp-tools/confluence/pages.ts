@@ -181,7 +181,10 @@ export async function registerPageTools(
       description:
         'Create a new Confluence page from Markdown. Headings, lists, code blocks, quotes, ' +
         'links, bold/italic/strike, and "[~accountId]" mentions (look up an accountId via ' +
-        'confluence_search_users) all render properly in the Confluence editor.',
+        'confluence_search_users) all render properly in the Confluence editor. There is no ' +
+        'length limit on this side; Confluence Cloud itself rejects a request over 5 MB, and ' +
+        'the converted body runs several times the Markdown, so split a very long document ' +
+        'into a parent page with child pages (parentId).',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         spaceId: z.string().min(1).describe('Space id from confluence_list_spaces'),
@@ -229,7 +232,8 @@ export async function registerPageTools(
       description:
         'Replace a page’s body with new Markdown content (a full replace, not a patch — Confluence ' +
         'has no partial-edit API). Optionally rename it in the same call. Use ' +
-        'confluence_update_page_title for a rename with no content change.',
+        'confluence_update_page_title for a rename with no content change. Same size rule as ' +
+        'confluence_create_page: no limit here, but Confluence Cloud rejects a request over 5 MB.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         pageId: z.string().min(1).describe('Page id to edit'),

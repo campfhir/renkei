@@ -21,6 +21,20 @@ export const REQUEST_TIMEOUT_MS = 15_000;
  */
 export const UPLOAD_TIMEOUT_MS = 120_000;
 
+/**
+ * A JSON write whose body is larger than this is treated as a transfer,
+ * not a round trip, and gets the upload budget. A multi-megabyte Confluence
+ * page (Markdown converts to several times its size in ADF) can take longer
+ * than 15s just to send on a slow uplink, and the 15s deadline was written
+ * for a stalled upstream, not a large one.
+ */
+export const LARGE_WRITE_BYTES = 512 * 1024;
+
+/** The deadline for a JSON write of `bodyBytes` bytes. */
+export function writeTimeoutFor(bodyBytes: number): number {
+  return bodyBytes > LARGE_WRITE_BYTES ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+}
+
 /** A caller-supplied signal wins; otherwise the request gets a deadline. */
 export function timeoutSignal(init: RequestInit | undefined, ms: number): AbortSignal {
   return init?.signal ?? AbortSignal.timeout(ms);
@@ -32,8 +46,7 @@ export function isTimeoutError(error: unknown): boolean {
 }
 
 export type DecodedAttachment =
-  | { ok: true; buffer: Buffer<ArrayBuffer> }
-  | { ok: false; error: string };
+  { ok: true; buffer: Buffer<ArrayBuffer> } | { ok: false; error: string };
 
 /**
  * Base64 attachment payload → Buffer, strictly. Buffer.from(x, 'base64')
