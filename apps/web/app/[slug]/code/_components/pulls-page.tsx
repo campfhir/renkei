@@ -12,6 +12,7 @@ import LocalTime from '@/components/local-time';
 import { getJson } from '@/lib/fetch-json';
 import type { HostPullRequest } from '@/lib/code/repo-host';
 import Pill from './pill';
+import PrSubscribe from './pr-subscribe';
 
 function StatePill({ state }: { state: HostPullRequest['state'] }) {
   if (state === 'merged') return <Pill tone="purple">Merged</Pill>;
@@ -104,6 +105,21 @@ export default function PullsPage({
                   <div className="text-xs text-gray-500">
                     {pr.author} · <LocalTime at={pr.updatedAt} />
                   </div>
+                  {pr.state === 'open' ? (
+                    <details className="pt-1">
+                      <summary className="cursor-pointer text-xs text-blue-600 dark:text-blue-400">
+                        Subscribe
+                      </summary>
+                      <div className="mt-1.5">
+                        <PrSubscribe
+                          tenantId={tenantId}
+                          projectId={projectId}
+                          prNumber={pr.number}
+                          prUrl={pr.url}
+                        />
+                      </div>
+                    </details>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -122,8 +138,11 @@ export default function PullsPage({
                   <th scope="col" className="hidden py-1 pr-2 font-medium sm:table-cell">
                     Author
                   </th>
-                  <th scope="col" className="py-1 font-medium">
+                  <th scope="col" className="py-1 pr-2 font-medium">
                     Updated
+                  </th>
+                  <th scope="col" className="py-1 font-medium">
+                    Subscribe
                   </th>
                 </tr>
               </thead>
@@ -152,8 +171,25 @@ export default function PullsPage({
                     <td className="hidden max-w-[10rem] truncate py-1.5 pr-2 text-xs text-gray-500 sm:table-cell">
                       {pr.author || '—'}
                     </td>
-                    <td className="py-1.5 text-xs whitespace-nowrap text-gray-500">
+                    <td className="py-1.5 pr-2 text-xs whitespace-nowrap text-gray-500">
                       <LocalTime at={pr.updatedAt} />
+                    </td>
+                    <td className="py-1.5 align-top">
+                      {pr.state === 'open' ? (
+                        <details>
+                          <summary className="cursor-pointer text-xs text-blue-600 dark:text-blue-400">
+                            Subscribe
+                          </summary>
+                          <div className="mt-1.5 w-56">
+                            <PrSubscribe
+                              tenantId={tenantId}
+                              projectId={projectId}
+                              prNumber={pr.number}
+                              prUrl={pr.url}
+                            />
+                          </div>
+                        </details>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

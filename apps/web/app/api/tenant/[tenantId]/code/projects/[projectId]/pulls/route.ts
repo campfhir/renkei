@@ -9,16 +9,25 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { jsonError } from '@/lib/chat/route-support';
-import { codeProjectHostContext } from '@/lib/code/host-route-context';
+import { codeProjectContext } from '@/lib/code/route-access';
+import { hostAdapterFor } from '@/lib/code/repo-host';
+import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; projectId: string }> }
 ): Promise<Response> {
   const { tenantId, projectId } = await params;
-  const ready = await codeProjectHostContext(request, tenantId, projectId);
+  const ready = await codeProjectContext(request, tenantId, projectId);
   if (!ready.ok) return ready.response;
-  const { project, adapter } = ready.context;
+  const { session, project } = ready.context;
+  const origin = await getOrigin(request);
+  const adapter = hostAdapterFor(project.repo!.provider, {
+    tenantId,
+    subject: session.subject,
+    origin: origin.ok ? origin.val : '',
+  });
+  if (!adapter) return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
   const listed = await adapter.listPullRequests(project.repo!.fullName, {
     state: 'open',
     max: 25,

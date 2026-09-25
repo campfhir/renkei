@@ -68,6 +68,7 @@ export async function GET(
     redirectUri:
       typeof config?.settings.redirectUri === 'string' ? config.settings.redirectUri : null,
     hasClientSecret: Boolean(config?.secrets.clientSecret),
+    hasWebhookSecret: Boolean(config?.secrets.webhookSecret),
   });
 }
 
@@ -93,7 +94,7 @@ export async function PUT(
   if (!isRecord(body)) {
     return NextResponse.json({ error: 'JSON body required' }, { status: 400 });
   }
-  const { clientId, clientSecret } = body;
+  const { clientId, clientSecret, webhookSecret } = body;
   if (typeof clientId !== 'string' || clientId.length === 0) {
     return NextResponse.json({ error: 'clientId is required' }, { status: 400 });
   }
@@ -129,6 +130,15 @@ export async function PUT(
       { status: 400 }
     );
   }
+  // Optional: verifies inbound webhook deliveries
+  // (app/api/webhooks/bitbucket/[tenantId]/route.ts) — a repo webhook is
+  // registered by hand in Bitbucket's own repository settings with this
+  // same value as a `?secret=` query parameter on the webhook URL, since
+  // Bitbucket Cloud does not sign deliveries the way GitHub Apps do.
+  const mergedWebhookSecret =
+    typeof webhookSecret === 'string' && webhookSecret.length > 0
+      ? webhookSecret
+      : storedSecrets.webhookSecret;
 
   const settings: Record<string, unknown> = { clientId, scopes };
   if (redirectUri) settings.redirectUri = redirectUri;
@@ -136,7 +146,14 @@ export async function PUT(
   const writeResult = await setConnectorConfig(
     tenantId,
     ATLASSIAN_BITBUCKET_CONNECTOR,
-    { enabled, settings, secrets: { clientSecret: mergedClientSecret } },
+    {
+      enabled,
+      settings,
+      secrets: {
+        clientSecret: mergedClientSecret,
+        ...(mergedWebhookSecret ? { webhookSecret: mergedWebhookSecret } : {}),
+      },
+    },
     keyResult.val
   );
   if (!writeResult.ok) {

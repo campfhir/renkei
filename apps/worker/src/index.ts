@@ -26,6 +26,10 @@ import {
   createMicrosoftMessageOverrideHandler,
 } from './handlers/microsoft-events';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
+import {
+  createGitHubPrPipelineHandler,
+  createBitbucketPrPipelineHandler,
+} from './handlers/pr-pipeline-events';
 import { createDomainDispatchHandler } from './handlers/domain-dispatch';
 import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
 import { createMailBulkJobHandler } from './handlers/mail-bulk-jobs';
@@ -60,6 +64,12 @@ function registerConnectorHandlers(): void {
   registerHandler('microsoft', 'message-override', createMicrosoftMessageOverrideHandler());
   registerHandler('zoom', 'recording.transcript_completed', createZoomTranscriptHandler());
   registerHandler('zoom', 'meeting.summary_completed', createZoomSummaryHandler());
+  // A subscribed pull request's pipeline outcome (app/api/webhooks/
+  // github|bitbucket/[tenantId]/route.ts in apps/web) — matched against
+  // pr_subscriptions, recorded, and acted on per that subscription's own
+  // auto_merge/auto_fix (handlers/pr-pipeline-events.ts).
+  registerHandler('github', 'workflow_run', createGitHubPrPipelineHandler());
+  registerHandler('atlassian-bitbucket', 'repo:commit_status_updated', createBitbucketPrPipelineHandler());
   // Async Outlook bulk mail actions — submitted by the MCP tool as a bare
   // {jobId} pointer; the mail_bulk_jobs row is the source of truth.
   registerHandler('mailjobs', 'bulk-action', createMailBulkJobHandler());
