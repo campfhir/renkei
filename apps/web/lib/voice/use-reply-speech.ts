@@ -73,7 +73,12 @@ export function useReplySpeech({
     const prose = replyProse(messages, current.turnId);
     if (prose.length < current.spoken) current.spoken = prose.length;
     const ended = activeTurnId !== current.turnId;
-    const { chunks, rest } = takeSpeakable(prose.slice(current.spoken), { final: ended });
+    // Nothing spoken yet: the first clause is enough to start on
+    // (sentences.ts), so the reply is heard before its first sentence ends.
+    const { chunks, rest } = takeSpeakable(prose.slice(current.spoken), {
+      final: ended,
+      first: current.spoken === 0,
+    });
     for (const chunk of chunks) queue.enqueue(chunk);
     current.spoken = prose.length - rest.length;
     if (ended) {

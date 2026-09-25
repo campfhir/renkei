@@ -5,7 +5,10 @@
  * composer and the speaker as the message list. Opens over the thread,
  * listens through lib/voice/recorder.ts, sends each utterance as a turn
  * exactly as typing it would (so it lands in the same chat, with the same
- * tools, model and project), and reads the reply as it streams.
+ * tools, model and project), and reads the reply as it streams. The
+ * recognition starts at the utterance's first real pause, before the
+ * recorder has decided it is over, so the words are usually back by then
+ * and the turn goes out the moment it is.
  *
  * Interruptions are the point, and so is not interrupting on a cough.
  * The rules are lib/voice/barge-in.ts's, and the recognizer is the
@@ -159,7 +162,18 @@ export default function VoiceMode({
   // The language the last utterance was heard in, when it was not the set one.
   const [heard, setHeard] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
+  // The utterance is words and on its way to being a turn: between the
+  // transcript landing and the turn starting, so the wave does not fall
+  // back to "Listening" for the length of the Send request.
+  const [sending, setSending] = useState(false);
   const recorder = useRef<UtteranceRecorder | null>(null);
+  // The recognition started at the utterance's pause (recorder.ts's
+  // onSpeechPause), for the close to take rather than start its own —
+  // numbered with the utterance it is of, so a stale one is never taken.
+  const early = useRef<{
+    seq: number;
+    result: ReturnType<typeof voiceClient.transcribe>;
+  } | null>(null);
   // The assistant is reading its answer: words of the reply are sounding
   // (or queued to), with no tool call in flight. Not a narration — "still
   // working on it", the sentence before a call — and not the model
@@ -272,12 +286,29 @@ export default function VoiceMode({
           }
         })();
       },
-      onUtterance: (wav) => {
+      onSpeechPause: (wav) => {
+        // Likely the end of the utterance, with the close most of a
+        // second away: recognise what there is now, so the words are
+        // back by the time the close asks for them. Speech after this
+        // makes it stale, and the close (told so) recognises afresh.
+        if (pushToTalk) return;
+        early.current = {
+          seq: utteranceSeq.current,
+          result: voiceClient.transcribe(tenantId, wav, { locale, detectLanguage }),
+        };
+      },
+      onUtterance: (wav, _durationMs, sameAsPause) => {
         const closed = utterance.current;
+        const seq = utteranceSeq.current;
         utteranceSeq.current += 1;
+        const pending =
+          sameAsPause && early.current?.seq === seq
+            ? early.current.result
+            : voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
+        early.current = null;
         void (async () => {
           setTranscribing(true);
-          const result = await voiceClient.transcribe(tenantId, wav, { locale, detectLanguage });
+          const result = await pending;
           setTranscribing(false);
           if (result.error) {
             setError(result.error);
@@ -306,8 +337,13 @@ export default function VoiceMode({
             else narrate('Say allow, always allow, or deny.');
             return;
           }
-          const sent = await latest.current.onSend(text);
-          if (!sent) setError('The message could not be sent.');
+          setSending(true);
+          try {
+            const sent = await latest.current.onSend(text);
+            if (!sent) setError('The message could not be sent.');
+          } finally {
+            setSending(false);
+          }
         })();
       },
       onSpeechEnd: () => {
@@ -337,6 +373,7 @@ export default function VoiceMode({
     return () => {
       instance.stop();
       recorder.current = null;
+      early.current = null;
       setRecording(false);
       setOpening(false);
     };
@@ -433,9 +470,9 @@ export default function VoiceMode({
     if (recording) setPhase('recording');
     else if (queueState === 'speaking') setPhase('speaking');
     else if (transcribing) setPhase('transcribing');
-    else if (running || queueState === 'loading') setPhase('thinking');
+    else if (running || sending || queueState === 'loading') setPhase('thinking');
     else setPhase('listening');
-  }, [phase, recording, queueState, running, transcribing]);
+  }, [phase, recording, queueState, running, sending, transcribing]);
 
   const close = useCallback(() => {
     recorder.current?.stop();

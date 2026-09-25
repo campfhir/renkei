@@ -155,10 +155,18 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   await shot(page, testInfo, 'voice-07-mode-listening', false);
 
   // The fake microphone speaks at three seconds; the utterance is cut,
-  // transcribed and sent, and the reply takes a moment to arrive.
+  // transcribed and sent, and the reply takes a moment to arrive. The
+  // recognition is asked for once: at the utterance's first pause, ahead
+  // of the recorder closing it (lib/voice/recorder.ts's onSpeechPause),
+  // and the close takes that answer rather than asking again.
+  let recognitions = 0;
+  page.on('request', (request) => {
+    if (/\/voice\/transcribe/.test(request.url())) recognitions += 1;
+  });
   await expect(dialog.getByText(UTTERANCE)).toBeVisible({ timeout: 30_000 });
   await expect(dialog.getByText('Thinking…')).toBeVisible({ timeout: 10_000 });
   await shot(page, testInfo, 'voice-08-mode-heard-thinking', false);
+  expect(recognitions).toBe(1);
 
   await expect(dialog.getByText('Speaking — talk to interrupt')).toBeVisible({ timeout: 20_000 });
   await expect(dialog.getByText(/Two issues slipped out of the last sprint/)).toBeVisible();
