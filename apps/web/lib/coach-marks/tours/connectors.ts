@@ -211,6 +211,41 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
     ],
   },
   {
+    id: 'connect-entra-developer',
+    area: 'Connectors',
+    version: 1,
+    title: 'Connecting Entra Developer',
+    description:
+      'Microsoft Entra app registrations, enterprise applications and app roles, for developers, on a connection of its own.',
+    startPath: '/connectors',
+    autoStart: false,
+    requires: ['card-entra-developer'],
+    audience: 'everyone',
+    steps: [
+      {
+        id: 'card',
+        title: 'For developers and app owners',
+        target: 'card-entra-developer',
+        placement: 'auto',
+        body: 'Create app registrations and enterprise applications, define their app roles, and put users and groups in those roles. It is a separate Entra app from Microsoft 365, with directory-wide permissions, so it connects on its own — and Entra still checks what you may create or own on every call.',
+      },
+      {
+        id: 'scopes',
+        title: 'What Renkei may do',
+        target: 'entra-developer-scopes',
+        placement: 'auto',
+        body: 'Reading applications, changing them, assigning roles, and finding people and groups are separate permissions. Leave out what you will not use; every change is a card you confirm before it reaches Entra.',
+      },
+      {
+        id: 'connect',
+        title: 'Connect',
+        target: 'entra-developer-connect',
+        placement: 'auto',
+        body: 'Approve on Microsoft’s screen and come back connected. Disconnecting it leaves your Microsoft 365 connection as it was.',
+      },
+    ],
+  },
+  {
     id: 'connect-bitbucket',
     area: 'Connectors',
     version: 1,

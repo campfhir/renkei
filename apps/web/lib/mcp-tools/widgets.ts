@@ -157,8 +157,10 @@ const TEMPLATES: Array<{
     name: 'directory_action_preview',
     uri: DIRECTORY_ACTION_PREVIEW_URI,
     description:
-      'Preview of an Active Directory account action (unlock, reset password, create/edit a ' +
-      'user, security-group membership) awaiting confirmation.',
+      'Preview of a directory action — an Active Directory account action (unlock, reset ' +
+      'password, create/edit a user, security-group membership) or a Microsoft Entra ' +
+      'application action (create/change an application, its app roles, who is assigned ' +
+      'to them) — awaiting confirmation.',
     html: DIRECTORY_ACTION_PREVIEW_HTML,
   },
 ];

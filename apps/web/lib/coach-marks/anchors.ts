@@ -189,6 +189,12 @@ export const COACH_ANCHORS = [
   'jira-admin-scopes',
   /** Connect Jira Administration. */
   'jira-admin-connect',
+  /** The Entra Developer card. */
+  'card-entra-developer',
+  /** Its scope picker ("What Renkei may do"). */
+  'entra-developer-scopes',
+  /** Connect Entra Developer. */
+  'entra-developer-connect',
   /** The Bitbucket panel. */
   'card-bitbucket',
   /** Its capability picker. */

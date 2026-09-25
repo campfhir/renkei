@@ -28,6 +28,10 @@ export const LOGO_FILE: Record<string, string> = {
   // OnBase Administration is a separate connector/capability key from
   // 'onbase', but the same Hyland product and the same mark.
   'onbase-admin': 'onbase',
+  // Entra Developer is a second Entra app registration on its own key; the
+  // company mark is the honest picture for a directory-level product, the
+  // same reasoning the enterprise-directory panel gives for 'microsoft'.
+  'entra-developer': 'microsoft',
   // The WebEx bot is a second registration of the same product.
   'webex-bot': 'webex',
 };

@@ -5,7 +5,7 @@
  * back out of a successful refresh or the grant dies on the next round.
  */
 
-import { MicrosoftAdapter } from './microsoft';
+import { ENTRA_DEVELOPER, MICROSOFT, MicrosoftAdapter } from './microsoft';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -16,6 +16,17 @@ function jsonResponse(status: number, body: unknown): Response {
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+describe('MicrosoftAdapter provider key', () => {
+  it('defaults to the Microsoft 365 rows, and takes the Entra Developer key for that app', () => {
+    // One adapter for every Entra app registration Renkei holds: the key
+    // decides which provider_grants rows a refresh writes back to.
+    expect(new MicrosoftAdapter('secret', 'tenant-1').provider).toBe(MICROSOFT);
+    expect(new MicrosoftAdapter('secret', 'tenant-1', ENTRA_DEVELOPER).provider).toBe(
+      ENTRA_DEVELOPER
+    );
+  });
 });
 
 describe('MicrosoftAdapter.refreshTokens', () => {

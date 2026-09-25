@@ -47,6 +47,8 @@ const PREFIXES: [string, string][] = [
   ['outlook_', 'microsoft'],
   ['sharepoint_', 'sharepoint'],
   ['onedrive_', 'onedrive'],
+  // Entra application provisioning: its own connector and grant, not Outlook's.
+  ['entra_', 'entra-developer'],
   ['webex_', 'webex'],
   ['zoom_', 'zoom'],
   // Before `onbase_`: the admin tools are a separate connector and grant.

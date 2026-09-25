@@ -40,7 +40,7 @@ export {
   OnBaseAdminAdapter,
   type OnBaseRefresh,
 } from './onbase';
-export { MICROSOFT, MicrosoftAdapter } from './microsoft';
+export { MICROSOFT, ENTRA_DEVELOPER, MicrosoftAdapter } from './microsoft';
 export {
   outlookIndexingOf,
   OUTLOOK_INDEXING_CATEGORIES,

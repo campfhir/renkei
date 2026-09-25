@@ -227,6 +227,7 @@ const handler = async (
       availability.zoomAvailable ||
       availability.confluenceAvailable ||
       availability.jiraAdminAvailable ||
+      availability.entraDeveloperAvailable ||
       availability.filesharesAvailable ||
       availability.mirthAvailable ||
       availability.onbaseAvailable ||
@@ -354,6 +355,8 @@ const handler = async (
       confluenceScopes,
       jiraAdminAvailable,
       jiraAdminScopes,
+      entraDeveloperAvailable,
+      entraDeveloperScopes,
       bitbucketAvailable,
       bitbucketScopes,
     } = availability;
@@ -436,6 +439,7 @@ const handler = async (
               zoomScopes: zoomAvailable ? zoomScopes : undefined,
               confluenceScopes: confluenceAvailable ? confluenceScopes : undefined,
               jiraAdminScopes: jiraAdminAvailable ? jiraAdminScopes : undefined,
+              entraDeveloperScopes: entraDeveloperAvailable ? entraDeveloperScopes : undefined,
               bitbucketScopes: bitbucketAvailable ? bitbucketScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               agent: agentId ? { agentId } : undefined,
@@ -542,7 +546,10 @@ const handler = async (
             'screens — are proposals the user applies from a Renkei review page, never from a ' +
             'tool call, so share the link a proposal returns), ' +
             'WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), ' +
-            'SharePoint (sharepoint_*), OneDrive (onedrive_*), Confluence (confluence_*), ' +
+            'SharePoint (sharepoint_*), OneDrive (onedrive_*), Entra Developer (entra_*: ' +
+            'Microsoft Entra app registrations, enterprise applications, app roles and who is ' +
+            'assigned to them — for developers and app owners, on its own connection; every ' +
+            'write is a *_preview card the user confirms), Confluence (confluence_*), ' +
             'Zoom (zoom_*), org network file shares (fileshare_*, SMB/SFTP, connected with ' +
             "the user's own credentials per share), Mirth Connect integration engines (mirth_*, " +
             "one or more instances such as dev/test/prod, each connected with the user's own " +

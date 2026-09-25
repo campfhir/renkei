@@ -32,6 +32,7 @@ import { GitHubForm } from '@/app/[slug]/admin/connectors/forms/github-form';
 import { WebexUserForm } from '@/app/[slug]/admin/connectors/forms/webex-user-form';
 import { WebexBotForm } from '@/app/[slug]/admin/connectors/forms/webex-bot-form';
 import { MicrosoftForm } from '@/app/[slug]/admin/connectors/forms/microsoft-form';
+import { EntraDeveloperForm } from '@/app/[slug]/admin/connectors/forms/entra-developer-form';
 import { ZoomForm } from '@/app/[slug]/admin/connectors/forms/zoom-form';
 import { OnBaseForm } from '@/app/[slug]/admin/connectors/forms/onbase-form';
 import { OnBaseAdminForm } from '@/app/[slug]/admin/connectors/forms/onbase-admin-form';
@@ -71,6 +72,7 @@ const FORMS: Record<string, ComponentType<AdminFormProps>> = {
   'webex-user': WebexUserForm,
   'webex-bot': WebexBotForm,
   microsoft: MicrosoftForm,
+  'entra-developer': EntraDeveloperForm,
   zoom: ZoomForm,
   onbase: OnBaseForm,
   'onbase-admin': OnBaseAdminForm,

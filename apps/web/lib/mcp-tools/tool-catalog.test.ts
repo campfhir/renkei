@@ -253,6 +253,83 @@ describe('listAvailableTools', () => {
     expect(tools).toContain('jira_search_issues');
   });
 
+  it('includes Entra Developer only on its own grant, narrowed to its scopes, apart from Microsoft 365', async () => {
+    // A Microsoft 365 grant alone brings Outlook, never entra_: the second
+    // Entra app registration is a separate connection.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      microsoft: {
+        requested_scopes: ['Mail.Read', 'offline_access'],
+        granted_scopes: ['Mail.Read', 'offline_access'],
+      },
+    };
+    let tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('outlook_list_messages');
+    expect(tools.some((name) => name.startsWith('entra_'))).toBe(false);
+
+    // A read-only Entra Developer grant registers the reads and none of
+    // the preview/confirm writes.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'entra-developer': {
+        requested_scopes: ['Application.Read.All', 'User.Read', 'offline_access'],
+        granted_scopes: ['Application.Read.All', 'User.Read'],
+      },
+    };
+    invalidateToolCatalogCache('tenant-1', 'subject-1');
+    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('entra_check_access');
+    expect(tools).toContain('entra_get_application');
+    expect(tools).not.toContain('entra_create_application_preview');
+    expect(tools).not.toContain('entra_assign_app_role_preview');
+    // And no Microsoft 365 grant means no Outlook.
+    expect(tools).not.toContain('outlook_list_messages');
+
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'entra-developer': {
+        requested_scopes: [
+          'Application.Read.All',
+          'Application.ReadWrite.All',
+          'AppRoleAssignment.ReadWrite.All',
+        ],
+        granted_scopes: [
+          'Application.Read.All',
+          'Application.ReadWrite.All',
+          'AppRoleAssignment.ReadWrite.All',
+        ],
+      },
+    };
+    invalidateToolCatalogCache('tenant-1', 'subject-1');
+    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('entra_create_application_preview');
+    expect(tools).toContain('entra_assign_app_role_preview');
+    // The confirm half is app-only, but it is still a registered tool.
+    expect(tools).toContain('entra_assign_app_role_confirm');
+  });
+
+  it('hides Entra Developer writes in read-only mode and switches it off on its own key', async () => {
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'entra-developer': {
+        requested_scopes: ['Application.Read.All', 'Application.ReadWrite.All'],
+        granted_scopes: null,
+      },
+    };
+    readOnly = true;
+    let tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('entra_get_application');
+    expect(tools).not.toContain('entra_create_application_preview');
+    expect(tools).not.toContain('entra_create_application_confirm');
+
+    readOnly = false;
+    disabledConnectors = ['entra-developer'];
+    invalidateToolCatalogCache('tenant-1', 'subject-1');
+    tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools.some((name) => name.startsWith('entra_'))).toBe(false);
+    expect(tools).toContain('jira_search_issues');
+  });
+
   it('includes Bitbucket once its grant exists, narrowed to requested ∩ granted', async () => {
     // The Zoom arrangement: the token always carries the consumer's full
     // scope set, so the user's narrowing lives in requested_scopes and the

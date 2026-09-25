@@ -26,6 +26,7 @@ import {
   ATLASSIAN_BITBUCKET,
   ATLASSIAN_ADMIN,
   MICROSOFT,
+  ENTRA_DEVELOPER,
   ZOOM,
   ONBASE,
   ONBASE_ADMIN,
@@ -54,6 +55,11 @@ import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-too
 import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth';
 import { registerJiraAdminTools, JIRA_ADMIN_MCP_CONNECTOR } from '@/lib/mcp-tools/jira-admin';
 import { oauthJiraAdminAuth } from '@/lib/mcp-tools/jira-admin/jira-admin-auth';
+import {
+  registerEntraDeveloperTools,
+  ENTRA_DEVELOPER_MCP_CONNECTOR,
+} from '@/lib/mcp-tools/entra-developer';
+import { oauthEntraAuth } from '@/lib/mcp-tools/entra-developer/entra-auth';
 import { registerBitbucketTools, BITBUCKET_MCP_CONNECTOR } from '@/lib/mcp-tools/bitbucket';
 import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { registerGitHubTools, GITHUB_MCP_CONNECTOR } from '@/lib/mcp-tools/github';
@@ -105,6 +111,9 @@ export interface ConnectorAvailability {
   graphScopes: string[];
   sharepointAvailable: boolean;
   onedriveAvailable: boolean;
+  /** A SEPARATE connector/grant from microsoftAvailable — the second Entra app registration. */
+  entraDeveloperAvailable: boolean;
+  entraDeveloperScopes: string[];
   zoomAvailable: boolean;
   zoomScopes: string[];
   confluenceAvailable: boolean;
@@ -192,6 +201,16 @@ export async function resolveConnectorAvailability(
     microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Sites.'));
   const onedriveAvailable =
     microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Files.'));
+
+  // Entra Developer: the second Entra app registration, its own grant —
+  // connecting Microsoft 365 does not connect it, and it does not need
+  // Microsoft 365 connected. Same granted-over-requested rule (Graph tokens
+  // carry scp); its tools resolve their access fresh per call too.
+  const entraDeveloperGrantRow = await grantRow(db, tenantId, ENTRA_DEVELOPER, subject);
+  const entraDeveloperAvailable = entraDeveloperGrantRow !== undefined;
+  const entraDeveloperScopes = entraDeveloperGrantRow
+    ? (entraDeveloperGrantRow.granted_scopes ?? entraDeveloperGrantRow.requested_scopes)
+    : [];
 
   // Zoom inverts the rule: the token ALWAYS carries the Marketplace app's
   // full scope set (Zoom cannot narrow at consent), so bare granted would
@@ -304,6 +323,8 @@ export async function resolveConnectorAvailability(
     graphScopes,
     sharepointAvailable,
     onedriveAvailable,
+    entraDeveloperAvailable,
+    entraDeveloperScopes,
     zoomAvailable,
     zoomScopes,
     confluenceAvailable,
@@ -359,6 +380,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
     ...(availability.jiraAdminAvailable ? [JIRA_ADMIN_MCP_CONNECTOR] : []),
+    ...(availability.entraDeveloperAvailable ? [ENTRA_DEVELOPER_MCP_CONNECTOR] : []),
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.githubAvailable ? [GITHUB_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
@@ -393,6 +415,7 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   ZOOM_MCP_CONNECTOR,
   CONFLUENCE_MCP_CONNECTOR,
   JIRA_ADMIN_MCP_CONNECTOR,
+  ENTRA_DEVELOPER_MCP_CONNECTOR,
   BITBUCKET_MCP_CONNECTOR,
   GITHUB_MCP_CONNECTOR,
   FILESHARES_MCP_CONNECTOR,
@@ -436,6 +459,7 @@ export async function registerRenkeiTools(
     zoomAvailable,
     confluenceAvailable,
     jiraAdminAvailable,
+    entraDeveloperAvailable,
     bitbucketAvailable,
     githubAvailable,
     filesharesAvailable,
@@ -638,6 +662,17 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, JIRA_ADMIN_MCP_CONNECTOR),
       context,
       oauthJiraAdminAuth(context)
+    );
+  }
+  if (entraDeveloperAvailable) {
+    // A SEPARATE connector from Microsoft 365 — the second Entra app
+    // registration, its own grant and capability gate, the jira-admin
+    // arrangement — so it can be switched off or audience-limited on its
+    // own. Its scope gate sits inside registerEntraDeveloperTools.
+    await registerEntraDeveloperTools(
+      withCapabilityGate(server, projection, ENTRA_DEVELOPER_MCP_CONNECTOR),
+      context,
+      oauthEntraAuth(context)
     );
   }
   if (bitbucketAvailable) {
