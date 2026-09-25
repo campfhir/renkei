@@ -113,6 +113,19 @@ const REPLY_MARKDOWN = [
   'Want me to **move them** into the next sprint?',
 ].join('\n');
 
+/**
+ * The person's own prompt, seeded with a fence and a backtick of its
+ * own: the same Markdown renderer as the reply's, so this should read as
+ * a code-block card and inline monospace rather than literal backticks.
+ */
+const FENCE_PROMPT = [
+  'One more thing — does `status != Done` cover every closed state, or should it run as:',
+  '',
+  '```jql',
+  'project = OPS AND sprint in closedSprints() AND status not in (Done, Cancelled)',
+  '```',
+].join('\n');
+
 async function seedChat(
   client: Client,
   {
@@ -151,6 +164,12 @@ async function seedChat(
     [TURN_ID, E2E_TENANT_ID, CHAT_ID, MODEL_ID]
   );
   const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
+    {
+      seq: 0,
+      role: 'user',
+      kind: 'prompt',
+      blocks: [{ type: 'text', text: FENCE_PROMPT }],
+    },
     {
       seq: 1,
       role: 'user',
@@ -425,6 +444,63 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
       "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
     );
     await shot(page, testInfo, 'chat-code-blocks.png');
+
+    // The person's own prompt goes through the identical renderer: their
+    // fence is the same code-block card (on the blue bubble's own
+    // colours) and their backtick is monospace, not a literal character.
+    const userFence = page.locator('.chat-markdown-user').filter({ hasText: 'closedSprints()' });
+    await expect(userFence.locator('code', { hasText: 'status != Done' })).toBeVisible();
+    const userCode = userFence.locator('.chat-code');
+    await expect(userCode.locator('.chat-code-lang')).toHaveText('JQL');
+    // Off by default: no gutter class, and Copy hands back bare code —
+    // read from the clipboard rather than the button's transient label,
+    // which a stray re-render could flip back before this reads it.
+    await expect(userCode).not.toHaveClass(/line-numbers/);
+    await userCode.getByRole('button', { name: 'Copy' }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe('project = OPS AND sprint in closedSprints() AND status not in (Done, Cancelled)\n');
+
+    // Line numbers are this person's Appearance preference (off by
+    // default, as just shown) — on, every block gets a gutter, a pure
+    // CSS counter rather than a character the markup carries, so Copy
+    // above and here both still return bare code, numbers or not.
+    await client.query(
+      `INSERT INTO user_preferences (tenant_id, subject, key, value)
+       VALUES ($1, $2, 'theme', '{"mode":"auto","codeLineNumbers":true}'::jsonb)
+       ON CONFLICT (tenant_id, subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      [E2E_TENANT_ID, E2E_SUBJECT]
+    );
+    try {
+      await page.reload();
+      const numberedSql = markdown.locator('.chat-code.line-numbers', {
+        hasText: 'closedSprints()',
+      });
+      await expect(numberedSql).toBeVisible();
+      // The gutter's digits are `::before` generated content — not a DOM
+      // text node, so nothing here can read the rendered "1" back out
+      // the way Copy or a selection would; what a script CAN confirm is
+      // that every line is wired to the counter that draws it.
+      const codeLines = numberedSql.locator('.chat-code-line');
+      await expect(codeLines).toHaveCount(1);
+      await expect
+        .poll(() => codeLines.first().evaluate((el) => getComputedStyle(el).counterIncrement))
+        .toContain('chat-code-line');
+      await numberedSql.getByRole('button', { name: 'Copy' }).click();
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(
+          'project = OPS AND sprint in closedSprints() AND status != Done ORDER BY updated DESC\n'
+        );
+    } finally {
+      await client.query(
+        `UPDATE user_preferences SET value = '{"mode":"auto","codeLineNumbers":false}'::jsonb
+         WHERE tenant_id = $1 AND subject = $2 AND key = 'theme'`,
+        [E2E_TENANT_ID, E2E_SUBJECT]
+      );
+      await page.reload();
+    }
+
     // At phone width the header, and Copy in it, are still there — no hover
     // to bring a button out — and the block scrolls rather than the page.
     if (!mobile) {
@@ -496,10 +572,16 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await page.keyboard.press('Escape');
 
     // The owner can rewrite a prompt: Edit fills the box with its text and
-    // says what sending will do; Cancel empties it again. Resend asks first.
-    const bubble = page.getByText('Which issues slipped out of the last OPS sprint?');
+    // says what sending will do; Cancel empties it again. Resend asks
+    // first. Scoped to this prompt's own group — a second prompt earlier
+    // in the chat (the fenced one) carries the identical Edit/Resend
+    // pair, always in the DOM even unhovered.
+    const promptGroup = page.locator('div.group.items-end', {
+      hasText: 'Which issues slipped out of the last OPS sprint?',
+    });
+    const bubble = promptGroup.getByText('Which issues slipped out of the last OPS sprint?');
     await bubble.hover();
-    await page.getByRole('button', { name: 'Edit' }).click();
+    await promptGroup.getByRole('button', { name: 'Edit' }).click();
     const box = page.getByRole('textbox', { name: 'Message' });
     await expect(box).toHaveValue('Which issues slipped out of the last OPS sprint?');
     await expect(page.getByText(/Editing an earlier message/)).toBeVisible();
@@ -507,7 +589,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(box).toHaveValue('');
     await bubble.hover();
-    await page.getByRole('button', { name: 'Resend' }).click();
+    await promptGroup.getByRole('button', { name: 'Resend' }).click();
     await expect(page.getByRole('heading', { name: 'Resend this message?' })).toBeVisible();
     await page.getByRole('button', { name: 'Cancel' }).click();
 

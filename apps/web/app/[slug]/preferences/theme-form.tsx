@@ -11,7 +11,7 @@
  */
 
 import { useState } from 'react';
-import type { ThemeMode } from '@renkei/user-prefs/prefs';
+import type { ThemeMode, ThemePrefs } from '@renkei/user-prefs/prefs';
 import { applyThemeMode, setStoredThemeMode } from '@/lib/theme';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
@@ -21,16 +21,27 @@ const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] 
   { value: 'dark', label: 'Dark', hint: '' },
 ];
 
-export default function ThemeForm({ tenantId, initial }: { tenantId: string; initial: ThemeMode }) {
-  const [mode, setMode] = useState<ThemeMode>(initial);
-  const [saved, setSaved] = useState<ThemeMode>(initial);
+export default function ThemeForm({
+  tenantId,
+  initial,
+}: {
+  tenantId: string;
+  initial: ThemePrefs;
+}) {
+  const [prefs, setPrefs] = useState<ThemePrefs>(initial);
+  const [saved, setSaved] = useState<ThemePrefs>(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
 
-  function choose(next: ThemeMode) {
-    setMode(next);
+  function choose(mode: ThemeMode) {
+    setPrefs((current) => ({ ...current, mode }));
     setStatus('idle');
-    setStoredThemeMode(tenantId, next);
-    applyThemeMode(next);
+    setStoredThemeMode(tenantId, mode);
+    applyThemeMode(mode);
+  }
+
+  function chooseLineNumbers(codeLineNumbers: boolean) {
+    setPrefs((current) => ({ ...current, codeLineNumbers }));
+    setStatus('idle');
   }
 
   async function save() {
@@ -39,10 +50,10 @@ export default function ThemeForm({ tenantId, initial }: { tenantId: string; ini
       const response = await fetch(`/api/tenant/${tenantId}/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme: { mode } }),
+        body: JSON.stringify({ theme: prefs }),
       });
       if (response.ok) {
-        setSaved(mode);
+        setSaved(prefs);
         setStatus('saved');
       } else {
         setStatus('failed');
@@ -75,7 +86,7 @@ export default function ThemeForm({ tenantId, initial }: { tenantId: string; ini
                 type="radio"
                 name="theme-mode"
                 className="shrink-0"
-                checked={mode === option.value}
+                checked={prefs.mode === option.value}
                 onChange={() => choose(option.value)}
               />
               {option.label}
@@ -87,11 +98,30 @@ export default function ThemeForm({ tenantId, initial }: { tenantId: string; ini
         </div>
       </fieldset>
 
+      <label className="mt-3 flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={prefs.codeLineNumbers}
+          onChange={(event) => chooseLineNumbers(event.target.checked)}
+        />
+        <span>
+          <span className="block">Show line numbers in code blocks</span>
+          <span className="block text-xs text-gray-500 dark:text-gray-400">
+            A gutter down the left of every fenced code block. It never rides along when you copy
+            the code.
+          </span>
+        </span>
+      </label>
+
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={() => void save()}
-          disabled={status === 'saving' || mode === saved}
+          disabled={
+            status === 'saving' ||
+            (prefs.mode === saved.mode && prefs.codeLineNumbers === saved.codeLineNumbers)
+          }
           className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {status === 'saving' ? 'Saving…' : 'Save'}

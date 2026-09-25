@@ -19,6 +19,7 @@ import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
 import ThemeScript from '@/components/theme-script';
 import ThemeSync from '@/components/theme-sync';
+import { CodeLineNumbersProvider } from '@/components/code-display-context';
 import { getVersionInfo } from '@/lib/version-info';
 import AppNav from './nav';
 
@@ -123,7 +124,7 @@ export default async function TenantLayout({
     this layout).
   */
   return (
-    <>
+    <CodeLineNumbersProvider value={theme.codeLineNumbers}>
       <ThemeScript tenantId={tenant.id} />
       <ThemeSync tenantId={tenant.id} mode={theme.mode} />
       <NotificationCenter tenantId={tenant.id}>
@@ -164,6 +165,6 @@ export default async function TenantLayout({
           <DesktopNotifications tenantId={tenant.id} />
         </div>
       </NotificationCenter>
-    </>
+    </CodeLineNumbersProvider>
   );
 }

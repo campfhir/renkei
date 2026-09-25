@@ -943,9 +943,15 @@ input[type='number']::-webkit-inner-spin-button {
   max-width: 100%;
 }
 /*
- * A fenced code block is a card: a header naming the language, with Copy
- * at its end, and the code beneath. The header is what makes Copy usable
- * on a phone — a button that appears on hover never appears there.
+ * A fenced code block is a card: a header naming the language, the code
+ * beneath, and a small Copy affordance in a footer under it — always
+ * there rather than only on hover, which is what makes it usable on a
+ * phone. `.chat-code-line` is every physical line of the code (see
+ * markdown.tsx's rehypeCodeLines) — always its own block, whether or not
+ * the line-number gutter is showing, because splitting the block into
+ * lines is what took its literal "\n" characters out. The gutter itself
+ * is a CSS counter, `.line-numbers` only: pure generated content, so it
+ * is never part of a selection or a copy.
  */
 .chat-markdown .chat-code {
   background: var(--color-gray-100);
@@ -958,7 +964,6 @@ input[type='number']::-webkit-inner-spin-button {
 .chat-markdown .chat-code-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
   min-height: 1.75rem;
   padding: 0.2rem 0.5rem 0.2rem 0.75rem;
@@ -972,15 +977,47 @@ input[type='number']::-webkit-inner-spin-button {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.chat-markdown .chat-code-line {
+  display: block;
+  /* A blank source line has no content to give it height on its own; this
+     matches the line box a non-blank line gets from the inherited 1.6
+     line-height at this element's own (0.85em) font-size. */
+  min-height: 1.6em;
+}
+.chat-markdown .chat-code.line-numbers pre code {
+  counter-reset: chat-code-line;
+}
+.chat-markdown .chat-code.line-numbers .chat-code-line {
+  counter-increment: chat-code-line;
+  padding-left: 3em;
+  position: relative;
+}
+.chat-markdown .chat-code.line-numbers .chat-code-line::before {
+  content: counter(chat-code-line);
+  position: absolute;
+  left: 0;
+  width: 2.25em;
+  text-align: right;
+  color: var(--color-gray-400);
+  user-select: none;
+}
+.chat-markdown .chat-code-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.2rem 0.4rem;
+  border-top: 1px solid var(--color-gray-200);
+}
 .chat-markdown .chat-code-copy {
+  display: flex;
+  align-items: center;
   border-radius: 0.25rem;
-  padding: 0.15rem 0.4rem;
-  color: var(--color-gray-600);
+  padding: 0.2rem;
+  color: var(--color-gray-400);
   transition: color 0.15s;
 }
 .chat-markdown .chat-code-copy:hover,
 .chat-markdown .chat-code-copy:focus-visible {
-  color: var(--color-gray-900);
+  color: var(--color-gray-700);
   background: var(--color-gray-200);
 }
 
@@ -1115,9 +1152,13 @@ input[type='number']::-webkit-inner-spin-button {
   :root:not([data-theme='light']) .chat-markdown .chat-code {
     background: var(--color-gray-900);
   }
-  :root:not([data-theme='light']) .chat-markdown .chat-code-head {
+  :root:not([data-theme='light']) .chat-markdown .chat-code-head,
+  :root:not([data-theme='light']) .chat-markdown .chat-code-foot {
     border-color: var(--color-gray-800);
     color: var(--color-gray-400);
+  }
+  :root:not([data-theme='light']) .chat-markdown .chat-code-line::before {
+    color: var(--color-gray-500);
   }
   :root:not([data-theme='light']) .chat-markdown .chat-code-copy {
     color: var(--color-gray-400);
@@ -1173,9 +1214,13 @@ input[type='number']::-webkit-inner-spin-button {
 :root[data-theme='dark'] .chat-markdown .chat-code {
   background: var(--color-gray-900);
 }
-:root[data-theme='dark'] .chat-markdown .chat-code-head {
+:root[data-theme='dark'] .chat-markdown .chat-code-head,
+:root[data-theme='dark'] .chat-markdown .chat-code-foot {
   border-color: var(--color-gray-800);
   color: var(--color-gray-400);
+}
+:root[data-theme='dark'] .chat-markdown .chat-code-line::before {
+  color: var(--color-gray-500);
 }
 :root[data-theme='dark'] .chat-markdown .chat-code-copy {
   color: var(--color-gray-400);
@@ -1195,6 +1240,65 @@ input[type='number']::-webkit-inner-spin-button {
   --hl-title: var(--color-blue-300);
   --hl-variable: var(--color-rose-300);
   --hl-punctuation: var(--color-gray-400);
+  --hl-deletion: var(--color-red-300);
+  --hl-addition: var(--color-emerald-300);
+}
+
+/*
+ * The person's own prompt: the same Markdown, on the solid blue bubble
+ * (bg-blue-600, message-list.tsx's UserMessage) rather than the reply's
+ * card, in both colour schemes. Every selector here pairs both classes
+ * (`.chat-markdown.chat-markdown-user`, the wrapper always carries both)
+ * to match or beat the specificity of the dark-theme overrides above —
+ * `.chat-markdown-user a` alone would still lose to
+ * `:root[data-theme='dark'] .chat-markdown a` regardless of source order.
+ */
+.chat-markdown.chat-markdown-user a {
+  color: #fff;
+  text-decoration-color: rgba(255, 255, 255, 0.6);
+}
+.chat-markdown.chat-markdown-user blockquote {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.85);
+}
+.chat-markdown.chat-markdown-user code,
+.chat-markdown.chat-markdown-user .chat-code,
+.chat-markdown.chat-markdown-user th {
+  background: rgba(0, 0, 0, 0.18);
+}
+.chat-markdown.chat-markdown-user th,
+.chat-markdown.chat-markdown-user td {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.chat-markdown.chat-markdown-user hr {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.chat-markdown.chat-markdown-user .chat-code-head,
+.chat-markdown.chat-markdown-user .chat-code-foot {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.75);
+}
+.chat-markdown.chat-markdown-user .chat-code-line::before {
+  color: rgba(255, 255, 255, 0.5);
+}
+.chat-markdown.chat-markdown-user .chat-code-copy {
+  color: rgba(255, 255, 255, 0.75);
+}
+.chat-markdown.chat-markdown-user .chat-code-copy:hover,
+.chat-markdown.chat-markdown-user .chat-code-copy:focus-visible {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+}
+.chat-markdown.chat-markdown-user {
+  --hl-comment: var(--color-gray-300);
+  --hl-keyword: var(--color-purple-300);
+  --hl-type: var(--color-teal-300);
+  --hl-string: var(--color-emerald-300);
+  --hl-key: var(--color-sky-300);
+  --hl-number: var(--color-amber-300);
+  --hl-title: var(--color-blue-300);
+  --hl-variable: var(--color-rose-300);
+  --hl-punctuation: var(--color-gray-300);
   --hl-deletion: var(--color-red-300);
   --hl-addition: var(--color-emerald-300);
 }
