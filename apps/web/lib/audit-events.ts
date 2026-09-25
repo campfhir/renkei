@@ -83,6 +83,7 @@ export type AuditAction =
   | 'code.files.saved'
   | 'code.commit'
   | 'code.push'
+  | 'code.branch_switch'
   /**
    * A Jira admin change request was applied from its review page — what
    * Renkei changed in Jira's configuration, and on whose click. Recorded

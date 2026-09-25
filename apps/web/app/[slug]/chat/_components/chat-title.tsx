@@ -7,11 +7,13 @@
  * the field saves, Escape puts the old name back. On a narrow screen the
  * pencil is dropped in favor of the title bar's overflow menu, which has
  * its own Rename. Under the name, the project the chat sits in, when it
- * does — and, for a code project, the branch its checkout is on right now.
- * A `tag` (a code project's "history") sits beside the name.
+ * does — and, for a code project, the branch its checkout is on right
+ * now: a BranchSwitcher (branch-switcher.tsx) for the active chat, a
+ * plain label for a history one. A `tag` (a code project's "history")
+ * sits beside the name.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Icon, ICONS } from '@/components/icons';
 
@@ -21,6 +23,7 @@ export default function ChatTitle({
   tag = null,
   canRename,
   onRename,
+  branchSwitcher = null,
 }: {
   title: string;
   project: { id: string; name: string; href: string; branch?: string | null } | null;
@@ -29,6 +32,13 @@ export default function ChatTitle({
   canRename: boolean;
   /** Saves the new name; resolves to the name as stored, or null on failure. */
   onRename: ((title: string) => Promise<string | null>) | null;
+  /**
+   * In place of the plain branch label: a BranchSwitcher, for a code
+   * project's active chat. Rendered outside the project Link, since it
+   * opens its own interactive control and a button can't nest inside an
+   * anchor.
+   */
+  branchSwitcher?: ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -109,13 +119,20 @@ export default function ChatTitle({
         </div>
       )}
       {project ? (
-        <Link
-          href={project.href}
-          className="flex min-w-0 items-center gap-1 text-xs text-gray-500 hover:text-gray-800 hover:underline dark:hover:text-gray-200"
-        >
-          <Icon path={ICONS.folder} className="h-3 w-3 shrink-0" />
-          <span className="truncate">{project.name}</span>
-          {project.branch ? (
+        <div className="flex min-w-0 items-center gap-1 text-xs text-gray-500">
+          <Link
+            href={project.href}
+            className="flex min-w-0 shrink items-center gap-1 hover:text-gray-800 hover:underline dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.folder} className="h-3 w-3 shrink-0" />
+            <span className="truncate">{project.name}</span>
+          </Link>
+          {branchSwitcher ? (
+            <span className="flex min-w-0 shrink items-center gap-0.5" data-testid="chat-branch">
+              <span aria-hidden="true">·</span>
+              {branchSwitcher}
+            </span>
+          ) : project.branch ? (
             <span
               className="flex min-w-0 shrink items-center gap-0.5 font-mono"
               title={`The checkout is on ${project.branch}`}
@@ -126,7 +143,7 @@ export default function ChatTitle({
               <span className="truncate">{project.branch}</span>
             </span>
           ) : null}
-        </Link>
+        </div>
       ) : null}
     </div>
   );

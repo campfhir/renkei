@@ -21,6 +21,7 @@ import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
 import PipelinesSummary from './pipelines-summary';
 import ServicesSummaryCard from './services-summary';
+import BranchSwitcher from './branch-switcher';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -151,13 +152,17 @@ export default function CodeSections({
             The repository this project works in, chosen when it was made.
           </p>
         </div>
-        <p className="text-sm">
+        <div className="flex flex-wrap items-center gap-1 text-sm">
           <span className="font-mono">{code.repoFullName}</span>
-          <span className="text-gray-500">
-            {' '}
-            @ {workspace?.branch || code.branch || 'default branch'}
-          </span>
-        </p>
+          <span className="text-gray-500">@</span>
+          <BranchSwitcher
+            tenantId={tenantId}
+            projectId={projectId}
+            branch={workspace?.branch || code.branch || null}
+            canSwitch={canEdit && workspace?.status === 'ready'}
+            className="text-gray-500"
+          />
+        </div>
         <p className="mt-1 text-xs text-gray-500">
           {!code.enabled
             ? 'Code workspaces are not enabled on this deployment; chats here have no code tools.'
