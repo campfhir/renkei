@@ -235,4 +235,100 @@ test.describe('code pane file management', () => {
     await ghost.click();
     await expect(page.getByRole('dialog', { name: 'Changes to README.md' })).toBeVisible();
   });
+
+  test('a gitignored folder dims its whole subtree, not just its own row', async ({
+    page,
+  }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const mobile = testInfo.project.name === 'mobile';
+    if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
+    const main = page.getByRole('main');
+
+    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
+      timeout: 30_000,
+    });
+    if (mobile) {
+      const tabs = main.getByRole('tablist', { name: 'Chat or code' });
+      await tabs.getByRole('tab', { name: /Code/ }).click();
+    }
+    const tree = main.getByRole('tree', { name: 'Files' });
+    await expect(tree.getByText('package.json')).toBeVisible({ timeout: 30_000 });
+
+    // node_modules itself is flagged ignored by the (stubbed) host.
+    const nodeModulesRow = tree.getByRole('button', { name: 'node_modules', exact: true });
+    await expect(nodeModulesRow.locator('xpath=..')).toHaveCSS('opacity', '0.5');
+    await nodeModulesRow.click();
+
+    // left-pad, one level down, is deliberately NOT flagged ignored by the
+    // stub's own listing for node_modules — it dims anyway, because an
+    // ignored ancestor's whole subtree is meant to read as ghosted,
+    // whatever a per-directory listing does or doesn't repeat.
+    const leftPadRow = tree.getByRole('button', { name: 'left-pad', exact: true });
+    await expect(leftPadRow).toBeVisible();
+    await expect(leftPadRow.locator('xpath=..')).toHaveCSS('opacity', '0.5');
+    await shot(page, testInfo, 'code-tree-ignored-subtree-dir.png');
+
+    // Its own child, two levels down and also unflagged, dims the same way.
+    await leftPadRow.click();
+    const indexRow = tree.getByRole('button', { name: /^index\.js/ });
+    await expect(indexRow).toBeVisible();
+    await expect(indexRow.locator('xpath=..')).toHaveCSS('opacity', '0.5');
+    await shot(page, testInfo, 'code-tree-ignored-subtree-file.png');
+  });
+
+  test('a trailing slash creates a folder, a nested path mkdir -ps its parents, and ".." is refused', async ({
+    page,
+  }, testInfo) => {
+    const ids = idsFor(testInfo.project.name);
+    const mobile = testInfo.project.name === 'mobile';
+    if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
+    const main = page.getByRole('main');
+
+    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
+      timeout: 30_000,
+    });
+    if (mobile) {
+      const tabs = main.getByRole('tablist', { name: 'Chat or code' });
+      await tabs.getByRole('tab', { name: /Code/ }).click();
+    }
+    const tree = main.getByRole('tree', { name: 'Files' });
+    await expect(tree.getByText('package.json')).toBeVisible({ timeout: 30_000 });
+
+    // ── ".." is refused before any request leaves the dialog ──
+    await main.getByRole('button', { name: 'New file', exact: true }).click();
+    const newFileDialog = page.getByRole('dialog', { name: 'New file' });
+    await expect(newFileDialog.getByText(/End the name with/)).toBeVisible();
+    await newFileDialog.getByLabel('File name').fill('../escape.txt');
+    await newFileDialog.getByRole('button', { name: 'Create' }).click();
+    await expect(newFileDialog.getByText(/cannot leave the workspace/)).toBeVisible();
+    await expect(newFileDialog).toHaveCount(1);
+    await expect(tree.getByRole('button', { name: /^escape\.txt/ })).toHaveCount(0);
+
+    // ── A name ending in "/" creates an empty folder, not a file ──
+    await newFileDialog.getByLabel('File name').fill('assets/');
+    await newFileDialog.getByRole('button', { name: 'Create' }).click();
+    await expect(newFileDialog).toHaveCount(0);
+    const assetsRow = tree.getByRole('button', { name: 'assets', exact: true });
+    await expect(assetsRow).toBeVisible();
+    await shot(page, testInfo, 'code-tree-new-folder.png');
+    await assetsRow.click();
+    await expect(tree.getByText('Empty.')).toBeVisible();
+
+    // ── A nested path with missing intermediate folders creates them all,
+    //    the same "New file" dialog used throughout ──
+    await main.getByRole('button', { name: 'New file', exact: true }).click();
+    await newFileDialog.getByLabel('File name').fill('generated/nested/deep.txt');
+    await newFileDialog.getByRole('button', { name: 'Create' }).click();
+    await expect(newFileDialog).toHaveCount(0);
+    const generatedRow = tree.getByRole('button', { name: 'generated', exact: true });
+    await expect(generatedRow).toBeVisible();
+    await generatedRow.click();
+    const nestedRow = tree.getByRole('button', { name: 'nested', exact: true });
+    await expect(nestedRow).toBeVisible();
+    await nestedRow.click();
+    await expect(tree.getByRole('button', { name: /^deep\.txt/ })).toBeVisible();
+    await shot(page, testInfo, 'code-tree-mkdir-p.png');
+  });
 });

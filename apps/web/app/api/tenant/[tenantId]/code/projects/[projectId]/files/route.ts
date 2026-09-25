@@ -21,7 +21,11 @@
  * POST: `{path}` — an empty new file at `path` (the tree's "New file"),
  * refused if something is already there. Unlike PUT this never
  * overwrites, and unlike an upload it allows zero bytes — the whole
- * point is a blank file to start typing into.
+ * point is a blank file to start typing into. A trailing `/` on `path`
+ * (checked on the raw string, before `validateWorkspacePath` normalizes
+ * it away) creates an empty folder instead — the same dialog's "New
+ * file" convention for a folder, mkdir-p over any missing ancestors
+ * either way.
  *
  * DELETE `?path=`: the file or folder at `path`, removed from the
  * checkout — recursively for a folder. 404 when there was nothing
@@ -42,6 +46,7 @@ import {
 import {
   clientFailure,
   sandboxWorkspacesEnabled,
+  sbWorkspaceMkdir,
   sbWorkspaceMove,
   sbWorkspaceRead,
   sbWorkspaceRemove,
@@ -229,11 +234,39 @@ export async function POST(
     return jsonError(409, 'not-cloned', 'Clone the repository before creating files in it.');
 
   const body = await readJsonBody(request);
+  // Checked on the raw, un-normalized string: validateWorkspacePath below
+  // strips a trailing slash as part of normalizing the path, so this is
+  // the one place the folder-vs-file signal is still visible.
+  const rawPath = typeof body.path === 'string' ? body.path.trim() : '';
+  const isFolder = rawPath.endsWith('/');
   const path = validateWorkspacePath(body.path, { forWrite: true });
   if (!path.ok || !path.path)
-    return jsonError(400, 'invalid', path.ok ? 'Say where the file goes.' : path.message);
+    return jsonError(
+      400,
+      'invalid',
+      path.ok ? (isFolder ? 'Say where the folder goes.' : 'Say where the file goes.') : path.message
+    );
 
   const target = codeProjectTarget(tenantId, projectId);
+
+  if (isFolder) {
+    const made = await sbWorkspaceMkdir(target, { id: project.workspaceId, path: path.path });
+    if (!made.ok) {
+      const failure = clientFailure(made.err);
+      return jsonError(failure.status, 'create', failure.message);
+    }
+    if (!made.val.created) return jsonError(409, 'exists', `${path.path} already exists.`);
+    recordAuditEvent({
+      tenantId,
+      actorSubject: session.subject,
+      action: 'code.files.folder-created',
+      targetKind: 'code_project',
+      targetLabel: project.name,
+      details: { projectId, path: made.val.path },
+    });
+    return NextResponse.json({ path: made.val.path, created: true, kind: 'dir' });
+  }
+
   // Never silently overwrite — "New file" means new.
   const existing = await sbWorkspaceRead(target, { id: project.workspaceId, path: path.path });
   if (existing.ok) return jsonError(409, 'exists', `${path.path} already exists.`);
@@ -255,7 +288,7 @@ export async function POST(
     targetLabel: project.name,
     details: { projectId, path: written.val.path },
   });
-  return NextResponse.json({ path: written.val.path, created: true });
+  return NextResponse.json({ path: written.val.path, created: true, kind: 'file' });
 }
 
 export async function DELETE(

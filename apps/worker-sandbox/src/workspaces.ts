@@ -710,6 +710,38 @@ export async function writeWorkspaceFile(
 }
 
 /**
+ * An empty directory created in the checkout — the trailing-`/` "New
+ * file" convention's target. Shares `ensureParentDirs` with the write
+ * path above, so a nested `some/deep/dir/` gets the same mkdir-p
+ * semantics a nested file path already does; idempotent when the
+ * directory is already there.
+ */
+export async function mkdirWorkspaceFile(
+  dir: string,
+  relativePath: string,
+  identity: ExecIdentity | null
+): Promise<{ created: boolean }> {
+  const path = await containedPath(dir, relativePath);
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink())
+      throw new WorkspacePathError(
+        `${relativePath} is a symbolic link; refusing to create a directory through it.`
+      );
+    if (!info.isDirectory())
+      throw new WorkspacePathError(`${relativePath} already exists as a file.`);
+    return { created: false };
+  } catch (error) {
+    if (error instanceof WorkspacePathError) throw error;
+  }
+  const root = await realpath(dir);
+  await ensureParentDirs(path, root, identity);
+  await mkdir(path, { mode: 0o755 });
+  await chownIf(path, identity);
+  return { created: true };
+}
+
+/**
  * A file or folder removed from the checkout — recursively for a
  * directory. `{existed: false}` rather than an error when there was
  * nothing there: the tree's own idea of the checkout can be a beat

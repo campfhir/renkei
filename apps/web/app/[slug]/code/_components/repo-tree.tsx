@@ -209,6 +209,12 @@ const RepoTree = forwardRef<
       setDialogError(dialog.kind === 'new-file' ? 'Say what to call it.' : 'Say the new name.');
       return;
     }
+    // The server rejects ".." too (validateWorkspacePath) — this is just
+    // the immediate, no-round-trip version of the same rule.
+    if (trimmed.split('/').some((part) => part === '..')) {
+      setDialogError('A path cannot leave the workspace ("..").');
+      return;
+    }
     setBusy(true);
     setDialogError(null);
     if (dialog.kind === 'new-file') {
@@ -303,10 +309,16 @@ const RepoTree = forwardRef<
     );
   };
 
-  const renderEntry = (entry: Entry, depth: number) => {
+  const renderEntry = (entry: Entry, depth: number, inheritedIgnored: boolean) => {
     const name = nameOf(entry.path);
     const indent = { paddingLeft: `${depth * 12 + 4}px` };
-    const dimmed = entry.ignored ? 'opacity-50' : '';
+    // A directory's own listing only reports its own children's ignored
+    // status — an ignored ancestor's subtree, once expanded, is not
+    // guaranteed to have every descendant re-flagged by the host's git
+    // query. Inheriting from the parent here is what makes the whole
+    // subtree read as ghosted, regardless of that per-directory quirk.
+    const ignored = inheritedIgnored || entry.ignored === true;
+    const dimmed = ignored ? 'opacity-50' : '';
 
     if (entry.kind === 'dir') {
       const expanded = open[entry.path] === true;
@@ -356,7 +368,7 @@ const RepoTree = forwardRef<
             </button>
             {menu}
           </div>
-          {expanded ? <ul>{renderDir(entry.path, depth + 1)}</ul> : null}
+          {expanded ? <ul>{renderDir(entry.path, depth + 1, ignored)}</ul> : null}
         </li>
       );
     }
@@ -452,7 +464,7 @@ const RepoTree = forwardRef<
     );
   };
 
-  const renderDir = (path: string, depth: number) => {
+  const renderDir = (path: string, depth: number, inheritedIgnored = false) => {
     const listing = listings[path];
     const ghosts = ghostsFor(path);
     if (!listing || listing.state === 'loading') {
@@ -475,7 +487,7 @@ const RepoTree = forwardRef<
     }
     return (
       <>
-        {listing.entries.map((entry) => renderEntry(entry, depth))}
+        {listing.entries.map((entry) => renderEntry(entry, depth, inheritedIgnored))}
         {ghosts.map((path) => renderGhost(path, depth))}
       </>
     );
@@ -511,6 +523,12 @@ const RepoTree = forwardRef<
               maxLength={255}
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 font-mono text-sm dark:border-gray-700 dark:bg-gray-900"
             />
+            {dialog.kind === 'new-file' ? (
+              <p className="text-xs text-gray-500">
+                Missing folders in the path are created for you. End the name with “/” to create a
+                folder instead of a file — e.g. “some_dir/”.
+              </p>
+            ) : null}
             <DialogFooter
               busy={busy}
               error={dialogError}

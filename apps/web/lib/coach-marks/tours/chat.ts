@@ -295,4 +295,26 @@ export const CHAT_TOURS: CoachMarkTour[] = [
       },
     ],
   },
+  {
+    id: 'code-tree',
+    area: 'Chat',
+    version: 1,
+    title: 'The file tree',
+    description: 'Creating files and folders in a code project’s checkout.',
+    startPath: '/chat/new',
+    // Reference material for a feature already visible, not a greeting —
+    // opened from the Tutorials page rather than sprung on a first visit.
+    autoStart: false,
+    requires: ['code-tree-new-file'],
+    audience: 'everyone',
+    steps: [
+      {
+        id: 'new-file',
+        title: 'New files, and new folders',
+        target: 'code-tree-new-file',
+        placement: 'bottom',
+        body: 'Type a path like some/new/folder/file.ts and the folders in between are created for you. End the name with a slash, like some_dir/, to create an empty folder instead of a file. A gitignored folder’s whole contents show dimmed once you open it, not just the folder itself.',
+      },
+    ],
+  },
 ];

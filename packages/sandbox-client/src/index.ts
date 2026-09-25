@@ -821,6 +821,21 @@ export async function sbWorkspaceWrite(
   };
 }
 
+/** An empty directory created in the checkout — mkdir -p semantics. */
+export async function sbWorkspaceMkdir(
+  target: SandboxTarget,
+  input: { id: string; path: string }
+): Promise<ClientResult<{ path: string; created: boolean }>> {
+  const result = await workspaceCall('mkdir', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: { path: str(value.path), created: value.created === true },
+  };
+}
+
 /**
  * A file uploaded into the checkout as bytes — a person's gesture from the
  * project page, not the model's. The body is the file; the target, the

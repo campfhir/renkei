@@ -118,6 +118,8 @@ export const COACH_ANCHORS = [
   'code-repo-search',
   /** The standing instructions on the new code project form. */
   'code-instructions',
+  /** The New file button inline with the code pane's tree heading. */
+  'code-tree-new-file',
 
   // The pages behind the avatar.
   /** The "Choose what appears here" link on the notifications page. */
