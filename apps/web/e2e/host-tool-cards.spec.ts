@@ -1,12 +1,14 @@
 /**
  * Which git-host calls stand out in a thread. A reply's tool calls fold
- * into one collapsed line; only the calls a person waits on — a pull
- * request opened or merged, a commit, a branch — are lifted out as
- * cards of their own (lib/code/milestones.ts). Reading a file, listing
- * branches or pipelines, and the host's quieter acts fold with the rest,
- * in an ordinary chat as in a code chat. Seeded straight into the
- * database as a finished turn of a plain chat, with ids of its own per
- * Playwright project; also a viewport pass at phone width.
+ * into one collapsed line; in a code project's chat the calls a person
+ * waits on — a pull request opened or merged, a commit, a branch — are
+ * lifted out as cards of their own (lib/code/milestones.ts), while
+ * reading a file, listing branches or pipelines, and the host's quieter
+ * acts fold with the rest. In an ordinary chat nothing is lifted: a word
+ * to GitHub or Bitbucket is a tool call like any other. The same turn is
+ * seeded straight into the database twice — a plain chat, and a chat in
+ * a code project — with ids of their own per Playwright project; also a
+ * viewport pass at phone width.
  */
 
 import { createCipheriv, randomBytes } from 'node:crypto';
@@ -48,6 +50,11 @@ function idsFor(project: string) {
     chatId: `7a7a7a7a-7a7a-4a7a-8a7a-7a7a7a7a7a${digit}1`,
     turnId: `7a7a7a7a-7a7a-4a7a-8a7a-7a7a7a7a7a${digit}2`,
     chatTitle: `Open a pull request for the timeout fix (host cards ${digit})`,
+    projectId: `7a7a7a7a-7a7a-4a7a-8a7a-7a7a7a7a7a${digit}3`,
+    codeChatId: `7a7a7a7a-7a7a-4a7a-8a7a-7a7a7a7a7a${digit}4`,
+    codeTurnId: `7a7a7a7a-7a7a-4a7a-8a7a-7a7a7a7a7a${digit}5`,
+    projectName: `Demo service (host cards ${digit})`,
+    codeChatTitle: `Open a pull request for the timeout fix (code, host cards ${digit})`,
   };
 }
 
@@ -62,15 +69,16 @@ async function db(): Promise<Client> {
 async function clean(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
+    await client.query('DELETE FROM chats WHERE id = $1 OR id = $2', [ids.chatId, ids.codeChatId]);
+    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
   } finally {
     await client.end();
   }
 }
 
 /**
- * A plain chat's finished turn: two host reads and a comment (all of
- * which fold), then the pull request (a card), then the reply.
+ * One finished turn — two host reads, then the pull request, then the
+ * reply — written into a plain chat and into a code project's chat.
  */
 async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
   await clean(ids);
@@ -82,10 +90,39 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.chatTitle]
     );
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
-       VALUES ($1, $2, $3, 'completed', 3, 2100, 320, NOW())`,
-      [ids.turnId, E2E_TENANT_ID, ids.chatId]
+      `INSERT INTO chat_projects
+         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
+       VALUES ($1, $2, $3, $4, 'The demo service.', 'code', 'github', 'acme/demo', 'main')`,
+      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
     );
+    await client.query(
+      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [ids.codeChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.codeChatTitle]
+    );
+    // The project's active chat — a history chat takes no turn (lib/code/active-chat.ts).
+    await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
+      ids.codeChatId,
+      ids.projectId,
+    ]);
+    for (const [chatId, turnId] of [
+      [ids.chatId, ids.turnId],
+      [ids.codeChatId, ids.codeTurnId],
+    ]) {
+      await client.query(
+        `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
+         VALUES ($1, $2, $3, 'completed', 3, 2100, 320, NOW())`,
+        [turnId, E2E_TENANT_ID, chatId]
+      );
+      await seedTurn(client, chatId, turnId);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+async function seedTurn(client: Client, chatId: string, turnId: string): Promise<void> {
+  {
     const rows: {
       seq: number;
       role: string;
@@ -182,8 +219,8 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
          VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8)`,
         [
           E2E_TENANT_ID,
-          ids.chatId,
-          ids.turnId,
+          chatId,
+          turnId,
           row.seq,
           row.role,
           row.kind,
@@ -192,8 +229,6 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
         ]
       );
     }
-  } finally {
-    await client.end();
   }
 }
 
@@ -214,7 +249,9 @@ test.describe('git-host tool cards in an ordinary chat', () => {
     await clean(idsFor(testInfo.project.name));
   });
 
-  test('reads fold with the work; the pull request is the one card', async ({ page }, testInfo) => {
+  test('a plain chat folds every host call; a code chat lifts the pull request alone', async ({
+    page,
+  }, testInfo) => {
     const ids = idsFor(testInfo.project.name);
     const shot = (name: string) =>
       page.screenshot({
@@ -229,18 +266,31 @@ test.describe('git-host tool cards in an ordinary chat', () => {
         fullPage: false,
       });
     const main = page.getByRole('main');
+
+    // ── The plain chat: no card at all — the pull request folds with the
+    //    reads, three steps under one line ──
     await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
     await expect(main.getByText(PROMPT)).toBeVisible();
+    await expect(main.getByText('Pull request #12 is open against main.')).toBeVisible();
+    await expect(main.locator('details[data-milestone]')).toHaveCount(0);
+    const plainWork = main.locator('details.chat-fold').first();
+    await expect(plainWork).toContainText('3 tool calls');
+    await plainWork.locator('> summary').click();
+    await expect(plainWork.locator('ol > li > details.chat-fold')).toHaveCount(3);
+    await expectNoHorizontalOverflow(page);
+    await shot('host-tool-cards-plain.png');
 
-    // ── The two reads are steps inside the one folded line, not cards ──
+    // ── The code project's chat: the two reads are steps inside the one
+    //    folded line, and the pull request stands on its own with the
+    //    host's link ──
+    await page.goto(`/${E2E_SLUG}/chat/${ids.codeChatId}`);
+    await expect(main.getByText(PROMPT)).toBeVisible();
     await expect(main.locator('details[data-milestone="github_list_branches"]')).toHaveCount(0);
     await expect(main.locator('details[data-milestone="github_read_file"]')).toHaveCount(0);
     const work = main.locator('details.chat-fold:not([data-milestone])').first();
     await expect(work).toContainText('2 tool calls');
     await work.locator('> summary').click();
     await expect(work.locator('ol > li > details.chat-fold')).toHaveCount(2);
-
-    // ── The pull request stands on its own, with the host's link ──
     const card = main.locator('details[data-milestone="github_create_pull_request"]');
     await expect(card).toHaveCount(1);
     await expect(card).toContainText('Created pull request #12');
@@ -250,14 +300,19 @@ test.describe('git-host tool cards in an ordinary chat', () => {
       'https://github.com/acme/demo/pull/12'
     );
     await expectNoHorizontalOverflow(page);
-    await shot('host-tool-cards.png');
+    await shot('host-tool-cards-code.png');
 
-    // ── Phone width ──
+    // ── Phone width, both ──
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await expect(main.getByText(PROMPT)).toBeVisible();
     await expect(main.locator('details[data-milestone]')).toHaveCount(1);
     await expectNoHorizontalOverflow(page);
-    await shot('host-tool-cards-mobile.png');
+    await shot('host-tool-cards-code-mobile.png');
+    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await expect(main.getByText(PROMPT)).toBeVisible();
+    await expect(main.locator('details[data-milestone]')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+    await shot('host-tool-cards-plain-mobile.png');
   });
 });

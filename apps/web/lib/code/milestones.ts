@@ -1,15 +1,16 @@
 /**
- * The calls a chat makes that a person actually waits for — a commit, a
- * push, a pull request opened, merged or closed, a branch made or
- * removed. The thread folds a reply's tool calls into one collapsed line
- * so that ten file reads read as a line, not a wall; these are the calls
- * that must NOT disappear into that line. They are lifted out of the
- * fold as milestone cards, in order, with a sentence, the headline the
- * tool answered with, and the link it gave. Every other exchange with
- * the git host — reading a file, listing branches or pipelines, a
- * comment on a pull request — folds like any other tool call, in a code
- * chat and an ordinary one alike. Pure; the icons and the cards live in
- * message-list.tsx.
+ * The calls a code project's chat makes that a person actually waits
+ * for — a commit, a push, a pull request opened, merged or closed, a
+ * branch made or removed. The thread folds a reply's tool calls into
+ * one collapsed line so that ten file reads read as a line, not a wall;
+ * these are the calls that must NOT disappear into that line. They are
+ * lifted out of the fold as milestone cards, in order, with a sentence,
+ * the headline the tool answered with, and the link it gave. Every other
+ * exchange with the git host — reading a file, listing branches or
+ * pipelines, a comment on a pull request — folds like any other tool
+ * call; and outside a code project nothing is lifted at all (segment.ts
+ * asks only there), a word to Bitbucket or GitHub being a tool call like
+ * any other. Pure; the icons and the cards live in message-list.tsx.
  */
 
 import { friendlyToolName } from '@/lib/tool-name';

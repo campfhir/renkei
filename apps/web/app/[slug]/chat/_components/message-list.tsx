@@ -478,7 +478,12 @@ function Reply({
   onShowSubagent: ((toolUseId: string) => void) | null;
   onWidgetDecision: ((outcome: WidgetModelContextOutcome) => void) | null;
 }) {
-  const segments = useMemo(() => segment(messages, results), [messages, results]);
+  // Milestone cards are a code project's: `code` is there exactly then.
+  const codeProject = code !== null;
+  const segments = useMemo(
+    () => segment(messages, results, { codeProject }),
+    [messages, results, codeProject]
+  );
   // The call the ask is about, for the card to show its input.
   const askedCall = useMemo(() => {
     if (!permission) return null;

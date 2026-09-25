@@ -20,7 +20,7 @@ export type Segment =
    * first step); 0 when no row carried timing.
    */
   | { kind: 'work'; steps: WorkStep[]; modelMs: number }
-  /** A commit, a push, a pull request opened or merged — a card of its own, never folded. */
+  /** In a code project's chat: a commit, a push, a pull request opened or merged — a card of its own, never folded. */
   | { kind: 'milestone'; step: Extract<WorkStep, { kind: 'call' }> }
   /** A sub-agent at work, or its report: a card with its progress and a way into its transcript. */
   | { kind: 'subagent'; step: Extract<WorkStep, { kind: 'call' }> }
@@ -42,7 +42,23 @@ export type WorkStep =
   | { kind: 'redacted' }
   | { kind: 'call'; block: Extract<ChatBlock, { type: 'tool_use' }>; result: ToolResult | null };
 
-export function segment(messages: ChatMessageView[], results: Map<string, ToolResult>): Segment[] {
+export interface SegmentOptions {
+  /**
+   * The chat belongs to a code project: the calls a person waits on
+   * there — a commit, a push, a pull request — are lifted out of the
+   * fold as milestone cards (lib/code/milestones.ts). In any other chat
+   * a word to Bitbucket or GitHub is a tool call like any other, and
+   * folds with the rest.
+   */
+  codeProject?: boolean;
+}
+
+export function segment(
+  messages: ChatMessageView[],
+  results: Map<string, ToolResult>,
+  options: SegmentOptions = {}
+): Segment[] {
+  const milestones = options.codeProject === true;
   const out: Segment[] = [];
   // Each assistant row's model call is counted once, on the fold its
   // first step lands in — a row that also wrote prose before its next
@@ -99,7 +115,10 @@ export function segment(messages: ChatMessageView[], results: Map<string, ToolRe
             const card: Extract<Segment, { kind: 'subagent' }> = { kind: 'subagent', step };
             out.push(card);
             cards.set(block.id, card);
-          } else if (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL) {
+          } else if (
+            milestones &&
+            (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL)
+          ) {
             const card: Extract<Segment, { kind: 'milestone' }> = { kind: 'milestone', step };
             out.push(card);
             cards.set(block.id, card);
