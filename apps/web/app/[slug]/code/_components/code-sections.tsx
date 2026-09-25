@@ -2,10 +2,13 @@
 
 /**
  * The sections that make a project a code project, at the top of its
- * page: the repository (fixed when the project was made, its branch now
- * a BranchSwitcher) and the state of its checkout on the sandbox — none
- * until the first chat clones it, then ready, cloning, or failed with
- * why — and the environment: the names of the variables the project's
+ * page: the repository (fixed when the project was made — this page is
+ * about the repository as a whole, so it carries no branch picker, or
+ * mention of a branch at all; a chat's title bar is where the checkout's
+ * current branch lives and switches) and the state of its checkout on
+ * the sandbox — none until the first chat clones it, then ready,
+ * cloning, or failed with why — and the environment: the names of the
+ * variables the project's
  * commands run with, replaced by pasting a `.env` again. Values are
  * never shown; the worker sealed them and only a command ever sees
  * them. Every project also gets: a card summarizing its open pull
@@ -29,7 +32,6 @@ import ExternalLink from '@/components/external-link';
 import PipelinesSummary from './pipelines-summary';
 import ActionsSummary from './actions-summary';
 import ServicesSummaryCard from './services-summary';
-import BranchSwitcher from './branch-switcher';
 import PullsSummary from './pulls-summary';
 import CommitsSummary from './commits-summary';
 import Pill from './pill';
@@ -163,25 +165,6 @@ export default function CodeSections({
         </div>
         <div className="flex flex-wrap items-center gap-1 text-sm">
           <span className="font-mono">{code.repoFullName}</span>
-          <span className="text-gray-500">@</span>
-          <BranchSwitcher
-            tenantId={tenantId}
-            projectId={projectId}
-            branch={workspace?.branch || code.branch || null}
-            canSwitch={canEdit && workspace?.status === 'ready'}
-            reason={
-              !canEdit
-                ? 'Only editors can switch branches.'
-                : !workspace
-                  ? 'Start a chat to clone the repository, then you can switch branches.'
-                  : workspace.status === 'cloning'
-                    ? 'Cloning — branch switching will be available once it’s ready.'
-                    : workspace.status === 'failed'
-                      ? 'The last clone failed; branch switching isn’t available until it’s re-cloned.'
-                      : undefined
-            }
-            className="text-gray-500"
-          />
         </div>
         <p className="mt-1 text-xs text-gray-500">
           {!code.enabled

@@ -699,6 +699,7 @@ export interface WireFileEntry {
   path: string;
   kind: 'file' | 'dir' | 'link' | 'other';
   sizeBytes: number | null;
+  ignored: boolean;
 }
 
 export async function sbWorkspaceLs(
@@ -716,6 +717,7 @@ export async function sbWorkspaceLs(
       path: str(raw.path),
       kind: kind === 'file' || kind === 'dir' || kind === 'link' ? kind : 'other',
       sizeBytes: typeof raw.sizeBytes === 'number' ? raw.sizeBytes : null,
+      ignored: raw.ignored === true,
     });
   }
   return { ok: true, val: { path: str(result.val.path), entries } };
@@ -882,6 +884,36 @@ export async function sbWorkspaceEdit(
   };
 }
 
+/** A file or folder removed from the checkout — recursively for a folder. */
+export async function sbWorkspaceRemove(
+  target: SandboxTarget,
+  input: { id: string; path: string }
+): Promise<ClientResult<{ path: string; deleted: boolean }>> {
+  const result = await workspaceCall('rm', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: { path: str(value.path), deleted: value.deleted === true },
+  };
+}
+
+/** A file or folder renamed or moved within the checkout. */
+export async function sbWorkspaceMove(
+  target: SandboxTarget,
+  input: { id: string; from: string; to: string }
+): Promise<ClientResult<{ from: string; to: string }>> {
+  const result = await workspaceCall('mv', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: { from: str(value.from), to: str(value.to) },
+  };
+}
+
 export interface WireExecResult {
   exitCode: number | null;
   signal: string | null;
@@ -973,7 +1005,7 @@ export interface WireDiffFile {
   path: string;
   added: number;
   deleted: number;
-  status: 'modified' | 'untracked';
+  status: 'modified' | 'untracked' | 'deleted';
 }
 
 /**
@@ -998,7 +1030,8 @@ export async function sbWorkspaceGitDiff(
       path: str(raw.path),
       added: typeof raw.added === 'number' ? raw.added : 0,
       deleted: typeof raw.deleted === 'number' ? raw.deleted : 0,
-      status: raw.status === 'untracked' ? 'untracked' : 'modified',
+      status:
+        raw.status === 'untracked' ? 'untracked' : raw.status === 'deleted' ? 'deleted' : 'modified',
     });
   }
   return {
@@ -1130,6 +1163,21 @@ export async function sbWorkspaceGitPull(
   const value = result.val;
   if (!isRecord(value)) return malformed();
   return { ok: true, val: { branch: str(value.branch), output: str(value.output) } };
+}
+
+/**
+ * Every uncommitted change on the checkout discarded — `git reset --hard`
+ * plus `git clean -fd`. Irreversible; the caller has already confirmed.
+ */
+export async function sbWorkspaceGitDiscard(
+  target: SandboxTarget,
+  input: { id: string }
+): Promise<ClientResult<{ branch: string }>> {
+  const result = await workspaceCall('git-discard', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return { ok: true, val: { branch: str(value.branch) } };
 }
 
 // ─── Workspace environment secrets ──────────────────────────────────────────

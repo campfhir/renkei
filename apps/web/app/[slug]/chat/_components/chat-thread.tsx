@@ -58,7 +58,7 @@ import {
 import Modal from '@/components/modal';
 import ArtifactsMenu from './artifacts-menu';
 import ChatTitle from './chat-title';
-import BranchSwitcher, { BranchPickerModal } from '../../code/_components/branch-switcher';
+import { BranchPickerModal } from '../../code/_components/branch-switcher';
 import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
@@ -1102,44 +1102,13 @@ export default function ChatThread({
             tag={history ? 'history' : null}
             canRename={isOwner}
             onRename={rename}
-            branchSwitcher={
-              codeProjectId && !history ? (
-                <>
-                  {/* The anchored dropdown needs room the title bar doesn't
-                      have below `lg` (a long branch name there rendered
-                      past the header's bounds, over the transcript) —
-                      display:contents wrappers swap it for the plain
-                      label, whose "Switch branch" lives in the overflow
-                      menu instead (see the `overflow` items above). */}
-                  <div className="hidden lg:contents">
-                    <BranchSwitcher
-                      tenantId={tenantId}
-                      projectId={codeProjectId}
-                      branch={branch}
-                      canSwitch={isOwner}
-                      reason={
-                        isOwner ? undefined : 'Only the person who owns this chat can switch branches.'
-                      }
-                      className="text-xs text-gray-500"
-                    />
-                  </div>
-                  <div className="contents lg:hidden">
-                    <BranchSwitcher
-                      tenantId={tenantId}
-                      projectId={codeProjectId}
-                      branch={branch}
-                      canSwitch={false}
-                      reason={
-                        isOwner
-                          ? 'Use the ⋯ menu to switch branches on a small screen.'
-                          : 'Only the person who owns this chat can switch branches.'
-                      }
-                      className="text-xs text-gray-500"
-                    />
-                  </div>
-                </>
-              ) : null
-            }
+            /* No inline switcher here: the title bar has no reliable
+               room for one (a wide viewport still narrows this column
+               when the code pane sits beside it), so switching always
+               goes through "Switch branch" in the overflow menu (the
+               `overflow` items above) and this stays the plain
+               read-only label ChatTitle renders on its own from
+               `project.branch`. */
           />
           {codePane ? (
             paneMode === 'tabs' ? (

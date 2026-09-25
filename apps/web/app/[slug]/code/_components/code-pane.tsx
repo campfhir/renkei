@@ -8,20 +8,23 @@
  *
  * Beside the chat: a header with the file tree's toggle, the open files
  * as tabs, Save, Commit with the count of changed files, and a close;
- * a rail with the working tree's **Changed** files above the tree; the
- * editor; and a status line saying the one thing that matters — saved
- * to the checkout but not committed, or unsaved. As a tab: the rail's
- * content full width with Commit along the bottom, and a file opened
- * over it with Save above the keyboard. Every read and write goes
- * through the same routes the chat's tools' work is seen through, so
- * what is here is what the chat sees.
+ * a rail with the checkout's branch above the file tree — "New file" sits
+ * inline with the tree's own heading rather than as a button of its own
+ * — the editor; and a status line saying the one thing that matters —
+ * saved to the checkout but not committed, or unsaved. As a tab: the
+ * rail's content full width with Commit along the bottom, and a file
+ * opened over it with Save above the keyboard. What the working tree has
+ * changed is marks (M/A/D) in the tree itself, not a list of its own —
+ * every read and write goes through the same routes the chat's tools'
+ * work is seen through, so what is here is what the chat sees.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
+import { sendJsonFull } from '@/lib/fetch-json';
 import type { ChatNote } from '@/lib/code/note-text';
 import { unifiedDiff } from '@/lib/code/text-diff';
 import { highlighterLanguageFor } from '@/lib/code/language';
@@ -30,7 +33,7 @@ import { highlightedTokens } from '@/components/code-tokens';
 import CodeEditor from './code-editor';
 import CommitDialog, { FileDiffInline } from './commit-dialog';
 import DiffView, { Counts } from './diff-view';
-import RepoTree, { type FileMark } from './repo-tree';
+import RepoTree, { type FileMark, type RepoTreeHandle } from './repo-tree';
 import type { CodePaneFile, CodePaneHandle } from './use-code-pane';
 import type { LanguageServersHandle, LanguageServerStatus } from './use-language-servers';
 
@@ -94,6 +97,7 @@ export default function CodePane({
   onClose: () => void;
 }) {
   const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
+  const repoTreeRef = useRef<RepoTreeHandle>(null);
   const [treeOpen, setTreeOpen] = useState(true);
   const [showList, setShowList] = useState(pane.active === null);
   const [commitOpen, setCommitOpen] = useState(false);
@@ -120,7 +124,12 @@ export default function CodePane({
 
   const marks = useMemo(() => {
     const map = new Map<string, FileMark>();
-    for (const file of pane.changed) map.set(file.path, file.status === 'untracked' ? 'A' : 'M');
+    for (const file of pane.changed) {
+      map.set(
+        file.path,
+        file.status === 'untracked' ? 'A' : file.status === 'deleted' ? 'D' : 'M'
+      );
+    }
     return map;
   }, [pane.changed]);
 
@@ -135,6 +144,58 @@ export default function CodePane({
   const openFile = (path: string) => {
     pane.open(path);
     setShowList(false);
+  };
+
+  // The tree renamed or deleted a file that happened to be open: the tab
+  // it was in no longer points at anything real, so close it (and for a
+  // rename, open the file at its new path in its place) rather than
+  // leaving a stale tab showing text that no longer lives there.
+  const renamedOpen = (from: string, to: string) => {
+    if (pane.tabs.includes(from)) {
+      pane.close(from);
+      pane.open(to);
+    }
+    pane.refresh();
+  };
+  const deletedOpen = (path: string) => {
+    if (pane.tabs.includes(path)) pane.close(path);
+    pane.refresh();
+  };
+
+  const renameActive = async () => {
+    if (!active) return;
+    const currentName = nameOf(active.path);
+    const nextName = window.prompt('Rename to:', currentName);
+    const trimmed = nextName?.trim();
+    if (!trimmed || trimmed === currentName) return;
+    const folder = folderOf(active.path);
+    const to = folder ? `${folder}/${trimmed}` : trimmed;
+    const result = await sendJsonFull<{ from: string; to: string }>(`${base}/files`, 'PATCH', {
+      from: active.path,
+      to,
+    });
+    if (result.error) {
+      window.alert(result.error);
+      return;
+    }
+    pane.close(active.path);
+    pane.open(to);
+    pane.refresh();
+  };
+
+  const deleteActive = async () => {
+    if (!active) return;
+    if (!window.confirm(`Delete “${nameOf(active.path)}”? This can't be undone.`)) return;
+    const result = await sendJsonFull(
+      `${base}/files?path=${encodeURIComponent(active.path)}`,
+      'DELETE'
+    );
+    if (result.error) {
+      window.alert(result.error);
+      return;
+    }
+    pane.close(active.path);
+    pane.refresh();
   };
 
   const commitButton = (
@@ -189,60 +250,30 @@ export default function CodePane({
 
   const rail = (
     <div className={layout === 'tab' ? 'px-2 py-3' : 'p-2'}>
-      {pane.changed.length > 0 ? (
-        <section className="mb-3">
-          <h3 className="mb-1 flex items-center px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-            <span className="flex-1">Changed · not committed</span>
-            <Counts added={totals.added} deleted={totals.deleted} />
-          </h3>
-          <ul className="font-mono">
-            {pane.changed.map((file) => (
-              <li key={file.path}>
-                <button
-                  type="button"
-                  onClick={() => openFile(file.path)}
-                  aria-current={pane.active === file.path ? 'true' : undefined}
-                  title={file.path}
-                  className={`flex w-full items-center gap-1.5 rounded px-1 text-left text-xs ${touch ? 'min-h-10 py-1.5' : 'py-0.5'} ${
-                    pane.active === file.path
-                      ? 'bg-blue-50 dark:bg-blue-950/40'
-                      : 'hover:bg-gray-100 dark:hover:bg-gray-900'
-                  }`}
-                >
-                  <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${
-                      dirty.has(file.path)
-                        ? 'bg-amber-500'
-                        : file.status === 'untracked'
-                          ? 'bg-green-500'
-                          : 'bg-gray-300 dark:bg-gray-600'
-                    }`}
-                    title={
-                      dirty.has(file.path)
-                        ? 'Unsaved edits here'
-                        : file.status === 'untracked'
-                          ? 'New file'
-                          : 'Changed'
-                    }
-                  />
-                  <span className="min-w-0 flex-1 truncate">{file.path}</span>
-                  <Counts added={file.added} deleted={file.deleted} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {pane.branch ? (
+        <h3
+          data-testid="pane-branch"
+          className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500"
+        >
+          <Icon path={ICONS.gitBranch} className="h-3 w-3 shrink-0" />
+          <span className="truncate font-mono normal-case tracking-normal">{pane.branch}</span>
+        </h3>
       ) : null}
       <h3 className="mb-1 flex items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
         <span className="flex-1">Files</span>
-        {pane.branch ? (
-          <span className="flex min-w-0 items-center gap-1 font-mono text-[11px] normal-case tracking-normal text-gray-500">
-            <Icon path={ICONS.gitBranch} className="h-3 w-3 shrink-0" />
-            <span className="truncate">{pane.branch}</span>
-          </span>
+        {canEdit && pane.available ? (
+          <button
+            type="button"
+            onClick={() => repoTreeRef.current?.newFile()}
+            className="flex items-center gap-1 text-[11px] font-medium normal-case tracking-normal text-blue-600 hover:underline dark:text-blue-400"
+          >
+            <Icon path={ICONS.plus} className="h-3 w-3" />
+            New file
+          </button>
         ) : null}
       </h3>
       <RepoTree
+        ref={repoTreeRef}
         tenantId={tenantId}
         projectId={projectId}
         onOpen={openFile}
@@ -250,7 +281,10 @@ export default function CodePane({
         marks={marks}
         refreshKey={refreshKey}
         touch={touch}
-        showBranch={false}
+        canEdit={canEdit}
+        onRenamed={renamedOpen}
+        onDeleted={deletedOpen}
+        onDeletedClick={setDiffFor}
       />
     </div>
   );
@@ -349,6 +383,28 @@ export default function CodePane({
               Diff
             </button>
           ) : null}
+          {canEdit && active.source === 'checkout' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void renameActive()}
+                aria-label={`Rename ${nameOf(active.path)}`}
+                title="Rename"
+                className={iconButton}
+              >
+                <Icon path={ICONS.pencil} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteActive()}
+                aria-label={`Delete ${nameOf(active.path)}`}
+                title="Delete"
+                className={`${iconButton} hover:text-red-600 dark:hover:text-red-400`}
+              >
+                <Icon path={ICONS.trash} className="h-4 w-4" />
+              </button>
+            </>
+          ) : null}
         </div>
         <div className="min-h-0 flex-1">{editor}</div>
         {active.state === 'ready' && active.editable && canEdit ? (
@@ -432,6 +488,28 @@ export default function CodePane({
               <Icon path={ICONS.diff} className="h-3.5 w-3.5" />
               Diff
             </button>
+          ) : null}
+          {active && canEdit && active.source === 'checkout' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => void renameActive()}
+                aria-label={`Rename ${nameOf(active.path)}`}
+                title="Rename"
+                className={iconButton}
+              >
+                <Icon path={ICONS.pencil} className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteActive()}
+                aria-label={`Delete ${nameOf(active.path)}`}
+                title="Delete"
+                className={`${iconButton} hover:text-red-600 dark:hover:text-red-400`}
+              >
+                <Icon path={ICONS.trash} className="h-4 w-4" />
+              </button>
+            </>
           ) : null}
           {saveButtons}
           {canEdit ? commitButton : null}

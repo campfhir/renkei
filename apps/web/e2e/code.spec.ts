@@ -675,27 +675,27 @@ test.describe('code projects', () => {
 
     if (mobile) {
       // ── A phone: the pane is the Code tab of a switch in the title bar.
-      //    It opens on the working tree's changed files, then the tree,
-      //    with Commit along the bottom ──
+      //    It opens on the file tree (the branch above it, "New file"
+      //    inline with the tree's own heading), with Commit along the
+      //    bottom ──
       const tabs = main.getByRole('tablist', { name: 'Chat or code' });
       await expect(tabs.getByRole('tab', { name: /Chat/ })).toHaveAttribute(
         'aria-selected',
         'true'
       );
       await tabs.getByRole('tab', { name: /Code/ }).click();
-      await expect(main.getByText('Changed · not committed')).toBeVisible({ timeout: 20_000 });
-      await expect(main.getByRole('button', { name: /src\/billing\.ts/ }).first()).toBeVisible();
-      await expect(main.getByRole('tree', { name: 'Files' })).toBeVisible();
+      const tree = main.getByRole('tree', { name: 'Files' });
+      await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
       await expect(main.getByRole('button', { name: /^Commit/ })).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await shot('code-pane-mobile-files.png');
 
-      // ── A file opens over the list, in a plain text area with accessory
-      //    keys, Save above the keyboard ──
-      await main
-        .getByRole('button', { name: /src\/billing\.ts/ })
-        .first()
-        .click();
+      // ── A file opens over the tree, in a plain text area with
+      //    accessory keys, Save above the keyboard ──
+      // (each row's own "More for <name>" button also matches on a loose
+      // name — anchoring at the start keeps this the row's own button)
+      await tree.getByRole('button', { name: 'src', exact: true }).click();
+      await tree.getByRole('button', { name: /^billing\.ts/ }).click();
       const area = main.getByLabel('Contents of src/billing.ts');
       await expect(area).toBeVisible();
       await expect(area).toHaveValue(/MAX_ATTEMPTS/);
@@ -743,26 +743,28 @@ test.describe('code projects', () => {
     }
 
     // ── A wide screen: the pane beside the chat, open at first, with the
-    //    back arrow at the page's left edge, the changed files above the
-    //    tree, and the chat in its compact form on the right ──
+    //    back arrow at the page's left edge, the branch above the tree,
+    //    and the chat in its compact form on the right ──
     const openFiles = main.getByRole('tablist', { name: 'Open files' });
     await expect(openFiles).toBeVisible();
     // First hits on the tree and diff routes in this test: dev-mode's
     // on-demand compile can outrun the default assertion timeout.
     const tree = main.getByRole('tree', { name: 'Files' });
     await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
-    await expect(main.getByText('Changed · not committed')).toBeVisible({ timeout: 20_000 });
+    await expect(main.locator('[data-testid="pane-branch"]')).toContainText('main');
     const back = main.getByRole('link', { name: 'Back to project' });
     await expect(back).toHaveAttribute('href', `/${E2E_SLUG}/code/${ids.seededProjectId}`);
     expect((await back.boundingBox())!.x).toBeLessThan((await tree.boundingBox())!.x);
     expect((await back.boundingBox())!.x).toBeLessThan((await openFiles.boundingBox())!.x);
     // The chat column is narrow beside the pane: its title bar folds.
-    await expect(main.getByRole('button', { name: 'More' })).toBeVisible();
+    await expect(main.getByRole('button', { name: 'More', exact: true })).toBeVisible();
     await expect(main.getByRole('button', { name: 'Changes' })).toHaveCount(0);
 
     // ── A file from the tree opens in Monaco, read as the checkout has it ──
-    await tree.getByRole('button', { name: 'src' }).click();
-    await tree.getByRole('button', { name: /billing\.ts/ }).click();
+    // (each row's own "More for <name>" button also matches on a loose
+    // name — anchoring at the start keeps this the row's own button)
+    await tree.getByRole('button', { name: 'src', exact: true }).click();
+    await tree.getByRole('button', { name: /^billing\.ts/ }).click();
     await expect(openFiles.getByRole('tab', { name: /billing\.ts/ })).toHaveAttribute(
       'aria-selected',
       'true'
@@ -860,10 +862,12 @@ test.describe('code projects', () => {
       // file opens and colours as before, and nothing claims a server.
       const tabs = main.getByRole('tablist', { name: 'Chat or code' });
       await tabs.getByRole('tab', { name: /Code/ }).click();
-      await main
-        .getByRole('button', { name: /src\/billing\.ts/ })
-        .first()
-        .click({ timeout: 20_000 });
+      const tree = main.getByRole('tree', { name: 'Files' });
+      await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
+      // (each row's own "More for <name>" button also matches on a loose
+      // name — anchoring at the start keeps this the row's own button)
+      await tree.getByRole('button', { name: 'src', exact: true }).click();
+      await tree.getByRole('button', { name: /^billing\.ts/ }).click();
       await expect(main.getByLabel('Contents of src/billing.ts')).toHaveValue(/MAX_ATTEMPTS/);
       await expect(main.getByText(/language server/)).toHaveCount(0);
       return;
@@ -873,8 +877,10 @@ test.describe('code projects', () => {
     //    pane starts and names in the status line ──
     const tree = main.getByRole('tree', { name: 'Files' });
     await expect(tree.getByText('package.json')).toBeVisible({ timeout: 20_000 });
-    await tree.getByRole('button', { name: 'src' }).click();
-    await tree.getByRole('button', { name: /billing\.ts/ }).click();
+    // (each row's own "More for <name>" button also matches on a loose
+    // name — anchoring at the start keeps this the row's own button)
+    await tree.getByRole('button', { name: 'src', exact: true }).click();
+    await tree.getByRole('button', { name: /^billing\.ts/ }).click();
     const editor = main.locator('.monaco-editor');
     await expect(editor).toBeVisible({ timeout: 20_000 });
     await expect(editor.getByText('MAX_ATTEMPTS').first()).toBeVisible();
@@ -942,7 +948,7 @@ test.describe('code projects', () => {
 
     // ── A file whose language has no server is counted in
     //    code_language_gaps (no UI; an operator's query) ──
-    await tree.getByRole('button', { name: /package\.json/ }).click();
+    await tree.getByRole('button', { name: /^package\.json/ }).click();
     await expect(openFiles.getByRole('tab', { name: /package\.json/ })).toHaveAttribute(
       'aria-selected',
       'true'

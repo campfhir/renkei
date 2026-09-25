@@ -46,7 +46,7 @@ export interface ChangedFile {
   path: string;
   added: number;
   deleted: number;
-  status: 'modified' | 'untracked';
+  status: 'modified' | 'untracked' | 'deleted';
 }
 
 interface FilePayload {
