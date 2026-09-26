@@ -943,33 +943,24 @@ input[type='number']::-webkit-inner-spin-button {
   max-width: 100%;
 }
 /*
- * A fenced code block is a card: a header naming the language, the code
- * beneath, and a small Copy affordance in a footer under it — always
+ * A fenced code block: a small language label, the code itself as the
+ * only card (`.chat-markdown pre`'s own background/radius/padding —
+ * nothing extra set here), and a small Copy affordance under it — always
  * there rather than only on hover, which is what makes it usable on a
- * phone. `.chat-code-line` is every physical line of the code (see
- * markdown.tsx's rehypeCodeLines) — always its own block, whether or not
- * the line-number gutter is showing, because splitting the block into
- * lines is what took its literal "\n" characters out. The gutter itself
- * is a CSS counter, `.line-numbers` only: pure generated content, so it
- * is never part of a selection or a copy.
+ * phone. The label and Copy sit directly on the page/bubble behind them,
+ * not a bar of their own. `.chat-code-line` is every physical line of
+ * the code (see markdown.tsx's rehypeCodeLines) — always its own block,
+ * whether or not the line-number gutter is showing, because splitting
+ * the block into lines is what took its literal "\n" characters out.
+ * The gutter itself is a CSS counter, `.line-numbers` only: pure
+ * generated content, so it is never part of a selection or a copy.
  */
-.chat-markdown .chat-code {
-  background: var(--color-gray-100);
-  border-radius: 0.5rem;
-  overflow: hidden;
-}
-.chat-markdown .chat-code pre {
-  border-radius: 0;
-  /* The card's own background (above) shows through instead — so the
-     code area always matches the header/footer text sits on, in both
-     schemes, rather than picking up `.chat-markdown pre`'s own fill. */
-  background: transparent;
-}
 .chat-markdown .chat-code-head {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem 0;
+  background: transparent;
   font-family: var(--font-geist-sans), ui-sans-serif, sans-serif;
   font-size: 0.6875rem;
   line-height: 1.2;
@@ -1007,6 +998,7 @@ input[type='number']::-webkit-inner-spin-button {
   display: flex;
   justify-content: flex-end;
   padding: 0.15rem 0.35rem 0.35rem;
+  background: transparent;
 }
 .chat-markdown .chat-code-copy {
   display: flex;
@@ -1150,16 +1142,11 @@ input[type='number']::-webkit-inner-spin-button {
   :root:not([data-theme='light']) .chat-markdown hr {
     border-color: var(--color-gray-800);
   }
-  :root:not([data-theme='light']) .chat-markdown .chat-code {
-    /* A shade closer to the page's own black than code/pre/th's gray-900
-       (below) — as a full card rather than an inline patch, gray-900
-       read as a bright, sharp-edged box against the page. */
-    background: var(--color-gray-950);
-  }
   :root:not([data-theme='light']) .chat-markdown .chat-code pre {
-    /* More specific than code/pre/th's own gray-900, below, so the card's
-       gray-950 (just above) is what actually shows. */
-    background: transparent;
+    /* Lighter than code/pre/th's own gray-900 (below) — a fenced block
+       is a bigger field than an inline patch, and gray-900 read as too
+       close to the page's black to tell apart from it. */
+    background: var(--color-gray-800);
   }
   :root:not([data-theme='light']) .chat-markdown .chat-code-head,
   :root:not([data-theme='light']) .chat-markdown .chat-code-foot {
@@ -1219,11 +1206,8 @@ input[type='number']::-webkit-inner-spin-button {
 :root[data-theme='dark'] .chat-markdown hr {
   border-color: var(--color-gray-800);
 }
-:root[data-theme='dark'] .chat-markdown .chat-code {
-  background: var(--color-gray-950);
-}
 :root[data-theme='dark'] .chat-markdown .chat-code pre {
-  background: transparent;
+  background: var(--color-gray-800);
 }
 :root[data-theme='dark'] .chat-markdown .chat-code-head,
 :root[data-theme='dark'] .chat-markdown .chat-code-foot {
@@ -1272,16 +1256,10 @@ input[type='number']::-webkit-inner-spin-button {
   color: rgba(255, 255, 255, 0.85);
 }
 .chat-markdown.chat-markdown-user code,
-.chat-markdown.chat-markdown-user .chat-code,
+.chat-markdown.chat-markdown-user pre,
 .chat-markdown.chat-markdown-user th {
   background: rgba(0, 0, 0, 0.18);
   color: #fff;
-}
-/* `.chat-markdown pre` sets a light background for the reply's card; on
-   the blue bubble the `.chat-code` div around it already carries the
-   dark overlay above, so the `<pre>` itself must give up its own. */
-.chat-markdown.chat-markdown-user pre {
-  background: transparent;
 }
 .chat-markdown.chat-markdown-user th,
 .chat-markdown.chat-markdown-user td {
