@@ -960,14 +960,16 @@ input[type='number']::-webkit-inner-spin-button {
 }
 .chat-markdown .chat-code pre {
   border-radius: 0;
+  /* The card's own background (above) shows through instead — so the
+     code area always matches the header/footer text sits on, in both
+     schemes, rather than picking up `.chat-markdown pre`'s own fill. */
+  background: transparent;
 }
 .chat-markdown .chat-code-head {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  min-height: 1.75rem;
-  padding: 0.2rem 0.5rem 0.2rem 0.75rem;
-  border-bottom: 1px solid var(--color-gray-200);
+  padding: 0.4rem 0.75rem 0;
   font-family: var(--font-geist-sans), ui-sans-serif, sans-serif;
   font-size: 0.6875rem;
   line-height: 1.2;
@@ -1004,8 +1006,7 @@ input[type='number']::-webkit-inner-spin-button {
 .chat-markdown .chat-code-foot {
   display: flex;
   justify-content: flex-end;
-  padding: 0.2rem 0.4rem;
-  border-top: 1px solid var(--color-gray-200);
+  padding: 0.15rem 0.35rem 0.35rem;
 }
 .chat-markdown .chat-code-copy {
   display: flex;
@@ -1150,11 +1151,18 @@ input[type='number']::-webkit-inner-spin-button {
     border-color: var(--color-gray-800);
   }
   :root:not([data-theme='light']) .chat-markdown .chat-code {
-    background: var(--color-gray-900);
+    /* A shade closer to the page's own black than code/pre/th's gray-900
+       (below) — as a full card rather than an inline patch, gray-900
+       read as a bright, sharp-edged box against the page. */
+    background: var(--color-gray-950);
+  }
+  :root:not([data-theme='light']) .chat-markdown .chat-code pre {
+    /* More specific than code/pre/th's own gray-900, below, so the card's
+       gray-950 (just above) is what actually shows. */
+    background: transparent;
   }
   :root:not([data-theme='light']) .chat-markdown .chat-code-head,
   :root:not([data-theme='light']) .chat-markdown .chat-code-foot {
-    border-color: var(--color-gray-800);
     color: var(--color-gray-400);
   }
   :root:not([data-theme='light']) .chat-markdown .chat-code-line::before {
@@ -1212,11 +1220,13 @@ input[type='number']::-webkit-inner-spin-button {
   border-color: var(--color-gray-800);
 }
 :root[data-theme='dark'] .chat-markdown .chat-code {
-  background: var(--color-gray-900);
+  background: var(--color-gray-950);
+}
+:root[data-theme='dark'] .chat-markdown .chat-code pre {
+  background: transparent;
 }
 :root[data-theme='dark'] .chat-markdown .chat-code-head,
 :root[data-theme='dark'] .chat-markdown .chat-code-foot {
-  border-color: var(--color-gray-800);
   color: var(--color-gray-400);
 }
 :root[data-theme='dark'] .chat-markdown .chat-code-line::before {
@@ -1282,7 +1292,6 @@ input[type='number']::-webkit-inner-spin-button {
 }
 .chat-markdown.chat-markdown-user .chat-code-head,
 .chat-markdown.chat-markdown-user .chat-code-foot {
-  border-color: rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.75);
 }
 .chat-markdown.chat-markdown-user .chat-code-line::before {
