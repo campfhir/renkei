@@ -336,9 +336,20 @@ describe('parseThemePrefs', () => {
   });
 
   it('keeps a valid mode', () => {
-    expect(parseThemePrefs({ mode: 'light' })).toEqual({ mode: 'light' });
-    expect(parseThemePrefs({ mode: 'dark' })).toEqual({ mode: 'dark' });
-    expect(parseThemePrefs({ mode: 'auto' })).toEqual({ mode: 'auto' });
+    expect(parseThemePrefs({ mode: 'light' })).toEqual({ mode: 'light', codeLineNumbers: false });
+    expect(parseThemePrefs({ mode: 'dark' })).toEqual({ mode: 'dark', codeLineNumbers: false });
+    expect(parseThemePrefs({ mode: 'auto' })).toEqual({ mode: 'auto', codeLineNumbers: false });
+  });
+
+  it('keeps a valid codeLineNumbers alongside the mode', () => {
+    expect(parseThemePrefs({ mode: 'dark', codeLineNumbers: true })).toEqual({
+      mode: 'dark',
+      codeLineNumbers: true,
+    });
+    expect(parseThemePrefs({ mode: 'dark', codeLineNumbers: 'yes' })).toEqual({
+      mode: 'dark',
+      codeLineNumbers: false,
+    });
   });
 
   it('falls back to auto for an unrecognised mode', () => {
