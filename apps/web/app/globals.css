@@ -1265,6 +1265,13 @@ input[type='number']::-webkit-inner-spin-button {
 .chat-markdown.chat-markdown-user .chat-code,
 .chat-markdown.chat-markdown-user th {
   background: rgba(0, 0, 0, 0.18);
+  color: #fff;
+}
+/* `.chat-markdown pre` sets a light background for the reply's card; on
+   the blue bubble the `.chat-code` div around it already carries the
+   dark overlay above, so the `<pre>` itself must give up its own. */
+.chat-markdown.chat-markdown-user pre {
+  background: transparent;
 }
 .chat-markdown.chat-markdown-user th,
 .chat-markdown.chat-markdown-user td {
