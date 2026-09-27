@@ -131,7 +131,7 @@ export default async function PreferencesPage({
         allowed to do.
       </p>
       <div className="mb-6">
-        <ThemeForm tenantId={tenant.id} initial={theme.mode} />
+        <ThemeForm tenantId={tenant.id} initial={theme} />
       </div>
       {voice ? (
         <div className="mb-6">

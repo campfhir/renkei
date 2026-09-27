@@ -442,18 +442,30 @@ export type ThemeMode = 'auto' | 'light' | 'dark';
 
 export interface ThemePrefs {
   mode: ThemeMode;
+  /**
+   * Off by default: a fenced code block is already legible without a
+   * gutter, and turning it on for everyone would print a column of digits
+   * across every short snippet a reply happens to include. The gutter is
+   * pure CSS (a counter, incremented per line) rather than text the
+   * markup carries, so it never rides along when a block's code is
+   * copied — see apps/web/app/[slug]/chat/_components/markdown.tsx.
+   */
+  codeLineNumbers: boolean;
 }
 
-export const DEFAULT_THEME_PREFS: ThemePrefs = { mode: 'auto' };
+export const DEFAULT_THEME_PREFS: ThemePrefs = { mode: 'auto', codeLineNumbers: false };
 
-/** Survives whatever jsonb hands back; anything unrecognisable is 'auto'. */
+/** Survives whatever jsonb hands back; anything unrecognisable is 'auto'/off. */
 export function parseThemePrefs(stored: unknown): ThemePrefs {
   if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
     return DEFAULT_THEME_PREFS;
   }
   const raw: Record<string, unknown> = { ...stored };
   const mode = raw.mode === 'light' || raw.mode === 'dark' ? raw.mode : 'auto';
-  return { mode };
+  return {
+    mode,
+    codeLineNumbers: boolOr(raw.codeLineNumbers, DEFAULT_THEME_PREFS.codeLineNumbers),
+  };
 }
 
 /**
