@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { chatClient } from '@/lib/chat/client';
-import type { ChatBlock } from '@/lib/chat/views';
+import type { ChatBlock, WidgetDecisionState } from '@/lib/chat/views';
 import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
 
 type ToolResultBlock = Extract<ChatBlock, { type: 'tool_result' }>;
@@ -131,7 +131,11 @@ export default function WidgetCard({
               isError: result.isError === true,
               content: textContentOf(result.content),
               ...('structuredContent' in result
-                ? { structuredContent: result.structuredContent }
+                ? {
+                    structuredContent: result.resolved
+                      ? { ...plainObject(result.structuredContent), resolved: result.resolved }
+                      : result.structuredContent,
+                  }
                 : {}),
             },
           });
@@ -140,8 +144,9 @@ export default function WidgetCard({
           if (id === undefined) return;
           const name = typeof params?.name === 'string' ? params.name : '';
           const args = plainObject(params?.arguments) ?? {};
+          const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : undefined;
           void chatClient
-            .confirmWidgetTool(tenantId, chatId, name, args)
+            .confirmWidgetTool(tenantId, chatId, name, args, stateKey)
             .then(({ data, error }) => {
               if (error || !data) {
                 post({
@@ -152,6 +157,26 @@ export default function WidgetCard({
               }
               post({ id, result: data.result });
             });
+          return;
+        }
+        case 'ui/report-decision': {
+          if (id === undefined) return;
+          post({ id, result: {} });
+          const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : '';
+          const state = plainObject(params?.state);
+          const decision = state?.icon === 'sent' ? 'confirmed' : 'cancelled';
+          // Best-effort, same as ui/update-model-context: a dropped request
+          // costs cross-device sync, never the decision itself, which the
+          // card already rendered locally before sending this.
+          if (!stateKey || !state) return;
+          void chatClient.reportWidgetDecision(
+            tenantId,
+            chatId,
+            stateKey,
+            decision,
+            // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+            state as unknown as WidgetDecisionState
+          );
           return;
         }
         case 'ui/open-link': {

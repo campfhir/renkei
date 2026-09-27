@@ -27,6 +27,7 @@ export async function POST(
 
   const body = await readJsonBody(request);
   const name = typeof body.name === 'string' ? body.name : '';
+  const stateKey = typeof body.stateKey === 'string' ? body.stateKey : undefined;
   const args: Record<string, unknown> = {};
   if (
     typeof body.arguments === 'object' &&
@@ -45,11 +46,21 @@ export async function POST(
     roles: session.roles,
     name,
     arguments: args,
+    ...(stateKey ? { stateKey } : {}),
   });
   if (!outcome.ok) {
-    return outcome.reason === 'not-a-card-tool'
-      ? jsonError(403, 'not-a-card-tool', 'That tool is not a card action.')
-      : jsonError(502, 'call-failed', 'The tool could not be reached.');
+    switch (outcome.reason) {
+      case 'not-a-card-tool':
+        return jsonError(403, 'not-a-card-tool', 'That tool is not a card action.');
+      case 'already-decided':
+        return jsonError(
+          409,
+          'already-decided',
+          'This was already decided on another device — reload to see it.'
+        );
+      default:
+        return jsonError(502, 'call-failed', 'The tool could not be reached.');
+    }
   }
   return NextResponse.json({ result: outcome.result });
 }

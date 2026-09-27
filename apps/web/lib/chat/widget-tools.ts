@@ -15,6 +15,16 @@
  * (Claude Desktop) would restrict it. The minted token is further
  * allow-listed to that one tool name, so even a bug in the appOnly check
  * could not reach anything else.
+ *
+ * A third callback, `ui/report-decision` (bridge.ts), is what makes a card's
+ * "already decided" receipt durable across devices instead of living only
+ * in the browser that clicked the button (ui.ts's rememberDone/recallDone,
+ * localStorage): `recordWidgetDecision` writes it to `chat_widget_decisions`,
+ * keyed by the same `state_key` the card already used for its own local
+ * receipt, and `confirmWidgetTool` checks that same key BEFORE running a
+ * confirm tool a second time — a device that opens the chat after another
+ * device already decided a non-idempotent action (send an email, create an
+ * issue) must never re-run it, only show the receipt.
  */
 
 import type { Kysely } from 'kysely';
@@ -30,13 +40,16 @@ import { insertMessage } from './messages';
 import { startChatTurn, type StartedTurn } from './start-turn';
 import { getActiveTurn } from './turns';
 import { internalMcpEndpoint } from './internal-origin';
-import type { ChatMessageView } from './views';
+import type { ChatMessageView, WidgetDecisionState } from './views';
 
 const CALL_TTL_SECONDS = 5 * 60;
 const MODEL_CONTEXT_MAX_CHARS = 4_000;
+const MAX_STATE_KEY_CHARS = 255;
 
 export type ConfirmWidgetToolResult =
-  { ok: true; result: McpToolResult } | { ok: false; reason: 'not-a-card-tool' | 'call-failed' };
+  | { ok: true; result: McpToolResult }
+  | { ok: false; reason: 'not-a-card-tool' | 'call-failed' }
+  | { ok: false; reason: 'already-decided'; decision: WidgetDecisionState };
 
 /**
  * Run a card's confirm tool as the signed-in owner. Refuses anything not
@@ -52,8 +65,27 @@ export async function confirmWidgetTool(
     roles: string[];
     name: string;
     arguments: Record<string, unknown>;
+    /**
+     * The card's own persistence key (ui.ts's rememberDone key), when the
+     * card sends one along with its `tools/call` (bridge.ts's `callTool`).
+     * A decision already recorded under it refuses the call rather than
+     * running the tool again — the one guard against a second device
+     * double-acting on a confirm tool that is not idempotent.
+     */
+    stateKey?: string;
   }
 ): Promise<ConfirmWidgetToolResult> {
+  // Checked first, and on its own: whether this exact card was already
+  // decided is a plain fact about `chat_widget_decisions`, independent of
+  // whatever the tool catalog says right now — a connector that dropped
+  // after the fact must never turn "already decided" into "not a card
+  // tool" (or, worse, into `not-a-card-tool` masking a stale catalog read
+  // that would otherwise have let a second run through).
+  if (input.stateKey) {
+    const existing = await getWidgetDecision(db, input.tenantId, input.stateKey);
+    if (existing) return { ok: false, reason: 'already-decided', decision: existing };
+  }
+
   const catalog = await listAvailableTools(input.tenantId, input.subject, { roles: input.roles });
   const descriptor = catalog.find((entry) => entry.name === input.name);
   if (!descriptor?.appOnly) return { ok: false, reason: 'not-a-card-tool' };
@@ -227,5 +259,115 @@ function noteView(row: {
     error: null,
     createdAt: row.createdAt,
     attachments: [],
+  };
+}
+
+/**
+ * A card's decision, reported once it finishes (bridge.ts's
+ * `reportDecision`, sent from every widget bundle's `finishDone`). Both
+ * Confirm and Cancel funnel through `finishDone`, so this is the one write
+ * path for either outcome.
+ *
+ * `ON CONFLICT DO NOTHING`: the first report for a `state_key` wins. A
+ * second report — a race between two devices, or a retry — arrives after
+ * whatever it reported (a tool call, or nothing, for Cancel) already
+ * happened once; overwriting the row would rewrite a receipt the model and
+ * the chat may already have reacted to.
+ */
+export async function recordWidgetDecision(
+  db: Kysely<DB>,
+  input: {
+    tenantId: string;
+    chatId: string;
+    subject: string;
+    stateKey: string;
+    decision: 'confirmed' | 'cancelled';
+    state: WidgetDecisionState;
+  }
+): Promise<{ ok: true } | { ok: false; reason: 'invalid' }> {
+  const stateKey = input.stateKey.trim().slice(0, MAX_STATE_KEY_CHARS);
+  if (!stateKey) return { ok: false, reason: 'invalid' };
+  await db
+    .insertInto('chat_widget_decisions')
+    .values({
+      tenant_id: input.tenantId,
+      chat_id: input.chatId,
+      state_key: stateKey,
+      decision: input.decision,
+      state: JSON.stringify(input.state),
+      decided_by: input.subject,
+    })
+    .onConflict((oc) => oc.columns(['tenant_id', 'state_key']).doNothing())
+    .execute();
+  return { ok: true };
+}
+
+/** One card's decision, by its own persistence key — `confirmWidgetTool`'s guard. */
+export async function getWidgetDecision(
+  db: Kysely<DB>,
+  tenantId: string,
+  stateKey: string
+): Promise<WidgetDecisionState | null> {
+  const row = await db
+    .selectFrom('chat_widget_decisions')
+    .select(['state'])
+    .where('tenant_id', '=', tenantId)
+    .where('state_key', '=', stateKey)
+    .executeTakeFirst();
+  return row ? widgetDecisionStateOf(row.state) : null;
+}
+
+/**
+ * Every decision recorded for one chat, by `state_key` — chat-view.ts's
+ * batch read, merged onto each message's `tool_result` blocks at render
+ * time so a chat opened on a new device shows every card's real state at
+ * once rather than one lookup per card.
+ */
+export async function listWidgetDecisions(
+  db: Kysely<DB>,
+  tenantId: string,
+  chatId: string
+): Promise<Map<string, WidgetDecisionState>> {
+  const rows = await db
+    .selectFrom('chat_widget_decisions')
+    .select(['state_key', 'state'])
+    .where('tenant_id', '=', tenantId)
+    .where('chat_id', '=', chatId)
+    .execute();
+  const out = new Map<string, WidgetDecisionState>();
+  for (const row of rows) {
+    const state = widgetDecisionStateOf(row.state);
+    if (state) out.set(row.state_key, state);
+  }
+  return out;
+}
+
+function widgetDecisionStateOf(value: unknown): WidgetDecisionState | null {
+  let parsed: unknown = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const record: { icon?: unknown; headline?: unknown; detail?: unknown; links?: unknown } = parsed;
+  if (record.icon !== 'sent' && record.icon !== 'cancelled') return null;
+  if (typeof record.headline !== 'string') return null;
+  const links = Array.isArray(record.links)
+    ? record.links.flatMap((entry) => {
+        if (typeof entry !== 'object' || entry === null) return [];
+        const link: { label?: unknown; href?: unknown } = entry;
+        return typeof link.label === 'string' && typeof link.href === 'string'
+          ? [{ label: link.label, href: link.href }]
+          : [];
+      })
+    : [];
+  return {
+    icon: record.icon,
+    headline: record.headline,
+    ...(typeof record.detail === 'string' ? { detail: record.detail } : {}),
+    ...(links.length > 0 ? { links } : {}),
   };
 }

@@ -578,6 +578,16 @@ export interface ChatUserMemories {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ChatWidgetDecisions {
+  chat_id: string;
+  decided_at: Generated<Timestamp>;
+  decided_by: string;
+  decision: string;
+  state: Json;
+  state_key: string;
+  tenant_id: string;
+}
+
 export interface CoachMarkProgress {
   completed_at: Timestamp | null;
   completed_count: Generated<number>;
@@ -1461,6 +1471,7 @@ export interface DB {
   chat_summaries: ChatSummaries;
   chat_turns: ChatTurns;
   chat_user_memories: ChatUserMemories;
+  chat_widget_decisions: ChatWidgetDecisions;
   chats: Chats;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;

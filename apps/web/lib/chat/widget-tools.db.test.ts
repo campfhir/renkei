@@ -11,7 +11,12 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { encrypt, parseEncryptionKey } from '@renkei/crypto';
-import { recordWidgetModelContext } from './widget-tools';
+import {
+  getWidgetDecision,
+  listWidgetDecisions,
+  recordWidgetModelContext,
+  recordWidgetDecision,
+} from './widget-tools';
 
 const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
@@ -164,5 +169,107 @@ maybe('recordWidgetModelContext', () => {
       .execute();
     expect(turns).toEqual([]);
     expect(deferred).toHaveLength(1);
+  });
+});
+
+/**
+ * A card's decision, durable across devices (chat_widget_decisions): the
+ * write path a card's Confirm or Cancel reports through (widget-tools.ts's
+ * `recordWidgetDecision`), and the two read paths that keep a second device
+ * from re-showing live buttons — `getWidgetDecision` (confirmWidgetTool's
+ * own guard against running a confirm tool twice) and `listWidgetDecisions`
+ * (chat-view.ts's batch read for one chat's whole message list).
+ */
+maybe('chat widget decisions', () => {
+  let db: Kysely<DB>;
+  const tenantId = randomUUID();
+  const me = `me-${tenantId.slice(0, 8)}`;
+  const chatId = randomUUID();
+  const otherChatId = randomUUID();
+  const stateKey = `renkei-preview:${randomUUID()}`;
+
+  beforeAll(async () => {
+    const result = getDatabase();
+    if (!result.ok) throw new Error('no database');
+    db = result.val;
+    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await db
+      .insertInto('chats')
+      .values([
+        { id: chatId, tenant_id: tenantId, owner_subject: me, title: 'Rotate the secret' },
+        { id: otherChatId, tenant_id: tenantId, owner_subject: me, title: 'A different chat' },
+      ])
+      .execute();
+  });
+
+  afterAll(async () => {
+    await sql`DELETE FROM chat_widget_decisions WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await closeDatabase();
+  });
+
+  it('is absent until recorded', async () => {
+    expect(await getWidgetDecision(db, tenantId, stateKey)).toBeNull();
+    expect(await listWidgetDecisions(db, tenantId, chatId)).toEqual(new Map());
+  });
+
+  it('records a decision, readable by its own key and by its chat', async () => {
+    const recorded = await recordWidgetDecision(db, {
+      tenantId,
+      chatId,
+      subject: me,
+      stateKey,
+      decision: 'confirmed',
+      state: {
+        icon: 'sent',
+        headline: 'Created issue OPS-1.',
+        detail: 'OPS · Task',
+        links: [{ label: 'Open in Jira', href: 'https://example.atlassian.net/browse/OPS-1' }],
+      },
+    });
+    expect(recorded).toEqual({ ok: true });
+
+    expect(await getWidgetDecision(db, tenantId, stateKey)).toEqual({
+      icon: 'sent',
+      headline: 'Created issue OPS-1.',
+      detail: 'OPS · Task',
+      links: [{ label: 'Open in Jira', href: 'https://example.atlassian.net/browse/OPS-1' }],
+    });
+    expect(await listWidgetDecisions(db, tenantId, chatId)).toEqual(
+      new Map([
+        [
+          stateKey,
+          {
+            icon: 'sent',
+            headline: 'Created issue OPS-1.',
+            detail: 'OPS · Task',
+            links: [{ label: 'Open in Jira', href: 'https://example.atlassian.net/browse/OPS-1' }],
+          },
+        ],
+      ])
+    );
+    // A different chat in the same tenant never sees another chat's card.
+    expect(await listWidgetDecisions(db, tenantId, otherChatId)).toEqual(new Map());
+  });
+
+  it('keeps the first decision when a second is reported for the same key', async () => {
+    // A race between two devices, or a retry — by the time a second report
+    // for one state_key could arrive, whatever it reported already
+    // happened once (a tool call, or nothing, for Cancel); recording a
+    // later, different report over it would rewrite that history.
+    const recorded = await recordWidgetDecision(db, {
+      tenantId,
+      chatId,
+      subject: me,
+      stateKey,
+      decision: 'cancelled',
+      state: { icon: 'cancelled', headline: 'Cancelled' },
+    });
+    expect(recorded).toEqual({ ok: true });
+    expect(await getWidgetDecision(db, tenantId, stateKey)).toMatchObject({
+      icon: 'sent',
+      headline: 'Created issue OPS-1.',
+    });
   });
 });

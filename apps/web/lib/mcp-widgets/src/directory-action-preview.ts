@@ -31,6 +31,7 @@ import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   avatar,
   cardActions,
+  doneStateOf,
   el,
   injectStyle,
   parseLinks,
@@ -175,13 +176,20 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   // second preview of the same kind recall the first one's receipt.
   const previewId = str(preview.previewId);
   const stateKey = previewId ? `renkei-preview:${previewId}` : '';
-  const remembered = stateKey ? recallDone(stateKey) : null;
+  // A decision made on another device (chat-view.ts's `resolved`, joined
+  // in from chat_widget_decisions) outranks this browser's own localStorage
+  // receipt — it is the newer, durable record; recallDone is only ever a
+  // same-device fallback for an older server that sends no `resolved`.
+  const remembered = doneStateOf(preview.resolved) ?? (stateKey ? recallDone(stateKey) : null);
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
-    if (stateKey) rememberDone(stateKey, state);
+    if (stateKey) {
+      rememberDone(stateKey, state);
+      bridge.reportDecision(stateKey, state);
+    }
     renderDone(root, state);
   };
 
@@ -247,7 +255,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   root.append(card);
 
   footer.run(confirmButton, async () => {
-    const confirmed = await bridge.callTool(confirmTool, confirmArgs);
+    const confirmed = await bridge.callTool(confirmTool, confirmArgs, stateKey);
     const text = resultText(confirmed);
     if (confirmed.isError) throw new Error(text || 'The action failed');
     const links = parseLinks(text);
