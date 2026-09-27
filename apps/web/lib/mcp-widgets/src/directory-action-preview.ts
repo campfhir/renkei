@@ -266,14 +266,16 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       ...(links.length > 0 ? { links } : {}),
     });
     bridge.updateModelContext(
-      `The user confirmed "${str(preview.title)}" on the preview card. Result: ${text}`
+      `The user confirmed "${str(preview.title)}" on the preview card. Result: ${text}`,
+      stateKey
     );
   });
 
   footer.run(cancelButton, async () => {
     finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing changed.' });
     bridge.updateModelContext(
-      `The user cancelled "${str(preview.title)}" from the preview card. Nothing changed.`
+      `The user cancelled "${str(preview.title)}" from the preview card. Nothing changed.`,
+      stateKey
     );
   });
 }

@@ -118,14 +118,16 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       detail: `“${topic.input.value.trim()}” — ${startTime}${recurrenceText ? `, ${recurrenceText}` : ''}`,
     });
     bridge.updateModelContext(
-      `The user confirmed the Zoom meeting preview; "${topic.input.value.trim()}" was scheduled for ${startTime}.`
+      `The user confirmed the Zoom meeting preview; "${topic.input.value.trim()}" was scheduled for ${startTime}.`,
+      stateKey
     );
   });
 
   footer.run(cancelButton, async () => {
     finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing was created.' });
     bridge.updateModelContext(
-      'The user cancelled the Zoom meeting from the preview card. Nothing was created.'
+      'The user cancelled the Zoom meeting from the preview card. Nothing was created.',
+      stateKey
     );
   });
 }

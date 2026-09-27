@@ -190,12 +190,16 @@ export default function WidgetCard({
           if (id === undefined) return;
           post({ id, result: {} });
           const text = joinedText(params?.content);
-          // Best-effort, same as the card's own bridge treats it: a turn
-          // running right now (409) means this update is simply lost.
+          const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : undefined;
+          // Best-effort, same as the card's own bridge treats it: a note
+          // the server could not write at all (no usable model on a chat
+          // this isn't, so effectively never) is simply lost.
           if (!text) return;
-          void chatClient.appendWidgetModelContext(tenantId, chatId, text).then(({ data }) => {
-            if (data?.message) onModelContext?.(data);
-          });
+          void chatClient
+            .appendWidgetModelContext(tenantId, chatId, text, stateKey)
+            .then(({ data }) => {
+              if (data?.message) onModelContext?.(data);
+            });
           return;
         }
         case 'ui/notifications/size-changed': {

@@ -113,10 +113,16 @@ export class WidgetBridge {
    * conversation's record stops at "a preview was shown" — the send or the
    * discard happened outside the model's view, and its next reply would
    * guess. Best-effort: a host that rejects it loses nothing but fidelity.
+   *
+   * `stateKey` — the same key `reportDecision` uses — lets the host hold
+   * off replying until every card from the same reply is decided, so one
+   * reply presenting several cards gets one answer, informed by all of
+   * them, instead of one answer per card.
    */
-  updateModelContext(text: string): void {
+  updateModelContext(text: string, stateKey?: string): void {
     this.request('ui/update-model-context', {
       content: [{ type: 'text', text }],
+      ...(stateKey ? { stateKey } : {}),
     }).catch(() => undefined);
   }
 

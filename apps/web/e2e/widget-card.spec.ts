@@ -63,7 +63,7 @@ const COLD = { timeout: 30_000 };
  * its chat, so two tests on one chat would race on the one running turn
  * a chat allows (AGENTS.md's "isolate what you create").
  */
-function idsFor(project: string, variant: '1' | '2' | '3' | '4') {
+function idsFor(project: string, variant: '1' | '2' | '3' | '4' | '5') {
   const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
   return {
     chatId: `cccccccc-cccc-4ccc-8ccc-ccccccccc${variant}${digit}1`,
@@ -207,6 +207,109 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
       ]
     );
   }
+}
+
+/** A completed reply presenting TWO widget-bound previews at once. */
+async function seedTwoCardChat(
+  client: Client,
+  ids: Ids,
+  previewIdA: string,
+  previewIdB: string
+): Promise<{ toolUseIdA: string; toolUseIdB: string }> {
+  await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
+  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
+  await client.query(
+    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
+     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, $5, true, false)`,
+    [
+      ids.modelId,
+      E2E_TENANT_ID,
+      ids.modelLabel,
+      STUB_MODEL_BASE_URL,
+      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
+    ]
+  );
+  await client.query(
+    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())`,
+    [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
+  );
+  await client.query(
+    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
+     VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
+    [ids.turnId, E2E_TENANT_ID, ids.chatId, ids.modelId]
+  );
+  const toolUseIdA = `${ids.toolUseId}_a`;
+  const toolUseIdB = `${ids.toolUseId}_b`;
+  const toolInputA = { ...TOOL_INPUT, summary: 'Rotate the Zoom webhook secret' };
+  const toolInputB = { ...TOOL_INPUT, summary: 'Rotate the Webex webhook secret' };
+  const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
+    {
+      seq: 1,
+      role: 'user',
+      kind: 'prompt',
+      blocks: [{ type: 'text', text: 'File two tasks: the Zoom and Webex webhook secrets.' }],
+    },
+    {
+      seq: 2,
+      role: 'assistant',
+      kind: 'assistant',
+      blocks: [
+        { type: 'text', text: 'Two previews — nothing is created until you confirm each.' },
+        { type: 'tool_use', id: toolUseIdA, name: 'jira_create_issue_preview', input: toolInputA },
+        { type: 'tool_use', id: toolUseIdB, name: 'jira_create_issue_preview', input: toolInputB },
+      ],
+    },
+    {
+      seq: 3,
+      role: 'user',
+      kind: 'tool_results',
+      blocks: [
+        {
+          type: 'tool_result',
+          toolUseId: toolUseIdA,
+          content: 'Awaiting the user’s decision on the preview card.',
+          uiResourceUri: ISSUE_PREVIEW_URI,
+          structuredContent: {
+            ...structuredContent(previewIdA),
+            title: 'Create Jira issue A',
+            confirmArgs: toolInputA,
+          },
+        },
+        {
+          type: 'tool_result',
+          toolUseId: toolUseIdB,
+          content: 'Awaiting the user’s decision on the preview card.',
+          uiResourceUri: ISSUE_PREVIEW_URI,
+          structuredContent: {
+            ...structuredContent(previewIdB),
+            title: 'Create Jira issue B',
+            confirmArgs: toolInputB,
+          },
+        },
+      ],
+    },
+  ];
+  for (const row of rows) {
+    const assistant = row.role === 'assistant';
+    await client.query(
+      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
+       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10)`,
+      [
+        E2E_TENANT_ID,
+        ids.chatId,
+        ids.turnId,
+        row.seq,
+        row.role,
+        row.kind,
+        seal(JSON.stringify(row.blocks)),
+        assistant ? ids.modelId : null,
+        assistant ? 'anthropic' : null,
+        assistant ? 'e2e-model' : null,
+      ]
+    );
+  }
+  return { toolUseIdA, toolUseIdB };
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -515,6 +618,79 @@ test('the card still renders at phone width', async ({ page }, testInfo) => {
     const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(bodyWidth).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
     await shot(page, testInfo, 'widget-card-mobile.png');
+  } finally {
+    await client.end();
+  }
+});
+
+/** How many turns exist on the chat right now — the seeded reply plus whatever decisions opened. */
+async function turnCount(client: Client, chatId: string): Promise<number> {
+  const { rows } = await client.query<{ n: string }>(
+    'SELECT count(*)::text AS n FROM chat_turns WHERE chat_id = $1',
+    [chatId]
+  );
+  return Number(rows[0]?.n ?? '0');
+}
+
+test('two cards from one reply: deciding both opens exactly one turn, informed by each', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const ids = idsFor(testInfo.project.name, '5');
+  try {
+    await seedTwoCardChat(client, ids, randomUUID(), randomUUID());
+    await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
+      await route.fulfill({
+        json: {
+          result: {
+            content: [{ type: 'text', text: 'Created issue OPS-99.' }],
+            isError: false,
+            meta: {},
+          },
+        },
+      });
+    });
+
+    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+
+    const iframes = page.locator('iframe[title="Preview card"]');
+    await expect(iframes).toHaveCount(2, COLD);
+    const frameA = iframes.nth(0).contentFrame();
+    const frameB = iframes.nth(1).contentFrame();
+    await expect(frameA.locator('.card-title')).toHaveText('Create Jira issue A', COLD);
+    await expect(frameB.locator('.card-title')).toHaveText('Create Jira issue B', COLD);
+
+    // Card A alone: its note appears, but nothing has opened a turn yet —
+    // the model must not answer having seen only one of the two cards.
+    await frameA.getByRole('button', { name: 'Create' }).click();
+    await expect(frameA.locator('.done-headline')).toHaveText('Created issue OPS-99.');
+    const noteA = noteLine(page, 'The user confirmed "Create Jira issue A" on the preview card');
+    await expect(noteA).toBeVisible(COLD);
+    await expect(page.getByText('Stub model: I saw')).toHaveCount(0);
+    expect(await turnCount(client, ids.chatId)).toBe(1); // just the seeded reply
+
+    // Card B decided too: now — and only now — one turn opens, and the
+    // model's reply lands once, not twice.
+    await frameB.getByRole('button', { name: 'Create' }).click();
+    await expect(frameB.locator('.done-headline')).toHaveText('Created issue OPS-99.');
+    const noteB = noteLine(page, 'The user confirmed "Create Jira issue B" on the preview card');
+    await expect(noteB).toBeVisible(COLD);
+    const reply = page.getByText('Stub model: I saw');
+    await expect(reply).toBeVisible(COLD);
+    await expect(reply).toHaveCount(1);
+    await expect
+      .poll(() => decisionTurn(client, ids.chatId), COLD)
+      .toEqual({ status: 'completed', noteTurnId: expect.any(String) });
+
+    // Exactly one new turn across both decisions — never one per card.
+    expect(await turnCount(client, ids.chatId)).toBe(2);
+    // Both notes are still on the record, from the SAME one turn's reply.
+    await expect(noteA).toBeVisible();
+    await expect(noteB).toBeVisible();
+    await shot(page, testInfo, 'widget-card-batched-decisions.png');
   } finally {
     await client.end();
   }

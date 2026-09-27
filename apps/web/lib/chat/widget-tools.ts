@@ -36,10 +36,11 @@ import {
   type McpToolResult,
 } from '@renkei/mcp-client';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
-import { insertMessage } from './messages';
+import { insertMessage, listMessages } from './messages';
 import { startChatTurn, type StartedTurn } from './start-turn';
 import { getActiveTurn } from './turns';
 import { internalMcpEndpoint } from './internal-origin';
+import { toChatBlocks, widgetStateKeyOf } from './views';
 import type { ChatMessageView, WidgetDecisionState } from './views';
 
 const CALL_TTL_SECONDS = 5 * 60;
@@ -134,8 +135,10 @@ export type WidgetModelContextOutcome = { message: ChatMessageView; turn: Starte
  * Refused while a turn is running, same as any note: the runner is the
  * only writer of a turn's own rows then. When a turn cannot start for a
  * reason that is not the chat's state — no model configured, the model
- * unusable, the chat a code project's history — the note is still
- * appended on its own so the decision is not lost, and `turn` is null.
+ * unusable, the chat a code project's history, or (see `stateKey` below)
+ * another card from the same reply still awaiting its own decision — the
+ * note is still appended on its own so the decision is not lost, and
+ * `turn` is null.
  */
 export async function recordWidgetModelContext(
   db: Kysely<DB>,
@@ -144,6 +147,23 @@ export async function recordWidgetModelContext(
     session: { subject: string; roles: string[] };
     chatId: string;
     text: string;
+    /**
+     * The card's own persistence key, when the card sends one along with
+     * its `ui/update-model-context` (bridge.ts). One reply can present
+     * several cards at once (a batch of assignments to review, say), and
+     * without this, deciding the first one opened a turn immediately —
+     * the model answered having seen only that one, and the SECOND
+     * decision then either opened a turn of its own (the model commenting
+     * a second time on what is, to the person, one batch of decisions) or,
+     * if the first reply was still streaming, was dropped outright by the
+     * ALREADY_RUNNING branch this replaced. With it, a decision whose
+     * sibling in the same reply is still undecided is appended but never
+     * opens a turn; only the LAST sibling to be decided does, and by then
+     * the model's own context already has every one of them as prior note
+     * rows to read — one reply, informed by all of them, instead of one
+     * reply per card.
+     */
+    stateKey?: string;
     defer?: (task: () => Promise<void>) => void;
   }
 ): Promise<
@@ -151,6 +171,16 @@ export async function recordWidgetModelContext(
 > {
   const text = input.text.trim().slice(0, MODEL_CONTEXT_MAX_CHARS);
   if (!text) return { ok: false, reason: 'failed' };
+
+  if (input.stateKey && (await waitingOnSiblings(db, input.tenantId, input.chatId, input.stateKey))) {
+    const appended = await appendWidgetModelContext(db, {
+      tenantId: input.tenantId,
+      chatId: input.chatId,
+      text,
+    });
+    return appended.ok ? { ok: true, message: appended.message, turn: null } : appended;
+  }
+
   const started = await startChatTurn(db, {
     tenantId: input.tenantId,
     session: input.session,
@@ -173,8 +203,12 @@ export async function recordWidgetModelContext(
     };
   }
   switch (started.err.type) {
+    // Folded in with the reasons below rather than dropping the note
+    // outright (this branch used to return `{ok:false, reason:'turn-running'}`
+    // with nothing written at all): a turn already running when this
+    // decision lands is not this decision's fault, and losing it meant
+    // the person had to repeat themselves once the reply finished.
     case 'ALREADY_RUNNING':
-      return { ok: false, reason: 'turn-running' };
     case 'NO_MODEL':
     case 'MODEL_ERROR':
     case 'HISTORY': {
@@ -188,6 +222,67 @@ export async function recordWidgetModelContext(
     default:
       return { ok: false, reason: 'failed' };
   }
+}
+
+/**
+ * True when this card shares a reply (the same `turnId` on its
+ * `tool_results` row) with another decidable card that has no decision
+ * recorded yet. The current card counts as decided regardless of whether
+ * its own `recordWidgetDecision` write has landed — `reportDecision` and
+ * `updateModelContext` fire one after the other from the same synchronous
+ * handler (ui.ts's `finishDone`), but nothing guarantees which request the
+ * server sees first, and by definition the fact that this call is
+ * happening at all means the card is decided.
+ */
+async function waitingOnSiblings(
+  db: Kysely<DB>,
+  tenantId: string,
+  chatId: string,
+  stateKey: string
+): Promise<boolean> {
+  const siblings = await turnWidgetStateKeys(db, tenantId, chatId, stateKey);
+  if (!siblings || siblings.length <= 1) return false;
+  const decisions = await listWidgetDecisions(db, tenantId, chatId);
+  return siblings.some((key) => key !== stateKey && !decisions.has(key));
+}
+
+/**
+ * Every decidable card's persistence key sharing one reply with `stateKey`
+ * — every `tool_results` row carrying the same `turnId` as the row this
+ * card's own result lives on (one reply can run more than one round of
+ * tool calls before it answers, each landing in its own `tool_results`
+ * row). Null when no row carries this exact key at all — an unknown or
+ * already-compacted card — which callers read as "nothing to wait on".
+ */
+async function turnWidgetStateKeys(
+  db: Kysely<DB>,
+  tenantId: string,
+  chatId: string,
+  stateKey: string
+): Promise<string[] | null> {
+  const rows = await listMessages(db, tenantId, chatId);
+  let turnId: string | null | undefined;
+  for (const row of rows) {
+    if (row.kind !== 'tool_results') continue;
+    const keys = toChatBlocks(row.blocks).flatMap((block) => {
+      const key = widgetStateKeyOf(block);
+      return key ? [key] : [];
+    });
+    if (keys.includes(stateKey)) {
+      turnId = row.turnId;
+      break;
+    }
+  }
+  if (turnId === undefined) return null;
+  const keys: string[] = [];
+  for (const row of rows) {
+    if (row.kind !== 'tool_results' || row.turnId !== turnId) continue;
+    for (const block of toChatBlocks(row.blocks)) {
+      const key = widgetStateKeyOf(block);
+      if (key) keys.push(key);
+    }
+  }
+  return keys;
 }
 
 /**

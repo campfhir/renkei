@@ -27,6 +27,7 @@ export async function POST(
 
   const body = await readJsonBody(request);
   const text = typeof body.text === 'string' ? body.text : '';
+  const stateKey = typeof body.stateKey === 'string' ? body.stateKey : undefined;
   if (!text.trim()) return jsonError(400, 'invalid', 'text is required.');
 
   const recorded = await recordWidgetModelContext(db, {
@@ -34,6 +35,7 @@ export async function POST(
     session: { subject: session.subject, roles: session.roles },
     chatId: chat.id,
     text,
+    ...(stateKey ? { stateKey } : {}),
   });
   if (!recorded.ok) {
     return recorded.reason === 'turn-running'

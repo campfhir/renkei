@@ -146,7 +146,8 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       detail: `To ${finalTo}${finalSubject ? ` — “${finalSubject}”` : ''}`,
     });
     bridge.updateModelContext(
-      `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and sent it to ${finalTo}.`
+      `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and sent it to ${finalTo}.`,
+      stateKey
     );
   });
 
@@ -159,7 +160,8 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     if (discarded.isError) throw new Error(resultText(discarded) || 'Discard failed');
     finishDone({ icon: 'cancelled', headline: 'Discarded', detail: 'Nothing was sent.' });
     bridge.updateModelContext(
-      'The user discarded the email draft from the preview card. Nothing was sent.'
+      'The user discarded the email draft from the preview card. Nothing was sent.',
+      stateKey
     );
   });
 }

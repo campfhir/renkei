@@ -297,13 +297,15 @@ export const chatClient = {
    * A card's `ui/update-model-context` — recorded as a note and, when the
    * chat can take one, the user row of a new turn the model answers at
    * once (`turn` carries the ids to stream from; null when only the note
-   * was written).
+   * was written, including when `stateKey` names a card whose reply still
+   * has an undecided sibling — the model answers once every card in that
+   * reply has one, not once per card).
    */
-  appendWidgetModelContext: (tenantId: string, chatId: string, text: string) =>
+  appendWidgetModelContext: (tenantId: string, chatId: string, text: string, stateKey?: string) =>
     sendJsonFull<WidgetModelContextOutcome>(
       `${base(tenantId)}/chats/${chatId}/widget/model-context`,
       'POST',
-      { text }
+      { text, ...(stateKey ? { stateKey } : {}) }
     ),
 };
 

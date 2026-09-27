@@ -298,7 +298,8 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       ...(links.length > 0 ? { links } : {}),
     });
     bridge.updateModelContext(
-      `The user confirmed "${str(preview.title)}" on the preview card. Result: ${text}`
+      `The user confirmed "${str(preview.title)}" on the preview card. Result: ${text}`,
+      stateKey
     );
   });
 
@@ -306,7 +307,8 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     if (!cancelTool) {
       finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing was written.' });
       bridge.updateModelContext(
-        `The user cancelled "${str(preview.title)}" from the preview card. Nothing was written.`
+        `The user cancelled "${str(preview.title)}" from the preview card. Nothing was written.`,
+        stateKey
       );
       return;
     }
@@ -319,7 +321,8 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       detail: str(preview.subtitle) || str(preview.title),
     });
     bridge.updateModelContext(
-      `The user declined "${str(preview.title)}" from the preview card. Result: ${text}`
+      `The user declined "${str(preview.title)}" from the preview card. Result: ${text}`,
+      stateKey
     );
   });
 }
