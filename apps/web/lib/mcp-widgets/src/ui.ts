@@ -442,21 +442,41 @@ export function rememberDone(key: string, state: DoneState): void {
   }
 }
 
+/**
+ * A `DoneState`, from wherever one might arrive already parsed — the
+ * server's own `resolved` field (chat-view.ts stamps it onto structuredContent
+ * from `chat_widget_decisions`) as well as JSON.parse'd localStorage. Kept
+ * permissive on purpose: an older or newer shape than this build expects
+ * degrades to "nothing remembered" rather than a rendering error.
+ */
+export function doneStateOf(value: unknown): DoneState | null {
+  if (typeof value !== 'object' || value === null) return null;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const state = value as Record<string, unknown>;
+  if (state.icon !== 'sent' && state.icon !== 'cancelled') return null;
+  if (typeof state.headline !== 'string') return null;
+  const links = Array.isArray(state.links)
+    ? state.links.flatMap((entry: unknown) => {
+        if (typeof entry !== 'object' || entry === null) return [];
+        const link: { label?: unknown; href?: unknown } = entry;
+        return typeof link.label === 'string' && typeof link.href === 'string'
+          ? [{ label: link.label, href: link.href }]
+          : [];
+      })
+    : [];
+  return {
+    icon: state.icon,
+    headline: state.headline,
+    ...(typeof state.detail === 'string' ? { detail: state.detail } : {}),
+    ...(links.length > 0 ? { links } : {}),
+  };
+}
+
 export function recallDone(key: string): DoneState | null {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const state = parsed as Record<string, unknown>;
-    if (state.icon !== 'sent' && state.icon !== 'cancelled') return null;
-    if (typeof state.headline !== 'string') return null;
-    return {
-      icon: state.icon,
-      headline: state.headline,
-      ...(typeof state.detail === 'string' ? { detail: state.detail } : {}),
-    };
+    return doneStateOf(JSON.parse(raw));
   } catch {
     return null;
   }

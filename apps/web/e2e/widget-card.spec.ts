@@ -63,7 +63,7 @@ const COLD = { timeout: 30_000 };
  * its chat, so two tests on one chat would race on the one running turn
  * a chat allows (AGENTS.md's "isolate what you create").
  */
-function idsFor(project: string, variant: '1' | '2' | '3') {
+function idsFor(project: string, variant: '1' | '2' | '3' | '4') {
   const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
   return {
     chatId: `cccccccc-cccc-4ccc-8ccc-ccccccccc${variant}${digit}1`,
@@ -341,23 +341,48 @@ test('a preview tool renders its card, and confirming it runs the real tool call
       .toEqual({ status: 'completed', noteTurnId: expect.any(String) });
     await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
 
-    // The card's "already decided" receipt is localStorage-backed
-    // (ui.ts's rememberDone/recallDone), and this sandbox is deliberately
-    // `allow-scripts` with no `allow-same-origin` (see widget-card.tsx's
-    // note on why) — an opaque origin gets a fresh, unlinked storage
-    // partition on every load, so a reload cannot recall it. ui.ts
-    // documents exactly this as the accepted degradation: "the card
-    // degrades to re-showing the form, never to re-sending." The stored
-    // tool_result is unchanged, so the form reappears rather than the
-    // receipt — never a re-send, since nothing here re-fires the call.
+    // The card's decision is durable now: finishDone (ui.ts) reported it
+    // through bridge.reportDecision, which widget-card.tsx forwarded to
+    // /widget/decision — a real write to chat_widget_decisions, not
+    // mocked. A reload replays the SAME stored tool_result (nothing about
+    // the row itself changed), but chat-view.ts's withResolvedWidgets joins
+    // that decision back onto it as `resolved`, and the card checks that
+    // before ever rendering its live form, so the receipt reappears
+    // instead of Confirm/Cancel buttons for something already decided —
+    // never a re-send, since nothing here re-fires the confirm tool.
     await page.reload();
-    await expect(frame.locator('.card-title')).toHaveText('Create Jira issue');
-    await expect(frame.getByRole('button', { name: 'Create' })).toBeVisible();
+    await expect(frame.locator('.done-headline')).toHaveText('Created issue OPS-99.', COLD);
+    await expect(frame.getByRole('link', { name: 'Open in Jira' })).toHaveAttribute(
+      'href',
+      'https://example.atlassian.net/browse/OPS-99'
+    );
+    await expect(frame.getByRole('button', { name: 'Create' })).toHaveCount(0);
+    await expect(frame.locator('.card-title')).toHaveCount(0);
     // The note and the reply are rows now, so they are still there.
     await expect(
       noteLine(page, 'The user confirmed "Create Jira issue" on the preview card')
     ).toBeVisible();
     await expect(page.getByText('Stub model: I saw')).toBeVisible();
+
+    // A second device (no localStorage at all, and no tools/call mock
+    // wired up this time) opens the SAME chat: the same durable decision
+    // still resolves it, and a live confirm call would be a bug — the
+    // route mock above is gone, so a re-fired call would 404/fail loudly
+    // rather than silently double-run the tool.
+    const freshContext = await page.context().browser()!.newContext();
+    try {
+      const freshPage = await freshContext.newPage();
+      await freshPage.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+      await expect(freshPage.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+      const freshFrame = freshPage.frameLocator('iframe[title="Preview card"]');
+      await expect(freshFrame.locator('.done-headline')).toHaveText(
+        'Created issue OPS-99.',
+        COLD
+      );
+      await expect(freshFrame.getByRole('button', { name: 'Create' })).toHaveCount(0);
+    } finally {
+      await freshContext.close();
+    }
   } finally {
     await client.end();
   }
@@ -399,6 +424,75 @@ test('cancelling the card is a decision too: the model replies to it', async ({
       .poll(() => decisionTurn(client, ids.chatId), COLD)
       .toEqual({ status: 'completed', noteTurnId: expect.any(String) });
     await shot(page, testInfo, 'widget-card-cancelled.png');
+
+    // Cancel reports its decision the same way Confirm does (finishDone,
+    // ui.ts), so it is just as durable: a reload shows the cancelled
+    // receipt again rather than live buttons.
+    await page.reload();
+    await expect(frame.locator('.done-headline')).toHaveText('Cancelled', COLD);
+    await expect(frame.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+  } finally {
+    await client.end();
+  }
+});
+
+test('a stale card refuses to re-run a confirm tool another device already decided', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const ids = idsFor(testInfo.project.name, '4');
+  const previewId = randomUUID();
+  try {
+    await seedChat(client, ids, previewId);
+
+    // Not mocked, on purpose: the point of this test is the REAL server
+    // route (confirmWidgetTool, widget-tools.ts) refusing the call on its
+    // own, before it would ever reach a tool — checked first thing, ahead
+    // of the tool catalog lookup a mock would otherwise stand in for.
+    const toolCallRequests: unknown[] = [];
+    page.on('request', (req) => {
+      if (req.url().includes('/widget/tool-call')) toolCallRequests.push(req.postDataJSON());
+    });
+
+    await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
+    await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+    const frame = page.frameLocator('iframe[title="Preview card"]');
+    const confirmButton = frame.getByRole('button', { name: 'Create' });
+    await expect(confirmButton).toBeVisible(COLD);
+
+    // Another device decides this exact card while this one is still
+    // showing its (now stale) live form — the same row `/widget/decision`
+    // would write, inserted directly rather than driving a second browser.
+    await client.query(
+      `INSERT INTO chat_widget_decisions (tenant_id, chat_id, state_key, decision, state, decided_by)
+       VALUES ($1, $2, $3, 'confirmed', $4, $5)`,
+      [
+        E2E_TENANT_ID,
+        ids.chatId,
+        `renkei-preview:${previewId}`,
+        JSON.stringify({ icon: 'sent', headline: 'Created issue OPS-1.' }),
+        E2E_SUBJECT,
+      ]
+    );
+
+    // This stale page's Confirm still fires — confirmWidgetTool
+    // (widget-tools.ts) checks the state_key BEFORE minting a run token or
+    // reaching the tool, and refuses rather than double-acting.
+    await confirmButton.click();
+    await expect(frame.locator('.status.error')).toHaveText(
+      'This was already decided on another device — reload to see it.'
+    );
+    // The request reached the real route (it is not mocked) and came back
+    // refused — never mind what it would have sent, this asserts a
+    // response arrived, not that the tool was actually invoked.
+    expect(toolCallRequests).toHaveLength(1);
+
+    // Reloading picks up the real decision (chat-view.ts's withResolvedWidgets).
+    await page.reload();
+    await expect(frame.locator('.done-headline')).toHaveText('Created issue OPS-1.', COLD);
+    await expect(confirmButton).toHaveCount(0);
   } finally {
     await client.end();
   }

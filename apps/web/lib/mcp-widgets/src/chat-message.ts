@@ -11,6 +11,7 @@
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
+  doneStateOf,
   el,
   injectStyle,
   readonlyField,
@@ -54,13 +55,16 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   // someone else's outcome.
   const previewId = str(preview.previewId);
   const stateKey = previewId ? `renkei-preview:${previewId}` : '';
-  const remembered = stateKey ? recallDone(stateKey) : null;
+  const remembered = doneStateOf(preview.resolved) ?? (stateKey ? recallDone(stateKey) : null);
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
-    if (stateKey) rememberDone(stateKey, state);
+    if (stateKey) {
+      rememberDone(stateKey, state);
+      bridge.reportDecision(stateKey, state);
+    }
     renderDone(root, state);
   };
 
@@ -84,11 +88,15 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   footer.run(sendButton, async () => {
     const markdown = message.input.value.trim();
     if (!markdown) throw new Error('The message is empty.');
-    const sent = await bridge.callTool('webex_send_message_confirm', {
-      ...(roomId ? { roomId } : { toPersonEmail }),
-      markdown,
-      ...(str(preview.parentId) ? { parentId: str(preview.parentId) } : {}),
-    });
+    const sent = await bridge.callTool(
+      'webex_send_message_confirm',
+      {
+        ...(roomId ? { roomId } : { toPersonEmail }),
+        markdown,
+        ...(str(preview.parentId) ? { parentId: str(preview.parentId) } : {}),
+      },
+      stateKey
+    );
     if (sent.isError) throw new Error(resultText(sent) || 'Send failed');
     const sentLinks = parseLinks(resultText(sent));
     finishDone({

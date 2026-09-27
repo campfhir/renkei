@@ -41,6 +41,7 @@ import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
   checkboxGroupField,
+  doneStateOf,
   el,
   injectStyle,
   inputField,
@@ -160,13 +161,16 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   // extra click; showing a stale one makes the tool unusable.
   const previewId = str(preview.previewId);
   const stateKey = previewId ? `renkei-preview:${previewId}` : '';
-  const remembered = stateKey ? recallDone(stateKey) : null;
+  const remembered = doneStateOf(preview.resolved) ?? (stateKey ? recallDone(stateKey) : null);
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
-    if (stateKey) rememberDone(stateKey, state);
+    if (stateKey) {
+      rememberDone(stateKey, state);
+      bridge.reportDecision(stateKey, state);
+    }
     renderDone(root, state);
   };
 
@@ -278,7 +282,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   };
 
   footer.run(confirmButton, async () => {
-    const confirmed = await bridge.callTool(confirmTool, gatherArgs());
+    const confirmed = await bridge.callTool(confirmTool, gatherArgs(), stateKey);
     const text = resultText(confirmed);
     if (confirmed.isError) throw new Error(text || 'The write failed');
     // First line only on the card ("Created issue SCRUM-42"); the model gets
@@ -306,7 +310,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       );
       return;
     }
-    const declined = await bridge.callTool(cancelTool, gatherArgs());
+    const declined = await bridge.callTool(cancelTool, gatherArgs(), stateKey);
     const text = resultText(declined);
     if (declined.isError) throw new Error(text || 'The request failed');
     finishDone({

@@ -12,6 +12,8 @@
  * where every kilobyte is weight the MCP response carries.
  */
 
+import type { DoneState } from './ui';
+
 type Json = Record<string, unknown>;
 
 export interface HostContext {
@@ -69,9 +71,32 @@ export class WidgetBridge {
     this.onToolInput.push(handler);
   }
 
-  /** Call a tool on the MCP server, through the host. */
-  async callTool(name: string, args: Json): Promise<ToolResult> {
-    return this.request('tools/call', { name, arguments: args });
+  /**
+   * Call a tool on the MCP server, through the host. `stateKey` — the same
+   * key the card remembers its own receipt under (ui.ts's rememberDone) —
+   * lets the host refuse the call outright when another device already
+   * decided this exact card, rather than running a non-idempotent confirm
+   * tool a second time.
+   */
+  async callTool(name: string, args: Json, stateKey?: string): Promise<ToolResult> {
+    return this.request('tools/call', {
+      name,
+      arguments: args,
+      ...(stateKey ? { stateKey } : {}),
+    });
+  }
+
+  /**
+   * Tell the host the card is done — Confirm or Cancel, whichever the user
+   * picked — so the receipt is durable across devices instead of living
+   * only in this browser's localStorage (ui.ts's rememberDone). Best-effort,
+   * same as `updateModelContext`: a host that predates this, or a dropped
+   * request, costs cross-device sync, never the decision itself, which
+   * already rendered locally the moment this is called.
+   */
+  reportDecision(stateKey: string, state: DoneState): void {
+    if (!stateKey) return;
+    this.request('ui/report-decision', { stateKey, state: { ...state } }).catch(() => undefined);
   }
 
   /** Open an external URL through the host (new tab / system browser). */

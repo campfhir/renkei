@@ -24,6 +24,16 @@ export type TurnStatus = 'running' | 'completed' | 'failed' | 'canceled' | 'inte
 export type TurnKind = 'reply' | 'compaction';
 
 /** A content block as rendered: attachments carry size, not bytes. */
+/** A widget card's terminal receipt (mcp-widgets/src/ui.ts's `DoneState`), as reported back
+ *  to the server (widget-tools.ts's `recordWidgetDecision`) so a card already decided on one
+ *  device renders that receipt on another instead of live Confirm/Cancel buttons. */
+export interface WidgetDecisionState {
+  icon: 'sent' | 'cancelled';
+  headline: string;
+  detail?: string;
+  links?: { label: string; href: string }[];
+}
+
 export type ChatBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string }
@@ -39,6 +49,14 @@ export type ChatBlock =
       structuredContent?: unknown;
       /** How long the call ran, for the thread's fold; absent on rows before it was kept. */
       durationMs?: number;
+      /**
+       * The card's decision, read back from `chat_widget_decisions` — present
+       * only when this block carries a widget (`uiResourceUri` set) AND
+       * someone, on some device, already confirmed or cancelled it. Never
+       * stored on the row itself (chat-view.ts joins it in at read time), so
+       * the model's own view of this call is unaffected.
+       */
+      resolved?: WidgetDecisionState;
     }
   | { type: 'document'; mediaType: string; title?: string; bytes: number }
   | { type: 'image'; mediaType: string; bytes: number };
@@ -185,6 +203,34 @@ export interface ModelOption {
   isDefault: boolean;
   /** Anthropic models take a thinking budget; the OpenAI dialect does not. */
   supportsThinking: boolean;
+}
+
+/**
+ * The persistence key a widget card would use for this block, were it to
+ * remember its own receipt (mcp-widgets/src/ui.ts's `rememberDone`/
+ * `recallDone` — `renkei-preview:<previewId>` for most cards,
+ * `renkei-email:<draftId>` for the email compose card). Reused server-side,
+ * unchanged, as `chat_widget_decisions.state_key` (widget-tools.ts) — one
+ * identity, one place that computes it, so the row a card writes and the
+ * row chat-view.ts reads back can never drift apart over field-name
+ * differences between the widget templates.
+ *
+ * Null for a block with no widget binding, or one whose structuredContent
+ * carries neither id — a results-list (display-only, nothing to decide) or
+ * an older row from before either id existed.
+ */
+export function widgetStateKeyOf(block: ChatBlock): string | null {
+  if (block.type !== 'tool_result' || !block.uiResourceUri) return null;
+  const content = block.structuredContent;
+  if (typeof content !== 'object' || content === null) return null;
+  const record: { previewId?: unknown; draftId?: unknown } = content;
+  if (typeof record.previewId === 'string' && record.previewId) {
+    return `renkei-preview:${record.previewId}`;
+  }
+  if (typeof record.draftId === 'string' && record.draftId) {
+    return `renkei-email:${record.draftId}`;
+  }
+  return null;
 }
 
 /** Bytes of a base64 string, without decoding it. */

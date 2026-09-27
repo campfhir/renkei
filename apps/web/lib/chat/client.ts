@@ -13,6 +13,7 @@ import type {
   ChatView,
   ModelOption,
   ToolPermissionDecision,
+  WidgetDecisionState,
 } from './views';
 import type { SubagentRunView } from './subagent-runs';
 import type { ConnectorOption } from './tool-surface';
@@ -255,18 +256,42 @@ export const chatClient = {
   widgetResourceUrl: (tenantId: string, resourceUri: string) =>
     `${base(tenantId)}/widgets?${new URLSearchParams({ uri: resourceUri }).toString()}`,
 
-  /** A card's confirm button, run for real (widget-card.tsx's `tools/call` proxy). */
+  /**
+   * A card's confirm button, run for real (widget-card.tsx's `tools/call`
+   * proxy). `stateKey` — the card's own persistence key — lets the server
+   * refuse the call when another device already decided this exact card,
+   * rather than running a non-idempotent confirm tool a second time.
+   */
   confirmWidgetTool: (
     tenantId: string,
     chatId: string,
     name: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    stateKey?: string
   ) =>
     sendJsonFull<{ result: McpToolResult }>(
       `${base(tenantId)}/chats/${chatId}/widget/tool-call`,
       'POST',
-      { name, arguments: args }
+      { name, arguments: args, ...(stateKey ? { stateKey } : {}) }
     ),
+
+  /**
+   * A card's decision, once it finishes (bridge.ts's `reportDecision`) —
+   * recorded so the same card, opened on another device or after a reload,
+   * shows this receipt instead of live Confirm/Cancel buttons.
+   */
+  reportWidgetDecision: (
+    tenantId: string,
+    chatId: string,
+    stateKey: string,
+    decision: 'confirmed' | 'cancelled',
+    state: WidgetDecisionState
+  ) =>
+    sendJsonFull(`${base(tenantId)}/chats/${chatId}/widget/decision`, 'POST', {
+      stateKey,
+      decision,
+      state,
+    }),
 
   /**
    * A card's `ui/update-model-context` — recorded as a note and, when the

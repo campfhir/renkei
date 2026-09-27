@@ -11,6 +11,7 @@
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
+  doneStateOf,
   el,
   injectStyle,
   inputField,
@@ -55,13 +56,16 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   // someone else's outcome.
   const previewId = str(preview.previewId);
   const stateKey = previewId ? `renkei-preview:${previewId}` : '';
-  const remembered = stateKey ? recallDone(stateKey) : null;
+  const remembered = doneStateOf(preview.resolved) ?? (stateKey ? recallDone(stateKey) : null);
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
-    if (stateKey) rememberDone(stateKey, state);
+    if (stateKey) {
+      rememberDone(stateKey, state);
+      bridge.reportDecision(stateKey, state);
+    }
     renderDone(root, state);
   };
 
@@ -92,14 +96,18 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   root.append(card);
 
   footer.run(createButton, async () => {
-    const created = await bridge.callTool('zoom_create_meeting_confirm', {
-      topic: topic.input.value.trim() || str(preview.topic),
-      startTime,
-      durationMinutes: duration,
-      ...(timezone ? { timezone } : {}),
-      ...(agenda.input.value.trim() ? { agenda: agenda.input.value.trim() } : {}),
-      ...(recurrence ? { recurrence } : {}),
-    });
+    const created = await bridge.callTool(
+      'zoom_create_meeting_confirm',
+      {
+        topic: topic.input.value.trim() || str(preview.topic),
+        startTime,
+        durationMinutes: duration,
+        ...(timezone ? { timezone } : {}),
+        ...(agenda.input.value.trim() ? { agenda: agenda.input.value.trim() } : {}),
+        ...(recurrence ? { recurrence } : {}),
+      },
+      stateKey
+    );
     if (created.isError) throw new Error(resultText(created) || 'Create failed');
     finishDone({
       icon: 'sent',

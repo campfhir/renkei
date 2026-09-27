@@ -18,6 +18,7 @@
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
+  doneStateOf,
   el,
   htmlField,
   injectStyle,
@@ -65,13 +66,14 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   }
 
   const stateKey = `renkei-email:${draftId}`;
-  const remembered = recallDone(stateKey);
+  const remembered = doneStateOf(draft.resolved) ?? recallDone(stateKey);
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
     rememberDone(stateKey, state);
+    bridge.reportDecision(stateKey, state);
     renderDone(root, state);
   };
 
@@ -129,10 +131,11 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
           body: bodyInput?.input.value ?? body,
         }
       : undefined;
-    const sent = await bridge.callTool('outlook_send_draft_confirm', {
-      draftId,
-      ...(overrides ? { overrides } : {}),
-    });
+    const sent = await bridge.callTool(
+      'outlook_send_draft_confirm',
+      { draftId, ...(overrides ? { overrides } : {}) },
+      stateKey
+    );
     if (sent.isError) throw new Error(resultText(sent) || 'Send failed');
     const finalTo = overrides ? overrides.to.join(', ') : to || 'the original recipients';
     const finalSubject = overrides ? overrides.subject : subject;
@@ -148,7 +151,11 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   });
 
   footer.run(discardButton, async () => {
-    const discarded = await bridge.callTool('outlook_discard_draft_confirm', { draftId });
+    const discarded = await bridge.callTool(
+      'outlook_discard_draft_confirm',
+      { draftId },
+      stateKey
+    );
     if (discarded.isError) throw new Error(resultText(discarded) || 'Discard failed');
     finishDone({ icon: 'cancelled', headline: 'Discarded', detail: 'Nothing was sent.' });
     bridge.updateModelContext(
