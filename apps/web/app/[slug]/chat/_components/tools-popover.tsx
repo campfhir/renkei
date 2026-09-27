@@ -36,6 +36,7 @@ export default function ToolsPopover({
   slug,
   locked,
   saveDefault,
+  projectDefault = null,
 }: {
   tenantId: string;
   /** null = the core set. */
@@ -62,6 +63,15 @@ export default function ToolsPopover({
   saveDefault?: boolean;
   /** Only used in project context, to link out to where the personal default lives. */
   slug?: string;
+  /**
+   * The chat's project's own toolset (null outside a project, or when the
+   * project has none) — the tier between "nothing chosen on this chat" and
+   * the person's personal default, matching the server's chat ?? project ??
+   * userDefault ?? default chain (tool-config.ts's effectiveToolConfig).
+   * Only meaningful in `context: 'chat'`; a project's own popover has no
+   * higher tier than personal/built-in.
+   */
+  projectDefault?: string[] | null;
   /**
    * Connectors that are always on in this chat, whatever is chosen — a
    * code project's Bitbucket and GitHub (tool-config.ts's
@@ -100,7 +110,7 @@ export default function ToolsPopover({
   const lockedKeys = locked ?? [];
   const personal = kind === 'code' ? userCodeDefault : userDefault;
   const setPersonal = kind === 'code' ? setUserCodeDefault : setUserDefault;
-  const fallback = personal ?? (kind === 'code' ? codeDefault : core);
+  const fallback = projectDefault ?? personal ?? (kind === 'code' ? codeDefault : core);
   const effective = new Set([...(selected ?? fallback), ...lockedKeys]);
   const offersDefault = saveDefault ?? context === 'chat';
   const count = selected ? selected.length : null;
@@ -135,7 +145,9 @@ export default function ToolsPopover({
                 : 'Connectors chats in this project start with, unless a chat picks its own.'
               : kind === 'code'
                 ? 'Connectors the assistant may use in this chat. A code project’s chat starts from the project’s toolset, else your default for code projects, else the code default.'
-                : 'Connectors the assistant may use in this chat.'}
+                : projectDefault
+                  ? 'Connectors the assistant may use in this chat. Starts from this project’s toolset, unless you pick your own.'
+                  : 'Connectors the assistant may use in this chat.'}
           </p>
           {options === null ? (
             <LoadingLine size="xs" className="px-1" label="Loading connectors…" />

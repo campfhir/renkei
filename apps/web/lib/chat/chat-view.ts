@@ -80,6 +80,7 @@ export async function loadChatView(
       projectActiveChatId: project?.kind === 'code' ? project.activeChatId : null,
       llmModelId: chat.llmModelId,
       toolConfig: chat.toolConfig,
+      projectToolConfig: project?.toolConfig ?? null,
       thinkingEnabled: chat.thinkingEnabled,
       autoMode: chat.autoMode,
       ownerSubject: chat.ownerSubject,

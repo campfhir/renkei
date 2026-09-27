@@ -134,6 +134,8 @@ export interface ChatView {
   projectActiveChatId: string | null;
   llmModelId: string | null;
   toolConfig: ChatToolConfigView | null;
+  /** The project's own toolset, for the Tools popover's fallback chain; null outside a project or when the project has none. */
+  projectToolConfig: ChatToolConfigView | null;
   thinkingEnabled: boolean;
   /**
    * Auto mode (auto-mode.ts): the chat's tools run without asking and a
