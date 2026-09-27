@@ -244,6 +244,27 @@ services:
   # are live process state and stay per replica; run one replica if the
   # sandbox_browser_* tools matter. DEPLOYMENT.md, "More than one sandbox
   # replica".
+  # Docker Engine access for worker-sandbox's code project services
+  # (SANDBOX_SERVICES_ENABLED=true), without handing that container the raw
+  # socket — which is root-equivalent on this host. Only this container
+  # mounts the real socket; it re-exposes a locked-down subset of the Engine
+  # API over plain HTTP on the compose network. CONTAINERS/IMAGES/NETWORKS
+  # (read) + POST (write) is exactly what starting/stopping project service
+  # containers needs; everything else (EXEC, SECRETS, SWARM, SYSTEM, ...)
+  # stays denied by the image's own default-deny. No published ports — only
+  # worker-sandbox, on the same compose network, can reach it by name.
+  proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: renkei-docker-socket-proxy
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
   worker-sandbox:
     image: scotteremiaroden/renkei-sandbox:latest
     container_name: renkei-worker-sandbox
@@ -259,24 +280,25 @@ services:
       # This container's own name, for joining the services network when
       # code project services are on (the socket below).
       SANDBOX_CONTAINER_ID: renkei-worker-sandbox
-    volumes:
-      - renkei-sandbox-data:/data
-      - renkei-sandbox-workspaces:/workspaces
       # Code project services (SANDBOX_SERVICES_ENABLED=true in .env, read
       # by this service AND renkei): the worker starts containers —
       # Postgres, Redis — beside a project's checkout, from the images the
-      # organization allows, through the host's Docker engine. Uncomment
-      # the socket to turn that on. It is root's inside the container
-      # (a project's own commands, dropped to their own uids, cannot open
-      # it), but it is the engine, so it is this worker's process that is
-      # trusted with it: prefer a socket proxy (docker-socket-proxy with
-      # CONTAINERS, IMAGES, NETWORKS and POST allowed, nothing else) and
-      # SANDBOX_DOCKER_HOST=tcp://proxy:2375 instead of the raw socket
-      # where that is available. Services are created on the internal
-      # network SANDBOX_SERVICES_NETWORK (default renkei-sandbox-services),
-      # which this container joins at boot; SANDBOX_CONTAINER_ID names
-      # this container for that join (the hostname works when compose is
-      # left to set it).
+      # organization allows, through the Docker engine reached via the
+      # `proxy` service above (docker-socket-proxy), instead of a raw
+      # socket mount. Services are created on the internal network
+      # SANDBOX_SERVICES_NETWORK (default renkei-sandbox-services), which
+      # this container joins at boot; SANDBOX_CONTAINER_ID names this
+      # container for that join (the hostname works when compose is left
+      # to set it). Override in .env only if you point this at a different
+      # engine/proxy.
+      SANDBOX_DOCKER_HOST: ${SANDBOX_DOCKER_HOST:-tcp://proxy:2375}
+    volumes:
+      - renkei-sandbox-data:/data
+      - renkei-sandbox-workspaces:/workspaces
+      # Fallback: mount the raw socket directly instead of using the proxy
+      # above (not recommended — see the proxy service's comment for why).
+      # Uncomment this AND drop SANDBOX_DOCKER_HOST above if you can't run
+      # the proxy for some reason.
       # - /var/run/docker.sock:/var/run/docker.sock
     # The browser is the memory hog in this stack: a busy session runs
     # 300-500MB, up to eight at once. The reservation asks the host to keep
@@ -294,6 +316,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      proxy:
+        condition: service_started
     restart: unless-stopped
 
   renkei:

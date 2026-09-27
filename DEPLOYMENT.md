@@ -323,12 +323,15 @@ chats get, and the Organization → Code services page) and this worker —
 lets a project's chat start a container beside its checkout (Postgres,
 Redis, a broker) for the project's tests, from the images the
 organization allows. The worker needs a Docker engine for that:
-uncomment the `/var/run/docker.sock` mount on `worker-sandbox` in
-`docker-compose.yaml`, or run a socket proxy (docker-socket-proxy with
-`CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing else)
-and point `SANDBOX_DOCKER_HOST=tcp://<proxy>:2375` at it — the proxy is
-the recommendation where it can be had, since the raw socket is the
-engine itself. Either way the socket is root's inside the container: a
+`docker-compose.yaml` ships a `proxy` service (docker-socket-proxy, the
+only container that mounts the real socket, with `CONTAINERS`, `IMAGES`,
+`NETWORKS` and `POST` allowed and nothing else) and `worker-sandbox`
+already points `SANDBOX_DOCKER_HOST` at it by default — enabling
+`SANDBOX_SERVICES_ENABLED` is all that's needed. Uncommenting the raw
+`/var/run/docker.sock` mount on `worker-sandbox` instead (and dropping
+`SANDBOX_DOCKER_HOST`) is a fallback for when the proxy can't be run, not
+the default, since the raw socket is the engine itself. Either way the
+socket is root's inside the container: a
 project's own commands run as other uids (above) and cannot open it;
 what may run is decided by this worker against the organization's
 rules, never by a command. The worker refuses to start with the flag
