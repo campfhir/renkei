@@ -17,6 +17,7 @@ import {
   recordWidgetModelContext,
   recordWidgetDecision,
 } from './widget-tools';
+import { insertMessage } from './messages';
 
 const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
@@ -271,5 +272,196 @@ maybe('chat widget decisions', () => {
       icon: 'sent',
       headline: 'Created issue OPS-1.',
     });
+  });
+});
+
+/**
+ * One reply presenting two cards at once: deciding the first must not open
+ * a turn while the second is still undecided (the model would answer
+ * having seen only one of them), and deciding the second — now that both
+ * have a recorded decision — opens exactly one turn, informed by both.
+ */
+maybe('recordWidgetModelContext: batches decisions from one reply', () => {
+  let db: Kysely<DB>;
+  const tenantId = randomUUID();
+  const me = `me-${tenantId.slice(0, 8)}`;
+  const chatId = randomUUID();
+  const modelId = randomUUID();
+  const replyTurnId = randomUUID();
+  const toolUseIdA = `toolu_${randomUUID()}`;
+  const toolUseIdB = `toolu_${randomUUID()}`;
+  const stateKeyA = `renkei-preview:${randomUUID()}`;
+  const stateKeyB = `renkei-preview:${randomUUID()}`;
+  const session: { subject: string; roles: string[] } = { subject: me, roles: [] };
+  const deferred: Array<() => Promise<void>> = [];
+  const defer = (task: () => Promise<void>) => {
+    deferred.push(task);
+  };
+
+  beforeAll(async () => {
+    const result = getDatabase();
+    if (!result.ok) throw new Error('no database');
+    db = result.val;
+    const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
+    if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
+    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await db
+      .insertInto('llm_model_configs')
+      .values({
+        id: modelId,
+        tenant_id: tenantId,
+        label: 'Card model',
+        provider: 'anthropic',
+        model: 'e2e-model',
+        encrypted_secrets: encrypt(JSON.stringify({ apiKey: 'test' }), key.val),
+        enabled: true,
+        is_default: true,
+      })
+      .execute();
+    await db
+      .insertInto('chats')
+      .values({ id: chatId, tenant_id: tenantId, owner_subject: me, title: 'Two cards at once' })
+      .execute();
+    // The reply that presented both cards — already finished, so a new
+    // turn is free to start once both are decided.
+    await db
+      .insertInto('chat_turns')
+      .values({
+        id: replyTurnId,
+        tenant_id: tenantId,
+        chat_id: chatId,
+        status: 'completed',
+        llm_model_id: modelId,
+        iterations: 1,
+        finished_at: new Date(),
+      })
+      .execute();
+    await insertMessage(db, {
+      tenantId,
+      chatId,
+      turnId: replyTurnId,
+      role: 'assistant',
+      kind: 'assistant',
+      status: 'complete',
+      blocks: [
+        { type: 'text', text: 'Two role assignments to review.' },
+        { type: 'tool_use', id: toolUseIdA, name: 'entra_assign_app_role_preview', input: {} },
+        { type: 'tool_use', id: toolUseIdB, name: 'entra_assign_app_role_preview', input: {} },
+      ],
+    });
+    await insertMessage(db, {
+      tenantId,
+      chatId,
+      turnId: replyTurnId,
+      role: 'user',
+      kind: 'tool_results',
+      status: 'complete',
+      blocks: [
+        {
+          type: 'tool_result',
+          toolUseId: toolUseIdA,
+          content: 'Awaiting the user’s decision on the preview card.',
+          uiResourceUri: 'ui://widget/directory-action-preview.test.html',
+          structuredContent: { kind: 'directory_action', previewId: stateKeyA.split(':')[1] },
+        },
+        {
+          type: 'tool_result',
+          toolUseId: toolUseIdB,
+          content: 'Awaiting the user’s decision on the preview card.',
+          uiResourceUri: 'ui://widget/directory-action-preview.test.html',
+          structuredContent: { kind: 'directory_action', previewId: stateKeyB.split(':')[1] },
+        },
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    await sql`DELETE FROM chat_widget_decisions WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_messages WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chat_turns WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM llm_model_configs WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await closeDatabase();
+  });
+
+  it('appends the first decision as a note, opening no turn, while its sibling is undecided', async () => {
+    await recordWidgetDecision(db, {
+      tenantId,
+      chatId,
+      subject: me,
+      stateKey: stateKeyA,
+      decision: 'confirmed',
+      state: { icon: 'sent', headline: 'Assigned Tony Liang.' },
+    });
+    const recorded = await recordWidgetModelContext(db, {
+      tenantId,
+      session,
+      chatId,
+      text: 'The user confirmed "Assign app role" (Tony Liang) on the preview card.',
+      stateKey: stateKeyA,
+      defer,
+    });
+    expect(recorded.ok).toBe(true);
+    if (!recorded.ok) return;
+    expect(recorded.turn).toBeNull();
+    expect(recorded.message.turnId).toBeNull();
+    expect(deferred).toHaveLength(0);
+
+    const turns = await db
+      .selectFrom('chat_turns')
+      .select('id')
+      .where('chat_id', '=', chatId)
+      .execute();
+    // Still just the one (already-finished) reply turn — none opened yet.
+    expect(turns).toEqual([{ id: replyTurnId }]);
+  });
+
+  it('opens exactly one turn once the second decision lands, informed by both', async () => {
+    await recordWidgetDecision(db, {
+      tenantId,
+      chatId,
+      subject: me,
+      stateKey: stateKeyB,
+      decision: 'confirmed',
+      state: { icon: 'sent', headline: 'Assigned Rachel Cheng.' },
+    });
+    const recorded = await recordWidgetModelContext(db, {
+      tenantId,
+      session,
+      chatId,
+      text: 'The user confirmed "Assign app role" (Rachel Cheng) on the preview card.',
+      stateKey: stateKeyB,
+      defer,
+    });
+    expect(recorded.ok).toBe(true);
+    if (!recorded.ok) return;
+    expect(recorded.turn).not.toBeNull();
+    expect(recorded.message.turnId).toBe(recorded.turn?.turnId ?? null);
+    // The model work for THIS turn was handed off, not run.
+    expect(deferred).toHaveLength(1);
+
+    const turns = await db
+      .selectFrom('chat_turns')
+      .select('id')
+      .where('chat_id', '=', chatId)
+      .execute();
+    // Exactly one NEW turn opened across both decisions, not one each.
+    expect(turns).toEqual(
+      expect.arrayContaining([{ id: replyTurnId }, { id: recorded.turn?.turnId }])
+    );
+    expect(turns).toHaveLength(2);
+
+    const noteRows = await db
+      .selectFrom('chat_messages')
+      .select(['kind', 'turn_id'])
+      .where('chat_id', '=', chatId)
+      .where('kind', '=', 'note')
+      .orderBy('seq')
+      .execute();
+    expect(noteRows).toEqual([
+      { kind: 'note', turn_id: null },
+      { kind: 'note', turn_id: recorded.turn?.turnId },
+    ]);
   });
 });

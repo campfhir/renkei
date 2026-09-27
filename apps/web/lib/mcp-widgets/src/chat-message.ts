@@ -106,14 +106,16 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       ...(sentLinks.length > 0 ? { links: sentLinks } : {}),
     });
     bridge.updateModelContext(
-      `The user reviewed the WebEx message preview and sent it to ${destination}.`
+      `The user reviewed the WebEx message preview and sent it to ${destination}.`,
+      stateKey
     );
   });
 
   footer.run(cancelButton, async () => {
     finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing was sent.' });
     bridge.updateModelContext(
-      'The user cancelled the WebEx message from the preview card. Nothing was sent.'
+      'The user cancelled the WebEx message from the preview card. Nothing was sent.',
+      stateKey
     );
   });
 }
