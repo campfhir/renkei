@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getOrigin } from '@/lib/get-origin';
+import { isFreeEmailDomain, FREE_EMAIL_DOMAIN_ERROR } from '@/lib/free-email-domains';
 
 function emailDomain(email: string): string | null {
   const at = email.lastIndexOf('@');
@@ -25,6 +26,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const domain = emailDomain(email);
   if (!domain) {
     return NextResponse.json({ error: 'Invalid email domain' }, { status: 400 });
+  }
+
+  // Reject free/consumer domains before ever looking up or offering to
+  // create a tenant for them — a personal Gmail address can't stand in for
+  // an organization.
+  if (isFreeEmailDomain(domain)) {
+    return NextResponse.json({ error: FREE_EMAIL_DOMAIN_ERROR }, { status: 400 });
   }
 
   try {

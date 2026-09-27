@@ -5,6 +5,7 @@ import { isReservedSlug } from '@/lib/tenant-slug';
 import { seedDefaultClassifierRules } from '@renkei/email-sanitizer';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { logger } from '@/lib/logger';
+import { isFreeEmailDomain, FREE_EMAIL_DOMAIN_ERROR } from '@/lib/free-email-domains';
 
 /**
  * Self-service onboarding: an email domain nothing yet claims becomes a
@@ -42,8 +43,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Validate domain format
   const DOMAIN_SHAPE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
-  if (!DOMAIN_SHAPE.test(domain.toLowerCase())) {
+  const normalizedDomain = domain.toLowerCase();
+  if (!DOMAIN_SHAPE.test(normalizedDomain)) {
     return NextResponse.json({ error: 'Invalid domain format' }, { status: 400 });
+  }
+
+  // This is the endpoint that actually mints a tenant — it must refuse free
+  // domains itself rather than trust that every caller went through
+  // /api/home-realm's earlier check first.
+  if (isFreeEmailDomain(normalizedDomain)) {
+    return NextResponse.json({ error: FREE_EMAIL_DOMAIN_ERROR }, { status: 400 });
   }
 
   try {
