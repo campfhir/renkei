@@ -17,6 +17,7 @@ import {
   heartbeatTurn,
   readToolPermission,
   requestToolPermission,
+  suspendTurn,
 } from './turns';
 import { notifyChatToolPermission } from './permission-notification';
 import { touchChat } from './store';
@@ -65,6 +66,12 @@ export function createTurnStore(
       // A sub-agent still marked running now has no turn to report to.
       await interruptSubagentRunsOfTurn(db, scope.turnId);
       await touchChat(db, scope.chatId, {});
+    },
+    async suspendTurn(iterations) {
+      await suspendTurn(db, scope.turnId, iterations);
+      // A sub-agent in flight dies with this process; the resumed turn
+      // is told its delegation was interrupted and delegates again.
+      await interruptSubagentRunsOfTurn(db, scope.turnId);
     },
     async recordUsage(usage, model, durationMs) {
       await recordLlmCall(db, {

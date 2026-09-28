@@ -41,7 +41,8 @@ import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
 import { compactChat, latestChatSummary, needsCompaction } from './compaction';
 import { listMessages, insertMessage, type InsertedMessage } from './messages';
-import { createTurn, finishTurn } from './turns';
+import { createTurn, finishTurn, heartbeatTurn, suspendTurn } from './turns';
+import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 import { touchChat, type ChatRow } from './store';
 import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
@@ -53,9 +54,9 @@ import { getChatToolPermissionPrefs } from './permission-prefs';
 import { resolveChatToolSurface } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
 import { findToolsTool, recallDiscoveredTools } from './tool-discovery';
-import { openTurnChannel } from './turn-events';
+import { openTurnChannel, type TurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
-import { runChatTurn, DEFAULT_TURN_LIMITS } from './turn-runner';
+import { runChatTurn, DEFAULT_TURN_LIMITS, type TurnResumeSeed } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
 import {
   AUTO_MAX_CONTINUES,
@@ -226,6 +227,9 @@ export async function startChatTurn(
         chatId: chat.id,
         llmModelId: llm.modelConfigId,
         thinkingBudget,
+        // For a process that resumes this turn after this one is gone
+        // (turn-recovery.ts): the session's roles and the voice flag.
+        runner: { roles: input.session.roles, voice: input.voice === true },
       });
       if (!turn.ok) return turn;
       let user: InsertedMessage | null = null;
@@ -338,10 +342,65 @@ export interface ExecuteTurnInput {
   localTools?: LocalTool[];
   /** See StartTurnInput.voice. */
   voice?: boolean;
+  /**
+   * This is a turn another process left running (turn-recovery.ts): the
+   * rows are already reconciled, `assistantMessage` is the fresh row to
+   * stream into, and `seed` is what the loop's counters had reached.
+   */
+  resume?: { seed: TurnResumeSeed };
 }
 
+/** How often the turn row is touched before the runner's own heartbeat takes over. */
+const PREPARING_HEARTBEAT_MS = 2_000;
+
 export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): Promise<void> {
+  // Going down already: nothing here should start. The row is marked for
+  // the sweep the way a turn suspended mid-loop is.
+  if (isShuttingDown()) {
+    await suspendTurn(db, input.turnId, input.resume?.seed.iterations ?? 0);
+    return;
+  }
   const channel = openTurnChannel(input.turnId);
+  // Shutdown reaches the loop through this signal (turn-runner.ts), and
+  // the shutdown waits for this turn to have written its suspension —
+  // that is the `settled` promise the listener hands back.
+  const suspend = new AbortController();
+  let settle = () => {};
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  const unsubscribeShutdown = onShutdown(() => {
+    suspend.abort();
+    return settled;
+  });
+  // The runner heartbeats the row only once its loop starts; everything
+  // before that — the tool surface, compaction, the checkout — can take
+  // a while, and a row nobody touches for that long looks like a dead
+  // process to the recovery sweep. So the row is touched here until the
+  // loop takes over; a cancel clicked meanwhile reaches the channel.
+  const preparing = setInterval(() => {
+    void heartbeatTurn(db, input.turnId, input.resume?.seed.iterations ?? 0, 'preparing')
+      .then((canceled) => {
+        if (canceled) channel.requestCancel();
+      })
+      .catch(() => {});
+  }, PREPARING_HEARTBEAT_MS);
+  try {
+    await executeTurnBody(db, input, channel, suspend.signal, () => clearInterval(preparing));
+  } finally {
+    clearInterval(preparing);
+    unsubscribeShutdown();
+    settle();
+  }
+}
+
+async function executeTurnBody(
+  db: Kysely<DB>,
+  input: ExecuteTurnInput,
+  channel: TurnChannel,
+  suspendSignal: AbortSignal,
+  prepared: () => void
+): Promise<void> {
   const store = createTurnStore(db, {
     tenantId: input.tenantId,
     chatId: input.chat.id,
@@ -602,9 +661,16 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
     });
     log(
       'chat turn prepared in {preparedMs} ms',
-      { preparedMs: Date.now() - preparingSince, tools: surface.tools.length, voice: input.voice },
+      {
+        preparedMs: Date.now() - preparingSince,
+        tools: surface.tools.length,
+        voice: input.voice,
+        resumed: input.resume !== undefined,
+      },
       'debug'
     );
+    // The loop's own heartbeat takes over from here.
+    prepared();
 
     const outcome = await runChatTurn(
       {
@@ -636,6 +702,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
               },
             }
           : {}),
+        suspendSignal,
         channel,
         store,
         log,
@@ -648,6 +715,7 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         history,
         thinkingBudget: input.thinkingBudget,
         ...(code?.prelude ? { prelude: [code.prelude] } : {}),
+        ...(input.resume ? { resume: input.resume.seed } : {}),
       }
     );
     // Only a reply that actually landed is news — a canceled or interrupted
@@ -663,6 +731,20 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
       });
     }
   } catch (error) {
+    // A failure while the process is going down (a pool closing under a
+    // read, say) is the shutdown's, not the turn's: leave it for a resume.
+    if (suspendSignal.aborted) {
+      log('chat turn suspended before the model ran: {message}', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      try {
+        await suspendTurn(db, input.turnId, input.resume?.seed.iterations ?? 0);
+      } catch {
+        // The stale heartbeat says the same thing to the sweep.
+      }
+      channel.close();
+      return;
+    }
     log('chat turn failed before the model ran: {message}', {
       message: error instanceof Error ? error.message : String(error),
     });

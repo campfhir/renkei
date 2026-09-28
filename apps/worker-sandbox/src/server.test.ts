@@ -315,3 +315,35 @@ describe('list/stat/delete dispatch', () => {
     expect(disk.deleteFile).toHaveBeenCalledWith('tenant-1/hashed/file-1');
   });
 });
+
+describe('draining', () => {
+  it('turns every request away with 503 shutting_down once draining starts, health included', async () => {
+    const draining = createSandboxServer({
+      db: {} as Kysely<DB>,
+      apiKeys: [API_KEY],
+      maxFileBytes: async () => 1_048_576,
+    });
+    await new Promise<void>((resolve) => draining.listen(0, '127.0.0.1', resolve));
+    const port = (draining.address() as AddressInfo).port;
+    const url = `http://127.0.0.1:${port}`;
+    expect((await fetch(`${url}/health`)).status).toBe(200);
+    draining.startDraining();
+    const health = await fetch(`${url}/health`);
+    expect(health.status).toBe(503);
+    expect(await health.json()).toEqual({
+      error: {
+        type: 'shutting_down',
+        message: 'The sandbox worker is stopping; try again in a moment.',
+      },
+    });
+    const listed = await fetch(`${url}/v1/list`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify(TARGET),
+    });
+    expect(listed.status).toBe(503);
+    expect(store.listFiles).not.toHaveBeenCalled();
+    await draining.drain(1_000);
+    await expect(fetch(`${url}/health`)).rejects.toThrow();
+  });
+});

@@ -220,6 +220,20 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
       }
     },
 
+    async release(message: ClaimedMessage) {
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return;
+      // `attempts = message.attempts` guards the release the same way the
+      // lease does: a row another consumer has since reclaimed carries a
+      // higher count and is not ours to give back.
+      await sql`
+        UPDATE ${live()}
+        SET status = 'pending', locked_at = NULL, attempts = GREATEST(attempts - 1, 0),
+            run_after = NOW(), updated_at = NOW()
+        WHERE id = ${message.id} AND status = 'processing' AND attempts = ${message.attempts}
+      `.execute(dbResult.val);
+    },
+
     async fail(message: ClaimedMessage, error: string): Promise<Disposition> {
       const disposition = failureDisposition(message.attempts, policy);
       const dbResult = getDatabase();

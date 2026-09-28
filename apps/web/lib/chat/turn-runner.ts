@@ -36,7 +36,18 @@
  * Cancel is checked between chunks (the channel aborts the in-flight
  * request) and between tool calls (the heartbeat reads the row, so a
  * cancel clicked on another replica lands within a flush interval).
- * A crash leaves the rows `streaming`/`running` for the janitor.
+ *
+ * Shutdown (deps.suspendSignal, lib/shutdown.ts) is a third way out: the
+ * process is going down, so the turn stops where it is — the in-flight
+ * model call aborted, a tool round or a permission wait walked away
+ * from — and marks its row suspended (store.suspendTurn) for another
+ * process to pick up. Nothing is finished: the rows stay `running` and
+ * `streaming`, which is exactly what a resume (turn-recovery.ts) reads
+ * to work out where it was, and `input.resume` is how that resume hands
+ * the loop its counters back. A crash marks nothing and leaves the same
+ * rows behind, with a heartbeat that goes stale; the recovery sweep reads
+ * that the same way, and the janitor is the backstop when no process is
+ * there to resume it at all.
  */
 
 import {
@@ -89,6 +100,13 @@ export interface TurnStore {
    */
   heartbeat(iterations: number, stage: string | null): Promise<boolean>;
   finishTurn(outcome: TurnOutcome): Promise<void>;
+  /**
+   * The turn is still running but this process is leaving it: marks the
+   * row suspended (stage cleared, iterations kept) for a resuming process
+   * to claim. The turn's status stays `running` — one running turn per
+   * chat still holds, since the turn is not over.
+   */
+  suspendTurn(iterations: number): Promise<void>;
   /** `model` is what spent it when not the turn's own (a sub-agent's model); absent, the turn's. */
   recordUsage(usage: LlmUsage, model?: LlmCallModel | null, durationMs?: number): Promise<void>;
   /**
@@ -123,6 +141,46 @@ export interface TurnOutcome {
   inputTokens: number;
   outputTokens: number;
 }
+
+/**
+ * The loop left the turn running for another process (deps.suspendSignal
+ * fired): its row is marked suspended, not finished, and the counters
+ * here are what it had reached. Never passed to finishTurn.
+ */
+export interface SuspendedTurn {
+  status: 'suspended';
+  error: null;
+  iterations: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export type TurnRunResult = TurnOutcome | SuspendedTurn;
+
+/**
+ * What a resumed turn hands the loop back (turn-recovery.ts works these
+ * out from the turn's rows): the counters the loop keeps in memory, and
+ * when the turn began, so a restart never extends its wall clock.
+ */
+export interface TurnResumeSeed {
+  /** The turn's original start, epoch ms; the deadline counts from here. */
+  startedAt: number;
+  iterations: number;
+  continues: number;
+  silentRetries: number;
+  spawnedSubagent: boolean;
+  taskDone: boolean;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * A resumed turn whose original budget is nearly or entirely spent still
+ * gets this long to say something — the restart was not the model's
+ * doing, and ending the turn the instant it is picked up would leave the
+ * person with an interrupted reply for no reason of their own.
+ */
+export const RESUMED_TURN_MIN_BUDGET_MS = 2 * 60_000;
 
 export interface TurnLimits {
   wallClockMs: number;
@@ -291,6 +349,12 @@ export interface TurnRunnerDeps {
   permissions?: TurnPermissions;
   /** See AutoContinue; omitted means a reply without tool calls ends the turn. */
   autoContinue?: AutoContinue;
+  /**
+   * Fires when this process is shutting down (lib/shutdown.ts). The loop
+   * then suspends the turn rather than finishing it — see the module doc.
+   * Omitted, the turn only ever ends by finishing, canceling or crashing.
+   */
+  suspendSignal?: AbortSignal;
   channel: TurnChannel;
   store: TurnStore;
   now?: () => number;
@@ -329,6 +393,8 @@ export interface TurnInput {
   history: LlmMessage[];
   thinkingBudget: number | null;
   prelude?: PreludeStep[];
+  /** Present when this is a resumed turn — see TurnResumeSeed. */
+  resume?: TurnResumeSeed;
 }
 
 const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -572,12 +638,17 @@ function argsOf(input: unknown): Record<string, unknown> {
   return out;
 }
 
-export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promise<TurnOutcome> {
+export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promise<TurnRunResult> {
   const limits: TurnLimits = { ...DEFAULT_TURN_LIMITS, ...deps.limits };
   const now = deps.now ?? (() => Date.now());
   const log = deps.log ?? (() => {});
+  const seed = input.resume;
   // `let`: every permission wait pushes it out by exactly the time waited.
-  let deadline = now() + limits.wallClockMs;
+  // A resumed turn's clock started when the turn did, not now — with the
+  // floor RESUMED_TURN_MIN_BUDGET_MS describes.
+  let deadline = seed
+    ? Math.max(seed.startedAt + limits.wallClockMs, now() + RESUMED_TURN_MIN_BUDGET_MS)
+    : now() + limits.wallClockMs;
   const { channel, store, llm } = deps;
   const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
   const widgetResourceUris = deps.widgetResourceUris ?? new Map<string, string>();
@@ -597,9 +668,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   // that only answered directly (a question, an edit it made itself) is
   // finished the moment it ends, so it is never nudged into inventing a
   // task_complete call for nothing.
-  let taskDone = false;
-  let continues = 0;
-  let spawnedSubagent = false;
+  let taskDone = seed?.taskDone ?? false;
+  let continues = seed?.continues ?? 0;
+  let spawnedSubagent = seed?.spawnedSubagent ?? false;
   // A reply that stopped without any text or tool call — a thought and
   // nothing else, whether it ran out of room mid-thinking or the model
   // simply stopped there — has left the person with nothing to read.
@@ -608,13 +679,13 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   // it and making the person type "continue" themselves, turn after
   // turn. Bounded so a chat that never manages an answer does not loop
   // forever.
-  let silentRetries = 0;
+  let silentRetries = seed?.silentRetries ?? 0;
 
   const messages: LlmMessage[] = [...input.history];
   let assistant = input.assistantMessage;
   let blocks: LlmContentBlock[] = [];
   let dirty = false;
-  let iterations = 0;
+  let iterations = seed?.iterations ?? 0;
   // Grows as find_tools (tool-discovery.ts) surfaces more of the chat's
   // enabled connectors; every discovery is callable from the very next
   // model reply onward. Earlier turns' discoveries arrive already in
@@ -629,9 +700,30 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     activeToolNames.add(tool.name);
     activeTools.push(tool);
   };
-  const totals = { inputTokens: 0, outputTokens: 0 };
+  const totals = { inputTokens: seed?.inputTokens ?? 0, outputTokens: seed?.outputTokens ?? 0 };
   const attachmentBudget = { blocks: 0, base64Chars: 0 };
   let cancelRequested = false;
+  // Shutdown: see the module doc. `suspended` settles when the signal
+  // fires and is raced against every wait the loop has no other way out
+  // of — a tool round, a prelude step, a permission ask; it never settles
+  // without a signal, which a race with a promise that does is fine with.
+  let suspendRequested = deps.suspendSignal?.aborted === true;
+  const suspended = new Promise<'suspended'>((resolve) => {
+    const signal = deps.suspendSignal;
+    if (!signal) return;
+    if (signal.aborted) {
+      resolve('suspended');
+      return;
+    }
+    signal.addEventListener(
+      'abort',
+      () => {
+        suspendRequested = true;
+        resolve('suspended');
+      },
+      { once: true }
+    );
+  });
   // What the loop is doing right now, for the heartbeat to persist — see
   // TurnStore.heartbeat. Read fresh on every tick, so it always reflects
   // the stage in flight when the tick fires, not the stage when the timer
@@ -663,6 +755,20 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   channel.onCancel(() => {
     cancelRequested = true;
   });
+  // What Stop and shutdown reach into: the signal every tool call of the
+  // turn runs with (LocalToolContext.signal, the MCP client's own), so a
+  // command on the sandbox or a sub-agent's loop actually stops rather
+  // than running on after the turn has ended — and `canceled`, raced
+  // against a round so the turn ends promptly even for a tool that does
+  // not honour the signal (its work is orphaned, as a timed-out one's is).
+  const turnAbort = new AbortController();
+  const canceled = new Promise<'canceled'>((resolve) => {
+    channel.onCancel(() => {
+      turnAbort.abort();
+      resolve('canceled');
+    });
+  });
+  void suspended.then(() => turnAbort.abort());
 
   const finalize = async (
     status: TurnOutcome['status'],
@@ -684,6 +790,30 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     emit({ type: 'turn_end', turnId: input.turnId, status, error });
     channel.close();
     return outcome;
+  };
+
+  /**
+   * The way out on shutdown: what streamed so far is kept on the row (a
+   * resume resets a half-streamed reply anyway), the turn row is marked
+   * suspended, and no turn_end is announced — the turn is not over. The
+   * channel closes so a stream watching it in this process falls back to
+   * the rows, where the resumed turn's progress lands.
+   */
+  const finalizeSuspended = async (): Promise<SuspendedTurn> => {
+    clearInterval(timer);
+    if (dirty) {
+      try {
+        await flush();
+      } catch (error) {
+        log('chat turn flush on suspend failed: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    await store.suspendTurn(iterations);
+    log('chat turn suspended for another process to resume', { iterations });
+    channel.close();
+    return { status: 'suspended', error: null, iterations, ...totals };
   };
 
   const announceAssistant = () =>
@@ -812,7 +942,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
    */
   const askPermission = async (
     use: Extract<LlmContentBlock, { type: 'tool_use' }>
-  ): Promise<ToolPermissionDecision | 'timeout' | 'canceled'> => {
+  ): Promise<ToolPermissionDecision | 'timeout' | 'canceled' | 'suspended'> => {
     const ask: PendingToolPermission = {
       toolUseId: use.id,
       messageId: assistant.id,
@@ -824,42 +954,50 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     emit({ type: 'tool_permission_request', turnId: input.turnId, permission: ask });
     const startedAt = now();
     const budget = Math.max(0, limits.permissionWaitMs - permissionWaited);
-    const answer = await new Promise<ToolPermissionDecision | 'timeout' | 'canceled'>((resolve) => {
-      let settled = false;
-      let cleanup = () => {};
-      const finish = (decision: ToolPermissionDecision | 'timeout' | 'canceled') => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve(decision);
-      };
-      const unsubscribe = channel.onToolPermission((answered) => {
-        if (answered.toolUseId === use.id) finish(answered.decision);
-      });
-      const timer = setTimeout(() => finish('timeout'), budget);
-      const poll = setInterval(() => {
-        void store
-          .readToolPermission(use.id)
-          .then((decision) => {
-            if (decision) finish(decision);
-          })
-          .catch(() => {
-            // A failed read is retried on the next tick; the channel
-            // and the clock still end the wait.
-          });
-      }, limits.permissionPollMs);
-      cleanup = () => {
-        unsubscribe();
-        clearTimeout(timer);
-        clearInterval(poll);
-      };
-      // Registered last: a cancel already requested fires this at once.
-      channel.onCancel(() => finish('canceled'));
-    });
+    const answer = await new Promise<ToolPermissionDecision | 'timeout' | 'canceled' | 'suspended'>(
+      (resolve) => {
+        let settled = false;
+        let cleanup = () => {};
+        const finish = (
+          decision: ToolPermissionDecision | 'timeout' | 'canceled' | 'suspended'
+        ) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(decision);
+        };
+        const unsubscribe = channel.onToolPermission((answered) => {
+          if (answered.toolUseId === use.id) finish(answered.decision);
+        });
+        const timer = setTimeout(() => finish('timeout'), budget);
+        const poll = setInterval(() => {
+          void store
+            .readToolPermission(use.id)
+            .then((decision) => {
+              if (decision) finish(decision);
+            })
+            .catch(() => {
+              // A failed read is retried on the next tick; the channel
+              // and the clock still end the wait.
+            });
+        }, limits.permissionPollMs);
+        cleanup = () => {
+          unsubscribe();
+          clearTimeout(timer);
+          clearInterval(poll);
+        };
+        // Registered last: a cancel already requested fires this at once.
+        channel.onCancel(() => finish('canceled'));
+        void suspended.then(() => finish('suspended'));
+      }
+    );
     const waited = now() - startedAt;
     permissionWaited += waited;
     deadline += waited;
     stage = null;
+    // Suspended: the ask stays on the row as it is — the resume answers
+    // the call as interrupted and clears it — and nothing is announced.
+    if (answer === 'suspended') return answer;
     try {
       await store.clearToolPermission();
     } catch (error) {
@@ -883,6 +1021,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
 
   try {
     for (const step of input.prelude ?? []) {
+      if (suspendRequested) return await finalizeSuspended();
       if (cancelRequested || channel.cancelRequested)
         return await finalize('canceled', null, 'canceled');
       const use: LlmContentBlock = {
@@ -908,7 +1047,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const stepStartedAt = now();
       let outcome: McpToolResult;
       try {
-        outcome = await step.run();
+        const raced = await Promise.race([step.run(), suspended, canceled]);
+        // The step's tool_use is on the row without a result: the resume
+        // answers it as interrupted and runs the step again if it must.
+        if (raced === 'suspended') return await finalizeSuspended();
+        if (raced === 'canceled') return await finalize('canceled', null, 'canceled');
+        outcome = raced;
       } catch (error) {
         outcome = {
           content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
@@ -936,6 +1080,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     }
 
     for (;;) {
+      if (suspendRequested) return await finalizeSuspended();
       if (cancelRequested || channel.cancelRequested)
         return await finalize('canceled', null, 'canceled');
       if (now() > deadline) {
@@ -1049,6 +1194,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       for (let attempt = 0; ; attempt += 1) {
         const controller = new AbortController();
         channel.onCancel(() => controller.abort());
+        // Shutdown aborts the call the same way Stop does; which of the two
+        // it was is read off suspendRequested once the call has failed.
+        deps.suspendSignal?.addEventListener('abort', () => controller.abort(), { once: true });
         result = await streamOrComplete(
           llm.provider,
           {
@@ -1097,6 +1245,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       };
 
       if (!result.ok) {
+        // A call cut short by shutdown: the half-streamed row stays as it
+        // is; the resume resets it and asks the model again.
+        if (suspendRequested) return await finalizeSuspended();
         if (result.err.type === 'aborted' || cancelRequested) {
           return await finalize('canceled', null, 'canceled');
         }
@@ -1337,6 +1488,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
                 deps.localTools.run(use.name, use.input, {
                   ...deps.localContext,
                   toolUseId: use.id,
+                  signal: turnAbort.signal,
                   // A sub-agent (code_delegate) spends its own model calls
                   // through this sink rather than the loop above, so its
                   // usage never reaches `totals` on its own — fold it in
@@ -1357,7 +1509,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           }
           if (deps.mcp) {
             return logOutcome(
-              await deps.mcp.callTool(use.name, argsOf(use.input), limits.toolTimeoutMs)
+              await deps.mcp.callTool(
+                use.name,
+                argsOf(use.input),
+                limits.toolTimeoutMs,
+                turnAbort.signal
+              )
             );
           }
           return logOutcome({
@@ -1393,6 +1550,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         for (const use of group) {
           if (refused.has(use.id) || !needsPermission(use.name)) continue;
           const answer = await askPermission(use);
+          if (answer === 'suspended') return await finalizeSuspended();
           if (answer === 'canceled') {
             canceledWhileAsking = true;
             break;
@@ -1413,13 +1571,28 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         // Each call's own wall time, measured here rather than inside
         // runTool so a group's concurrent calls are timed apart: the
         // round waits for the slowest, and the line should say which.
-        const outcomes = await Promise.all(
-          group.map(async (use) => {
-            const startedAt = now();
-            const outcome = await runTool(use);
-            return { outcome, durationMs: now() - startedAt };
-          })
-        );
+        // Shutdown mid-round walks away from the calls in flight with the
+        // tool_use blocks on the row and no results: the resume answers
+        // them as interrupted. Stop mid-round ends the turn the way a
+        // cancel between rounds does, the calls likewise unanswered (the
+        // history builder drops the dangling tool_use next time). Either
+        // way the calls were told through the signal; one that ignores it
+        // runs on orphaned, as a timed-out one would. A round that
+        // finished before the signal keeps its results — the loop's top
+        // is the next stop.
+        const outcomes = await Promise.race([
+          Promise.all(
+            group.map(async (use) => {
+              const startedAt = now();
+              const outcome = await runTool(use);
+              return { outcome, durationMs: now() - startedAt };
+            })
+          ),
+          suspended,
+          canceled,
+        ]);
+        if (outcomes === 'suspended') return await finalizeSuspended();
+        if (outcomes === 'canceled') break;
         stage = null;
         for (const [index, use] of group.entries()) {
           const { outcome, durationMs } = outcomes[index];

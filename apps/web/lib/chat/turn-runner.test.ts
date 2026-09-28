@@ -47,7 +47,11 @@ function fakeStore() {
   const asks: { toolUseId: string; name: string; messageId: string }[] = [];
   let pending: { toolUseId: string; decision: 'once' | 'always' | 'deny' | null } | null = null;
   let cleared = 0;
+  const suspensions: number[] = [];
   const store: TurnStore = {
+    async suspendTurn(iterations) {
+      suspensions.push(iterations);
+    },
     async appendMessage(input) {
       seq += 1;
       const id = `m${seq}`;
@@ -118,6 +122,7 @@ function fakeStore() {
     artifacts,
     stages,
     asks,
+    suspensions,
     pending: () => pending,
     cleared: () => cleared,
     /** What the decision route does to the row, minus the channel. */
@@ -1702,5 +1707,329 @@ describe('runChatTurn in auto mode', () => {
       .flatMap((row) => row.blocks)
       .find((block) => block.type === 'tool_result' && block.toolUseId === 'tu_outlook_send_mail');
     expect(refusal && refusal.type === 'tool_result' ? refusal.isError : null).toBe(true);
+  });
+});
+
+describe('runChatTurn on shutdown', () => {
+  /** A model that answers only when its call is aborted — a reply still streaming when the process goes. */
+  function hangingProvider(): LlmProvider & { calls: () => number } {
+    let calls = 0;
+    return {
+      calls: () => calls,
+      async complete() {
+        throw new Error('stream is expected');
+      },
+      stream(_request, options) {
+        calls += 1;
+        return new Promise((resolve) => {
+          options.signal?.addEventListener('abort', () => resolve(err('aborted' as const)), {
+            once: true,
+          });
+        });
+      },
+    };
+  }
+
+  it('suspends a reply mid-stream: the row stays, no turn_end, nothing finished', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-s1');
+    const watched = watch(channel);
+    const model = hangingProvider();
+    const suspend = new AbortController();
+    const run = runChatTurn(
+      {
+        llm: llmOf(model),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        suspendSignal: suspend.signal,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-s1')
+    );
+    await waitUntil(() => model.calls() === 1);
+    suspend.abort();
+    const outcome = await run;
+    expect(outcome.status).toBe('suspended');
+    expect(fake.suspensions).toEqual([1]);
+    expect(fake.outcome()).toBeNull();
+    expect(watched.events.some((event) => event.type === 'turn_end')).toBe(false);
+    expect(channel.closed).toBe(true);
+    // The reply's row is still streaming: the resume drops it and asks again.
+    expect(fake.rows.get('m1')?.status ?? 'streaming').toBe('streaming');
+  });
+
+  it('walks away from a tool round in flight, leaving the calls unanswered for the resume', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-s2');
+    let started = 0;
+    const stuck: LocalTool = {
+      def: { name: 'code_run', description: 'never returns', inputSchema: { type: 'object' } },
+      execute: () => {
+        started += 1;
+        return new Promise(() => {});
+      },
+    };
+    const suspend = new AbortController();
+    const run = runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('code_run', { command: 'pnpm test' }), text('never')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([stuck]),
+        localContext,
+        suspendSignal: suspend.signal,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, toolTimeoutMs: 300 },
+      },
+      inputFor('turn-s2')
+    );
+    await waitUntil(() => started === 1);
+    suspend.abort();
+    const outcome = await run;
+    expect(outcome.status).toBe('suspended');
+    expect(fake.suspensions).toEqual([1]);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows.some((row) => row.kind === 'tool_results')).toBe(false);
+    const reply = rows.find((row) => row.role === 'assistant');
+    expect(reply?.status).toBe('complete');
+    expect(reply?.blocks.some((block) => block.type === 'tool_use')).toBe(true);
+  });
+
+  it('suspends while parked behind a permission ask, leaving the ask on the row', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-s3');
+    const calls: string[] = [];
+    const suspend = new AbortController();
+    const act: LlmResponse = {
+      content: [{ type: 'tool_use', id: 'tu_1', name: 'jira_create_issue', input: {} }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 20, outputTokens: 8 },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(provider([act, text('Filed')])),
+        tools: [],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([]),
+        localContext,
+        permissions: { alwaysAllowed: new Set() },
+        suspendSignal: suspend.signal,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, permissionPollMs: 10, permissionWaitMs: 5_000 },
+      },
+      inputFor('turn-s3')
+    );
+    await waitUntil(() => fake.asks.length === 1);
+    suspend.abort();
+    const outcome = await run;
+    expect(outcome.status).toBe('suspended');
+    expect(calls).toEqual([]);
+    expect(fake.cleared()).toBe(0);
+    expect(fake.pending()).toMatchObject({ toolUseId: 'tu_1', decision: null });
+  });
+
+  it('suspends at once when the signal fired before the loop began', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-s4');
+    const model = hangingProvider();
+    const suspend = new AbortController();
+    suspend.abort();
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(model),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        suspendSignal: suspend.signal,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-s4')
+    );
+    expect(outcome.status).toBe('suspended');
+    expect(model.calls()).toBe(0);
+    expect(fake.suspensions).toEqual([0]);
+  });
+});
+
+describe('runChatTurn resumed', () => {
+  it('carries the seed on: iterations count from where they were, tokens add up', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-r1');
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('a', {}), toolCall('b', {}), text('done')])),
+        tools: [],
+        mcp: fakeMcp(calls),
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, maxIterations: 4 },
+      },
+      {
+        ...inputFor('turn-r1'),
+        resume: {
+          startedAt: Date.now() - 1_000,
+          iterations: 3,
+          continues: 0,
+          silentRetries: 0,
+          spawnedSubagent: false,
+          taskDone: false,
+          inputTokens: 100,
+          outputTokens: 50,
+        },
+      }
+    );
+    // The fourth model call ran its tool; a fifth would pass the cap.
+    expect(calls).toEqual(['a:{}']);
+    expect(outcome.status).toBe('failed');
+    expect(outcome.iterations).toBe(4);
+    expect(outcome.inputTokens).toBe(120);
+    expect(outcome.outputTokens).toBe(58);
+  });
+
+  it('gives a resumed turn whose clock has run out a floor of time to answer', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-r2');
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(provider([text('Picked up.')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, wallClockMs: 10 * 60_000 },
+      },
+      {
+        ...inputFor('turn-r2'),
+        resume: {
+          startedAt: Date.now() - 60 * 60_000,
+          iterations: 1,
+          continues: 0,
+          silentRetries: 0,
+          spawnedSubagent: false,
+          taskDone: false,
+          inputTokens: 0,
+          outputTokens: 0,
+        },
+      }
+    );
+    expect(outcome.status).toBe('completed');
+    expect(outcome.iterations).toBe(2);
+  });
+});
+
+describe('runChatTurn Stop while a tool call runs', () => {
+  it('ends the turn at once even for a tool that ignores the signal, leaving the call unanswered', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-stop1');
+    const watched = watch(channel);
+    let started = 0;
+    const stuck: LocalTool = {
+      def: { name: 'code_run', description: 'never returns', inputSchema: { type: 'object' } },
+      execute: () => {
+        started += 1;
+        return new Promise(() => {});
+      },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(provider([toolCall('code_run', { command: 'sleep 200' }), text('never')])),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([stuck]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5, toolTimeoutMs: 300 },
+      },
+      inputFor('turn-stop1')
+    );
+    await waitUntil(() => started === 1);
+    const stoppedAt = Date.now();
+    channel.requestCancel();
+    const outcome = await run;
+    expect(outcome.status).toBe('canceled');
+    expect(Date.now() - stoppedAt).toBeLessThan(250);
+    expect(fake.outcome()?.status).toBe('canceled');
+    const rows = [...fake.rows.values()];
+    expect(rows.some((row) => row.kind === 'tool_results')).toBe(false);
+    expect(watched.events.at(-1)).toMatchObject({ type: 'turn_end', status: 'canceled' });
+  });
+
+  it('hands every call the turn’s signal, which Stop fires', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-stop2');
+    let seen: AbortSignal | undefined;
+    const listening: LocalTool = {
+      def: {
+        name: 'code_run',
+        description: 'stops on the signal',
+        inputSchema: { type: 'object' },
+      },
+      execute: (_input, context) =>
+        new Promise((resolve) => {
+          seen = context.signal;
+          context.signal?.addEventListener('abort', () =>
+            resolve(textResult('The command was stopped.'))
+          );
+        }),
+    };
+    const mcpSignals: (AbortSignal | undefined)[] = [];
+    const mcp: McpClient = {
+      async initialize() {},
+      async listTools() {
+        return [];
+      },
+      async callTool(_name, _args, _timeoutMs, signal) {
+        mcpSignals.push(signal);
+        return { content: [{ type: 'text', text: 'ok' }], isError: false, meta: {} };
+      },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(
+          provider([
+            {
+              content: [
+                { type: 'tool_use', id: 'tu_read', name: 'jira_get_issue', input: {} },
+                { type: 'tool_use', id: 'tu_run', name: 'code_run', input: {} },
+              ],
+              stopReason: 'tool_use',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+            text('never'),
+          ])
+        ),
+        tools: [],
+        mcp,
+        localTools: createLocalToolSet([listening]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-stop2')
+    );
+    await waitUntil(() => seen !== undefined);
+    expect(seen?.aborted).toBe(false);
+    expect(mcpSignals).toHaveLength(1);
+    expect(mcpSignals[0]).toBe(seen);
+    channel.requestCancel();
+    const outcome = await run;
+    expect(outcome.status).toBe('canceled');
+    expect(seen?.aborted).toBe(true);
   });
 });

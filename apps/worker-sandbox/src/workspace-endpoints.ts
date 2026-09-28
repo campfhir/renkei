@@ -721,12 +721,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   ) {
     const path = validateWorkspacePath(body.path, { forWrite: true });
     if (!path.ok || !path.path)
-      return sendError(
-        response,
-        400,
-        'bad_path',
-        path.ok ? 'A path is required.' : path.message
-      );
+      return sendError(response, 400, 'bad_path', path.ok ? 'A path is required.' : path.message);
     let outcome;
     try {
       outcome = await removeWorkspaceFile(workspaceDir(workspace.storageKey), path.path);
@@ -812,8 +807,15 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     // The running services' addresses and exports, over the `.env`. Not
     // secrets — the address is the point — so they are not scrubbed.
     const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(workspace) : {};
+    // A caller that goes away before the answer — the chat turn behind
+    // the call was stopped — takes the command with it: its process tree
+    // is killed rather than left to run to its timeout unseen.
+    const gone = new AbortController();
+    response.on('close', () => {
+      if (!response.writableFinished) gone.abort();
+    });
     const result = await runShell(
-      runInputFor(workspace, env, timeoutMs, { extraEnv: serviceEnv }),
+      runInputFor(workspace, env, timeoutMs, { extraEnv: serviceEnv, signal: gone.signal }),
       command.command
     );
     await markEnvUsed(db, env);
@@ -824,6 +826,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       stdout: scrubEnv(result.stdout, env),
       stderr: scrubEnv(result.stderr, env),
       timedOut: result.timedOut,
+      interrupted: result.interrupted,
       truncated: result.truncated,
       durationMs: result.durationMs,
       timeoutMs,

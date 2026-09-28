@@ -557,10 +557,13 @@ export interface ChatTurns {
   kind: Generated<string>;
   llm_model_id: string | null;
   output_tokens: Generated<number>;
+  resume_count: Generated<number>;
+  runner: Json | null;
   stage: string | null;
   stage_at: Timestamp | null;
   started_at: Generated<Timestamp>;
   status: Generated<string>;
+  suspended_at: Timestamp | null;
   tenant_id: string;
   thinking_budget: number | null;
   tool_permission: Json | null;

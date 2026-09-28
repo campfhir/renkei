@@ -76,6 +76,7 @@ import {
 } from './notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
+import { MessageReleased } from '@renkei/worker-loop';
 import { AgentMcpClient } from './mcp-client';
 import { mintRunToken, revokeRunToken } from './token';
 import {
@@ -182,6 +183,13 @@ export interface EngineDeps {
   resolveLlm?: typeof resolveAgentLlm;
   /** Called once per terminal run — trigger fan-out and notifications hook. */
   onFinalized?: (run: FinalizedRun) => Promise<void>;
+  /**
+   * Whether this process is shutting down. Polled at every checkpoint —
+   * before a step, before a model call, before a tool call — and true
+   * ends the run's execution here, to be resumed elsewhere: see
+   * ExecutorStopping. Omitted, a run executes to its end.
+   */
+  stopRequested?: () => boolean;
 }
 
 interface RunRow {
@@ -432,6 +440,17 @@ class RunAbort extends Error {
 
 /** Thrown to nack the queue job — transient, resume later, no attempt burned. */
 class TransientFailure extends Error {}
+
+/**
+ * Thrown at a checkpoint when this process has been told to stop
+ * (EngineDeps.stopRequested — the worker's SIGTERM): the run stays
+ * `running` at its current step, the attempt in flight is voided like a
+ * TransientFailure's, and the job goes back to the queue untouched
+ * (worker-loop's MessageReleased) for the next executor to resume from
+ * the same checkpoint — at once, rather than after the 30-minute lease
+ * a killed process would have left behind.
+ */
+class ExecutorStopping extends Error {}
 
 /**
  * Thrown mid-attempt when an owner's cancel click lands while a step is
@@ -1022,6 +1041,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
       await executeRun(run);
     } catch (error) {
       if (error instanceof TransientFailure) throw error; // → queue backoff
+      if (error instanceof ExecutorStopping) {
+        logger.info('run {runId} handed back at step {stepId}: this executor is stopping', {
+          component: 'worker-agents/engine',
+          runId,
+          tenantId: run.tenant_id,
+          stepId: run.current_step_id,
+        });
+        throw new MessageReleased('the agents worker is stopping'); // → back to the queue, at once
+      }
       throw error;
     }
   };
@@ -1248,6 +1276,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // run started with — null on a fresh run — and the log line then
         // carries a literal "{failedStep}" instead of a step name.
         run.current_step_id = node.id;
+        // Stopping: the run is left exactly here, `running` at this step,
+        // and the job released for the next executor to resume from.
+        if (deps.stopRequested?.()) throw new ExecutorStopping();
         // A RUNNING run has no separate job to notice a cancel click — this
         // one call to executeRun IS its only executor — so this checkpoint,
         // reached before every step, is the entire mechanism: request a
@@ -2789,9 +2820,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
           resumeNote
         );
       } catch (error) {
-        if (error instanceof TransientFailure) {
-          // No tool ran; void the attempt row so the user-visible budget is
-          // untouched, and let the queue back off.
+        if (error instanceof TransientFailure || error instanceof ExecutorStopping) {
+          // No tool ran (or this executor is stopping): void the attempt
+          // row so the user-visible budget is untouched, and let the queue
+          // back off — or, stopping, hand the job straight back.
           await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
           throw error;
         }
@@ -3808,6 +3840,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (await isCanceled(run.id)) {
         throw new RunCanceled();
       }
+      // Stopping mid-attempt: the turns so far are this attempt's alone
+      // and go with it (the row is voided by the caller); the step starts
+      // over on the next executor.
+      if (deps.stopRequested?.()) throw new ExecutorStopping();
       // The tool list never changes within an attempt: tools render first
       // in the cached prompt prefix, so narrowing them would throw the
       // whole cache away. Exhaustion is expressed through tool_choice
@@ -4097,6 +4133,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         if (Date.now() > deadline) {
           throw new RunAbort('timeout', 'The run exceeded its time budget.');
         }
+        // Before a call that acts, not after: a tool this process will not
+        // live to record the result of is better not made at all.
+        if (deps.stopRequested?.()) throw new ExecutorStopping();
         const args =
           typeof use.input === 'object' && use.input !== null && !Array.isArray(use.input)
             ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above

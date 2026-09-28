@@ -77,12 +77,19 @@ async function main(): Promise<void> {
   const db = dbResult.val;
   const handleDraft = createDraftHandler({ db, webBaseUrl: webBaseUrl() });
   const handleOptimize = createOptimizeHandler({ db, webBaseUrl: webBaseUrl() });
+  // Set by the signal handler below and read by the engine at every
+  // checkpoint: a run in flight is handed back to the queue at the next
+  // one (step, model call, tool call) rather than run to its end — or
+  // killed mid-call by the container's stop timeout, which used to leave
+  // its job `processing` until the 30-minute lease expired.
+  let stopRequested = false;
   const handleRun = createAgentRunHandler({
     db,
     webBaseUrl: webBaseUrl(),
     // Chained agents go back onto OUR queue; failure notifications go to
     // the interactive worker's, which owns the connector delivery paths.
     onFinalized: createFinalizeHook(db, queue.producer, webhookEventsQueue().producer),
+    stopRequested: () => stopRequested,
   });
 
   // Every sweep is replica-safe: the schedule advance is optimistically
@@ -202,6 +209,9 @@ async function main(): Promise<void> {
     claim: () => queue.consumer.claim(),
     complete: (event, outcome) => queue.consumer.complete(event, outcome),
     fail: (event, error) => queue.consumer.fail(event, error),
+    // A run the engine hands back on shutdown goes straight back to
+    // pending — no attempt spent, no backoff, no lease to wait out.
+    release: (event) => queue.consumer.release(event),
     // Runs enqueue under a per-agent fairness lane (`agents:{agentId}`);
     // the bare `agents` form still matches so rows enqueued before lanes
     // existed drain normally.
@@ -220,10 +230,11 @@ async function main(): Promise<void> {
   });
 
   const shutdown = (signal: string): void => {
-    logger.info('{signal} received, finishing current run step', {
+    logger.info('{signal} received, handing the current run back at its next checkpoint', {
       component: 'worker-agents/loop',
       signal,
     });
+    stopRequested = true;
     loop.stop();
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));

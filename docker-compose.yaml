@@ -114,6 +114,11 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # On SIGTERM the engine hands the run in flight back to the queue at
+    # its next checkpoint (a step, a model call, a tool call) — a model
+    # call can take most of a minute to reach one. Docker's default 10s
+    # would kill it first and leave the job to its 30-minute lease.
+    stop_grace_period: 45s
 
   # The batch-jobs worker (document-ocr-pipeline and future batch kinds):
   # same image as `worker`, different entrypoint — the embeddings pattern.
@@ -295,6 +300,11 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # On SIGTERM the worker turns new requests away, kills the commands
+    # in flight so their callers get an "interrupted" answer rather than
+    # a dropped socket, and closes the browser. Longer than the worker's
+    # own 25s deadline (src/index.ts), so it is the worker that decides.
+    stop_grace_period: 30s
 
   renkei:
     image: scotteremiaroden/renkei:latest
@@ -345,6 +355,11 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # On SIGTERM every chat turn running in the process suspends itself
+    # (its row marked for another process's recovery sweep — this one's,
+    # after the restart) and the open event streams close, so Next can
+    # drain and exit inside this. Docker's default 10s cut it close.
+    stop_grace_period: 30s
 
 volumes:
   renkei-postgres:

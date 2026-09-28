@@ -337,10 +337,15 @@ describe('code_run', () => {
       },
     });
     const result = await tools().get('code_run')!.execute({ command: 'pnpm test' }, context);
-    expect(client.sbWorkspaceExec).toHaveBeenCalledWith(TARGET, {
-      id: WS_ID,
-      command: 'pnpm test',
-    });
+    expect(client.sbWorkspaceExec).toHaveBeenCalledWith(
+      TARGET,
+      {
+        id: WS_ID,
+        command: 'pnpm test',
+      },
+      // No turn behind this context, so no signal to pass down.
+      {}
+    );
     expect(result.isError).toBe(true);
     expect(result.content[0]).toEqual({
       type: 'text',
@@ -374,6 +379,28 @@ describe('code_run', () => {
     expect(rendered.ok).toBe(false);
     expect(rendered.text).toContain('TIMED OUT after 30s');
     expect(rendered.text).toContain('NPM_TOKEN');
+  });
+
+  it('renders a command the sandbox worker was stopped under as interrupted, not as a failure of its own', () => {
+    const rendered = renderRun(
+      {
+        exitCode: null,
+        signal: 'SIGTERM',
+        stdout: 'Running 12 tests',
+        stderr: '',
+        timedOut: false,
+        interrupted: true,
+        truncated: false,
+        durationMs: 4_200,
+        timeoutMs: 120_000,
+        unreadableEnv: [],
+      },
+      1_000
+    );
+    expect(rendered.ok).toBe(false);
+    expect(rendered.text).toContain('INTERRUPTED');
+    expect(rendered.text).toContain('Run it again');
+    expect(rendered.text).toContain('Running 12 tests');
   });
 });
 

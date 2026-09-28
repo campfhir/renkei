@@ -63,6 +63,15 @@ export interface LocalToolContext {
   toolUseId?: string;
   /** Where a code chat's sub-agents record their runs (subagent-runs.ts); absent, they do not. */
   subagents?: SubagentRecorder;
+  /**
+   * Fires when the turn is stopped — the person's Stop, or the process
+   * shutting down — while this call is in flight. A tool that waits on
+   * something long (a command on the sandbox, a sub-agent's loop) passes
+   * it down so the work actually stops, rather than running on unseen
+   * after the turn has ended; a tool that answers in a moment can ignore
+   * it. Absent for a context with no turn behind it.
+   */
+  signal?: AbortSignal;
 }
 
 export interface LocalTool {

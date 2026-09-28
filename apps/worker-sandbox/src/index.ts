@@ -73,6 +73,13 @@ import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
 import { watchLogLevel } from '@renkei/settings';
 
+/**
+ * The most a shutdown may take end to end. Inside the 30s stop grace
+ * docker-compose.yaml gives this container, with room for the drain's
+ * own wait and the browser's close.
+ */
+const SHUTDOWN_DEADLINE_MS = 25_000;
+
 function envFlag(name: string): boolean {
   return /^(1|true|yes|on)$/i.test((process.env[name] ?? '').trim());
 }
@@ -314,17 +321,39 @@ async function main(): Promise<void> {
     );
   });
 
+  // Stopping, in order: turn new requests away and kill the commands in
+  // flight so each caller gets an `interrupted` answer rather than a
+  // dropped socket (server.drain, workspaces.interruptRunningProcesses —
+  // a `code_run` whose sandbox restarted then reads as exactly that in
+  // the chat, and the model runs it again); wait for those answers to go
+  // out; then the browser, the charts, the vault, the logs, the database.
+  // A second signal changes nothing, and if the whole of it has not
+  // finished inside SHUTDOWN_DEADLINE_MS the process exits anyway — the
+  // container's stop timeout would do the same, less tidily.
+  let stopping = false;
   const shutdown = (signal: string): void => {
-    logger.info('{signal} received, closing', { component: 'worker-sandbox/server', signal });
-    server.close(() => {
-      void (async () => {
-        await browser?.shutdown();
-        await charts?.shutdown();
-        vault.close();
-        await logger.flush();
-        await closeDatabase();
-        process.exit(0);
-      })();
+    if (stopping) return;
+    stopping = true;
+    logger.info('{signal} received, draining', { component: 'worker-sandbox/server', signal });
+    const deadline = setTimeout(() => {
+      console.error(
+        `[worker-sandbox] shutdown did not finish in ${SHUTDOWN_DEADLINE_MS}ms; exiting`
+      );
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS);
+    deadline.unref();
+    void (async () => {
+      await server.drain();
+      await browser?.shutdown();
+      await charts?.shutdown();
+      vault.close();
+      logger.info('stopped', { component: 'worker-sandbox/server' });
+      await logger.flush();
+      await closeDatabase();
+      process.exit(0);
+    })().catch((error: unknown) => {
+      console.error('[worker-sandbox] shutdown failed:', error);
+      process.exit(1);
     });
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));

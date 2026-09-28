@@ -134,7 +134,15 @@ that caps its process count (per uid, so a fork bomb stops at the
 caller's own ceiling), the largest file it may write, and core dumps;
 each has a wall-clock limit (two minutes by default, ten at most) after
 which its whole process group is killed; output is bounded in memory and
-clipped head-and-tail for the model. A checkout that grows past 2 GB
+clipped head-and-tail for the model. A command is also killed when its
+caller goes away — the chat turn behind it was stopped, and the request
+dropped — and when the worker itself is told to stop: on SIGTERM the
+worker turns new requests away (503 `shutting_down`), kills every
+command in flight and answers each with `interrupted: true`, which
+`code_run` renders as "INTERRUPTED … run it again" rather than as a
+failure of the command's own; a read the web app makes while the worker
+is restarting is retried for a few seconds (`@renkei/sandbox-client`),
+a command or a write never. A checkout that grows past 2 GB
 refuses further commands until something is deleted.
 
 **Paths.** A caller-supplied path is validated (relative, no `..`, no

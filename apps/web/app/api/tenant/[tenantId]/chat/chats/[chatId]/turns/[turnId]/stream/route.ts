@@ -26,6 +26,7 @@ import { getTurn, isTurnSettled, toTurnView } from '@/lib/chat/turns';
 import { listTurnMessages, toMessageView } from '@/lib/chat/messages';
 import { getTurnChannel } from '@/lib/chat/turn-events';
 import type { ChatStreamEvent } from '@/lib/chat/stream-events';
+import { onShutdown } from '@/lib/shutdown';
 
 export const runtime = 'nodejs';
 
@@ -125,12 +126,18 @@ export async function GET(
         if (closed) return;
         closed = true;
         cleanup?.();
+        unsubscribeShutdown();
         try {
           controller.close();
         } catch {
           // Already closed from the other end.
         }
       };
+      // A stream held open is what keeps the listener from draining on
+      // shutdown. Closed here, the browser's EventSource reconnects — to
+      // the process that replaces this one, whose snapshot path shows
+      // the turn as the rows have it, resumed or not.
+      const unsubscribeShutdown = onShutdown(() => close());
       const ping = setInterval(() => {
         write(': ping\n\n');
         touchPresence();

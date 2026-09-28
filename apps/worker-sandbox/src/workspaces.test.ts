@@ -21,6 +21,7 @@ import {
   getWorkspacesRoot,
   grepFiles,
   homeDir,
+  interruptRunningProcesses,
   isCheckoutStorageKey,
   listDirectory,
   mkdirWorkspaceFile,
@@ -403,5 +404,31 @@ describe('a cloned workspace', () => {
     expect(result.timedOut).toBe(true);
     expect(result.stdout).not.toContain('never');
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it('interrupts every running command when the worker stops, and says so in the result', async () => {
+    const dir = workspaceDir(storageKey);
+    const started = Date.now();
+    const run = runShell(
+      { cwd: dir, home: homeDir(storageKey), identity: null, env: {}, timeoutMs: 30_000 },
+      'echo begun; sleep 30; echo never'
+    );
+    // Let the shell start before pulling the rug.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(interruptRunningProcesses()).toBe(1);
+    const result = await run;
+    expect(result.interrupted).toBe(true);
+    expect(result.timedOut).toBe(false);
+    expect(result.exitCode).toBeNull();
+    expect(result.stdout).toContain('begun');
+    expect(result.stdout).not.toContain('never');
+    expect(Date.now() - started).toBeLessThan(10_000);
+    // Nothing left to interrupt; a finished command was never interrupted.
+    expect(interruptRunningProcesses()).toBe(0);
+    const after = await runShell(
+      { cwd: dir, home: homeDir(storageKey), identity: null, env: {}, timeoutMs: 5_000 },
+      'echo fine'
+    );
+    expect(after).toMatchObject({ exitCode: 0, interrupted: false, stdout: 'fine\n' });
   });
 });
