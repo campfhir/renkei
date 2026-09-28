@@ -44,6 +44,7 @@ import {
   identityFor,
   setWorkspacesRootForTests,
   workspaceDir,
+  interruptRunningProcesses,
 } from './workspaces';
 import { resetEnvSecretsKeyForTests, sealEnvValue, envSecretsKey } from './env-secrets';
 
@@ -268,6 +269,34 @@ describe('secrets never leave as text', () => {
     });
     expect(grep.status).toBe(200);
     expect(grep.json.matches[0].text).toBe('export const token = "••••••";');
+  });
+});
+
+describe('a command whose caller goes away', () => {
+  it('is killed when the request is dropped mid-run, instead of running to its timeout', async () => {
+    const controller = new AbortController();
+    const request = fetch(`${enabledBase}/v1/workspaces/exec`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({
+        tenantId: 'tenant-1',
+        subject: 'alice',
+        id: 'ws-1',
+        command: 'sleep 30; echo never',
+        timeoutMs: 60_000,
+      }),
+      signal: controller.signal,
+    }).catch(() => null);
+    // Let the command start before the caller walks away.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    controller.abort();
+    await request;
+    // The process tree is gone within the kill grace, not after 30s.
+    const started = Date.now();
+    while (interruptRunningProcesses() > 0 && Date.now() - started < 5_000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });
 
@@ -608,10 +637,7 @@ describe('ls', () => {
       const result = await post(enabledBase, 'workspaces/ls', { ...TARGET, id: 'ws-1' });
       expect(result.status).toBe(200);
       const byPath = new Map<string, { ignored?: boolean }>(
-        result.json.entries.map((entry: { path: string; ignored?: boolean }) => [
-          entry.path,
-          entry,
-        ])
+        result.json.entries.map((entry: { path: string; ignored?: boolean }) => [entry.path, entry])
       );
       expect(byPath.get('ignored-file.txt')?.ignored).toBe(true);
       expect(byPath.get('ignored-dir')?.ignored).toBe(true);

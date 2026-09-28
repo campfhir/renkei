@@ -174,6 +174,15 @@ export class InMemoryQueue implements Queue {
       row.completedAt = Date.now();
     },
 
+    release: async (message: ClaimedMessage): Promise<void> => {
+      const row = this.rows.find((r) => r.id === message.id);
+      if (!row || row.status !== 'processing' || row.attempts !== message.attempts) return;
+      row.status = 'pending';
+      row.lockedAt = null;
+      row.attempts = Math.max(0, row.attempts - 1);
+      row.runAfter = Date.now();
+    },
+
     fail: async (message: ClaimedMessage, error: string): Promise<Disposition> => {
       const disposition = failureDisposition(message.attempts, this.policy);
       const index = this.rows.findIndex((r) => r.id === message.id);

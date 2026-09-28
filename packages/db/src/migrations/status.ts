@@ -158,6 +158,7 @@ export const EXPECTED_MIGRATIONS = [
   '126-admanager-instances',
   '127-pr-pipeline-subscriptions',
   '128-chat-widget-decisions',
+  '129-chat-turn-resume',
 ];
 
 export interface MigrationStatus {

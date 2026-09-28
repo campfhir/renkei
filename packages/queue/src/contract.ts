@@ -100,6 +100,16 @@ export interface QueueConsumer {
   complete(message: ClaimedMessage, outcome?: CompletionOutcome): Promise<void>;
   /** Nack: retry per policy, or move to the dead-letter store. */
   fail(message: ClaimedMessage, error: string): Promise<Disposition>;
+  /**
+   * Hand the message back untouched: pending again, deliverable at once,
+   * and this delivery not counted against its attempt budget. For a
+   * consumer that is stopping mid-message on purpose (a worker shutting
+   * down at a checkpoint), where neither ack nor nack is true — the work
+   * is neither done nor failed, and the next consumer simply carries on.
+   * A message this consumer no longer holds (its lease expired and
+   * another took it) is left alone.
+   */
+  release(message: ClaimedMessage): Promise<void>;
 }
 
 export interface DeadLetter {

@@ -82,6 +82,44 @@ describe('delivery basics', () => {
   });
 });
 
+describe('release — a consumer stopping on purpose', () => {
+  it('hands the message back at once without spending an attempt', async () => {
+    const queue = new InMemoryQueue();
+    await queue.producer.enqueue(input());
+    const first = await mustClaim(queue);
+    expect(first.attempts).toBe(1);
+    expect(await queue.consumer.claim()).toBeNull();
+
+    await queue.consumer.release(first);
+    const again = await mustClaim(queue);
+    expect(again.id).toBe(first.id);
+    // The released delivery never happened, as far as the budget knows.
+    expect(again.attempts).toBe(1);
+  });
+
+  it('leaves a message another consumer has since reclaimed alone', async () => {
+    const queue = new InMemoryQueue({ leaseMs: -1 });
+    await queue.producer.enqueue(input());
+    const stale = await mustClaim(queue);
+    const current = await mustClaim(queue);
+    expect(current.attempts).toBe(2);
+
+    await queue.consumer.release(stale);
+    // Still held by the current consumer: nothing to claim under a live lease.
+    await queue.consumer.complete(current);
+    expect(await queue.consumer.claim()).toBeNull();
+  });
+
+  it('keeps ordering: a released keyed message still goes before its younger sibling', async () => {
+    const queue = new InMemoryQueue();
+    await queue.producer.enqueue(input({ type: 'first', orderingKey: 'k' }));
+    await queue.producer.enqueue(input({ type: 'second', orderingKey: 'k' }));
+    const first = await mustClaim(queue);
+    await queue.consumer.release(first);
+    expect((await mustClaim(queue)).type).toBe('first');
+  });
+});
+
 describe('retry and dead-letter lifecycle', () => {
   it('fail schedules a backoff retry per the policy', async () => {
     const queue = new InMemoryQueue();

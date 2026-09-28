@@ -21,6 +21,7 @@ import {
 import { setNotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '@renkei/user-prefs';
 import { setOrgSettings } from '@renkei/settings';
 import { createAgentRunHandler } from './engine';
+import { MessageReleased } from '@renkei/worker-loop';
 import { resumeAgentRun } from '@renkei/agents/runs';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
 import { createApprovalSweep } from './approval-sweep';
@@ -208,6 +209,61 @@ maybe('agent run engine', () => {
         ...overrides,
       },
     ],
+  });
+
+  it('hands a run back to the queue at its next checkpoint when the executor is stopping, and resumes it later', async () => {
+    const { runId } = await seedRun(singleStep());
+    let stop = false;
+    let armed = true;
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' })
+    );
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () =>
+        stubMcp(['jira_get_issue'], () => {
+          // SIGTERM lands while the tool call is out.
+          if (armed) stop = true;
+          return okToolResult;
+        }),
+      resolveLlm: async () => ok(llm),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      stopRequested: () => stop,
+    });
+    await expect(handler({ payload: { runId } })).rejects.toBeInstanceOf(MessageReleased);
+
+    // Left running at its step, with nothing half-recorded under it.
+    const parked = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'current_step_id'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(parked.status).toBe('running');
+    expect(parked.current_step_id).not.toBeNull();
+    expect(
+      await db.selectFrom('agent_run_steps').select('id').where('run_id', '=', runId).execute()
+    ).toEqual([]);
+
+    // The next executor picks it up and the step runs afresh to its end.
+    armed = false;
+    stop = false;
+    await handler({ payload: { runId } });
+    const finished = await db
+      .selectFrom('agent_runs')
+      .select(['status'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(finished.status).toBe('succeeded');
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['status', 'attempt'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toEqual([{ status: 'succeeded', attempt: 1 }]);
   });
 
   it('runs a single step to success and records the attempt', async () => {

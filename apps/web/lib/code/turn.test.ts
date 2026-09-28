@@ -189,10 +189,13 @@ describe('codeProjectContext', () => {
     clone.mockResolvedValue({
       ok: false,
       status: 502,
-      message: 'Could not reach the sandbox service.',
+      message: 'Could not reach the sandbox service; it may be restarting. Try again in a moment.',
     });
     const recovered = await bound().recover!('ws-1');
-    expect(recovered).toEqual({ ok: false, message: 'Could not reach the sandbox service.' });
+    expect(recovered).toEqual({
+      ok: false,
+      message: 'Could not reach the sandbox service; it may be restarting. Try again in a moment.',
+    });
   });
 
   it('resumes waiting on a clone an earlier turn started', async () => {

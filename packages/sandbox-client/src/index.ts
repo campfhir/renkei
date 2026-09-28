@@ -128,26 +128,86 @@ async function opFailure(response: Response): Promise<{ ok: false; err: SandboxC
   return { ok: false, err: { kind: 'op', type, message, status: response.status } };
 }
 
-async function callOp(op: string, body: unknown): Promise<ClientResult<Response>> {
-  const cfg = sandboxConfig();
-  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
-  let response: Response;
-  try {
-    response = await fetch(`${cfg.url}/v1/${op}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    return unreachable(error instanceof Error ? error.message : String(error));
-  }
-  if (!response.ok) return opFailure(response);
-  return { ok: true, val: response };
+/**
+ * Retrying a call the worker never took. A worker restarting — a deploy,
+ * a crash and its restart — refuses or resets connections for a few
+ * seconds and answers 503 `shutting_down` while it drains; a read made
+ * in that window would otherwise reach the model as "could not be
+ * reached" and cost it a turn to try again. The delays add up to about
+ * seven seconds, a container restart's worth. Only a call the caller
+ * says is safe to repeat (`retry`): a read, never a command or a write,
+ * which may have started before the connection dropped.
+ */
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
+let retryDelay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Test hook: the wait between retries, without real time passing. */
+export function setRetryDelayForTests(delay: ((ms: number) => Promise<void>) | null): void {
+  retryDelay = delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 }
 
-async function callJson(op: string, body: unknown): Promise<ClientResult<unknown>> {
-  const called = await callOp(op, body);
+const CONNECTION_FAILURE_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EPIPE',
+  'EAI_AGAIN',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+/** A fetch that never reached the worker's handler: refused, reset, or the socket gone. Not a timeout: that request may be running. */
+export function isConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'TimeoutError' || error.name === 'AbortError') return false;
+  const cause: { code?: unknown } | undefined =
+    typeof error.cause === 'object' && error.cause !== null ? error.cause : undefined;
+  if (typeof cause?.code === 'string' && CONNECTION_FAILURE_CODES.has(cause.code)) return true;
+  return [...CONNECTION_FAILURE_CODES].some((code) => error.message.includes(code));
+}
+
+async function callOp(
+  op: string,
+  body: unknown,
+  options: { retry?: boolean } = {}
+): Promise<ClientResult<Response>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  for (let attempt = 0; ; attempt += 1) {
+    const delay = RETRY_DELAYS_MS[attempt];
+    const mayRetry = options.retry === true && delay !== undefined;
+    let response: Response;
+    try {
+      response = await fetch(`${cfg.url}/v1/${op}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (mayRetry && isConnectionFailure(error)) {
+        await retryDelay(delay);
+        continue;
+      }
+      return unreachable(error instanceof Error ? error.message : String(error));
+    }
+    if (!response.ok) {
+      const failure = await opFailure(response);
+      if (mayRetry && failure.err.kind === 'op' && failure.err.type === 'shutting_down') {
+        await retryDelay(delay);
+        continue;
+      }
+      return failure;
+    }
+    return { ok: true, val: response };
+  }
+}
+
+async function callJson(
+  op: string,
+  body: unknown,
+  options: { retry?: boolean } = {}
+): Promise<ClientResult<unknown>> {
+  const called = await callOp(op, body, options);
   if (!called.ok) return called;
   try {
     return { ok: true, val: await called.val.json() };
@@ -628,12 +688,33 @@ function workspaceOf(value: unknown): WireWorkspace | null {
   };
 }
 
+/**
+ * Workspace verbs that only read, retried through a worker restart (see
+ * callOp). Everything else — a write, an edit, a command, git — runs
+ * once: repeating it after a dropped connection could do it twice.
+ */
+const RETRIED_WORKSPACE_READS = new Set([
+  'get',
+  'list',
+  'ls',
+  'find',
+  'grep',
+  'read',
+  'git-status',
+  'git-diff',
+  'git-show',
+]);
+
 async function workspaceCall(
   op: string,
   target: SandboxTarget,
   input: Record<string, unknown>
 ): Promise<ClientResult<unknown>> {
-  return callJson(`workspaces/${op}`, { ...target, ...input });
+  return callJson(
+    `workspaces/${op}`,
+    { ...target, ...input },
+    { retry: RETRIED_WORKSPACE_READS.has(op) }
+  );
 }
 
 /**
@@ -935,6 +1016,8 @@ export interface WireExecResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  /** The worker was stopped (a restart, a deploy) while the command ran and killed it: not finished, run it again. */
+  interrupted: boolean;
   truncated: boolean;
   durationMs: number;
   timeoutMs: number;
@@ -946,22 +1029,33 @@ export interface WireExecResult {
 /** Run one shell command in the workspace; a long command needs its own timeout, up to the worker's ceiling. */
 export async function sbWorkspaceExec(
   target: SandboxTarget,
-  input: { id: string; command: string; timeoutMs?: number }
+  input: { id: string; command: string; timeoutMs?: number },
+  options: {
+    /**
+     * Ends the call early — a chat turn stopped while the command ran.
+     * Dropping the connection is what tells the worker to kill the
+     * command (workspace-endpoints.ts watches for it), so the process
+     * does not run on after the person said stop.
+     */
+    signal?: AbortSignal;
+  } = {}
 ): Promise<ClientResult<WireExecResult>> {
   const cfg = sandboxConfig();
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   // The client waits a little beyond the command's own limit: the worker
   // kills the process at timeoutMs and still has to answer.
   const wait = Math.min(15 * 60_000, (input.timeoutMs ?? 2 * 60_000) + 30_000);
+  const timeout = AbortSignal.timeout(wait);
   let response: Response;
   try {
     response = await fetch(`${cfg.url}/v1/workspaces/exec`, {
       method: 'POST',
       headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
       body: JSON.stringify({ ...target, ...input }),
-      signal: AbortSignal.timeout(wait),
+      signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
     });
   } catch (error) {
+    if (options.signal?.aborted) return unreachable('The command was stopped.');
     return unreachable(error instanceof Error ? error.message : String(error));
   }
   if (!response.ok) return opFailure(response);
@@ -983,6 +1077,7 @@ export async function sbWorkspaceExec(
       stdout: value.stdout,
       stderr: value.stderr,
       timedOut: value.timedOut === true,
+      interrupted: value.interrupted === true,
       truncated: value.truncated === true,
       durationMs: num(value.durationMs),
       timeoutMs: num(value.timeoutMs),
@@ -1046,7 +1141,11 @@ export async function sbWorkspaceGitDiff(
       added: typeof raw.added === 'number' ? raw.added : 0,
       deleted: typeof raw.deleted === 'number' ? raw.deleted : 0,
       status:
-        raw.status === 'untracked' ? 'untracked' : raw.status === 'deleted' ? 'deleted' : 'modified',
+        raw.status === 'untracked'
+          ? 'untracked'
+          : raw.status === 'deleted'
+            ? 'deleted'
+            : 'modified',
     });
   }
   return {
@@ -1583,9 +1682,17 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
     };
   }
   if (error.kind === 'unreachable') {
-    return { status: 502, message: 'Could not reach the sandbox service.' };
+    return {
+      status: 502,
+      message: 'Could not reach the sandbox service; it may be restarting. Try again in a moment.',
+    };
   }
   switch (error.type) {
+    case 'shutting_down':
+      return {
+        status: 503,
+        message: error.message ?? 'The sandbox service is restarting. Try again in a moment.',
+      };
     case 'not_found':
       return {
         status: 404,

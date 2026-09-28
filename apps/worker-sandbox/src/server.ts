@@ -73,7 +73,7 @@ import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './bro
 import { ChartRenderError, type ChartErrorType, type ChartVerbs } from './charts';
 import { SecretVault } from './secret-vault';
 import { secretSummary } from './secrets';
-import { orphanedByNow } from './workspaces';
+import { interruptRunningProcesses, orphanedByNow } from './workspaces';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import { createServiceHandlers } from './service-endpoints';
 import type { ServiceManager } from './services';
@@ -301,8 +301,24 @@ function expiryFromNow(batchId: string | null): Date {
   return new Date(Date.now() + ttl);
 }
 
-export function createSandboxServer(deps: SandboxServerDeps): Server {
+/**
+ * The server, plus how it stops: `startDraining` turns every request away
+ * with 503 `shutting_down` and kills the commands in flight so their
+ * callers get an `interrupted` answer instead of a dropped socket
+ * (workspaces.ts's interruptRunningProcesses); `drain` does that and then
+ * waits for the listener to close, forcing the last connections (a
+ * language server's event stream, a stuck client) after `waitMs`.
+ */
+export interface SandboxServer extends Server {
+  startDraining(): void;
+  drain(waitMs?: number): Promise<void>;
+}
+
+const DRAIN_WAIT_MS = 10_000;
+
+export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   const maxFileBytes = deps.maxFileBytes ?? orgMaxFileBytes;
+  let draining = false;
   const vault = deps.vault ?? new SecretVault();
   const services = createServiceHandlers({ db: deps.db, manager: deps.services ?? null });
   const workspaces = createWorkspaceHandlers({
@@ -893,6 +909,18 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://sandbox.internal');
 
+    // Stopping: nothing new starts here, the health check included, so a
+    // balancer stops routing and a client's retry lands on a replica or
+    // on this worker once it is back.
+    if (draining) {
+      response.setHeader('connection', 'close');
+      return sendError(
+        response,
+        503,
+        'shutting_down',
+        'The sandbox worker is stopping; try again in a moment.'
+      );
+    }
     if (request.method === 'GET' && url.pathname === '/health') {
       return sendJson(response, 200, { ok: true });
     }
@@ -964,20 +992,47 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     await jsonHandler!(parsedBody, response);
   }
 
-  const server = createServer((request, response) => {
-    void handle(request, response).catch((error: unknown) => {
-      logger.error('unhandled sandbox op failure: {error}', {
-        component: 'worker-sandbox/server',
-        error: error instanceof Error ? error.message : String(error),
+  const server: SandboxServer = Object.assign(
+    createServer((request, response) => {
+      void handle(request, response).catch((error: unknown) => {
+        logger.error('unhandled sandbox op failure: {error}', {
+          component: 'worker-sandbox/server',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!response.headersSent) {
+          sendError(response, 500, 'internal');
+        } else {
+          response.end();
+        }
       });
-      if (!response.headersSent) {
-        sendError(response, 500, 'internal');
-      } else {
-        response.end();
-      }
-    });
-  });
-
+    }),
+    {
+      startDraining(): void {
+        if (draining) return;
+        draining = true;
+        const interrupted = interruptRunningProcesses();
+        logger.info('draining: {interrupted} command(s) interrupted', {
+          component: 'worker-sandbox/server',
+          interrupted,
+        });
+        server.closeIdleConnections();
+      },
+      drain(waitMs = DRAIN_WAIT_MS): Promise<void> {
+        server.startDraining();
+        return new Promise<void>((resolve) => {
+          // What is still open past the wait is not going to finish on
+          // its own: a language server's event stream, a client that
+          // never read its answer.
+          const force = setTimeout(() => server.closeAllConnections(), waitMs);
+          force.unref();
+          server.close(() => {
+            clearTimeout(force);
+            resolve();
+          });
+        });
+      },
+    }
+  );
   // The TTL sweep: expired rows lose their bytes, then their row. Errors on
   // one file never stop the batch — a locked/already-gone file is logged and
   // skipped so the sweep keeps making progress.

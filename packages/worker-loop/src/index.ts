@@ -40,6 +40,22 @@ export type LoopDisposition = { status: 'retry'; delaySeconds: number } | { stat
  */
 export type HandlerResolution = void | 'skipped';
 
+/**
+ * Thrown by a handler that is stopping on purpose partway through a
+ * message — the process is shutting down and the work reached a
+ * checkpoint it can be resumed from. The loop then hands the message
+ * back to the queue untouched (`release`: pending again, no attempt
+ * spent) instead of failing it, so the next consumer — this process
+ * after its restart, or a replica — picks it up at once rather than
+ * after a retry backoff or, worse, a lease expiry.
+ */
+export class MessageReleased extends Error {
+  constructor(reason = 'the consumer is stopping') {
+    super(reason);
+    this.name = 'MessageReleased';
+  }
+}
+
 /** Poll cadence: quick when draining a backlog, relaxed when idle. The idle
  * delay bounds per-hop latency for push-driven work — an event crosses up to
  * three queue hops (intake → domain lane → agent job), so 1s keeps the
@@ -52,6 +68,12 @@ export interface EventLoopDeps<M extends LoopMessage> {
   claim: () => Promise<M | null>;
   complete: (message: M, outcome?: 'processed' | 'skipped') => Promise<void>;
   fail: (message: M, error: string) => Promise<LoopDisposition>;
+  /**
+   * Hands a message back untouched when its handler threw MessageReleased.
+   * Omitted, a released message is failed like any other error — a
+   * queue without the operation still makes progress, just more slowly.
+   */
+  release?: (message: M) => Promise<void>;
   handlerFor: (
     message: Pick<M, 'source' | 'type'>
   ) => ((message: M) => Promise<HandlerResolution>) | undefined;
@@ -69,6 +91,12 @@ export interface EventLoop {
   /** Poll until stop(); resolves once the current message has wound down. */
   run(): Promise<void>;
   stop(): void;
+  /**
+   * True once stop() was called: what a long handler polls at its own
+   * checkpoints to decide to throw MessageReleased rather than carry on
+   * into work the process will not live to finish.
+   */
+  readonly stopping: boolean;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -128,6 +156,18 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         outcome,
       });
     } catch (error) {
+      if (error instanceof MessageReleased && deps.release) {
+        await deps.release(event);
+        logger.warn('event {eventId} ({source}/{type}) released on attempt {attempts}: {reason}', {
+          component,
+          eventId: event.id,
+          source: event.source,
+          type: event.type,
+          attempts: event.attempts,
+          reason: error.message,
+        });
+        return true;
+      }
       const message = error instanceof Error ? error.message : String(error);
       const disposition = await deps.fail(event, message);
       logger.error(
@@ -168,6 +208,9 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
     run,
     stop: () => {
       running = false;
+    },
+    get stopping() {
+      return !running;
     },
   };
 }

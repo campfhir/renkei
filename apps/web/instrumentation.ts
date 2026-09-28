@@ -80,6 +80,22 @@ export async function register() {
     });
 
     await reportSchemaDrift();
+
+    // Shutdown and recovery for the chat turns this process runs. Next's
+    // own SIGTERM/SIGINT handler stays: it waits for after() work, and
+    // this is what makes a turn's after() work end promptly — suspended,
+    // for any web process's recovery sweep (this one's, after a restart)
+    // to pick up where the rows say it was. See lib/shutdown.ts and
+    // lib/chat/turn-recovery.ts.
+    const { installShutdownHandlers } = await import('@/lib/shutdown');
+    const { startTurnRecovery } = await import('@/lib/chat/turn-recovery');
+    installShutdownHandlers((signal) =>
+      logger.info('{signal} received: suspending running chat turns', {
+        component: 'web/instrumentation',
+        signal,
+      })
+    );
+    startTurnRecovery(dbResult.val);
   }
 }
 

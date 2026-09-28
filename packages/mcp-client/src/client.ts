@@ -51,7 +51,13 @@ export interface McpToolResult {
 export interface McpClient {
   initialize(): Promise<void>;
   listTools(): Promise<McpToolInfo[]>;
-  callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<McpToolResult>;
+  /** `signal` ends the wait early (a stopped turn); the call rejects as aborted. */
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<McpToolResult>;
   /**
    * Tell the server which try of a step the next calls belong to. Optional
    * so the in-memory test doubles need not implement it.
@@ -116,7 +122,8 @@ export class HttpMcpClient implements McpClient {
     this.attempt = { attempt, maxAttempts };
   }
 
-  private async post(body: unknown, timeoutMs: number): Promise<unknown> {
+  private async post(body: unknown, timeoutMs: number, signal?: AbortSignal): Promise<unknown> {
+    const timeout = AbortSignal.timeout(timeoutMs);
     const response = await fetch(this.endpoint, {
       method: 'POST',
       headers: {
@@ -133,7 +140,10 @@ export class HttpMcpClient implements McpClient {
           : {}),
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
+      // The caller's own signal (a chat turn stopped mid-call) ends the
+      // wait as the timeout would; the call itself may still run to its
+      // end on the server, which is the server's to bound.
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
     });
 
     const sessionId = response.headers.get('mcp-session-id');
@@ -156,10 +166,11 @@ export class HttpMcpClient implements McpClient {
   private async request(
     method: string,
     params: Record<string, unknown>,
-    timeoutMs: number
+    timeoutMs: number,
+    signal?: AbortSignal
   ): Promise<unknown> {
     const id = this.nextId++;
-    const raw = await this.post({ jsonrpc: '2.0', id, method, params }, timeoutMs);
+    const raw = await this.post({ jsonrpc: '2.0', id, method, params }, timeoutMs, signal);
     if (typeof raw !== 'object' || raw === null) {
       throw new Error(`MCP ${method}: empty or malformed response`);
     }
@@ -215,9 +226,10 @@ export class HttpMcpClient implements McpClient {
   async callTool(
     name: string,
     args: Record<string, unknown>,
-    timeoutMs = CALL_TIMEOUT_MS
+    timeoutMs = CALL_TIMEOUT_MS,
+    signal?: AbortSignal
   ): Promise<McpToolResult> {
-    const result = await this.request('tools/call', { name, arguments: args }, timeoutMs);
+    const result = await this.request('tools/call', { name, arguments: args }, timeoutMs, signal);
     const shaped: {
       content?: unknown;
       isError?: unknown;

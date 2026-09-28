@@ -259,9 +259,36 @@ export interface RunResult {
   stderr: string;
   /** The wall-clock limit fired and the process tree was killed. */
   timedOut: boolean;
+  /**
+   * This worker was told to stop (interruptRunningProcesses) while the
+   * command ran and killed its process tree: the command did not finish,
+   * through no fault of its own, and can be run again.
+   */
+  interrupted: boolean;
   /** A stream grew past STREAM_CAP_BYTES and the rest was dropped. */
   truncated: boolean;
   durationMs: number;
+}
+
+/**
+ * Every process runProcess has running right now, by the kill that ends
+ * it. A worker shutting down (index.ts) calls interruptRunningProcesses
+ * so each in-flight command answers `interrupted` instead of vanishing
+ * with the process — the caller then gets a result that says what
+ * happened rather than a dropped connection.
+ */
+const running = new Set<() => void>();
+
+/**
+ * Kills every running command's process tree, SIGTERM then SIGKILL after
+ * the grace, and marks each result interrupted. Returns how many were
+ * running. Idempotent: a second call finds nothing.
+ */
+export function interruptRunningProcesses(): number {
+  const interrupt = [...running];
+  running.clear();
+  for (const kill of interrupt) kill();
+  return interrupt.length;
 }
 
 export interface RunInput {
@@ -275,6 +302,12 @@ export interface RunInput {
   extraEnv?: Record<string, string>;
   /** Passed to the child only, never logged: a git credential header. */
   gitAuthHeader?: string;
+  /**
+   * Fires when the caller no longer wants the result — the web app's
+   * chat turn was stopped and its request went away. The process tree is
+   * killed and the result marked `interrupted`, as on a worker stop.
+   */
+  signal?: AbortSignal;
 }
 
 /** The environment a caller's process starts with, built from nothing. */
@@ -399,6 +432,7 @@ export function runProcess(input: RunInput, file: string, args: string[]): Promi
   return new Promise((resolvePromise) => {
     let truncated = false;
     let timedOut = false;
+    let interrupted = false;
     let settled = false;
     let child: ChildProcess;
     try {
@@ -417,6 +451,7 @@ export function runProcess(input: RunInput, file: string, args: string[]): Promi
         stdout: '',
         stderr: error instanceof Error ? error.message : String(error),
         timedOut: false,
+        interrupted: false,
         truncated: false,
         durationMs: Date.now() - started,
       });
@@ -437,16 +472,29 @@ export function runProcess(input: RunInput, file: string, args: string[]): Promi
         }
       }
     };
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const killTree = (): void => {
       killGroup('SIGTERM');
       setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS).unref();
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree();
     }, input.timeoutMs);
+    const interrupt = (): void => {
+      if (settled) return;
+      interrupted = true;
+      killTree();
+    };
+    running.add(interrupt);
+    if (input.signal?.aborted) interrupt();
+    else input.signal?.addEventListener('abort', interrupt, { once: true });
 
     const settle = (): boolean => {
       if (settled) return false;
       settled = true;
       clearTimeout(timer);
+      running.delete(interrupt);
+      input.signal?.removeEventListener('abort', interrupt);
       return true;
     };
     const answer = (exitCode: number | null, signal: string | null, failure?: string): void =>
@@ -456,6 +504,7 @@ export function runProcess(input: RunInput, file: string, args: string[]): Promi
         stdout: stdout(),
         stderr: failure ? `${stderr()}\n${failure}` : stderr(),
         timedOut,
+        interrupted,
         truncated,
         durationMs: Date.now() - started,
       });

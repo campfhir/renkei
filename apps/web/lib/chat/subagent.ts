@@ -251,6 +251,11 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
   ];
   const deadline = Date.now() + run.wallClockMs;
   const controller = new AbortController();
+  // The turn's Stop (or the process's shutdown) ends the sub-agent too:
+  // its model call in flight is aborted here, and its tools see the same
+  // signal through the context they run with.
+  if (context.signal?.aborted) controller.abort();
+  else context.signal?.addEventListener('abort', () => controller.abort(), { once: true });
   const calls: string[] = [];
   let lastText = '';
   // The run's record, when the turn keeps one: started now, told
@@ -305,6 +310,9 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
   };
 
   for (let step = 1; step <= run.maxSteps; step += 1) {
+    if (controller.signal.aborted) {
+      return close('failed', 'The sub-agent was stopped.', 'stopped', step - 1);
+    }
     if (Date.now() > deadline) {
       const text = report('stopped: out of time', lastText, calls, step - 1);
       return close('completed', text, 'out of time', step - 1);

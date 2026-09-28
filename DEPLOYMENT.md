@@ -396,6 +396,43 @@ must run first, and both worker containers must restart on the new image
 in the same rollout — jobs enqueued by new code into `embedding_jobs` are
 only consumed by the new embeddings worker.
 
+## Restarts and Graceful Shutdown
+
+Every process stops cleanly on SIGTERM (what `docker compose stop`, a
+rolling deploy and a scale-in send), and the work that was in flight
+survives the restart rather than hanging until a janitor gives up on it:
+
+- **`renkei` (web app)** — a chat turn runs inside the web process
+  (Next's `after()`). On SIGTERM every running turn suspends itself:
+  its rows stay as they are, marked for recovery, and the process exits.
+  Every web process runs a recovery sweep (every 10 s) that picks such
+  turns up — including turns whose heartbeat went stale, which is a
+  process that was killed outright — and carries them on from where the
+  rows say they were; the thread shows a note that the service restarted
+  and the reply resumed. Three resumes of one turn end it as interrupted.
+  See `docs/chat.md`, "Shutdown and recovery".
+- **`worker-agents`** — the engine checks at every checkpoint (before a
+  step, a model call, a tool call) whether the process is stopping, and
+  hands the run's job back to the queue untouched: pending again, no
+  attempt spent, so the next executor resumes the run from that
+  checkpoint at once instead of after the 30-minute claim lease.
+- **`worker-sandbox`** — turns new requests away (503 `shutting_down`),
+  kills every command in flight so each caller gets an `interrupted`
+  answer (a `code_run` then reads "INTERRUPTED … run it again" in the
+  chat, and the model runs it again), closes the browser, and exits.
+  The web app retries reads of a checkout for a few seconds while the
+  worker is away; a command or a write is never repeated on its own.
+- **The other workers** finish the message they hold and stop.
+
+`docker-compose.yaml` gives these three containers a `stop_grace_period`
+above Docker's 10-second default (30 s, 45 s for `worker-agents`, whose
+next checkpoint may be a model call away); a platform that sends SIGTERM
+itself should allow the same. A process killed before it can do any of
+this — SIGKILL, a node lost — is covered by the same recovery paths on a
+slower clock: the web app's sweep after a minute of silence, the queue's
+lease for agent runs, the chat janitor after fifteen minutes as the
+backstop.
+
 ## Deployment Options
 
 ### Option 1: Vercel (Recommended)

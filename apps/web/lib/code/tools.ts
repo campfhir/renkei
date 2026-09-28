@@ -236,6 +236,8 @@ export function renderRun(
     stdout: string;
     stderr: string;
     timedOut: boolean;
+    /** Absent on an older worker's answer; read as false. */
+    interrupted?: boolean;
     truncated: boolean;
     durationMs: number;
     timeoutMs: number;
@@ -243,11 +245,13 @@ export function renderRun(
   },
   maxChars: number
 ): { text: string; ok: boolean } {
-  const head = result.timedOut
-    ? `TIMED OUT after ${Math.round(result.timeoutMs / 1000)}s — the process tree was killed`
-    : result.exitCode === null
-      ? `killed by ${result.signal ?? 'a signal'}`
-      : `exit ${result.exitCode}`;
+  const head = result.interrupted
+    ? 'INTERRUPTED — the sandbox worker was stopped (a restart or a deploy) while this command ran, and killed it; it did not finish. Run it again.'
+    : result.timedOut
+      ? `TIMED OUT after ${Math.round(result.timeoutMs / 1000)}s — the process tree was killed`
+      : result.exitCode === null
+        ? `killed by ${result.signal ?? 'a signal'}`
+        : `exit ${result.exitCode}`;
   const notes: string[] = [];
   if (result.truncated) notes.push('output exceeded the worker’s buffer and was cut');
   if (result.unreadableEnv.length) {
@@ -261,7 +265,10 @@ export function renderRun(
   if (notes.length) parts.push(`[${notes.join('; ')}]`);
   parts.push(`--- stdout ---\n${stdout.text || '(none)'}`);
   parts.push(`--- stderr ---\n${stderr.text || '(none)'}`);
-  return { text: parts.join('\n'), ok: result.exitCode === 0 && !result.timedOut };
+  return {
+    text: parts.join('\n'),
+    ok: result.exitCode === 0 && !result.timedOut && result.interrupted !== true,
+  };
 }
 
 const pathProperty = (description: string) => ({
@@ -789,11 +796,17 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const timeout = num(input.timeoutSeconds);
-        const ran = await sbWorkspaceExec(target, {
-          id: workspaceId,
-          command: str(input.command),
-          ...(timeout !== undefined ? { timeoutMs: timeout * 1000 } : {}),
-        });
+        const ran = await sbWorkspaceExec(
+          target,
+          {
+            id: workspaceId,
+            command: str(input.command),
+            ...(timeout !== undefined ? { timeoutMs: timeout * 1000 } : {}),
+          },
+          // Stop reaches the command itself: the worker kills it when this
+          // call goes away, rather than letting it run to its timeout.
+          { ...(context.signal ? { signal: context.signal } : {}) }
+        );
         if (!ran.ok) return failed(ran.err);
         const rendered = renderRun(ran.val, num(input.maxChars) ?? EXEC_OUTPUT_DEFAULT_CHARS);
         const text = rendered.text + (await changedFilesNote());

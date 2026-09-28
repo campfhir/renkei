@@ -20,7 +20,27 @@ import {
   sbChartStage,
   sandboxChartsEnabled,
   clientFailure,
+  sbWorkspaceGet,
+  sbWorkspaceExec,
+  setRetryDelayForTests,
 } from './index';
+
+/** A ready workspace as the worker answers it, for the retry test. */
+function readyWorkspaceWire() {
+  return {
+    id: 'ws-1',
+    provider: 'atlassian-bitbucket',
+    repoFullName: 'acme/billing',
+    branch: 'main',
+    status: 'ready',
+    error: null,
+    sizeBytes: 10,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    lastUsedAt: '2026-01-01T00:00:00.000Z',
+    expiresAt: '2026-02-01T00:00:00.000Z',
+    worker: null,
+  };
+}
 
 const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
 const WIRE_FILE = {
@@ -152,6 +172,111 @@ describe('sbFetchUrl / sbListFiles / sbStatFile / sbDeleteFile (JSON ops)', () =
 
     if (result.ok) throw new Error('expected failure');
     expect(result.err).toEqual({ kind: 'unreachable', message: 'ECONNREFUSED' });
+    // A delete is never repeated on its own: one call, one failure.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a workspace read through a worker restart — refused, draining, then back', async () => {
+    const waited: number[] = [];
+    setRetryDelayForTests(async (ms) => {
+      waited.push(ms);
+    });
+    try {
+      const refused = Object.assign(new TypeError('fetch failed'), {
+        cause: { code: 'ECONNREFUSED' },
+      });
+      fetchSpy = jest
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValueOnce(refused)
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: { type: 'shutting_down', message: 'stopping' } }), {
+            status: 503,
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ workspace: readyWorkspaceWire() }), { status: 200 })
+        );
+      const result = await sbWorkspaceGet(TARGET, 'ws-1');
+      expect(result.ok).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect(waited).toEqual([1_000, 2_000]);
+    } finally {
+      setRetryDelayForTests(null);
+    }
+  });
+
+  it('gives up on a read after the retry budget, and never retries a command or a timeout', async () => {
+    setRetryDelayForTests(async () => {});
+    try {
+      const reset = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+      fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(reset);
+      const read = await sbWorkspaceGet(TARGET, 'ws-1');
+      expect(read.ok).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+
+      fetchSpy.mockClear();
+      const ran = await sbWorkspaceExec(TARGET, { id: 'ws-1', command: 'pnpm test' });
+      expect(ran.ok).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      fetchSpy.mockClear();
+      const timeout = Object.assign(new Error('The operation was aborted due to timeout'), {
+        name: 'TimeoutError',
+      });
+      fetchSpy.mockRejectedValue(timeout);
+      const slow = await sbWorkspaceGet(TARGET, 'ws-1');
+      expect(slow.ok).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      setRetryDelayForTests(null);
+    }
+  });
+
+  it('stops waiting on a command when the caller’s signal fires, and says so', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))
+          );
+        })
+    );
+    const controller = new AbortController();
+    const pending = sbWorkspaceExec(
+      TARGET,
+      { id: 'ws-1', command: 'sleep 200' },
+      { signal: controller.signal }
+    );
+    controller.abort();
+    const ran = await pending;
+    expect(ran).toEqual({
+      ok: false,
+      err: { kind: 'unreachable', message: 'The command was stopped.' },
+    });
+  });
+
+  it('reads an interrupted command back as such', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          exitCode: null,
+          signal: 'SIGTERM',
+          stdout: 'begun',
+          stderr: '',
+          timedOut: false,
+          interrupted: true,
+          truncated: false,
+          durationMs: 1200,
+          timeoutMs: 120000,
+          sizeBytes: 10,
+          unreadableEnv: [],
+        }),
+        { status: 200 }
+      )
+    );
+    const ran = await sbWorkspaceExec(TARGET, { id: 'ws-1', command: 'sleep 30' });
+    if (!ran.ok) throw new Error('expected a result');
+    expect(ran.val).toMatchObject({ interrupted: true, timedOut: false, exitCode: null });
   });
 
   it('requires deleted: true in the response, not just a 2xx', async () => {
