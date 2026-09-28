@@ -841,7 +841,7 @@ describe('runChatTurn', () => {
       {
         type: 'tool_result',
         toolUseId: 'tu_local_stuck',
-        content: 'The tool could not be reached.',
+        content: expect.stringContaining('local_stuck did not answer within 0s'),
         isError: true,
         // Real clock here (the timeout is a real timer): the time waited, whatever it was.
         durationMs: expect.any(Number),
