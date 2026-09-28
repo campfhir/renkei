@@ -144,7 +144,7 @@ test.describe('Code project services', () => {
     const main = page.getByRole('main');
     const pagePath = `/${E2E_SLUG}/code/${ids.projectId}/services`;
 
-    // ── The project page: a card after the environment, before the chats ──
+    // ── The project page: a card in the rail after the chats, before the environment ──
     await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
       timeout: 30_000,
@@ -154,8 +154,8 @@ test.describe('Code project services', () => {
     });
     const headings = await main.getByRole('heading', { level: 2 }).allTextContents();
     const at = (name: string) => headings.findIndex((text) => text.startsWith(name));
-    expect(at('Services')).toBeGreaterThan(at('Environment'));
-    expect(at('Chats in this project')).toBeGreaterThan(at('Services'));
+    expect(at('Services')).toBeGreaterThan(at('Chats in this project'));
+    expect(at('Environment')).toBeGreaterThan(at('Services'));
     await expect(card.getByText(/^None yet · \d+ allowed images/)).toBeVisible();
     await expect(card.getByText('None running')).toBeVisible();
     await expect(card.getByRole('button')).toHaveCount(0);

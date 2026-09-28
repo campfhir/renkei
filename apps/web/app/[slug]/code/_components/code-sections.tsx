@@ -1,17 +1,20 @@
 'use client';
 
 /**
- * The sections that make a project a code project, at the top of its
- * page: the repository (fixed when the project was made — this page is
+ * The sections that make a project a code project, in two pieces the
+ * page places by how often they are touched (project-view.tsx lays them
+ * out): `CodeRepoStrip`, a one-line strip under the header, and
+ * `CodeRail`, the column of cards beside the chats on a wide screen and
+ * below them on a narrow one.
+ *
+ * The strip is the repository (fixed when the project was made — this page is
  * about the repository as a whole, so it carries no branch picker, or
  * mention of a branch at all; a chat's title bar is where the checkout's
  * current branch lives and switches) and the state of its checkout on
  * the sandbox — none until the first chat clones it, then ready,
- * cloning, or failed with why — and the environment: the names of the
- * variables the project's
- * commands run with, replaced by pasting a `.env` again. Values are
- * never shown; the worker sealed them and only a command ever sees
- * them. Every project also gets: a card summarizing its open pull
+ * cloning, or failed with why.
+ *
+ * The rail, most-looked-at first: a card summarizing the project's open pull
  * requests (pulls-summary.tsx / pulls-page.tsx) and its recent commits
  * (commits-summary.tsx / commits-page.tsx), both read through the
  * host-agnostic RepoHostAdapter (lib/code/repo-host.ts); a card for its
@@ -21,7 +24,10 @@
  * (actions-summary.tsx / actions-page.tsx: recent runs only, since
  * GitHub's own UI already owns configuring them); and a card summarizing
  * its services — the containers beside the checkout — opening its
- * Services page (services-summary.tsx, services-page.tsx).
+ * Services page (services-summary.tsx, services-page.tsx); and last the
+ * environment: the names of the variables the project's commands run
+ * with, replaced by pasting a `.env` again. Values are never shown; the
+ * worker sealed them and only a command ever sees them.
  */
 
 import { useEffect, useState } from 'react';
@@ -51,7 +57,91 @@ function bytes(value: number): string {
   return `${(value / 1_073_741_824).toFixed(2)} GB`;
 }
 
-export default function CodeSections({
+/** The repository and its checkout's state: one line under the header. */
+export function CodeRepoStrip({
+  tenantId,
+  projectId,
+  code,
+}: {
+  tenantId: string;
+  projectId: string;
+  code: CodeProjectView['code'];
+}) {
+  const router = useRouter();
+  const base = `/api/tenant/${tenantId}/code/projects/${projectId}`;
+  const workspace = code.workspace;
+  const cloning = workspace?.status === 'cloning';
+
+  // While a chat's clone runs, follow it: the worker flips the row on its
+  // own, and the page's server data is the truth.
+  useEffect(() => {
+    if (!cloning) return;
+    const timer = setInterval(() => {
+      void (async () => {
+        const view = await getJson<CodeProjectView>(base);
+        if (view.data && view.data.code.workspace?.status !== 'cloning') router.refresh();
+      })();
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [cloning, base, router]);
+
+  const statusPill = !code.enabled ? (
+    <Pill tone="amber">Workspaces off</Pill>
+  ) : !workspace ? (
+    <Pill tone="gray">Not cloned yet</Pill>
+  ) : workspace.status === 'ready' ? (
+    <Pill tone="green">Ready</Pill>
+  ) : workspace.status === 'cloning' ? (
+    <Pill tone="blue">Cloning…</Pill>
+  ) : (
+    <Pill tone="red">Clone failed</Pill>
+  );
+
+  const [workspaceSlug, repoSlug] = code.repoFullName.split('/');
+  const isGitHub = code.repoProvider === 'github';
+  const hostLabel = isGitHub ? 'GitHub' : 'Bitbucket';
+  const hostUrl =
+    workspaceSlug && repoSlug
+      ? isGitHub
+        ? `https://github.com/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
+        : `https://bitbucket.org/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
+      : null;
+
+  return (
+    <section
+      className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 dark:border-gray-800 dark:bg-gray-900/40"
+      data-testid="code-repo-strip"
+    >
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <h2 className="text-sm font-semibold">Repository</h2>
+        <span className="font-mono text-sm">{code.repoFullName}</span>
+        {statusPill}
+        {hostUrl ? (
+          <ExternalLink
+            href={hostUrl}
+            className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Open on {hostLabel}
+          </ExternalLink>
+        ) : null}
+      </div>
+      <p className="mt-0.5 text-xs text-gray-500">
+        {!code.enabled
+          ? 'Code workspaces are not enabled on this deployment; chats here have no code tools.'
+          : !workspace
+            ? `The first chat in this project clones it into the sandbox, with the chatting person’s own ${hostLabel} access.`
+            : workspace.status === 'failed'
+              ? `The last clone failed: ${workspace.error ?? 'unknown reason'}. The next chat tries again.`
+              : workspace.status === 'cloning'
+                ? 'Cloning on the sandbox worker; this page follows it.'
+                : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · chats in this project work here, and clone again if it has expired.`}
+      </p>
+    </section>
+  );
+}
+
+/** The cards beside (or below) the chats: pulls, commits, CI, services, then the environment. */
+export function CodeRail({
   slug,
   tenantId,
   projectId,
@@ -74,22 +164,6 @@ export default function CodeSections({
   const [envOpen, setEnvOpen] = useState(false);
   const [envText, setEnvText] = useState('');
   const [problems, setProblems] = useState(envProblems);
-
-  const workspace = code.workspace;
-  const cloning = workspace?.status === 'cloning';
-
-  // While a chat's clone runs, follow it: the worker flips the row on its
-  // own, and the page's server data is the truth.
-  useEffect(() => {
-    if (!cloning) return;
-    const timer = setInterval(() => {
-      void (async () => {
-        const view = await getJson<CodeProjectView>(base);
-        if (view.data && view.data.code.workspace?.status !== 'cloning') router.refresh();
-      })();
-    }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [cloning, base, router]);
 
   const replaceEnv = async () => {
     setBusy(true);
@@ -121,64 +195,41 @@ export default function CodeSections({
     router.refresh();
   };
 
-  const statusPill = !code.enabled ? (
-    <Pill tone="amber">Workspaces off</Pill>
-  ) : !workspace ? (
-    <Pill tone="gray">Not cloned yet</Pill>
-  ) : workspace.status === 'ready' ? (
-    <Pill tone="green">Ready</Pill>
-  ) : workspace.status === 'cloning' ? (
-    <Pill tone="blue">Cloning…</Pill>
-  ) : (
-    <Pill tone="red">Clone failed</Pill>
-  );
-
-  const [workspaceSlug, repoSlug] = code.repoFullName.split('/');
   const isGitHub = code.repoProvider === 'github';
-  const hostLabel = isGitHub ? 'GitHub' : 'Bitbucket';
-  const hostUrl =
-    workspaceSlug && repoSlug
-      ? isGitHub
-        ? `https://github.com/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
-        : `https://bitbucket.org/${encodeURIComponent(workspaceSlug)}/${encodeURIComponent(repoSlug)}`
-      : null;
 
   return (
     <>
-      <section className={sectionClass}>
-        <div className="mb-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold">Repository</h2>
-            {statusPill}
-            {hostUrl ? (
-              <ExternalLink
-                href={hostUrl}
-                className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400"
-              >
-                Open on {hostLabel}
-              </ExternalLink>
-            ) : null}
-          </div>
-          <p className="text-xs text-gray-500">
-            The repository this project works in, chosen when it was made.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-1 text-sm">
-          <span className="font-mono">{code.repoFullName}</span>
-        </div>
-        <p className="mt-1 text-xs text-gray-500">
-          {!code.enabled
-            ? 'Code workspaces are not enabled on this deployment; chats here have no code tools.'
-            : !workspace
-              ? `The first chat in this project clones it into the sandbox, with the chatting person’s own ${hostLabel} access.`
-              : workspace.status === 'failed'
-                ? `The last clone failed: ${workspace.error ?? 'unknown reason'}. The next chat tries again.`
-                : workspace.status === 'cloning'
-                  ? 'Cloning on the sandbox worker; this page follows it.'
-                  : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · chats in this project work here, and clone again if it has expired.`}
-        </p>
-      </section>
-
+      <PullsSummary
+        href={`/${slug}/code/${projectId}/pulls`}
+        tenantId={tenantId}
+        projectId={projectId}
+      />
+      <CommitsSummary
+        href={`/${slug}/code/${projectId}/commits`}
+        tenantId={tenantId}
+        projectId={projectId}
+      />
+      {isGitHub ? (
+        <ActionsSummary
+          href={`/${slug}/code/${projectId}/actions`}
+          tenantId={tenantId}
+          projectId={projectId}
+        />
+      ) : (
+        <PipelinesSummary
+          href={`/${slug}/code/${projectId}/pipelines`}
+          tenantId={tenantId}
+          projectId={projectId}
+          branch={code.branch}
+        />
+      )}
+      {code.enabled ? (
+        <ServicesSummaryCard
+          href={`/${slug}/code/${projectId}/services`}
+          tenantId={tenantId}
+          projectId={projectId}
+        />
+      ) : null}
       <section className={sectionClass}>
         <div className="mb-2">
           <div className="flex items-center gap-2">
@@ -271,37 +322,6 @@ export default function CodeSections({
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
-      ) : null}
-      <PullsSummary
-        href={`/${slug}/code/${projectId}/pulls`}
-        tenantId={tenantId}
-        projectId={projectId}
-      />
-      <CommitsSummary
-        href={`/${slug}/code/${projectId}/commits`}
-        tenantId={tenantId}
-        projectId={projectId}
-      />
-      {isGitHub ? (
-        <ActionsSummary
-          href={`/${slug}/code/${projectId}/actions`}
-          tenantId={tenantId}
-          projectId={projectId}
-        />
-      ) : (
-        <PipelinesSummary
-          href={`/${slug}/code/${projectId}/pipelines`}
-          tenantId={tenantId}
-          projectId={projectId}
-          branch={code.branch}
-        />
-      )}
-      {code.enabled ? (
-        <ServicesSummaryCard
-          href={`/${slug}/code/${projectId}/services`}
-          tenantId={tenantId}
-          projectId={projectId}
-        />
       ) : null}
     </>
   );

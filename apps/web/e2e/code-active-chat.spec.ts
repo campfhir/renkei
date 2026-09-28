@@ -235,8 +235,10 @@ test.describe('code project active chat', () => {
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
     ).toBeVisible({ timeout: 30_000 });
     await main.getByRole('button', { name: 'New chat' }).click();
-    const alert = main.getByRole('alert');
-    await expect(alert).toContainText('The active chat is still replying');
+    // The header's own notice — the Pulls and Commits cards may be showing
+    // alerts of their own (no host token in this seed).
+    const alert = main.getByRole('alert').filter({ hasText: 'The active chat is still replying' });
+    await expect(alert).toBeVisible();
     await expect(page).toHaveURL(`/${E2E_SLUG}/code/${ids.projectId}`);
     // The active chat is still the seeded one.
     await expect(

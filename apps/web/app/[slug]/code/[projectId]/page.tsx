@@ -6,14 +6,17 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { loadCodeProjectView } from '@/lib/code/project-view';
 import ProjectView from '../../chat/_components/project-view';
-import CodeSections from '../_components/code-sections';
+import { CodeRail, CodeRepoStrip } from '../_components/code-sections';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 
 /**
- * One code project: its repository's checkout and its environment on
- * top, then everything a chat project's page has — instructions, files,
- * memory, toolset, the chats inside it, sharing. Editors change it;
- * viewers read it and start their own chats in it.
+ * One code project, laid out by how often each part is touched: the
+ * repository's checkout as a strip under the header, the chats first
+ * (what the page is opened for), a rail of pulls, commits, CI, services
+ * and the environment beside them on a wide screen and below them on a
+ * narrow one, then everything a chat project's page has — README,
+ * instructions, memory, sharing. Editors change it; viewers read it and
+ * start their own chats in it.
  */
 export default async function CodeProjectPage({
   params,
@@ -54,9 +57,12 @@ export default async function CodeProjectPage({
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
       readme={view.code.readme}
       usage={view.code.usage}
-      before={
-        <CodeSections
-          key="code"
+      strip={
+        <CodeRepoStrip key="strip" tenantId={tenant.id} projectId={projectId} code={view.code} />
+      }
+      rail={
+        <CodeRail
+          key="rail"
           slug={slug}
           tenantId={tenant.id}
           projectId={projectId}

@@ -405,14 +405,50 @@ test.describe('code projects', () => {
     const readme = sectionOf('README');
     await expect(readme.getByRole('heading', { name: 'Billing service' })).toBeVisible();
     await expect(readme.getByRole('heading', { name: 'Running it' })).toBeVisible();
-    // The chats come right after the environment — what the page is opened
-    // for — with the README beneath them, and the README folds away.
+    // Laid out by how often each part is touched: the repository strip
+    // first, then the chats — what the page is opened for — then the rail
+    // (pulls, commits, CI, services, environment last), then the README,
+    // About, Memory. On a wide screen the rail sits beside the chats; on
+    // a phone it follows them in one stack.
     const headings = await main.getByRole('heading', { level: 2 }).allTextContents();
     const at = (name: string) => headings.findIndex((text) => text.startsWith(name));
-    expect(at('Environment')).toBeGreaterThan(at('Repository'));
-    expect(at('Chats in this project')).toBeGreaterThan(at('Environment'));
-    expect(at('README')).toBeGreaterThan(at('Chats in this project'));
+    expect(at('Chats in this project')).toBeGreaterThan(at('Repository'));
+    expect(at('Pull requests')).toBeGreaterThan(at('Chats in this project'));
+    expect(at('Environment')).toBeGreaterThan(at('Pull requests'));
+    expect(at('README')).toBeGreaterThan(at('Environment'));
     expect(at('About')).toBeGreaterThan(at('README'));
+    const rail = main.getByRole('complementary', { name: 'Repository activity' });
+    const chatsBox = (await main
+      .locator('section', {
+        has: page.getByRole('heading', { level: 2, name: 'Chats in this project' }),
+      })
+      .boundingBox())!;
+    const railBox = (await rail.boundingBox())!;
+    if (!mobile) {
+      expect(railBox.x).toBeGreaterThan(chatsBox.x + chatsBox.width - 1);
+      expect(Math.abs(railBox.y - chatsBox.y)).toBeLessThan(2);
+      // At phone width the same page is one stack, rail after the chats.
+      const wide = page.viewportSize()!;
+      await page.setViewportSize({ width: 390, height: 844 });
+      const narrowChats = (await main
+        .locator('section', {
+          has: page.getByRole('heading', { level: 2, name: 'Chats in this project' }),
+        })
+        .boundingBox())!;
+      const narrowRail = (await rail.boundingBox())!;
+      expect(narrowRail.y).toBeGreaterThan(narrowChats.y + narrowChats.height - 1);
+      await expectNoHorizontalOverflow(page);
+      await shot('code-project-phone.png');
+      await page.setViewportSize(wide);
+    } else {
+      expect(railBox.y).toBeGreaterThan(chatsBox.y + chatsBox.height - 1);
+    }
+    // The README opens as a preview and reads in full on request.
+    const readmeBody = readme.getByTestId('project-readme-body');
+    await expect(readmeBody).not.toHaveAttribute('data-expanded', 'true');
+    await readme.getByRole('button', { name: 'Read more' }).click();
+    await expect(readmeBody).toHaveAttribute('data-expanded', 'true');
+    await readme.getByRole('button', { name: 'Show less' }).click();
     await readme.getByRole('heading', { level: 2, name: 'README' }).click();
     await expect(readme.getByRole('heading', { name: 'Running it' })).toBeHidden();
     await expect(readme.getByRole('heading', { level: 2, name: 'README' })).toBeVisible();
