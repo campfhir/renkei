@@ -114,6 +114,15 @@ export interface CodeToolBinding {
  */
 export const MAX_CHECKOUT_RECOVERIES_PER_TURN = 2;
 
+/**
+ * How long the turn waits on one `code_run` before abandoning the call:
+ * the longest a command may be allowed to run, plus the margin the
+ * sandbox client itself waits for the worker's answer after the kill.
+ */
+export const EXEC_TOOL_TIMEOUT_MS = EXEC_MAX_TIMEOUT_MS + 60_000;
+/** Likewise for `code_service_start`, over the client's own six-minute wait. */
+export const SERVICE_START_TOOL_TIMEOUT_MS = 7 * 60_000;
+
 /** The worker's word for a checkout that is not there to work in — never for a missing file. */
 function checkoutLost(error: SandboxClientError): boolean {
   if (error.kind !== 'op') return false;
@@ -373,6 +382,9 @@ function serviceTools(
           required: ['name', 'image'],
         },
       },
+      // The worker pulls the image and waits for the container's port; the
+      // client waits up to six minutes for that (sbServiceStart).
+      timeoutMs: SERVICE_START_TOOL_TIMEOUT_MS,
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const started = await sbServiceStart(target, {
@@ -793,6 +805,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
           required: ['command'],
         },
       },
+      // The turn's own local-tool budget (two minutes) is shorter than a
+      // command's allowed timeoutSeconds; without this a test suite told it
+      // may take five minutes was abandoned by the runner at two, and read
+      // as "could not be reached". The worker kills the command at its own
+      // limit and still answers; the client waits a little past that.
+      timeoutMs: EXEC_TOOL_TIMEOUT_MS,
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const timeout = num(input.timeoutSeconds);

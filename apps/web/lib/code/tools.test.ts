@@ -42,12 +42,15 @@ jest.mock('@/lib/sandbox/workspace-git', () => ({
 }));
 
 import {
+  EXEC_TOOL_TIMEOUT_MS,
   MAX_CHECKOUT_RECOVERIES_PER_TURN,
+  SERVICE_START_TOOL_TIMEOUT_MS,
   codeTools,
   numberedLines,
   renderRun,
   type CheckoutRecovery,
 } from './tools';
+import { EXEC_MAX_TIMEOUT_MS } from '@renkei/connector-sandbox';
 import type { LocalToolContext } from '@/lib/chat/local-tools';
 
 const client = jest.requireMock<Record<string, jest.Mock>>('@renkei/sandbox-client');
@@ -359,6 +362,25 @@ describe('code_run', () => {
       .execute({ command: 'ls' }, { ...context, readOnly: true });
     expect(result.isError).toBe(true);
     expect(client.sbWorkspaceExec).not.toHaveBeenCalled();
+  });
+
+  it('waits on a command for as long as the command itself may run', () => {
+    // The runner's default local-tool budget is two minutes; a test suite
+    // allowed ten by timeoutSeconds must not be abandoned at two.
+    const run = tools().get('code_run')!;
+    expect(run.timeoutMs).toBe(EXEC_TOOL_TIMEOUT_MS);
+    expect(EXEC_TOOL_TIMEOUT_MS).toBeGreaterThanOrEqual(EXEC_MAX_TIMEOUT_MS + 30_000);
+    const withServices = codeTools({
+      target: TARGET,
+      workspaceId: WS_ID,
+      repoFullName: 'acme/demo',
+      repoProvider: 'atlassian-bitbucket',
+      origin: 'https://r.example',
+      servicesEnabled: true,
+    });
+    const start = withServices.find((tool) => tool.def.name === 'code_service_start');
+    expect(start?.timeoutMs).toBe(SERVICE_START_TOOL_TIMEOUT_MS);
+    expect(SERVICE_START_TOOL_TIMEOUT_MS).toBeGreaterThanOrEqual(6 * 60_000);
   });
 
   it('renders a timeout and the unreadable variables', () => {

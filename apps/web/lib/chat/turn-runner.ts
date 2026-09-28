@@ -583,9 +583,24 @@ export function friendlyLlmError(kind: LlmErrorKind): string {
  * turn is no longer held hostage to it, and the rejection is a real error
  * the caller's own catch logs, not a heartbeat that quietly outlives it.
  */
-function raceTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+/** The runner gave up waiting on a local tool — see raceTimeout. */
+class LocalToolTimeout extends Error {
+  constructor(
+    public readonly tool: string,
+    public readonly ms: number
+  ) {
+    super(`local tool ${tool} timed out after ${ms}ms`);
+  }
+}
+
+/** What the model is told when the runner stopped waiting on a call. */
+export function localToolTimedOutResult(tool: string, ms: number): string {
+  return `${tool} did not answer within ${Math.round(ms / 1000)}s and the reply stopped waiting for it; whatever it was doing may still be running or may have finished unseen. Check the result before repeating the call, and for a long command pass a timeoutSeconds that covers it.`;
+}
+
+function raceTimeout<T>(promise: Promise<T>, tool: string, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
+    const timer = setTimeout(() => reject(new LocalToolTimeout(tool, ms)), ms);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -1502,8 +1517,8 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
                       }
                     : undefined,
                 }),
-                deps.localTools.timeoutMsFor(use.name) ?? limits.toolTimeoutMs,
-                `local tool ${use.name} timed out`
+                use.name,
+                deps.localTools.timeoutMsFor(use.name) ?? limits.toolTimeoutMs
               )
             );
           }
@@ -1530,7 +1545,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
             message: error instanceof Error ? error.message : String(error),
           });
           return {
-            content: [{ type: 'text', text: 'The tool could not be reached.' }],
+            content: [
+              {
+                type: 'text',
+                text:
+                  error instanceof LocalToolTimeout
+                    ? localToolTimedOutResult(error.tool, error.ms)
+                    : 'The tool could not be reached.',
+              },
+            ],
             isError: true,
             meta: {},
           };
