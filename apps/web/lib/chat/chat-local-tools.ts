@@ -2,9 +2,10 @@
  * The chat's own tools, chosen per turn from what the chat has: reading
  * and staging its attachments, writing a file for the person to keep,
  * remembering things for its project or (outside a project) for the
- * person across every chat they own, recalling their other chats, and
- * compacting its own history (chat_compact, offered unconditionally — see
- * below). Each of the others is registered only when it can do something — no project, no
+ * person across every chat they own, recalling their other chats,
+ * settling its preview cards on the person's word (widget-state-tools.ts),
+ * and compacting its own history (chat_compact, offered unconditionally —
+ * see below). Each of the others is registered only when it can do something — no project, no
  * project memory tools; a chat in a project, no personal memory or recall
  * tools either, since a project is self-contained and does not reach
  * outside itself; no attachments, no attachment tools; no file store, no
@@ -24,6 +25,7 @@ import { fileTools } from './file-tools';
 import { memoryTools } from './memory-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
+import { widgetStateTools } from './widget-state-tools';
 
 export async function chatLocalTools(
   db: Kysely<DB>,
@@ -62,5 +64,9 @@ export async function chatLocalTools(
   // Recall sees the project's own chats in a project, the person's own
   // outside one — the tool decides from the context (recall-tools.ts).
   tools.push(...recallTools());
+  // The preview cards' state (widget-state-tools.ts): listing is always
+  // answerable ("no cards"), and marking one decided writes only the
+  // chat's own decision row — the tool refuses under read-only itself.
+  tools.push(...widgetStateTools());
   return tools;
 }

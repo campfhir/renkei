@@ -102,10 +102,50 @@ export default function WidgetCard({
   // so the handshake the widget sends on THAT load always has a listener
   // waiting for it.
   const [ready, setReady] = useState(false);
+  // Whether the card has finished its handshake — the point from which a
+  // later change to the result (below) can be pushed to it, rather than
+  // waiting to be handed over at `ui/notifications/initialized`.
+  const initializedRef = useRef(false);
 
   const post = useCallback((message: Record<string, unknown>) => {
     iframeRef.current?.contentWindow?.postMessage({ jsonrpc: '2.0', ...message }, '*');
   }, []);
+
+  const toolResultNotification = useCallback(
+    (block: ToolResultBlock) => ({
+      method: 'ui/notifications/tool-result',
+      params: {
+        isError: block.isError === true,
+        content: textContentOf(block.content),
+        ...('structuredContent' in block
+          ? {
+              structuredContent: block.resolved
+                ? { ...plainObject(block.structuredContent), resolved: block.resolved }
+                : block.structuredContent,
+            }
+          : {}),
+      },
+    }),
+    []
+  );
+
+  // A decision that arrives AFTER the card rendered — the model marking
+  // it decided on the person's word (chat_widget_resolve, carried by the
+  // turn's `widget_decided` event) — is handed to the card as a second
+  // tool-result notification: every widget bundle re-renders from scratch
+  // on each one (mcp-widgets/src/*.ts's `bridge.toolResult`), and reads
+  // `resolved` off the payload the way it does on first load, so the live
+  // buttons give way to the receipt without a reload. Keyed on the
+  // receipt's content, not the block's identity, so a re-render that
+  // leaves the decision as it was posts nothing.
+  const resolved = result.resolved;
+  const resolvedKey = resolved ? JSON.stringify(resolved) : null;
+  const latestResult = useRef(result);
+  latestResult.current = result;
+  useEffect(() => {
+    if (!resolvedKey || !initializedRef.current) return;
+    post(toolResultNotification(latestResult.current));
+  }, [resolvedKey, post, toolResultNotification]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -124,21 +164,9 @@ export default function WidgetCard({
           return;
         }
         case 'ui/notifications/initialized':
+          initializedRef.current = true;
           post({ method: 'ui/notifications/tool-input', params: { arguments: toolInput ?? {} } });
-          post({
-            method: 'ui/notifications/tool-result',
-            params: {
-              isError: result.isError === true,
-              content: textContentOf(result.content),
-              ...('structuredContent' in result
-                ? {
-                    structuredContent: result.resolved
-                      ? { ...plainObject(result.structuredContent), resolved: result.resolved }
-                      : result.structuredContent,
-                  }
-                : {}),
-            },
-          });
+          post(toolResultNotification(result));
           return;
         case 'tools/call': {
           if (id === undefined) return;
@@ -216,7 +244,7 @@ export default function WidgetCard({
     window.addEventListener('message', onMessage);
     setReady(true);
     return () => window.removeEventListener('message', onMessage);
-  }, [post, toolInput, result, tenantId, chatId, onModelContext]);
+  }, [post, toolResultNotification, toolInput, result, tenantId, chatId, onModelContext]);
 
   return (
     <div className="my-2 max-w-md overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">

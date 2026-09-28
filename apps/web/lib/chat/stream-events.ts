@@ -31,7 +31,9 @@ import type {
   ToolPermissionDecision,
   TurnStatus,
   TurnView,
+  WidgetDecisionState,
 } from './views';
+import { widgetStateKeyOf } from './views';
 
 export type ChatStreamEvent =
   | {
@@ -109,6 +111,14 @@ export type ChatStreamEvent =
    * delegating call's tool_use id, which is the card in the thread.
    */
   | { type: 'subagent_progress'; turnId: string; subagent: SubagentProgress }
+  /**
+   * A preview card settled by the model rather than by its own buttons
+   * (chat_widget_resolve, widget-state-tools.ts): the receipt now recorded
+   * for it, keyed the way chat-view.ts keys `resolved` — so the card open
+   * in the thread shows that receipt at once instead of live buttons for
+   * something already handled.
+   */
+  | { type: 'widget_decided'; turnId: string; stateKey: string; state: WidgetDecisionState }
   | {
       type: 'snapshot';
       turn: TurnView;
@@ -306,6 +316,22 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
       return {
         ...state,
         subagents: { ...state.subagents, [event.subagent.toolUseId]: event.subagent },
+      };
+    case 'widget_decided':
+      return {
+        ...state,
+        messages: state.messages.map((message) => {
+          if (message.kind !== 'tool_results') return message;
+          let changed = false;
+          const blocks = message.blocks.map((block) => {
+            if (block.type !== 'tool_result' || widgetStateKeyOf(block) !== event.stateKey) {
+              return block;
+            }
+            changed = true;
+            return { ...block, resolved: event.state };
+          });
+          return changed ? { ...message, blocks } : message;
+        }),
       };
     case 'compaction_progress':
       return {

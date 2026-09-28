@@ -67,6 +67,7 @@ import { readProjectMemory, renderProjectMemory } from './memory';
 import { readUserMemory, renderUserMemory } from './user-memory';
 import { notifyChatReplyDesktop } from './reply-notification';
 import { createSubagentRecorder } from './subagent-runs';
+import type { WidgetDecisionState } from './views';
 
 /**
  * The hard ceiling on one Send: past this, even chunking is refused (an
@@ -502,6 +503,11 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
         store.recordUsage(usage, model),
       emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>
         channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
+      // A card the model marks decided (chat_widget_resolve) flips in the
+      // open thread as the tool returns; the row it wrote is what every
+      // later load reads (chat-view.ts).
+      emitWidgetDecision: (decision: { stateKey: string; state: WidgetDecisionState }) =>
+        channel.emit({ type: 'widget_decided', turnId: input.turnId, ...decision }),
       // A chat's sub-agents — code_delegate in a code project, chat_delegate
       // anywhere else — keep their runs (subagent-runs.ts) and report
       // progress on the turn's stream; nothing of theirs enters this
