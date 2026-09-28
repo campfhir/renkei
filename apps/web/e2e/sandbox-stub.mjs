@@ -75,7 +75,10 @@ function pathsIn(dirPath, workspace) {
 
 function entryAt(path, workspace) {
   if (workspace.removed?.has(path)) return null;
-  for (const dirPath of new Set([...Object.keys(TREE), ...(workspace.extraEntries?.keys() ?? [])])) {
+  for (const dirPath of new Set([
+    ...Object.keys(TREE),
+    ...(workspace.extraEntries?.keys() ?? []),
+  ])) {
     const found = pathsIn(dirPath, workspace).find((entry) => entry.path === path);
     if (found) return found;
   }
@@ -764,13 +767,16 @@ function handleWorkspaces(op, body, response) {
       const to = body.to ?? '';
       const entry = entryAt(from, workspace);
       if (!entry) return error(response, 404, 'not_found', `No such file or folder: ${from}`);
-      if (entryAt(to, workspace)) return error(response, 409, 'move_conflict', `${to} already exists.`);
+      if (entryAt(to, workspace))
+        return error(response, 409, 'move_conflict', `${to} already exists.`);
       workspace.removed = workspace.removed ?? new Set();
       workspace.removed.add(from);
       workspace.extraEntries = workspace.extraEntries ?? new Map();
       const toDir = folderOf(to);
       if (!workspace.extraEntries.has(toDir)) workspace.extraEntries.set(toDir, []);
-      workspace.extraEntries.get(toDir).push({ path: to, kind: entry.kind, sizeBytes: entry.sizeBytes });
+      workspace.extraEntries
+        .get(toDir)
+        .push({ path: to, kind: entry.kind, sizeBytes: entry.sizeBytes });
       if (workspace.files.has(from)) {
         workspace.files.set(to, workspace.files.get(from));
         workspace.files.delete(from);
@@ -816,7 +822,8 @@ function handleWorkspaces(op, body, response) {
       if (workspace.status !== 'ready')
         return error(response, 409, 'not_ready', 'That workspace is still cloning.');
       const path = body.path ?? '';
-      if (workspace.removed?.has(path)) return error(response, 404, 'not_found', `No such file: ${path}`);
+      if (workspace.removed?.has(path))
+        return error(response, 404, 'not_found', `No such file: ${path}`);
       const uploaded = workspace.files.get(path);
       const text = uploaded ? uploaded.toString('utf8') : FILES[path];
       if (text === undefined) return error(response, 404, 'not_found', `No such file: ${path}`);
@@ -854,7 +861,8 @@ function handleWorkspaces(op, body, response) {
       if (!path) return error(response, 400, 'bad_path', 'A folder path is required.');
       const existing = entryAt(path, workspace);
       if (existing) {
-        if (existing.kind !== 'dir') return error(response, 409, 'bad_path', `${path} already exists.`);
+        if (existing.kind !== 'dir')
+          return error(response, 409, 'bad_path', `${path} already exists.`);
         return json(response, 200, { path, created: false });
       }
       ensureDirChain(workspace, path);
@@ -1747,14 +1755,54 @@ function handleAnthropic(request, url, response) {
           : '';
     const firstLine = text.split('\n').find((line) => line.trim()) ?? '';
     const reply = `Stub model: I saw “${firstLine.trim()}”`;
-    const frames = [
-      { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
-      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } },
-      { type: 'content_block_stop', index: 0 },
-      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 8 } },
-      { type: 'message_stop' },
-    ];
+    // A scripted tool call: a user message of the form
+    // `[[call <tool> <json arguments>]]` is answered with that one
+    // tool_use, streamed the way the real API streams it (an empty input
+    // on the start frame, the arguments as one input_json_delta), so a
+    // spec can have the model reach for a tool without a real model. The
+    // round after — the tool's result comes back as a tool_result block,
+    // never as text — gets the plain text reply below.
+    const scripted = /^\[\[call\s+([A-Za-z0-9_.-]+)\s*(\{[\s\S]*\})?\s*\]\]$/.exec(
+      firstLine.trim()
+    );
+    const frames = scripted
+      ? [
+          { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
+          {
+            type: 'content_block_start',
+            index: 0,
+            content_block: {
+              type: 'tool_use',
+              id: `toolu_stub_${Date.now()}`,
+              name: scripted[1],
+              input: {},
+            },
+          },
+          {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'input_json_delta', partial_json: scripted[2] ?? '{}' },
+          },
+          { type: 'content_block_stop', index: 0 },
+          {
+            type: 'message_delta',
+            delta: { stop_reason: 'tool_use' },
+            usage: { output_tokens: 8 },
+          },
+          { type: 'message_stop' },
+        ]
+      : [
+          { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
+          { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } },
+          { type: 'content_block_stop', index: 0 },
+          {
+            type: 'message_delta',
+            delta: { stop_reason: 'end_turn' },
+            usage: { output_tokens: 8 },
+          },
+          { type: 'message_stop' },
+        ];
     response.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',

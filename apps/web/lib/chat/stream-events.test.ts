@@ -443,3 +443,73 @@ describe('compaction_progress with a status of its own', () => {
     expect(state.compaction?.status).toBe('failed');
   });
 });
+
+describe('widget_decided', () => {
+  const card = (previewId: string): ChatMessageView => ({
+    id: 'results',
+    turnId: 'turn',
+    seq: 3,
+    role: 'user',
+    kind: 'tool_results',
+    status: 'complete',
+    blocks: [
+      {
+        type: 'tool_result',
+        toolUseId: 'tu',
+        content: 'Awaiting the user’s decision on the preview card.',
+        uiResourceUri: 'ui://widget/issue-preview.abc.html',
+        structuredContent: { kind: 'issue', previewId },
+      },
+      { type: 'tool_result', toolUseId: 'tu2', content: 'You are u1.' },
+    ],
+    llmModelId: null,
+    provider: null,
+    model: null,
+    stopReason: null,
+    usage: null,
+    timing: null,
+    error: null,
+    createdAt: '2026-09-04T00:00:00.000Z',
+    attachments: [],
+  });
+
+  it('stamps the receipt onto the card it names, the way chat-view.ts does on load', () => {
+    const initial = initialThreadState([card('p1')], null);
+    const state = reduce(
+      [
+        {
+          type: 'widget_decided',
+          turnId: 'turn',
+          stateKey: 'renkei-preview:p1',
+          state: { icon: 'sent', headline: 'Sent manually' },
+        },
+      ],
+      initial
+    );
+    expect(state.messages[0].blocks[0]).toMatchObject({
+      type: 'tool_result',
+      resolved: { icon: 'sent', headline: 'Sent manually' },
+    });
+    expect(state.messages[0].blocks[1]).toEqual({
+      type: 'tool_result',
+      toolUseId: 'tu2',
+      content: 'You are u1.',
+    });
+  });
+
+  it('leaves every message as it was when no card carries the key', () => {
+    const initial = initialThreadState([card('p1')], null);
+    const state = reduce(
+      [
+        {
+          type: 'widget_decided',
+          turnId: 'turn',
+          stateKey: 'renkei-preview:other',
+          state: { icon: 'cancelled', headline: 'Cancelled' },
+        },
+      ],
+      initial
+    );
+    expect(state.messages[0]).toBe(initial.messages[0]);
+  });
+});

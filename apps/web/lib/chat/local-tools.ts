@@ -13,6 +13,7 @@ import type { LlmToolDef, LlmUsage, ResolvedLlm } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { SubagentRecorder } from './subagent-runs';
+import type { WidgetDecisionState } from './views';
 
 export interface LocalToolContext {
   db: Kysely<DB>;
@@ -46,6 +47,14 @@ export interface LocalToolContext {
    * for a context with no turn behind it (none today).
    */
   emitProgress?: (progress: { foldedSoFar: number; totalToFold: number }) => void;
+  /**
+   * Where a tool that settles a preview card on the model's behalf
+   * (chat_widget_resolve, widget-state-tools.ts) announces the receipt —
+   * the turn's own channel again, so the card open in the thread flips
+   * to that receipt as the tool returns rather than on the next reload.
+   * Absent for a context with no turn behind it.
+   */
+  emitWidgetDecision?: (decision: { stateKey: string; state: WidgetDecisionState }) => void;
   /**
    * The id of the tool_use block being answered — the runner sets it per
    * call, so a tool that keeps a record of its own (a sub-agent's run)
