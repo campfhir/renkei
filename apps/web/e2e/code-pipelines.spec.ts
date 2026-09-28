@@ -201,8 +201,8 @@ test.describe('Code project pipelines', () => {
     const main = page.getByRole('main');
     const pagePath = `/${E2E_SLUG}/code/${ids.projectId}/pipelines`;
 
-    // ── The project page: a card, after the environment and before the
-    //    chats, summarizing what Bitbucket says — off, no file, no
+    // ── The project page: a card in the rail after the chats, before the
+    //    environment, summarizing what Bitbucket says — off, no file, no
     //    variables, the last run — and nothing to edit inline ──
     await page.goto(`/${E2E_SLUG}/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible({
@@ -213,8 +213,8 @@ test.describe('Code project pipelines', () => {
     });
     const headings = await main.getByRole('heading', { level: 2 }).allTextContents();
     const at = (name: string) => headings.findIndex((text) => text.startsWith(name));
-    expect(at('Pipelines')).toBeGreaterThan(at('Environment'));
-    expect(at('Chats in this project')).toBeGreaterThan(at('Pipelines'));
+    expect(at('Pipelines')).toBeGreaterThan(at('Chats in this project'));
+    expect(at('Environment')).toBeGreaterThan(at('Pipelines'));
     await expect(
       card.getByText(/^Off · no bitbucket-pipelines\.yml on main yet · 0 variables/)
     ).toBeVisible();

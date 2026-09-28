@@ -4,9 +4,12 @@
  * A project's page: instructions (editors), files (editors upload, all
  * download), memory (editors add and remove), the toolset chats inherit,
  * the chats inside it, and sharing (owner). Every change goes through a
- * route and refreshes the server data. On a code project the chats come
- * right after the repository and environment — what a developer opens
- * the page for — and the README folds beneath them. A code project has
+ * route and refreshes the server data. On a code project the page is
+ * laid out by how often each part is touched: the repository strip under
+ * the header, the chats first — what a developer opens the page for —
+ * with the `rail` (pulls, commits, CI, services, environment) beside
+ * them on a wide screen and below them on a narrow one, then the README
+ * (folded to a preview), About, Memory and the danger zone. A code project has
  * one active chat and the rest are history (lib/code/active-chat.ts):
  * the list says which, and New chat there goes through the API so it can
  * say why when the active chat is still replying.
@@ -34,6 +37,8 @@ import IssueCards from '../../code/_components/issue-cards';
 
 /** Previous chats a row bothers asking for a PR badge — the rest just don't show one. */
 const PR_BADGE_ROW_LIMIT = 10;
+/** Previous chats a code project lists before "Show more" — the recent ones are the ones looked for. */
+const PREVIOUS_CHATS_SHOWN = 5;
 
 /** A code project's own token spend — this component stays generic to chat/chat_project too. */
 interface ChatTokenUsage {
@@ -54,7 +59,8 @@ export default function ProjectView({
   tenantId,
   initial,
   variant = 'chat',
-  before = null,
+  strip = null,
+  rail = null,
   defaultInstructions = null,
   readme = null,
   usage = null,
@@ -65,11 +71,12 @@ export default function ProjectView({
   /**
    * A code project is a chat project with a repository on it: the same
    * page, listed under Code, deleted through the code route (which takes
-   * the checkout and the environment with it), and headed by the
-   * repository and environment sections the caller passes in `before`.
+   * the checkout and the environment with it), headed by the repository
+   * `strip` and carrying the caller's `rail` of cards beside its chats.
    */
   variant?: 'chat' | 'code';
-  before?: ReactNode;
+  strip?: ReactNode;
+  rail?: ReactNode;
   /**
    * What the instructions field starts as when the project has none —
    * shown so it can be read and changed, kept the moment Save is pressed.
@@ -113,6 +120,8 @@ export default function ProjectView({
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [startingChat, setStartingChat] = useState(false);
+  const [allPrevious, setAllPrevious] = useState(false);
+  const [readmeOpen, setReadmeOpen] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
 
   // A code project's New chat: the new chat becomes the active one and
@@ -322,8 +331,21 @@ export default function ProjectView({
                 className="divide-y divide-gray-200 text-sm text-gray-600 dark:divide-gray-800 dark:text-gray-400"
                 data-testid="project-previous-chats"
               >
-                {previousChats.map((chat, index) => chatRow(chat, index < PR_BADGE_ROW_LIMIT))}
+                {(allPrevious ? previousChats : previousChats.slice(0, PREVIOUS_CHATS_SHOWN)).map(
+                  (chat, index) => chatRow(chat, index < PR_BADGE_ROW_LIMIT)
+                )}
               </ul>
+              {previousChats.length > PREVIOUS_CHATS_SHOWN ? (
+                <button
+                  type="button"
+                  onClick={() => setAllPrevious((value) => !value)}
+                  className="mt-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  {allPrevious
+                    ? 'Show fewer'
+                    : `Show ${previousChats.length - PREVIOUS_CHATS_SHOWN} more`}
+                </button>
+              ) : null}
             </>
           ) : null}
         </>
@@ -455,246 +477,287 @@ export default function ProjectView({
         </p>
       ) : null}
 
-      <div className="mx-auto max-w-3xl p-4">
-        <div className="space-y-4">
-          {before}
-          {variant === 'code' ? chatsSection : null}
+      <div className={`mx-auto p-4 ${variant === 'code' ? 'max-w-5xl' : 'max-w-3xl'}`}>
+        {/* A code project: a grid — the strip across the top, the chats
+            and the rest down the wide column, the rail beside them, all
+            one stack (strip, chats, rail, the rest) below `lg`. */}
+        <div
+          className={
+            variant === 'code'
+              ? 'grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]'
+              : 'space-y-4'
+          }
+        >
+          {variant === 'code' ? <div className="min-w-0 lg:col-span-2">{strip}</div> : null}
+          {variant === 'code' ? <div className="min-w-0">{chatsSection}</div> : null}
           {variant === 'code' ? (
-            <section className={sectionClass}>
-              <details open className="group">
-                <summary className="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden">
-                  <Icon
-                    path={ICONS.chevron}
-                    className="mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <h2 className="text-sm font-semibold">README</h2>
-                    <p className="text-xs text-gray-500">
-                      {readme
-                        ? `${readme.path} on the project’s branch, as its host has it.`
-                        : 'The repository’s README, when it has one.'}
-                    </p>
-                  </span>
-                </summary>
-                <div className="mt-3">
-                  {readme ? (
-                    <Markdown text={readme.text} />
-                  ) : (
-                    <p className="text-sm text-gray-500">No README was found in the repository.</p>
-                  )}
-                </div>
-              </details>
-            </section>
+            <aside
+              aria-label="Repository activity"
+              className="min-w-0 space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-2"
+            >
+              {rail}
+            </aside>
           ) : null}
-          <section className={sectionClass} {...aboutAnchor}>
-            <h2 className="mb-2 text-sm font-semibold">About</h2>
-            {canEdit ? (
-              <div className="space-y-3">
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  aria-label="Project name"
-                  maxLength={200}
-                  className={inputClass}
-                />
-                {variant === 'code' ? null : (
-                  <input
-                    value={description}
-                    onChange={(event) => setDescription(event.target.value)}
-                    placeholder="Description (optional)"
-                    aria-label="Description"
-                    maxLength={2000}
-                    className={inputClass}
-                  />
-                )}
-                <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-gray-500">
-                    Instructions — what every chat in this project should know and how it should
-                    behave
-                  </span>
-                  <textarea
-                    value={instructions}
-                    onChange={(event) => setInstructions(event.target.value)}
-                    rows={variant === 'code' ? 12 : 6}
-                    maxLength={20_000}
-                    className={inputClass}
-                  />
-                  {!project.instructions && defaultInstructions && instructions.trim() ? (
-                    <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
-                      A developer’s standing brief, not saved yet — change it as you like, then Save
-                      keeps it for every chat in this project.
+          <div className={variant === 'code' ? 'min-w-0 space-y-4 lg:col-start-1' : 'contents'}>
+            {variant === 'code' ? (
+              <section className={sectionClass}>
+                <details open className="group">
+                  <summary className="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden">
+                    <Icon
+                      path={ICONS.chevron}
+                      className="mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <h2 className="text-sm font-semibold">README</h2>
+                      <p className="text-xs text-gray-500">
+                        {readme
+                          ? `${readme.path} on the project’s branch, as its host has it.`
+                          : 'The repository’s README, when it has one.'}
+                      </p>
                     </span>
-                  ) : null}
-                </label>
-                <div className="flex items-center gap-2">
-                  {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
-                  {savedAt && !dirty ? <p className="text-xs text-gray-500">Saved.</p> : null}
-                  <button
-                    type="button"
-                    disabled={!dirty || saving || !name.trim()}
-                    onClick={() => void save()}
-                    className="ml-auto rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {saving ? 'Saving…' : 'Save'}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2 text-sm">
-                {project.description && variant !== 'code' ? (
-                  <p className="break-words">{project.description}</p>
-                ) : null}
-                {project.instructions ? (
-                  <div>
-                    <p className="text-xs font-medium text-gray-500">Instructions</p>
-                    <p className="whitespace-pre-wrap break-words">{project.instructions}</p>
+                  </summary>
+                  <div className="mt-3">
+                    {readme ? (
+                      <>
+                        <div
+                          className={
+                            readmeOpen
+                              ? undefined
+                              : 'relative max-h-40 overflow-hidden after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-12 after:bg-gradient-to-t after:from-white after:to-transparent dark:after:from-gray-950'
+                          }
+                          data-testid="project-readme-body"
+                          data-expanded={readmeOpen ? 'true' : undefined}
+                        >
+                          <Markdown text={readme.text} />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setReadmeOpen((value) => !value)}
+                          aria-expanded={readmeOpen}
+                          className="mt-2 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          {readmeOpen ? 'Show less' : 'Read more'}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-sm text-gray-500">
+                        No README was found in the repository.
+                      </p>
+                    )}
                   </div>
-                ) : (
-                  <p className="text-gray-500">No instructions.</p>
-                )}
-              </div>
-            )}
-          </section>
-
-          {variant === 'code' ? null : (
-            <section className={sectionClass} {...filesAnchor}>
-              <div className="mb-2 flex items-center gap-2">
-                <h2 className="text-sm font-semibold">Files</h2>
-                {canEdit ? (
-                  <>
+                </details>
+              </section>
+            ) : null}
+            <section className={sectionClass} {...aboutAnchor}>
+              <h2 className="mb-2 text-sm font-semibold">About</h2>
+              {canEdit ? (
+                <div className="space-y-3">
+                  <input
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    aria-label="Project name"
+                    maxLength={200}
+                    className={inputClass}
+                  />
+                  {variant === 'code' ? null : (
+                    <input
+                      value={description}
+                      onChange={(event) => setDescription(event.target.value)}
+                      placeholder="Description (optional)"
+                      aria-label="Description"
+                      maxLength={2000}
+                      className={inputClass}
+                    />
+                  )}
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-gray-500">
+                      Instructions — what every chat in this project should know and how it should
+                      behave
+                    </span>
+                    <textarea
+                      value={instructions}
+                      onChange={(event) => setInstructions(event.target.value)}
+                      rows={variant === 'code' ? 12 : 6}
+                      maxLength={20_000}
+                      className={inputClass}
+                    />
+                    {!project.instructions && defaultInstructions && instructions.trim() ? (
+                      <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
+                        A developer’s standing brief, not saved yet — change it as you like, then
+                        Save keeps it for every chat in this project.
+                      </span>
+                    ) : null}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
+                    {savedAt && !dirty ? <p className="text-xs text-gray-500">Saved.</p> : null}
                     <button
                       type="button"
-                      disabled={uploading}
-                      onClick={() => fileInput.current?.click()}
-                      className="ml-auto rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                      disabled={!dirty || saving || !name.trim()}
+                      onClick={() => void save()}
+                      className="ml-auto rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                     >
-                      {uploading ? 'Uploading…' : 'Add files'}
+                      {saving ? 'Saving…' : 'Save'}
                     </button>
-                    <input
-                      ref={fileInput}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(event) => {
-                        void upload(event.target.files);
-                        event.target.value = '';
-                      }}
-                    />
-                  </>
-                ) : null}
-              </div>
-              {files.length === 0 ? (
-                <p className="text-sm text-gray-500">
-                  No files yet. Files here are readable in every chat of the project.
-                </p>
+                  </div>
+                </div>
               ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {files.map((file) => (
-                    <AttachmentChip
-                      key={file.id}
-                      tenantId={tenantId}
-                      attachment={file}
-                      onRemove={canEdit ? () => void removeFile(file.id) : undefined}
-                    />
-                  ))}
+                <div className="space-y-2 text-sm">
+                  {project.description && variant !== 'code' ? (
+                    <p className="break-words">{project.description}</p>
+                  ) : null}
+                  {project.instructions ? (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500">Instructions</p>
+                      <p className="whitespace-pre-wrap break-words">{project.instructions}</p>
+                    </div>
+                  ) : (
+                    <p className="text-gray-500">No instructions.</p>
+                  )}
                 </div>
               )}
-              {fileError ? <p className="mt-1 text-xs text-red-600">{fileError}</p> : null}
             </section>
-          )}
 
-          <section className={sectionClass} {...memoryAnchor}>
-            <div className="mb-2">
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold">Memory</h2>
-                {canEdit && memory.entries.length > 0 ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void forget('all')}
-                    className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
-                  >
-                    Forget all
-                  </button>
-                ) : null}
-              </div>
-              <p className="text-xs text-gray-500">
-                Notes the assistant keeps across this project's chats.
-              </p>
-            </div>
-            {memory.summary ? (
-              <p className="mb-2 rounded-md bg-gray-50 p-2 text-sm dark:bg-gray-900">
-                {memory.summary}
-              </p>
-            ) : null}
-            {memory.entries.length === 0 ? (
-              <p className="text-sm text-gray-500">Nothing remembered yet.</p>
-            ) : (
-              <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-                {memory.entries.map((entry) => (
-                  <li key={entry.id} className="flex items-start gap-2 py-1.5">
-                    <span className="min-w-0 flex-1">
-                      {entry.content}
-                      <span className="block text-xs text-gray-500">
-                        <LocalTime at={entry.createdAt} format="date" />
-                        {entry.authorName ? ` · ${entry.authorName}` : ''}
-                      </span>
-                    </span>
-                    {canEdit ? (
+            {variant === 'code' ? null : (
+              <section className={sectionClass} {...filesAnchor}>
+                <div className="mb-2 flex items-center gap-2">
+                  <h2 className="text-sm font-semibold">Files</h2>
+                  {canEdit ? (
+                    <>
                       <button
                         type="button"
-                        disabled={busy}
-                        onClick={() => void forget([entry.id])}
-                        aria-label="Forget this note"
-                        className="rounded p-1 text-gray-400 hover:text-red-600"
+                        disabled={uploading}
+                        onClick={() => fileInput.current?.click()}
+                        className="ml-auto rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
                       >
-                        <Icon path={ICONS.trash} className="h-4 w-4" />
+                        {uploading ? 'Uploading…' : 'Add files'}
                       </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
+                      <input
+                        ref={fileInput}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => {
+                          void upload(event.target.files);
+                          event.target.value = '';
+                        }}
+                      />
+                    </>
+                  ) : null}
+                </div>
+                {files.length === 0 ? (
+                  <p className="text-sm text-gray-500">
+                    No files yet. Files here are readable in every chat of the project.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {files.map((file) => (
+                      <AttachmentChip
+                        key={file.id}
+                        tenantId={tenantId}
+                        attachment={file}
+                        onRemove={canEdit ? () => void removeFile(file.id) : undefined}
+                      />
+                    ))}
+                  </div>
+                )}
+                {fileError ? <p className="mt-1 text-xs text-red-600">{fileError}</p> : null}
+              </section>
             )}
-            {canEdit ? (
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void addNote();
-                }}
-                className="mt-2 flex gap-2"
-              >
-                <input
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  placeholder="Add a note the assistant should remember"
-                  maxLength={500}
-                  className={inputClass}
-                />
-                <button
-                  type="submit"
-                  disabled={busy || !note.trim()}
-                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+
+            <section className={sectionClass} {...memoryAnchor}>
+              <div className="mb-2">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold">Memory</h2>
+                  {canEdit && memory.entries.length > 0 ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void forget('all')}
+                      className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
+                    >
+                      Forget all
+                    </button>
+                  ) : null}
+                </div>
+                <p className="text-xs text-gray-500">
+                  Notes the assistant keeps across this project's chats.
+                </p>
+              </div>
+              {memory.summary ? (
+                <p className="mb-2 rounded-md bg-gray-50 p-2 text-sm dark:bg-gray-900">
+                  {memory.summary}
+                </p>
+              ) : null}
+              {memory.entries.length === 0 ? (
+                <p className="text-sm text-gray-500">Nothing remembered yet.</p>
+              ) : (
+                <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
+                  {memory.entries.map((entry) => (
+                    <li key={entry.id} className="flex items-start gap-2 py-1.5">
+                      <span className="min-w-0 flex-1">
+                        {entry.content}
+                        <span className="block text-xs text-gray-500">
+                          <LocalTime at={entry.createdAt} format="date" />
+                          {entry.authorName ? ` · ${entry.authorName}` : ''}
+                        </span>
+                      </span>
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void forget([entry.id])}
+                          aria-label="Forget this note"
+                          className="rounded p-1 text-gray-400 hover:text-red-600"
+                        >
+                          <Icon path={ICONS.trash} className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {canEdit ? (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void addNote();
+                  }}
+                  className="mt-2 flex gap-2"
                 >
-                  Add
-                </button>
-              </form>
-            ) : null}
-          </section>
-
-          {variant === 'code' ? null : chatsSection}
-
-          {role === 'owner' ? (
-            <section className={sectionClass}>
-              <h2 className="mb-2 text-sm font-semibold">Danger zone</h2>
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(true)}
-                className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40"
-              >
-                Delete project
-              </button>
+                  <input
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    placeholder="Add a note the assistant should remember"
+                    maxLength={500}
+                    className={inputClass}
+                  />
+                  <button
+                    type="submit"
+                    disabled={busy || !note.trim()}
+                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                  >
+                    Add
+                  </button>
+                </form>
+              ) : null}
             </section>
-          ) : null}
+
+            {variant === 'code' ? null : chatsSection}
+
+            {role === 'owner' ? (
+              <section className={sectionClass}>
+                <h2 className="mb-2 text-sm font-semibold">Danger zone</h2>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40"
+                >
+                  Delete project
+                </button>
+              </section>
+            ) : null}
+          </div>
         </div>
       </div>
 
