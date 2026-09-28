@@ -46,6 +46,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'fixed',
+        title: 'Outlook calls wait their turn instead of failing when the mailbox is busy',
+        detail:
+          'Exchange runs only a few requests against one mailbox at a time, and a chat, an agent’s bulk mail job and the inbox sync could all reach it at once — every call past the limit came back as “Microsoft Graph answered 503 — CommandConcurrencyLimitReached”. Renkei now holds its own calls to that limit per mailbox, waits the pause Microsoft asks for and retries a throttled read before reporting it, and a bulk job’s batches run one message at a time so they leave room for the person using the same mailbox. When a call still cannot get through, the error says the mailbox is busy and how long Microsoft asked to wait.',
+      },
+      {
+        kind: 'changed',
+        title: 'Inbox and calendar sync runs one catch-up per burst of notifications',
+        detail:
+          'Microsoft sends several notifications for one mailbox change, and each used to start its own sync round even though the first already caught everything up. Notifications that arrive while a round is still queued now fold into it, which cuts the background traffic on a busy mailbox without delaying what it indexes.',
+      },
+      {
         kind: 'changed',
         title: 'Reasoning effort applies to Claude models too',
         detail:

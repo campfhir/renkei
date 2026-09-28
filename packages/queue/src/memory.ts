@@ -79,6 +79,21 @@ export class InMemoryQueue implements Queue {
 
   readonly producer = {
     enqueue: async (message: QueueMessageInput) => {
+      const key = message.orderingKey ?? null;
+      if (
+        message.coalesce &&
+        key !== null &&
+        this.rows.some(
+          (row) =>
+            row.status === 'pending' &&
+            row.tenant_id === message.tenantId &&
+            row.source === message.source &&
+            row.type === message.type &&
+            row.orderingKey === key
+        )
+      ) {
+        return ok();
+      }
       this.rows.push({
         id: randomUUID(),
         tenant_id: message.tenantId,

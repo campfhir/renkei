@@ -99,10 +99,30 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
       const dbResult = getDatabase();
       if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
       try {
+        const key = message.orderingKey ?? null;
+        if (message.coalesce && key !== null) {
+          // INSERT ... SELECT ... WHERE NOT EXISTS keeps the check and the
+          // insert in one statement; two producers racing can still both
+          // insert, which costs one redundant round, never a lost one.
+          await sql`
+            INSERT INTO ${live()} (id, tenant_id, source, type, payload, ordering_key)
+            SELECT gen_random_uuid(), ${message.tenantId}, ${message.source}, ${message.type},
+                   ${JSON.stringify(message.payload)}::jsonb, ${key}
+            WHERE NOT EXISTS (
+              SELECT 1 FROM ${live()} q
+              WHERE q.tenant_id = ${message.tenantId}
+                AND q.source = ${message.source}
+                AND q.type = ${message.type}
+                AND q.ordering_key = ${key}
+                AND q.status = 'pending'
+            )
+          `.execute(dbResult.val);
+          return ok();
+        }
         await sql`
           INSERT INTO ${live()} (id, tenant_id, source, type, payload, ordering_key)
           VALUES (gen_random_uuid(), ${message.tenantId}, ${message.source}, ${message.type},
-                  ${JSON.stringify(message.payload)}::jsonb, ${message.orderingKey ?? null})
+                  ${JSON.stringify(message.payload)}::jsonb, ${key})
         `.execute(dbResult.val);
         return ok();
       } catch (error) {

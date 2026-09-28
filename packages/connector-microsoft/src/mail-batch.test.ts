@@ -124,6 +124,57 @@ describe('graphBatch', () => {
     expect(progress).toEqual([20, 20, 5]);
   });
 
+  it('chains a background chunk with dependsOn so Graph runs it one sub-request at a time', async () => {
+    await graphBatch('token', markRequests(3), { lane: 'background' });
+    const [batch] = batches;
+    expect(batch!.requests.map((request) => (request as { dependsOn?: string[] }).dependsOn)).toEqual([
+      undefined,
+      ['msg-0'],
+      ['msg-1'],
+    ]);
+  });
+
+  it('leaves an interactive chunk fanned out unless told otherwise', async () => {
+    await graphBatch('token', markRequests(3), { lane: 'interactive' });
+    expect(
+      batches[0]!.requests.some((request) => 'dependsOn' in request)
+    ).toBe(false);
+
+    batches = [];
+    await graphBatch('token', markRequests(3), { lane: 'interactive', sequential: true });
+    expect((batches[0]!.requests[2] as { dependsOn?: string[] }).dependsOn).toEqual(['msg-1']);
+  });
+
+  it('re-sends sub-requests Graph skipped behind a failed dependency, without a throttle pause', async () => {
+    statusById.set('msg-0', [404]);
+    statusById.set('msg-1', [424, 200]);
+    statusById.set('msg-2', [424, 200]);
+    const { results } = await graphBatch('token', markRequests(3), { lane: 'background' });
+
+    expect(results.map((result) => [result.id, result.ok])).toEqual([
+      ['msg-0', false],
+      ['msg-1', true],
+      ['msg-2', true],
+    ]);
+    expect(batches).toHaveLength(2);
+    expect(batches[1]!.requests.map((request) => request.id)).toEqual(['msg-1', 'msg-2']);
+    expect((batches[1]!.requests[1] as { dependsOn?: string[] }).dependsOn).toEqual(['msg-1']);
+    expect(setTimeout).not.toHaveBeenCalled();
+  });
+
+  it('marks the whole $batch retryable only when every sub-request is idempotent', async () => {
+    await graphBatch('token', markRequests(2));
+    const patchInit = graphRequestMock.mock.calls[0]![2] as { retry?: boolean };
+    expect(patchInit.retry).toBe(true);
+
+    graphRequestMock.mockClear();
+    await graphBatch('token', [
+      { id: 'a', method: 'POST', url: '/me/messages/a/move', body: { destinationId: 'archive' } },
+    ]);
+    const moveInit = graphRequestMock.mock.calls[0]![2] as { retry?: boolean };
+    expect(moveInit.retry).toBe(false);
+  });
+
   it('fails every item in a chunk on a transport-level error', async () => {
     graphRequestMock.mockResolvedValue({
       ok: false,

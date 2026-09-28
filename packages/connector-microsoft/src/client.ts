@@ -10,29 +10,10 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import type { RequestLane } from '@renkei/rate-limit';
+import { GRAPH_BASE_URL, REQUEST_TIMEOUT_MS, GateTimeoutError, graphFetch } from './fetch';
 
-export const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
-/**
- * Bounds every call out to Graph — see the identical comment in
- * connector-webex's client.ts.
- */
-const REQUEST_TIMEOUT_MS = 15_000;
-
-/**
- * Process-scoped, split by lane — see `LaneLimiter` in @renkei/rate-limit.
- *
- * Background bounds bursts from the subscription health sweep (many
- * tenants/grants) and from delta-sync paging. Interactive keeps a reserve for
- * work a person is waiting on — above all the SharePoint ACL check, which
- * runs inside the retrieval gate's 3s budget and whose $batch call must not
- * queue behind a sweep, since anything unverified by the deadline is withheld
- * and reads as a denial.
- */
-const limiter = new LaneLimiter({
-  interactive: { capacity: 20, refillPerSecond: 10 },
-  background: { capacity: 5, refillPerSecond: 5 },
-});
+export { GRAPH_BASE_URL } from './fetch';
 
 /** Options accepted alongside a standard RequestInit. */
 export interface GraphRequestOptions {
@@ -45,6 +26,11 @@ export interface GraphRequestOptions {
    * than it is worth failing, because a retry re-pays the same latency.
    */
   timeoutMs?: number;
+  /**
+   * Re-send a throttled (429/503) answer after its Retry-After. On by
+   * default for idempotent methods; a POST must opt in — see fetch.ts.
+   */
+  retry?: boolean;
 }
 
 export async function graphRequest(
@@ -54,27 +40,25 @@ export async function graphRequest(
 ): Promise<Result<unknown, 'GRAPH_API_ERROR'>> {
   const url = pathOrUrl.startsWith('https://') ? pathOrUrl : `${GRAPH_BASE_URL}${pathOrUrl}`;
 
-  await limiter.take(init?.lane);
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await graphFetch(accessToken, url, {
       ...init,
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
         ...(init?.body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(init?.headers ?? {}),
       },
-      // A caller-supplied signal (none today) still wins — theirs may carry
-      // its own cancellation semantics we should not override.
-      signal: init?.signal ?? AbortSignal.timeout(init?.timeoutMs ?? REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    const busy = error instanceof GateTimeoutError;
     return err('GRAPH_API_ERROR' as const, {
       message: timedOut
         ? `Graph API timed out after ${init?.timeoutMs ?? REQUEST_TIMEOUT_MS}ms for ${url}`
-        : 'Graph API unreachable',
+        : busy
+          ? `Graph API busy: too many requests in flight for this mailbox (${url})`
+          : 'Graph API unreachable',
     });
   }
 

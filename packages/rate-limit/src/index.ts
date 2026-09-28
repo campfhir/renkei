@@ -161,3 +161,108 @@ export class LaneLimiter {
       : this.background.take(timeoutMs);
   }
 }
+
+/**
+ * Thrown by `KeyedGate.acquire()` when `timeoutMs` passes before a slot
+ * frees up — the same shape as RateLimitTimeoutError so a caller that
+ * already tells "slow" from "broken" needs nothing new.
+ */
+export class GateTimeoutError extends Error {
+  constructor(key: string, timeoutMs: number) {
+    super(`concurrency gate for ${key} timed out after ${timeoutMs}ms`);
+    this.name = 'GateTimeoutError';
+  }
+}
+
+/**
+ * A counting semaphore per key — at most `limit` holders of any one key at
+ * a time, everyone else queued FIFO behind them.
+ *
+ * Built for Exchange Online's per-mailbox concurrency cap: Microsoft lets
+ * one app run about four operations against one mailbox at once and
+ * answers the fifth with 503 CommandConcurrencyLimitReached. That is a
+ * ceiling on IN-FLIGHT requests, which a token bucket (rate over time) does
+ * nothing to bound — a chat firing four cheap reads at once trips it while
+ * the bucket still has tokens to spare. The key is whatever names the
+ * limited resource (a mailbox, via its grant's token); keys are forgotten
+ * again once nothing holds or waits on them, so the map never grows past
+ * the number of resources in use right now.
+ */
+export class KeyedGate {
+  private readonly limit: number;
+  private readonly entries = new Map<string, { active: number; queue: Array<() => void> }>();
+
+  constructor(options: { limit: number }) {
+    if (!(options.limit >= 1)) throw new Error('KeyedGate needs a limit of at least 1');
+    this.limit = options.limit;
+  }
+
+  /**
+   * Resolves with a release function once a slot for `key` is free. The
+   * release is idempotent, so a caller may call it from both a normal exit
+   * and a finally block without double-freeing.
+   */
+  acquire(key: string, timeoutMs?: number): Promise<() => void> {
+    return new Promise((resolve, reject) => {
+      const entry = this.entries.get(key) ?? { active: 0, queue: [] };
+      this.entries.set(key, entry);
+
+      const grant = (): void => {
+        entry.active += 1;
+        let released = false;
+        resolve(() => {
+          if (released) return;
+          released = true;
+          this.release(key);
+        });
+      };
+
+      if (entry.active < this.limit) {
+        grant();
+        return;
+      }
+
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const waiter = (): void => {
+        if (timer) clearTimeout(timer);
+        grant();
+      };
+      entry.queue.push(waiter);
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          const index = entry.queue.indexOf(waiter);
+          if (index === -1) return;
+          entry.queue.splice(index, 1);
+          this.forgetIfIdle(key, entry);
+          reject(new GateTimeoutError(key, timeoutMs));
+        }, timeoutMs);
+      }
+    });
+  }
+
+  /** How many requests hold `key` right now — for tests and observability. */
+  active(key: string): number {
+    return this.entries.get(key)?.active ?? 0;
+  }
+
+  /** How many requests are queued behind `key`'s holders — for tests and observability. */
+  waiting(key: string): number {
+    return this.entries.get(key)?.queue.length ?? 0;
+  }
+
+  private release(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    entry.active = Math.max(0, entry.active - 1);
+    const next = entry.queue.shift();
+    if (next) {
+      next();
+      return;
+    }
+    this.forgetIfIdle(key, entry);
+  }
+
+  private forgetIfIdle(key: string, entry: { active: number; queue: Array<() => void> }): void {
+    if (entry.active === 0 && entry.queue.length === 0) this.entries.delete(key);
+  }
+}

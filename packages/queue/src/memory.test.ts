@@ -323,3 +323,48 @@ describe('discardPending — the other half of a rebuild', () => {
     expect(await queue.consumer.claim()).not.toBeNull();
   });
 });
+
+describe('coalescing', () => {
+  it('drops a coalesced message while an identical one is still waiting, but not once it is claimed', async () => {
+    const queue = new InMemoryQueue();
+    const message = {
+      tenantId: 't1',
+      source: 'microsoft',
+      type: 'change-notification',
+      payload: { subscriptionId: 's1' },
+      orderingKey: 'microsoft/acct/s1',
+      coalesce: true,
+    };
+    await queue.producer.enqueue(message);
+    await queue.producer.enqueue(message);
+    await queue.producer.enqueue({ ...message, coalesce: false });
+
+    const first = await queue.consumer.claim();
+    expect(first).not.toBeNull();
+    // Two rows: the coalesced duplicate was dropped, the explicit one kept.
+    // With the first now in flight, a new coalesced message is NOT dropped
+    // against it — only against the still-pending explicit one.
+    await queue.producer.enqueue(message);
+    await queue.consumer.complete(first!);
+    const second = await queue.consumer.claim();
+    expect(second).not.toBeNull();
+    await queue.consumer.complete(second!);
+    expect(await queue.consumer.claim()).toBeNull();
+  });
+
+  it('coalesces nothing without an ordering key', async () => {
+    const queue = new InMemoryQueue();
+    const message = {
+      tenantId: 't1',
+      source: 'x',
+      type: 'y',
+      payload: {},
+      coalesce: true,
+    };
+    await queue.producer.enqueue(message);
+    await queue.producer.enqueue(message);
+    const first = await queue.consumer.claim();
+    await queue.consumer.complete(first!);
+    expect(await queue.consumer.claim()).not.toBeNull();
+  });
+});

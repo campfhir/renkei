@@ -135,6 +135,14 @@ export async function POST(
       // One subscription's delta rounds run in order — two workers must not
       // race the same delta cursor.
       orderingKey: `microsoft/${accountId}/${subscriptionId}`,
+      // A notification is only "something changed, go look": the round it
+      // triggers catches up on everything since the cursor, so a second
+      // notification queued behind an unclaimed first would only re-run
+      // the same round. Graph delivers bursts of these per mailbox change,
+      // and every redundant round is another request against a mailbox
+      // whose concurrency the chats and agents need. Lifecycle events are
+      // each their own instruction and are never coalesced.
+      coalesce: !lifecycleEvent,
     });
     if (enqueued.ok) accepted += 1;
   }

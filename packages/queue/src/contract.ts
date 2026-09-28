@@ -50,6 +50,16 @@ export interface QueueMessageInput {
    * messages with no ordering requirement.
    */
   orderingKey?: string | null;
+  /**
+   * Skip this message when one of the same tenant, source, type and
+   * ordering key is still waiting to be claimed. For a message that is a
+   * bare "go look" (a change notification whose handler runs a delta round
+   * that catches up on everything anyway), a second copy behind an unclaimed
+   * first does the same work twice; one already in flight does NOT count,
+   * since it may have passed the change before it landed. Requires an
+   * ordering key.
+   */
+  coalesce?: boolean;
 }
 
 /**
