@@ -178,7 +178,9 @@ describe('runDeltaRound', () => {
   });
 
   it('propagates a page failure', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(503, {}));
+    // 500, not 503: a throttled page is now re-sent after a pause (fetch.ts),
+    // and this test is about the failure that reaches the caller.
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(500, {}));
 
     const result = await runDeltaRound('token-1', '/me/messages/delta');
 

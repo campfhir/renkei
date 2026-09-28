@@ -29,6 +29,7 @@ jest.mock('@renkei/db', () => ({
   getDatabase: () => ({ ok: false, error: 'no db in this suite' }),
 }));
 jest.mock('@renkei/connector-microsoft', () => ({
+  ...jest.requireActual('@renkei/connector-microsoft/src/fetch'),
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
   objectIdOfMicrosoftRefId: (refId: string) => refId,
 }));

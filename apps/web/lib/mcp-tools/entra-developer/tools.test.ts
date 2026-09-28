@@ -17,6 +17,7 @@ jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({ ENTRA_DEVELOPER: 'entra-developer' }));
 jest.mock('@renkei/connector-microsoft', () => ({
+  ...jest.requireActual('@renkei/connector-microsoft/src/fetch'),
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
 }));
 jest.mock('@/lib/entra-developer-app', () => ({ getEntraDeveloperApp: jest.fn() }));

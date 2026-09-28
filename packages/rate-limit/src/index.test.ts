@@ -4,7 +4,7 @@
  * bucket refills — never all at once, never out of order.
  */
 
-import { TokenBucket, LaneLimiter, RateLimitTimeoutError } from './index';
+import { TokenBucket, LaneLimiter, RateLimitTimeoutError, KeyedGate, GateTimeoutError } from './index';
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -172,5 +172,73 @@ describe('LaneLimiter', () => {
     // Both defaults competed for the background token, so the second queued
     // while the untouched interactive lane let its call straight through.
     expect(resolved).toEqual(['default-1', 'interactive']);
+  });
+});
+
+describe('KeyedGate', () => {
+  it('admits up to the limit per key at once and queues the rest in order', async () => {
+    const gate = new KeyedGate({ limit: 2 });
+    const order: string[] = [];
+    const releases: Array<() => void> = [];
+
+    for (const name of ['a', 'b', 'c', 'd']) {
+      void gate.acquire('mailbox-1').then((release) => {
+        order.push(name);
+        releases.push(release);
+      });
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(order).toEqual(['a', 'b']);
+    expect(gate.active('mailbox-1')).toBe(2);
+    expect(gate.waiting('mailbox-1')).toBe(2);
+
+    releases[0]!();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['a', 'b', 'c']);
+    expect(gate.active('mailbox-1')).toBe(2);
+  });
+
+  it('keeps keys independent', async () => {
+    const gate = new KeyedGate({ limit: 1 });
+    const first = await gate.acquire('mailbox-1');
+    const other = await gate.acquire('mailbox-2');
+    expect(gate.active('mailbox-1')).toBe(1);
+    expect(gate.active('mailbox-2')).toBe(1);
+    first();
+    other();
+    expect(gate.active('mailbox-1')).toBe(0);
+    expect(gate.active('mailbox-2')).toBe(0);
+  });
+
+  it('a release is idempotent', async () => {
+    const gate = new KeyedGate({ limit: 1 });
+    const release = await gate.acquire('k');
+    release();
+    release();
+    expect(gate.active('k')).toBe(0);
+    // A second holder proves the count did not go negative and wedge.
+    const again = await gate.acquire('k');
+    expect(gate.active('k')).toBe(1);
+    again();
+  });
+
+  it('rejects a waiter that outlives its timeout, leaving the holder untouched', async () => {
+    const gate = new KeyedGate({ limit: 1 });
+    const release = await gate.acquire('k');
+    const waiting = gate.acquire('k', 1_000);
+    const outcome = waiting.then(
+      () => 'granted',
+      (error: unknown) => (error instanceof GateTimeoutError ? 'timed out' : 'other')
+    );
+
+    jest.advanceTimersByTime(1_000);
+    await expect(outcome).resolves.toBe('timed out');
+    expect(gate.active('k')).toBe(1);
+    expect(gate.waiting('k')).toBe(0);
+    release();
+    expect(gate.active('k')).toBe(0);
   });
 });

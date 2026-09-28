@@ -44,6 +44,7 @@ jest.mock('@renkei/db', () => ({
   }),
 }));
 jest.mock('@renkei/connector-microsoft', () => ({
+  ...jest.requireActual('@renkei/connector-microsoft/src/fetch'),
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
   BATCH_CHUNK_SIZE: 20,
   graphBatch: jest.requireActual('@renkei/connector-microsoft/src/mail-batch').graphBatch,

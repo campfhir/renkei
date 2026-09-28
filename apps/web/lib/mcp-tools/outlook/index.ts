@@ -25,12 +25,16 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import {
   GRAPH_BASE_URL,
+  GateTimeoutError,
   buildMailQueryPath,
   clientSideSelect,
   graphBatch,
+  graphFetch,
   hasClientSideFilter,
+  headersForLog,
   matchesClientSide,
   objectIdOfMicrosoftRefId,
+  retryAfterSeconds,
   withCategoryChanges,
   type MailSearchFilters,
 } from '@renkei/connector-microsoft';
@@ -58,16 +62,20 @@ import {
   DIRECTORY_USER_SELECT,
   searchDirectoryUsers,
 } from '../graph/directory';
-import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
+import { REQUEST_TIMEOUT_MS, isTimeoutError } from '../fetch-guard';
 import { registerBulkJobTools } from './bulk-jobs';
 import { createUploadSlot } from '../upload-slots';
 import { extractText } from '@renkei/document-text';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
-function describeStatus(status: number, responseBody = ''): string {
+function describeStatus(status: number, responseBody = '', retryAfter: number | null = null): string {
   const detail = graphErrorDetail(responseBody);
   const suffix = detail ? ` — ${detail}` : '';
+  // What Microsoft asked for, when it said: the model reads this and the
+  // person sees it, and "try again shortly" was a guess where Graph had
+  // named the number.
+  const wait = retryAfter !== null ? ` Microsoft asks for a ${retryAfter}s pause first.` : '';
   if (status === 403) {
     return (
       'Graph refused (403) — the grant likely lacks the needed scope, or the Entra app is ' +
@@ -75,8 +83,26 @@ function describeStatus(status: number, responseBody = ''): string {
       suffix
     );
   }
-  if (status === 429) return `Graph is rate limiting (429); try again shortly.${suffix}`;
-  return `Microsoft Graph answered ${status}${suffix}`;
+  if (status === 429) return `Graph is rate limiting (429); try again shortly.${wait}${suffix}`;
+  if (status === 503 && detail.includes('CommandConcurrencyLimitReached')) {
+    return (
+      'The mailbox is busy (503): Exchange runs only a few requests per mailbox at a time and ' +
+      `others are in flight — try again shortly.${wait}${suffix}`
+    );
+  }
+  return `Microsoft Graph answered ${status}${suffix}${wait}`;
+}
+
+/** The sentence for a request that never got an answer. */
+function describeFetchFailure(error: unknown): string {
+  if (isTimeoutError(error)) return `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`;
+  if (error instanceof GateTimeoutError) {
+    return (
+      'The mailbox is busy with other Renkei requests (Exchange runs only a few per mailbox at ' +
+      'a time); try again in a moment.'
+    );
+  }
+  return 'Could not reach graph.microsoft.com';
 }
 
 /**
@@ -124,29 +150,25 @@ async function graphGet(
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
   let response: Response;
   try {
-    response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+    response = await graphFetch(accessToken, pathAndQuery, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Prefer: 'outlook.body-content-type="text"',
         ...extraHeaders,
       },
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
-      timedOut,
+      timedOut: isTimeoutError(error),
+      mailboxBusy: error instanceof GateTimeoutError,
     });
-    return {
-      ok: false,
-      error: timedOut
-        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'Could not reach graph.microsoft.com',
-    };
+    return { ok: false, error: describeFetchFailure(error) };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
@@ -156,9 +178,10 @@ async function graphGet(
       subject: context.subject,
       path: pathAndQuery,
       status: response.status,
+      responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody) };
+    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
   }
   let body: unknown = null;
   try {
@@ -183,30 +206,26 @@ async function graphPost(
   let response: Response;
   const requestBody = JSON.stringify(json);
   try {
-    response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+    response = await graphFetch(accessToken, pathAndQuery, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
       body: requestBody,
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
-      timedOut,
+      timedOut: isTimeoutError(error),
+      mailboxBusy: error instanceof GateTimeoutError,
     });
-    return {
-      ok: false,
-      error: timedOut
-        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'Could not reach graph.microsoft.com',
-    };
+    return { ok: false, error: describeFetchFailure(error) };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
@@ -217,10 +236,11 @@ async function graphPost(
       path: pathAndQuery,
       method: 'POST',
       status: response.status,
+      responseHeaders: headersForLog(response.headers),
       requestBody: secure(truncateForLog(requestBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody) };
+    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
   }
   let body: unknown = null;
   try {
@@ -245,30 +265,26 @@ async function graphPatch(
   const requestBody = JSON.stringify(json);
   let response: Response;
   try {
-    response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+    response = await graphFetch(accessToken, pathAndQuery, {
       method: 'PATCH',
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
       body: requestBody,
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
-      timedOut,
+      timedOut: isTimeoutError(error),
+      mailboxBusy: error instanceof GateTimeoutError,
     });
-    return {
-      ok: false,
-      error: timedOut
-        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'Could not reach graph.microsoft.com',
-    };
+    return { ok: false, error: describeFetchFailure(error) };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');
@@ -279,10 +295,11 @@ async function graphPatch(
       path: pathAndQuery,
       method: 'PATCH',
       status: response.status,
+      responseHeaders: headersForLog(response.headers),
       requestBody: secure(truncateForLog(requestBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody) };
+    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
   }
   return { ok: true };
 }
@@ -294,10 +311,11 @@ async function graphDelete(
   pathAndQuery: string
 ): Promise<void> {
   try {
-    const response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+    const response = await graphFetch(accessToken, pathAndQuery, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${accessToken}` },
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
     if (!response.ok) {
       logger.warn('Could not clean up an orphaned draft', {
@@ -306,6 +324,7 @@ async function graphDelete(
         subject: context.subject,
         path: pathAndQuery,
         status: response.status,
+      responseHeaders: headersForLog(response.headers),
       });
     }
   } catch {
@@ -326,26 +345,22 @@ async function graphDeleteChecked(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   let response: Response;
   try {
-    response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+    response = await graphFetch(accessToken, pathAndQuery, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${accessToken}` },
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
-      timedOut,
+      timedOut: isTimeoutError(error),
+      mailboxBusy: error instanceof GateTimeoutError,
     });
-    return {
-      ok: false,
-      error: timedOut
-        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'Could not reach graph.microsoft.com',
-    };
+    return { ok: false, error: describeFetchFailure(error) };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');
@@ -356,9 +371,10 @@ async function graphDeleteChecked(
       path: pathAndQuery,
       method: 'DELETE',
       status: response.status,
+      responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody) };
+    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
   }
   return { ok: true };
 }

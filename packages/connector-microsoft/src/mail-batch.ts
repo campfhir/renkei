@@ -48,6 +48,17 @@ export interface BatchResultItem {
 export interface GraphBatchOptions {
   /** Rate-limit lane; the web tools pass 'interactive', the worker 'background'. */
   lane?: RequestLane;
+  /**
+   * Chain each chunk's sub-requests with `dependsOn` so Graph runs them one
+   * at a time. Graph otherwise fans a batch out four-wide against the
+   * mailbox — the whole of Exchange's per-mailbox concurrency — so a bulk
+   * job's every chunk shut out the chats and agents sharing that mailbox
+   * (503 CommandConcurrencyLimitReached) for as long as it ran. Chained, a
+   * batch holds one slot. Defaults to true on the background lane, where a
+   * job has all night, and false on the interactive lane, where a person is
+   * waiting on the answer.
+   */
+  sequential?: boolean;
   /** Called after each settled chunk — the worker's incremental-progress hook. */
   onChunk?: (results: readonly BatchResultItem[]) => void | Promise<void>;
 }
@@ -70,20 +81,37 @@ function describeBatchItemError(status: number, body: unknown): string {
   return message || `Graph API answered ${status}`;
 }
 
+/** Sub-request methods a whole-batch retry cannot double-apply. */
+const IDEMPOTENT_METHODS = new Set(['GET', 'PATCH', 'DELETE']);
+
+interface ChunkOutcome {
+  results: BatchResultItem[];
+  retryable: BatchRequestItem[];
+  /** Whether any retryable item was throttled (as opposed to skipped behind a failed dependency). */
+  throttled: boolean;
+  retryAfterMs: number;
+}
+
 /** Send one chunk (≤20) and map Graph's per-sub-request outcomes back onto the inputs. */
 async function runBatchChunk(
   accessToken: string,
   chunk: readonly BatchRequestItem[],
-  lane: RequestLane | undefined
-): Promise<{ results: BatchResultItem[]; retryable: BatchRequestItem[]; retryAfterMs: number }> {
+  lane: RequestLane | undefined,
+  sequential: boolean
+): Promise<ChunkOutcome> {
   const result = await graphRequest(accessToken, '/$batch', {
     method: 'POST',
     lane,
+    // The $batch POST itself is safe to re-send after a throttle only when
+    // none of its sub-requests could have taken effect twice — a /move
+    // answers with NEW ids, so a repeated move double-acts on the mailbox.
+    retry: chunk.every((item) => IDEMPOTENT_METHODS.has(item.method)),
     body: JSON.stringify({
-      requests: chunk.map((item) => ({
+      requests: chunk.map((item, index) => ({
         id: item.id,
         method: item.method,
         url: item.url,
+        ...(sequential && index > 0 ? { dependsOn: [chunk[index - 1]!.id] } : {}),
         ...(item.body !== undefined
           ? { headers: { 'Content-Type': 'application/json' }, body: item.body }
           : {}),
@@ -95,6 +123,7 @@ async function runBatchChunk(
     return {
       results: chunk.map((item) => ({ id: item.id, ok: false, body: null, error: message })),
       retryable: [],
+      throttled: false,
       retryAfterMs: 0,
     };
   }
@@ -103,6 +132,7 @@ async function runBatchChunk(
   const responses = Array.isArray(responsesRaw) ? responsesRaw : [];
   const results: BatchResultItem[] = [];
   const retryable: BatchRequestItem[] = [];
+  let throttled = false;
   let retryAfterMs = 0;
 
   for (const item of chunk) {
@@ -112,10 +142,18 @@ async function runBatchChunk(
       // Throttled, not refused: worth another round rather than reporting a
       // failure the caller would only re-attempt by hand anyway.
       retryable.push(item);
+      throttled = true;
       const retryAfter = Number(str(rec(entry.headers)['Retry-After']));
       if (Number.isFinite(retryAfter) && retryAfter > 0) {
         retryAfterMs = Math.max(retryAfterMs, Math.min(retryAfter * 1000, BATCH_MAX_RETRY_MS));
       }
+      continue;
+    }
+    if (status === 424 && sequential) {
+      // Failed Dependency: Graph skipped this one because the sub-request
+      // it was chained behind failed. Nothing is wrong with THIS item, so
+      // it goes into the next round (re-chained behind survivors only).
+      retryable.push(item);
       continue;
     }
     const ok = status >= 200 && status < 300;
@@ -127,7 +165,7 @@ async function runBatchChunk(
     });
   }
 
-  return { results, retryable, retryAfterMs };
+  return { results, retryable, throttled, retryAfterMs };
 }
 
 export async function graphBatch(
@@ -140,29 +178,33 @@ export async function graphBatch(
     chunks.push(requests.slice(i, i + BATCH_CHUNK_SIZE));
   }
 
+  const sequential = options.sequential ?? (options.lane ?? 'background') === 'background';
   const results: BatchResultItem[] = [];
   for (const chunk of chunks) {
     const settled: BatchResultItem[] = [];
     let pending: readonly BatchRequestItem[] = chunk;
     for (let round = 0; round <= BATCH_RETRY_ROUNDS && pending.length > 0; round += 1) {
-      const outcome = await runBatchChunk(accessToken, pending, options.lane);
+      const outcome = await runBatchChunk(accessToken, pending, options.lane, sequential);
       settled.push(...outcome.results);
       pending = outcome.retryable;
       if (pending.length === 0) break;
       if (round === BATCH_RETRY_ROUNDS) {
-        // Out of rounds — report the still-throttled items as failures
+        // Out of rounds — report the still-unsettled items as failures
         // rather than silently dropping them from the summary.
         settled.push(
           ...pending.map((item) => ({
             id: item.id,
             ok: false,
             body: null,
-            error: 'Graph kept rate limiting this message (429); try it again later.',
+            error: outcome.throttled
+              ? 'Graph kept rate limiting this message (429); try it again later.'
+              : 'Graph did not process this message after repeated attempts; try it again later.',
           }))
         );
         break;
       }
-      await sleep(outcome.retryAfterMs || BATCH_DEFAULT_RETRY_MS);
+      // A throttle asks for a pause; a skipped dependency does not.
+      if (outcome.throttled) await sleep(outcome.retryAfterMs || BATCH_DEFAULT_RETRY_MS);
     }
     results.push(...settled);
     if (options.onChunk) await options.onChunk(settled);

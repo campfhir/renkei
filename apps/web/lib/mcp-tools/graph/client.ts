@@ -13,18 +13,19 @@
  * by which point the access token has expired.
  */
 
-import { GRAPH_BASE_URL } from '@renkei/connector-microsoft';
+import {
+  GRAPH_BASE_URL,
+  GateTimeoutError,
+  graphFetch,
+  headersForLog,
+  retryAfterSeconds,
+} from '@renkei/connector-microsoft';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getGrant, refreshGrantTokens, MICROSOFT, MicrosoftAdapter } from '@renkei/provider-grants';
 import { getDatabase } from '@renkei/db';
 import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { logger, secure } from '@/lib/logger';
-import {
-  REQUEST_TIMEOUT_MS,
-  UPLOAD_TIMEOUT_MS,
-  isTimeoutError,
-  timeoutSignal,
-} from '../fetch-guard';
+import { REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, isTimeoutError } from '../fetch-guard';
 /**
  * All these calls need of their caller.
  *
@@ -60,7 +61,8 @@ export interface GraphAccess {
 export type GraphResult =
   { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
 
-export function describeStatus(status: number): string {
+export function describeStatus(status: number, retryAfter: number | null = null): string {
+  const wait = retryAfter !== null ? ` Microsoft asks for a ${retryAfter}s pause first.` : '';
   if (status === 403) {
     return (
       'Graph refused (403) — the grant likely lacks the needed scope, or the Entra app is ' +
@@ -69,9 +71,19 @@ export function describeStatus(status: number): string {
   }
   if (status === 404) return 'Not found (404) — it may have been moved, renamed or deleted.';
   if (status === 423) return 'The file is checked out or locked by someone else (423).';
-  if (status === 429) return 'Graph is rate limiting (429); try again shortly.';
+  if (status === 429) return `Graph is rate limiting (429); try again shortly.${wait}`;
+  if (status === 503) return `Graph is temporarily unavailable (503); try again shortly.${wait}`;
   if (status === 507) return 'The drive is out of storage (507).';
   return `Microsoft Graph answered ${status}`;
+}
+
+/** The sentence for a request that never got an answer. */
+function describeFetchFailure(error: unknown, timeoutMs: number): string {
+  if (isTimeoutError(error)) return `graph.microsoft.com timed out after ${timeoutMs}ms`;
+  if (error instanceof GateTimeoutError) {
+    return 'The mailbox is busy with other Renkei requests; try again in a moment.';
+  }
+  return 'Could not reach graph.microsoft.com';
 }
 
 function truncateForLog(text: string): string {
@@ -157,7 +169,7 @@ async function graphCall(
     : `${GRAPH_BASE_URL}${pathAndQuery}`;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await graphFetch(accessToken, url, {
       method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -165,23 +177,19 @@ async function graphCall(
         ...extraHeaders,
       },
       ...(json === undefined ? {} : { body: JSON.stringify(json) }),
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'graph/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
-      timedOut,
+      timedOut: isTimeoutError(error),
+      mailboxBusy: error instanceof GateTimeoutError,
     });
-    return {
-      ok: false,
-      error: timedOut
-        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'Could not reach graph.microsoft.com',
-    };
+    return { ok: false, error: describeFetchFailure(error, REQUEST_TIMEOUT_MS) };
   }
 
   const responseBody = await response.text().catch(() => '');
@@ -191,10 +199,12 @@ async function graphCall(
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
+      method,
       status: response.status,
+      responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status) };
+    return { ok: false, error: describeStatus(response.status, retryAfterSeconds(response.headers)) };
   }
 
   // 202 (accepted, e.g. copy) and 204 (deleted) carry no body.
@@ -264,19 +274,15 @@ export async function graphPutContent(
 
   let response: Response;
   try {
-    response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+    response = await graphFetch(accessToken, pathAndQuery, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': contentType },
       body,
-      signal: timeoutSignal(undefined, UPLOAD_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: UPLOAD_TIMEOUT_MS,
     });
   } catch (error) {
-    return {
-      ok: false,
-      error: isTimeoutError(error)
-        ? `graph.microsoft.com timed out after ${UPLOAD_TIMEOUT_MS}ms`
-        : 'Could not reach graph.microsoft.com',
-    };
+    return { ok: false, error: describeFetchFailure(error, UPLOAD_TIMEOUT_MS) };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
@@ -286,9 +292,10 @@ export async function graphPutContent(
       subject: context.subject,
       path: pathAndQuery,
       status: response.status,
+      responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status) };
+    return { ok: false, error: describeStatus(response.status, retryAfterSeconds(response.headers)) };
   }
   try {
     const parsed: unknown = JSON.parse(responseBody);
@@ -318,18 +325,14 @@ export async function graphContentDownloadUrl(
   const path = `/drives/${driveId}/items/${itemId}/content`;
   let response: Response;
   try {
-    response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+    response = await graphFetch(accessToken, path, {
       headers: { Authorization: `Bearer ${accessToken}` },
       redirect: 'manual',
-      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    return {
-      ok: false,
-      error: isTimeoutError(error)
-        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'Could not reach graph.microsoft.com',
-    };
+    return { ok: false, error: describeFetchFailure(error, REQUEST_TIMEOUT_MS) };
   }
   const location = response.headers.get('location');
   if (response.status >= 300 && response.status < 400 && location) {
@@ -341,6 +344,7 @@ export async function graphContentDownloadUrl(
     subject: context.subject,
     path,
     status: response.status,
+    responseHeaders: headersForLog(response.headers),
   });
   return {
     ok: false,

@@ -36,7 +36,19 @@
 /** The connector key used in connector_configs, capability descriptors, and event rows. */
 export const MICROSOFT_CONNECTOR = 'microsoft';
 
-export { GRAPH_BASE_URL, graphRequest } from './client';
+export { GRAPH_BASE_URL, graphRequest, type GraphRequestOptions } from './client';
+export {
+  graphFetch,
+  headersForLog,
+  isMailboxUrl,
+  isThrottled,
+  retryAfterMs,
+  retryAfterSeconds,
+  GateTimeoutError,
+  MAILBOX_CONCURRENCY,
+  REQUEST_TIMEOUT_MS as GRAPH_REQUEST_TIMEOUT_MS,
+  type GraphFetchOptions,
+} from './fetch';
 export {
   BATCH_CHUNK_SIZE,
   graphBatch,
