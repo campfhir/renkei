@@ -51,6 +51,7 @@ import { useCodeLineNumbers } from '@/components/code-display-context';
 import { CODE_GRAMMARS } from '@/lib/chat/code-grammars';
 import { CODE_ALIASES, languageFromClassName, languageLabel } from '@/lib/chat/code-languages';
 import { copySelectionWithMarkdownTables } from './copy-tables-as-markdown';
+import { openInSystemBrowser } from '@/lib/open-external';
 
 /** The slice of a hast node this file walks; hast's own types aren't a direct dependency. */
 type HastNode = {
@@ -279,7 +280,14 @@ export default function Markdown({
         skipHtml
         components={{
           a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer nofollow">
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              onClick={(e) => {
+                if (href && openInSystemBrowser(href)) e.preventDefault();
+              }}
+            >
               {children}
             </a>
           ),

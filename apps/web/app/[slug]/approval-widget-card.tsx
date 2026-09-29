@@ -31,6 +31,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { openInSystemBrowser } from '@/lib/open-external';
 
 /** Which decision a `tools/call` means, from the preview's own outcome
  * metadata — not from the tool name, which is free to be anything (or, for
@@ -187,7 +188,7 @@ export default function ApprovalWidgetCard({
           if (id === undefined) return;
           const url = typeof params?.url === 'string' ? params.url : '';
           post({ id, result: {} });
-          if (url) window.open(url, '_blank', 'noopener');
+          if (url && !openInSystemBrowser(url)) window.open(url, '_blank', 'noopener');
           return;
         }
         case 'ui/update-model-context': {

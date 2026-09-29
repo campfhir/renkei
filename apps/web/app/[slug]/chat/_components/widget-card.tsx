@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatBlock, WidgetDecisionState } from '@/lib/chat/views';
 import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
+import { openInSystemBrowser } from '@/lib/open-external';
 
 type ToolResultBlock = Extract<ChatBlock, { type: 'tool_result' }>;
 
@@ -211,7 +212,7 @@ export default function WidgetCard({
           if (id === undefined) return;
           const url = typeof params?.url === 'string' ? params.url : '';
           post({ id, result: {} });
-          if (url) window.open(url, '_blank', 'noopener');
+          if (url && !openInSystemBrowser(url)) window.open(url, '_blank', 'noopener');
           return;
         }
         case 'ui/update-model-context': {
