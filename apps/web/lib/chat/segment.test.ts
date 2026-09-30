@@ -139,4 +139,40 @@ describe('segment', () => {
     const out = segment(messages, new Map());
     expect(out.filter((part) => part.kind === 'subagent')).toHaveLength(2);
   });
+
+  describe('mockups', () => {
+    const input = { title: 'Login', format: 'html', source: '<p>hi</p>' };
+
+    it('lifts a finished chat_show_mockup call out of the fold as a card', () => {
+      const messages = [assistantMessage('m1', [toolUse('k1', 'chat_show_mockup', input)])];
+      const out = segment(messages, new Map([['k1', toolResult('k1', 'Showed it.')]]));
+      const cards = out.filter((part) => part.kind === 'mockup');
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toMatchObject({ request: { title: 'Login', format: 'html', width: 1024 } });
+      expect(out.filter((part) => part.kind === 'work')).toHaveLength(0);
+    });
+
+    it('leaves a call still pending in the fold', () => {
+      const messages = [assistantMessage('m1', [toolUse('k1', 'chat_show_mockup', input)])];
+      const out = segment(messages, new Map());
+      expect(out.filter((part) => part.kind === 'mockup')).toHaveLength(0);
+      expect(out.filter((part) => part.kind === 'work')).toHaveLength(1);
+    });
+
+    it('folds a call the tool refused, so no card claims a broken mockup', () => {
+      const messages = [assistantMessage('m1', [toolUse('k1', 'chat_show_mockup', input)])];
+      const results = new Map([['k1', { ...toolResult('k1', 'did not compile'), isError: true }]]);
+      const out = segment(messages, results);
+      expect(out.filter((part) => part.kind === 'mockup')).toHaveLength(0);
+    });
+
+    it('updates the one card when the same call is seen twice', () => {
+      const messages = [
+        assistantMessage('m1', [toolUse('k1', 'chat_show_mockup', input)]),
+        assistantMessage('m2', [toolUse('k1', 'chat_show_mockup', input)]),
+      ];
+      const out = segment(messages, new Map([['k1', toolResult('k1', 'ok')]]));
+      expect(out.filter((part) => part.kind === 'mockup')).toHaveLength(1);
+    });
+  });
 });

@@ -8,6 +8,7 @@ import type { ChatBlock, ChatMessageView } from './views';
 import { milestoneKindOf } from '@/lib/code/milestones';
 import { TASK_COMPLETE_TOOL } from './auto-mode';
 import { isSubagentTool } from './subagent-tools';
+import { MOCKUP_TOOL, parseMockupRequest, type MockupRequest } from '@/lib/mockups/request';
 
 export type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
 
@@ -32,6 +33,13 @@ export type Segment =
    * like any other, and takes this card's place the moment it resolves.
    */
   | { kind: 'widget'; step: Extract<WorkStep, { kind: 'call' }> }
+  /**
+   * A mockup the model showed (chat_show_mockup): drawn inline as a card
+   * the person can open full screen, never folded. Only a call that
+   * succeeded and whose input still parses gets one — a call still
+   * pending, or one the tool refused, sits in `work` like any other.
+   */
+  | { kind: 'mockup'; step: Extract<WorkStep, { kind: 'call' }>; request: MockupRequest }
   /** Auto mode's runner-written "carry on", between two of the model's replies. */
   | { kind: 'nudge'; text: string }
   /** What the person did to the checkout from the code pane (lib/code/notes.ts). */
@@ -82,7 +90,10 @@ export function segment(
   // stable start to finish, so a second sighting updates the FIRST card in
   // place instead of opening a second one for what is, underneath, the one
   // call the person is already watching.
-  const cards = new Map<string, Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' }>>();
+  const cards = new Map<
+    string,
+    Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' | 'mockup' }>
+  >();
   for (const message of messages) {
     if (message.role !== 'assistant') {
       if (message.kind === 'nudge' || message.kind === 'note') {
@@ -122,6 +133,19 @@ export function segment(
             const card: Extract<Segment, { kind: 'milestone' }> = { kind: 'milestone', step };
             out.push(card);
             cards.set(block.id, card);
+          } else if (block.name === MOCKUP_TOOL && step.result && !step.result.isError) {
+            const parsed = parseMockupRequest(block.input);
+            if (parsed.ok) {
+              const card: Extract<Segment, { kind: 'mockup' }> = {
+                kind: 'mockup',
+                step,
+                request: parsed.request,
+              };
+              out.push(card);
+              cards.set(block.id, card);
+            } else {
+              work(message).steps.push(step);
+            }
           } else if (step.result?.uiResourceUri) {
             const card: Extract<Segment, { kind: 'widget' }> = { kind: 'widget', step };
             out.push(card);

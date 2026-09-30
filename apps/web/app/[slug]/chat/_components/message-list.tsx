@@ -48,6 +48,7 @@ import AttachmentChip from './attachment-chip';
 import CodePane from './code-pane';
 import ListenButton from './listen-button';
 import Markdown from './markdown';
+import MockupCard from './mockup-card';
 import WidgetCard from './widget-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
@@ -578,6 +579,16 @@ function Reply({
               />
             );
           }
+          case 'mockup':
+            return (
+              <MockupCard
+                key={part.step.block.id}
+                tenantId={tenantId}
+                chatId={chatId}
+                toolUseId={part.step.block.id}
+                request={part.request}
+              />
+            );
           case 'widget': {
             // segment() only ever routes a call here once its result has
             // arrived with a uiResourceUri — never pending, so there is

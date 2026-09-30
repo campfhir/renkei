@@ -3,7 +3,8 @@
  * and staging its attachments, writing a file for the person to keep,
  * remembering things for its project or (outside a project) for the
  * person across every chat they own, recalling their other chats,
- * settling its preview cards on the person's word (widget-state-tools.ts),
+ * showing a mockup inline (mockup-tools.ts), settling its preview cards
+ * on the person's word (widget-state-tools.ts),
  * and compacting its own history (chat_compact, offered unconditionally —
  * see below). Each of the others is registered only when it can do something — no project, no
  * project memory tools; a chat in a project, no personal memory or recall
@@ -23,6 +24,7 @@ import { compactionTools } from './compaction-tools';
 import { chartTools } from './chart-tools';
 import { fileTools } from './file-tools';
 import { memoryTools } from './memory-tools';
+import { mockupTools } from './mockup-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
 import { widgetStateTools } from './widget-state-tools';
@@ -38,6 +40,10 @@ export async function chatLocalTools(
   // organization system, so every chat gets it — no project or
   // read-only gate, unlike the tools below.
   const tools: LocalTool[] = [...compactionTools()];
+  // A mockup is drawn from the call's own input and needs no store, no
+  // worker and no project — every chat, a code project's included, can
+  // show one (mockup-tools.ts).
+  tools.push(...mockupTools());
   const hasFiles = await db
     .selectFrom('chat_attachments')
     .select('id')
