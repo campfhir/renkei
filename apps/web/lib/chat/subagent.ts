@@ -63,11 +63,35 @@ const RETRYABLE_LLM_ERRORS = new Set<LlmErrorKind>([
   'overloaded',
   'provider_error',
 ]);
-const MODEL_CALL_MAX_ATTEMPTS = 3;
+const MODEL_CALL_MAX_ATTEMPTS = 5;
+/** Backoff doubles from here; a provider saying "slow down" needs longer than a dropped connection. */
 const MODEL_CALL_RETRY_DELAY_MS = 2_000;
+const MODEL_CALL_BUSY_RETRY_DELAY_MS = 5_000;
+const MODEL_CALL_RETRY_DELAY_CAP_MS = 30_000;
+const ERROR_DETAIL_MAX_CHARS = 300;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** The wait before retry number `attempt` (1-based): exponential, capped, with a little jitter. */
+export function retryDelayMs(kind: LlmErrorKind, attempt: number): number {
+  const base =
+    kind === 'rate_limit' || kind === 'overloaded'
+      ? MODEL_CALL_BUSY_RETRY_DELAY_MS
+      : MODEL_CALL_RETRY_DELAY_MS;
+  const delay = Math.min(MODEL_CALL_RETRY_DELAY_CAP_MS, base * 2 ** (attempt - 1));
+  return Math.round(delay * (0.9 + Math.random() * 0.2));
+}
+
+/** Waits `ms`, or less when the run is stopped meanwhile. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  });
 }
 
 export function str(value: unknown): string {
@@ -325,6 +349,7 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     // the credentials, is worth another attempt.
     const callStartedAt = Date.now();
     let result = await callModel();
+    let attempts = 1;
     for (
       let attempt = 1;
       !result.ok &&
@@ -334,16 +359,19 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
       !controller.signal.aborted;
       attempt += 1
     ) {
-      await sleep(MODEL_CALL_RETRY_DELAY_MS * attempt);
+      attempts = attempt + 1;
+      await sleep(retryDelayMs(result.err.type, attempt), controller.signal);
+      if (controller.signal.aborted) break;
       result = await callModel();
     }
     // Retries included: what the orchestrator waited for this step.
     const callMs = Date.now() - callStartedAt;
     if (!result.ok) {
+      const reason = failureReason(result.err, attempts);
       const failure =
-        `The sub-agent's model call failed: ${friendlyLlmError(result.err.type)}` +
+        `The sub-agent's model call failed: ${reason}` +
         (lastText ? `\n\nIts last message:\n${lastText}` : '');
-      return close('failed', failure, friendlyLlmError(result.err.type), step - 1);
+      return close('failed', failure, reason, step - 1);
     }
     const reply = result.val;
     if (context.recordUsage) await context.recordUsage(reply.usage, model, callMs);
@@ -379,7 +407,15 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     const results: LlmContentBlock[] = [];
     for (const use of uses) {
       const toolStartedAt = Date.now();
-      const outcome = await tools.run(use.name, use.input, use.id);
+      // A tool that throws is that call's failure, not the run's: the
+      // model reads the error and carries on, and the run still closes
+      // with its transcript rather than being left marked running.
+      const outcome = await tools.run(use.name, use.input, use.id).catch(
+        (error: unknown): McpToolResult =>
+          errorResult(
+            `The tool ${use.name} failed: ${error instanceof Error ? error.message : String(error)}`
+          )
+      );
       const outText = textOfResult(outcome);
       results.push({
         type: 'tool_result',
@@ -399,6 +435,16 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     report(`stopped after ${run.maxSteps} steps (maxSteps)`, lastText, calls, run.maxSteps),
     `stopped after ${run.maxSteps} steps`,
     run.maxSteps
+  );
+}
+
+/** Why a model call gave up: the kind in words, the attempts made, and the provider's own message. */
+function failureReason(error: { type: LlmErrorKind; message?: string }, attempts: number): string {
+  const tries = attempts > 1 ? ` (after ${attempts} attempts)` : '';
+  const detail = error.message?.trim();
+  return (
+    `${friendlyLlmError(error.type)}${tries}` +
+    (detail ? ` Provider said: ${clipOutput(detail, ERROR_DETAIL_MAX_CHARS).text}` : '')
   );
 }
 
