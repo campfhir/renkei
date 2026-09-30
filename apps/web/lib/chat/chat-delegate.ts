@@ -45,6 +45,7 @@ import {
   type ResolveSubagentLlm,
   type SubagentModelChoice,
 } from './subagent';
+import { MOCKUP_TOOL } from '@/lib/mockups/request';
 import { CHAT_DELEGATE_TOOL } from './subagent-tools';
 import { FIND_TOOLS_NAME, findToolsTool } from './tool-discovery';
 import type { DiscoverableTool } from './tool-surface';
@@ -115,7 +116,11 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
   const eager = surface.tools.filter((tool) => readsOnly(tool.name, surface));
   const discoverable = surface.discoverable.filter((entry) => readsOnly(entry.def.name, surface));
   const local = options.localTools.filter(
-    (tool) => tool.readOnly === true && tool.def.name !== CHAT_DELEGATE_TOOL
+    (tool) =>
+      tool.readOnly === true &&
+      tool.def.name !== CHAT_DELEGATE_TOOL &&
+      // A sub-agent has no thread to draw the card in; its mockup would be seen by no one.
+      tool.def.name !== MOCKUP_TOOL
   );
   const discovery = surface.mcp ? findToolsTool(discoverable) : null;
   if (eager.length === 0 && discovery === null && local.length === 0) return null;

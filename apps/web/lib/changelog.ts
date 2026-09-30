@@ -46,6 +46,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'added',
+        title: 'Chats can show mockups',
+        detail:
+          'Ask how a screen, form or layout would look and the reply shows it — a live preview right in the chat, in a project’s code chat or any other. Click it to open it full screen, zoom in, pan, and see it at phone, tablet or desktop width.',
+      },
+      {
         kind: 'fixed',
         title: 'Outlook calls wait their turn instead of failing when the mailbox is busy',
         detail:

@@ -252,6 +252,10 @@ export const chatClient = {
       `${base(tenantId)}/people`
     ),
 
+  /** The HTML document of one chat_show_mockup call (mockup-card.tsx's iframe src). */
+  mockupUrl: (tenantId: string, chatId: string, toolUseId: string) =>
+    `${base(tenantId)}/chats/${chatId}/mockups/${encodeURIComponent(toolUseId)}`,
+
   /** Where a widget card's `ui://` resource HTML is served (widget-card.tsx's iframe src). */
   widgetResourceUrl: (tenantId: string, resourceUri: string) =>
     `${base(tenantId)}/widgets?${new URLSearchParams({ uri: resourceUri }).toString()}`,

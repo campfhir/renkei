@@ -40,6 +40,12 @@ const LABELS: Record<string, CodeToolLabel> = {
   code_service_logs: { label: 'Service logs' },
   code_delegate: { label: 'Sub-agent' },
   chat_delegate: { label: 'Sub-agent' },
+  chat_show_mockup: {
+    label: 'Show mockup',
+    pending: 'Drawing a mockup',
+    done: 'Showed a mockup',
+    failed: 'The mockup did not build',
+  },
   bitbucket_create_pull_request: { label: 'Open pull request' },
   bitbucket_create_pull_request_preview: { label: 'Open pull request' },
   bitbucket_create_pull_request_confirm: { label: 'Open pull request' },

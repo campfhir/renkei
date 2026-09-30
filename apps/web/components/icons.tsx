@@ -141,6 +141,16 @@ export const ICONS = {
     'M15 9.5V6a3 3 0 0 0-5.5-1.6M9 9v3a3 3 0 0 0 5.1 2.1M6 11a6 6 0 0 0 9.4 5M18 11a6 6 0 0 1-.6 2.6M12 17v4M9 21h6M4 4l16 16',
   /** A sound wave — the voice speaking. */
   waveform: 'M5 10.5v3M8.5 7.5v9M12 5v14M15.5 8v8M19 10v4',
+  /** Four corners pointing out — open full screen. */
+  expand: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+  /** A magnifier with a plus — zoom in. */
+  zoomIn: 'M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM15.5 15.5 21 21M10.5 8v5M8 10.5h5',
+  /** A magnifier with a minus — zoom out. */
+  zoomOut: 'M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM15.5 15.5 21 21M8 10.5h5',
+  /** An open hand — drag the view around. */
+  hand: 'M8 13V6.5a1.5 1.5 0 0 1 3 0V11M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-.5a5 5 0 0 1-4-2L3.6 15a1.5 1.5 0 0 1 2.3-1.9L8 15',
+  /** A browser window — a mockup of a screen. */
+  mockup: 'M3 5h18v14H3zM3 9h18M6 7h.01M9 7h.01',
 };
 
 export function Icon({
