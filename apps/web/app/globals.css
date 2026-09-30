@@ -935,6 +935,11 @@ input[type='number']::-webkit-inner-spin-button {
   .chat-markdown td:not([data-label])::before {
     content: '';
   }
+  /* The value: one grid item holding all of the cell's inline content. */
+  .chat-markdown .chat-cell {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 }
 .chat-markdown hr {
   border-color: var(--color-gray-200);
