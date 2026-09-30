@@ -187,6 +187,14 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await shot(page, testInfo, '01-project-default');
 
   // ── A member asks for more: the form needs a reason; a second ask waits ──
+  // The ask is a link, not a form on the page: nothing to fill until it is opened.
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByLabel('Size wanted (GB)')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Ask for more space' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Ask for more space' });
+  await expect(dialog).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toHaveCount(0);
   await page.getByRole('button', { name: 'Ask for more space' }).click();
   await expect(page.getByLabel('Size wanted (GB)')).toHaveValue('16');
   const send = page.getByRole('button', { name: 'Send request' });
@@ -195,6 +203,7 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await page.getByLabel('Why you need it').fill('Monorepo with vendored toolchains');
   await shot(page, testInfo, '03-request-form');
   await send.click();
+  await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId('size-request-pending')).toHaveText(
     'Your request for 24 GB is waiting for an admin.'
   );
