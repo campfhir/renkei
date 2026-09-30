@@ -38,7 +38,10 @@ export interface EditableSettings {
   knowledgeKeywordEnrichment: boolean;
   knowledgeKeywordMinChars: number;
   chatReplyPresenceWindowSeconds: number;
+  sandboxWorkspaceMaxBytes: number;
 }
+
+const GB = 1_073_741_824;
 
 const inputClass =
   'w-28 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm tabular-nums dark:border-gray-700 dark:bg-gray-900';
@@ -386,6 +389,27 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="Largest attachment a tool will upload or download."
         >
           {numberInput('maxAttachmentBytes', '1MB–100MB')}
+        </Row>
+      </Section>
+
+      <Section title="Code sandbox">
+        <Row
+          label="Checkout size limit (GB)"
+          hint="How large one code project's checkout on the sandbox may grow before commands and writes in it are refused. People can ask for more on a project's page; you approve or deny those requests below, and an approval raises that project only."
+        >
+          <span className="flex items-center gap-2">
+            <input
+              type="number"
+              aria-label="sandboxWorkspaceMaxGb"
+              min={1}
+              max={64}
+              step={1}
+              value={Math.round(values.sandboxWorkspaceMaxBytes / GB)}
+              onChange={(event) => set('sandboxWorkspaceMaxBytes', Number(event.target.value) * GB)}
+              className={inputClass}
+            />
+            <span className="w-20 text-xs text-gray-400 dark:text-gray-600">1GB–64GB</span>
+          </span>
         </Row>
       </Section>
 

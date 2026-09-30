@@ -26,8 +26,18 @@ export const WORKSPACE_MAX_PER_SUBJECT = 3;
 /** A checkout's lifetime since its last use; the worker's sweep removes it after. */
 export const WORKSPACE_TTL_MS = 7 * 24 * 60 * 60_000; // 7 days
 
-/** What one checkout may grow to before further work is refused. */
-export const WORKSPACE_MAX_BYTES = 2 * 1_073_741_824; // 2GB
+/**
+ * What one checkout may grow to before further work is refused, when the
+ * org has not set its own (`sandboxWorkspaceMaxBytes` in @renkei/settings).
+ */
+export const WORKSPACE_DEFAULT_MAX_BYTES = 8 * 1_073_741_824; // 8GB
+
+/** The range an org admin may set the limit within, and a person may ask for. */
+export const WORKSPACE_LIMIT_MIN_BYTES = 1 * 1_073_741_824; // 1GB
+export const WORKSPACE_LIMIT_MAX_BYTES = 64 * 1_073_741_824; // 64GB
+
+/** Longest reason a person may give when asking for a larger checkout. */
+export const SIZE_REQUEST_REASON_MAX_CHARS = 1_000;
 
 /** Commits fetched by default — a shallow clone is what most tasks need; `depth: 0` asks for everything. */
 export const CLONE_DEFAULT_DEPTH = 100;

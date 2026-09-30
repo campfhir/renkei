@@ -5,6 +5,8 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
+import { SizeRequests } from './size-requests';
+import { listSizeRequests } from '@/lib/code/size-requests';
 import { SettingsForm, type EditableSettings } from './settings-form';
 import IdentityForm from './identity-form';
 import { observedIdpGroups } from '@/lib/identity';
@@ -41,7 +43,7 @@ export default async function SettingsPage({
     );
   }
 
-  const [settingsResult, oidc, observedGroups] = await Promise.all([
+  const [settingsResult, oidc, observedGroups, sizeRequests] = await Promise.all([
     getOrgSettings(tenantRef.id),
     dbResult.val
       .selectFrom('tenant_oidc')
@@ -49,6 +51,7 @@ export default async function SettingsPage({
       .where('tenant_id', '=', tenantRef.id)
       .executeTakeFirst(),
     observedIdpGroups(dbResult.val, tenantRef.id, '', 10_000),
+    listSizeRequests(dbResult.val, tenantRef.id),
   ]);
   if (!settingsResult.ok) {
     return (
@@ -86,6 +89,7 @@ export default async function SettingsPage({
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
+    sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
   };
 
   return (
@@ -103,6 +107,8 @@ export default async function SettingsPage({
       </p>
 
       <SettingsForm slug={slug} initial={initial} />
+
+      <SizeRequests slug={slug} requests={sizeRequests} />
 
       <section className="mt-6 rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-800 dark:bg-gray-950">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">

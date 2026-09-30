@@ -247,6 +247,15 @@ export interface OrgSettings {
    * value that needs careful tuning.
    */
   chatReplyPresenceWindowSeconds: number;
+  /**
+   * What one code-workspace checkout on the sandbox may grow to before
+   * further work in it is refused, in bytes. Enforced by the sandbox
+   * worker on each write, so a change applies to existing checkouts
+   * within the cache window. A person may ask for more than this for one
+   * project; an approved request (sandbox_size_requests) raises the limit
+   * for that project only, never for the org.
+   */
+  sandboxWorkspaceMaxBytes: number;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -286,6 +295,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   coachMarksEnabled: true,
   knowledgeKeywordMinChars: 500,
   chatReplyPresenceWindowSeconds: 30,
+  sandboxWorkspaceMaxBytes: 8 * 1_073_741_824, // 8GB
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -425,6 +435,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     chatReplyPresenceWindowSeconds: Number(
       coerce(stored.get('chat_reply_presence_window_seconds'), d.chatReplyPresenceWindowSeconds)
     ),
+    sandboxWorkspaceMaxBytes: Number(
+      coerce(stored.get('sandbox_workspace_max_bytes'), d.sandboxWorkspaceMaxBytes)
+    ),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -475,6 +488,7 @@ export async function setOrgSettings(
     ['coach_marks_enabled', updates.coachMarksEnabled],
     ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
     ['chat_reply_presence_window_seconds', updates.chatReplyPresenceWindowSeconds],
+    ['sandbox_workspace_max_bytes', updates.sandboxWorkspaceMaxBytes],
   ];
 
   for (const [key, value] of pairs) {
@@ -503,6 +517,38 @@ export async function setOrgSettings(
 
   orgCache.delete(tenantId);
   return ok();
+}
+
+/**
+ * The most a (tenant, subject)'s code-workspace checkout may grow to: the
+ * org's limit, or the subject's largest approved size request when that is
+ * larger. An approval only ever raises that one workspace's limit — lowering the
+ * org limit below an earlier approval does not take the approval away.
+ * Falls back to the org limit if the request table cannot be read, so a
+ * database blip never turns into a refusal to write.
+ */
+export async function getWorkspaceLimitBytes(
+  tenantId: string,
+  subject: string
+): Promise<Result<number, 'DB_ERROR'>> {
+  const org = await getOrgSettings(tenantId);
+  if (!org.ok) return org;
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return ok(org.val.sandboxWorkspaceMaxBytes);
+  const rows = await wrapAsync(
+    () =>
+      dbResult.val
+        .selectFrom('sandbox_size_requests')
+        .select('requested_bytes')
+        .where('tenant_id', '=', tenantId)
+        .where('subject', '=', subject)
+        .where('status', '=', 'approved')
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!rows.ok) return ok(org.val.sandboxWorkspaceMaxBytes);
+  const approved = rows.val.map((row) => Number(row.requested_bytes));
+  return ok(Math.max(org.val.sandboxWorkspaceMaxBytes, ...approved));
 }
 
 /**

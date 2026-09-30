@@ -46,6 +46,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: null,
     entries: [
       {
+        kind: 'changed',
+        title: 'Larger code checkouts, and a way to ask for more',
+        detail:
+          'A code project’s checkout can now grow to 8 GB (it was 2 GB), and an admin can change that limit under Settings. If a project needs more, ask from its page with a reason; an admin approves or denies it, and an approval raises that project only.',
+      },
+      {
         kind: 'added',
         title: 'Chats can show mockups',
         detail:

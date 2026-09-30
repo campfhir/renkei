@@ -41,6 +41,7 @@ import ServicesSummaryCard from './services-summary';
 import PullsSummary from './pulls-summary';
 import CommitsSummary from './commits-summary';
 import Pill from './pill';
+import SizeRequest from './size-request';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -136,6 +137,14 @@ export function CodeRepoStrip({
                 ? 'Cloning on the sandbox worker; this page follows it.'
                 : `${bytes(workspace.sizeBytes)} on the sandbox · expires ${when(workspace.expiresAt)} unless used · chats in this project work here, and clone again if it has expired.`}
       </p>
+      {code.enabled && workspace?.status === 'ready' ? (
+        <SizeRequest
+          tenantId={tenantId}
+          projectId={projectId}
+          limitBytes={code.sizeLimitBytes}
+          request={code.sizeRequest}
+        />
+      ) : null}
     </section>
   );
 }

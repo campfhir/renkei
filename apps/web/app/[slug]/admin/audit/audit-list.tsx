@@ -52,6 +52,10 @@ function describe(event: AuditEventRow): string {
       return `cloned the repository of code project “${event.targetLabel ?? 'unnamed'}”`;
     case 'code.project.deleted':
       return `deleted code project “${event.targetLabel ?? 'unnamed'}”`;
+    case 'code.size_requested':
+      return `asked for a larger checkout on code project “${event.targetLabel ?? 'unnamed'}”`;
+    case 'code.size_request_decided':
+      return `${details.decision === 'approved' ? 'approved' : 'denied'} a larger checkout for code project “${event.targetLabel ?? 'unnamed'}”`;
     case 'code.env.replaced':
       return `replaced the environment of code project “${event.targetLabel ?? 'unnamed'}”`;
     case 'code.env.deleted':

@@ -454,6 +454,20 @@ export interface ChatMessages {
   usage: Json | null;
 }
 
+export interface SandboxSizeRequests {
+  created_at: Generated<Timestamp>;
+  decided_at: Timestamp | null;
+  decided_by: string | null;
+  decision_note: string | null;
+  id: Generated<string>;
+  reason: Generated<string>;
+  requested_by: string;
+  requested_bytes: Int8;
+  status: Generated<string>;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface ChatQueuedSends {
   chat_id: string;
   queue: Json;
@@ -1534,6 +1548,7 @@ export interface DB {
   resource_access_grants: ResourceAccessGrants;
   sandbox_env_secrets: SandboxEnvSecrets;
   sandbox_files: SandboxFiles;
+  sandbox_size_requests: SandboxSizeRequests;
   sandbox_secrets: SandboxSecrets;
   sandbox_services: SandboxServices;
   sandbox_workspaces: SandboxWorkspaces;
