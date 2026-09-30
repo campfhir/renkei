@@ -69,6 +69,10 @@ export interface QueuedComposerItem {
 }
 
 const MAX_ROWS = 10;
+/** Files sent to the server at once in a mass upload. */
+const UPLOAD_CONCURRENCY = 4;
+/** Files OCR'd per request; the server takes at most this many. */
+const OCR_BATCH = 12;
 
 export default function Composer({
   tenantId,
@@ -79,6 +83,7 @@ export default function Composer({
   onRemoveQueued,
   onClearQueue,
   uploads,
+  massUploadThreshold,
   onSubmit,
   onCompact,
   onStop,
@@ -101,6 +106,8 @@ export default function Composer({
   onClearQueue: () => void;
   /** Files can be attached at all — false when the org has no storage. */
   uploads: boolean;
+  /** More files than this in a chat is a mass upload: confirm first, OCR scans afterwards. */
+  massUploadThreshold: number;
   /** While running, this queues instead of sending — the caller decides which. */
   onSubmit: (input: ComposerSubmit) => Promise<boolean>;
   /** Forces a compaction pass — /compact, or picked from the prompt picker. */
@@ -128,6 +135,10 @@ export default function Composer({
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [uploading, setUploading] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /** A mass upload waiting on the person's OK. */
+  const [pendingBatch, setPendingBatch] = useState<File[] | null>(null);
+  const [uploadTotal, setUploadTotal] = useState(0);
+  const [ocrPending, setOcrPending] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [prompts, setPrompts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
@@ -227,25 +238,76 @@ export default function Composer({
   }, []);
   useEffect(grow, [text, grow]);
 
-  const upload = useCallback(
-    async (files: FileList | File[]) => {
-      const list = [...files];
-      if (list.length === 0) return;
-      setUploadError(null);
-      setUploading((count) => count + list.length);
-      for (const file of list) {
-        const result = await chatClient.uploadAttachment(tenantId, { chatId }, file);
-        setUploading((count) => count - 1);
-        const attachment = result.data;
-        if (result.error || !attachment) {
-          setUploadError(`${file.name}: ${result.error ?? 'upload failed'}`);
-          continue;
-        }
-        setAttachments((current) => [...current, attachment]);
+  /** Files are OCR'd in the background; the send button waits on `uploading` only. */
+  const runOcr = useCallback(
+    async (ids: string[]) => {
+      let todo = ids;
+      setOcrPending((count) => count + ids.length);
+      while (todo.length > 0) {
+        const batch = todo.slice(0, OCR_BATCH);
+        todo = todo.slice(OCR_BATCH);
+        const results = await chatClient.ocrAttachments(tenantId, chatId, batch);
+        const byId = new Map(results.map((result) => [result.id, result.extractStatus]));
+        setAttachments((current) =>
+          current.map((entry) =>
+            byId.has(entry.id) ? { ...entry, extractStatus: byId.get(entry.id) ?? '' } : entry
+          )
+        );
+        setOcrPending((count) => count - batch.length);
       }
     },
     [chatId, tenantId]
   );
+
+  const startUpload = useCallback(
+    async (list: File[]) => {
+      setUploadError(null);
+      setUploading((count) => count + list.length);
+      setUploadTotal((count) => count + list.length);
+      const stored: AttachmentView[] = [];
+      let next = 0;
+      const lane = async () => {
+        while (next < list.length) {
+          const file = list[next++];
+          const result = await chatClient.uploadAttachment(tenantId, { chatId }, file);
+          setUploading((count) => count - 1);
+          const attachment = result.data;
+          if (result.error || !attachment) {
+            setUploadError(`${file.name}: ${result.error ?? 'upload failed'}`);
+            continue;
+          }
+          stored.push(attachment);
+          setAttachments((current) => [...current, attachment]);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, list.length) }, lane));
+      setUploadTotal((count) => Math.max(0, count - list.length));
+      const needsOcr = stored.filter((entry) => entry.extractStatus === 'needs_ocr');
+      if (needsOcr.length > 0) void runOcr(needsOcr.map((entry) => entry.id));
+    },
+    [chatId, tenantId, runOcr]
+  );
+
+  const upload = useCallback(
+    async (files: FileList | File[]) => {
+      const list = [...files];
+      if (list.length === 0) return;
+      // Past the threshold the person is asked first: a mass upload is slow,
+      // and its files reach the model as a list, not as inline text.
+      if (attachments.length + uploading + list.length > massUploadThreshold) {
+        setPendingBatch((current) => [...(current ?? []), ...list]);
+        return;
+      }
+      await startUpload(list);
+    },
+    [attachments.length, uploading, massUploadThreshold, startUpload]
+  );
+
+  const confirmBatch = useCallback(() => {
+    const list = pendingBatch;
+    setPendingBatch(null);
+    if (list) void startUpload(list);
+  }, [pendingBatch, startUpload]);
 
   const remove = useCallback(
     async (attachment: AttachmentView) => {
@@ -403,7 +465,40 @@ export default function Composer({
             : 'border-gray-300 dark:border-gray-700'
         }`}
       >
-        {attachments.length > 0 || uploading > 0 ? (
+        {pendingBatch ? (
+          <div
+            role="alertdialog"
+            aria-label="Large upload"
+            className="m-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            <p className="font-medium">
+              Add {pendingBatch.length} {pendingBatch.length === 1 ? 'file' : 'files'}? Large
+              uploads take a while.
+            </p>
+            <p className="mt-1">
+              More than {massUploadThreshold} files is a mass upload. Scanned PDFs and images are
+              read with OCR after they upload, and the assistant gets a list of the files and reads
+              each one as it needs to, rather than seeing them all at once.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={confirmBatch}
+                className="rounded-md bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-700"
+              >
+                Upload {pendingBatch.length} files
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingBatch(null)}
+                className="rounded-md px-2.5 py-1 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {attachments.length > 0 || uploading > 0 || ocrPending > 0 ? (
           <div className="flex flex-wrap gap-1.5 px-3 pt-2">
             {attachments.map((attachment) => (
               <AttachmentChip
@@ -415,7 +510,12 @@ export default function Composer({
             ))}
             {uploading > 0 ? (
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-800">
-                Uploading {uploading}…
+                Uploading {uploadTotal - uploading}/{uploadTotal}…
+              </span>
+            ) : null}
+            {ocrPending > 0 ? (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-800">
+                Reading scans ({ocrPending} left)…
               </span>
             ) : null}
           </div>

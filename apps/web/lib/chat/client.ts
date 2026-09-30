@@ -226,6 +226,25 @@ export const chatClient = {
     }
   },
 
+  /** OCRs unsent files that came up needs_ocr; returns each one's new status. */
+  ocrAttachments: async (
+    tenantId: string,
+    chatId: string,
+    attachmentIds: string[]
+  ): Promise<Array<{ id: string; extractStatus: string }>> => {
+    try {
+      const response = await fetch(`${base(tenantId)}/attachments/ocr`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chatId, attachmentIds }),
+      });
+      const body = await response.json().catch(() => null);
+      return response.ok && Array.isArray(body?.results) ? body.results : [];
+    } catch {
+      return [];
+    }
+  },
+
   deleteAttachment: (tenantId: string, attachmentId: string) =>
     sendJsonFull(`${base(tenantId)}/attachments/${attachmentId}`, 'DELETE'),
 
