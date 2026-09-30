@@ -66,6 +66,10 @@ export type AuditAction =
   | 'code.project.deleted'
   | 'code.env.replaced'
   | 'code.env.deleted'
+  /** A person asked for a larger checkout on a code project (details: requestedBytes). */
+  | 'code.size_requested'
+  /** An admin approved or denied that ask (details: decision, requestedBytes). */
+  | 'code.size_request_decided'
   /** A repository's Pipelines switch or variables, changed from a code project's page. */
   | 'code.pipelines.enabled'
   | 'code.pipelines.disabled'

@@ -142,8 +142,11 @@ command in flight and answers each with `interrupted: true`, which
 `code_run` renders as "INTERRUPTED … run it again" rather than as a
 failure of the command's own; a read the web app makes while the worker
 is restarting is retried for a few seconds (`@renkei/sandbox-client`),
-a command or a write never. A checkout that grows past 2 GB
-refuses further commands until something is deleted.
+a command or a write never. A checkout that grows past its limit
+refuses further commands until something is deleted. The limit is the org
+setting `sandboxWorkspaceMaxBytes` (default 8 GB, Admin → Settings); a
+project member may ask for more, and an admin's approval raises that
+project's limit only (`sandbox_size_requests`, `getWorkspaceLimitBytes`).
 
 **Paths.** A caller-supplied path is validated (relative, no `..`, no
 control characters, nothing written under `.git`) and then resolved and
@@ -284,17 +287,17 @@ knows it, else a no-reply address on their Bitbucket username.
 
 ## Lifetime and limits
 
-| Bound                            | Value                            |
-| -------------------------------- | -------------------------------- |
-| Checkouts per project            | 1 (a new clone replaces it)      |
-| Lifetime since last use          | 7 days (the worker's sweep)      |
-| Checkout size                    | 2 GB                             |
-| Default clone depth              | 100 commits (`depth: 0` for all) |
-| Command timeout                  | 2 min default, 10 min max        |
-| Command output to model          | 30k chars default, 100k max      |
-| Processes per project            | 512 (RLIMIT_NPROC)               |
-| Largest file a command may write | 512 MB (RLIMIT_FSIZE)            |
-| Environment variables            | 50 per project, 8 KB each        |
+| Bound                            | Value                                                 |
+| -------------------------------- | ----------------------------------------------------- |
+| Checkouts per project            | 1 (a new clone replaces it)                           |
+| Lifetime since last use          | 7 days (the worker's sweep)                           |
+| Checkout size                    | 8 GB (org setting; per-project approval may raise it) |
+| Default clone depth              | 100 commits (`depth: 0` for all)                      |
+| Command timeout                  | 2 min default, 10 min max                             |
+| Command output to model          | 30k chars default, 100k max                           |
+| Processes per project            | 512 (RLIMIT_NPROC)                                    |
+| Largest file a command may write | 512 MB (RLIMIT_FSIZE)                                 |
+| Environment variables            | 50 per project, 8 KB each                             |
 
 A workspace's row (`sandbox_workspaces`, migration 101) is the metadata
 half; the sweep that retires expired staged files retires expired

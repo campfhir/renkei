@@ -72,6 +72,9 @@ const NUMERIC_BOUNDS = {
   // the typo guard — past a few minutes "recently streamed to this chat"
   // stops meaning anything the check is for.
   chatReplyPresenceWindowSeconds: [0, 300],
+  // Per-checkout size limit on the sandbox: 1GB floor (a monorepo will not
+  // fit below it), 64GB the typo guard and the most a request may ask for.
+  sandboxWorkspaceMaxBytes: [1_073_741_824, 68_719_476_736],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -96,6 +99,7 @@ const NUMERIC_KEYS = [
   'agentOptimizerWindowDays',
   'knowledgeKeywordMinChars',
   'chatReplyPresenceWindowSeconds',
+  'sandboxWorkspaceMaxBytes',
 ] as const;
 
 const BOOLEAN_KEYS = [
@@ -135,6 +139,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     coachMarksEnabled: settings.coachMarksEnabled,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
+    sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
   };
 }
 

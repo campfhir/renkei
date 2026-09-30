@@ -10,11 +10,14 @@ import type { ResourceAccess } from '@/lib/chat/access';
 import { loadProjectView, type ProjectView } from '@/lib/chat/project-view';
 import { getProjectRow } from '@/lib/chat/projects';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
-import { getPublicBaseUrl } from '@renkei/settings';
+import { getPublicBaseUrl, getWorkspaceLimitBytes } from '@renkei/settings';
+import { WORKSPACE_DEFAULT_MAX_BYTES } from '@renkei/connector-sandbox';
 import { GITHUB } from '@renkei/provider-grants';
 import { bitbucketAuthOf, readReadme as readBitbucketReadme } from './bitbucket-browse';
 import { githubAuthOf, readReadme as readGitHubReadme } from './github-browse';
 import { projectEnv, projectWorkspace } from './projects';
+import { codeProjectTarget } from './scope';
+import { latestSizeRequest, type SizeRequestView } from './size-requests';
 import { loadCodeProjectUsage, type CodeProjectUsage } from './usage';
 
 export interface CodeProjectView extends ProjectView {
@@ -38,6 +41,10 @@ export interface CodeProjectView extends ProjectView {
     readme: { path: string; text: string } | null;
     /** Token spend: the project's total and each of its chats' own (usage.ts). */
     usage: CodeProjectUsage;
+    /** What this project's checkout may grow to: the org's limit, or a larger approved one. */
+    sizeLimitBytes: number;
+    /** The project's newest request for a larger checkout, whatever its state. */
+    sizeRequest: SizeRequestView | null;
   };
 }
 
@@ -63,12 +70,14 @@ export async function loadCodeProjectView(
           project.repo.fullName,
           project.repo.branch
         );
-  const [view, workspace, env, readmeResult, usage] = await Promise.all([
+  const [view, workspace, env, readmeResult, usage, limit, sizeRequest] = await Promise.all([
     loadProjectView(db, tenantId, viewerSubject, projectId, access),
     projectWorkspace(project),
     projectEnv(project),
     readme,
     loadCodeProjectUsage(db, tenantId, projectId),
+    getWorkspaceLimitBytes(tenantId, codeProjectTarget(tenantId, projectId).subject),
+    latestSizeRequest(db, tenantId, projectId),
   ]);
   if (!view) return null;
   return {
@@ -95,6 +104,8 @@ export async function loadCodeProjectView(
       enabled: sandboxWorkspacesEnabled(),
       readme: readmeResult,
       usage,
+      sizeLimitBytes: limit.ok ? limit.val : WORKSPACE_DEFAULT_MAX_BYTES,
+      sizeRequest,
     },
   };
 }

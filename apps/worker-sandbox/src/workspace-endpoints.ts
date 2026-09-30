@@ -25,6 +25,7 @@
 import type { ServerResponse } from 'node:http';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { getWorkspaceLimitBytes } from '@renkei/settings';
 import {
   CLONE_DEFAULT_DEPTH,
   COMMIT_MESSAGE_MAX_CHARS,
@@ -40,7 +41,7 @@ import {
   GIT_OUTPUT_MAX_CHARS,
   GREP_MAX_MATCHES,
   READ_MAX_BYTES,
-  WORKSPACE_MAX_BYTES,
+  WORKSPACE_DEFAULT_MAX_BYTES,
   WORKSPACE_MAX_PER_SUBJECT,
   UPLOAD_MAX_BYTES,
   WRITE_MAX_CHARS,
@@ -190,6 +191,12 @@ function gitText(result: RunResult): string {
 export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   const { db } = deps;
   const lsp = deps.lsp ?? new LspSessions();
+
+  /** The checkout size limit for this caller: the org's, or their approved larger one. */
+  async function limitFor(workspace: store.WorkspaceTarget): Promise<number> {
+    const limit = await getWorkspaceLimitBytes(workspace.tenantId, workspace.subject);
+    return limit.ok ? limit.val : WORKSPACE_DEFAULT_MAX_BYTES;
+  }
 
   /** The caller's workspace, ready to work in, or the refusal already sent. */
   async function loadReady(
@@ -600,12 +607,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         `A write is at most ${WRITE_MAX_CHARS} characters.`
       );
     }
-    if (workspace.sizeBytes > WORKSPACE_MAX_BYTES) {
+    if (workspace.sizeBytes > (await limitFor(workspace))) {
       return sendError(
         response,
         413,
         'quota_exceeded',
-        'The workspace is over its size limit; remove some files first.'
+        'The workspace is over its size limit; remove some files first, or ask an admin for a larger limit.'
       );
     }
     const written = await writeWorkspaceFile(
@@ -761,12 +768,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         'bad_path',
         to.ok ? 'A destination path is required.' : to.message
       );
-    if (workspace.sizeBytes > WORKSPACE_MAX_BYTES) {
+    if (workspace.sizeBytes > (await limitFor(workspace))) {
       return sendError(
         response,
         413,
         'quota_exceeded',
-        'The workspace is over its size limit; remove some files first.'
+        'The workspace is over its size limit; remove some files first, or ask an admin for a larger limit.'
       );
     }
     try {
@@ -795,12 +802,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
   ) {
     const command = validateCommand(body.command);
     if (!command.ok) return sendError(response, 400, 'bad_request', command.message);
-    if (workspace.sizeBytes > WORKSPACE_MAX_BYTES) {
+    if (workspace.sizeBytes > (await limitFor(workspace))) {
       return sendError(
         response,
         413,
         'quota_exceeded',
-        `The workspace is over its ${WORKSPACE_MAX_BYTES}-byte limit; remove build output or delete the workspace.`
+        `The workspace is over its ${await limitFor(workspace)}-byte limit; remove build output, delete the workspace, or ask an admin for a larger limit.`
       );
     }
     const timeoutMs = execTimeoutMs(body.timeoutMs);
@@ -1390,12 +1397,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       return sendError(response, 413, 'too_large', `A file is at most ${UPLOAD_MAX_BYTES} bytes.`);
     const workspace = await loadReady(target, { id }, response);
     if (!workspace) return;
-    if (workspace.sizeBytes + bytes.byteLength > WORKSPACE_MAX_BYTES) {
+    if (workspace.sizeBytes + bytes.byteLength > (await limitFor(workspace))) {
       return sendError(
         response,
         413,
         'quota_exceeded',
-        'The workspace is over its size limit; remove some files first.'
+        'The workspace is over its size limit; remove some files first, or ask an admin for a larger limit.'
       );
     }
     try {
