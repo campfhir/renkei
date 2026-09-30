@@ -160,6 +160,7 @@ export const EXPECTED_MIGRATIONS = [
   '128-chat-widget-decisions',
   '129-chat-turn-resume',
   '130-chat-queued-sends',
+  '131-sandbox-size-requests',
 ];
 
 export interface MigrationStatus {
