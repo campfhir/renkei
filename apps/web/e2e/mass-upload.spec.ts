@@ -195,6 +195,21 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
   expect(uploaded).toHaveLength(14);
   expect(ocrRequests.flat()).toHaveLength(3);
 
+  // 14 files fold into 3 chips and a "+11 more" button, not a wall of chips.
+  await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(3);
+  await page.getByRole('button', { name: 'Show all 14 attached files' }).click();
+  const list = page.getByRole('dialog', { name: 'Attached files' });
+  await expect(list).toContainText('Attached files (14)');
+  await expect(list.getByRole('link')).toHaveCount(14);
+  await shot(page, testInfo, 'mass-upload-file-list');
+  await list.getByRole('button', { name: 'Remove applicant-14.pdf' }).click();
+  await expect(list).toContainText('Attached files (13)');
+  await page.keyboard.press('Escape');
+  await expect(list).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show all 13 attached files' })).toContainText(
+    '+10 more'
+  );
+
   // Mobile pass: the warning fits a phone viewport without side-scroll.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await input.setInputFiles(pdfs(11));
@@ -204,4 +219,10 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
   );
   expect(overflow).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'mass-upload-warning-mobile');
+  await warning.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Show all 13 attached files' }).click();
+  await expect(list).toBeVisible();
+  const box = await list.locator('> div').boundingBox();
+  expect(box?.width ?? 999).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  await shot(page, testInfo, 'mass-upload-file-list-mobile');
 });

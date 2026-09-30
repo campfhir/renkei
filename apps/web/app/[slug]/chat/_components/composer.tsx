@@ -26,6 +26,7 @@ import type { AttachmentView } from '@/lib/chat/views';
 import { UtteranceRecorder } from '@/lib/voice/recorder';
 import { LevelEmitter } from '@/lib/voice/levels';
 import { voiceClient } from '@/lib/voice/client';
+import AttachmentListModal from './attachment-list-modal';
 import AttachmentChip from './attachment-chip';
 import ComposerToolsMenu from './composer-tools-menu';
 import PromptPicker from './prompt-picker';
@@ -69,6 +70,8 @@ export interface QueuedComposerItem {
 }
 
 const MAX_ROWS = 10;
+/** Chips shown before the rest fold into a "+N more" button that opens the full list. */
+const VISIBLE_CHIPS = 3;
 /** Files sent to the server at once in a mass upload. */
 const UPLOAD_CONCURRENCY = 4;
 /** Files OCR'd per request; the server takes at most this many. */
@@ -139,6 +142,7 @@ export default function Composer({
   const [pendingBatch, setPendingBatch] = useState<File[] | null>(null);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [ocrPending, setOcrPending] = useState(0);
+  const [listOpen, setListOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [prompts, setPrompts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
@@ -308,6 +312,12 @@ export default function Composer({
     setPendingBatch(null);
     if (list) void startUpload(list);
   }, [pendingBatch, startUpload]);
+
+  // Past the mass-upload threshold the chips would crowd out the text box.
+  const folded = attachments.length > massUploadThreshold;
+  useEffect(() => {
+    if (attachments.length === 0) setListOpen(false);
+  }, [attachments.length]);
 
   const remove = useCallback(
     async (attachment: AttachmentView) => {
@@ -500,7 +510,7 @@ export default function Composer({
         ) : null}
         {attachments.length > 0 || uploading > 0 || ocrPending > 0 ? (
           <div className="flex flex-wrap gap-1.5 px-3 pt-2">
-            {attachments.map((attachment) => (
+            {(folded ? attachments.slice(0, VISIBLE_CHIPS) : attachments).map((attachment) => (
               <AttachmentChip
                 key={attachment.id}
                 tenantId={tenantId}
@@ -508,6 +518,16 @@ export default function Composer({
                 onRemove={() => void remove(attachment)}
               />
             ))}
+            {folded ? (
+              <button
+                type="button"
+                onClick={() => setListOpen(true)}
+                aria-label={`Show all ${attachments.length} attached files`}
+                className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+              >
+                +{attachments.length - VISIBLE_CHIPS} more
+              </button>
+            ) : null}
             {uploading > 0 ? (
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-800">
                 Uploading {uploadTotal - uploading}/{uploadTotal}…
@@ -519,6 +539,14 @@ export default function Composer({
               </span>
             ) : null}
           </div>
+        ) : null}
+        {listOpen ? (
+          <AttachmentListModal
+            tenantId={tenantId}
+            attachments={attachments}
+            onRemove={(attachment) => void remove(attachment)}
+            onClose={() => setListOpen(false)}
+          />
         ) : null}
         <textarea
           ref={textareaRef}
