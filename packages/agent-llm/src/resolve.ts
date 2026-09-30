@@ -35,7 +35,14 @@ export interface ResolvedLlm {
 export type ResolveLlmError = 'NO_MODEL' | 'UNSUPPORTED_PROVIDER' | 'CONFIG_ERROR' | 'DB_ERROR';
 
 const CACHE_TTL_MS = 60_000;
-const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
+/**
+ * Used when a model config leaves Max output tokens blank. Anthropic's API
+ * requires max_tokens, so "unlimited" has to be a ceiling; this is high
+ * enough that a large write-file call is not cut off mid-JSON, and still
+ * within the output cap of current Claude models (a value above a model's
+ * own cap is a 400, so set the field explicitly for a model that caps lower).
+ */
+const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 
 interface CacheEntry {
   value: ResolvedLlm;

@@ -650,7 +650,7 @@ export default function ModelForms({ slug }: { slug: string }) {
                 type="number"
                 min={1}
                 value={draft.maxOutputTokens}
-                placeholder="4096"
+                placeholder="32000"
                 onChange={(event) => setDraft({ ...draft, maxOutputTokens: event.target.value })}
               />
             </div>
