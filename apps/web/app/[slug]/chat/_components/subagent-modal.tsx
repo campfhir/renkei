@@ -10,7 +10,7 @@
  * is still going the page asks again every few seconds.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Modal from '@/components/modal';
 import { LoadingLine } from '@/components/skeleton';
 import { chatClient } from '@/lib/chat/client';
@@ -83,15 +83,26 @@ export default function SubagentModal({
   tenantId,
   chatId,
   toolUseId,
+  notStarted = false,
   onClose,
 }: {
   tenantId: string;
   chatId: string;
   toolUseId: string;
+  /**
+   * The delegating call has no result yet and its turn is still going: a
+   * call that acts runs after the ones before it, so its run row does not
+   * exist until its turn comes. No record then means "not started", not
+   * "not recorded".
+   */
+  notStarted?: boolean;
   onClose: () => void;
 }) {
   const [run, setRun] = useState<SubagentRunView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queued, setQueued] = useState(false);
+  const notStartedRef = useRef(notStarted);
+  notStartedRef.current = notStarted;
 
   useEffect(() => {
     let cancelled = false;
@@ -102,8 +113,14 @@ export default function SubagentModal({
       if (result.data) {
         setRun(result.data.run);
         setError(null);
+        setQueued(false);
         if (result.data.run.status === 'running') timer = setTimeout(() => void load(), POLL_MS);
+      } else if (result.error === 'No such sub-agent run' && notStartedRef.current) {
+        setQueued(true);
+        setError(null);
+        timer = setTimeout(() => void load(), POLL_MS);
       } else {
+        setQueued(false);
         setError(
           result.error === 'No such sub-agent run'
             ? 'This sub-agent’s run was not recorded — it ran before runs were kept, or its turn was removed.'
@@ -132,6 +149,8 @@ export default function SubagentModal({
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>
+      ) : !run && queued ? (
+        <LoadingLine label="Waiting for this sub-agent to start — it runs after the call before it…" />
       ) : !run ? (
         <LoadingLine label="Reading the sub-agent’s run…" />
       ) : (

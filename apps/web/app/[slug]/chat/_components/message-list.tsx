@@ -505,6 +505,24 @@ function Reply({
         .join('\n\n'),
     [segments]
   );
+  // The calls of the latest tool-calling row that have not been answered.
+  // While the turn runs these are still in flight, whatever the stream
+  // said: a snapshot (a reconnect, a phone coming back to the tab) clears
+  // `pendingToolCalls`, and only the LAST segment counts as the tail — so
+  // an earlier sub-agent card, still working beside a later one, would
+  // otherwise read "failed". Calls of an earlier row always have their
+  // results by the time the model went on, so only the latest row can hold
+  // any that are open.
+  const inFlight = useMemo(() => {
+    let open = new Set<string>();
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue;
+      const uses = message.blocks.filter((block) => block.type === 'tool_use');
+      if (uses.length === 0) continue;
+      open = new Set(uses.filter((block) => !results.has(block.id)).map((block) => block.id));
+    }
+    return open;
+  }, [messages, results]);
   const last = messages[messages.length - 1];
   const lastIndex = segments.length - 1;
   return (
@@ -535,7 +553,11 @@ function Reply({
             const step = part.step;
             const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
             const pending =
-              !step.result && !waiting && (tail || pendingToolCalls.includes(step.block.id));
+              !step.result &&
+              !waiting &&
+              (tail ||
+                pendingToolCalls.includes(step.block.id) ||
+                (streaming && inFlight.has(step.block.id)));
             return (
               <SubagentCard
                 key={step.block.id}
@@ -560,7 +582,11 @@ function Reply({
             const step = part.step;
             const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
             const pending =
-              !step.result && !waiting && (tail || pendingToolCalls.includes(step.block.id));
+              !step.result &&
+              !waiting &&
+              (tail ||
+                pendingToolCalls.includes(step.block.id) ||
+                (streaming && inFlight.has(step.block.id)));
             return (
               <MilestoneCard
                 key={step.block.id}
