@@ -18,6 +18,7 @@ import type {
 import type { SubagentRunView } from './subagent-runs';
 import type { ConnectorOption } from './tool-surface';
 import type { GrantView, GrantRole, ResourceKind } from './access';
+import type { QueuedSend } from './views';
 import type { StartedTurn } from './start-turn';
 import type { ChatSearchHit } from './search-text';
 import type { WidgetModelContextOutcome } from './widget-tools';
@@ -85,6 +86,10 @@ export const chatClient = {
       'POST',
       input
     ),
+
+  /** Replace the chat's held sends with `queue` — the whole list, so a stale write cannot resurrect a sent one. */
+  saveQueue: (tenantId: string, chatId: string, queue: QueuedSend[]) =>
+    sendJsonFull(`${base(tenantId)}/chats/${chatId}/queue`, 'PUT', { queue }),
 
   /** Resend a prompt (text null = as it was), removing the replies after it. */
   resend: (

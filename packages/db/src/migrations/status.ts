@@ -159,6 +159,7 @@ export const EXPECTED_MIGRATIONS = [
   '127-pr-pipeline-subscriptions',
   '128-chat-widget-decisions',
   '129-chat-turn-resume',
+  '130-chat-queued-sends',
 ];
 
 export interface MigrationStatus {

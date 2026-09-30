@@ -38,6 +38,7 @@ import type {
   ChatMessageView,
   ChatView,
   ModelOption,
+  QueuedSend,
   ToolPermissionDecision,
 } from '@/lib/chat/views';
 import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
@@ -578,10 +579,25 @@ export default function ChatThread({
    * Each item keeps its own id so the composer can list them and let the
    * person remove any one, not just clear the whole queue.
    */
-  type QueuedItem =
-    { id: number; kind: 'message'; input: ComposerSubmit } | { id: number; kind: 'compact' };
-  const [queue, setQueue] = useState<QueuedItem[]>([]);
-  const nextQueueId = useRef(0);
+  type QueuedItem = QueuedSend;
+  // Held server-side (queued-sends.ts) so a reload, or the chat opened
+  // elsewhere, still finds what is waiting: seeded from the page's load,
+  // rewritten below on every change.
+  const [queue, setQueue] = useState<QueuedItem[]>(initialChat.queue);
+  const nextQueueId = useRef(initialChat.queue.reduce((max, item) => Math.max(max, item.id), 0));
+  const savedQueue = useRef(JSON.stringify(initialChat.queue));
+  const queueWrites = useRef<Promise<unknown>>(Promise.resolve());
+  useEffect(() => {
+    if (!isOwner) return;
+    const serialised = JSON.stringify(queue);
+    if (serialised === savedQueue.current) return;
+    savedQueue.current = serialised;
+    // One write at a time, in order: the last state must be the last write.
+    queueWrites.current = queueWrites.current.then(async () => {
+      const saved = await chatClient.saveQueue(tenantId, chat.id, queue);
+      if (saved.error) setError('Your queued messages could not be saved.');
+    });
+  }, [queue, isOwner, tenantId, chat.id]);
   // What each queued message became once it went out, for a voice
   // correction that names the queue place (correctVoiceSend below).
   const queuedSent = useRef(new Map<number, string>());

@@ -12,6 +12,7 @@ import { workspaceBranches } from '@/lib/code/branches';
 import { getProjectRow } from './projects';
 import { getActiveTurn, toTurnView } from './turns';
 import { listWidgetDecisions } from './widget-tools';
+import { loadQueuedSends } from './queued-sends';
 import { widgetStateKeyOf } from './views';
 import type {
   AttachmentView,
@@ -50,7 +51,7 @@ export async function loadChatView(
   viewerSubject: string
 ): Promise<{ chat: ChatView; messages: ChatMessageView[] }> {
   const { chat } = access;
-  const [rows, active, project, owner, attachments, widgetDecisions] = await Promise.all([
+  const [rows, active, project, owner, attachments, widgetDecisions, queue] = await Promise.all([
     listMessages(db, tenantId, chat.id),
     getActiveTurn(db, chat.id),
     chat.projectId ? getProjectRow(db, tenantId, chat.projectId) : Promise.resolve(null),
@@ -78,6 +79,10 @@ export async function loadChatView(
       .orderBy('created_at', 'asc')
       .execute(),
     listWidgetDecisions(db, tenantId, chat.id),
+    // Only the owner sends, so only the owner has a queue to show.
+    chat.ownerSubject === viewerSubject
+      ? loadQueuedSends(db, tenantId, chat.id)
+      : Promise.resolve([]),
   ]);
   const branches =
     project?.kind === 'code' && project.workspaceId
@@ -122,6 +127,7 @@ export async function loadChatView(
       updatedAt: chat.updatedAt.toISOString(),
       activeTurn: active ? toTurnView(active) : null,
       artifacts,
+      queue,
     },
     messages: rows.map((row) => {
       const view = toMessageView(row);

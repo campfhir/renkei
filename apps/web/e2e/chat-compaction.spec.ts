@@ -19,7 +19,8 @@
  *    compaction turn through the actual route and SSE stream, settling to
  *    "nothing to fold" on a chat too small to need one;
  *  - a message sent while another turn is already running queues instead
- *    of being silently dropped, and Clear empties the queue again.
+ *    of being silently dropped, survives a reload, and Clear empties the
+ *    queue again.
  */
 
 import { createCipheriv, randomBytes } from 'node:crypto';
@@ -415,6 +416,22 @@ test.describe('chat compaction', () => {
       await expect(dialog).toBeHidden();
       await expect(page.getByText('Compact this conversation')).toBeVisible();
       await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
+
+      // The queue is durable: it is in the database, and a reload — which
+      // used to drop it — still shows what is waiting.
+      await expect
+        .poll(async () => {
+          const rows = await client.query(
+            `SELECT queue FROM chat_queued_sends WHERE chat_id = $1`,
+            [ids.queueChatId]
+          );
+          return rows.rows[0]?.queue.map((item: { kind: string }) => item.kind);
+        })
+        .toEqual(['compact']);
+      await page.reload();
+      await expect(page.getByRole('heading', { level: 1, name: ids.queueTitle })).toBeVisible();
+      await expect(page.getByText('Compact this conversation')).toBeVisible();
+      await expect(page.getByText('queued', { exact: true })).toBeVisible();
 
       // The other process finishes its reply — nobody clicks anything, the
       // queued compaction pass sends itself the moment the model is free.
