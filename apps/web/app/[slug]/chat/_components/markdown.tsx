@@ -92,6 +92,17 @@ function rehypeTableLabels() {
           cells.forEach((cell, index) => {
             const label = headers[index];
             if (label) cell.properties = { ...cell.properties, dataLabel: label };
+            // One wrapper child, so the card layout's grid sees the whole
+            // value as a single item instead of splitting text and inline
+            // code into separate grid cells.
+            cell.children = [
+              {
+                type: 'element',
+                tagName: 'span',
+                properties: { className: ['chat-cell'] },
+                children: cell.children ?? [],
+              },
+            ];
           });
         }
         return;

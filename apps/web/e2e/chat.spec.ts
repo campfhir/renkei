@@ -91,6 +91,7 @@ const REPLY_MARKDOWN = [
   '| --- | --- | --- |',
   '| OPS-41 | Rotate the Zoom webhook secret | In Progress |',
   '| OPS-44 | Backfill the fileshare index | To Do |',
+  '| OPS-45 | Clear `.next` after `pnpm build`, then retry | To Do |',
   '',
   'Both are still assigned. The search I ran was:',
   '',
@@ -444,6 +445,28 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
       "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
     );
     await shot(page, testInfo, 'chat-code-blocks.png');
+
+    // At phone width a table row is a card; a cell mixing text and inline
+    // code must stay one value beside its label, not split into a grid
+    // cell per text/code run.
+    const tableViewport = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mixedCell = markdown.locator('td', { hasText: 'Clear' }).first();
+    await expect(mixedCell.locator('.chat-cell')).toContainText('Clear .next after pnpm build');
+    const cellBoxes = await mixedCell.evaluate((td) => {
+      const box = (el: Element) => el.getBoundingClientRect();
+      const value = box(td.querySelector('.chat-cell')!);
+      return [...td.querySelectorAll('code')].map((code) => ({
+        left: box(code).left,
+        valueLeft: value.left,
+      }));
+    });
+    expect(cellBoxes.length).toBe(2);
+    // Inline code sits inside the value column (right of the label), not
+    // at the card's left edge.
+    for (const { left, valueLeft } of cellBoxes) expect(left).toBeGreaterThanOrEqual(valueLeft - 1);
+    await shot(page, testInfo, 'chat-table-card-inline-code.png');
+    if (tableViewport) await page.setViewportSize(tableViewport);
 
     // The person's own prompt goes through the identical renderer: their
     // fence is the same code-block card (on the blue bubble's own
