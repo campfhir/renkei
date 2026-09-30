@@ -197,6 +197,7 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
 
   // 14 files fold into 3 chips and a "+11 more" button, not a wall of chips.
   await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(3);
+  await shot(page, testInfo, 'mass-upload-folded');
   await page.getByRole('button', { name: 'Show all 14 attached files' }).click();
   const list = page.getByRole('dialog', { name: 'Attached files' });
   await expect(list).toContainText('Attached files (14)');
