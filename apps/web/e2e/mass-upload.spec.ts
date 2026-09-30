@@ -164,7 +164,9 @@ test('composer: a mass upload warns first, then uploads and OCRs scans', async (
   await input.setInputFiles(pdfs(10));
   await expect(page.getByRole('alertdialog', { name: 'Large upload' })).toHaveCount(0);
   await expect.poll(() => uploaded.length).toBe(10);
-  await expect(page.getByText('applicant-10.pdf')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show all 10 attached files' })).toContainText(
+    '10 attachments'
+  );
 });
 
 test('composer: cancelling the warning uploads nothing; confirming uploads all and OCRs scans', async ({
@@ -195,8 +197,11 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
   expect(uploaded).toHaveLength(14);
   expect(ocrRequests.flat()).toHaveLength(3);
 
-  // 14 files fold into 3 chips and a "+11 more" button, not a wall of chips.
-  await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(3);
+  // 14 files are one "14 attachments" chip, not a wall of chips.
+  await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show all 14 attached files' })).toContainText(
+    '14 attachments'
+  );
   await shot(page, testInfo, 'mass-upload-folded');
   await page.getByRole('button', { name: 'Show all 14 attached files' }).click();
   const list = page.getByRole('dialog', { name: 'Attached files' });
@@ -208,7 +213,7 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
   await page.keyboard.press('Escape');
   await expect(list).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Show all 13 attached files' })).toContainText(
-    '+10 more'
+    '13 attachments'
   );
 
   // Mobile pass: the warning fits a phone viewport without side-scroll.
@@ -228,7 +233,7 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
   await shot(page, testInfo, 'mass-upload-file-list-mobile');
 });
 
-test('composer: 6 files stay as chips; 14 fold to +N more on a phone', async ({
+test('composer: 2 files stay as chips; 3 or more become one counter chip, on a phone too', async ({
   page,
 }, testInfo) => {
   const fixture = fixtureFor(`${testInfo.project.name}-c`);
@@ -236,19 +241,28 @@ test('composer: 6 files stay as chips; 14 fold to +N more on a phone', async ({
   await openChat(page, fixture);
   const input = page.locator('input[type="file"]');
 
-  // Under the threshold every file is its own chip and there is no "+N more".
-  await input.setInputFiles(pdfs(6));
-  await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(6);
+  // Two files: each is its own chip, no counter.
+  await input.setInputFiles(pdfs(2));
+  await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(2);
   await expect(page.getByRole('button', { name: /attached files/ })).toHaveCount(0);
-  await shot(page, testInfo, 'mass-upload-six-chips');
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await shot(page, testInfo, 'mass-upload-six-chips-mobile');
+  await shot(page, testInfo, 'mass-upload-two-chips');
 
-  // Past it, the phone shows 3 chips and the button.
-  await input.setInputFiles(pdfs(8).map((file) => ({ ...file, name: `more-${file.name}` })));
-  await page.getByRole('button', { name: 'Upload 8 files' }).click();
-  await expect(page.getByRole('button', { name: 'Show all 14 attached files' })).toContainText(
-    '+11 more'
+  // The third file collapses everything into one counter chip, far under the
+  // mass-upload threshold.
+  await input.setInputFiles(pdfs(1).map((file) => ({ ...file, name: `third-${file.name}` })));
+  await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show all 3 attached files' })).toContainText(
+    '3 attachments'
   );
-  await shot(page, testInfo, 'mass-upload-folded-mobile');
+  await shot(page, testInfo, 'mass-upload-counter-chip');
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await shot(page, testInfo, 'mass-upload-counter-chip-mobile');
+
+  // Past the mass-upload threshold it is still the one chip, with the count.
+  await input.setInputFiles(pdfs(9).map((file) => ({ ...file, name: `more-${file.name}` })));
+  await page.getByRole('button', { name: 'Upload 9 files' }).click();
+  await expect(page.getByRole('button', { name: 'Show all 12 attached files' })).toContainText(
+    '12 attachments'
+  );
+  await shot(page, testInfo, 'mass-upload-counter-chip-large-mobile');
 });

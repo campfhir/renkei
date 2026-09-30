@@ -70,8 +70,8 @@ export interface QueuedComposerItem {
 }
 
 const MAX_ROWS = 10;
-/** Chips shown before the rest fold into a "+N more" button that opens the full list. */
-const VISIBLE_CHIPS = 3;
+/** From this many files on, the chips collapse into one counter chip that opens the full list. */
+const FOLD_AT = 3;
 /** Files sent to the server at once in a mass upload. */
 const UPLOAD_CONCURRENCY = 4;
 /** Files OCR'd per request; the server takes at most this many. */
@@ -313,8 +313,8 @@ export default function Composer({
     if (list) void startUpload(list);
   }, [pendingBatch, startUpload]);
 
-  // Past the mass-upload threshold the chips would crowd out the text box.
-  const folded = attachments.length > massUploadThreshold;
+  // A row of chips would crowd out the text box.
+  const folded = attachments.length >= FOLD_AT;
   useEffect(() => {
     if (attachments.length === 0) setListOpen(false);
   }, [attachments.length]);
@@ -510,24 +510,26 @@ export default function Composer({
         ) : null}
         {attachments.length > 0 || uploading > 0 || ocrPending > 0 ? (
           <div className="flex flex-wrap gap-1.5 px-3 pt-2">
-            {(folded ? attachments.slice(0, VISIBLE_CHIPS) : attachments).map((attachment) => (
-              <AttachmentChip
-                key={attachment.id}
-                tenantId={tenantId}
-                attachment={attachment}
-                onRemove={() => void remove(attachment)}
-              />
-            ))}
             {folded ? (
               <button
                 type="button"
                 onClick={() => setListOpen(true)}
                 aria-label={`Show all ${attachments.length} attached files`}
-                className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
+                className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs font-medium hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
               >
-                +{attachments.length - VISIBLE_CHIPS} more
+                <Icon path={ICONS.paperclip} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                {attachments.length} attachments
               </button>
-            ) : null}
+            ) : (
+              attachments.map((attachment) => (
+                <AttachmentChip
+                  key={attachment.id}
+                  tenantId={tenantId}
+                  attachment={attachment}
+                  onRemove={() => void remove(attachment)}
+                />
+              ))
+            )}
             {uploading > 0 ? (
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-800">
                 Uploading {uploadTotal - uploading}/{uploadTotal}…
