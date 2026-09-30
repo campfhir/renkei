@@ -1222,6 +1222,14 @@ export default function ChatThread({
             tenantId={tenantId}
             chatId={chat.id}
             toolUseId={subagent}
+            notStarted={
+              running &&
+              !state.messages.some((message) =>
+                message.blocks.some(
+                  (block) => block.type === 'tool_result' && block.toolUseId === subagent
+                )
+              )
+            }
             onClose={() => setSubagent(null)}
           />
         ) : null}
