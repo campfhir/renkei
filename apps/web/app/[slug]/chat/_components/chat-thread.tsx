@@ -1381,6 +1381,32 @@ export default function ChatThread({
                     />
                   ) : null
                 }
+                voicePanel={
+                  voice && speechQueue
+                    ? (level) => (
+                        <VoiceMenu
+                          embedded={level}
+                          tenantId={tenantId}
+                          prefs={voicePrefs}
+                          defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
+                          queueState={speech.state}
+                          levels={speechQueue}
+                          echoCancellation={echoCancellation}
+                          onEchoCancellation={changeEchoCancellation}
+                          microphone={microphone}
+                          onMicrophone={changeMicrophone}
+                          audioOutput={audioOutput}
+                          onAudioOutput={changeAudioOutput}
+                          onChange={changeVoicePrefs}
+                          onStopReading={stopReading}
+                          onStartVoiceMode={() => setVoiceMode(true)}
+                          onPrime={() => speechQueue.prime()}
+                          disabled={models.length === 0}
+                        />
+                      )
+                    : undefined
+                }
+                onVoiceOpen={speechQueue ? () => speechQueue.prime() : undefined}
               />
             ) : null}
           </>

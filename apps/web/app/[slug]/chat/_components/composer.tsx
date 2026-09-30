@@ -27,6 +27,7 @@ import { UtteranceRecorder } from '@/lib/voice/recorder';
 import { LevelEmitter } from '@/lib/voice/levels';
 import { voiceClient } from '@/lib/voice/client';
 import AttachmentChip from './attachment-chip';
+import ComposerToolsMenu from './composer-tools-menu';
 import PromptPicker from './prompt-picker';
 import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
 
@@ -84,6 +85,8 @@ export default function Composer({
   modelControl,
   modeControl,
   voiceControl,
+  voicePanel,
+  onVoiceOpen,
   dictation,
   editing,
   onCancelEdit,
@@ -108,6 +111,13 @@ export default function Composer({
   modeControl?: ReactNode;
   /** The speaker menu, when the org has a voice service; nothing otherwise. */
   voiceControl?: ReactNode;
+  /**
+   * The same speaker menu as the tools menu's second level (composer-tools-menu.tsx),
+   * which stands in for the prompt, speaker and microphone buttons on a phone in a
+   * code project, where the row also holds the Auto switch.
+   */
+  voicePanel?: (level: { onBack: () => void; onClose: () => void }) => ReactNode;
+  onVoiceOpen?: () => void;
   /** The microphone beside the box, when the org has a voice service. */
   dictation?: DictationSetup | null;
   /** An earlier prompt being rewritten: its text fills the box, Send resends it. */
@@ -127,6 +137,8 @@ export default function Composer({
   const attachAnchor = useCoachAnchor('chat-attach');
   const promptAnchor = useCoachAnchor('chat-prompt');
   const voiceAnchor = useCoachAnchor('chat-voice');
+  // A phone's row in a code project is out of room; fold the tools into one.
+  const foldTools = Boolean(modeControl) && Boolean(dictation || voicePanel);
 
   // Dictation: one recorder while the microphone is on; each utterance
   // is transcribed and appended to whatever is in the box.
@@ -465,11 +477,32 @@ export default function Composer({
             title="Prompt libraries"
             {...promptAnchor}
             disabled={disabled}
-            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+            className={`rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 ${
+              foldTools ? 'max-sm:hidden' : ''
+            }`}
           >
             <Icon path={ICONS.sparkle} className="h-5 w-5" />
           </button>
-          {voiceControl}
+          {foldTools ? (
+            <ComposerToolsMenu
+              disabled={disabled}
+              dictating={dictating}
+              wave={
+                dictation ? (
+                  <VoiceWaveIcon
+                    levels={hearing ? micLevels.current : null}
+                    accent={dictation.accent}
+                  />
+                ) : null
+              }
+              canDictate={Boolean(dictation)}
+              onPrompts={() => setPrompts(true)}
+              onToggleDictation={() => (dictating ? stopDictation() : void startDictation())}
+              voicePanel={voicePanel}
+              onVoiceOpen={onVoiceOpen}
+            />
+          ) : null}
+          {foldTools ? <div className="contents max-sm:hidden">{voiceControl}</div> : voiceControl}
           {dictation ? (
             <button
               type="button"
@@ -480,6 +513,8 @@ export default function Composer({
               title={dictating ? 'Stop dictating' : 'Dictate: speak into the box'}
               disabled={disabled}
               className={`flex items-center justify-center rounded-md p-1.5 disabled:opacity-40 ${
+                foldTools ? 'max-sm:hidden ' : ''
+              }${
                 dictating
                   ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/40'
                   : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'

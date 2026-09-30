@@ -52,7 +52,14 @@ export default function VoiceMenu({
   onStartVoiceMode,
   onPrime,
   disabled,
+  embedded,
 }: {
+  /**
+   * Rendered as the second level of the composer's tools menu
+   * (composer-tools-menu.tsx): just the panel, always open, with a way back
+   * in place of the speaker button and its own close.
+   */
+  embedded?: { onBack: () => void; onClose: () => void };
   tenantId: string;
   prefs: VoicePrefs;
   defaults: { voice: string; locale: string };
@@ -74,7 +81,8 @@ export default function VoiceMenu({
   onPrime: () => void;
   disabled: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [menuOpen, setOpen] = useState(false);
+  const open = menuOpen || Boolean(embedded);
   const [voices, setVoices] = useState<VoiceInfo[] | null>(null);
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [devices, setDevices] = useState<{
@@ -83,7 +91,9 @@ export default function VoiceMenu({
   } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
-  useDismiss(open, ref, close);
+  // Closing the whole menu: the panel's own, or the tools menu around it.
+  const dismiss = () => (embedded ? embedded.onClose() : setOpen(false));
+  useDismiss(menuOpen && !embedded, ref, close);
 
   // The devices, named, each time the menu opens: a headset connected
   // since last time, or names that appeared once the microphone was allowed.
@@ -160,34 +170,43 @@ export default function VoiceMenu({
       : list;
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => {
-          onPrime();
-          setOpen((state) => !state);
-        }}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Voice"
-        title={
-          reading ? 'Reading the reply aloud' : prefs.autoPlay ? 'Replies are read aloud' : 'Voice'
-        }
-        disabled={disabled}
-        className="relative flex items-center justify-center rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
-      >
-        {reading ? (
-          <VoiceWaveIcon levels={queueState === 'loading' ? null : levels} accent={prefs.accent} />
-        ) : (
-          <Icon path={ICONS.speaker} className="h-5 w-5" />
-        )}
-        {prefs.autoPlay && !reading ? (
-          <span
-            aria-hidden="true"
-            className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400"
-          />
-        ) : null}
-      </button>
+    <div ref={ref} className={embedded ? undefined : 'relative'}>
+      {embedded ? null : (
+        <button
+          type="button"
+          onClick={() => {
+            onPrime();
+            setOpen((state) => !state);
+          }}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="Voice"
+          title={
+            reading
+              ? 'Reading the reply aloud'
+              : prefs.autoPlay
+                ? 'Replies are read aloud'
+                : 'Voice'
+          }
+          disabled={disabled}
+          className="relative flex items-center justify-center rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
+        >
+          {reading ? (
+            <VoiceWaveIcon
+              levels={queueState === 'loading' ? null : levels}
+              accent={prefs.accent}
+            />
+          ) : (
+            <Icon path={ICONS.speaker} className="h-5 w-5" />
+          )}
+          {prefs.autoPlay && !reading ? (
+            <span
+              aria-hidden="true"
+              className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400"
+            />
+          ) : null}
+        </button>
+      )}
       {open ? (
         <div
           role="menu"
@@ -195,19 +214,31 @@ export default function VoiceMenu({
           // button, so it becomes a panel over the thread, as tall as its
           // content up to the screen, scrolling past that; the pickers'
           // lists open inside it.
-          className="absolute bottom-full left-0 z-40 mb-1 w-96 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:mb-0 max-sm:max-h-[calc(100dvh-5rem)] max-sm:w-auto max-sm:overflow-y-auto dark:border-gray-700 dark:bg-gray-900"
+          className={`${embedded ? 'fixed inset-x-3 bottom-3 max-h-[calc(100dvh-5rem)] overflow-y-auto' : 'absolute bottom-full left-0 mb-1 w-96 max-sm:fixed max-sm:inset-x-3 max-sm:bottom-3 max-sm:mb-0 max-sm:max-h-[calc(100dvh-5rem)] max-sm:w-auto max-sm:overflow-y-auto'} z-40 rounded-lg border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900`}
         >
           <div className="flex items-center justify-between px-2 pt-1 pb-1.5">
-            <p className="text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
-              Voice
-            </p>
+            {embedded ? (
+              <button
+                type="button"
+                onClick={embedded.onBack}
+                aria-label="Back to tools"
+                className="-ml-1 flex items-center gap-1 rounded-md p-1 pr-2 text-[11px] font-semibold tracking-wide text-gray-500 uppercase hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <Icon path={ICONS.chevronLeft} className="h-4 w-4" />
+                Voice
+              </button>
+            ) : (
+              <p className="text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
+                Voice
+              </p>
+            )}
             {/* An explicit close, not just outside-click/Escape: on a phone this panel
                 covers most of the screen, so tapping past it to dismiss is awkward, and
                 choosing a voice or language should not require reopening the panel just
                 to reach the preview button that was already on screen. */}
             <button
               type="button"
-              onClick={close}
+              onClick={dismiss}
               aria-label="Close voice menu"
               className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
             >
@@ -242,7 +273,7 @@ export default function VoiceMenu({
               role="menuitem"
               onClick={() => {
                 onStopReading();
-                setOpen(false);
+                dismiss();
               }}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
             >
@@ -422,7 +453,7 @@ export default function VoiceMenu({
             role="menuitem"
             onClick={() => {
               onPrime();
-              setOpen(false);
+              dismiss();
               onStartVoiceMode();
             }}
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
