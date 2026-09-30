@@ -227,3 +227,28 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
   expect(box?.width ?? 999).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'mass-upload-file-list-mobile');
 });
+
+test('composer: 6 files stay as chips; 14 fold to +N more on a phone', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(`${testInfo.project.name}-c`);
+  await seed(fixture);
+  await openChat(page, fixture);
+  const input = page.locator('input[type="file"]');
+
+  // Under the threshold every file is its own chip and there is no "+N more".
+  await input.setInputFiles(pdfs(6));
+  await expect(page.getByRole('link', { name: /\.pdf$/ })).toHaveCount(6);
+  await expect(page.getByRole('button', { name: /attached files/ })).toHaveCount(0);
+  await shot(page, testInfo, 'mass-upload-six-chips');
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await shot(page, testInfo, 'mass-upload-six-chips-mobile');
+
+  // Past it, the phone shows 3 chips and the button.
+  await input.setInputFiles(pdfs(8).map((file) => ({ ...file, name: `more-${file.name}` })));
+  await page.getByRole('button', { name: 'Upload 8 files' }).click();
+  await expect(page.getByRole('button', { name: 'Show all 14 attached files' })).toContainText(
+    '+11 more'
+  );
+  await shot(page, testInfo, 'mass-upload-folded-mobile');
+});
