@@ -13,6 +13,12 @@ import { textResult, type LocalTool, type LocalToolContext } from '@/lib/chat/lo
 import type { SubagentRecorder } from '@/lib/chat/subagent-runs';
 import { retryDelayMs } from '@/lib/chat/subagent';
 import {
+  DELEGATE_AUTO_DEFAULT_STEPS,
+  DELEGATE_AUTO_MAX_STEPS,
+  DELEGATE_AUTO_TOOL_TIMEOUT_MS,
+  DELEGATE_AUTO_WALL_CLOCK_MS,
+  DELEGATE_DEFAULT_STEPS,
+  DELEGATE_MAX_STEPS,
   DELEGATE_TOOL_TIMEOUT_MS,
   DELEGATE_WALL_CLOCK_MS,
   codeDelegateTool,
@@ -267,6 +273,62 @@ describe('code_delegate', () => {
       expect(attempts).toBe(2);
       expect(result.isError).toBe(false);
       expect(result.content[0]?.text).toContain('All good in the end.');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('gives an auto-mode sub-agent four hours and a step budget to use them', () => {
+    expect(DELEGATE_AUTO_WALL_CLOCK_MS).toBe(4 * 60 * 60_000);
+    const auto = codeDelegateTool([], { auto: true });
+    const plain = codeDelegateTool([]);
+    // The orchestrator's race must not fire on a sub-agent still inside its own clock.
+    expect(auto.timeoutMs).toBe(DELEGATE_AUTO_TOOL_TIMEOUT_MS);
+    expect(auto.timeoutMs).toBeGreaterThan(DELEGATE_AUTO_WALL_CLOCK_MS);
+    expect(plain.timeoutMs).toBe(DELEGATE_TOOL_TIMEOUT_MS);
+    const stepsOf = (tool: LocalTool) => {
+      const props = tool.def.inputSchema.properties as Record<string, { maximum?: number }>;
+      return props.maxSteps?.maximum;
+    };
+    expect(stepsOf(auto)).toBe(DELEGATE_AUTO_MAX_STEPS);
+    expect(stepsOf(plain)).toBe(DELEGATE_MAX_STEPS);
+    expect(auto.def.description).toContain(`default ${DELEGATE_AUTO_DEFAULT_STEPS}`);
+    expect(plain.def.description).toContain(`default ${DELEGATE_DEFAULT_STEPS}`);
+  });
+
+  it('runs an auto-mode sub-agent past the ordinary 45 minutes, and stops an ordinary one there', async () => {
+    jest.useFakeTimers();
+    try {
+      const slowTool: LocalTool = {
+        def: { name: 'code_slow', description: 'slow', inputSchema: { type: 'object' } },
+        readOnly: true,
+        async execute() {
+          await new Promise((resolve) => setTimeout(resolve, 50 * 60_000));
+          return textResult('ok');
+        },
+      };
+      const step: LlmResponse = {
+        content: [{ type: 'tool_use', id: 'u', name: 'code_slow', input: {} }],
+        stopReason: 'tool_use',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+      const run = async (auto: boolean) => {
+        let calls = 0;
+        const llm = llmOf({
+          async complete() {
+            calls += 1;
+            return ok(calls === 1 || calls === 2 ? step : done('finished'));
+          },
+        });
+        const promise = codeDelegateTool([slowTool], auto ? { auto: true } : {}).execute(
+          { task: 'long job' },
+          context({ llm })
+        );
+        await jest.advanceTimersByTimeAsync(3 * 60 * 60_000);
+        return (await promise).content[0]?.text ?? '';
+      };
+      expect(await run(false)).toContain('stopped: out of time');
+      expect(await run(true)).toContain('Sub-agent done');
     } finally {
       jest.useRealTimers();
     }

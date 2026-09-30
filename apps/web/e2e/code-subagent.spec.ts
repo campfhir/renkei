@@ -219,9 +219,9 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
     await client.query(
       `INSERT INTO chat_subagent_runs
          (tenant_id, chat_id, turn_id, tool_use_id, status, task, read_only, max_steps, steps, tool_calls,
-          transcript, report, input_tokens, output_tokens, llm_model_id, provider, model, finished_at)
+          transcript, report, input_tokens, output_tokens, llm_model_id, provider, model, started_at, finished_at)
        VALUES ($1, $2, $3, 'toolu_e2e_delegate', 'completed', $4, TRUE, 40, 2, 1, $5, $6, 640, 90,
-               $7, 'anthropic', 'claude-haiku-4-5', NOW())`,
+               $7, 'anthropic', 'claude-haiku-4-5', NOW() - INTERVAL '3 minutes 5 seconds', NOW())`,
       [
         E2E_TENANT_ID,
         ids.chatId,
@@ -295,6 +295,8 @@ test.describe('code chat sub-agent model', () => {
     await subagent.getByRole('button', { name: 'View transcript' }).click();
     const dialog = page.getByRole('dialog', { name: 'Sub-agent' });
     await expect(dialog.getByText('2 of 40 model calls')).toBeVisible();
+    // How long it ran: its start to its finish, the run being over.
+    await expect(dialog.locator('[data-subagent-elapsed]')).toHaveText('ran for 3m 05s');
     const model = dialog.locator('[data-subagent-model]');
     await expect(model).toHaveText(`on ${ids.fastModelLabel}`);
     await expect(model).toHaveAttribute('title', 'anthropic claude-haiku-4-5');

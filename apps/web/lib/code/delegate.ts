@@ -49,6 +49,19 @@ export const DELEGATE_WALL_CLOCK_MS = 45 * 60_000;
  */
 export const DELEGATE_TOOL_TIMEOUT_MS = DELEGATE_WALL_CLOCK_MS + 15 * 60_000;
 
+/**
+ * Auto mode's sub-agent (auto-mode.ts): the person has left the chat to
+ * work a task through unattended, so one sub-agent may spend hours on a
+ * stage of it. Four hours of wall clock, and enough model calls to use
+ * them; the orchestrating turn's own wall clock (CODE_TURN_LIMITS, six
+ * hours) still bounds the whole task across its stages, and Stop ends a
+ * sub-agent at any point.
+ */
+export const DELEGATE_AUTO_DEFAULT_STEPS = 400;
+export const DELEGATE_AUTO_MAX_STEPS = 1_000;
+export const DELEGATE_AUTO_WALL_CLOCK_MS = 4 * 60 * 60_000;
+export const DELEGATE_AUTO_TOOL_TIMEOUT_MS = DELEGATE_AUTO_WALL_CLOCK_MS + 15 * 60_000;
+
 /** Tools a sub-agent never gets: publishing and further delegation stay with the orchestrator. */
 const WITHHELD = new Set([
   'code_git_push',
@@ -71,6 +84,8 @@ export interface DelegateOptions {
   models?: SubagentModelChoice[];
   /** How a chosen config becomes a provider — resolveAgentLlm, or a fake in tests. */
   resolve?: ResolveSubagentLlm;
+  /** The chat is in auto mode: a sub-agent gets the long limits above. */
+  auto?: boolean;
 }
 
 /**
@@ -81,6 +96,10 @@ export interface DelegateOptions {
 export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = {}): LocalTool {
   const offered = tools.filter((tool) => !WITHHELD.has(tool.def.name));
   const models = options.models ?? [];
+  const auto = options.auto === true;
+  const defaultSteps = auto ? DELEGATE_AUTO_DEFAULT_STEPS : DELEGATE_DEFAULT_STEPS;
+  const maxSteps = auto ? DELEGATE_AUTO_MAX_STEPS : DELEGATE_MAX_STEPS;
+  const wallClockMs = auto ? DELEGATE_AUTO_WALL_CLOCK_MS : DELEGATE_WALL_CLOCK_MS;
   const def: LlmToolDef = {
     name: CODE_DELEGATE_TOOL,
     description:
@@ -93,7 +112,7 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
       'this one (readOnly for a pure investigation). Give it a complete, self-contained task and ' +
       'say what to report — it sees nothing of this chat — and read its report critically; you ' +
       'remain responsible for the result, for checking what it claims, and for committing and ' +
-      `pushing. A sub-agent makes at most maxSteps model calls (default ${DELEGATE_DEFAULT_STEPS}). ` +
+      `pushing. A sub-agent makes at most maxSteps model calls (default ${defaultSteps}). ` +
       'A person can open its full transcript from this chat, so the report can stay brief.' +
       modelChoiceDescription(models),
     inputSchema: {
@@ -120,8 +139,8 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
         maxSteps: {
           type: 'integer',
           minimum: 1,
-          maximum: DELEGATE_MAX_STEPS,
-          description: `Model calls the sub-agent may make (default ${DELEGATE_DEFAULT_STEPS}).`,
+          maximum: maxSteps,
+          description: `Model calls the sub-agent may make (default ${defaultSteps}).`,
         },
         ...modelArgumentSchema(models),
       },
@@ -131,7 +150,7 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
 
   return {
     def,
-    timeoutMs: DELEGATE_TOOL_TIMEOUT_MS,
+    timeoutMs: auto ? DELEGATE_AUTO_TOOL_TIMEOUT_MS : DELEGATE_TOOL_TIMEOUT_MS,
     async execute(input, context: LocalToolContext) {
       if (!context.llm) return errorResult('Sub-agents are not available in this chat.');
       const task = str(input.task).trim();
@@ -156,8 +175,8 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
         task,
         instructions: instructions || null,
         readOnly,
-        maxSteps: stepsOf(input.maxSteps, DELEGATE_DEFAULT_STEPS, DELEGATE_MAX_STEPS),
-        wallClockMs: DELEGATE_WALL_CLOCK_MS,
+        maxSteps: stepsOf(input.maxSteps, defaultSteps, maxSteps),
+        wallClockMs,
         tools: {
           defs: () => set.defs(),
           run: (name, args, toolUseId) =>

@@ -99,6 +99,8 @@ export interface CodeToolBinding {
    * turn's own model.
    */
   subagentModels?: SubagentModelChoice[];
+  /** The chat is in auto mode: its sub-agents run under auto mode's long limits (delegate.ts). */
+  auto?: boolean;
   /**
    * Whether the deployment lets a project start services — containers
    * beside the checkout (SANDBOX_SERVICES_ENABLED on both sides). Off,
@@ -1053,6 +1055,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
     ...recovering,
     codeDelegateTool(recovering, {
       ...(binding.subagentModels ? { models: binding.subagentModels } : {}),
+      ...(binding.auto ? { auto: true } : {}),
     }),
   ];
 }

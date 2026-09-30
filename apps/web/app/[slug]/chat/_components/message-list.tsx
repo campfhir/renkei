@@ -37,6 +37,7 @@ import type {
 import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
 import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
 import { formatDurationMs } from '@/lib/duration';
+import { useElapsedMs } from './use-elapsed';
 import { parseNote } from '@/lib/code/note-text';
 import { parseCommitResult } from '@/lib/code/chat-commits';
 import { milestoneSentence, milestoneSummary, type MilestoneState } from '@/lib/code/milestones';
@@ -926,8 +927,16 @@ function SubagentCard({
           ? 'The sub-agent failed'
           : 'Sub-agent reported';
   const live = progress && progress.status === 'running' ? progress : null;
+  // How long it has been (or was) at work: ticks while it runs, and keeps
+  // its total once it ends.
+  const elapsedMs = useElapsedMs(
+    progress?.startedAt ?? null,
+    progress?.finishedAt ?? null,
+    progress?.status === 'running'
+  );
+  const elapsed = elapsedMs === null ? null : formatDurationMs(elapsedMs);
   const inline = live
-    ? `${live.steps}/${live.maxSteps} calls · ${live.toolCalls} tool call${live.toolCalls === 1 ? '' : 's'}`
+    ? `${live.steps}/${live.maxSteps} calls · ${live.toolCalls} tool call${live.toolCalls === 1 ? '' : 's'}${elapsed ? ` · ${elapsed}` : ''}`
     : !running && reportLine
       ? reportLine
       : taskLine;
@@ -968,7 +977,18 @@ function SubagentCard({
           <p className="text-gray-600 dark:text-gray-400">
             {live.steps} of {live.maxSteps} model call{live.maxSteps === 1 ? '' : 's'} ·{' '}
             {live.toolCalls} tool call{live.toolCalls === 1 ? '' : 's'}
+            {elapsed ? (
+              <>
+                {' '}
+                · <span data-subagent-elapsed>{elapsed}</span> running
+              </>
+            ) : null}
             {live.lastTool ? ` · ${milestoneSentence(live.lastTool, 'pending')}` : ''}
+          </p>
+        ) : null}
+        {!live && elapsed ? (
+          <p className="text-gray-600 dark:text-gray-400">
+            Ran for <span data-subagent-elapsed>{elapsed}</span>
           </p>
         ) : null}
         {step.result ? (

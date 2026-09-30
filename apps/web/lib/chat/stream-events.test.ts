@@ -352,6 +352,8 @@ describe('subagent_progress', () => {
         maxSteps: 40,
         toolCalls: 2,
         lastTool: 'code_read_file',
+        startedAt: 1_000,
+        finishedAt: null,
       },
     });
     state = apply(state, {
@@ -364,6 +366,8 @@ describe('subagent_progress', () => {
         maxSteps: 40,
         toolCalls: 9,
         lastTool: null,
+        startedAt: 1_000,
+        finishedAt: 61_000,
       },
     });
     expect(state.subagents.d1).toEqual(

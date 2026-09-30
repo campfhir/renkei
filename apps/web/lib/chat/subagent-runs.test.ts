@@ -56,7 +56,7 @@ describe('parseTranscript', () => {
 
 describe('createSubagentRecorder', () => {
   it('emits a start, a progress and an end event for the delegating call, and survives a failed write', async () => {
-    const events: unknown[] = [];
+    const events: { startedAt: number; finishedAt: number | null }[] = [];
     const inserted = jest.fn().mockResolvedValue({ id: 'run-1' });
     const db = {
       insertInto: () => ({
@@ -113,8 +113,19 @@ describe('createSubagentRecorder', () => {
         toolCalls: 3,
         lastTool: 'code_read_file',
       }),
-      expect.objectContaining({ toolUseId: 'd1', status: 'completed', steps: 3, toolCalls: 4 }),
+      expect.objectContaining({
+        toolUseId: 'd1',
+        status: 'completed',
+        steps: 3,
+        toolCalls: 4,
+        finishedAt: expect.any(Number),
+      }),
     ]);
+    // Every event carries the one start, so a card can count elapsed time from it.
+    const starts = new Set(events.map((event) => event.startedAt));
+    expect(starts.size).toBe(1);
+    expect(events[0]?.finishedAt).toBeNull();
+    expect(events[2]?.finishedAt).toBeGreaterThanOrEqual(events[0]?.startedAt ?? 0);
     // The failed writes were logged, never thrown into the sub-agent's loop.
     expect(logged.length).toBe(2);
   });
