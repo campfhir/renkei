@@ -171,7 +171,22 @@ export interface ChatView {
   activeTurn: TurnView | null;
   /** Files tools produced in this chat, oldest first. */
   artifacts: AttachmentView[];
+  /** The owner's messages waiting behind the running turn, in send order (queued-sends.ts). */
+  queue: QueuedSend[];
 }
+
+/**
+ * One send held for after the running turn: a message (with what the
+ * composer submitted) or a compaction pass. `id` is the composer's own
+ * handle for removing or correcting it.
+ */
+export type QueuedSend =
+  | {
+      id: number;
+      kind: 'message';
+      input: { text: string; attachments: AttachmentView[]; voice?: boolean };
+    }
+  | { id: number; kind: 'compact' };
 
 export interface ChatListItem {
   id: string;

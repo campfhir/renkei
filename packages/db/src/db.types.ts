@@ -454,6 +454,13 @@ export interface ChatMessages {
   usage: Json | null;
 }
 
+export interface ChatQueuedSends {
+  chat_id: string;
+  queue: Json;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ChatPresence {
   chat_id: string;
   subject: string;
@@ -1468,6 +1475,7 @@ export interface DB {
   chat_attachments: ChatAttachments;
   chat_messages: ChatMessages;
   chat_presence: ChatPresence;
+  chat_queued_sends: ChatQueuedSends;
   chat_project_memories: ChatProjectMemories;
   chat_projects: ChatProjects;
   chat_subagent_runs: ChatSubagentRuns;
