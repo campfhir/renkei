@@ -69,6 +69,7 @@ export default async function SettingsPage({
     logLevel: settings.logLevel,
     maxJqlResults: settings.maxJqlResults,
     maxAttachmentBytes: settings.maxAttachmentBytes,
+    massUploadThreshold: settings.massUploadThreshold,
     rateLimitPerUserPerMinute: settings.rateLimitPerUserPerMinute,
     accessTokenTtlMinutes: settings.accessTokenTtlMinutes,
     authorizationCodeTtlSeconds: settings.authorizationCodeTtlSeconds,

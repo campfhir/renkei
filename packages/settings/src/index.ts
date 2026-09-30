@@ -67,6 +67,12 @@ export interface OrgSettings {
   enableDcr: boolean;
   maxJqlResults: number;
   maxAttachmentBytes: number;
+  /**
+   * A chat upload of more files than this is a mass upload: the composer
+   * warns first, the prompt carries a manifest instead of each file's text,
+   * and scanned files are OCR'd in the background.
+   */
+  massUploadThreshold: number;
   rateLimitPerUserPerMinute: number;
   accessTokenTtlMinutes: number;
   authorizationCodeTtlSeconds: number;
@@ -266,6 +272,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   enableDcr: true,
   maxJqlResults: 100,
   maxAttachmentBytes: 20_971_520, // 20MB
+  massUploadThreshold: 10,
   rateLimitPerUserPerMinute: 60,
   accessTokenTtlMinutes: 60,
   authorizationCodeTtlSeconds: 60,
@@ -373,6 +380,7 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     enableDcr: Boolean(coerce(stored.get('enable_dcr'), d.enableDcr)),
     maxJqlResults: Number(coerce(stored.get('max_jql_results'), d.maxJqlResults)),
     maxAttachmentBytes: Number(coerce(stored.get('max_attachment_bytes'), d.maxAttachmentBytes)),
+    massUploadThreshold: Number(coerce(stored.get('mass_upload_threshold'), d.massUploadThreshold)),
     rateLimitPerUserPerMinute: Number(
       coerce(stored.get('rate_limit_per_user_per_minute'), d.rateLimitPerUserPerMinute)
     ),
@@ -462,6 +470,7 @@ export async function setOrgSettings(
     ['enable_dcr', updates.enableDcr],
     ['max_jql_results', updates.maxJqlResults],
     ['max_attachment_bytes', updates.maxAttachmentBytes],
+    ['mass_upload_threshold', updates.massUploadThreshold],
     ['rate_limit_per_user_per_minute', updates.rateLimitPerUserPerMinute],
     ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
     ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],

@@ -92,6 +92,8 @@ interface ThreadProps {
   models: ModelOption[];
   /** The org has file storage; without it the composer offers no uploads. */
   uploadsEnabled: boolean;
+  /** More files than this in one chat is a mass upload: the composer warns first. */
+  massUploadThreshold: number;
   /** The org has a voice service, and how this person has it set; null shows nothing about voice. */
   voice: VoiceAvailability | null;
 }
@@ -167,6 +169,7 @@ export default function ChatThread({
   initialMessages,
   models,
   uploadsEnabled,
+  massUploadThreshold,
   voice,
 }: ThreadProps) {
   const router = useRouter();
@@ -1346,6 +1349,7 @@ export default function ChatThread({
                 onRemoveQueued={removeQueued}
                 onClearQueue={() => setQueue([])}
                 uploads={uploadsEnabled}
+                massUploadThreshold={massUploadThreshold}
                 onSubmit={onComposerSubmit}
                 onCompact={queueOrCompact}
                 editing={editing ? { text: promptTextOf(editing) } : null}

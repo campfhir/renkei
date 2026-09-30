@@ -18,6 +18,7 @@ export interface EditableSettings {
   logLevel: LogLevel;
   maxJqlResults: number;
   maxAttachmentBytes: number;
+  massUploadThreshold: number;
   rateLimitPerUserPerMinute: number;
   accessTokenTtlMinutes: number;
   authorizationCodeTtlSeconds: number;
@@ -389,6 +390,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="Largest attachment a tool will upload or download."
         >
           {numberInput('maxAttachmentBytes', '1MB–100MB')}
+        </Row>
+        <Row
+          label="Mass upload threshold (files)"
+          hint="A chat upload of more files than this shows a slow-processing warning, is sent to the model as a file list instead of inline text, and has scanned files OCR'd."
+        >
+          {numberInput('massUploadThreshold', '2–500')}
         </Row>
       </Section>
 

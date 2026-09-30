@@ -27,6 +27,7 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 const NUMERIC_BOUNDS = {
   maxJqlResults: [1, 1000],
   maxAttachmentBytes: [1_048_576, 104_857_600], // 1MB..100MB
+  massUploadThreshold: [2, 500],
   rateLimitPerUserPerMinute: [1, 10_000],
   accessTokenTtlMinutes: [5, 1_440],
   authorizationCodeTtlSeconds: [30, 600],
@@ -80,6 +81,7 @@ const NUMERIC_BOUNDS = {
 const NUMERIC_KEYS = [
   'maxJqlResults',
   'maxAttachmentBytes',
+  'massUploadThreshold',
   'rateLimitPerUserPerMinute',
   'accessTokenTtlMinutes',
   'authorizationCodeTtlSeconds',
@@ -118,6 +120,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     logLevel: settings.logLevel,
     maxJqlResults: settings.maxJqlResults,
     maxAttachmentBytes: settings.maxAttachmentBytes,
+    massUploadThreshold: settings.massUploadThreshold,
     rateLimitPerUserPerMinute: settings.rateLimitPerUserPerMinute,
     accessTokenTtlMinutes: settings.accessTokenTtlMinutes,
     authorizationCodeTtlSeconds: settings.authorizationCodeTtlSeconds,

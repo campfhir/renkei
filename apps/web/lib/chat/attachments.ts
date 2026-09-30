@@ -12,6 +12,8 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmContentBlock } from '@renkei/agent-llm';
 import { chatAttachmentKey, resolveTenantBlobStore } from '@renkei/blob-store';
 import { extractText, isExtractableCandidate } from '@renkei/document-text';
+import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
+import { getOrgSettings } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
 import { openText, sealText } from './content-crypto';
@@ -22,6 +24,12 @@ import type { AttachmentView } from './views';
 export const INLINE_EXCERPT_CHARS = 40_000;
 /** What is kept of the extracted text at all. */
 export const EXTRACTED_TEXT_MAX_CHARS = 200_000;
+
+/** Extract status of a file whose text needs OCR: a scan, or an image. */
+export const NEEDS_OCR = 'needs_ocr';
+const OCR_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/tiff']);
+/** How many files one OCR pass works on at once. */
+const OCR_CONCURRENCY = 3;
 
 const TEXT_TYPES = new Set([
   'application/json',
@@ -134,6 +142,7 @@ async function extract(
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     return { text: text.slice(0, EXTRACTED_TEXT_MAX_CHARS), status: 'done' };
   }
+  if (OCR_IMAGE_TYPES.has(contentType)) return { text: null, status: NEEDS_OCR };
   if (!isExtractableCandidate({ fileName: filename, contentType })) {
     return { text: null, status: 'unsupported' };
   }
@@ -153,7 +162,95 @@ async function extract(
             : 'failed',
     };
   }
+  if (result.val.notes.includes('scanned-pdf')) return { text: null, status: NEEDS_OCR };
   return { text: result.val.text.slice(0, EXTRACTED_TEXT_MAX_CHARS), status: 'done' };
+}
+
+/**
+ * OCRs one file that came up as needs_ocr and stores the text. A file
+ * OCR cannot read is marked ocr_failed, so a mass upload never retries
+ * the same file forever; with no OCR connector the file stays needs_ocr.
+ */
+async function ocrOne(
+  db: Kysely<DB>,
+  tenantId: string,
+  row: AttachmentRow,
+  redactor: OutboundRedactor | null
+): Promise<string> {
+  const config = await resolveMistralOcrConfig(tenantId);
+  if (!config.ok) return NEEDS_OCR;
+  const store = await resolveTenantBlobStore(tenantId);
+  if (!store.ok) return NEEDS_OCR;
+  const object = await store.val.getObject(row.blobKey);
+  if (!object.ok) return 'ocr_failed';
+  const ocr = await callMistralOcr(config.val, {
+    bytes: object.val.bytes,
+    filename: row.filename,
+    contentType: row.contentType,
+  });
+  const markdown = ocr.ok
+    ? ocr.val.pages
+        .map((page) => page.markdown)
+        .join('\n\n')
+        .slice(0, EXTRACTED_TEXT_MAX_CHARS)
+    : '';
+  if (!ocr.ok || !markdown.trim()) {
+    // An unreachable service is worth another try; anything else is the file.
+    return ocr.ok || ocr.err.type !== 'unreachable' ? 'ocr_failed' : NEEDS_OCR;
+  }
+  const sealed = sealText(redactor ? redactor.apply(markdown).text : markdown);
+  if (!sealed.ok) return NEEDS_OCR;
+  await db
+    .updateTable('chat_attachments')
+    .set({ extracted_text: sealed.val, extract_status: 'done' })
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', row.id)
+    .execute();
+  return 'done';
+}
+
+/**
+ * OCRs the caller's unsent files in a chat that still need it, a few at
+ * a time, and returns each one's resulting status. The composer calls
+ * this after a mass upload and repeats it for whatever is still
+ * needs_ocr, so it is safe to call twice and to interrupt.
+ */
+export async function ocrChatAttachments(
+  db: Kysely<DB>,
+  input: {
+    tenantId: string;
+    ownerSubject: string;
+    chatId: string;
+    attachmentIds: string[];
+    redactor: OutboundRedactor | null;
+  }
+): Promise<Array<{ id: string; extractStatus: string }>> {
+  const ids = input.attachmentIds.filter(isUuid);
+  if (ids.length === 0) return [];
+  const rows = (
+    await db
+      .selectFrom('chat_attachments')
+      .select(COLUMNS)
+      .where('tenant_id', '=', input.tenantId)
+      .where('owner_subject', '=', input.ownerSubject)
+      .where('chat_id', '=', input.chatId)
+      .where('extract_status', '=', NEEDS_OCR)
+      .where('id', 'in', ids)
+      .execute()
+  ).map(rowOf);
+  const results: Array<{ id: string; extractStatus: string }> = [];
+  let next = 0;
+  const lane = async () => {
+    while (next < rows.length) {
+      const row = rows[next++];
+      results.push({
+        id: row.id,
+        extractStatus: await ocrOne(db, input.tenantId, row, input.redactor),
+      });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(OCR_CONCURRENCY, rows.length) }, lane));
+  return results;
 }
 
 export async function createAttachment(
@@ -312,6 +409,9 @@ export async function attachmentPromptBlocks(
     .where('id', 'in', ids)
     .orderBy('created_at', 'asc')
     .execute();
+  const settings = await getOrgSettings(tenantId);
+  const threshold = settings.ok ? settings.val.massUploadThreshold : 10;
+  if (rows.length > threshold) return [massUploadManifest(rows.map(rowOf))];
   const blocks: LlmContentBlock[] = [];
   const store = await resolveTenantBlobStore(tenantId);
   for (const raw of rows) {
@@ -344,4 +444,32 @@ export async function attachmentPromptBlocks(
     }
   }
   return blocks;
+}
+
+/**
+ * A mass upload is sent as a list, not as text: hundreds of inlined
+ * excerpts would not fit any context window. The model reads each file
+ * with chat_read_attachment, one at a time or as its task calls for.
+ */
+export function massUploadManifest(rows: AttachmentRow[]): LlmContentBlock {
+  const lines = rows.map(
+    (row) =>
+      `- id=${row.id} name="${row.filename}" type=${row.contentType} size=${row.sizeBytes} text=${
+        row.extractStatus === 'done'
+          ? 'ready'
+          : row.extractStatus === NEEDS_OCR
+            ? 'ocr-pending'
+            : row.extractStatus
+      }`
+  );
+  return {
+    type: 'text',
+    text:
+      `<attachments count="${rows.length}" mode="manifest">\n` +
+      `${rows.length} files were attached at once, so their contents are not inlined. ` +
+      'Read each with chat_read_attachment (by id, in pages). text=ocr-pending means OCR has not ' +
+      'finished for that file yet; text=ocr_failed or unsupported means no text is available ' +
+      '(chat_attach_to_sandbox stages the bytes).\n' +
+      `${lines.join('\n')}\n</attachments>`,
+  };
 }
