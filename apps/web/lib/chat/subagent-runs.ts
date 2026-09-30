@@ -312,11 +312,13 @@ export function createSubagentRecorder(
     maxSteps: number;
     toolCalls: number;
     lastTool: string | null;
+    startedAt: number;
+    finishedAt: number | null;
   }) => void,
   log: (message: string, fields: Record<string, unknown>) => void = () => {}
 ): SubagentRecorder {
   // What each run id was started with, for the stream's events.
-  const known = new Map<string, { toolUseId: string; maxSteps: number }>();
+  const known = new Map<string, { toolUseId: string; maxSteps: number; startedAt: number }>();
   const quietly = async (what: string, work: () => Promise<void>) => {
     try {
       await work();
@@ -332,7 +334,8 @@ export function createSubagentRecorder(
       await quietly('start', async () => {
         id = await createSubagentRun(db, { ...scope, ...input });
       });
-      if (id) known.set(id, { toolUseId: input.toolUseId, maxSteps: input.maxSteps });
+      const startedAt = Date.now();
+      if (id) known.set(id, { toolUseId: input.toolUseId, maxSteps: input.maxSteps, startedAt });
       emit({
         toolUseId: input.toolUseId,
         status: 'running',
@@ -340,6 +343,8 @@ export function createSubagentRecorder(
         maxSteps: input.maxSteps,
         toolCalls: 0,
         lastTool: null,
+        startedAt,
+        finishedAt: null,
       });
       return id;
     },
@@ -354,6 +359,8 @@ export function createSubagentRecorder(
           maxSteps: run.maxSteps,
           toolCalls: state.toolCalls,
           lastTool: state.lastTool,
+          startedAt: run.startedAt,
+          finishedAt: null,
         });
       }
     },
@@ -368,6 +375,8 @@ export function createSubagentRecorder(
           maxSteps: run.maxSteps,
           toolCalls: outcome.toolCalls,
           lastTool: null,
+          startedAt: run.startedAt,
+          finishedAt: Date.now(),
         });
       }
     },

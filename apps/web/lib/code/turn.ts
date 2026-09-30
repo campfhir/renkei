@@ -156,7 +156,7 @@ function sleep(ms: number): Promise<void> {
 export async function codeProjectContext(
   db: Kysely<DB>,
   project: ProjectRow,
-  actor: { subject: string; origin?: string }
+  actor: { subject: string; origin?: string; auto?: boolean }
 ): Promise<CodeTurnContext | null> {
   if (project.kind !== 'code' || !project.repo) return null;
   const target = codeProjectTarget(project.tenantId, project.id);
@@ -221,6 +221,7 @@ export async function codeProjectContext(
     origin: actor.origin ?? getPublicBaseUrl() ?? '',
     recover: (lostId) => recoverCheckout(db, project, actor, target, lostId),
     servicesEnabled,
+    ...(actor.auto ? { auto: true } : {}),
     subagentModels: subagentModels.map(({ id, label, provider, model, isDefault }) => ({
       id,
       label,

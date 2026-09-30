@@ -500,7 +500,11 @@ async function executeTurnBody(
       // A code project's checkout, when it is there to work in: the code_*
       // tools bound to it, and what the prompt says about it either way.
       project?.kind === 'code'
-        ? codeProjectContext(db, project, { subject: input.session.subject })
+        ? codeProjectContext(db, project, {
+            subject: input.session.subject,
+            // Auto mode's sub-agents run long (delegate.ts).
+            auto: input.chat.autoMode && !readOnly,
+          })
         : null,
       chatPromptContext(db, input.tenantId, input.chat, project),
       // The roster a chat's sub-agent picks from; a code project's chat has

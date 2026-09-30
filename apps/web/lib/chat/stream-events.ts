@@ -142,6 +142,10 @@ export interface SubagentProgress {
   toolCalls: number;
   /** The tool it last reached for, while running. */
   lastTool: string | null;
+  /** When the run started (ms since the epoch, the server's clock) — its elapsed time reads off this. */
+  startedAt: number;
+  /** When it ended, once it has; null while running. */
+  finishedAt: number | null;
 }
 
 export interface CompactionProgress {

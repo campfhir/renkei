@@ -11,7 +11,14 @@ import type { LlmProvider, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { textResult, type LocalTool, type LocalToolContext } from '@/lib/chat/local-tools';
 import type { SubagentRecorder } from '@/lib/chat/subagent-runs';
+import { retryDelayMs } from '@/lib/chat/subagent';
 import {
+  DELEGATE_AUTO_DEFAULT_STEPS,
+  DELEGATE_AUTO_MAX_STEPS,
+  DELEGATE_AUTO_TOOL_TIMEOUT_MS,
+  DELEGATE_AUTO_WALL_CLOCK_MS,
+  DELEGATE_DEFAULT_STEPS,
+  DELEGATE_MAX_STEPS,
   DELEGATE_TOOL_TIMEOUT_MS,
   DELEGATE_WALL_CLOCK_MS,
   codeDelegateTool,
@@ -269,6 +276,143 @@ describe('code_delegate', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('gives an auto-mode sub-agent four hours and a step budget to use them', () => {
+    expect(DELEGATE_AUTO_WALL_CLOCK_MS).toBe(4 * 60 * 60_000);
+    const auto = codeDelegateTool([], { auto: true });
+    const plain = codeDelegateTool([]);
+    // The orchestrator's race must not fire on a sub-agent still inside its own clock.
+    expect(auto.timeoutMs).toBe(DELEGATE_AUTO_TOOL_TIMEOUT_MS);
+    expect(auto.timeoutMs).toBeGreaterThan(DELEGATE_AUTO_WALL_CLOCK_MS);
+    expect(plain.timeoutMs).toBe(DELEGATE_TOOL_TIMEOUT_MS);
+    const stepsOf = (tool: LocalTool) => {
+      const props = tool.def.inputSchema.properties as Record<string, { maximum?: number }>;
+      return props.maxSteps?.maximum;
+    };
+    expect(stepsOf(auto)).toBe(DELEGATE_AUTO_MAX_STEPS);
+    expect(stepsOf(plain)).toBe(DELEGATE_MAX_STEPS);
+    expect(auto.def.description).toContain(`default ${DELEGATE_AUTO_DEFAULT_STEPS}`);
+    expect(plain.def.description).toContain(`default ${DELEGATE_DEFAULT_STEPS}`);
+  });
+
+  it('runs an auto-mode sub-agent past the ordinary 45 minutes, and stops an ordinary one there', async () => {
+    jest.useFakeTimers();
+    try {
+      const slowTool: LocalTool = {
+        def: { name: 'code_slow', description: 'slow', inputSchema: { type: 'object' } },
+        readOnly: true,
+        async execute() {
+          await new Promise((resolve) => setTimeout(resolve, 50 * 60_000));
+          return textResult('ok');
+        },
+      };
+      const step: LlmResponse = {
+        content: [{ type: 'tool_use', id: 'u', name: 'code_slow', input: {} }],
+        stopReason: 'tool_use',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+      const run = async (auto: boolean) => {
+        let calls = 0;
+        const llm = llmOf({
+          async complete() {
+            calls += 1;
+            return ok(calls === 1 || calls === 2 ? step : done('finished'));
+          },
+        });
+        const promise = codeDelegateTool([slowTool], auto ? { auto: true } : {}).execute(
+          { task: 'long job' },
+          context({ llm })
+        );
+        await jest.advanceTimersByTimeAsync(3 * 60 * 60_000);
+        return (await promise).content[0]?.text ?? '';
+      };
+      expect(await run(false)).toContain('stopped: out of time');
+      expect(await run(true)).toContain('Sub-agent done');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps retrying a rate limit with a growing wait, then says why and how often it tried', async () => {
+    jest.useFakeTimers();
+    try {
+      let attempts = 0;
+      const limited: LlmProvider = {
+        async complete() {
+          attempts += 1;
+          return err('rate_limit' as const, { message: 'slow down, 429' });
+        },
+      };
+      const tool = codeDelegateTool([]);
+      const promise = tool.execute({ task: 'do it' }, context({ llm: llmOf(limited) }));
+      await jest.advanceTimersByTimeAsync(5 * 60_000);
+      const result = await promise;
+      expect(attempts).toBe(5);
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? '';
+      expect(text).toContain('rate-limiting');
+      expect(text).toContain('after 5 attempts');
+      expect(text).toContain('slow down, 429');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('backs off exponentially, longer for a busy provider, and never past the cap', () => {
+    expect(retryDelayMs('network', 1)).toBeLessThanOrEqual(2_200);
+    expect(retryDelayMs('network', 3)).toBeGreaterThanOrEqual(7_200);
+    expect(retryDelayMs('rate_limit', 1)).toBeGreaterThan(retryDelayMs('network', 1));
+    expect(retryDelayMs('overloaded', 10)).toBeLessThanOrEqual(33_000);
+  });
+
+  it('hands a tool that throws back to the model as an error and still closes the run', async () => {
+    const boom: LocalTool = {
+      def: { name: 'code_boom', description: 'throws', inputSchema: { type: 'object' } },
+      async execute() {
+        throw new Error('disk on fire');
+      },
+    };
+    const replies: LlmResponse[] = [
+      {
+        content: [{ type: 'tool_use', id: 'u1', name: 'code_boom', input: {} }],
+        stopReason: 'tool_use',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      },
+      done('The tool failed, so I stopped.'),
+    ];
+    const seen: string[] = [];
+    let call = 0;
+    const llm = llmOf({
+      async complete(request) {
+        if (call === 1) {
+          const last = request.messages[request.messages.length - 1];
+          for (const block of last?.content ?? []) {
+            if (block.type === 'tool_result') seen.push(block.content);
+          }
+        }
+        return ok(replies[call++]);
+      },
+    });
+    const finished: { status: string }[] = [];
+    const result = await codeDelegateTool([boom]).execute(
+      { task: 'do it' },
+      context({
+        llm,
+        toolUseId: 'call-1',
+        subagents: {
+          start: async () => 'run-1',
+          progress: async () => {},
+          finish: async (_id, outcome) => {
+            finished.push(outcome);
+          },
+        },
+      })
+    );
+    expect(result.isError).toBe(false);
+    expect(seen.join('\n')).toContain('disk on fire');
+    expect(finished).toHaveLength(1);
+    expect(finished[0]?.status).toBe('completed');
   });
 
   it('does not retry an error that describes the request, not the moment', async () => {

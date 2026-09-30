@@ -18,6 +18,7 @@ import type { SubagentRunView } from '@/lib/chat/subagent-runs';
 import type { ChatBlock } from '@/lib/chat/views';
 import { formatDurationMs } from '@/lib/duration';
 import Markdown from './markdown';
+import { useElapsedMs } from './use-elapsed';
 import { StepList, type WorkStep } from './message-list';
 
 const POLL_MS = 3_000;
@@ -118,6 +119,12 @@ export default function SubagentModal({
   }, [tenantId, chatId, toolUseId]);
 
   const turns = useMemo(() => (run ? turnsOf(run.transcript) : []), [run]);
+  // Counted from the run's own start to its finish, or to now while it works.
+  const elapsedMs = useElapsedMs(
+    run ? Date.parse(run.startedAt) : null,
+    run?.finishedAt ? Date.parse(run.finishedAt) : null,
+    run?.status === 'running'
+  );
 
   return (
     <Modal title="Sub-agent" onClose={onClose} size="wide">
@@ -141,6 +148,11 @@ export default function SubagentModal({
             >
               {statusWord(run)}
             </span>
+            {elapsedMs !== null ? (
+              <span data-subagent-elapsed>
+                {run.status === 'running' ? 'running for' : 'ran for'} {formatDurationMs(elapsedMs)}
+              </span>
+            ) : null}
             <span>
               {run.steps} of {run.maxSteps} model calls · {run.toolCalls} tool call
               {run.toolCalls === 1 ? '' : 's'}
