@@ -1,6 +1,6 @@
 /**
  * "Tokens by surface": how spend splits across chat, chat projects, code
- * projects and agents — the same four buckets and the same colors whether
+ * projects, agents and images — the same five buckets and the same colors whether
  * it's read org-wide (Organization Usage) or for one person (My usage),
  * so a color always means the same surface everywhere it appears.
  */
@@ -13,6 +13,8 @@ const SURFACES: { key: keyof OrgTokenTotals; label: string; className: string }[
   { key: 'chatProjects', label: 'Chat projects', className: 'bg-teal-500' },
   { key: 'codeProjects', label: 'Code projects', className: 'bg-amber-500' },
   { key: 'agents', label: 'Agents', className: 'bg-purple-500' },
+  // What image generation models billed; violet like the Images card and chart.
+  { key: 'images', label: 'Images', className: 'bg-violet-500' },
 ];
 
 function Row({
@@ -67,7 +69,11 @@ export function TokenSurfaceBreakdown({
             key={surface.key}
             label={surface.label}
             tokens={tokens[surface.key]}
-            shareOfTotal={total > 0 ? ((tokens[surface.key].input + tokens[surface.key].output) / total) * 100 : 0}
+            shareOfTotal={
+              total > 0
+                ? ((tokens[surface.key].input + tokens[surface.key].output) / total) * 100
+                : 0
+            }
             className={surface.className}
           />
         ))}

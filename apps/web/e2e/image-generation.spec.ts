@@ -620,6 +620,13 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   await expect(mine.getByTestId('image-usage-bytes')).toHaveText('3.8 MB');
   await expect(mine.getByTestId('image-usage-tokens')).toContainText('101 tokens in');
   await expect(mine.getByTestId('image-usage-tokens')).toContainText('5.2k tokens out');
+  // And the same tokens are a surface of their own in "Tokens by surface".
+  const mySurfaces = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Tokens by surface' }),
+  });
+  const myImages = mySurfaces.getByRole('listitem').filter({ hasText: 'Images' });
+  await expect(myImages).toContainText('5.3k');
+  await expect(myImages).toContainText('(101 in · 5.2k out)');
   await shot(page, testInfo, 'usage-images-mine.png');
 
   // The organization: three pictures, and who has the most.
@@ -628,6 +635,14 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   await expect(org).toBeVisible(COLD);
   await expect(org.getByTestId('image-usage-count')).toHaveText('3');
   await expect(org.getByTestId('image-usage-bytes')).toHaveText('4.3 MB');
+  // The tokens image models billed are a surface beside chat and agents, and part of the headline total.
+  const surfaces = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Tokens by surface' }),
+  });
+  const surfaceImages = surfaces.getByRole('listitem').filter({ hasText: 'Images' });
+  await expect(surfaceImages).toContainText('5.3k');
+  await expect(surfaceImages).toContainText('(101 in · 5.2k out)');
+  await expect(page.getByRole('main').getByText('5.3k', { exact: true }).first()).toBeVisible();
   const board = page.locator('section', {
     has: page.getByRole('heading', { name: 'Top image creators' }),
   });

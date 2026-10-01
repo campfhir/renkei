@@ -11,6 +11,7 @@ import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { recordImageUsage } from '@/lib/image/usage';
 import { getImageSeries, getImageTotals, getImageUsers } from './image-usage';
+import { getSurfaceTokenTotals } from './org-usage';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -155,6 +156,27 @@ maybe('image usage ledger', () => {
       inputTokens: 0,
       outputTokens: 0,
     });
+  });
+
+  it('counts the tokens image models billed as their own surface, beside chat and agents', async () => {
+    const org = await getSurfaceTokenTotals(db, tenantId, span, 'UTC');
+    expect(org.images).toEqual({ input: 101, output: 5160 });
+    // Nothing else was spent here.
+    expect(org.chat).toEqual({ input: 0, output: 0 });
+    expect(org.agents).toEqual({ input: 0, output: 0 });
+    // Scoped to a person: Ann's own, and FLUX (which bills no tokens) adds none for Bo.
+    expect((await getSurfaceTokenTotals(db, tenantId, span, 'UTC', ann)).images).toEqual({
+      input: 101,
+      output: 5160,
+    });
+    expect((await getSurfaceTokenTotals(db, tenantId, span, 'UTC', bo)).images).toEqual({
+      input: 0,
+      output: 0,
+    });
+    // The picture from 60 days ago carries no tokens, and a wider span still leaves them as they are.
+    expect(
+      (await getSurfaceTokenTotals(db, tenantId, { days: 90, endOffsetDays: 0 }, 'UTC')).images
+    ).toEqual({ input: 101, output: 5160 });
   });
 
   it('reads a wider span back to include the old picture', async () => {

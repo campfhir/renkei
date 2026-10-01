@@ -87,6 +87,7 @@ const ZERO: UtilizationTotals = {
 const ZERO_SURFACE_TOKENS: OrgTokenTotals = {
   chat: { input: 0, output: 0 },
   chatProjects: { input: 0, output: 0 },
+  images: { input: 0, output: 0 },
   codeProjects: { input: 0, output: 0 },
   agents: { input: 0, output: 0 },
 };

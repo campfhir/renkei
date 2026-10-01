@@ -378,10 +378,9 @@ export default function OrgUsageViewer({
         {row.label}
       </button>
     );
-  const totalTokens = (['chat', 'chatProjects', 'codeProjects', 'agents'] as const).reduce(
-    (sum, key) => sum + tokens[key].input + tokens[key].output,
-    0
-  );
+  const totalTokens = (
+    ['chat', 'chatProjects', 'codeProjects', 'agents', 'images'] as const
+  ).reduce((sum, key) => sum + tokens[key].input + tokens[key].output, 0);
   const failureRate = activity.runs > 0 ? (activity.failures / activity.runs) * 100 : 0;
   const toolErrorRate =
     activity.toolCalls > 0 ? (activity.toolErrors / activity.toolCalls) * 100 : 0;
@@ -430,9 +429,9 @@ export default function OrgUsageViewer({
         </Link>
         <p className="w-full text-sm text-gray-500 dark:text-gray-400">
           Every surface&rsquo;s and model&rsquo;s token spend across the tenant — chat, chat
-          projects, code projects and agents — how much of the org is actually using it, and who and
-          what is driving the bill. Pick a person to see the same for them alone, along with their
-          groups and agents. Counts only, never content.
+          projects, code projects, agents and images — how much of the org is actually using it, and
+          who and what is driving the bill. Pick a person to see the same for them alone, along with
+          their groups and agents. Counts only, never content.
         </p>
       </header>
 

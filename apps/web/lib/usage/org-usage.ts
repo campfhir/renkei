@@ -41,6 +41,13 @@ export interface OrgTokenTotals {
   chatProjects: SurfaceTokens;
   codeProjects: SurfaceTokens;
   agents: SurfaceTokens;
+  /**
+   * What image generation models billed (image_usage, migration 132). Only
+   * models that report tokens count here — gpt-image does, FLUX does not —
+   * so a FLUX-only org shows 0 even with pictures drawn; the Images card
+   * counts those by the picture and the byte.
+   */
+  images: SurfaceTokens;
 }
 
 export interface OrgActivityTotals {
@@ -116,7 +123,7 @@ export async function getSurfaceTokenTotals(
   timeZone: string,
   ownerSubject: string | null = null
 ): Promise<OrgTokenTotals> {
-  const [chatResult, agentRow] = await Promise.all([
+  const [chatResult, agentRow, imageRow] = await Promise.all([
     sql<ChatBucketRow>`
       SELECT
         ${CHAT_BUCKET_CASE} AS bucket,
@@ -137,6 +144,14 @@ export async function getSurfaceTokenTotals(
         AND ${inSpan('created_at', span, timeZone)}
         ${ownedBy('subject', ownerSubject)}
     `.execute(db),
+    sql<{ input_tokens: string; output_tokens: string }>`
+      SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens
+      FROM image_usage
+      WHERE tenant_id = ${tenantId}
+        AND ${inSpan('created_at', span, timeZone)}
+        ${ownedBy('subject', ownerSubject)}
+    `.execute(db),
   ]);
   return {
     chat: surfaceOf(chatResult.rows, 'chat'),
@@ -145,6 +160,10 @@ export async function getSurfaceTokenTotals(
     agents: {
       input: Number(agentRow.rows[0]?.input_tokens ?? 0),
       output: Number(agentRow.rows[0]?.output_tokens ?? 0),
+    },
+    images: {
+      input: Number(imageRow.rows[0]?.input_tokens ?? 0),
+      output: Number(imageRow.rows[0]?.output_tokens ?? 0),
     },
   };
 }
