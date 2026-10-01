@@ -44,42 +44,235 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: ‘Image generation, sub-agents, and code project refinements’,
     entries: [
       {
-        kind: 'changed',
-        title: 'Larger code checkouts, and a way to ask for more',
+        kind: ‘added’,
+        title: ‘Chat preview window and Download button for generated pictures’,
         detail:
-          'A code project’s checkout can now grow to 8 GB (it was 2 GB), and an admin can change that limit under Settings. If a project needs more, ask from its page with a reason; an admin approves or denies it, and an approval raises that project only.',
+          ‘Ask the chat to generate an image and it now shows in a preview window within the chat. Hover or tap to see the full image and download it as a file, keeping it alongside your conversation.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Image chat with verbatim prompt and preferred model’,
+        detail:
+          ‘The chat shows exactly what prompt was sent to the image model, lets you pick which image model to use (gpt-image or FLUX), tracks usage separately, and the ledger shows how many images were generated.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Dedicated image generation models’,
+        detail:
+          ‘Use OpenAI’s GPT-4o image model or FLUX for high-quality image generation directly within chat, with better control over the generation process and results.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Save SVGs the model presents as PNG or .svg files’,
+        detail:
+          ‘When the model generates or presents SVG code in a chat, save it directly as an SVG file or render and save it as a PNG, so you can use it in your own projects.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Handle mass chat uploads with warnings and OCR’,
+        detail:
+          ‘Uploading many files at once now shows a file manifest, warns if some files cannot be processed, performs OCR on scanned documents, and displays a counter chip showing upload progress.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘Sub-agent card shows correct state while running’,
+        detail:
+          ‘The sub-agent card no longer incorrectly shows as failed while the agent is still running, and the queued run modal no longer errors when displaying sub-agent status.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Larger code checkouts, and a way to ask for more’,
+        detail:
+          ‘A code project’s checkout can now grow to 8 GB (it was 2 GB), and an admin can change that limit under Settings. If a project needs more, ask from its page with a reason; an admin approves or denies it, and an approval raises that project only.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Sub-agents are resilient and long-running with elapsed time’,
+        detail:
+          ‘Code sub-agents now run longer without timing out, are resilient to temporary failures, show elapsed time for each step, and display better status when running in auto mode.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘Queued chat messages survive page reloads’,
+        detail:
+          ‘When you queue multiple messages in a chat, they are now persisted server-side so they will not be lost if you refresh the page or close the browser.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Composer redesigned on phones’,
+        detail:
+          ‘On smaller screens, the voice and dictation buttons, along with the prompt composer, are now tucked into a two-level menu, giving more room for the actual message box.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Chats can show mockups inline’,
+        detail:
+          ‘Ask how a screen, form or layout would look and the reply shows it — a live preview right in the chat. Click to open full screen, zoom in, pan, and see it at phone, tablet or desktop width.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Code render with syntax highlighting and line numbers’,
+        detail:
+          ‘Code fences and backtick blocks in chat prompts now render with syntax highlighting and a line-number gutter, making it easier to reference specific lines in code discussions.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Improved code block styling’,
+        detail:
+          ‘Code block headers and footers are now transparent and lighter in dark mode, making code more readable and the UI cleaner.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Chat widget decisions persist across devices’,
+        detail:
+          ‘Your widget preferences in chats now sync across all your devices, so approval cards and other widget choices follow you wherever you are working.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Widget decisions batched before reply’,
+        detail:
+          ‘When a reply contains multiple widget decisions, they are now batched together before the reply is sent, improving performance and consistency.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Voice recognition is faster with improved interruption’,
+        detail:
+          ‘Voice barge-in now judges words instead of noise floor, enabling much faster interruption. The recognizer takes a sentence in about 1.2 seconds and streamed first words appear almost immediately.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘PR pipeline subscriptions with status monitoring’,
+        detail:
+          ‘Code projects can now subscribe to pull request pipeline updates via webhooks, showing pipeline status directly in the code chat and monitoring CI results.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Code project page layout optimized by usage’,
+        detail:
+          ‘The project page sections are now arranged based on how frequently each part is used, putting the most-accessed features front and center.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Branch switching improved with better UX’,
+        detail:
+          ‘The branch picker now shows clickable options, has a more visual design on phones, and moving between branches is simpler with an overflow menu.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘Branch switching works with uncommitted changes’,
+        detail:
+          ‘You can now switch branches even when you have uncommitted changes in the code project, and file management is integrated into the code pane.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Auto-detect Jira and GitHub issues from pull requests’,
+        detail:
+          ‘Sub-agents now automatically detect related Jira issues and GitHub issues mentioned in a pull request, linking them for context.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘Outlook calls wait their turn instead of failing when the mailbox is busy’,
+        detail:
+          ‘Exchange runs only a few requests against one mailbox at a time, and a chat, an agent’s bulk mail job and the inbox sync could all reach it at once — every call past the limit came back as “Microsoft Graph answered 503 — CommandConcurrencyLimitReached”. Renkei now holds its own calls to that limit per mailbox, waits the pause Microsoft asks for and retries a throttled read before reporting it.’,
       },
       {
         kind: 'added',
-        title: 'Chats can show mockups',
+        title: 'Survive restarts mid-turn with suspension and resumption',
         detail:
-          'Ask how a screen, form or layout would look and the reply shows it — a live preview right in the chat, in a project’s code chat or any other. Click it to open it full screen, zoom in, pan, and see it at phone, tablet or desktop width.',
+          'Chats can now be suspended and resumed mid-turn if the worker restarts, tools are properly drained, and in-flight operations are stopped gracefully rather than abandoning work.',
+      },
+      {
+        kind: 'changed',
+        title: 'Code run waits as long as commands may take',
+        detail:
+          'The code_run tool no longer times out prematurely, giving long-running commands the time they need to complete.',
+      },
+      {
+        kind: 'added',
+        title: 'Shared ExternalLink component for consistency',
+        detail:
+          'All external links throughout the UI now use a consistent component, ensuring predictable behavior and proper handling of new-tab opening.',
       },
       {
         kind: 'fixed',
-        title: 'Outlook calls wait their turn instead of failing when the mailbox is busy',
+        title: 'iOS PWA push subscriptions survive silent rotation',
         detail:
-          'Exchange runs only a few requests against one mailbox at a time, and a chat, an agent’s bulk mail job and the inbox sync could all reach it at once — every call past the limit came back as “Microsoft Graph answered 503 — CommandConcurrencyLimitReached”. Renkei now holds its own calls to that limit per mailbox, waits the pause Microsoft asks for and retries a throttled read before reporting it, and a bulk job’s batches run one message at a time so they leave room for the person using the same mailbox. When a call still cannot get through, the error says the mailbox is busy and how long Microsoft asked to wait.',
+          'Push notification subscriptions in the iOS PWA no longer get lost when the app goes to the background and the worker restarts.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Jira external links open in new tab, not webview',
+        detail:
+          'External Jira issue links in the iOS PWA now open in a new tab rather than the webview, providing better navigation.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Bitbucket host detection improved',
+        detail:
+          'The connector now correctly detects Bitbucket API endpoints regardless of connection configuration.',
       },
       {
         kind: 'changed',
         title: 'Inbox and calendar sync runs one catch-up per burst of notifications',
         detail:
-          'Microsoft sends several notifications for one mailbox change, and each used to start its own sync round even though the first already caught everything up. Notifications that arrive while a round is still queued now fold into it, which cuts the background traffic on a busy mailbox without delaying what it indexes.',
+          'Microsoft sends several notifications for one mailbox change, and each used to start its own sync round even though the first already caught everything up. Notifications that arrive while a round is still queued now fold into it, which cuts the background traffic on a busy mailbox.',
       },
       {
-        kind: 'changed',
-        title: 'Reasoning effort applies to Claude models too',
+        kind: ‘added’,
+        title: ‘ADManager Plus connector for service desk account actions’,
         detail:
-          'A model row’s Reasoning effort now sets how long Claude 4.6 and later deliberate before answering and how many tool rounds they take, the same way it already did for the GPT reasoning models — low, medium, high, xhigh or max, blank for the provider’s default. Set it lower on a row whose replies think longer than the work needs, or on a row meant for sub-agents. On these models a chat’s own Thinking switch only shows or hides the thinking summary.',
+          ‘Manage user accounts directly through ADManager Plus, with support for password resets, account unlocking, and directory queries with customizable templates.’,
       },
       {
-        kind: 'added',
-        title: 'See where a reply’s time went',
+        kind: ‘added’,
+        title: ‘Entra Developer connector for app provisioning’,
         detail:
-          'The collapsed “Thought · 3 tool calls” line under a reply now says how long the model’s own calls took apart from the tools they waited on — “12s model, 41s tools” — and each tool call in it carries its own time, so a slow reply reads as thinking or as one slow tool at a glance. A sub-agent’s transcript shows the time of each of its model calls and tool calls the same way, and an agent run’s timeline says how many model calls an attempt made and how long it waited on them beside the tool calls it already listed. Behind it, every model call now records how long it took in the organization’s usage ledger.',
+          ‘Provision and manage Entra applications, set API permissions, configure exposed scopes, and manage app roles — all through Renkei.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘ADManager Plus password reset uses correct endpoints’,
+        detail:
+          ‘The connector now uses the actual endpoints documented by ADManager Plus instead of guessing, and properly supports domain-aware account targeting.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘ADManager Plus handles large organizations’,
+        detail:
+          ‘Fixed "unreachable" errors when testing connectivity against large ADManager Plus installations.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘Dynamic field editing on Jira approvals’,
+        detail:
+          ‘When approving or editing a Jira action, you can now modify any field and it is typed against the live Jira schema for that project.’,
+      },
+      {
+        kind: ‘changed’,
+        title: ‘Reasoning effort applies to Claude models too’,
+        detail:
+          ‘A model row’s Reasoning effort now sets how long Claude 4.6 and later deliberate before answering and how many tool rounds they take, the same way it already did for the GPT reasoning models — low, medium, high, xhigh or max, blank for the provider’s default.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘Free domain registration blocked for security’,
+        detail:
+          ‘Free and consumer email domains are now blocked from self-service organization registration to prevent abuse.’,
+      },
+      {
+        kind: ‘fixed’,
+        title: ‘Project chats use project tool defaults, not personal’,
+        detail:
+          ‘New chats in a project now correctly use the project’s configured tool defaults instead of falling back to personal preferences.’,
+      },
+      {
+        kind: ‘added’,
+        title: ‘See where a reply’s time went’,
+        detail:
+          ‘The collapsed “Thought · 3 tool calls” line under a reply now says how long the model’s own calls took apart from the tools they waited on — “12s model, 41s tools” — and each tool call in it carries its own time, so a slow reply reads as thinking or as one slow tool at a glance.’,
       },
       {
         kind: 'fixed',
