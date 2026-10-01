@@ -129,31 +129,42 @@ argument is text either way — Markdown, CSV, JSON — never base64, so this
 does not reopen the no-bytes-as-arguments rule; it is what makes the rule
 possible for authored documents at all.
 
-### The one exception: `sandbox_write_binary_file`
+### Pictures: `chat_generate_image`, not bytes from a chat model
 
-A model that can produce the bytes of a PNG, JPEG, TIFF or PDF itself may
-stage them as base64 — the single place the no-bytes rule bends, and only
-behind `@renkei/document-render`'s validators (`src/binary/`), which never
-render or execute the input:
+No chat model writes image bytes as a tool argument, here or anywhere. A
+picture comes from an **image generation model**: an `llm_model_configs`
+row whose **API surface** is _Images API_ (`settings.apiSurface =
+'images'`, e.g. `gpt-image-1` or an Azure deployment of it). Such a row is
+never a chat model — the shared predicates in `@renkei/agent-llm`
+(`chatModelsOnly` / `imageModelsOnly`) keep it out of the chat picker, the
+org default, an agent's override and `resolveAgentLlm`, and it can never be
+saved as the default.
 
-- **PNG, JPEG, TIFF are rebuilt, not cleaned.** Each is parsed against an
+Chats whose org has an enabled image row are offered `chat_generate_image`
+(chat only; org agents do not get it, since the MCP server cannot tell
+which model is calling). It sends the prompt to the image model through the
+Images API (`generateImage`, same URL/auth rules as the OpenAI chat
+adapter) and keeps the PNG or JPEG under the chat's Artifacts.
+
+What comes back is still untrusted bytes from a remote service, so it goes
+through `@renkei/document-render`'s validators (`src/binary/`) and is kept
+only as **rebuilt** output, never as given:
+
+- **PNG and JPEG are rebuilt, not cleaned.** Each is parsed against an
   allowlist of the structures that describe pixels (PNG chunks; JPEG
-  tables, frame and scan data; TIFF strip tags) and written out again from
-  those alone. EXIF/XMP/ICC, text chunks, APNG frames, SubIFDs, comments,
-  unknown markers and trailing bytes cannot survive, so a payload parked
-  beside the pixels (or a polyglot) is gone by construction. PNG pixel data
-  is inflated under a size bound (decompression bombs refused) and
-  re-deflated by our own zlib.
-- **A PDF is gated, not rebuilt.** It is refused if the bytes (scanned raw,
-  `#xx` name escapes decoded) contain scripts, auto-run/launch/URI/submit
-  actions, embedded files, forms, encryption, object streams or the JBIG2 /
-  JPX decoders, or if it does not start at byte 0 and end at `%%EOF`.
+  tables, frame and scan data) and written out again from those alone.
+  EXIF/XMP/ICC, text chunks, APNG frames, comments, unknown markers and
+  trailing bytes cannot survive, so a payload parked beside the pixels (or
+  a polyglot) is gone by construction. PNG pixel data is inflated under a
+  size bound (decompression bombs refused) and re-deflated by our own zlib.
 - The extension names the format and the matching validator must accept the
   bytes, so a `.png` that is really HTML or a JPEG is refused. At most 1 MiB
   decoded, 16384 px a side, 50 MP.
-
-`chat_write_binary_file` is the chat's twin, and keeps the file under the
-chat's Artifacts like `chat_write_file`.
+- The validators also cover TIFF (rewritten from its strip tags only) and
+  PDF (refused if it carries scripts, auto-run/launch/URI/submit actions,
+  embedded files, forms, encryption, object streams or the JBIG2/JPX
+  decoders). No tool produces those today; they stand ready for any caller
+  that must accept such bytes.
 
 ## `sandbox_render_chart` — a chart from Mermaid text
 

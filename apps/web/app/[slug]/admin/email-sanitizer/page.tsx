@@ -3,6 +3,7 @@ import { redirect, notFound } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
+import { chatModelsOnly } from '@renkei/agent-llm';
 import RuleForms from './rule-forms';
 import SuggestRulesPanel from './suggest-rules-panel';
 import CleanerScripts from './cleaner-scripts';
@@ -37,6 +38,7 @@ export default async function AdminEmailSanitizerPage({
         .select('id')
         .where('tenant_id', '=', tenantRef.id)
         .where('enabled', '=', true)
+        .where(chatModelsOnly)
         .limit(1)
         .executeTakeFirst()) !== undefined
     : false;

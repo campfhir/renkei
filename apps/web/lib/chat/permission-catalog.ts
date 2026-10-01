@@ -22,6 +22,7 @@ import { codeTools } from '@/lib/code/tools';
 import { attachmentTools } from './attachment-tools';
 import { compactionTools } from './compaction-tools';
 import { fileTools } from './file-tools';
+import { imageGenerationTool } from './image-tools';
 import { memoryTools } from './memory-tools';
 import { userMemoryTools } from './user-memory-tools';
 import type { LocalTool } from './local-tools';
@@ -47,10 +48,13 @@ function actNamesOf(tools: LocalTool[]): ActToolEntry[] {
 
 /** The chat's in-process act tools: files, memory, compaction, staging. */
 export function chatOwnActTools(): ActToolEntry[] {
+  // Listed by name whether or not this org has an image model: the catalog is of tools that exist.
+  const imageTool = imageGenerationTool({ models: [{ id: '', label: '', model: '' }] });
   return dedupe([
     ...actNamesOf(compactionTools()),
     ...actNamesOf(attachmentTools({ connectors: ['sandbox'] })),
     ...actNamesOf(fileTools()),
+    ...actNamesOf(imageTool ? [imageTool] : []),
     ...actNamesOf(memoryTools()),
     ...actNamesOf(userMemoryTools()),
   ]);

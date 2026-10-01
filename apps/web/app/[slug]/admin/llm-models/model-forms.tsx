@@ -64,7 +64,10 @@ interface ModelDraft {
   temperature: string;
   apiVersion: string;
   reasoningEffort: string;
-  /** '' = chat-completions (the default); 'responses' = the Responses API. */
+  /**
+   * '' = chat-completions (the default); 'responses' = the Responses API;
+   * 'images' = the Images API — an image generation model, not a chat one.
+   */
   apiSurface: string;
   apiKey: string;
   /** '' = type/keep a key; a config id = reuse that config's stored key. */
@@ -195,7 +198,9 @@ export default function ModelForms({ slug }: { slug: string }) {
     editingId !== 'new' ? (models ?? []).find((row) => row.id === editingId) : undefined;
   const borrowFromId = draft.apiKeyFromId || (editingRow?.hasApiKey ? editingRow.id : '');
   const canList = Boolean(draft.apiKey || borrowFromId);
-  const canTest = canList && Boolean(draft.model.trim());
+  // "Test connection" sends a chat completion, which an image model rejects.
+  const isImage = draft.apiSurface === 'images';
+  const canTest = canList && Boolean(draft.model.trim()) && !isImage;
 
   /** Other configs whose stored key can be reused — the same connection
    *  serving another model row. */
@@ -332,6 +337,11 @@ export default function ModelForms({ slug }: { slug: string }) {
                     Default
                   </span>
                 ) : null}
+                {row.settings?.apiSurface === 'images' ? (
+                  <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300">
+                    Image generation
+                  </span>
+                ) : null}
                 {!row.enabled ? (
                   <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400">
                     Disabled
@@ -403,7 +413,12 @@ export default function ModelForms({ slug }: { slug: string }) {
               className={inputClass}
               value={draft.provider}
               onChange={(event) => {
-                setDraft({ ...draft, provider: event.target.value });
+                setDraft({
+                  ...draft,
+                  provider: event.target.value,
+                  // The API surface is an OpenAI-dialect setting; switching away drops it.
+                  apiSurface: event.target.value === 'openai' ? draft.apiSurface : '',
+                });
                 clearAvailable();
               }}
             >
@@ -453,20 +468,38 @@ export default function ModelForms({ slug }: { slug: string }) {
                 className={inputClass}
                 value={draft.apiSurface}
                 onChange={(event) => {
-                  setDraft({ ...draft, apiSurface: event.target.value });
+                  setDraft({
+                    ...draft,
+                    apiSurface: event.target.value,
+                    // An image model cannot answer chat, so it can never be the default.
+                    isDefault: event.target.value === 'images' ? false : draft.isDefault,
+                  });
                   clearAvailable();
                 }}
               >
                 <option value="">Chat completions (default)</option>
                 <option value="responses">Responses API</option>
+                <option value="images">Images API (image generation)</option>
               </select>
-              <p className={hintClass}>
-                Some reasoning-model deployments (an Azure gpt-6-astra-1 case is where this setting
-                came from) cannot make tool calls on chat completions at ANY reasoning effort value
-                — their own error names <span className="font-mono">/v1/responses</span> as the only
-                path. Switch this only if &quot;Test connection&quot; with tools fails citing
-                <span className="font-mono"> reasoning_effort</span> no matter what you set it to.
-              </p>
+              {isImage ? (
+                <p className={hintClass} data-testid="image-surface-hint">
+                  For a model that draws pictures (gpt-image-1, gpt-image-2 and the like) rather
+                  than chats. It is never offered as a chat model or the default; instead, chats get
+                  a &quot;generate image&quot; tool that sends the prompt to it. On Azure, set the
+                  base URL to the resource&apos;s <span className="font-mono">/openai/v1</span>{' '}
+                  surface and the model id to your deployment name.
+                </p>
+              ) : null}
+              {isImage ? null : (
+                <p className={hintClass}>
+                  Some reasoning-model deployments (an Azure gpt-6-astra-1 case is where this
+                  setting came from) cannot make tool calls on chat completions at ANY reasoning
+                  effort value — their own error names{' '}
+                  <span className="font-mono">/v1/responses</span> as the only path. Switch this
+                  only if &quot;Test connection&quot; with tools fails citing
+                  <span className="font-mono"> reasoning_effort</span> no matter what you set it to.
+                </p>
+              )}
             </div>
           ) : null}
 
@@ -740,14 +773,15 @@ export default function ModelForms({ slug }: { slug: string }) {
             >
               {testing ? 'Sending a test message…' : 'Test connection'}
             </button>
-            {!canTest ? (
+            {!canTest && !isImage ? (
               <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
                 Enter a model id and an API key (or pick one to reuse) first.
               </span>
             ) : null}
             <p className={hintClass}>
-              Sends one real chat completion with these settings — the same check an agent run would
-              make.
+              {isImage
+                ? 'An image generation model cannot be tested here: the check sends a chat completion, which it rejects. Ask a chat to draw something to try it.'
+                : 'Sends one real chat completion with these settings — the same check an agent run would make.'}
             </p>
             {testError ? (
               <p className="mt-1 text-xs text-red-600 dark:text-red-400">{testError}</p>
@@ -771,7 +805,8 @@ export default function ModelForms({ slug }: { slug: string }) {
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
-                checked={draft.isDefault}
+                checked={draft.isDefault && !isImage}
+                disabled={isImage}
                 onChange={(event) => setDraft({ ...draft, isDefault: event.target.checked })}
               />
               Organization default

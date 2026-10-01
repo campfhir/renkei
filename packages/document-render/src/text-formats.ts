@@ -41,12 +41,12 @@ export const REFUSED_EXTENSIONS: Record<string, string> = {
   doc: 'write it as .docx instead',
   ppt: 'write it as .pptx instead',
   zip: 'write the files one at a time instead',
-  png: 'write it as base64 bytes with the binary-file tool',
-  jpg: 'write it as base64 bytes with the binary-file tool',
-  jpeg: 'write it as base64 bytes with the binary-file tool',
-  tif: 'write it as base64 bytes with the binary-file tool',
-  tiff: 'write it as base64 bytes with the binary-file tool',
-  gif: 'only PNG, JPEG, TIFF and PDF can be written as bytes',
+  png: 'use chat_generate_image if it is offered to you',
+  jpg: 'use chat_generate_image if it is offered to you',
+  jpeg: 'use chat_generate_image if it is offered to you',
+  tif: 'only PNG and JPEG images can be generated, with chat_generate_image',
+  tiff: 'only PNG and JPEG images can be generated, with chat_generate_image',
+  gif: 'only PNG and JPEG images can be generated, with chat_generate_image',
 };
 
 /** More than any caller writes in one go. */

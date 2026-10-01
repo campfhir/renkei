@@ -7,19 +7,13 @@
  * does itself — download a URL, read back what's staged, forward it into
  * an already-requested upload — never an arbitrary command.
  *
- * File bytes do not travel as tool arguments here, with one narrow exception
- * (sandbox_write_binary_file, below): sandbox_download_url
+ * File bytes never travel as tool arguments here either: sandbox_download_url
  * and sandbox_fetch_from_fileshare have the WORKER (or the web app, for the
  * fileshare pull) fetch the bytes itself, sandbox_render_document has the web
  * app RENDER them from text the model wrote (Markdown/CSV/JSON — never
  * base64), and sandbox_send_to_upload reads them back out and forwards them
  * into an upload slot server-side. The model only ever sees filenames,
  * sizes, and ids.
- *
- * sandbox_write_binary_file stages a PNG, JPEG, TIFF or PDF the model wrote
- * as base64 — but only the bytes @renkei/document-render's validators
- * REBUILD (images) or accept (a PDF with nothing in it that can act), never
- * the caller's own bytes for an image.
  *
  * sandbox_render_chart (./charts.ts) is the same door for a chart or a
  * diagram: Mermaid text the model wrote, drawn by the worker's own Chromium
@@ -48,16 +42,11 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
 import {
-  BINARY_EXTENSIONS,
-  BINARY_MAX_BASE64_CHARS,
-  BINARY_MAX_BYTES,
   extensionOf,
-  isBinaryExtension,
   isRenderedExtension,
   renderDocument,
   RENDER_INPUT_MAX_CHARS,
   resolveMediaType,
-  sanitizeBinary,
 } from '@renkei/document-render';
 import {
   PAGE_TEXT_DEFAULT_CHARS,
@@ -373,63 +362,6 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
           'Next: request an upload endpoint with the destination’s own *_request_*_upload tool ' +
           `(e.g. sharepoint_request_document_upload), then call sandbox_send_to_upload with ` +
           'this fileId and that uploadId to move it there.'
-      );
-    }
-  );
-
-  server.registerTool(
-    'sandbox_write_binary_file',
-    {
-      title: 'Sandbox · Act — Stage a PNG, JPEG, TIFF or PDF you wrote as bytes',
-      description:
-        'Stage a PNG, JPEG, TIFF or PDF you produced as raw bytes in your scratch space, to file ' +
-        'elsewhere with a *_request_*_upload tool and sandbox_send_to_upload. Pass plain base64 in ' +
-        'content. The bytes are validated and images are REBUILT from their pixels — metadata, ' +
-        'text chunks and trailing data are removed — and a PDF containing scripts, launch/URI ' +
-        'actions, attachments, forms or encryption is refused. For a chart use ' +
-        'sandbox_render_chart; for a PDF of ordinary prose use sandbox_render_document. At most ' +
-        `${BINARY_MAX_BYTES} bytes.`,
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        filename: z
-          .string()
-          .min(1)
-          .max(255)
-          .describe(
-            `Name to stage the file as; the extension names the format (${BINARY_EXTENSIONS.join(', ')}).`
-          ),
-        content: z
-          .string()
-          .max(BINARY_MAX_BASE64_CHARS + 1024)
-          .describe(`The file's bytes as plain base64 (no data: prefix).`),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      const target = targetOf(context);
-      if (typeof target === 'string') return errText(target);
-
-      const named = validateFilename(str(args.filename));
-      if (!named.ok) return errText('filename must be a name, not a path, and not empty.');
-      const extension = extensionOf(named.filename);
-      if (!extension || !isBinaryExtension(extension)) {
-        return errText(
-          `filename must end in one of: ${BINARY_EXTENSIONS.map((e) => `.${e}`).join(', ')}.`
-        );
-      }
-      const checked = sanitizeBinary(extension, str(args.content));
-      if (!checked.ok) return errText(`${named.filename} was not staged: ${checked.reason}`);
-
-      const staged = await sbWriteFile(
-        target,
-        { filename: named.filename, contentType: checked.mediaType, source: 'docgen' },
-        checked.bytes
-      );
-      if (!staged.ok) return errText(clientFailure(staged.err).message);
-      const note = checked.notes.length ? `\nNote: ${checked.notes.join(' ')}` : '';
-      return textResult(
-        `Staged ${fileLine(staged.val)}${note}\n` +
-          'Next: request an upload endpoint with the destination’s own *_request_*_upload tool, ' +
-          'then call sandbox_send_to_upload with this fileId and that uploadId to move it there.'
       );
     }
   );

@@ -12,12 +12,13 @@
  * minute to bite.
  */
 
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '@renkei/db';
 import { decrypt, parseEncryptionKey } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
+import type { ImageModelConfig } from './images';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
 import { OpenAiResponsesProvider } from './openai-responses';
@@ -33,6 +34,28 @@ export interface ResolvedLlm {
 }
 
 export type ResolveLlmError = 'NO_MODEL' | 'UNSUPPORTED_PROVIDER' | 'CONFIG_ERROR' | 'DB_ERROR';
+
+/**
+ * A model row whose API surface is the Images API (settings.apiSurface
+ * 'images'): an image generation model such as gpt-image-1. It speaks
+ * the Images API, not chat, so it
+ * must never be offered where a chat model is chosen — the picker, the
+ * org default, an agent's override, a sub-agent's roster.
+ */
+export function isImageModelSettings(settings: unknown): boolean {
+  return (
+    typeof settings === 'object' &&
+    settings !== null &&
+    !Array.isArray(settings) &&
+    Reflect.get(settings, 'apiSurface') === 'images'
+  );
+}
+
+/** `.where(chatModelsOnly)` — the SQL twin of !isImageModelSettings, for every query that picks a chat model. */
+export const chatModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') <> 'images'`;
+
+/** `.where(imageModelsOnly)` — the rows that generate images. */
+export const imageModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') = 'images'`;
 
 const CACHE_TTL_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
@@ -123,6 +146,29 @@ function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, Resol
   }
 }
 
+/** The row's API key, decrypted with the deployment key at the moment of use. */
+function apiKeyOf(row: ModelRow): Result<string, ResolveLlmError> {
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) return err('CONFIG_ERROR' as const, { message: 'Encryption key missing' });
+
+  if (!row.encrypted_secrets) {
+    return err('CONFIG_ERROR' as const, { message: 'The model has no API key stored.' });
+  }
+  const secretsResult = decrypt(row.encrypted_secrets, keyResult.val);
+  if (!secretsResult.ok) {
+    return err('CONFIG_ERROR' as const, { message: 'The stored API key cannot be decrypted.' });
+  }
+  let apiKey = '';
+  try {
+    const secrets: { apiKey?: unknown } = JSON.parse(secretsResult.val);
+    if (typeof secrets.apiKey === 'string') apiKey = secrets.apiKey;
+  } catch {
+    return err('CONFIG_ERROR' as const, { message: 'The stored secrets are malformed.' });
+  }
+  if (!apiKey) return err('CONFIG_ERROR' as const, { message: 'The model has no API key stored.' });
+  return ok(apiKey);
+}
+
 export async function resolveAgentLlm(
   db: Kysely<DB>,
   tenantId: string,
@@ -137,7 +183,8 @@ export async function resolveAgentLlm(
       .selectFrom('llm_model_configs')
       .select(['id', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
       .where('tenant_id', '=', tenantId)
-      .where('enabled', '=', true);
+      .where('enabled', '=', true)
+      .where(chatModelsOnly);
     query = agentModelConfigId
       ? query.where('id', '=', agentModelConfigId)
       : query.where('is_default', '=', sql<boolean>`true`);
@@ -157,24 +204,9 @@ export async function resolveAgentLlm(
     });
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return err('CONFIG_ERROR' as const, { message: 'Encryption key missing' });
-
-  if (!row.encrypted_secrets) {
-    return err('CONFIG_ERROR' as const, { message: 'The model has no API key stored.' });
-  }
-  const secretsResult = decrypt(row.encrypted_secrets, keyResult.val);
-  if (!secretsResult.ok) {
-    return err('CONFIG_ERROR' as const, { message: 'The stored API key cannot be decrypted.' });
-  }
-  let apiKey = '';
-  try {
-    const secrets: { apiKey?: unknown } = JSON.parse(secretsResult.val);
-    if (typeof secrets.apiKey === 'string') apiKey = secrets.apiKey;
-  } catch {
-    return err('CONFIG_ERROR' as const, { message: 'The stored secrets are malformed.' });
-  }
-  if (!apiKey) return err('CONFIG_ERROR' as const, { message: 'The model has no API key stored.' });
+  const key = apiKeyOf(row);
+  if (!key.ok) return key;
+  const apiKey = key.val;
 
   const providerResult = buildProvider(row, apiKey);
   if (!providerResult.ok) return providerResult;
@@ -188,4 +220,56 @@ export async function resolveAgentLlm(
   };
   cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
   return ok(resolved);
+}
+
+export interface ResolvedImageModel {
+  modelConfigId: string;
+  label: string;
+  /** What the Images API call needs; the key lives only in this object. */
+  config: ImageModelConfig;
+}
+
+/**
+ * The enabled image generation model `modelConfigId`, or — with null —
+ * the first one the org has. Never a chat model: a row is an image model
+ * only when its API surface is 'images'.
+ */
+export async function resolveImageModel(
+  db: Kysely<DB>,
+  tenantId: string,
+  modelConfigId: string | null
+): Promise<Result<ResolvedImageModel, ResolveLlmError>> {
+  const rowResult = await wrapAsync(async () => {
+    let query = db
+      .selectFrom('llm_model_configs')
+      .select(['id', 'label', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
+      .where('tenant_id', '=', tenantId)
+      .where('enabled', '=', true)
+      .where(imageModelsOnly);
+    if (modelConfigId) query = query.where('id', '=', modelConfigId);
+    return query.orderBy('label', 'asc').executeTakeFirst();
+  }, 'DB_ERROR' as const);
+  if (!rowResult.ok) return rowResult;
+  const row = rowResult.val;
+  if (!row) {
+    return err('NO_MODEL' as const, { message: 'No image generation model is configured.' });
+  }
+  // The Images API is OpenAI's; Anthropic has no equivalent to adapt.
+  if (row.provider !== 'openai') {
+    return err('UNSUPPORTED_PROVIDER' as const, {
+      message: `No image adapter for provider "${row.provider}"`,
+    });
+  }
+  const key = apiKeyOf(row);
+  if (!key.ok) return key;
+  return ok({
+    modelConfigId: row.id,
+    label: row.label,
+    config: {
+      apiKey: key.val,
+      model: row.model,
+      baseUrl: row.base_url,
+      apiVersion: settingString(row, 'apiVersion'),
+    },
+  });
 }

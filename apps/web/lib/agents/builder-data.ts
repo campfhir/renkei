@@ -7,6 +7,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { chatModelsOnly } from '@renkei/agent-llm';
 import { isBlackoutEntry, MAX_STEP_ATTEMPTS, MAX_STEPS, type BlackoutEntry } from '@renkei/agents';
 import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -47,6 +48,8 @@ export async function loadBuilderData(
       .select(['id', 'label', 'is_default'])
       .where('tenant_id', '=', tenantId)
       .where('enabled', '=', true)
+      // An agent runs on a chat model; an image generation model cannot answer.
+      .where(chatModelsOnly)
       .orderBy('label')
       .execute(),
     getOrgSettings(tenantId),

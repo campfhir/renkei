@@ -333,3 +333,62 @@ test('admin: API surface can opt an OpenAI-compatible model into the Responses A
   await page.getByRole('button', { name: 'Edit' }).click();
   await expect(page.getByLabel('API surface')).toHaveValue('responses');
 });
+
+test('admin: the Images API surface makes an image generation model — never the default, no chat test', async ({
+  page,
+}, testInfo) => {
+  // Its own tenant, same reasoning as the specs above.
+  const fixture = fixtureFor(`${testInfo.project.name}-image-model`);
+  await seedTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/admin/llm-models`);
+  await page.getByRole('button', { name: '+ Add a model' }).click();
+
+  // The Images API is OpenAI's: Anthropic (the default provider) has no such surface to pick.
+  await expect(page.getByLabel('API surface')).toHaveCount(0);
+
+  await page.getByLabel('Display name').fill('Painter');
+  await page.getByLabel('Provider').selectOption('openai');
+  await page.getByLabel('Model id').fill('gpt-image-1');
+  await page.getByLabel('API key').fill('sk-e2e-fake-key');
+
+  // Choosing the Images surface takes the model out of the chat-only choices: no default, no chat test.
+  const defaultBox = page.getByRole('checkbox', { name: 'Organization default' });
+  await defaultBox.check();
+  await page.getByLabel('API surface').selectOption('images');
+  await expect(page.getByTestId('image-surface-hint')).toBeVisible();
+  await expect(defaultBox).toBeDisabled();
+  await expect(defaultBox).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+  await expect(page.getByText('cannot be tested here')).toBeVisible();
+  // The chat-only reasoning hint does not apply to a picture model.
+  await expect(page.getByText('Some reasoning-model deployments')).toHaveCount(0);
+  await shot(page, testInfo, 'llm-models-image-model-form');
+
+  // Back to a chat surface restores the chat test and the default box.
+  await page.getByLabel('API surface').selectOption('');
+  await expect(defaultBox).toBeEnabled();
+  await page.getByLabel('API surface').selectOption('images');
+
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Painter')).toBeVisible();
+  // The row says what it is, and it is not the default.
+  await expect(page.getByText('Image generation', { exact: true })).toBeVisible();
+  await expect(page.getByText('Default', { exact: true })).toHaveCount(0);
+
+  // Round-trips through the real save route and DB.
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('API surface')).toHaveValue('images');
+
+  // Switching the provider to Anthropic drops the surface: it has no Images API.
+  await page.getByLabel('Provider').selectOption('anthropic');
+  await expect(page.getByLabel('API surface')).toHaveCount(0);
+  await page.getByLabel('Provider').selectOption('openai');
+  await expect(page.getByLabel('API surface')).toHaveValue('');
+  await page.getByLabel('API surface').selectOption('images');
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(page.getByLabel('API surface')).toBeVisible();
+  await shot(page, testInfo, 'llm-models-image-model-form-mobile');
+});

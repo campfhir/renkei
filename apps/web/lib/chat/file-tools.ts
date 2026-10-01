@@ -13,29 +13,20 @@
  * used by sandbox_render_document for org agents), so the model's cost is
  * the same whether the result is a .csv or an .xlsx.
  *
- * The one exception to "text only" is chat_write_binary_file: a PNG, JPEG,
- * TIFF or PDF the model writes as base64. Those bytes are never kept as
- * given — each format's validator in @renkei/document-render parses them
- * and, for images, REBUILDS the file from the parsed pixels (metadata,
- * trailing data and polyglot payloads do not survive), while a PDF is
- * refused if it carries anything that can act (scripts, launch actions,
- * attachments, forms). Nothing is executed or rendered to check them.
+ * The one exception to "text only" is image-tools.ts's
+ * chat_write_binary_file, offered only to a model the admin has declared
+ * able to generate images.
  * Offered only when the organization has a store to keep files in
  * (chat-local-tools.ts), so the model is never given a verb that can
  * only fail.
  */
 
 import {
-  BINARY_EXTENSIONS,
-  BINARY_MAX_BASE64_CHARS,
-  BINARY_MAX_BYTES,
   extensionOf,
-  isBinaryExtension,
   isRenderedExtension,
   renderDocument,
   RENDER_INPUT_MAX_CHARS,
   resolveMediaType,
-  sanitizeBinary,
   WRITABLE_EXTENSIONS,
 } from '@renkei/document-render';
 import { errorResult, textResult, type LocalTool } from './local-tools';
@@ -70,7 +61,7 @@ export function checkFilename(raw: unknown): FilenameCheck {
   return { ok: true, filename };
 }
 
-const KEPT_LINE =
+export const KEPT_LINE =
   'It is under this chat’s Artifacts, where the person can download it or copy it to a network share; tell them so, and do not repeat the content.';
 
 export function fileTools(): LocalTool[] {
@@ -147,59 +138,6 @@ export function fileTools(): LocalTool[] {
               {
                 mediaType: type.mediaType,
                 dataBase64: bytes.toString('base64'),
-                title: name.filename,
-              },
-            ],
-            renkeiDocumentsShown: false,
-          }
-        );
-      },
-    },
-    {
-      def: {
-        name: 'chat_write_binary_file',
-        description:
-          'Write a PNG, JPEG, TIFF or PDF you produced as raw bytes, for the person to keep (it appears under this chat’s Artifacts like any other file). ' +
-          'Pass the file as plain base64 in content. Use this only when you can produce the format’s bytes yourself; for a chart or diagram use chat_write_chart, and for a PDF of ordinary prose use chat_write_file with Markdown. ' +
-          `The bytes are validated and images are rebuilt from their pixels: metadata, text chunks and trailing data are removed, and a PDF containing scripts, launch/URI actions, attachments, forms or encryption is refused. At most ${BINARY_MAX_BYTES} bytes. ` +
-          'If the file is refused, the reason says what to change.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            filename: {
-              type: 'string',
-              description: `The name to save as; the extension names the format (${BINARY_EXTENSIONS.join(', ')}). A name, not a path.`,
-            },
-            content: {
-              type: 'string',
-              description: `The file's bytes as plain base64 (no data: prefix), at most ${BINARY_MAX_BASE64_CHARS} characters.`,
-            },
-          },
-          required: ['filename', 'content'],
-        },
-      },
-      async execute(input) {
-        const name = checkFilename(input.filename);
-        if (!name.ok) return errorResult(name.reason);
-        if (typeof input.content !== 'string') {
-          return errorResult('content must be a string — the file’s bytes as base64.');
-        }
-        const extension = extensionOf(name.filename);
-        if (!extension || !isBinaryExtension(extension)) {
-          return errorResult(
-            `filename must end in one of: ${BINARY_EXTENSIONS.map((e) => `.${e}`).join(', ')}.`
-          );
-        }
-        const checked = sanitizeBinary(extension, input.content);
-        if (!checked.ok) return errorResult(`${name.filename} was not written: ${checked.reason}`);
-        const notes = checked.notes.length ? `\n\nNote: ${checked.notes.join(' ')}` : '';
-        return textResult(
-          `Wrote ${name.filename} (${checked.mediaType}, ${checked.bytes.byteLength} bytes). ${KEPT_LINE}${notes}`,
-          {
-            renkeiDocuments: [
-              {
-                mediaType: checked.mediaType,
-                dataBase64: checked.bytes.toString('base64'),
                 title: name.filename,
               },
             ],
