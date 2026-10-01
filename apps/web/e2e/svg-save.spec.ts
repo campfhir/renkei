@@ -268,7 +268,7 @@ test('an svg mockup saves from its card and from the fullscreen viewer', async (
 });
 
 test('the save buttons fit at phone width', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
   const card = page.locator('figure', { hasText: 'Renkei logo' });
   await expect(card).toBeVisible(COLD);
