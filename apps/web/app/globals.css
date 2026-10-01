@@ -1005,8 +1005,16 @@ input[type='number']::-webkit-inner-spin-button {
   padding: 0.15rem 0.35rem 0.35rem;
   background: transparent;
 }
+.chat-markdown .chat-code-save {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-right: auto;
+  font-size: 0.7rem;
+}
 .chat-markdown .chat-code-copy {
   display: flex;
+  gap: 0.25rem;
   align-items: center;
   border-radius: 0.25rem;
   padding: 0.2rem;

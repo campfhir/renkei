@@ -24,6 +24,7 @@ import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
 import type { MockupRequest } from '@/lib/mockups/request';
 import { clampFrameHeight, useFrameMessages, type FrameMessage } from './mockup-frame';
+import SvgSaveButtons from './svg-save-buttons';
 
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3, 4];
 const ZOOM_MIN = ZOOM_STEPS[0];
@@ -286,6 +287,14 @@ export default function MockupViewer({
             <Icon path={ICONS.hand} className="h-4 w-4" />
           </ToolButton>
         </div>
+        {request.format === 'svg' ? (
+          <SvgSaveButtons
+            source={request.source}
+            name={request.title}
+            className="flex items-center gap-0.5"
+            buttonClassName="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800"
+          />
+        ) : null}
         <ToolButton label="Copy the code" onClick={copySource}>
           <Icon path={copied ? ICONS.check : ICONS.copy} className="h-4 w-4" />
           {copied ? 'Copied' : 'Copy code'}
