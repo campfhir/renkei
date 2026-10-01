@@ -184,3 +184,94 @@ describe('checkFilename / resolveMediaType', () => {
     expect(resolveMediaType('a.txt', 'text/x-log')).toEqual({ ok: true, mediaType: 'text/x-log' });
   });
 });
+
+describe('chat_write_binary_file', () => {
+  const tools = createLocalToolSet(fileTools());
+  // A real 2x2 PNG; with a text chunk and trailing bytes added by the tests below.
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEX/AAAZ4gk3AAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC',
+    'base64'
+  );
+  const SCRIPT = Buffer.from('<script>alert(1)</script>');
+
+  it('is offered with filename and content required', () => {
+    const def = tools.defs().find((tool) => tool.name === 'chat_write_binary_file');
+    expect(def?.inputSchema.required).toEqual(['filename', 'content']);
+  });
+
+  it('keeps a valid PNG as a document typed image/png', async () => {
+    const result = await tools.run(
+      'chat_write_binary_file',
+      { filename: 'dot.png', content: PNG.toString('base64') },
+      context
+    );
+    expect(result.isError).toBe(false);
+    const [doc] = documentsOf(result.meta);
+    expect(doc?.mediaType).toBe('image/png');
+    expect(doc?.title).toBe('dot.png');
+    expect(result.meta.renkeiDocumentsShown).toBe(false);
+    expect(Buffer.from(doc!.dataBase64, 'base64').subarray(1, 4).toString()).toBe('PNG');
+  });
+
+  it('does not keep what rode along with the pixels, and says it removed something', async () => {
+    const content = Buffer.concat([PNG, SCRIPT]).toString('base64');
+    const result = await tools.run(
+      'chat_write_binary_file',
+      { filename: 'dot.png', content },
+      context
+    );
+    expect(result.isError).toBe(false);
+    expect(Buffer.from(documentsOf(result.meta)[0]!.dataBase64, 'base64').includes(SCRIPT)).toBe(
+      false
+    );
+    expect(result.content[0]?.text).toMatch(/Note: .*removed/);
+  });
+
+  it('refuses bytes that are not the format the extension names, keeping nothing', async () => {
+    for (const [filename, bytes] of [
+      ['a.png', Buffer.from('<html><script>alert(1)</script></html>')],
+      ['a.jpg', PNG],
+      ['a.pdf', PNG],
+      ['a.tiff', PNG],
+    ] as const) {
+      const result = await tools.run(
+        'chat_write_binary_file',
+        { filename, content: bytes.toString('base64') },
+        context
+      );
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toMatch(new RegExp(`${filename} was not written: `));
+      expect(documentsOf(result.meta)).toEqual([]);
+    }
+  });
+
+  it('refuses a name that is not a binary format, a path, and content that is not base64', async () => {
+    const content = PNG.toString('base64');
+    const wrongName = await tools.run(
+      'chat_write_binary_file',
+      { filename: 'run.exe', content },
+      context
+    );
+    expect(wrongName.isError).toBe(true);
+    expect(wrongName.content[0]?.text).toMatch(/must end in one of/);
+    const path = await tools.run(
+      'chat_write_binary_file',
+      { filename: '../a.png', content },
+      context
+    );
+    expect(path.isError).toBe(true);
+    const prefixed = await tools.run(
+      'chat_write_binary_file',
+      { filename: 'a.png', content: `data:image/png;base64,${content}` },
+      context
+    );
+    expect(prefixed.isError).toBe(true);
+    expect(prefixed.content[0]?.text).toMatch(/plain base64/);
+  });
+
+  it('points text-only callers of chat_write_file at it', async () => {
+    const result = await tools.run('chat_write_file', { filename: 'a.png', content: 'x' }, context);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/base64 bytes with the binary-file tool/);
+  });
+});
