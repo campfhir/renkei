@@ -18,6 +18,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import FileCaption from './file-caption';
 import ImagePreview from './image-preview';
 import { chatClient } from '@/lib/chat/client';
 import { skeletonRatio } from '@/lib/chat/image-size';
@@ -152,6 +153,16 @@ export default function ImageCard({
           ) : null}
         </div>
       )}
+      {showImage && loaded && image && src ? (
+        // Saved from right under the picture, the same line as every file a reply made.
+        <FileCaption
+          href={src}
+          filename={image.filename}
+          sizeBytes={image.sizeBytes}
+          icon={ICONS.fileImage}
+          as="div"
+        />
+      ) : null}
       {open && src ? (
         <ImagePreview
           src={src}

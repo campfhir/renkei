@@ -354,6 +354,22 @@ export async function getAttachment(
   return raw ? rowOf(raw) : null;
 }
 
+/** The text extracted at upload (redacted as the model saw it), or null when there is none. */
+export async function getAttachmentText(
+  db: Kysely<DB>,
+  tenantId: string,
+  attachmentId: string
+): Promise<string | null> {
+  if (!isUuid(attachmentId)) return null;
+  const raw = await db
+    .selectFrom('chat_attachments')
+    .select('extracted_text')
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', attachmentId)
+    .executeTakeFirst();
+  return raw?.extracted_text ? openText(raw.extracted_text) : null;
+}
+
 export async function listAttachments(
   db: Kysely<DB>,
   tenantId: string,

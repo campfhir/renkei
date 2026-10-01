@@ -49,6 +49,7 @@ import { parseTaskCompletion, TASK_COMPLETE_TOOL } from '@/lib/chat/auto-mode';
 import { CHAT_DELEGATE_TOOL, isSubagentTool } from '@/lib/chat/subagent-tools';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
+import ArtifactInline from './artifact-inline';
 import CodePane from './code-pane';
 import ListenButton from './listen-button';
 import Markdown from './markdown';
@@ -549,6 +550,27 @@ function Reply({
     }
     return open;
   }, [messages, results]);
+  // The files this reply's tool calls kept: each hangs off the tool_results
+  // row that carried it, and is shown under the reply with its Download.
+  // A picture already drawn in its image call's own card is not drawn twice.
+  const produced = useMemo(() => {
+    const rows = new Set(messages.map((message) => message.id));
+    return artifacts.filter((artifact) => artifact.messageId && rows.has(artifact.messageId));
+  }, [messages, artifacts]);
+  const inline = useMemo(() => {
+    const drawn = new Set<string>();
+    for (const part of segments) {
+      if (part.kind !== 'image') continue;
+      const image = imageArtifactFor(
+        part.step.block.id,
+        resultRows,
+        artifacts,
+        part.step.result?.content ?? ''
+      );
+      if (image) drawn.add(image.id);
+    }
+    return produced.filter((artifact) => !drawn.has(artifact.id));
+  }, [segments, produced, resultRows, artifacts]);
   const last = messages[messages.length - 1];
   const lastIndex = segments.length - 1;
   return (
@@ -711,6 +733,9 @@ function Reply({
         }
       })}
       {segments.length === 0 && streaming ? <Cursor /> : null}
+      {inline.map((artifact) => (
+        <ArtifactInline key={artifact.id} tenantId={tenantId} artifact={artifact} />
+      ))}
       {permission ? <PermissionCard prompt={permission} call={askedCall} /> : null}
       {last.status === 'failed' && last.error ? (
         <p className="mt-1 text-xs text-red-600 dark:text-red-400">{last.error}</p>
