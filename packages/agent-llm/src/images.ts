@@ -56,6 +56,16 @@ export interface ImageModelConfig {
   baseUrl?: string | null;
   /** Azure surfaces version routes with ?api-version=; null = omit. */
   apiVersion?: string | null;
+  /**
+   * 'flux' only — BFL's advanced knobs, sent when set: `steps` 1–50,
+   * `guidance` 1.5–10, `safetyTolerance` 0–5 (0 strictest), `promptUpsampling`.
+   */
+  fluxOptions?: {
+    steps?: number;
+    guidance?: number;
+    safetyTolerance?: number;
+    promptUpsampling?: boolean;
+  };
 }
 
 export interface ImageRequest {
@@ -87,6 +97,8 @@ export interface GeneratedImage {
   mediaType: 'image/png' | 'image/jpeg';
   /** Tokens billed for the call; null when the provider reports none. */
   usage: ImageUsage | null;
+  /** BFL's own billing for the call (credits and megapixels), when the route reports it. */
+  cost?: { credits: number | null; inputMp: number | null; outputMp: number | null } | null;
 }
 
 /** An error kind of the chat adapters, plus the provider's safety system saying no. */
@@ -108,6 +120,132 @@ function errorKindOf(status: number, body: string): ImageErrorKind {
   return 'provider_error';
 }
 
+/** The advanced knobs that are in BFL's documented ranges; anything else is dropped. */
+function bflOptions(options: ImageModelConfig['fluxOptions']): Record<string, unknown> {
+  if (!options) return {};
+  const within = (value: unknown, min: number, max: number, whole: boolean) =>
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= min &&
+    value <= max &&
+    (!whole || Number.isInteger(value));
+  return {
+    ...(within(options.steps, 1, 50, true) ? { steps: options.steps } : {}),
+    ...(within(options.guidance, 1.5, 10, false) ? { guidance: options.guidance } : {}),
+    ...(within(options.safetyTolerance, 0, 5, true)
+      ? { safety_tolerance: options.safetyTolerance }
+      : {}),
+    ...(typeof options.promptUpsampling === 'boolean'
+      ? { prompt_upsampling: options.promptUpsampling }
+      : {}),
+  };
+}
+
+function isBflHost(url: string): boolean {
+  try {
+    return /(^|\.)bfl\.(ai|ml)$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** Credentials for a FLUX call: BFL's own host takes `x-key`; Azure takes Bearer alone. */
+function fluxHeaders(url: string, apiKey: string): Record<string, string> {
+  if (isBflHost(url)) return { 'x-key': apiKey };
+  return {
+    authorization: `Bearer ${apiKey}`,
+    ...(isAzureHost(url) ? {} : { 'api-key': apiKey }),
+  };
+}
+
+const POLL_INTERVAL_MS = 1_500;
+
+/**
+ * BFL's route is asynchronous: the submit answers {id, polling_url, cost,
+ * input_mp, output_mp}; the picture is fetched by polling until Ready, then
+ * downloaded from result.sample. The polling URL is provider-supplied, so
+ * credentials follow it only to the endpoint's own origin or a bfl.ai host.
+ */
+async function pollForSample(
+  pollingUrl: string,
+  endpoint: string,
+  apiKey: string,
+  signal: AbortSignal | undefined
+): Promise<Result<string, ImageErrorKind>> {
+  let target: URL;
+  let origin: string;
+  try {
+    target = new URL(pollingUrl);
+    origin = new URL(endpoint).origin;
+  } catch {
+    return err('provider_error' as const, { message: 'The polling URL was not a URL.' });
+  }
+  if (target.protocol !== 'https:' || (target.origin !== origin && !isBflHost(pollingUrl))) {
+    return err('provider_error' as const, {
+      message: 'The polling URL points somewhere other than the image endpoint.',
+    });
+  }
+  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) return err('aborted' as const, { message: 'Canceled.' });
+    let response: Response;
+    try {
+      response = await fetch(target, {
+        headers: fluxHeaders(pollingUrl, apiKey),
+        redirect: 'error',
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+          : AbortSignal.timeout(30_000),
+      });
+    } catch (error) {
+      return err(transportErrorKind(error, signal), {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const text = await response.text().catch(() => '');
+    if (!response.ok) {
+      return err(errorKindOf(response.status, text), {
+        message: `Image polling ${response.status}: ${text.slice(0, 500)}`,
+      });
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return err('provider_error' as const, { message: 'Polling did not answer JSON.' });
+    }
+    if (typeof body !== 'object' || body === null) {
+      return err('provider_error' as const, { message: 'Polling did not answer an object.' });
+    }
+    const status: unknown = Reflect.get(body, 'status');
+    if (status === 'Ready') {
+      const result: unknown = Reflect.get(body, 'result');
+      const sample: unknown =
+        typeof result === 'object' && result ? Reflect.get(result, 'sample') : null;
+      if (typeof sample === 'string' && sample) return ok(sample);
+      return err('provider_error' as const, { message: 'The image was ready but had no sample.' });
+    }
+    if (typeof status === 'string' && /moderated/i.test(status)) {
+      return err('content_filter' as const, { message: `The image model said: ${status}.` });
+    }
+    if (status === 'Error' || status === 'Failed' || status === 'Task not found') {
+      return err('provider_error' as const, { message: `The image task ended: ${status}.` });
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+  return err('timeout' as const, { message: 'The image was not ready in time.' });
+}
+
+function costOf(raw: unknown): GeneratedImage['cost'] {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const num = (name: string): number | null => {
+    const value: unknown = Reflect.get(raw, name);
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  };
+  const cost = { credits: num('cost'), inputMp: num('input_mp'), outputMp: num('output_mp') };
+  return cost.credits === null && cost.inputMp === null && cost.outputMp === null ? null : cost;
+}
+
 /** What the chosen surface sends: where, and the body — JSON, or multipart for an OpenAI edit. */
 function requestFor(
   config: ImageModelConfig,
@@ -125,11 +263,12 @@ function requestFor(
         : endpoint,
       body: {
         prompt: request.prompt,
-        model: config.model,
+        // BFL's own host names the model in the path; Azure's gateway wants it in the body.
+        ...(isBflHost(endpoint) ? {} : { model: config.model, num_images: 1 }),
         width: match ? Number(match[1]) : 1024,
         height: match ? Number(match[2]) : 1024,
-        num_images: 1,
         output_format: request.outputFormat ?? 'png',
+        ...bflOptions(config.fluxOptions),
         // An edit: the picture to start from, as base64 (BFL's `input_image`).
         ...(request.image ? { input_image: request.image.bytes.toString('base64') } : {}),
       },
@@ -273,8 +412,12 @@ export async function generateImage(
       headers: {
         // A multipart body carries its own content type, with the boundary fetch picks.
         ...(body instanceof FormData ? {} : { 'content-type': 'application/json' }),
-        authorization: `Bearer ${config.apiKey}`,
-        ...(isAzureHost(authority) ? {} : { 'api-key': config.apiKey }),
+        ...(config.surface === 'flux'
+          ? fluxHeaders(authority, config.apiKey)
+          : {
+              authorization: `Bearer ${config.apiKey}`,
+              ...(isAzureHost(authority) ? {} : { 'api-key': config.apiKey }),
+            }),
       },
       body: body instanceof FormData ? body : JSON.stringify(body),
       signal: request.signal
@@ -305,6 +448,22 @@ export async function generateImage(
     return err(errorKindOf(200, JSON.stringify(parsed.error)), {
       message: String(parsed.error.message ?? 'The images endpoint reported an error.'),
     });
+  }
+  // BFL's asynchronous answer: poll for the finished picture.
+  const pollingUrl: unknown =
+    typeof payload === 'object' && payload ? Reflect.get(payload, 'polling_url') : null;
+  if (config.surface === 'flux' && typeof pollingUrl === 'string' && pollingUrl) {
+    const sample = await pollForSample(pollingUrl, authority, config.apiKey, request.signal);
+    if (!sample.ok) return sample;
+    const downloaded = await downloadImage(sample.val, request.signal);
+    if (!downloaded.ok) return downloaded;
+    const kind = mediaTypeOf(downloaded.val);
+    if (!kind) {
+      return err('provider_error' as const, {
+        message: 'The image model returned neither a PNG nor a JPEG.',
+      });
+    }
+    return ok({ bytes: downloaded.val, mediaType: kind, usage: null, cost: costOf(payload) });
   }
   const first: unknown = Array.isArray(parsed.data) ? parsed.data[0] : undefined;
   const field = (name: string): unknown =>

@@ -151,6 +151,16 @@ row whose **API surface** is an image one (`settings.apiSurface`):
   (`/openai/v1/images/generations`); there they are an `images` row, like
   gpt-image — use that for them.
 
+A `flux` row whose base URL is Black Forest Labs' own host
+(`https://api.bfl.ai/v1/flux-2-flex`) speaks BFL's asynchronous API: `x-key`
+auth, a body without `model`/`num_images`, then polling the returned
+`polling_url` (credentials only to the endpoint's origin or a `bfl.ai` host)
+until `Ready` and downloading `result.sample`. `Request/Content Moderated` is
+read as the safety system saying no. The submit's `cost`, `input_mp` and
+`output_mp` come back on the result (`GeneratedImage.cost`). Advanced knobs
+(`steps`, `guidance`, `safetyTolerance`, `promptUpsampling`) are read from the
+row's `settings.fluxOptions` and sent only inside BFL's documented ranges.
+
 Both answer base64 (`b64_json`), or a `url` the client downloads (public https only, no redirects, no credentials, size-capped) — the native route adds a `seed` and reports
 tokens as `prompt_tokens`/`completion_tokens`, which is read as input/output —
 and a moderation block comes back as a 400 whose message mentions content

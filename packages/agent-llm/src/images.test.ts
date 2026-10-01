@@ -497,3 +497,96 @@ describe('generateImage — an answer that is a link', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('generateImage — BFL’s own asynchronous API', () => {
+  const bfl = {
+    apiKey: 'bfl-key',
+    model: 'FLUX.2-flex',
+    surface: 'flux' as const,
+    baseUrl: 'https://api.bfl.ai/v1/flux-2-flex',
+    fluxOptions: { steps: 30, guidance: 4, safetyTolerance: 1, promptUpsampling: false },
+  };
+
+  it('submits with x-key, polls until Ready, downloads the sample, and reports the cost', async () => {
+    const spy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 'abc',
+            polling_url: 'https://api.eu1.bfl.ai/v1/get_result?id=abc',
+            cost: 7.5,
+            input_mp: 0,
+            output_mp: 1.05,
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: 'Ready', result: { sample: 'https://delivery.bfl.ai/x.png' } })
+        )
+      )
+      .mockResolvedValueOnce(new Response(PNG_BYTES, { status: 200 }));
+    const result = await generateImage(bfl, { prompt: 'fox', size: '1024x768' });
+    expect(result.ok && result.val.bytes.equals(PNG_BYTES)).toBe(true);
+    expect(result.ok && result.val.cost).toEqual({ credits: 7.5, inputMp: 0, outputMp: 1.05 });
+    const submit = lastCallOf(spy, 0);
+    expect(submit.headers).toEqual({ 'content-type': 'application/json', 'x-key': 'bfl-key' });
+    expect(JSON.parse(String(submit.body))).toEqual({
+      prompt: 'fox',
+      width: 1024,
+      height: 768,
+      output_format: 'png',
+      steps: 30,
+      guidance: 4,
+      safety_tolerance: 1,
+      prompt_upsampling: false,
+    });
+    expect(spy.mock.calls[1]?.[1]?.headers).toEqual({ 'x-key': 'bfl-key' });
+    // The signed download carries no credentials.
+    expect(spy.mock.calls[2]?.[1]?.headers).toBeUndefined();
+  });
+
+  it('reads a moderated task as the safety system saying no', async () => {
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ id: 'a', polling_url: 'https://api.bfl.ai/v1/get_result?id=a' })
+        )
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'Content Moderated' })));
+    const result = await generateImage(bfl, { prompt: 'x' });
+    expect(!result.ok && result.err.type).toBe('content_filter');
+  });
+
+  it('never sends the key to a polling URL on another host', async () => {
+    const spy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'a', polling_url: 'https://evil.example.com/poll' }))
+      );
+    const result = await generateImage(bfl, { prompt: 'x' });
+    expect(result.ok).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops advanced options outside BFL’s documented ranges', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    await generateImage(
+      { ...bfl, fluxOptions: { steps: 99, guidance: 0.1, safetyTolerance: 9 } },
+      { prompt: 'x' }
+    );
+    expect(JSON.parse(String(lastCallOf(spy, 0).body))).toEqual({
+      prompt: 'x',
+      width: 1024,
+      height: 1024,
+      output_format: 'png',
+    });
+  });
+});
+
+function lastCallOf(spy: jest.SpiedFunction<typeof fetch>, index: number): RequestInit {
+  return spy.mock.calls[index]?.[1] ?? {};
+}
