@@ -259,3 +259,22 @@ describe('generateImage — FLUX on Azure AI Foundry', () => {
     expect(!limited.ok && limited.err.type).toBe('rate_limit');
   });
 });
+
+describe('generateImage — usage', () => {
+  it('returns the tokens gpt-image bills, and null when the provider says nothing', async () => {
+    respond(200, {
+      data: [{ b64_json: PNG_B64 }],
+      usage: { input_tokens: 61, output_tokens: 4160, total_tokens: 4221 },
+    });
+    const billed = await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p' });
+    expect(billed.ok && billed.val.usage).toEqual({ inputTokens: 61, outputTokens: 4160 });
+
+    respond(200, { data: [{ b64_json: PNG_B64 }] });
+    const silent = await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p' });
+    expect(silent.ok && silent.val.usage).toBeNull();
+
+    respond(200, { data: [{ b64_json: PNG_B64 }], usage: { input_tokens: 'many' } });
+    const junk = await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p' });
+    expect(junk.ok && junk.val.usage).toBeNull();
+  });
+});

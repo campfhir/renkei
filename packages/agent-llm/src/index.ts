@@ -64,5 +64,6 @@ export {
   type ImageErrorKind,
   type ImageModelConfig,
   type ImageRequest,
+  type ImageUsage,
   type ImageSurface,
 } from './images';

@@ -27,7 +27,10 @@ import { Icon, ICONS } from '@/components/icons';
 import ExternalLink from '@/components/external-link';
 import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
 import { segment, type Segment, type ToolResult, type WorkStep } from '@/lib/chat/segment';
+import { IMAGE_TOOL } from '@/lib/chat/image-size';
+import { imageArtifactFor } from '@/lib/chat/image-artifact';
 import type {
+  AttachmentView,
   ChatBlock,
   ChatMessageView,
   PendingToolPermission,
@@ -49,6 +52,7 @@ import AttachmentChip from './attachment-chip';
 import CodePane from './code-pane';
 import ListenButton from './listen-button';
 import Markdown from './markdown';
+import ImageCard from './image-card';
 import MockupCard from './mockup-card';
 import WidgetCard from './widget-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -84,6 +88,7 @@ function toolIconFor(name: string): string {
   if (isSubagentTool(name)) return ICONS.group;
   if (name.startsWith('code_')) return ICONS.file;
   if (name === 'chat_recall_chats') return ICONS.history;
+  if (name === IMAGE_TOOL) return ICONS.image;
   return ICONS.tool;
 }
 
@@ -172,6 +177,7 @@ export default function MessageList({
   subagents = {},
   onShowSubagent = null,
   onWidgetDecision = null,
+  artifacts = [],
 }: {
   tenantId: string;
   chatId: string;
@@ -193,6 +199,8 @@ export default function MessageList({
   onShowSubagent?: ((toolUseId: string) => void) | null;
   /** A preview card's decision landed (widget-card.tsx): the note to show and the turn to stream. */
   onWidgetDecision?: ((outcome: WidgetModelContextOutcome) => void) | null;
+  /** The chat's files tools produced; an image call finds its picture among them. */
+  artifacts?: AttachmentView[];
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -222,6 +230,18 @@ export default function MessageList({
     for (const message of messages) {
       for (const block of message.blocks) {
         if (block.type === 'tool_result') map.set(block.toolUseId, block);
+      }
+    }
+    return map;
+  }, [messages]);
+
+  // Which tool_results row answered each call: the file a call kept carries
+  // that row's id, which is how its picture is found again (image-artifact.ts).
+  const resultRows = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const message of messages) {
+      for (const block of message.blocks) {
+        if (block.type === 'tool_result') map.set(block.toolUseId, message.id);
       }
     }
     return map;
@@ -266,6 +286,8 @@ export default function MessageList({
                 subagents={subagents}
                 onShowSubagent={onShowSubagent}
                 onWidgetDecision={onWidgetDecision}
+                artifacts={artifacts}
+                resultRows={resultRows}
               />
             ) : null}
           </div>
@@ -466,6 +488,8 @@ function Reply({
   subagents,
   onShowSubagent,
   onWidgetDecision,
+  artifacts,
+  resultRows,
 }: {
   tenantId: string;
   chatId: string;
@@ -480,6 +504,8 @@ function Reply({
   subagents: Record<string, SubagentProgress>;
   onShowSubagent: ((toolUseId: string) => void) | null;
   onWidgetDecision: ((outcome: WidgetModelContextOutcome) => void) | null;
+  artifacts: AttachmentView[];
+  resultRows: Map<string, string>;
 }) {
   // Milestone cards are a code project's: `code` is there exactly then.
   const codeProject = code !== null;
@@ -603,6 +629,42 @@ function Reply({
                           : 'failed'
                 }
                 code={code}
+              />
+            );
+          }
+          case 'image': {
+            // Same states as a sub-agent's card: asked, running, done, failed.
+            const step = part.step;
+            const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
+            const pending =
+              !step.result &&
+              !waiting &&
+              (tail ||
+                pendingToolCalls.includes(step.block.id) ||
+                (streaming && inFlight.has(step.block.id)));
+            return (
+              <ImageCard
+                key={step.block.id}
+                tenantId={tenantId}
+                call={step.block}
+                result={step.result}
+                state={
+                  waiting
+                    ? 'waiting'
+                    : pending
+                      ? 'pending'
+                      : step.result?.isError
+                        ? 'failed'
+                        : step.result
+                          ? 'done'
+                          : 'failed'
+                }
+                image={imageArtifactFor(
+                  step.block.id,
+                  resultRows,
+                  artifacts,
+                  step.result?.content ?? ''
+                )}
               />
             );
           }

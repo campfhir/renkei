@@ -97,6 +97,7 @@ export async function loadChatView(
       contentType: row.content_type,
       sizeBytes: Number(row.size_bytes),
       extractStatus: row.extract_status,
+      messageId: row.message_id,
     };
     if (row.origin === 'model') {
       artifacts.push(view);

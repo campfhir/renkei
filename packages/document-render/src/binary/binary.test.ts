@@ -6,9 +6,16 @@
  * reason the model can act on.
  */
 
+import { randomBytes } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { renderDocument } from '../index';
-import { sanitizeBinary, decodeBase64, BINARY_MAX_BYTES } from './index';
+import {
+  sanitizeBinary,
+  sanitizeBytes,
+  decodeBase64,
+  BINARY_MAX_BYTES,
+  IMAGE_FILE_MAX_BYTES,
+} from './index';
 import * as fx from './test-fixtures';
 
 const b64 = (bytes: Buffer) => bytes.toString('base64');
@@ -231,3 +238,49 @@ function pngChunk(type: string, data: Buffer): Buffer {
   tail.writeUInt32BE((c ^ 0xffffffff) >>> 0, 0);
   return Buffer.concat([head, data, tail]);
 }
+
+/** A w×h RGB PNG of random noise, which does not compress: its file is about w·h·3 bytes. */
+function noisePng(width: number, height: number): Buffer {
+  const rows: Buffer[] = [];
+  for (let y = 0; y < height; y++)
+    rows.push(Buffer.concat([Buffer.from([0]), randomBytes(width * 3)]));
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(Buffer.concat(rows), { level: 0 })),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+describe('image size limits', () => {
+  it('keeps a multi-megabyte generated image the old 1 MiB cap would have refused', () => {
+    const big = noisePng(1024, 1024);
+    expect(big.length).toBeGreaterThan(BINARY_MAX_BYTES * 2);
+    const result = sanitizeBytes('png', big);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.width).toBe(1024);
+      expect(result.height).toBe(1024);
+      expect(result.bytes.length).toBeGreaterThan(BINARY_MAX_BYTES * 2);
+    }
+  });
+
+  it('reports the pixel size of a PNG and a JPEG it kept', () => {
+    const png = accepted('png', fx.png);
+    expect([png.width, png.height]).toEqual([24, 16]);
+    const jpeg = accepted('jpg', fx.jpeg);
+    expect([jpeg.width, jpeg.height]).toEqual([24, 16]);
+  });
+
+  it('still refuses an image past the ceiling, and holds a PDF to the small cap', () => {
+    const tooBig = sanitizeBytes('png', Buffer.alloc(IMAGE_FILE_MAX_BYTES + 1, 1));
+    expect(!tooBig.ok && tooBig.reason).toMatch(/larger than/);
+    const pdf = sanitizeBinary('pdf', Buffer.alloc(BINARY_MAX_BYTES + 1, 65).toString('base64'));
+    expect(!pdf.ok && pdf.reason).toMatch(/larger than/);
+  });
+});

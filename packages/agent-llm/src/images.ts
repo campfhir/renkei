@@ -63,10 +63,18 @@ export interface ImageRequest {
   signal?: AbortSignal;
 }
 
+/** What the provider billed, when it said (gpt-image does; FLUX does not). */
+export interface ImageUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface GeneratedImage {
   /** The image as the provider sent it — untrusted until validated. */
   bytes: Buffer;
   mediaType: 'image/png' | 'image/jpeg';
+  /** Tokens billed for the call; null when the provider reports none. */
+  usage: ImageUsage | null;
 }
 
 /** An error kind of the chat adapters, plus the provider's safety system saying no. */
@@ -130,6 +138,17 @@ function requestFor(
   };
 }
 
+/** `usage` as gpt-image sends it ({input_tokens, output_tokens}); null when absent or not numbers. */
+function usageOf(raw: unknown): ImageUsage | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const input: unknown = Reflect.get(raw, 'input_tokens');
+  const output: unknown = Reflect.get(raw, 'output_tokens');
+  if (typeof input !== 'number' && typeof output !== 'number') return null;
+  const whole = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  return { inputTokens: whole(input), outputTokens: whole(output) };
+}
+
 /** PNG or JPEG by magic number; null for anything else (WebP, HTML, junk). */
 function mediaTypeOf(bytes: Buffer): GeneratedImage['mediaType'] | null {
   if (
@@ -190,7 +209,7 @@ export async function generateImage(
   } catch {
     return err('provider_error' as const, { message: 'The images endpoint did not answer JSON.' });
   }
-  const parsed: { data?: unknown; error?: { message?: unknown } } =
+  const parsed: { data?: unknown; usage?: unknown; error?: { message?: unknown } } =
     typeof payload === 'object' && payload !== null ? payload : {};
   if (parsed.error) {
     return err(errorKindOf(200, JSON.stringify(parsed.error)), {
@@ -215,5 +234,5 @@ export async function generateImage(
       message: 'The image model returned neither a PNG nor a JPEG.',
     });
   }
-  return ok({ bytes, mediaType });
+  return ok({ bytes, mediaType, usage: usageOf(parsed.usage) });
 }

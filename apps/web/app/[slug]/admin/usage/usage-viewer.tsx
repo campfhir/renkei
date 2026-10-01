@@ -33,8 +33,14 @@ import type { PersonProfile } from '@/lib/usage/person-profile';
 import { modelLabel } from '@/lib/agents/model-label';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
+import { ImageUsageCard } from '@/components/image-usage-card';
 import { Leaderboard } from '@/components/leaderboard';
 import { boardRows, formatDuration, type RankedVoiceUserRow } from '@/lib/usage/voice-window';
+import {
+  boardRows as imageBoardRows,
+  formatBytes,
+  type RankedImageUserRow,
+} from '@/lib/usage/image-window';
 import { ActivityCalendar } from '@/components/activity-calendar';
 import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
@@ -341,6 +347,21 @@ export default function OrgUsageViewer({
   const personName = report.person?.name ?? subject ?? '';
   const listeners = boardRows(report.topListeners, report.selectedListener);
   const speakers = boardRows(report.topSpeakers, report.selectedSpeaker);
+  const imagers = imageBoardRows(report.topImageUsers, report.selectedImageUser);
+  /** A name on the image board scopes the page to that person too. */
+  const imageLabel = (row: RankedImageUserRow) =>
+    row.subject === subject ? (
+      row.label
+    ) : (
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => refresh(report.periodKey, includeAgents, row.subject)}
+        className="truncate text-left text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
+      >
+        {row.label}
+      </button>
+    );
   /** A name on a voice board scopes the page to that person, as the token board's does. */
   const voiceLabel = (row: RankedVoiceUserRow) =>
     row.subject === subject ? (
@@ -585,6 +606,39 @@ export default function OrgUsageViewer({
           gapBefore={(row) => row.rank === speakers.gapAtRank}
           barClassName="bg-emerald-500"
         />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ImageUsageCard
+          totals={report.image}
+          hint={
+            scoped
+              ? `Images drawn for ${personName}: how many, how much space, and what the image model billed.`
+              : 'Images drawn across the organization: how many, how much space, and what the image model billed.'
+          }
+        />
+        <div className="lg:col-span-2">
+          <Leaderboard<RankedImageUserRow>
+            heading="Top image creators"
+            hint={
+              scoped && report.selectedImageUser === null
+                ? `${personName} had no image drawn in this period. By size of the image files.`
+                : 'By size of the image files kept. Pick a name to scope the page to that person.'
+            }
+            rows={imagers.rows}
+            empty="Nobody has had an image drawn in this period."
+            keyOf={(row) => row.subject}
+            labelOf={imageLabel}
+            valueOf={(row) => row.bytes}
+            formatValue={(row) =>
+              `${formatBytes(row.bytes)} · ${row.images.toLocaleString('en-US')} ${row.images === 1 ? 'image' : 'images'}`
+            }
+            rankOf={(row) => row.rank}
+            highlightOf={(row) => row.subject === subject}
+            gapBefore={(row) => row.rank === imagers.gapAtRank}
+            barClassName="bg-violet-500"
+          />
+        </div>
       </div>
 
       <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">

@@ -113,6 +113,7 @@ export function toAttachmentView(row: AttachmentRow): AttachmentView {
     contentType: row.contentType,
     sizeBytes: row.sizeBytes,
     extractStatus: row.extractStatus,
+    messageId: row.messageId,
   };
 }
 

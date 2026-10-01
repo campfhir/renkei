@@ -40,6 +40,13 @@ import {
 } from '@/lib/usage/voice-usage';
 import { rankVoiceUsers, type RankedVoiceUserRow } from '@/lib/usage/voice-window';
 import {
+  getImageTotals,
+  getImageUsers,
+  ZERO_IMAGE_TOTALS,
+  type ImageTotals,
+} from '@/lib/usage/image-usage';
+import { rankImageUsers, type RankedImageUserRow } from '@/lib/usage/image-window';
+import {
   activityCells,
   bucketOrgSeries,
   rankUsers,
@@ -85,6 +92,11 @@ export interface OrgUsageReport {
   /** Who talks to the chat the most (speech to text, by the second), and the selected person's rank. */
   topSpeakers: RankedVoiceUserRow[];
   selectedSpeaker: RankedVoiceUserRow | null;
+  /** Images over the window, scoped like the tokens. */
+  image: ImageTotals;
+  /** Who has the most images drawn (by the bytes kept), and the selected person's rank. */
+  topImageUsers: RankedImageUserRow[];
+  selectedImageUser: RankedImageUserRow | null;
   error?: string;
   signedOut?: boolean;
   forbidden?: boolean;
@@ -139,6 +151,9 @@ export async function getOrgUsageReport(
     selectedListener: null,
     topSpeakers: [],
     selectedSpeaker: null,
+    image: ZERO_IMAGE_TOTALS,
+    topImageUsers: [],
+    selectedImageUser: null,
   };
 
   const session = await getSessionFromCookies(tenantId);
@@ -165,6 +180,8 @@ export async function getOrgUsageReport(
       person,
       voice,
       voiceUsers,
+      image,
+      imageUsers,
     ] = await Promise.all([
       getSurfaceTokenTotals(db, tenantId, period, timeZone, subject),
       getOrgActivityTotals(db, tenantId, period, timeZone, subject),
@@ -180,11 +197,14 @@ export async function getOrgUsageReport(
       subject === null ? Promise.resolve(null) : getPersonProfile(db, tenantId, subject),
       getVoiceTotals(db, tenantId, period, timeZone, subject),
       getVoiceUsers(db, tenantId, period, timeZone),
+      getImageTotals(db, tenantId, period, timeZone, subject),
+      getImageUsers(db, tenantId, period, timeZone),
     ]);
     const now = new Date();
     const ranked = rankUsers(allUsers, subject, TOP_USERS);
     const listeners = rankVoiceUsers(voiceUsers, 'speech', subject, TOP_USERS);
     const speakers = rankVoiceUsers(voiceUsers, 'transcription', subject, TOP_USERS);
+    const imagers = rankImageUsers(imageUsers, subject, TOP_USERS);
     return {
       periodKey: period.key,
       days: period.days,
@@ -208,6 +228,9 @@ export async function getOrgUsageReport(
       selectedListener: listeners.selected,
       topSpeakers: speakers.top,
       selectedSpeaker: speakers.selected,
+      image,
+      topImageUsers: imagers.top,
+      selectedImageUser: imagers.selected,
     };
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };

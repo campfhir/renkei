@@ -9,6 +9,7 @@ import { milestoneKindOf } from '@/lib/code/milestones';
 import { TASK_COMPLETE_TOOL } from './auto-mode';
 import { isSubagentTool } from './subagent-tools';
 import { MOCKUP_TOOL, parseMockupRequest, type MockupRequest } from '@/lib/mockups/request';
+import { IMAGE_TOOL } from './image-size';
 
 export type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
 
@@ -40,6 +41,12 @@ export type Segment =
    * pending, or one the tool refused, sits in `work` like any other.
    */
   | { kind: 'mockup'; step: Extract<WorkStep, { kind: 'call' }>; request: MockupRequest }
+  /**
+   * A picture the model had drawn (chat_generate_image): shown inline, never
+   * folded, from the moment the call starts — an outline of its shape while
+   * it is drawn, the image itself when done, the reason when it failed.
+   */
+  | { kind: 'image'; step: Extract<WorkStep, { kind: 'call' }> }
   /** Auto mode's runner-written "carry on", between two of the model's replies. */
   | { kind: 'nudge'; text: string }
   /** What the person did to the checkout from the code pane (lib/code/notes.ts). */
@@ -92,7 +99,7 @@ export function segment(
   // call the person is already watching.
   const cards = new Map<
     string,
-    Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' | 'mockup' }>
+    Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' | 'mockup' | 'image' }>
   >();
   for (const message of messages) {
     if (message.role !== 'assistant') {
@@ -131,6 +138,10 @@ export function segment(
             (milestoneKindOf(block.name) !== null || block.name === TASK_COMPLETE_TOOL)
           ) {
             const card: Extract<Segment, { kind: 'milestone' }> = { kind: 'milestone', step };
+            out.push(card);
+            cards.set(block.id, card);
+          } else if (block.name === IMAGE_TOOL) {
+            const card: Extract<Segment, { kind: 'image' }> = { kind: 'image', step };
             out.push(card);
             cards.set(block.id, card);
           } else if (block.name === MOCKUP_TOOL && step.result && !step.result.isError) {

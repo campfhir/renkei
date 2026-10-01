@@ -158,8 +158,38 @@ default.
 
 Chats whose org has an enabled image row are offered `chat_generate_image`
 (chat only; org agents do not get it, since the MCP server cannot tell
-which model is calling). It sends the prompt to the image model and keeps
-the PNG or JPEG under the chat's Artifacts.
+which model is calling). How it behaves:
+
+- **The prompt is the person's own message, word for word.** The tool takes
+  no prompt: the turn hands it the user's message (`LocalToolContext.userPrompt`,
+  from `latestUserPrompt`), so what is drawn is what was asked. A message
+  over 32,000 characters is refused, never clipped. The chat model chooses
+  only the file's name and the shape. (A follow-up like "make it bluer" has
+  only its own words to draw from — the tool does not see earlier turns.)
+- **The chat model picks the shape**: `size` as pixels (`1792x1024`) or
+  `aspectRatio` (`16:9`, turned into about a megapixel of multiples of 16).
+  A size the image model rejects (`invalid_request`) is retried at the
+  nearest standard size (`1024x1024`, `1024x1536`, `1536x1024`), then — for
+  the OpenAI surface — left to the model (`auto`); the result tells the
+  model the size actually drawn. Other failures are not retried.
+- **Which image model**: the person's saved preference
+  (`user_preferences` key `image`, `modelId`) while the org still offers it,
+  else the org's first by name. The chat model cannot override it. Preferences
+  shows the picker whenever the org has at least one image model.
+- **Where it shows up**: inline in the thread, in the call that drew it —
+  never folded away with the other tool calls. The call is its own segment
+  kind (`image`): an outline of the requested aspect ratio while it is drawn
+  or waiting on permission, the picture when done (the file the call kept,
+  found by the tool_results row that carried it), the reason when it failed.
+  It has its own icon.
+- **Size limits**: a generated image may be up to 25 MB (the chat's artifact
+  limit); a PDF stays at 1 MiB.
+- **Usage**: every picture kept is counted in `image_usage` (migration 132),
+  content-free like the voice ledger: the file's bytes, its pixel size, and
+  the tokens the provider billed when it said (gpt-image does; FLUX reports
+  none). My usage and Organization usage show images, space (KB/MB/GB) and
+  tokens, and the org page ranks who has the most. Pruned with the other
+  ledgers under the usage retention.
 
 What comes back is still untrusted bytes from a remote service, so it goes
 through `@renkei/document-render`'s validators (`src/binary/`) and is kept
@@ -173,8 +203,8 @@ only as **rebuilt** output, never as given:
   a polyglot) is gone by construction. PNG pixel data is inflated under a
   size bound (decompression bombs refused) and re-deflated by our own zlib.
 - The extension names the format and the matching validator must accept the
-  bytes, so a `.png` that is really HTML or a JPEG is refused. At most 1 MiB
-  decoded, 16384 px a side, 50 MP.
+  bytes, so a `.png` that is really HTML or a JPEG is refused. At most 25 MB
+  for an image, 16384 px a side, 50 MP, and 96 MiB of raw pixels once inflated.
 - The validators also cover TIFF (rewritten from its strip tags only) and
   PDF (refused if it carries scripts, auto-run/launch/URI/submit actions,
   embedded files, forms, encryption, object streams or the JBIG2/JPX

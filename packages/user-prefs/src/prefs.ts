@@ -575,6 +575,36 @@ export function parseVoicePrefs(stored: unknown): VoicePrefs {
 }
 
 /**
+ * Which image generation model a person's chats draw with, when the org has
+ * several (the model rows whose API surface is an image one). A model row
+ * id; null means "no preference" and the chat takes the org's first image
+ * model by name. Checked against the org's live image models where it is
+ * used, never here — a model the admin has since disabled or removed just
+ * falls back to the first, so a stale pick can never block a picture.
+ */
+export const IMAGE_KEY = 'image';
+
+export interface ImagePrefs {
+  modelId: string | null;
+}
+
+export const DEFAULT_IMAGE_PREFS: ImagePrefs = { modelId: null };
+
+/** Survives whatever jsonb hands back; anything unrecognisable is the default. */
+export function parseImagePrefs(stored: unknown): ImagePrefs {
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) {
+    return DEFAULT_IMAGE_PREFS;
+  }
+  const modelId: unknown = Reflect.get(stored, 'modelId');
+  return {
+    modelId:
+      typeof modelId === 'string' && /^[0-9a-f-]{36}$/i.test(modelId)
+        ? modelId.toLowerCase()
+        : null,
+  };
+}
+
+/**
  * Whether the coach marks — the guided tours that walk somebody through a
  * workflow (apps/web/lib/coach-marks) — may start on their own when this
  * person lands on a page with one they have not seen. A fifth scope, read

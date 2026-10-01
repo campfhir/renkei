@@ -99,6 +99,12 @@ export interface AttachmentView {
   contentType: string;
   sizeBytes: number;
   extractStatus: string;
+  /**
+   * The message the file belongs to — for a file a tool produced, the
+   * tool_results row that carried it, which is how the thread puts an
+   * image back inside the call that drew it. Absent on a draft.
+   */
+  messageId?: string | null;
 }
 
 /** What a person answers a permission ask with. */

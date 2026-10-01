@@ -1,7 +1,7 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
+import { getImagePrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { actsByConnector, ACT_CATEGORIES } from '@renkei/tool-outcomes';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
@@ -14,11 +14,13 @@ import { CODE_PROJECT_CONNECTORS, CODE_PROJECT_DEFAULT_CONNECTORS } from '@/lib/
 import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
 import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
+import { listImageModels } from '@/lib/chat/models';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
 import ToolPermissionsForm from './tool-permissions-form';
 import ThemeForm from './theme-form';
 import VoiceForm from './voice-form';
+import ImageModelForm from './image-model-form';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -49,6 +51,8 @@ export default async function PreferencesPage({
     voice,
     toolPermissions,
     actToolGroups,
+    imagePrefs,
+    imageModels,
   ] = await Promise.all([
     getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
     getThemePrefs(tenant.id, session.subject, { fresh: true }),
@@ -72,6 +76,9 @@ export default async function PreferencesPage({
     loadVoiceAvailability(tenant.id, session.subject),
     getChatToolPermissionPrefs(tenant.id, session.subject, { fresh: true }),
     listChatActToolGroups(tenant.id, session.subject, session.roles),
+    getImagePrefs(tenant.id, session.subject, { fresh: true }),
+    // Empty when the org has no image generation model; the section is then left out.
+    dbResult.ok ? listImageModels(dbResult.val, tenant.id) : [],
   ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
@@ -140,6 +147,11 @@ export default async function PreferencesPage({
             initial={voice.prefs}
             defaults={{ voice: voice.defaultVoice, locale: voice.defaultLocale }}
           />
+        </div>
+      ) : null}
+      {imageModels.length > 0 ? (
+        <div className="mb-6">
+          <ImageModelForm tenantId={tenant.id} initial={imagePrefs} models={imageModels} />
         </div>
       ) : null}
       <div className="mb-6">

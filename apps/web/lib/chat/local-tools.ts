@@ -12,6 +12,7 @@ import type { DB } from '@renkei/db';
 import type { LlmToolDef, LlmUsage, ResolvedLlm } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import type { McpToolResult } from '@renkei/mcp-client';
+import type { ImageUsageReport } from '@/lib/image/usage';
 import type { SubagentRecorder } from './subagent-runs';
 import type { WidgetDecisionState } from './views';
 
@@ -35,6 +36,14 @@ export interface LocalToolContext {
    * `model` is what spent it when that is not the turn's own model (a
    * sub-agent on a model of its own); absent, the turn's model is stamped.
    */
+  /**
+   * The person's own message that opened this turn, word for word — what
+   * the image tool sends to the image model as the prompt. Absent when
+   * there is no such message; the tool then refuses.
+   */
+  userPrompt?: string;
+  /** Where a picture drawn for the person is counted (lib/image/usage.ts), the turn's own sink. */
+  recordImageUsage?: (report: ImageUsageReport) => Promise<void>;
   recordUsage?: (
     usage: LlmUsage,
     model?: LlmCallModel | null,
