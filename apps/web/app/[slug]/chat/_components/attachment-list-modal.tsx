@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import DownloadLink from '@/components/download-link';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
 
@@ -67,13 +68,14 @@ export default function AttachmentListModal({
             return (
               <li key={attachment.id} className="flex items-center gap-2 py-2">
                 <Icon path={ICONS.paperclip} className="h-4 w-4 shrink-0 text-gray-400" />
-                <a
+                <DownloadLink
                   href={chatClient.attachmentUrl(tenantId, attachment.id)}
+                  filename={attachment.filename}
                   className="min-w-0 flex-1 truncate hover:underline"
                   title={attachment.filename}
                 >
                   {attachment.filename}
-                </a>
+                </DownloadLink>
                 {status ? (
                   <span className="shrink-0 text-xs text-amber-700 dark:text-amber-400">
                     {status}
