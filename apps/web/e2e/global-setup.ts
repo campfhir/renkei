@@ -16,6 +16,31 @@ export const STORAGE_STATE_PATH = path.join(
   'storage-state.json'
 );
 
+/**
+ * A fresh dev server compiles an API route on its first hit, which can take
+ * longer than a test's 5s expect timeout. chat.spec.ts's title-bar rename is
+ * the first caller of the chat PATCH route, so it used to fail on a cold
+ * server and pass on a warm one. A PATCH to a chat that does not exist
+ * compiles the route and answers 404; the result is deliberately ignored.
+ */
+async function warmRoutes(): Promise<void> {
+  const base = 'http://127.0.0.1:3000';
+  const missingChat = '00000000-0000-4000-8000-000000000000';
+  try {
+    await fetch(`${base}/api/tenant/${E2E_TENANT_ID}/chat/chats/${missingChat}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        cookie: `renkei_session_${E2E_TENANT_ID}=${E2E_SESSION_ID}`,
+      },
+      body: JSON.stringify({ title: 'warm-up' }),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    // Warming is best-effort; the tests still run, just cold.
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -40,6 +65,8 @@ export default async function globalSetup(): Promise<void> {
   } finally {
     await client.end();
   }
+
+  await warmRoutes();
 
   // The cookie is the whole credential: an opaque session id (lib/session.ts).
   mkdirSync(path.dirname(STORAGE_STATE_PATH), { recursive: true });
