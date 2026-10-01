@@ -43,7 +43,7 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
+    date: ‘2026-10-01’,
     heading: ‘Image generation, sub-agents, and code project refinements’,
     entries: [
       {
