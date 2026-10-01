@@ -203,7 +203,7 @@ describe('generateImage — FLUX on Azure AI Foundry', () => {
     const result = await generateImage(flux, {
       prompt: 'A photograph of a red fox in an autumn forest',
       size: '1536x1024',
-      // FLUX has no such knobs: they must not be sent.
+      // FLUX has no quality or background knobs (not sent); the format is.
       quality: 'high',
       outputFormat: 'jpeg',
       background: 'transparent',
@@ -217,13 +217,13 @@ describe('generateImage — FLUX on Azure AI Foundry', () => {
       model: 'FLUX.2-flex',
       width: 1536,
       height: 1024,
-      n: 1,
+      num_images: 1,
+      output_format: 'jpeg',
     });
     expect(call.init.headers).toEqual({
       'content-type': 'application/json',
       authorization: 'Bearer az-key',
     });
-    // FLUX answers PNG whatever was asked.
     expect(result.ok && result.val.mediaType).toBe('image/png');
   });
 
@@ -294,7 +294,7 @@ describe('generateImage — editing a source image', () => {
     return { url: String(call?.[0]), init, form };
   }
 
-  it('posts multipart to /images/edits with the picture as image[], and no JSON content type', async () => {
+  it('posts multipart to /images/edits with the picture as image, and no JSON content type', async () => {
     const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
     const result = await generateImage(
       { apiKey: 'sk-1', model: 'gpt-image-1' },
@@ -318,7 +318,7 @@ describe('generateImage — editing a source image', () => {
     expect(form.get('quality')).toBe('low');
     expect(form.get('output_format')).toBe('png');
     // The picture is a file part carrying its name, type and exact bytes.
-    const file = form.get('image[]');
+    const file = form.get('image');
     if (!(file instanceof File)) throw new Error('expected a file part');
     expect(file.name).toBe('cute_polar_bear.png');
     expect(file.type).toBe('image/png');
@@ -383,7 +383,8 @@ describe('generateImage — editing a source image', () => {
       model: 'FLUX.2-flex',
       width: 1536,
       height: 1024,
-      n: 1,
+      num_images: 1,
+      output_format: 'png',
       input_image: PNG_B64,
     });
     expect(call.init.headers).toMatchObject({ 'content-type': 'application/json' });
@@ -453,5 +454,46 @@ describe('generateImage — Azure FLUX routes', () => {
     });
     const result = await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p' });
     expect(!result.ok && result.err.type).toBe('content_filter');
+  });
+});
+
+describe('generateImage — an answer that is a link', () => {
+  const flux = {
+    apiKey: 'k',
+    model: 'FLUX.2-pro',
+    surface: 'flux' as const,
+    baseUrl: 'https://r.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-pro',
+  };
+
+  function twoCalls(link: string) {
+    return jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [{ url: link }] }), { status: 200 })
+      )
+      .mockResolvedValueOnce(new Response(PNG_BYTES, { status: 200 }));
+  }
+
+  it('downloads a public https link without credentials or redirects', async () => {
+    const spy = twoCalls('https://cdn.example.com/out.png');
+    const result = await generateImage(flux, { prompt: 'fox' });
+    expect(result.ok && result.val.bytes.equals(PNG_BYTES)).toBe(true);
+    const init = spy.mock.calls[1]?.[1];
+    expect(init?.redirect).toBe('error');
+    expect(init?.headers).toBeUndefined();
+  });
+
+  it.each([
+    'http://cdn.example.com/out.png',
+    'https://127.0.0.1/out.png',
+    'https://localhost/out.png',
+    'https://[::1]/out.png',
+    'https://metadata.internal/out.png',
+    'not a url',
+  ])('refuses %s without fetching it', async (link) => {
+    const spy = twoCalls(link);
+    const result = await generateImage(flux, { prompt: 'fox' });
+    expect(result.ok).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

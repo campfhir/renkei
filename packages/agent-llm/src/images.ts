@@ -14,7 +14,7 @@
  *
  * With a source image (ImageRequest.image) the call is an EDIT — "make it
  * bluer" applied to a picture already drawn: the OpenAI surface posts
- * multipart to /images/edits (`image[]` is the file), and FLUX sends the
+ * multipart to /images/edits (`image` is the file), and FLUX sends the
  * picture as base64 in `input_image`, the field Black Forest Labs' own API
  * edits with. The prompt is the person's, untouched, either way.
  *
@@ -128,7 +128,8 @@ function requestFor(
         model: config.model,
         width: match ? Number(match[1]) : 1024,
         height: match ? Number(match[2]) : 1024,
-        n: 1,
+        num_images: 1,
+        output_format: request.outputFormat ?? 'png',
         // An edit: the picture to start from, as base64 (BFL's `input_image`).
         ...(request.image ? { input_image: request.image.bytes.toString('base64') } : {}),
       },
@@ -156,7 +157,7 @@ function requestFor(
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
   form.append(
-    'image[]',
+    'image',
     new Blob([new Uint8Array(request.image.bytes)], { type: request.image.mediaType }),
     request.image.filename
   );
@@ -191,6 +192,64 @@ function mediaTypeOf(bytes: Buffer): GeneratedImage['mediaType'] | null {
     return 'image/jpeg';
   }
   return null;
+}
+
+/**
+ * Fetches a picture the provider answered as a link. Only https to a named
+ * host (no IP literal, no localhost), no redirects, no credentials sent,
+ * capped in size and time — the link is provider-supplied, so it is treated
+ * as untrusted input.
+ */
+async function downloadImage(
+  link: string,
+  signal: AbortSignal | undefined
+): Promise<Result<Buffer, ImageErrorKind>> {
+  let target: URL;
+  try {
+    target = new URL(link);
+  } catch {
+    return err('provider_error' as const, { message: 'The image link was not a URL.' });
+  }
+  const host = target.hostname.toLowerCase();
+  const literal = /^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[');
+  if (
+    target.protocol !== 'https:' ||
+    literal ||
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.local')
+  ) {
+    return err('provider_error' as const, {
+      message: 'The image link was not a public https URL.',
+    });
+  }
+  try {
+    const response = await fetch(target, {
+      redirect: 'error',
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+        : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      return err('provider_error' as const, {
+        message: `The image link answered ${response.status}.`,
+      });
+    }
+    const declared = Number(response.headers.get('content-length') ?? 0);
+    if (declared > RESPONSE_MAX_BYTES) {
+      return err('provider_error' as const, { message: 'The image is larger than allowed.' });
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > RESPONSE_MAX_BYTES) {
+      return err('provider_error' as const, { message: 'The image is larger than allowed.' });
+    }
+    return ok(bytes);
+  } catch (error) {
+    return err(transportErrorKind(error, signal), {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export async function generateImage(
@@ -248,17 +307,26 @@ export async function generateImage(
     });
   }
   const first: unknown = Array.isArray(parsed.data) ? parsed.data[0] : undefined;
-  const b64: unknown =
-    typeof first === 'object' && first !== null ? Reflect.get(first, 'b64_json') : undefined;
-  if (typeof b64 !== 'string' || !b64) {
+  const field = (name: string): unknown =>
+    typeof first === 'object' && first !== null ? Reflect.get(first, name) : undefined;
+  const b64 = field('b64_json');
+  const link = field('url');
+  let bytes: Buffer;
+  if (typeof b64 === 'string' && b64) {
+    if (b64.length > Math.ceil((RESPONSE_MAX_BYTES * 4) / 3)) {
+      return err('provider_error' as const, { message: 'The image is larger than allowed.' });
+    }
+    bytes = Buffer.from(b64, 'base64');
+  } else if (typeof link === 'string' && link) {
+    // FLUX routes may answer a URL instead of bytes.
+    const downloaded = await downloadImage(link, request.signal);
+    if (!downloaded.ok) return downloaded;
+    bytes = downloaded.val;
+  } else {
     return err('provider_error' as const, {
-      message: 'The images endpoint returned no image (no b64_json).',
+      message: 'The images endpoint returned no image (no b64_json or url).',
     });
   }
-  if (b64.length > Math.ceil((RESPONSE_MAX_BYTES * 4) / 3)) {
-    return err('provider_error' as const, { message: 'The image is larger than allowed.' });
-  }
-  const bytes = Buffer.from(b64, 'base64');
   const mediaType = mediaTypeOf(bytes);
   if (!mediaType) {
     return err('provider_error' as const, {

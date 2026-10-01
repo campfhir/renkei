@@ -252,7 +252,8 @@ export function looksLikeCredentialFailure(body: string): boolean {
  */
 export function isAzureHost(baseUrl: string): boolean {
   try {
-    return /\.azure\.com$/i.test(new URL(baseUrl).hostname);
+    // `*.azure.com`, and the Foundry-era `*.cognitive.microsoft.com` gateway.
+    return /\.(azure\.com|cognitive\.microsoft\.com)$/i.test(new URL(baseUrl).hostname);
   } catch {
     return false;
   }

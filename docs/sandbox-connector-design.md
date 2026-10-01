@@ -141,21 +141,24 @@ row whose **API surface** is an image one (`settings.apiSurface`):
 - `flux` — Black Forest Labs' FLUX models on Azure AI Foundry's native
   provider route, which every FLUX model has (FLUX.2 included): the base URL is
   the model's own provider endpoint
-  (`https://{resource}.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex`,
-  api-version `preview`), the body carries `width`/`height` instead of `size`,
-  and the quality/format/background knobs are not sent. FLUX.1 Kontext and
-  1.1 Pro also answer on the OpenAI-compatible route
+  (`https://{resource}.api.cognitive.microsoft.com/providers/blackforestlabs/v1/flux-2-flex`
+  or the `.services.ai.azure.com` host, api-version `preview`; the path is
+  `flux-2-pro` or `flux-2-flex`). The body carries `width`/`height` instead of
+  `size`, `num_images: 1` and `output_format`; quality/background are not
+  sent. An edit sends the picture as base64 `input_image`. FLUX.1 Kontext Pro
+  and 1.1 Pro use other native paths (Kontext takes `aspect_ratio`, not
+  pixels) and also answer on the OpenAI-compatible route
   (`/openai/v1/images/generations`); there they are an `images` row, like
-  gpt-image.
+  gpt-image — use that for them.
 
-Both answer base64 (`b64_json`) — the native route adds a `seed` and reports
+Both answer base64 (`b64_json`), or a `url` the client downloads (public https only, no redirects, no credentials, size-capped) — the native route adds a `seed` and reports
 tokens as `prompt_tokens`/`completion_tokens`, which is read as input/output —
 and a moderation block comes back as a 400 whose message mentions content
 moderation, read as the safety system saying no rather than a bad request (so
 it is not retried at other sizes). `generateImage` in `@renkei/agent-llm`
 speaks either, with the OpenAI chat adapter's credential-header rules. The
 media type is taken from the returned bytes, not from the format asked
-for — FLUX answers PNG whatever is requested — and the tool saves under
+for, and the tool saves under
 the extension of what actually came back. Adding another vendor is a new
 surface in `IMAGE_SURFACES` and a branch in `requestFor`.
 
@@ -181,7 +184,7 @@ which model is calling). How it behaves:
   JPEG files (`pickSourceImage`; the person's uploads count too), reads it back
   and rebuilds it through the same validators, and sends it with the person's
   unchanged message to the image model's EDIT endpoint — OpenAI's
-  `/images/edits` (multipart, `image[]`), or `input_image` (base64) for FLUX.
+  `/images/edits` (multipart, `image`), or `input_image` (base64) for FLUX.
   A name that is not there is answered with the names that are, so the chat
   model can correct itself; a model that cannot edit is told to call again
   without `sourceImage`. With no `sourceImage` a new picture is drawn. The

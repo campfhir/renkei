@@ -493,14 +493,17 @@ export default function ModelForms({ slug }: { slug: string }) {
                   sends the prompt to it.{' '}
                   {draft.apiSurface === 'flux' ? (
                     <>
-                      FLUX through its native provider route, which every FLUX model has (FLUX.2
-                      included): set the base URL to the model&apos;s own endpoint, e.g.{' '}
+                      FLUX through its native provider route (FLUX.2 pro / flex): set the base URL
+                      to the model&apos;s own endpoint, e.g.{' '}
                       <span className="font-mono break-all">
-                        https://&#123;resource&#125;.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex
-                      </span>
-                      , the model id to its name (FLUX.2-flex), and the API version to{' '}
-                      <span className="font-mono">preview</span>. FLUX.1 Kontext and 1.1 Pro can
-                      instead use the OpenAI-compatible route — pick the Images API for those.
+                        https://&#123;resource&#125;.api.cognitive.microsoft.com/providers/blackforestlabs/v1/flux-2-flex
+                      </span>{' '}
+                      (a <span className="font-mono">.services.ai.azure.com</span> host works the
+                      same; the path is <span className="font-mono">flux-2-pro</span> or{' '}
+                      <span className="font-mono">flux-2-flex</span>), the model id to its name
+                      (FLUX.2-flex), and the API version to{' '}
+                      <span className="font-mono">preview</span>. FLUX.1 Kontext Pro and 1.1 Pro
+                      take a different request on this route — pick the Images API for those.
                     </>
                   ) : (
                     <>
