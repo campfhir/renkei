@@ -501,6 +501,28 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   expect(box).not.toBeNull();
   expect(box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'image-card-done-mobile.png');
+
+  // The preview window at phone width: picture and both buttons inside the screen, no sideways scroll.
+  await drawn.getByRole('button', { name: 'Preview image' }).click();
+  const phonePreview = page.getByTestId('image-preview');
+  await expect(phonePreview).toBeVisible();
+  for (const target of [
+    phonePreview.getByTestId('image-preview-picture'),
+    phonePreview.getByTestId('image-preview-download'),
+    phonePreview.getByRole('button', { name: 'Close' }),
+  ]) {
+    const at = await target.boundingBox();
+    expect(at).not.toBeNull();
+    expect(at!.x).toBeGreaterThanOrEqual(0);
+    expect(at!.x + at!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+    expect(at!.y + at!.height).toBeLessThanOrEqual(MOBILE_VIEWPORT.height);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true
+  );
+  await shot(page, testInfo, 'image-preview-mobile.png');
+  await phonePreview.getByRole('button', { name: 'Close' }).click();
+  await expect(phonePreview).toHaveCount(0);
 });
 
 test('a call waiting on permission shows no outline; once approved it is an outline in the shape asked for', async ({
