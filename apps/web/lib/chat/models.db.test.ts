@@ -22,6 +22,7 @@ maybe('image generation models', () => {
   const tenantId = randomUUID();
   const chatId = randomUUID();
   const imageId = randomUUID();
+  const fluxId = randomUUID();
   const offImageId = randomUUID();
   const anthropicId = randomUUID();
   const previousKey = process.env.TOKEN_ENCRYPTION_KEY;
@@ -83,6 +84,13 @@ maybe('image generation models', () => {
       settings: { apiSurface: 'images' },
     });
     await addModel({
+      id: fluxId,
+      label: 'Fox',
+      provider: 'openai',
+      model: 'FLUX.2-flex',
+      settings: { apiSurface: 'flux' },
+    });
+    await addModel({
       id: offImageId,
       label: 'Retired painter',
       provider: 'openai',
@@ -114,26 +122,35 @@ maybe('image generation models', () => {
     expect(chat.map((model) => model.label).sort()).toEqual(['Chatty', 'Claude']);
     const images = await listImageModels(db, tenantId);
     // The disabled one is not offered either.
-    expect(images).toEqual([{ id: imageId, label: 'Painter', model: 'gpt-image-1' }]);
+    expect(images).toEqual([
+      { id: fluxId, label: 'Fox', model: 'FLUX.2-flex' },
+      { id: imageId, label: 'Painter', model: 'gpt-image-1' },
+    ]);
   });
 
   it('never resolves an image model as a chat model, by id or as the default', async () => {
-    const byId = await resolveAgentLlm(db, tenantId, imageId);
-    // An override that is not a chat model falls back to the org default.
-    expect(byId.ok && byId.val.modelConfigId).toBe(chatId);
+    for (const imageModel of [imageId, fluxId]) {
+      const byId = await resolveAgentLlm(db, tenantId, imageModel);
+      // An override that is not a chat model falls back to the org default.
+      expect(byId.ok && byId.val.modelConfigId).toBe(chatId);
+    }
     const fallback = await resolveAgentLlm(db, tenantId, null);
     expect(fallback.ok && fallback.val.modelConfigId).toBe(chatId);
   });
 
   it('resolves an image model with its key, and only an enabled image model', async () => {
+    // The first by label is the FLUX row, and its surface travels with it.
     const first = await resolveImageModel(db, tenantId, null);
     expect(first.ok && first.val).toMatchObject({
-      modelConfigId: imageId,
-      label: 'Painter',
-      config: { apiKey: 'sk-test', model: 'gpt-image-1' },
+      modelConfigId: fluxId,
+      label: 'Fox',
+      config: { apiKey: 'sk-test', model: 'FLUX.2-flex', surface: 'flux' },
     });
     const named = await resolveImageModel(db, tenantId, imageId);
-    expect(named.ok && named.val.modelConfigId).toBe(imageId);
+    expect(named.ok && named.val).toMatchObject({
+      modelConfigId: imageId,
+      config: { model: 'gpt-image-1', surface: 'images' },
+    });
 
     for (const notAnImageModel of [chatId, anthropicId, offImageId]) {
       const refused = await resolveImageModel(db, tenantId, notAnImageModel);

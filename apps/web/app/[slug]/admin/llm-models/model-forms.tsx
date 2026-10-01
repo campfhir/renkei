@@ -66,7 +66,8 @@ interface ModelDraft {
   reasoningEffort: string;
   /**
    * '' = chat-completions (the default); 'responses' = the Responses API;
-   * 'images' = the Images API — an image generation model, not a chat one.
+   * 'images' = the OpenAI Images API and 'flux' = Black Forest Labs FLUX on
+   * Azure AI Foundry — image generation models, not chat ones.
    */
   apiSurface: string;
   apiKey: string;
@@ -199,7 +200,7 @@ export default function ModelForms({ slug }: { slug: string }) {
   const borrowFromId = draft.apiKeyFromId || (editingRow?.hasApiKey ? editingRow.id : '');
   const canList = Boolean(draft.apiKey || borrowFromId);
   // "Test connection" sends a chat completion, which an image model rejects.
-  const isImage = draft.apiSurface === 'images';
+  const isImage = draft.apiSurface === 'images' || draft.apiSurface === 'flux';
   const canTest = canList && Boolean(draft.model.trim()) && !isImage;
 
   /** Other configs whose stored key can be reused — the same connection
@@ -337,7 +338,7 @@ export default function ModelForms({ slug }: { slug: string }) {
                     Default
                   </span>
                 ) : null}
-                {row.settings?.apiSurface === 'images' ? (
+                {row.settings?.apiSurface === 'images' || row.settings?.apiSurface === 'flux' ? (
                   <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300">
                     Image generation
                   </span>
@@ -472,22 +473,40 @@ export default function ModelForms({ slug }: { slug: string }) {
                     ...draft,
                     apiSurface: event.target.value,
                     // An image model cannot answer chat, so it can never be the default.
-                    isDefault: event.target.value === 'images' ? false : draft.isDefault,
+                    isDefault:
+                      event.target.value === 'images' || event.target.value === 'flux'
+                        ? false
+                        : draft.isDefault,
                   });
                   clearAvailable();
                 }}
               >
                 <option value="">Chat completions (default)</option>
                 <option value="responses">Responses API</option>
-                <option value="images">Images API (image generation)</option>
+                <option value="images">Images API — gpt-image (image generation)</option>
+                <option value="flux">FLUX — Black Forest Labs (image generation)</option>
               </select>
               {isImage ? (
                 <p className={hintClass} data-testid="image-surface-hint">
-                  For a model that draws pictures (gpt-image-1, gpt-image-2 and the like) rather
-                  than chats. It is never offered as a chat model or the default; instead, chats get
-                  a &quot;generate image&quot; tool that sends the prompt to it. On Azure, set the
-                  base URL to the resource&apos;s <span className="font-mono">/openai/v1</span>{' '}
-                  surface and the model id to your deployment name.
+                  For a model that draws pictures rather than chats. It is never offered as a chat
+                  model or the default; instead, chats get a &quot;generate image&quot; tool that
+                  sends the prompt to it.{' '}
+                  {draft.apiSurface === 'flux' ? (
+                    <>
+                      FLUX: set the base URL to the model&apos;s own endpoint, e.g.{' '}
+                      <span className="font-mono break-all">
+                        https://&#123;resource&#125;.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex
+                      </span>
+                      , the model id to its name (FLUX.2-flex), and the API version to{' '}
+                      <span className="font-mono">preview</span>.
+                    </>
+                  ) : (
+                    <>
+                      gpt-image: leave the base URL blank for OpenAI, or on Azure set it to the
+                      resource&apos;s <span className="font-mono">/openai/v1</span> surface and the
+                      model id to your deployment name.
+                    </>
+                  )}
                 </p>
               ) : null}
               {isImage ? null : (

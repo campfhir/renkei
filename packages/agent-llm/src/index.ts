@@ -48,6 +48,7 @@ export {
 export {
   chatModelsOnly,
   imageModelsOnly,
+  imageSurfaceOf,
   invalidateLlmCache,
   isImageModelSettings,
   resolveAgentLlm,
@@ -58,8 +59,10 @@ export {
 } from './resolve';
 export {
   generateImage,
+  IMAGE_SURFACES,
   type GeneratedImage,
   type ImageErrorKind,
   type ImageModelConfig,
   type ImageRequest,
+  type ImageSurface,
 } from './images';

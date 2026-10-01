@@ -9,7 +9,14 @@
 
 import { generateImage } from './images';
 
-const PNG_B64 = Buffer.from('not really a png').toString('base64');
+// Only the magic number matters here: the client sniffs the type, validation is the caller's.
+const PNG_BYTES = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from('rest'),
+]);
+const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+const PNG_B64 = PNG_BYTES.toString('base64');
+const JPEG_B64 = JPEG_BYTES.toString('base64');
 
 function respond(status: number, body: unknown): jest.SpiedFunction<typeof fetch> {
   return jest
@@ -38,12 +45,12 @@ describe('generateImage', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.val.mediaType).toBe('image/png');
-      expect(result.val.bytes.toString()).toBe('not really a png');
+      expect(result.val.bytes.equals(PNG_BYTES)).toBe(true);
     }
   });
 
   it('asks OpenAI for one image, in the format and quality named', async () => {
-    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    const spy = respond(200, { data: [{ b64_json: JPEG_B64 }] });
     const result = await generateImage(
       { apiKey: 'sk-1', model: 'gpt-image-1' },
       {
@@ -164,5 +171,91 @@ describe('generateImage', () => {
       { prompt: 'p', signal: stop.signal }
     );
     expect(!stopped.ok && stopped.err.type).toBe('aborted');
+  });
+
+  it('reports the type of the bytes it got, not the format it asked for', async () => {
+    respond(200, { data: [{ b64_json: PNG_B64 }] });
+    const result = await generateImage(
+      { apiKey: 'k', model: 'm' },
+      { prompt: 'p', outputFormat: 'jpeg' }
+    );
+    expect(result.ok && result.val.mediaType).toBe('image/png');
+  });
+
+  it('refuses an image that is neither a PNG nor a JPEG', async () => {
+    respond(200, { data: [{ b64_json: Buffer.from('RIFF....WEBP').toString('base64') }] });
+    const result = await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p' });
+    expect(!result.ok && result.err.type).toBe('provider_error');
+  });
+});
+
+describe('generateImage — FLUX on Azure AI Foundry', () => {
+  const flux = {
+    apiKey: 'az-key',
+    model: 'FLUX.2-flex',
+    surface: 'flux' as const,
+    baseUrl: 'https://res.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex',
+    apiVersion: 'preview',
+  };
+
+  it('posts to the model’s own provider URL with width and height, Bearer alone', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    const result = await generateImage(flux, {
+      prompt: 'A photograph of a red fox in an autumn forest',
+      size: '1536x1024',
+      // FLUX has no such knobs: they must not be sent.
+      quality: 'high',
+      outputFormat: 'jpeg',
+      background: 'transparent',
+    });
+    const call = lastCall(spy);
+    expect(call.url).toBe(
+      'https://res.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex?api-version=preview'
+    );
+    expect(call.body).toEqual({
+      prompt: 'A photograph of a red fox in an autumn forest',
+      model: 'FLUX.2-flex',
+      width: 1536,
+      height: 1024,
+      n: 1,
+    });
+    expect(call.init.headers).toEqual({
+      'content-type': 'application/json',
+      authorization: 'Bearer az-key',
+    });
+    // FLUX answers PNG whatever was asked.
+    expect(result.ok && result.val.mediaType).toBe('image/png');
+  });
+
+  it('draws 1024x1024 for auto or no size', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    for (const size of [undefined, 'auto']) {
+      await generateImage(flux, { prompt: 'p', ...(size ? { size } : {}) });
+      expect(lastCall(spy).body).toMatchObject({ width: 1024, height: 1024 });
+    }
+  });
+
+  it('keeps a query string already on the endpoint, and omits an unset api-version', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    await generateImage({ ...flux, baseUrl: `${flux.baseUrl}?x=1` }, { prompt: 'p' });
+    expect(lastCall(spy).url).toBe(`${flux.baseUrl}?x=1&api-version=preview`);
+    await generateImage({ ...flux, apiVersion: null }, { prompt: 'p' });
+    expect(lastCall(spy).url).toBe(flux.baseUrl);
+  });
+
+  it('refuses a FLUX model with no endpoint, without calling anything', async () => {
+    const spy = respond(200, {});
+    const result = await generateImage({ ...flux, baseUrl: null }, { prompt: 'p' });
+    expect(!result.ok && result.err.type).toBe('invalid_request');
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('maps its failures the same way', async () => {
+    respond(400, { error: { code: 'content_policy_violation' } });
+    const filtered = await generateImage(flux, { prompt: 'p' });
+    expect(!filtered.ok && filtered.err.type).toBe('content_filter');
+    respond(429, 'slow down');
+    const limited = await generateImage(flux, { prompt: 'p' });
+    expect(!limited.ok && limited.err.type).toBe('rate_limit');
   });
 });

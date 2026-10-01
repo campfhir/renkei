@@ -133,18 +133,33 @@ possible for authored documents at all.
 
 No chat model writes image bytes as a tool argument, here or anywhere. A
 picture comes from an **image generation model**: an `llm_model_configs`
-row whose **API surface** is _Images API_ (`settings.apiSurface =
-'images'`, e.g. `gpt-image-1` or an Azure deployment of it). Such a row is
-never a chat model — the shared predicates in `@renkei/agent-llm`
-(`chatModelsOnly` / `imageModelsOnly`) keep it out of the chat picker, the
-org default, an agent's override and `resolveAgentLlm`, and it can never be
-saved as the default.
+row whose **API surface** is an image one (`settings.apiSurface`):
+
+- `images` — the OpenAI Images API (`gpt-image-1`, `gpt-image-2`, or an
+  Azure deployment of one): `POST {base}/images/generations` with `size`,
+  `quality`, `output_format`, `background`.
+- `flux` — Black Forest Labs' FLUX models as Azure AI Foundry serves them
+  (`FLUX.2-flex`, …): the base URL is the model's own provider endpoint
+  (`https://{resource}.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex`,
+  api-version `preview`), the body carries `width`/`height` instead of
+  `size`, and the quality/format/background knobs are not sent.
+
+Both answer base64 (`b64_json`); `generateImage` in `@renkei/agent-llm`
+speaks either, with the OpenAI chat adapter's credential-header rules. The
+media type is taken from the returned bytes, not from the format asked
+for — FLUX answers PNG whatever is requested — and the tool saves under
+the extension of what actually came back. Adding another vendor is a new
+surface in `IMAGE_SURFACES` and a branch in `requestFor`.
+
+Such a row is never a chat model: the shared predicates (`chatModelsOnly` /
+`imageModelsOnly`) keep it out of the chat picker, the org default, an
+agent's override and `resolveAgentLlm`, and it can never be saved as the
+default.
 
 Chats whose org has an enabled image row are offered `chat_generate_image`
 (chat only; org agents do not get it, since the MCP server cannot tell
-which model is calling). It sends the prompt to the image model through the
-Images API (`generateImage`, same URL/auth rules as the OpenAI chat
-adapter) and keeps the PNG or JPEG under the chat's Artifacts.
+which model is calling). It sends the prompt to the image model and keeps
+the PNG or JPEG under the chat's Artifacts.
 
 What comes back is still untrusted bytes from a remote service, so it goes
 through `@renkei/document-render`'s validators (`src/binary/`) and is kept

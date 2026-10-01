@@ -1,15 +1,28 @@
 /**
- * Image generation models — the OpenAI Images API (gpt-image-* on OpenAI
- * itself, and on Azure AI Foundry's v1 surface), spoken with the same
- * base-URL tolerance and credential-header rules as the chat adapter
- * (openai.ts): an Azure host gets Bearer alone, anything else both
+ * Image generation models, over two wire surfaces:
+ *
+ *   - 'images' — the OpenAI Images API (gpt-image-* on OpenAI itself, and
+ *     on Azure AI Foundry's v1 surface): POST {base}/images/generations
+ *     with `size`, `quality`, `output_format`, `background`.
+ *   - 'flux' — Black Forest Labs' FLUX models as Azure AI Foundry serves
+ *     them (FLUX.2-flex, FLUX.1 Kontext pro, …): POST to the model's own
+ *     provider URL, e.g.
+ *     https://{resource}.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex
+ *     — the base URL IS the full endpoint, since the path names the model —
+ *     with `width` and `height` in place of `size`, and no quality,
+ *     format or background knobs.
+ *
+ * Both are spoken with the same credential-header rules as the chat
+ * adapter (openai.ts): an Azure host gets Bearer alone, anything else both
  * headers, because Azure's gateway fails a request carrying a pair.
  *
  * These models are not chat models and never go through LlmProvider: one
  * request, one picture back. gpt-image models always answer base64
  * (`b64_json`), which is what this returns — bytes the caller must still
  * treat as untrusted (the chat's image tool runs them through
- * @renkei/document-render before keeping them).
+ * @renkei/document-render before keeping them). The media type comes from
+ * the bytes themselves, not from the format asked for: FLUX answers PNG
+ * whatever is requested, and a gateway may ignore `output_format`.
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -23,10 +36,17 @@ const REQUEST_TIMEOUT_MS = 180_000;
 /** Larger than any 4K PNG gpt-image returns; a guard on a hostile or broken gateway. */
 const RESPONSE_MAX_BYTES = 40 * 1024 * 1024;
 
+/** The wire dialects an image generation model can speak. */
+export const IMAGE_SURFACES = ['images', 'flux'] as const;
+export type ImageSurface = (typeof IMAGE_SURFACES)[number];
+
 export interface ImageModelConfig {
   apiKey: string;
-  /** Model id — for Azure AI Foundry, the DEPLOYMENT name. */
+  /** Model id — for Azure AI Foundry, the DEPLOYMENT name (FLUX: the model name, e.g. FLUX.2-flex). */
   model: string;
+  /** Which wire dialect; absent = the OpenAI Images API. */
+  surface?: ImageSurface;
+  /** The API root; for 'flux', the model's full provider URL. */
   baseUrl?: string | null;
   /** Azure surfaces version routes with ?api-version=; null = omit. */
   apiVersion?: string | null;
@@ -64,37 +84,88 @@ function errorKindOf(status: number, body: string): ImageErrorKind {
   return 'provider_error';
 }
 
-export async function generateImage(
+/** What the chosen surface sends: where, and the JSON body. */
+function requestFor(
   config: ImageModelConfig,
   request: ImageRequest
-): Promise<Result<GeneratedImage, ImageErrorKind>> {
+): { url: string; body: Record<string, unknown> } {
+  const version = config.apiVersion ? `?api-version=${encodeURIComponent(config.apiVersion)}` : '';
+  if (config.surface === 'flux') {
+    // The base URL is the model's own endpoint; a query string already on it is kept.
+    const endpoint = (config.baseUrl ?? '').replace(/\/+$/, '');
+    // FLUX takes pixels, not a size name; 'auto' (or anything unparsable) is 1024x1024.
+    const match = /^(\d{2,5})x(\d{2,5})$/.exec(request.size ?? '');
+    return {
+      url: version
+        ? `${endpoint}${endpoint.includes('?') ? '&' : '?'}${version.slice(1)}`
+        : endpoint,
+      body: {
+        prompt: request.prompt,
+        model: config.model,
+        width: match ? Number(match[1]) : 1024,
+        height: match ? Number(match[2]) : 1024,
+        n: 1,
+      },
+    };
+  }
   // Tolerate a pasted FULL endpoint: the path is appended here.
   const baseUrl = (config.baseUrl || DEFAULT_BASE_URL)
     .replace(/\/+$/, '')
     .replace(/\/images\/generations$/, '');
-  const version = config.apiVersion ? `?api-version=${encodeURIComponent(config.apiVersion)}` : '';
   const format = request.outputFormat ?? 'png';
-  const body = {
-    model: config.model,
-    prompt: request.prompt,
-    n: 1,
-    ...(request.size ? { size: request.size } : {}),
-    ...(request.quality ? { quality: request.quality } : {}),
-    output_format: format,
-    // Transparency only exists in PNG; asking for it on a JPEG is a 400.
-    ...(request.background === 'transparent' && format === 'png'
-      ? { background: 'transparent' }
-      : {}),
+  return {
+    url: `${baseUrl}/images/generations${version}`,
+    body: {
+      model: config.model,
+      prompt: request.prompt,
+      n: 1,
+      ...(request.size ? { size: request.size } : {}),
+      ...(request.quality ? { quality: request.quality } : {}),
+      output_format: format,
+      // Transparency only exists in PNG; asking for it on a JPEG is a 400.
+      ...(request.background === 'transparent' && format === 'png'
+        ? { background: 'transparent' }
+        : {}),
+    },
   };
+}
+
+/** PNG or JPEG by magic number; null for anything else (WebP, HTML, junk). */
+function mediaTypeOf(bytes: Buffer): GeneratedImage['mediaType'] | null {
+  if (
+    bytes.length > 8 &&
+    bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) {
+    return 'image/png';
+  }
+  if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  return null;
+}
+
+export async function generateImage(
+  config: ImageModelConfig,
+  request: ImageRequest
+): Promise<Result<GeneratedImage, ImageErrorKind>> {
+  if (config.surface === 'flux' && !config.baseUrl) {
+    return err('invalid_request' as const, {
+      message:
+        'A FLUX model needs its endpoint as the base URL (…/providers/blackforestlabs/v1/<model>).',
+    });
+  }
+  const { url, body } = requestFor(config, request);
+  const authority =
+    config.surface === 'flux' ? (config.baseUrl ?? '') : config.baseUrl || DEFAULT_BASE_URL;
 
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}/images/generations${version}`, {
+    response = await fetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${config.apiKey}`,
-        ...(isAzureHost(baseUrl) ? {} : { 'api-key': config.apiKey }),
+        ...(isAzureHost(authority) ? {} : { 'api-key': config.apiKey }),
       },
       body: JSON.stringify(body),
       signal: request.signal
@@ -137,8 +208,12 @@ export async function generateImage(
   if (b64.length > Math.ceil((RESPONSE_MAX_BYTES * 4) / 3)) {
     return err('provider_error' as const, { message: 'The image is larger than allowed.' });
   }
-  return ok({
-    bytes: Buffer.from(b64, 'base64'),
-    mediaType: format === 'jpeg' ? 'image/jpeg' : 'image/png',
-  });
+  const bytes = Buffer.from(b64, 'base64');
+  const mediaType = mediaTypeOf(bytes);
+  if (!mediaType) {
+    return err('provider_error' as const, {
+      message: 'The image model returned neither a PNG nor a JPEG.',
+    });
+  }
+  return ok({ bytes, mediaType });
 }

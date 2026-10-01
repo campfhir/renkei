@@ -366,6 +366,14 @@ test('admin: the Images API surface makes an image generation model — never th
   await expect(page.getByText('Some reasoning-model deployments')).toHaveCount(0);
   await shot(page, testInfo, 'llm-models-image-model-form');
 
+  // FLUX is an image surface too, with its own endpoint guidance.
+  await page.getByLabel('API surface').selectOption('flux');
+  await expect(page.getByTestId('image-surface-hint')).toContainText('providers/blackforestlabs');
+  await expect(defaultBox).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+  await page.getByLabel('API surface').selectOption('images');
+  await expect(page.getByTestId('image-surface-hint')).toContainText('gpt-image');
+
   // Back to a chat surface restores the chat test and the default box.
   await page.getByLabel('API surface').selectOption('');
   await expect(defaultBox).toBeEnabled();

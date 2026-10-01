@@ -1,8 +1,8 @@
 /**
  * chat_generate_image — the model's way to have a picture drawn. A chat
  * model does not produce image bytes; an image generation model does (the
- * org's "Image generation model" rows — gpt-image-1, gpt-image-2 and the
- * like, spoken to through the Images API, never chat). This tool sends the
+ * org's rows whose API surface is Images or FLUX — gpt-image-1,
+ * FLUX.2-flex and the like, never chat). This tool sends the
  * model's prompt to one of them and keeps what comes back as a PNG or JPEG
  * under the chat's Artifacts, through the same door chat_write_file uses.
  *
@@ -121,13 +121,13 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
             type: 'string',
             enum: [...QUALITIES],
             description:
-              'low is fastest and cheapest; high is the most detailed. Default: model’s own.',
+              'low is fastest and cheapest; high is the most detailed. Default: the model’s own. Ignored by models without a quality setting (FLUX).',
           },
           background: {
             type: 'string',
             enum: [...BACKGROUNDS],
             description:
-              'transparent gives a PNG with a transparent background (a logo, a sticker).',
+              'transparent gives a PNG with a transparent background (a logo, a sticker). Ignored by models that cannot (FLUX).',
           },
           ...(models.length > 1
             ? {
@@ -189,21 +189,32 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
       });
       if (!made.ok) return errorResult(failureMessage(made.err.type, made.err.message));
 
+      // The bytes decide the format, not the request: FLUX answers PNG whatever is asked.
+      const actual = made.val.mediaType === 'image/jpeg' ? 'jpg' : 'png';
+      const asked = extension === 'png' ? 'png' : 'jpg';
+      const filename =
+        actual === asked
+          ? name.filename
+          : `${name.filename.slice(0, name.filename.lastIndexOf('.'))}.${actual}`;
+      const renamed =
+        filename === name.filename
+          ? ''
+          : ` This model produces ${actual.toUpperCase()}, so it was saved as ${filename} rather than ${name.filename}.`;
       // Untrusted bytes: rebuilt from the pixels, or refused.
-      const checked = sanitizeBinary(extension, made.val.bytes.toString('base64'));
+      const checked = sanitizeBinary(actual, made.val.bytes.toString('base64'));
       if (!checked.ok) {
         return errorResult(
-          `The image model returned a file that is not a valid ${extension.toUpperCase()}, so it was not kept: ${checked.reason}`
+          `The image model returned a file that is not a valid ${actual.toUpperCase()}, so it was not kept: ${checked.reason}`
         );
       }
       return textResult(
-        `Generated ${name.filename} with ${choice.label} (${checked.mediaType}, ${checked.bytes.byteLength} bytes). ${KEPT_LINE}`,
+        `Generated ${filename} with ${choice.label} (${checked.mediaType}, ${checked.bytes.byteLength} bytes).${renamed} ${KEPT_LINE}`,
         {
           renkeiDocuments: [
             {
               mediaType: checked.mediaType,
               dataBase64: checked.bytes.toString('base64'),
-              title: name.filename,
+              title: filename,
             },
           ],
           // The model asked for it by description; it does not need the pixels back.

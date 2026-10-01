@@ -120,6 +120,18 @@ describe('chat_generate_image — making an image', () => {
     expect(jpeg).toHaveBeenCalledWith(expect.anything(), { prompt: 'p', outputFormat: 'jpeg' });
   });
 
+  it('saves under the extension of what the model actually returned, and says so', async () => {
+    // FLUX answers PNG whatever is asked: a .jpg request comes back as a PNG.
+    const result = await tool(returning(PNG, 'image/png')).execute(
+      { prompt: 'a fox', filename: 'fox.jpg' },
+      context()
+    );
+    expect(result.isError).toBe(false);
+    const [doc] = documentsOf(result.meta);
+    expect(doc).toMatchObject({ mediaType: 'image/png', title: 'fox.png' });
+    expect(result.content[0]?.text).toMatch(/saved as fox\.png rather than fox\.jpg/);
+  });
+
   it('uses the model named, by label or model id', async () => {
     await tool(returning(PNG)).execute(
       { prompt: 'p', filename: 'a.png', model: 'sketcher' },

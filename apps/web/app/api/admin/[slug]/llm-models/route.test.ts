@@ -183,6 +183,20 @@ describe('POST .../llm-models', () => {
     expect(db.inserted[0]!.is_default).toBe(false);
   });
 
+  it('stores a FLUX model by its flux surface too, and never as the org default', async () => {
+    const db = fakeDb([]);
+    mockGetDatabase.mockReturnValue(db);
+
+    const response = await POST(
+      reqOf({ label: 'Fox', provider: 'openai', model: 'FLUX.2-flex', apiKey: 'sk-x', apiSurface: 'flux', apiVersion: 'preview', isDefault: true }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(201);
+    expect(JSON.parse(String(db.inserted[0]!.settings))).toEqual({ apiSurface: 'flux', apiVersion: 'preview' });
+    expect(db.inserted[0]!.is_default).toBe(false);
+  });
+
   it('still lets a chat model be the default on either chat surface', async () => {
     const db = fakeDb([]);
     mockGetDatabase.mockReturnValue(db);
@@ -201,7 +215,7 @@ describe('POST .../llm-models', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ label: 'Nope', provider: 'anthropic', model: 'claude-x', apiKey: 'sk-x', apiSurface: 'images' }),
+      reqOf({ label: 'Nope', provider: 'anthropic', model: 'claude-x', apiKey: 'sk-x', apiSurface: 'flux' }),
       { params: paramsOf() }
     );
 

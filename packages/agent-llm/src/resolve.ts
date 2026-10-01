@@ -18,7 +18,7 @@ import { decrypt, parseEncryptionKey } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
-import type { ImageModelConfig } from './images';
+import { IMAGE_SURFACES, type ImageModelConfig, type ImageSurface } from './images';
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
 import { OpenAiResponsesProvider } from './openai-responses';
@@ -36,26 +36,27 @@ export interface ResolvedLlm {
 export type ResolveLlmError = 'NO_MODEL' | 'UNSUPPORTED_PROVIDER' | 'CONFIG_ERROR' | 'DB_ERROR';
 
 /**
- * A model row whose API surface is the Images API (settings.apiSurface
- * 'images'): an image generation model such as gpt-image-1. It speaks
- * the Images API, not chat, so it
+ * A model row whose API surface is an image one (settings.apiSurface
+ * 'images' — the OpenAI Images API — or 'flux'): an image generation
+ * model such as gpt-image-1 or FLUX.2-flex. It is not a chat model, so it
  * must never be offered where a chat model is chosen — the picker, the
  * org default, an agent's override, a sub-agent's roster.
  */
+export function imageSurfaceOf(settings: unknown): ImageSurface | null {
+  if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) return null;
+  const surface: unknown = Reflect.get(settings, 'apiSurface');
+  return IMAGE_SURFACES.find((candidate) => candidate === surface) ?? null;
+}
+
 export function isImageModelSettings(settings: unknown): boolean {
-  return (
-    typeof settings === 'object' &&
-    settings !== null &&
-    !Array.isArray(settings) &&
-    Reflect.get(settings, 'apiSurface') === 'images'
-  );
+  return imageSurfaceOf(settings) !== null;
 }
 
 /** `.where(chatModelsOnly)` — the SQL twin of !isImageModelSettings, for every query that picks a chat model. */
-export const chatModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') <> 'images'`;
+export const chatModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') not in ('images', 'flux')`;
 
 /** `.where(imageModelsOnly)` — the rows that generate images. */
-export const imageModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') = 'images'`;
+export const imageModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') in ('images', 'flux')`;
 
 const CACHE_TTL_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
@@ -232,7 +233,7 @@ export interface ResolvedImageModel {
 /**
  * The enabled image generation model `modelConfigId`, or — with null —
  * the first one the org has. Never a chat model: a row is an image model
- * only when its API surface is 'images'.
+ * only when its API surface is an image one.
  */
 export async function resolveImageModel(
   db: Kysely<DB>,
@@ -254,7 +255,7 @@ export async function resolveImageModel(
   if (!row) {
     return err('NO_MODEL' as const, { message: 'No image generation model is configured.' });
   }
-  // The Images API is OpenAI's; Anthropic has no equivalent to adapt.
+  // Both image surfaces are OpenAI-dialect (OpenAI itself, Azure AI Foundry); Anthropic has no image API.
   if (row.provider !== 'openai') {
     return err('UNSUPPORTED_PROVIDER' as const, {
       message: `No image adapter for provider "${row.provider}"`,
@@ -268,6 +269,7 @@ export async function resolveImageModel(
     config: {
       apiKey: key.val,
       model: row.model,
+      surface: imageSurfaceOf(row.settings) ?? 'images',
       baseUrl: row.base_url,
       apiVersion: settingString(row, 'apiVersion'),
     },
