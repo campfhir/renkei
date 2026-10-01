@@ -466,12 +466,22 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await expect(picture).toBeVisible();
   await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(150);
   await expect(drawn.getByTestId('image-card-picture')).toBeVisible();
-  // It opens full size in a new tab.
-  await expect(drawn.getByRole('link')).toHaveAttribute('target', '_blank');
-  await expect(drawn.getByRole('link')).toHaveAttribute(
-    'href',
-    /\/chat\/attachments\/[0-9a-f-]{36}$/
-  );
+  // Clicking it opens a preview window with the picture and a Download button.
+  await drawn.getByRole('button', { name: 'Preview image' }).click();
+  const preview = page.getByTestId('image-preview');
+  await expect(preview).toBeVisible();
+  const big = preview.getByTestId('image-preview-picture');
+  await expect.poll(() => big.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(150);
+  const download = preview.getByTestId('image-preview-download');
+  await expect(download).toHaveAttribute('download', 'cute_polar_bear.png');
+  await expect(download).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
+  const saved = page.waitForEvent('download');
+  await download.click();
+  expect((await saved).suggestedFilename()).toBe('cute_polar_bear.png');
+  await shot(page, testInfo, 'image-preview.png');
+  // Escape closes it and puts focus back on the picture's button.
+  await page.keyboard.press('Escape');
+  await expect(preview).toHaveCount(0);
 
   // Inline, not folded away with the other tool calls; and the image glyph, not the wrench.
   await expect(drawn.locator('xpath=ancestor::details')).toHaveCount(0);
