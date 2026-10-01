@@ -444,7 +444,7 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await addModels(fixture, ['chat', 'painter']);
   await seedDoneChat(fixture);
   // 3:2, like the size asked for; the bytes stand in for the blob store.
-  const png = solidPng(150, 100, [120, 170, 230]);
+  const png = solidPng(3000, 2000, [120, 170, 230]);
   await page.route(
     `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.attachmentId}`,
     (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png })
@@ -464,14 +464,19 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   // The picture itself, loaded — the file this call kept, not the other's.
   const picture = drawn.getByRole('img', { name: 'cute_polar_bear.png' });
   await expect(picture).toBeVisible();
-  await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(150);
+  await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(3000);
   await expect(drawn.getByTestId('image-card-picture')).toBeVisible();
   // Clicking it opens a preview window with the picture and a Download button.
   await drawn.getByRole('button', { name: 'Preview image' }).click();
   const preview = page.getByTestId('image-preview');
   await expect(preview).toBeVisible();
   const big = preview.getByTestId('image-preview-picture');
-  await expect.poll(() => big.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(150);
+  await expect.poll(() => big.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(3000);
+  // A large picture is fitted to the window, not spilled past it.
+  const fitted = await big.boundingBox();
+  expect(fitted).not.toBeNull();
+  expect(fitted!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(fitted!.y + fitted!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
   const download = preview.getByTestId('image-preview-download');
   await expect(download).toHaveAttribute('download', 'cute_polar_bear.png');
   await expect(download).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
