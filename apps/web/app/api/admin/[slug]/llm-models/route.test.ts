@@ -169,6 +169,60 @@ describe('POST .../llm-models', () => {
     if (decrypted?.ok) expect(JSON.parse(decrypted.val)).toEqual({ apiKey: 'sk-ant-secret' });
   });
 
+  it('stores an image generation model by its images API surface, and never as the org default', async () => {
+    const db = fakeDb([]);
+    mockGetDatabase.mockReturnValue(db);
+
+    const response = await POST(
+      reqOf({ label: 'Painter', provider: 'openai', model: 'gpt-image-1', apiKey: 'sk-x', apiSurface: 'images', isDefault: true }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(201);
+    expect(JSON.parse(String(db.inserted[0]!.settings))).toEqual({ apiSurface: 'images' });
+    expect(db.inserted[0]!.is_default).toBe(false);
+  });
+
+  it('stores a FLUX model by its flux surface too, and never as the org default', async () => {
+    const db = fakeDb([]);
+    mockGetDatabase.mockReturnValue(db);
+
+    const response = await POST(
+      reqOf({ label: 'Fox', provider: 'openai', model: 'FLUX.2-flex', apiKey: 'sk-x', apiSurface: 'flux', apiVersion: 'preview', isDefault: true }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(201);
+    expect(JSON.parse(String(db.inserted[0]!.settings))).toEqual({ apiSurface: 'flux', apiVersion: 'preview' });
+    expect(db.inserted[0]!.is_default).toBe(false);
+  });
+
+  it('still lets a chat model be the default on either chat surface', async () => {
+    const db = fakeDb([]);
+    mockGetDatabase.mockReturnValue(db);
+
+    const response = await POST(
+      reqOf({ label: 'Chatty', provider: 'openai', model: 'gpt-x', apiKey: 'sk-x', apiSurface: 'responses', isDefault: true }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(201);
+    expect(db.inserted[0]!.is_default).toBe(true);
+  });
+
+  it('refuses the images API surface on a provider with no Images API', async () => {
+    const db = fakeDb([]);
+    mockGetDatabase.mockReturnValue(db);
+
+    const response = await POST(
+      reqOf({ label: 'Nope', provider: 'anthropic', model: 'claude-x', apiKey: 'sk-x', apiSurface: 'flux' }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(400);
+    expect(db.inserted).toHaveLength(0);
+  });
+
   it('rejects a save with neither an apiKey nor a key to reuse', async () => {
     mockGetDatabase.mockReturnValue(fakeDb([]));
     const response = await POST(

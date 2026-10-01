@@ -6,6 +6,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { chatModelsOnly, imageModelsOnly } from '@renkei/agent-llm';
 import type { ModelOption } from './views';
 
 export async function listChatModels(db: Kysely<DB>, tenantId: string): Promise<ModelOption[]> {
@@ -14,6 +15,8 @@ export async function listChatModels(db: Kysely<DB>, tenantId: string): Promise<
     .select(['id', 'label', 'provider', 'model', 'is_default'])
     .where('tenant_id', '=', tenantId)
     .where('enabled', '=', true)
+    // An image generation model cannot answer chat: never in the picker.
+    .where(chatModelsOnly)
     .orderBy('is_default', 'desc')
     .orderBy('label', 'asc')
     .execute();
@@ -25,4 +28,26 @@ export async function listChatModels(db: Kysely<DB>, tenantId: string): Promise<
     isDefault: row.is_default,
     supportsThinking: row.provider === 'anthropic',
   }));
+}
+
+/** An image generation model the org has enabled, as the chat's image tool offers it. */
+export interface ImageModelChoice {
+  id: string;
+  label: string;
+  model: string;
+}
+
+export async function listImageModels(
+  db: Kysely<DB>,
+  tenantId: string
+): Promise<ImageModelChoice[]> {
+  const rows = await db
+    .selectFrom('llm_model_configs')
+    .select(['id', 'label', 'model'])
+    .where('tenant_id', '=', tenantId)
+    .where('enabled', '=', true)
+    .where(imageModelsOnly)
+    .orderBy('label', 'asc')
+    .execute();
+  return rows.map((row) => ({ id: row.id, label: row.label, model: row.model }));
 }

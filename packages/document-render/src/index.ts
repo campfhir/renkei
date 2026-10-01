@@ -15,6 +15,7 @@ import { renderXlsx, sheetsOf } from './xlsx';
 import { MEDIA_TYPE_BY_EXTENSION } from './text-formats';
 
 export * from './text-formats';
+export * from './binary';
 
 export const RENDERED_MEDIA_TYPES = {
   pdf: 'application/pdf',

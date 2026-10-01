@@ -5,14 +5,17 @@
  * writing through the same door, so it lands under the chat's Artifacts
  * like any other, for download or copying to a network share.
  *
- * The model only ever writes text. A text format (CSV, Markdown, JSON,
+ * For documents the model writes text. A text format (CSV, Markdown, JSON,
  * …) is kept as written; a document format (.docx, .pdf, .pptx, .xlsx)
  * is RENDERED here from that text — Markdown for the three documents,
  * CSV / JSON / Markdown tables for the workbook — by a library that
  * produces a valid file deterministically (@renkei/document-render, also
- * used by sandbox_render_document for org agents). Bytes never travel
- * as tool arguments, which is the platform's rule everywhere, and the
- * model's cost is the same whether the result is a .csv or an .xlsx.
+ * used by sandbox_render_document for org agents), so the model's cost is
+ * the same whether the result is a .csv or an .xlsx.
+ *
+ * The one exception to "text only" is image-tools.ts's
+ * chat_write_binary_file, offered only to a model the admin has declared
+ * able to generate images.
  * Offered only when the organization has a store to keep files in
  * (chat-local-tools.ts), so the model is never given a verb that can
  * only fail.
@@ -58,7 +61,7 @@ export function checkFilename(raw: unknown): FilenameCheck {
   return { ok: true, filename };
 }
 
-const KEPT_LINE =
+export const KEPT_LINE =
   'It is under this chat’s Artifacts, where the person can download it or copy it to a network share; tell them so, and do not repeat the content.';
 
 export function fileTools(): LocalTool[] {

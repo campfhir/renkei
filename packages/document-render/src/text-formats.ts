@@ -41,10 +41,12 @@ export const REFUSED_EXTENSIONS: Record<string, string> = {
   doc: 'write it as .docx instead',
   ppt: 'write it as .pptx instead',
   zip: 'write the files one at a time instead',
-  png: 'only text-based and document files can be written',
-  jpg: 'only text-based and document files can be written',
-  jpeg: 'only text-based and document files can be written',
-  gif: 'only text-based and document files can be written',
+  png: 'use chat_generate_image if it is offered to you',
+  jpg: 'use chat_generate_image if it is offered to you',
+  jpeg: 'use chat_generate_image if it is offered to you',
+  tif: 'only PNG and JPEG images can be generated, with chat_generate_image',
+  tiff: 'only PNG and JPEG images can be generated, with chat_generate_image',
+  gif: 'only PNG and JPEG images can be generated, with chat_generate_image',
 };
 
 /** More than any caller writes in one go. */

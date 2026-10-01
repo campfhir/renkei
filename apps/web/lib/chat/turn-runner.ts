@@ -406,6 +406,7 @@ const EXTENSION_BY_MEDIA_TYPE: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/gif': '.gif',
   'image/webp': '.webp',
+  'image/tiff': '.tiff',
   'text/plain': '.txt',
   'text/csv': '.csv',
   'text/tab-separated-values': '.tsv',

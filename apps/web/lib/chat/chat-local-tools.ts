@@ -27,6 +27,8 @@ import { memoryTools } from './memory-tools';
 import { mockupTools } from './mockup-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
+import { imageGenerationTool } from './image-tools';
+import { listImageModels } from './models';
 import { widgetStateTools } from './widget-state-tools';
 
 export async function chatLocalTools(
@@ -59,6 +61,12 @@ export async function chatLocalTools(
   if (hasFiles) tools.push(...attachmentTools(toolConfig));
   if (filesAllowed) {
     tools.push(...fileTools());
+    // A picture comes from an image generation model, never a chat one;
+    // without one in the org the tool is simply not offered. A failed
+    // lookup costs the turn this one tool, not the turn.
+    const imageModels = await listImageModels(db, context.tenantId).catch(() => []);
+    const imageTool = imageGenerationTool({ models: imageModels });
+    if (imageTool) tools.push(imageTool);
     // A chart needs the worker's Chromium as well as somewhere to keep the file.
     if (sandboxChartsEnabled()) tools.push(...chartTools());
   }

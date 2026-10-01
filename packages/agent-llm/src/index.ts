@@ -46,8 +46,23 @@ export {
   type TestConnectionError,
 } from './test-connection';
 export {
+  chatModelsOnly,
+  imageModelsOnly,
+  imageSurfaceOf,
   invalidateLlmCache,
+  isImageModelSettings,
   resolveAgentLlm,
+  resolveImageModel,
   type ResolveLlmError,
+  type ResolvedImageModel,
   type ResolvedLlm,
 } from './resolve';
+export {
+  generateImage,
+  IMAGE_SURFACES,
+  type GeneratedImage,
+  type ImageErrorKind,
+  type ImageModelConfig,
+  type ImageRequest,
+  type ImageSurface,
+} from './images';

@@ -17,7 +17,15 @@ export const SUPPORTED_PROVIDERS = ['anthropic', 'openai'] as const;
  * reasoning-model deployments (a gpt-6-astra-1 case found in production)
  * accept tool calls on at all.
  */
-export const API_SURFACES = ['chat_completions', 'responses'] as const;
+export const API_SURFACES = ['chat_completions', 'responses', 'images', 'flux'] as const;
+
+/**
+ * The surfaces that are image generation models rather than chat ones:
+ * 'images' is the OpenAI Images API (gpt-image-*), 'flux' Black Forest
+ * Labs' FLUX models as Azure AI Foundry serves them. Kept in step with
+ * @renkei/agent-llm's IMAGE_SURFACES.
+ */
+const IMAGE_API_SURFACES: readonly string[] = ['images', 'flux'];
 
 export interface ModelPayload {
   label: string;
@@ -72,6 +80,12 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
   if (typeof payload.model !== 'string' || !payload.model.trim()) {
     return { error: 'model is required' };
   }
+  const imageGeneration =
+    typeof payload.apiSurface === 'string' && IMAGE_API_SURFACES.includes(payload.apiSurface);
+  // The Images API is OpenAI's (OpenAI itself, Azure AI Foundry); there is no Anthropic one to call.
+  if (imageGeneration && payload.provider !== 'openai') {
+    return { error: 'An image API surface needs the openai provider (OpenAI or Azure)' };
+  }
   return {
     label: payload.label.trim(),
     provider: payload.provider,
@@ -108,6 +122,7 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
         ? payload.apiKeyFromId
         : null,
     enabled: payload.enabled !== false,
-    isDefault: payload.isDefault === true,
+    // An image model cannot answer chat, so it can never be the org's default.
+    isDefault: payload.isDefault === true && !imageGeneration,
   };
 }
