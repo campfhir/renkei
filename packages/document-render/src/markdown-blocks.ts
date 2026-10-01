@@ -38,7 +38,15 @@ export type Block =
   | { type: 'paragraph'; inlines: Inline[] }
   | { type: 'list'; ordered: boolean; start: number; items: ListItem[] }
   | { type: 'code'; text: string; lang: string | null }
-  | { type: 'table'; header: Inline[][]; rows: Inline[][][]; align: Align[] }
+  | {
+      type: 'table';
+      header: Inline[][];
+      rows: Inline[][][];
+      align: Align[];
+      /** Each cell as written, before inline Markdown is read. */
+      headerRaw: string[];
+      rowsRaw: string[][];
+    }
   | { type: 'quote'; blocks: Block[] }
   | { type: 'rule' };
 
@@ -212,6 +220,8 @@ function blocksOf(tokens: Token[]): Block[] {
         header: token.header.map((cell) => inlines(cell.tokens)),
         rows: token.rows.map((row) => row.map((cell) => inlines(cell.tokens))),
         align: token.align.map((align) => align ?? null),
+        headerRaw: token.header.map((cell) => cell.text),
+        rowsRaw: token.rows.map((row) => row.map((cell) => cell.text)),
       });
     } else if (is(token, 'blockquote')) {
       out.push({ type: 'quote', blocks: blocksOf(token.tokens) });

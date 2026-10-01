@@ -47,6 +47,7 @@ import {
   renderDocument,
   RENDER_INPUT_MAX_CHARS,
   resolveMediaType,
+  XLSX_FORMULA_GUIDE,
 } from '@renkei/document-render';
 import {
   PAGE_TEXT_DEFAULT_CHARS,
@@ -301,7 +302,8 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
         'slide and what follows is its body; .xlsx (Excel) from CSV, or JSON ' +
         '{"sheets":[{"name":…,"rows":[[…],…]}]} for several sheets, or Markdown tables (one ' +
         'sheet each, named by the heading above). Numbers and dates in a workbook are typed as ' +
-        'such.',
+        'such. ' +
+        XLSX_FORMULA_GUIDE,
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         filename: z

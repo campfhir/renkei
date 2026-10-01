@@ -111,9 +111,15 @@ function readRows(xml: string, shared: string[]): string[][] {
   let cellType = '';
   let inValue = false;
   let inInline = false;
+  let inFormula = false;
   let value = '';
+  let formula = '';
 
   const flushCell = () => {
+    // A formula with no cached result (a workbook written by a program and
+    // never opened in Excel) is still better read as itself than as nothing.
+    if (!value && formula) row.push(`=${formula}`);
+    formula = '';
     if (!value) return;
     if (cellType === 's') {
       const index = Number.parseInt(value, 10);
@@ -138,6 +144,10 @@ function readRows(xml: string, shared: string[]): string[][] {
         case 'c':
           cellType = attribute(tag.attributes, 't') ?? '';
           value = '';
+          formula = '';
+          break;
+        case 'f':
+          inFormula = true;
           break;
         case 'v':
           inValue = true;
@@ -157,6 +167,9 @@ function readRows(xml: string, shared: string[]): string[][] {
         case 'v':
           inValue = false;
           break;
+        case 'f':
+          inFormula = false;
+          break;
         case 't':
           if (inInline) inValue = false;
           break;
@@ -174,9 +187,10 @@ function readRows(xml: string, shared: string[]): string[][] {
       }
     },
     onText: (text) => {
-      // `f` (the formula) is never captured: SUM(B2:B40) is not something
-      // anyone will semantically search for. Only `v` and inline `t` are read.
+      // The formula (`f`) is kept only for a cell with no cached result:
+      // SUM(B2:B40) is not something anyone will semantically search for.
       if (inValue) value += text;
+      else if (inFormula) formula += text;
     },
   });
 

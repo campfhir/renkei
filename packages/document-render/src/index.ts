@@ -16,6 +16,7 @@ import { MEDIA_TYPE_BY_EXTENSION } from './text-formats';
 
 export * from './text-formats';
 export * from './binary';
+export { XLSX_FORMULA_GUIDE } from './xlsx';
 
 export const RENDERED_MEDIA_TYPES = {
   pdf: 'application/pdf',
