@@ -172,7 +172,10 @@ export async function recordWidgetModelContext(
   const text = input.text.trim().slice(0, MODEL_CONTEXT_MAX_CHARS);
   if (!text) return { ok: false, reason: 'failed' };
 
-  if (input.stateKey && (await waitingOnSiblings(db, input.tenantId, input.chatId, input.stateKey))) {
+  if (
+    input.stateKey &&
+    (await waitingOnSiblings(db, input.tenantId, input.chatId, input.stateKey))
+  ) {
     const appended = await appendWidgetModelContext(db, {
       tenantId: input.tenantId,
       chatId: input.chatId,

@@ -1,46 +1,84 @@
 'use client';
 
 /**
- * A file a tool produced, drawn inline in the reply that produced it — the
- * document, the workbook, the PDF itself, at reading size in a bounded,
- * scrollable frame — so the person sees what they got without leaving the
- * thread. Saving it is the Download button beside Copy under the reply.
- * A file with no faithful representation (preview-kind.ts says null) is
- * not drawn at all; its Download button is all there is.
+ * A file a tool produced, shown in the reply that produced it as what it
+ * is: the first page of a document, the first slide of a deck, the corner
+ * of a workbook's first sheet — a small picture of the thing, the way a
+ * file manager shows a thumbnail — with its name and a Download right
+ * under it. A file with no faithful picture (preview-kind.ts says null)
+ * is just its name and the Download.
  *
- * Nothing is fetched until the card comes near the screen: a long thread
- * of reports should not pull every one of them on open.
+ * Every picture is laid out at the size it was made for (a Letter page, a
+ * 16:9 slide) and scaled down to the card, so a page keeps a page's shape
+ * and its proportions, whatever the screen. Nothing is fetched until the
+ * card comes near the visible part of the thread.
  *
  *   image   <img> from the download URL
- *   pdf     each page painted to a canvas by pdf.js (first PDF_MAX_PAGES)
- *   docx    docx-preview, inside a sandboxed frame: no script runs there,
- *           and the document's own styles cannot leak into the app's
- *   sheet   tables from the /preview route (exceljs, server side)
- *   text    the bytes as text; Markdown rendered, anything else verbatim
- *   extract the text extracted at upload, for a deck or a legacy file
+ *   pdf     page 1 painted to a canvas by pdf.js
+ *   docx    page 1 laid out by docx-preview  } in a sandboxed frame: no
+ *   pptx    slide 1 drawn by pptx-preview    } script runs, no style leaks
+ *   sheet   the first sheet's corner, as a grid, from the /preview route
+ *   text    the start of the text on a page; Markdown rendered
+ *   extract the start of the text extracted at upload, on a page
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import DownloadLink from '@/components/download-link';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
 import { isMarkdown, previewKind, type PreviewKind } from '@/lib/chat/preview-kind';
 import type { AttachmentView } from '@/lib/chat/views';
 import Markdown from './markdown';
 
-const PDF_MAX_PAGES = 20;
-const TEXT_MAX_CHARS = 100_000;
+/** A US Letter page at 96 dpi, the size docx-preview lays a page out at. */
+const PAGE = { width: 816, height: 1056 };
+/** A page for plain text: Letter's shape, at a size its text reads well scaled down. */
+const TEXT_PAGE = { width: 612, height: 792 };
+const SLIDE = { width: 960, height: 540 };
+const SHEET = { width: 640, height: 400 };
+/** Enough text to fill one page; the rest is in the download. */
+const TEXT_CHARS = 4_000;
+
+interface PreviewCell {
+  v: string;
+  b?: true;
+  n?: true;
+}
 
 interface PreviewSheet {
   name: string;
-  rows: string[][];
-  truncated: boolean;
+  rows: PreviewCell[][];
+  widths: number[];
+  sheetCount: number;
 }
 
-function iconFor(kind: PreviewKind): string {
-  if (kind === 'image') return ICONS.fileImage;
-  if (kind === 'sheet') return ICONS.fileSheet;
-  if (kind === 'pdf' || kind === 'docx' || kind === 'text') return ICONS.fileText;
-  return ICONS.file;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isCell(value: unknown): value is PreviewCell {
+  return isRecord(value) && typeof value.v === 'string';
+}
+
+/** The /preview route's sheet, checked rather than trusted. */
+function sheetOf(body: unknown): PreviewSheet {
+  if (!isRecord(body) || !isRecord(body.sheet)) throw new Error('bad preview');
+  const { name, rows, widths, sheetCount } = body.sheet;
+  if (
+    typeof name !== 'string' ||
+    !Array.isArray(rows) ||
+    !rows.every((row) => Array.isArray(row) && row.every(isCell)) ||
+    !Array.isArray(widths) ||
+    !widths.every((width) => typeof width === 'number')
+  ) {
+    throw new Error('bad sheet');
+  }
+  return { name, rows, widths, sheetCount: typeof sheetCount === 'number' ? sheetCount : 1 };
+}
+
+function extractOf(body: unknown): string {
+  if (!isRecord(body) || typeof body.text !== 'string') throw new Error('bad preview');
+  return body.text;
 }
 
 function sizeOf(bytes: number): string {
@@ -49,31 +87,11 @@ function sizeOf(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isStringGrid(value: unknown): value is string[][] {
-  return (
-    Array.isArray(value) &&
-    value.every((row) => Array.isArray(row) && row.every((cell) => typeof cell === 'string'))
-  );
-}
-
-/** The /preview route's sheets, checked rather than trusted. */
-function sheetsOf(body: unknown): PreviewSheet[] {
-  if (!isRecord(body) || !Array.isArray(body.sheets)) throw new Error('bad preview');
-  return body.sheets.map((sheet: unknown) => {
-    if (!isRecord(sheet) || typeof sheet.name !== 'string' || !isStringGrid(sheet.rows)) {
-      throw new Error('bad sheet');
-    }
-    return { name: sheet.name, rows: sheet.rows, truncated: sheet.truncated === true };
-  });
-}
-
-function extractOf(body: unknown): { text: string; truncated: boolean } {
-  if (!isRecord(body) || typeof body.text !== 'string') throw new Error('bad preview');
-  return { text: body.text, truncated: body.truncated === true };
+function iconFor(kind: PreviewKind | null): string {
+  if (kind === 'image') return ICONS.fileImage;
+  if (kind === 'sheet') return ICONS.fileSheet;
+  if (kind === null) return ICONS.file;
+  return ICONS.fileText;
 }
 
 async function fetchOk(url: string): Promise<Response> {
@@ -118,26 +136,82 @@ function useNearScreen<T extends Element>(): [React.RefObject<T | null>, boolean
   return [ref, near];
 }
 
-function Failed() {
+/**
+ * A sheet of the given design size, scaled to whatever width the card has:
+ * the children lay out at `width` × `height` and are shrunk to fit, so a
+ * page keeps its proportions on a phone and on a desktop alike.
+ */
+function Scaled({
+  width,
+  height,
+  children,
+  testId,
+}: {
+  width: number;
+  height: number;
+  children: ReactNode;
+  testId?: string;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0);
+  useEffect(() => {
+    const element = box.current;
+    if (!element) return;
+    const measure = () => setScale(element.clientWidth / width);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [width]);
   return (
-    <p className="px-3 py-6 text-center text-xs text-gray-500" data-testid="artifact-inline-error">
-      This file could not be shown here. Download it to open it.
-    </p>
-  );
-}
-
-function Loading() {
-  return (
-    <div className="flex h-40 items-center justify-center text-gray-400 motion-safe:animate-pulse">
-      <Icon path={ICONS.file} className="h-8 w-8" />
+    <div
+      ref={box}
+      className="relative w-full overflow-hidden"
+      style={{ aspectRatio: `${width} / ${height}` }}
+      data-testid={testId}
+    >
+      <div
+        className="absolute top-0 left-0 origin-top-left"
+        style={{
+          width,
+          height,
+          transform: `scale(${scale})`,
+          visibility: scale ? undefined : 'hidden',
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
 
-function PdfPages({ url }: { url: string }) {
-  const host = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<'loading' | 'done' | 'failed'>('loading');
-  const [more, setMore] = useState(0);
+type Load = 'loading' | 'done' | 'failed';
+
+function Blank({ width, height, state }: { width: number; height: number; state: Load }) {
+  return (
+    <div
+      className={`absolute inset-0 flex items-center justify-center text-gray-300 ${
+        state === 'loading' ? 'motion-safe:animate-pulse' : ''
+      }`}
+      style={{ width, height }}
+      data-testid={state === 'failed' ? 'artifact-inline-error' : undefined}
+    >
+      {state === 'failed' ? (
+        <span className="px-8 text-center text-2xl text-gray-500">
+          No preview — download to open it.
+        </span>
+      ) : (
+        <Icon path={ICONS.file} className="h-24 w-24" />
+      )}
+    </div>
+  );
+}
+
+function PdfFirstPage({ url }: { url: string }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [state, setState] = useState<Load>('loading');
+  const [shape, setShape] = useState(PAGE);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -151,90 +225,70 @@ function PdfPages({ url }: { url: string }) {
         ).toString();
         const bytes = new Uint8Array(await (await fetchOk(url)).arrayBuffer());
         const doc = await pdfjs.getDocument({ data: bytes }).promise;
-        const target = host.current;
+        const page = await doc.getPage(1);
+        const target = canvas.current;
         if (cancelled || !target) return;
-        const width = target.clientWidth || 640;
-        const ratio = window.devicePixelRatio || 1;
-        const count = Math.min(doc.numPages, PDF_MAX_PAGES);
-        for (let number = 1; number <= count; number++) {
-          const page = await doc.getPage(number);
-          if (cancelled) return;
-          const scale = width / page.getViewport({ scale: 1 }).width;
-          const viewport = page.getViewport({ scale: scale * ratio });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.floor(viewport.width);
-          canvas.height = Math.floor(viewport.height);
-          canvas.style.width = '100%';
-          canvas.className = 'block bg-white shadow-sm';
-          canvas.setAttribute('role', 'img');
-          canvas.setAttribute('aria-label', `Page ${number}`);
-          target.appendChild(canvas);
-          await page.render({ canvas, viewport }).promise;
-          if (number === 1 && !cancelled) setState('done');
-        }
-        if (!cancelled) setMore(doc.numPages - count);
+        const natural = page.getViewport({ scale: 1 });
+        // Painted at twice the page's CSS size: sharp once scaled to the card.
+        const viewport = page.getViewport({ scale: (PAGE.width / natural.width) * 2 });
+        target.width = Math.floor(viewport.width);
+        target.height = Math.floor(viewport.height);
+        setShape({
+          width: PAGE.width,
+          height: Math.round((PAGE.width * natural.height) / natural.width),
+        });
+        await page.render({ canvas: target, viewport }).promise;
+        if (!cancelled) setState('done');
       } catch {
         if (!cancelled) setState('failed');
       }
     })();
     return () => {
       cancelled = true;
-      host.current?.replaceChildren();
     };
   }, [url]);
-  if (state === 'failed') return <Failed />;
   return (
-    <>
-      {state === 'loading' ? <Loading /> : null}
-      <div
-        ref={host}
-        className="flex flex-col gap-2 bg-gray-200 p-2 dark:bg-gray-800"
-        data-testid="artifact-inline-pdf"
+    <Scaled width={shape.width} height={shape.height} testId="artifact-inline-pdf">
+      <canvas
+        ref={canvas}
+        role="img"
+        aria-label="Page 1"
+        className="block bg-white"
+        style={{ width: shape.width, height: shape.height }}
       />
-      {more > 0 ? (
-        <p className="px-3 py-2 text-xs text-gray-500">
-          {more} more page{more === 1 ? '' : 's'} in the download.
-        </p>
-      ) : null}
-    </>
+      {state === 'done' ? null : <Blank {...shape} state={state} />}
+    </Scaled>
   );
 }
 
 const FRAME_DOC =
   '<!doctype html><html><head><meta charset="utf-8"><style>' +
-  'html,body{margin:0;background:#fff;color:#111;font-family:system-ui,sans-serif}' +
-  'body{padding:12px;overflow-wrap:anywhere}img{max-width:100%;height:auto}' +
-  'table{max-width:100%}' +
+  'html,body{margin:0;background:#fff;color:#111;overflow:hidden}' +
   '</style></head><body></body></html>';
 
-function DocxFrame({ url }: { url: string }) {
+/**
+ * A blank, sandboxed page the app lays a document out in: same origin so it
+ * can write into it, no allow-scripts so nothing in the document ever runs,
+ * and its own stylesheet so the document's styles stay inside.
+ */
+function useFrame(
+  url: string,
+  draw: (bytes: ArrayBuffer, doc: Document) => Promise<void>
+): [React.RefObject<HTMLIFrameElement | null>, () => void, Load] {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
-  const [state, setState] = useState<'loading' | 'done' | 'failed'>('loading');
-  const [height, setHeight] = useState(160);
+  const [state, setState] = useState<Load>('loading');
+  const drawRef = useRef(draw);
   useEffect(() => {
     if (!loaded) return;
     let cancelled = false;
     void (async () => {
       try {
-        const [{ renderAsync }, blob] = await Promise.all([
-          import('docx-preview'),
-          fetchOk(url).then((response) => response.blob()),
-        ]);
+        const bytes = await (await fetchOk(url)).arrayBuffer();
         const doc = frame.current?.contentDocument;
         if (cancelled || !doc) return;
-        await renderAsync(blob, doc.body, doc.head, {
-          inWrapper: false,
-          ignoreWidth: true,
-          ignoreHeight: true,
-          breakPages: false,
-          useBase64URL: true,
-          renderComments: false,
-          renderChanges: false,
-        });
-        if (cancelled) return;
-        setHeight(doc.documentElement.scrollHeight);
-        setState('done');
+        await drawRef.current(bytes, doc);
+        if (!cancelled) setState('done');
       } catch {
         if (!cancelled) setState('failed');
       }
@@ -243,116 +297,197 @@ function DocxFrame({ url }: { url: string }) {
       cancelled = true;
     };
   }, [loaded, url]);
-  if (state === 'failed') return <Failed />;
+  return [frame, () => setLoaded(true), state];
+}
+
+async function drawDocx(bytes: ArrayBuffer, doc: Document): Promise<void> {
+  const { renderAsync } = await import('docx-preview');
+  await renderAsync(bytes, doc.body, doc.head, {
+    inWrapper: false,
+    breakPages: true,
+    ignoreLastRenderedPageBreak: false,
+    useBase64URL: true,
+    renderComments: false,
+    renderChanges: false,
+    renderHeaders: true,
+    renderFooters: true,
+  });
+}
+
+/**
+ * A deck's package with every manifest entry for a part it lacks taken out.
+ * PowerPoint shrugs these off, and pptxgenjs (our own file tools) writes
+ * one for a second slide master that is never there; pptx-preview reads
+ * every entry, throws on the missing part, and swallows it into a deck
+ * with no slides.
+ */
+async function withoutMissingParts(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  const { default: JSZip } = await import('jszip');
+  const zip = await JSZip.loadAsync(bytes);
+  const types = zip.file('[Content_Types].xml');
+  if (!types) return bytes;
+  const xml = await types.async('text');
+  const cleaned = xml.replace(
+    /<Override\b[^>]*\bPartName="\/([^"]+)"[^>]*\/>/g,
+    (entry, part: string) => (zip.file(part) ? entry : '')
+  );
+  if (cleaned === xml) return bytes;
+  zip.file('[Content_Types].xml', cleaned);
+  return zip.generateAsync({ type: 'arraybuffer' });
+}
+
+async function drawPptx(bytes: ArrayBuffer, doc: Document): Promise<void> {
+  const { init } = await import('pptx-preview');
+  const previewer = init(doc.body, { width: SLIDE.width, height: SLIDE.height, mode: 'slide' });
+  await previewer.load(await withoutMissingParts(bytes));
+  if (previewer.slideCount === 0) throw new Error('no slides');
+  previewer.renderSingleSlide(0);
+}
+
+function FramedFirstPage({
+  url,
+  size,
+  draw,
+  title,
+  testId,
+}: {
+  url: string;
+  size: { width: number; height: number };
+  draw: (bytes: ArrayBuffer, doc: Document) => Promise<void>;
+  title: string;
+  testId: string;
+}) {
+  const [frame, onLoad, state] = useFrame(url, draw);
   return (
-    <>
-      {state === 'loading' ? <Loading /> : null}
+    <Scaled width={size.width} height={size.height}>
       <iframe
         ref={frame}
-        title="Document preview"
-        // Same origin so the app can lay the document out inside; no
-        // allow-scripts, so nothing in it ever runs.
+        title={title}
         sandbox="allow-same-origin"
         srcDoc={FRAME_DOC}
-        onLoad={() => setLoaded(true)}
-        data-testid="artifact-inline-docx"
-        className={state === 'done' ? 'block w-full border-0 bg-white' : 'h-0 w-full border-0'}
-        style={state === 'done' ? { height } : undefined}
+        onLoad={onLoad}
+        tabIndex={-1}
+        data-testid={testId}
+        className="pointer-events-none block border-0 bg-white"
+        style={{ width: size.width, height: size.height }}
       />
-    </>
+      {state === 'done' ? null : <Blank {...size} state={state} />}
+    </Scaled>
   );
 }
 
-function Sheets({ url }: { url: string }) {
-  const [sheets, setSheets] = useState<PreviewSheet[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [active, setActive] = useState(0);
+function columnName(index: number): string {
+  let name = '';
+  for (let number = index + 1; number > 0; number = Math.floor((number - 1) / 26)) {
+    name = String.fromCharCode(65 + ((number - 1) % 26)) + name;
+  }
+  return name;
+}
+
+/** Excel's width is in characters of its default font: about 7px each, plus padding. */
+const columnPx = (width: number) => Math.round(width * 7 + 5);
+const ROW_PX = 20;
+const NUMBER_COLUMN_PX = 36;
+
+/**
+ * The sheet's cells, padded with empty ones out to the edges of the
+ * picture: a spreadsheet reads as one by its gridlines running on past the
+ * data, not by a few cells floating on white.
+ */
+function filled(sheet: PreviewSheet): { rows: PreviewCell[][]; widths: number[] } {
+  const widths = [...sheet.widths];
+  let across = NUMBER_COLUMN_PX + widths.reduce((sum, width) => sum + columnPx(width), 0);
+  while (across < SHEET.width) {
+    widths.push(8.43);
+    across += columnPx(8.43);
+  }
+  const down = Math.ceil(SHEET.height / ROW_PX);
+  const rows = Array.from({ length: Math.max(down, sheet.rows.length) }, (_, index) => {
+    const row = sheet.rows[index] ?? [];
+    return widths.map((_, column) => row[column] ?? { v: '' });
+  });
+  return { rows, widths };
+}
+
+function SheetCorner({ url }: { url: string }) {
+  const [sheet, setSheet] = useState<PreviewSheet | null>(null);
+  const [state, setState] = useState<Load>('loading');
   useEffect(() => {
     let cancelled = false;
     fetchOk(url)
       .then((response) => response.json())
       .then((body: unknown) => {
-        if (!cancelled) setSheets(sheetsOf(body));
+        if (cancelled) return;
+        setSheet(sheetOf(body));
+        setState('done');
       })
       .catch(() => {
-        if (!cancelled) setFailed(true);
+        if (!cancelled) setState('failed');
       });
     return () => {
       cancelled = true;
     };
   }, [url]);
-  if (failed) return <Failed />;
-  if (!sheets) return <Loading />;
-  const sheet = sheets[active];
-  if (!sheet || sheet.rows.length === 0) {
-    return <p className="px-3 py-6 text-center text-xs text-gray-500">This sheet is empty.</p>;
-  }
-  const [head, ...body] = sheet.rows;
+  const head = 'border-r border-b border-gray-300 bg-gray-100 text-gray-500 font-normal';
+  const grid = sheet ? filled(sheet) : null;
   return (
-    <div data-testid="artifact-inline-sheet">
-      {sheets.length > 1 ? (
-        <div
-          role="tablist"
-          className="flex gap-1 overflow-x-auto border-b border-gray-200 px-2 pt-2 dark:border-gray-800"
-        >
-          {sheets.map((each, index) => (
-            <button
-              key={each.name}
-              type="button"
-              role="tab"
-              aria-selected={index === active}
-              onClick={() => setActive(index)}
-              className={`shrink-0 rounded-t-md px-2 py-1 text-xs ${
-                index === active
-                  ? 'bg-gray-100 font-medium dark:bg-gray-800'
-                  : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-900'
-              }`}
-            >
-              {each.name}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <div className="overflow-x-auto">
-        <table className="min-w-full border-collapse text-xs">
-          <thead className="sticky top-0 bg-gray-100 dark:bg-gray-800">
-            <tr>
-              {head.map((cell, index) => (
-                <th
-                  key={index}
-                  className="border border-gray-200 px-2 py-1 text-left font-semibold whitespace-nowrap dark:border-gray-700"
-                >
-                  {cell}
-                </th>
+    <Scaled width={SHEET.width} height={SHEET.height} testId="artifact-inline-sheet">
+      <div className="h-full w-full bg-white text-[13px] text-gray-900">
+        {grid ? (
+          <table
+            className="table-fixed border-collapse"
+            style={{ fontFamily: 'Calibri, Arial, sans-serif' }}
+          >
+            <colgroup>
+              <col style={{ width: NUMBER_COLUMN_PX }} />
+              {grid.widths.map((width, index) => (
+                <col key={index} style={{ width: columnPx(width) }} />
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {body.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {head.map((_, index) => (
-                  <td
-                    key={index}
-                    className="border border-gray-200 px-2 py-1 align-top whitespace-nowrap dark:border-gray-700"
-                  >
-                    {row[index] ?? ''}
-                  </td>
+            </colgroup>
+            <thead>
+              <tr className="h-5">
+                <th className={head} />
+                {grid.widths.map((_, index) => (
+                  <th key={index} className={`${head} text-center`}>
+                    {columnName(index)}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {grid.rows.map((row, rowIndex) => (
+                <tr key={rowIndex} style={{ height: ROW_PX }}>
+                  <th className={`${head} text-center`}>{rowIndex + 1}</th>
+                  {row.map((cell, index) => (
+                    <td
+                      key={index}
+                      className={`overflow-hidden border-r border-b border-gray-200 px-1 whitespace-nowrap ${
+                        cell.n ? 'text-right' : 'text-left'
+                      } ${cell.b ? 'font-bold' : ''}`}
+                    >
+                      {cell.v}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
       </div>
-      {sheet.truncated ? (
-        <p className="px-3 py-2 text-xs text-gray-500">
-          Showing the first part; the download has it all.
-        </p>
+      {sheet && sheet.sheetCount > 1 ? (
+        <div className="absolute right-0 bottom-0 left-0 border-t border-gray-300 bg-gray-50 px-2 py-1 text-[13px] text-gray-600">
+          <span className="border-b-2 border-green-700 px-2 font-medium text-gray-900">
+            {sheet.name}
+          </span>
+          <span className="ml-2">+{sheet.sheetCount - 1} more</span>
+        </div>
       ) : null}
-    </div>
+      {state === 'done' ? null : <Blank {...SHEET} state={state} />}
+    </Scaled>
   );
 }
 
-function TextBody({
+function TextPage({
   url,
   markdown,
   extracted,
@@ -361,55 +496,39 @@ function TextBody({
   markdown: boolean;
   extracted: boolean;
 }) {
-  const [text, setText] = useState<{ value: string; truncated: boolean } | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [state, setState] = useState<Load>('loading');
   useEffect(() => {
     let cancelled = false;
     const load = extracted
       ? fetchOk(url)
           .then((response) => response.json())
           .then(extractOf)
-      : fetchOk(url)
-          .then((response) => response.text())
-          .then((value) => ({
-            text: value.slice(0, TEXT_MAX_CHARS),
-            truncated: value.length > TEXT_MAX_CHARS,
-          }));
+      : fetchOk(url).then((response) => response.text());
     load
-      .then((body) => {
-        if (!cancelled) setText({ value: body.text, truncated: body.truncated });
+      .then((value) => {
+        if (cancelled) return;
+        setText(value.slice(0, TEXT_CHARS));
+        setState('done');
       })
       .catch(() => {
-        if (!cancelled) setFailed(true);
+        if (!cancelled) setState('failed');
       });
     return () => {
       cancelled = true;
     };
   }, [url, extracted]);
-  if (failed) return <Failed />;
-  if (!text) return <Loading />;
   return (
-    <div data-testid="artifact-inline-text">
-      {extracted ? (
-        <p className="border-b border-gray-200 px-3 py-1.5 text-[11px] text-gray-500 dark:border-gray-800">
-          Text only — the layout is in the download.
-        </p>
-      ) : null}
-      {markdown ? (
-        <div className="px-3 py-2">
-          <Markdown text={text.value} />
-        </div>
-      ) : (
-        <pre className="px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words">
-          {text.value}
-        </pre>
-      )}
-      {text.truncated ? (
-        <p className="px-3 py-2 text-xs text-gray-500">
-          Showing the first part; the download has it all.
-        </p>
-      ) : null}
-    </div>
+    <Scaled width={TEXT_PAGE.width} height={TEXT_PAGE.height} testId="artifact-inline-text">
+      <div className="h-full w-full overflow-hidden bg-white px-14 py-12 text-[15px] leading-relaxed text-gray-900">
+        {text === null ? null : markdown ? (
+          <Markdown text={text} />
+        ) : (
+          <pre className="font-mono text-[13px] whitespace-pre-wrap break-words">{text}</pre>
+        )}
+      </div>
+      {state === 'done' ? null : <Blank {...TEXT_PAGE} state={state} />}
+    </Scaled>
   );
 }
 
@@ -422,60 +541,109 @@ export default function ArtifactInline({
 }) {
   const kind = previewKind(artifact);
   const [ref, near] = useNearScreen<HTMLElement>();
-  if (!kind) return null;
   const url = chatClient.attachmentUrl(tenantId, artifact.id);
   const previewUrl = `${url}/preview`;
-  let body: ReactNode;
-  switch (kind) {
-    case 'image':
-      body = (
-        <img
-          src={url}
-          alt={artifact.filename}
-          className="mx-auto block h-auto max-w-full"
-          data-testid="artifact-inline-image"
-        />
-      );
-      break;
-    case 'pdf':
-      body = <PdfPages url={url} />;
-      break;
-    case 'docx':
-      body = <DocxFrame url={url} />;
-      break;
-    case 'sheet':
-      body = <Sheets url={previewUrl} />;
-      break;
-    case 'text':
-      body = (
-        <TextBody
-          url={url}
-          markdown={isMarkdown(artifact.filename, artifact.contentType)}
-          extracted={false}
-        />
-      );
-      break;
-    case 'extract':
-      body = <TextBody url={previewUrl} markdown={false} extracted />;
-      break;
+
+  let picture: ReactNode = null;
+  if (kind !== null && near) {
+    switch (kind) {
+      case 'image':
+        picture = (
+          <img
+            src={url}
+            alt={artifact.filename}
+            className="block h-auto max-h-96 max-w-full"
+            data-testid="artifact-inline-image"
+          />
+        );
+        break;
+      case 'pdf':
+        picture = <PdfFirstPage url={url} />;
+        break;
+      case 'docx':
+        picture = (
+          <FramedFirstPage
+            url={url}
+            size={PAGE}
+            draw={drawDocx}
+            title="First page"
+            testId="artifact-inline-docx"
+          />
+        );
+        break;
+      case 'pptx':
+        picture = (
+          <FramedFirstPage
+            url={url}
+            size={SLIDE}
+            draw={drawPptx}
+            title="First slide"
+            testId="artifact-inline-pptx"
+          />
+        );
+        break;
+      case 'sheet':
+        picture = <SheetCorner url={previewUrl} />;
+        break;
+      case 'text':
+        picture = (
+          <TextPage
+            url={url}
+            markdown={isMarkdown(artifact.filename, artifact.contentType)}
+            extracted={false}
+          />
+        );
+        break;
+      case 'extract':
+        picture = <TextPage url={previewUrl} markdown={false} extracted />;
+        break;
+    }
   }
+  // A page or a slide is a white sheet on the thread, lifted by a shadow
+  // rather than boxed in by a border; a deck is wider than a page.
+  const frameClass =
+    kind === 'image'
+      ? 'w-fit max-w-full overflow-hidden rounded-md'
+      : `${kind === 'pptx' || kind === 'sheet' ? 'max-w-md' : 'max-w-sm'} w-full overflow-hidden rounded-sm bg-white shadow-md`;
   return (
-    <figure
-      ref={ref}
-      data-testid="artifact-inline"
-      data-kind={kind}
-      className="my-2 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800"
-    >
-      <figcaption className="flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400">
-        <Icon path={iconFor(kind)} className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate font-medium" title={artifact.filename}>
+    <figure ref={ref} data-testid="artifact-inline" data-kind={kind ?? 'none'} className="my-3">
+      {kind !== null ? (
+        <div className={frameClass}>
+          {picture ?? (
+            <div
+              className="w-full bg-white"
+              style={{
+                aspectRatio:
+                  kind === 'pptx'
+                    ? '16 / 9'
+                    : kind === 'sheet'
+                      ? `${SHEET.width} / ${SHEET.height}`
+                      : kind === 'image'
+                        ? '4 / 3'
+                        : '8.5 / 11',
+              }}
+            />
+          )}
+        </div>
+      ) : null}
+      <figcaption className="mt-1.5 flex max-w-md items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+        <Icon path={iconFor(kind)} className="h-4 w-4 shrink-0 text-gray-400" />
+        <span className="min-w-0 truncate font-medium" title={artifact.filename}>
           {artifact.filename}
         </span>
         <span className="shrink-0 text-gray-400">{sizeOf(artifact.sizeBytes)}</span>
+        <DownloadLink
+          href={url}
+          filename={artifact.filename}
+          aria-label={`Download ${artifact.filename}`}
+          title={`Download ${artifact.filename}`}
+          data-testid="artifact-download"
+          className="ml-1 flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+        >
+          <Icon path={ICONS.download} className="h-3.5 w-3.5" />
+          Download
+        </DownloadLink>
       </figcaption>
-      <div className="max-h-[28rem] overflow-auto bg-white dark:bg-gray-950">
-        {near ? body : <Loading />}
-      </div>
     </figure>
   );
 }

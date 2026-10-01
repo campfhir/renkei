@@ -1,7 +1,7 @@
 /**
  * What the thread draws inline for a file it cannot lay out from the raw
- * bytes in the browser: a workbook or CSV as bounded tables, or — for a
- * deck, a legacy Office file — the text extracted at upload. Same access
+ * bytes in the browser: the corner of a workbook's first sheet (or a
+ * CSV), or — for a legacy Office file — the text extracted at upload. Same access
  * as the download (whoever may read the chat or project); JSON only, so
  * nothing here is ever rendered as markup.
  */
@@ -13,7 +13,7 @@ import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { getAttachment, getAttachmentText } from '@/lib/chat/attachments';
 import { mayReadAttachment } from '@/lib/chat/attachment-access';
 import { extensionOf, previewKind } from '@/lib/chat/preview-kind';
-import { sheetFromCsv, sheetsFromXlsx } from '@/lib/chat/sheet-preview';
+import { sheetFromCsv, sheetFromXlsx } from '@/lib/chat/sheet-preview';
 
 export const runtime = 'nodejs';
 
@@ -42,10 +42,11 @@ export async function GET(
     if (!object.ok) return jsonError(502, 'store', 'The file is unavailable.');
     const csv = row.contentType === 'text/csv' || extensionOf(row.filename) === 'csv';
     try {
-      const sheets = csv
-        ? [sheetFromCsv(new TextDecoder().decode(object.val.bytes), row.filename)]
-        : await sheetsFromXlsx(object.val.bytes);
-      return NextResponse.json({ kind: 'sheet', sheets }, { headers });
+      const sheet = csv
+        ? sheetFromCsv(new TextDecoder().decode(object.val.bytes), row.filename)
+        : await sheetFromXlsx(object.val.bytes);
+      if (!sheet) return jsonError(422, 'empty', 'The workbook has no sheets.');
+      return NextResponse.json({ kind: 'sheet', sheet }, { headers });
     } catch {
       return jsonError(422, 'unreadable', 'The workbook could not be read.');
     }

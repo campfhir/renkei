@@ -1,21 +1,24 @@
 /**
- * Files a tool produced, shown INLINE in the reply that produced them, and
- * saved from a Download button beside Copy — end to end in a browser, from
- * seeded rows alone (no model is called):
+ * Files a tool produced, shown in the reply that produced them as small
+ * pictures of themselves — the first page, the first slide, the corner of
+ * the first sheet — each with its Download right under it; end to end in a
+ * browser, from seeded rows alone (no model is called):
  *
- *   - a PDF's pages painted by pdf.js, a Word file laid out by docx-preview
- *     (in a sandboxed frame), a workbook as tables, Markdown rendered, and a
- *     deck as the text extracted at upload;
- *   - a file with no faithful representation (a zip) is not drawn at all,
- *     but still has its Download;
- *   - each file's Download sits in the reply's action row next to Copy;
- *   - at a phone's width every preview stays inside the screen.
+ *   - a PDF's first page painted by pdf.js; a Word file's first page laid
+ *     out by docx-preview and a deck's first slide by pptx-preview, both in
+ *     sandboxed frames; a workbook's first sheet as a spreadsheet grid
+ *     (column letters, row numbers, bold, numbers set right); Markdown on a
+ *     page; a legacy deck as the text extracted at upload;
+ *   - pages keep a page's shape and slides a slide's, with no border;
+ *   - a file with no faithful picture (a zip) is its name and Download only;
+ *   - each Download sits under its own file, not in the reply's Copy row;
+ *   - at a phone's width every picture stays inside the screen.
  *
  * The documents are real files, made by @renkei/document-render the way the
  * file tools make them. Their bytes are not in a blob store here, so the
  * browser's requests for them are answered by `page.route`; so is the
- * workbook's /preview (the table JSON comes from the same parser the route
- * uses). The deck's preview is the real route, reading the sealed text.
+ * workbook's /preview (its JSON comes from the parser the route uses). The
+ * legacy deck's preview is the real route, reading the sealed text.
  * Own tenant per project (the way llm-models.spec.ts does it).
  *
  * Runs on the pinned Chromium only; "mobile" is a resized viewport (see
@@ -28,7 +31,7 @@ import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import ExcelJS from 'exceljs';
 import { Client } from 'pg';
 import { renderDocument } from '@renkei/document-render';
-import { sheetsFromXlsx } from '../lib/chat/sheet-preview';
+import { sheetFromXlsx } from '../lib/chat/sheet-preview';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The first hit on a route compiles it (`next dev` builds lazily). */
@@ -93,7 +96,9 @@ const sealSecret = (plaintext: string) =>
 const PDF_MD = '# Quarterly report\n\nRevenue grew in every region.\n\n## Detail\n\nEMEA led.';
 const DOCX_MD = '# Board memo\n\nThe frog has the nuggets.\n\n- First point\n- Second point';
 const NOTES_MD = '# Release notes\n\n- Inline previews\n- Download beside Copy';
-const DECK_TEXT = '## Slide 1\nRoadmap for Q4\n\n## Slide 2\nShip the previews';
+const DECK_MD =
+  '# Roadmap for Q4\n\n- Ship the previews\n- Keep the frog fed\n\n# Second slide\n\nNot drawn.';
+const LEGACY_TEXT = 'Old deck\n\nNotes from the 2019 offsite';
 
 interface Seeded {
   id: string;
@@ -107,9 +112,11 @@ interface Seeded {
 async function filesFor(f: Fixture): Promise<Seeded[]> {
   const pdf = await renderDocument('pdf', 'report.pdf', PDF_MD);
   const docx = await renderDocument('docx', 'memo.docx', DOCX_MD);
+  const deck = await renderDocument('pptx', 'deck.pptx', DECK_MD);
   const workbook = new ExcelJS.Workbook();
   const sales = workbook.addWorksheet('Sales');
-  sales.addRow(['Region', 'Units']);
+  sales.getColumn(1).width = 18;
+  sales.addRow(['Region', 'Units']).font = { bold: true };
   sales.addRow(['EMEA', 1200]);
   sales.addRow(['APAC', 900]);
   workbook.addWorksheet('Notes').addRow(['Checked by finance']);
@@ -146,10 +153,17 @@ async function filesFor(f: Fixture): Promise<Seeded[]> {
     {
       id: f.id('pptx'),
       filename: 'deck.pptx',
-      contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      contentType: deck.mediaType,
+      bytes: deck.bytes,
+      extractStatus: 'done',
+    },
+    {
+      id: f.id('ppt'),
+      filename: 'old.ppt',
+      contentType: 'application/vnd.ms-powerpoint',
       bytes: Buffer.from('not served'),
       extractStatus: 'done',
-      extractedText: DECK_TEXT,
+      extractedText: LEGACY_TEXT,
     },
     {
       id: f.id('zip'),
@@ -234,7 +248,7 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
           {
             type: 'tool_result',
             toolUseId: f.call,
-            content: 'Wrote six files. They are under this chat’s Artifacts.',
+            content: 'Wrote seven files. They are under this chat’s Artifacts.',
             durationMs: 2_000,
           },
         ],
@@ -309,9 +323,9 @@ async function serveFiles(page: Page, f: Fixture, files: Seeded[]): Promise<void
     );
   }
   const workbook = files.find((file) => file.filename === 'q4.xlsx')!;
-  const sheets = await sheetsFromXlsx(new Uint8Array(workbook.bytes));
+  const sheet = await sheetFromXlsx(new Uint8Array(workbook.bytes));
   await page.route(`**/api/tenant/${f.tenantId}/chat/attachments/${workbook.id}/preview`, (route) =>
-    route.fulfill({ status: 200, json: { kind: 'sheet', sheets } })
+    route.fulfill({ status: 200, json: { kind: 'sheet', sheet } })
   );
 }
 
@@ -354,7 +368,14 @@ test.beforeEach(async ({}, testInfo) => {
   await seed(fixture, files);
 });
 
-test('the files a reply produced are drawn inline, each with a Download beside Copy', async ({
+/** The rendered picture's height over its width. */
+async function shapeOf(card: ReturnType<Page['getByTestId']>): Promise<number> {
+  const box = await card.locator('> div').first().boundingBox();
+  expect(box).not.toBeNull();
+  return box!.height / box!.width;
+}
+
+test('the files a reply produced are shown as pictures of their first page, each with its Download', async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000);
@@ -363,23 +384,23 @@ test('the files a reply produced are drawn inline, each with a Download beside C
   await page.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Quarter files' })).toBeVisible(COLD);
 
+  // One card per file, in the order the tool kept them; the zip is a name only.
   const cards = page.getByTestId('artifact-inline');
-  // Everything but the zip, in the order the tool kept them.
-  await expect(cards).toHaveCount(5, COLD);
-  await expect(cards.nth(0)).toHaveAttribute('data-kind', 'pdf');
-  await expect(cards.nth(1)).toHaveAttribute('data-kind', 'docx');
-  await expect(cards.nth(2)).toHaveAttribute('data-kind', 'sheet');
-  await expect(cards.nth(3)).toHaveAttribute('data-kind', 'text');
-  await expect(cards.nth(4)).toHaveAttribute('data-kind', 'extract');
-  await expect(cards.filter({ hasText: 'bundle.zip' })).toHaveCount(0);
+  await expect(cards).toHaveCount(7, COLD);
+  const kinds = ['pdf', 'docx', 'sheet', 'text', 'pptx', 'extract', 'none'];
+  for (const [index, kind] of kinds.entries()) {
+    await expect(cards.nth(index)).toHaveAttribute('data-kind', kind);
+  }
+  const [pdf, docx, sheet, notes, deck, legacy, zip] = kinds.map((_, index) => cards.nth(index));
 
-  // The PDF: its page painted, not blank.
-  const pdf = cards.nth(0);
-  await expect(pdf.getByRole('img', { name: 'Page 1' })).toBeVisible(COLD);
+  // The PDF: its first page painted, not blank.
+  await pdf.scrollIntoViewIfNeeded();
+  const pageOne = pdf.getByRole('img', { name: 'Page 1' });
+  await expect(pageOne).toBeVisible(COLD);
   await expect
     .poll(
       () =>
-        pdf.getByRole('img', { name: 'Page 1' }).evaluate((canvas: HTMLCanvasElement) => {
+        pageOne.evaluate((canvas: HTMLCanvasElement) => {
           const context = canvas.getContext('2d');
           if (!context) return 0;
           const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
@@ -393,41 +414,76 @@ test('the files a reply produced are drawn inline, each with a Download beside C
     )
     .toBeGreaterThan(100);
 
-  // The Word file: laid out inside its sandboxed frame, nothing scriptable.
-  const frame = cards.nth(1).getByTestId('artifact-inline-docx');
-  await expect(frame).toHaveAttribute('sandbox', 'allow-same-origin');
+  // The Word file's first page and the deck's first slide, each in a frame nothing can run in.
+  for (const testId of ['artifact-inline-docx', 'artifact-inline-pptx']) {
+    await expect(page.getByTestId(testId)).toHaveAttribute('sandbox', 'allow-same-origin');
+  }
+  await docx.scrollIntoViewIfNeeded();
   await expect(
     page.frameLocator('[data-testid="artifact-inline-docx"]').getByText('The frog has the nuggets.')
   ).toBeVisible(COLD);
+  const slide = page.frameLocator('[data-testid="artifact-inline-pptx"]');
+  await expect(slide.getByText('Roadmap for Q4')).toBeVisible(COLD);
+  await expect(slide.getByText('Not drawn.')).toHaveCount(0);
 
-  // The workbook: a table per sheet, behind tabs.
-  const sheet = cards.nth(2);
-  await expect(sheet.getByRole('cell', { name: 'EMEA' })).toBeVisible(COLD);
-  await expect(sheet.getByRole('cell', { name: '1200' })).toBeVisible();
-  await sheet.getByRole('tab', { name: 'Notes' }).click();
-  await expect(sheet.getByText('Checked by finance')).toBeVisible();
+  // The workbook: the first sheet's corner as a spreadsheet, the rest counted.
+  await sheet.scrollIntoViewIfNeeded();
+  await expect(sheet.getByRole('columnheader', { name: 'A', exact: true })).toBeVisible(COLD);
+  await expect(sheet.getByRole('rowheader', { name: '1', exact: true })).toBeVisible();
+  await expect(sheet.getByRole('cell', { name: 'Region' })).toHaveCSS('font-weight', '700');
+  await expect(sheet.getByRole('cell', { name: '1200' })).toHaveCSS('text-align', 'right');
+  await expect(sheet).toContainText('+1 more');
+  await expect(sheet.getByText('Checked by finance')).toHaveCount(0);
 
-  // Markdown, rendered; the deck, as its extracted text.
-  await expect(cards.nth(3).getByRole('heading', { name: 'Release notes' })).toBeVisible(COLD);
-  await expect(cards.nth(4)).toContainText('Ship the previews', COLD);
-  await expect(cards.nth(4)).toContainText('Text only');
+  // Markdown on a page; the legacy deck as its extracted text.
+  await notes.scrollIntoViewIfNeeded();
+  await expect(notes.getByRole('heading', { name: 'Release notes' })).toBeVisible(COLD);
+  await expect(legacy).toContainText('Notes from the 2019 offsite', COLD);
 
-  // Downloads beside Copy: one per file, the zip included, each named.
+  // Shapes: a PDF keeps its own page's (A4, as the file tools make it), the
+  // other pages are Letter-shaped, a slide is 16:9, and nothing is boxed in.
+  expect(await shapeOf(pdf)).toBeCloseTo(Math.SQRT2, 2);
+  for (const card of [docx, notes, legacy]) {
+    expect(await shapeOf(card)).toBeCloseTo(11 / 8.5, 2);
+  }
+  expect(await shapeOf(deck)).toBeCloseTo(9 / 16, 2);
+  for (const card of [pdf, docx, sheet, notes, deck, legacy]) {
+    await expect(card.locator('> div').first()).toHaveCSS('border-top-width', '0px');
+  }
+
+  // Each Download is right under its own file — the zip's too — not in the Copy row.
+  for (const card of [pdf, docx, sheet, notes, deck, legacy]) {
+    const picture = await card.locator('> div').first().boundingBox();
+    const link = await card.getByTestId('artifact-download').boundingBox();
+    expect(link!.y).toBeGreaterThan(picture!.y + picture!.height - 1);
+  }
+  await expect(zip.getByText('bundle.zip')).toBeVisible();
+  await expect(zip.getByTestId('artifact-download')).toBeVisible();
   const copy = page.getByRole('button', { name: 'Copy', exact: true });
   await expect(copy).toBeVisible();
-  const downloads = page.getByTestId('reply-download');
-  await expect(downloads).toHaveCount(6);
-  const row = copy.locator('xpath=..');
-  await expect(row.getByTestId('reply-download')).toHaveCount(6);
-  await expect(row.getByRole('link', { name: 'Download bundle.zip' })).toBeVisible();
+  await expect(copy.locator('xpath=..').getByTestId('artifact-download')).toHaveCount(0);
   const saved = page.waitForEvent('download');
-  await row.getByRole('link', { name: 'Download memo.docx' }).click();
+  await docx.getByRole('link', { name: 'Download memo.docx' }).click();
   expect((await saved).suggestedFilename()).toBe('memo.docx');
   await shot(page, testInfo, 'artifact-inline.png');
+  // Each card on its own: the thread scrolls inside the page, so a page shot shows only the last.
+  for (const [index, card] of [pdf, docx, sheet, notes, deck, legacy, zip].entries()) {
+    await card.scrollIntoViewIfNeeded();
+    await card.screenshot({
+      path: path.join(
+        import.meta.dirname,
+        '..',
+        'test-results',
+        'screens',
+        testInfo.project.name,
+        `artifact-card-${index}-${kinds[index]}.png`
+      ),
+    });
+  }
 
-  // Phone width: every preview inside the screen, no sideways scroll.
+  // Phone width: every picture inside the screen, no sideways scroll.
   await page.setViewportSize(MOBILE_VIEWPORT);
-  for (let index = 0; index < 5; index++) {
+  for (let index = 0; index < 7; index++) {
     const box = await cards.nth(index).boundingBox();
     expect(box).not.toBeNull();
     expect(box!.x).toBeGreaterThanOrEqual(0);

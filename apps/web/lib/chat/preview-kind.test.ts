@@ -33,10 +33,15 @@ describe('previewKind', () => {
     expect(previewKind(file('notes.md', octet))).toBe('text');
   });
 
-  it('shows extracted text for a deck, and nothing when there is none', () => {
+  it('draws a deck as its slide, and falls back to extracted text for a legacy file', () => {
     const pptx = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-    expect(previewKind(file('deck.pptx', pptx))).toBe('extract');
-    expect(previewKind(file('deck.pptx', pptx, { extractStatus: 'unsupported' }))).toBeNull();
+    expect(previewKind(file('deck.pptx', pptx))).toBe('pptx');
+    expect(previewKind(file('old.ppt', 'application/vnd.ms-powerpoint'))).toBe('extract');
+    expect(
+      previewKind(
+        file('old.ppt', 'application/vnd.ms-powerpoint', { extractStatus: 'unsupported' })
+      )
+    ).toBeNull();
     expect(
       previewKind(file('archive.zip', 'application/zip', { extractStatus: 'unsupported' }))
     ).toBeNull();
