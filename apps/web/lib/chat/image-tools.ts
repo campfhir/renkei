@@ -12,6 +12,13 @@
  * file's name. A shape the image model will not draw is retried at the
  * nearest size every model takes, then left to the model to choose.
  *
+ * A follow-up that builds on an earlier picture ("make it bluer") is an
+ * EDIT: the chat model, which can see the conversation, names that picture
+ * with `sourceImage` (a file in this chat, or "last"), and the tool sends it
+ * to the image model together with the person's unchanged message. The tool
+ * never decides for itself that a message refers to an earlier picture;
+ * without `sourceImage` it draws a new one.
+ *
  * Which image model: the person's saved preference when the org still
  * offers it, else the org's first by name. The chat model cannot override
  * the person's choice.
@@ -36,6 +43,7 @@ import {
 import { extensionOf, sanitizeBytes } from '@renkei/document-render';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import { formatSize, IMAGE_TOOL, requestedShape, sizeLadder } from './image-size';
+import { loadSourceImage, type SourceLoad, type SourceScope } from './image-source';
 import { errorResult, textResult, type LocalTool } from './local-tools';
 import type { ImageModelChoice } from './models';
 
@@ -56,7 +64,12 @@ function oneOf<T extends string>(allowed: readonly T[], value: unknown): T | und
   return allowed.find((candidate) => candidate === value);
 }
 
-function failureMessage(kind: ImageErrorKind, detail: string | undefined, tried: string): string {
+function failureMessage(
+  kind: ImageErrorKind,
+  detail: string | undefined,
+  tried: string,
+  edited: boolean
+): string {
   const extra = detail ? ` (${detail.slice(0, 300)})` : '';
   switch (kind) {
     case 'content_filter':
@@ -70,7 +83,12 @@ function failureMessage(kind: ImageErrorKind, detail: string | undefined, tried:
     case 'aborted':
       return 'Image generation was stopped.';
     case 'invalid_request':
-      return `The image model rejected the request${tried ? ` (sizes tried: ${tried})` : ''}.${extra}`;
+      return (
+        `The image model rejected the request${tried ? ` (sizes tried: ${tried})` : ''}.${extra}` +
+        (edited
+          ? ' It may not support building on an earlier image: call again without sourceImage to draw a new one.'
+          : '')
+      );
     default:
       return `The image model could not be reached or failed.${extra}`;
   }
@@ -85,6 +103,8 @@ export interface ImageToolOptions {
   generate?: typeof callImagesApi;
   /** How a chosen row becomes a config with its key — real by default. */
   resolve?: typeof resolveImageModel;
+  /** Finds and reads back an earlier picture of the chat — real by default. */
+  loadSource?: (scope: SourceScope, wanted: string) => Promise<SourceLoad>;
 }
 
 /** The model a picture is drawn with: the person's own pick if still offered, else the first. */
@@ -101,6 +121,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
   if (models.length === 0) return null;
   const generate = options.generate ?? callImagesApi;
   const resolve = options.resolve ?? resolveImageModel;
+  const loadSource = options.loadSource ?? loadSourceImage;
 
   return {
     def: {
@@ -114,7 +135,10 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
         'under its Artifacts as a PNG or JPEG. Choose the shape yourself: size as pixels (1024x1024 square, ' +
         '1024x1536 portrait, 1536x1024 landscape, or another WIDTHxHEIGHT such as 1792x1024) or aspectRatio ' +
         '(16:9, 4:3, 9:16, …) — a size the image model does not support is automatically retried at the ' +
-        'nearest one it does. For a chart, graph or flowchart use chat_write_chart (it is exact); for a ' +
+        'nearest one it does. When the person’s message builds on a picture already in this chat — ' +
+        '“make it bluer”, “same bear but in winter”, “add a hat” — set sourceImage to that picture’s ' +
+        'filename (or "last" for the one most recently drawn) so the image model changes that picture ' +
+        'instead of starting over; leave it out for a brand-new picture. For a chart, graph or flowchart use chat_write_chart (it is exact); for a ' +
         'document use chat_write_file. Each call makes one image and may take up to a minute; image generation ' +
         'has a low per-minute quota, so do not call it in a burst. Describe the result in a sentence.',
       inputSchema: {
@@ -123,6 +147,11 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
           filename: {
             type: 'string',
             description: `The name to save as; the extension picks the format (.png or .jpg). A name, not a path. Default: ${DEFAULT_FILENAME}.`,
+          },
+          sourceImage: {
+            type: 'string',
+            description:
+              'An earlier PNG or JPEG in this chat to start from — its filename, or "last" for the picture most recently drawn. Set it when the person’s message refers to that picture (“make it bluer”); omit it to draw something new. The size of the result follows that picture unless you set size or aspectRatio.',
           },
           size: {
             type: 'string',
@@ -191,6 +220,18 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
       }
       const config = resolved.val.config;
 
+      // A follow-up starts from the picture it names; found before anything is spent.
+      const wantedSource = typeof input.sourceImage === 'string' ? input.sourceImage.trim() : null;
+      let source: Extract<SourceLoad, { ok: true }>['image'] | null = null;
+      if (wantedSource !== null && wantedSource !== '') {
+        const loaded = await loadSource(
+          { db: context.db, tenantId: context.tenantId, chatId: context.chatId },
+          wantedSource
+        );
+        if (!loaded.ok) return errorResult(loaded.reason);
+        source = loaded.image;
+      }
+
       const quality = oneOf(QUALITIES, input.quality);
       // A model that can choose for itself ('images') has a last resort; FLUX has none.
       const ladder = sizeLadder(shape.size, config.surface !== 'flux');
@@ -204,6 +245,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
           ...(quality ? { quality } : {}),
           ...(background ? { background } : {}),
           outputFormat: extension === 'png' ? 'png' : 'jpeg',
+          ...(source ? { image: source } : {}),
           ...(context.signal ? { signal: context.signal } : {}),
         });
         // Only a rejected request is worth another size; anything else would fail the same way.
@@ -215,7 +257,8 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
           failureMessage(
             made.err.type,
             made.err.message,
-            tried.length > 1 || shape.size ? tried.join(', ') : ''
+            tried.length > 1 || shape.size ? tried.join(', ') : '',
+            source !== null
           )
         );
       }
@@ -262,7 +305,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
         });
       }
       return textResult(
-        `Generated ${filename} with ${choice.label} (${checked.mediaType}, ${drawn ? `${drawn} px, ` : ''}${checked.bytes.byteLength} bytes).${resized}${renamed} ${KEPT_LINE}`,
+        `Generated ${filename} with ${choice.label} (${checked.mediaType}, ${drawn ? `${drawn} px, ` : ''}${checked.bytes.byteLength} bytes)${source ? `, built on ${source.filename}` : ''}.${resized}${renamed} ${KEPT_LINE}`,
         {
           renkeiDocuments: [
             {

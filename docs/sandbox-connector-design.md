@@ -164,8 +164,21 @@ which model is calling). How it behaves:
   no prompt: the turn hands it the user's message (`LocalToolContext.userPrompt`,
   from `latestUserPrompt`), so what is drawn is what was asked. A message
   over 32,000 characters is refused, never clipped. The chat model chooses
-  only the file's name and the shape. (A follow-up like "make it bluer" has
-  only its own words to draw from — the tool does not see earlier turns.)
+  only the file's name, the shape and — for a follow-up — the source picture.
+- **Follow-ups build on the earlier picture.** The tool does not see earlier
+  turns, but the chat model does: when the person's message refers to a
+  picture already in the chat ("make it bluer", "same bear, but in
+  winter") it sets `sourceImage` to that file's name, or `last` for the most
+  recent picture a tool drew. The tool finds it among this chat's own PNG and
+  JPEG files (`pickSourceImage`; the person's uploads count too), reads it back
+  and rebuilds it through the same validators, and sends it with the person's
+  unchanged message to the image model's EDIT endpoint — OpenAI's
+  `/images/edits` (multipart, `image[]`), or `input_image` (base64) for FLUX.
+  A name that is not there is answered with the names that are, so the chat
+  model can correct itself; a model that cannot edit is told to call again
+  without `sourceImage`. With no `sourceImage` a new picture is drawn. The
+  result follows the source picture's size unless `size` or `aspectRatio`
+  says otherwise.
 - **The chat model picks the shape**: `size` as pixels (`1792x1024`) or
   `aspectRatio` (`16:9`, turned into about a megapixel of multiples of 16).
   A size the image model rejects (`invalid_request`) is retried at the

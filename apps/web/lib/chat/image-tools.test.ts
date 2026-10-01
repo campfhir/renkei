@@ -95,11 +95,20 @@ describe('chat_generate_image — offering', () => {
     expect(def.description).toMatch(/rather than saying it is not possible/);
     expect(def.description).toMatch(/exactly as they wrote it/);
     expect(def.description).toMatch(/automatically retried/);
+    expect(def.description).toMatch(/make it bluer/);
+    expect(def.description).toMatch(/sourceImage to that picture’s filename/);
   });
 
   it('takes no prompt and no model from the chat model — only the shape, name and look', () => {
     const properties = Object.keys(tool(returning()).def.inputSchema.properties ?? {});
-    expect(properties.sort()).toEqual(['aspectRatio', 'background', 'filename', 'quality', 'size']);
+    expect(properties.sort()).toEqual([
+      'aspectRatio',
+      'background',
+      'filename',
+      'quality',
+      'size',
+      'sourceImage',
+    ]);
     expect(tool(returning()).def.inputSchema.required).toEqual([]);
   });
 });
@@ -332,6 +341,113 @@ describe('chat_generate_image — a size the model will not draw', () => {
       await tool(generate).execute({ filename: 'a.png', size: '1792x1024' }, context());
       expect((generate as unknown as jest.Mock).mock.calls).toHaveLength(1);
     }
+  });
+});
+
+describe('chat_generate_image — building on an earlier picture', () => {
+  const SOURCE = { bytes: PNG, mediaType: 'image/png' as const, filename: 'cute_polar_bear.png' };
+  const loads = (
+    result: Awaited<
+      ReturnType<NonNullable<Parameters<typeof imageGenerationTool>[0]['loadSource']>>
+    >
+  ) => jest.fn(async () => result);
+  const withSource = (generate: typeof generateImage, loadSource: ReturnType<typeof loads>) =>
+    imageGenerationTool({ models, generate, resolve: resolveOk, loadSource })!;
+
+  it('sends the named picture to the image model with the person’s unchanged message', async () => {
+    const generate = returning();
+    const loadSource = loads({ ok: true, image: SOURCE });
+    const result = await withSource(generate, loadSource).execute(
+      { filename: 'bluer.png', sourceImage: 'last' },
+      context({ userPrompt: 'make it bluer' })
+    );
+    expect(result.isError).toBe(false);
+    // Looked up in this chat, by what the chat model named.
+    expect(loadSource).toHaveBeenCalledWith({ db: null, tenantId: 't', chatId: 'c' }, 'last');
+    expect(generate).toHaveBeenCalledWith(expect.anything(), {
+      prompt: 'make it bluer',
+      outputFormat: 'png',
+      image: SOURCE,
+    });
+    expect(result.content[0]?.text).toMatch(/built on cute_polar_bear\.png/);
+    expect(documentsOf(result.meta)[0]?.title).toBe('bluer.png');
+  });
+
+  it('passes the name the chat model gave, trimmed', async () => {
+    const loadSource = loads({ ok: true, image: SOURCE });
+    await withSource(returning(), loadSource).execute(
+      { filename: 'a.png', sourceImage: '  fox.png ' },
+      context()
+    );
+    expect(loadSource).toHaveBeenCalledWith(expect.anything(), 'fox.png');
+  });
+
+  it('draws a new picture, loading nothing, when no source is named', async () => {
+    for (const input of [{}, { sourceImage: '' }, { sourceImage: '   ' }, { sourceImage: 3 }]) {
+      const generate = returning();
+      const loadSource = loads({ ok: true, image: SOURCE });
+      await withSource(generate, loadSource).execute({ filename: 'a.png', ...input }, context());
+      expect(loadSource).not.toHaveBeenCalled();
+      expect(generate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.not.objectContaining({ image: expect.anything() })
+      );
+    }
+  });
+
+  it('still asks for the shape the model chose when it builds on a picture', async () => {
+    const generate = returning();
+    await withSource(generate, loads({ ok: true, image: SOURCE })).execute(
+      { filename: 'a.png', sourceImage: 'last', aspectRatio: '16:9' },
+      context()
+    );
+    expect(generate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ size: '1360x768', image: SOURCE })
+    );
+  });
+
+  it('refuses, spending nothing, when the picture cannot be found — saying what is there', async () => {
+    const generate = returning();
+    const recordImageUsage = jest.fn(async () => {});
+    const reason =
+      'No image called "x.png" in this chat. Its images, newest first: fox.png. Use one of those names, or "last".';
+    const result = await withSource(generate, loads({ ok: false, reason })).execute(
+      { filename: 'a.png', sourceImage: 'x.png' },
+      context({ recordImageUsage })
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(reason);
+    expect(generate).not.toHaveBeenCalled();
+    expect(recordImageUsage).not.toHaveBeenCalled();
+  });
+
+  it('suggests drawing anew when the image model cannot build on a picture', async () => {
+    const generate = rejecting('invalid_request', 'This model does not support image editing');
+    const result = await withSource(generate, loads({ ok: true, image: SOURCE })).execute(
+      { filename: 'a.png', sourceImage: 'last' },
+      context()
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/does not support image editing/);
+    expect(result.content[0]?.text).toMatch(/call again without sourceImage/);
+  });
+
+  it('does not suggest that for an ordinary rejected request', async () => {
+    const result = await tool(rejecting('invalid_request')).execute(
+      { filename: 'a.png' },
+      context()
+    );
+    expect(result.content[0]?.text).not.toMatch(/sourceImage/);
+  });
+
+  it('counts an edit in the ledger like any picture', async () => {
+    const recordImageUsage = jest.fn(async () => {});
+    await withSource(returning(), loads({ ok: true, image: SOURCE })).execute(
+      { filename: 'a.png', sourceImage: 'last' },
+      context({ recordImageUsage })
+    );
+    expect(recordImageUsage).toHaveBeenCalledTimes(1);
   });
 });
 

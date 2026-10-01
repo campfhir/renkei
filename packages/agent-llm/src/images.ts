@@ -12,6 +12,12 @@
  *     with `width` and `height` in place of `size`, and no quality,
  *     format or background knobs.
  *
+ * With a source image (ImageRequest.image) the call is an EDIT — "make it
+ * bluer" applied to a picture already drawn: the OpenAI surface posts
+ * multipart to /images/edits (`image[]` is the file), and FLUX sends the
+ * picture as base64 in `input_image`, the field Black Forest Labs' own API
+ * edits with. The prompt is the person's, untouched, either way.
+ *
  * Both are spoken with the same credential-header rules as the chat
  * adapter (openai.ts): an Azure host gets Bearer alone, anything else both
  * headers, because Azure's gateway fails a request carrying a pair.
@@ -60,6 +66,12 @@ export interface ImageRequest {
   outputFormat?: 'png' | 'jpeg';
   /** 'transparent' needs a PNG. */
   background?: 'auto' | 'transparent';
+  /**
+   * A picture to start from, which makes the call an edit. Already
+   * validated by the caller; the filename is only what the multipart part
+   * is called.
+   */
+  image?: { bytes: Buffer; mediaType: 'image/png' | 'image/jpeg'; filename: string };
   signal?: AbortSignal;
 }
 
@@ -92,11 +104,11 @@ function errorKindOf(status: number, body: string): ImageErrorKind {
   return 'provider_error';
 }
 
-/** What the chosen surface sends: where, and the JSON body. */
+/** What the chosen surface sends: where, and the body — JSON, or multipart for an OpenAI edit. */
 function requestFor(
   config: ImageModelConfig,
   request: ImageRequest
-): { url: string; body: Record<string, unknown> } {
+): { url: string; body: Record<string, unknown> | FormData } {
   const version = config.apiVersion ? `?api-version=${encodeURIComponent(config.apiVersion)}` : '';
   if (config.surface === 'flux') {
     // The base URL is the model's own endpoint; a query string already on it is kept.
@@ -113,29 +125,38 @@ function requestFor(
         width: match ? Number(match[1]) : 1024,
         height: match ? Number(match[2]) : 1024,
         n: 1,
+        // An edit: the picture to start from, as base64 (BFL's `input_image`).
+        ...(request.image ? { input_image: request.image.bytes.toString('base64') } : {}),
       },
     };
   }
   // Tolerate a pasted FULL endpoint: the path is appended here.
   const baseUrl = (config.baseUrl || DEFAULT_BASE_URL)
     .replace(/\/+$/, '')
-    .replace(/\/images\/generations$/, '');
+    .replace(/\/images\/(generations|edits)$/, '');
   const format = request.outputFormat ?? 'png';
-  return {
-    url: `${baseUrl}/images/generations${version}`,
-    body: {
-      model: config.model,
-      prompt: request.prompt,
-      n: 1,
-      ...(request.size ? { size: request.size } : {}),
-      ...(request.quality ? { quality: request.quality } : {}),
-      output_format: format,
-      // Transparency only exists in PNG; asking for it on a JPEG is a 400.
-      ...(request.background === 'transparent' && format === 'png'
-        ? { background: 'transparent' }
-        : {}),
-    },
+  const fields = {
+    model: config.model,
+    prompt: request.prompt,
+    n: 1,
+    ...(request.size ? { size: request.size } : {}),
+    ...(request.quality ? { quality: request.quality } : {}),
+    output_format: format,
+    // Transparency only exists in PNG; asking for it on a JPEG is a 400.
+    ...(request.background === 'transparent' && format === 'png'
+      ? { background: 'transparent' }
+      : {}),
   };
+  if (!request.image) return { url: `${baseUrl}/images/generations${version}`, body: fields };
+  // An edit is multipart: every field a form part, the picture a file part.
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
+  form.append(
+    'image[]',
+    new Blob([new Uint8Array(request.image.bytes)], { type: request.image.mediaType }),
+    request.image.filename
+  );
+  return { url: `${baseUrl}/images/edits${version}`, body: form };
 }
 
 /** `usage` as gpt-image sends it ({input_tokens, output_tokens}); null when absent or not numbers. */
@@ -182,11 +203,12 @@ export async function generateImage(
     response = await fetch(url, {
       method: 'POST',
       headers: {
-        'content-type': 'application/json',
+        // A multipart body carries its own content type, with the boundary fetch picks.
+        ...(body instanceof FormData ? {} : { 'content-type': 'application/json' }),
         authorization: `Bearer ${config.apiKey}`,
         ...(isAzureHost(authority) ? {} : { 'api-key': config.apiKey }),
       },
-      body: JSON.stringify(body),
+      body: body instanceof FormData ? body : JSON.stringify(body),
       signal: request.signal
         ? AbortSignal.any([request.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
         : AbortSignal.timeout(REQUEST_TIMEOUT_MS),

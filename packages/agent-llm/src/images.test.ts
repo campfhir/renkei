@@ -278,3 +278,134 @@ describe('generateImage — usage', () => {
     expect(junk.ok && junk.val.usage).toBeNull();
   });
 });
+
+describe('generateImage — editing a source image', () => {
+  const source = {
+    bytes: PNG_BYTES,
+    mediaType: 'image/png' as const,
+    filename: 'cute_polar_bear.png',
+  };
+
+  function editCall(spy: jest.SpiedFunction<typeof fetch>) {
+    const call = spy.mock.calls[spy.mock.calls.length - 1];
+    const init = call?.[1] ?? {};
+    const form = init.body;
+    if (!(form instanceof FormData)) throw new Error('expected a multipart body');
+    return { url: String(call?.[0]), init, form };
+  }
+
+  it('posts multipart to /images/edits with the picture as image[], and no JSON content type', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    const result = await generateImage(
+      { apiKey: 'sk-1', model: 'gpt-image-1' },
+      {
+        prompt: 'make it bluer',
+        size: '1024x1536',
+        quality: 'low',
+        outputFormat: 'png',
+        image: source,
+      }
+    );
+    expect(result.ok).toBe(true);
+    const { url, init, form } = editCall(spy);
+    expect(url).toBe('https://api.openai.com/v1/images/edits');
+    expect(form).toBeInstanceOf(FormData);
+    // The person's words, untouched, and the options asked for.
+    expect(form.get('prompt')).toBe('make it bluer');
+    expect(form.get('model')).toBe('gpt-image-1');
+    expect(form.get('n')).toBe('1');
+    expect(form.get('size')).toBe('1024x1536');
+    expect(form.get('quality')).toBe('low');
+    expect(form.get('output_format')).toBe('png');
+    // The picture is a file part carrying its name, type and exact bytes.
+    const file = form.get('image[]');
+    if (!(file instanceof File)) throw new Error('expected a file part');
+    expect(file.name).toBe('cute_polar_bear.png');
+    expect(file.type).toBe('image/png');
+    expect(Buffer.from(await file.arrayBuffer()).equals(PNG_BYTES)).toBe(true);
+    // fetch sets the multipart boundary itself; a JSON type would break it.
+    expect(init.headers).not.toHaveProperty('content-type');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer sk-1', 'api-key': 'sk-1' });
+  });
+
+  it('edits on Azure with Bearer alone, keeping the api-version', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    await generateImage(
+      {
+        apiKey: 'az-key',
+        model: 'my-deployment',
+        baseUrl: 'https://res.openai.azure.com/openai/v1/',
+        apiVersion: 'preview',
+      },
+      { prompt: 'p', image: source }
+    );
+    const { url, init } = editCall(spy);
+    expect(url).toBe('https://res.openai.azure.com/openai/v1/images/edits?api-version=preview');
+    expect(init.headers).toEqual({ authorization: 'Bearer az-key' });
+  });
+
+  it('tolerates a pasted generations or edits endpoint', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    for (const tail of ['images/generations', 'images/edits']) {
+      await generateImage(
+        { apiKey: 'k', model: 'm', baseUrl: `https://gw.example/v1/${tail}` },
+        { prompt: 'p', image: source }
+      );
+      expect(editCall(spy).url).toBe('https://gw.example/v1/images/edits');
+    }
+  });
+
+  it('still posts JSON to /images/generations when there is no source image', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p' });
+    const { url, init } = lastCall(spy);
+    expect(url).toBe('https://api.openai.com/v1/images/generations');
+    expect(init.headers).toMatchObject({ 'content-type': 'application/json' });
+    expect(typeof init.body).toBe('string');
+  });
+
+  it('sends FLUX the picture as base64 input_image in the JSON body', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    await generateImage(
+      {
+        apiKey: 'az-key',
+        model: 'FLUX.2-flex',
+        surface: 'flux',
+        baseUrl: 'https://res.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex',
+        apiVersion: 'preview',
+      },
+      { prompt: 'make it bluer', size: '1536x1024', image: source }
+    );
+    const call = lastCall(spy);
+    expect(call.url).toContain('/providers/blackforestlabs/v1/flux-2-flex?api-version=preview');
+    expect(call.body).toEqual({
+      prompt: 'make it bluer',
+      model: 'FLUX.2-flex',
+      width: 1536,
+      height: 1024,
+      n: 1,
+      input_image: PNG_B64,
+    });
+    expect(call.init.headers).toMatchObject({ 'content-type': 'application/json' });
+  });
+
+  it('sends FLUX no input_image for a plain generation', async () => {
+    const spy = respond(200, { data: [{ b64_json: PNG_B64 }] });
+    await generateImage(
+      {
+        apiKey: 'k',
+        model: 'FLUX.2-flex',
+        surface: 'flux',
+        baseUrl: 'https://res.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex',
+      },
+      { prompt: 'p' }
+    );
+    expect(lastCall(spy).body).not.toHaveProperty('input_image');
+  });
+
+  it('maps an edit the model cannot do like any other rejected request', async () => {
+    respond(400, { error: { message: 'This model does not support image editing' } });
+    const result = await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p', image: source });
+    expect(!result.ok && result.err.type).toBe('invalid_request');
+  });
+});
