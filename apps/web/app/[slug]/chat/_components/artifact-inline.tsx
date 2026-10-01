@@ -23,11 +23,11 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import DownloadLink from '@/components/download-link';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
 import { isMarkdown, previewKind, type PreviewKind } from '@/lib/chat/preview-kind';
 import type { AttachmentView } from '@/lib/chat/views';
+import FileCaption from './file-caption';
 import Markdown from './markdown';
 
 /** A US Letter page at 96 dpi, the size docx-preview lays a page out at. */
@@ -79,12 +79,6 @@ function sheetOf(body: unknown): PreviewSheet {
 function extractOf(body: unknown): string {
   if (!isRecord(body) || typeof body.text !== 'string') throw new Error('bad preview');
   return body.text;
-}
-
-function sizeOf(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function iconFor(kind: PreviewKind | null): string {
@@ -626,24 +620,12 @@ export default function ArtifactInline({
           )}
         </div>
       ) : null}
-      <figcaption className="mt-1.5 flex max-w-md items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-        <Icon path={iconFor(kind)} className="h-4 w-4 shrink-0 text-gray-400" />
-        <span className="min-w-0 truncate font-medium" title={artifact.filename}>
-          {artifact.filename}
-        </span>
-        <span className="shrink-0 text-gray-400">{sizeOf(artifact.sizeBytes)}</span>
-        <DownloadLink
-          href={url}
-          filename={artifact.filename}
-          aria-label={`Download ${artifact.filename}`}
-          title={`Download ${artifact.filename}`}
-          data-testid="artifact-download"
-          className="ml-1 flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-200"
-        >
-          <Icon path={ICONS.download} className="h-3.5 w-3.5" />
-          Download
-        </DownloadLink>
-      </figcaption>
+      <FileCaption
+        href={url}
+        filename={artifact.filename}
+        sizeBytes={artifact.sizeBytes}
+        icon={iconFor(kind)}
+      />
     </figure>
   );
 }

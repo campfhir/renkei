@@ -466,6 +466,16 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await expect(picture).toBeVisible();
   await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(3000);
   await expect(drawn.getByTestId('image-card-picture')).toBeVisible();
+  // Right under the picture, the same line as every file a reply made: name, size, Download.
+  const caption = drawn.getByTestId('file-caption');
+  await expect(caption).toContainText('cute_polar_bear.png');
+  await expect(caption).toContainText('2 KB');
+  const pictureBox = await drawn.getByTestId('image-card-picture').boundingBox();
+  const captionBox = await caption.boundingBox();
+  expect(captionBox!.y).toBeGreaterThanOrEqual(pictureBox!.y + pictureBox!.height - 1);
+  const fromCaption = page.waitForEvent('download');
+  await caption.getByRole('link', { name: 'Download cute_polar_bear.png' }).click();
+  expect((await fromCaption).suggestedFilename()).toBe('cute_polar_bear.png');
   // Clicking it opens a preview window with the picture and a Download button.
   await drawn.getByRole('button', { name: 'Preview image' }).click();
   const preview = page.getByTestId('image-preview');

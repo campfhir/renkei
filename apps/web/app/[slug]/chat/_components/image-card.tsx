@@ -17,8 +17,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import DownloadLink from '@/components/download-link';
 import { Icon, ICONS } from '@/components/icons';
+import FileCaption from './file-caption';
 import ImagePreview from './image-preview';
 import { chatClient } from '@/lib/chat/client';
 import { skeletonRatio } from '@/lib/chat/image-size';
@@ -154,17 +154,14 @@ export default function ImageCard({
         </div>
       )}
       {showImage && loaded && image && src ? (
-        // Saving it is right under the picture, as for every file a reply made.
-        <DownloadLink
+        // Saved from right under the picture, the same line as every file a reply made.
+        <FileCaption
           href={src}
           filename={image.filename}
-          aria-label={`Download ${image.filename}`}
-          data-testid="artifact-download"
-          className="mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-200"
-        >
-          <Icon path={ICONS.download} className="h-3.5 w-3.5" />
-          Download
-        </DownloadLink>
+          sizeBytes={image.sizeBytes}
+          icon={ICONS.fileImage}
+          as="div"
+        />
       ) : null}
       {open && src ? (
         <ImagePreview
