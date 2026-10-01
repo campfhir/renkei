@@ -67,6 +67,7 @@ export default function ImagePreview({
         <DownloadLink
           href={src}
           filename={filename}
+          prefetch
           className={button}
           data-testid="image-preview-download"
           aria-label="Download image"

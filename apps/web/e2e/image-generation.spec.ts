@@ -571,6 +571,65 @@ test('installed to the iOS home screen, Download opens the file over the app ins
   await expect(preview).toHaveCount(0);
 });
 
+test('installed to the iOS home screen with file sharing, Download opens the share sheet with the picture', async ({
+  page,
+}, testInfo) => {
+  await addModels(fixture, ['chat', 'painter']);
+  await seedDoneChat(fixture);
+  const png = solidPng(300, 200, [120, 170, 230]);
+  let prefetched!: () => void;
+  const fetchedAhead = new Promise<void>((resolve) => (prefetched = resolve));
+  await page.route(
+    `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.attachmentId}`,
+    async (route) => {
+      await route.fulfill({ status: 200, contentType: 'image/png', body: png });
+      if (route.request().resourceType() === 'fetch') prefetched();
+    }
+  );
+  // iOS standalone plus a stand-in share sheet that records what it was handed.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'standalone', { value: true, configurable: true });
+    const shared: { name: string; type: string; size: number }[] = [];
+    Reflect.set(window, '__shared', shared);
+    Object.defineProperty(navigator, 'canShare', {
+      configurable: true,
+      value: (data: ShareData) => Boolean(data.files?.length),
+    });
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: async (data: ShareData) => {
+        for (const file of data.files ?? []) {
+          shared.push({ name: file.name, type: file.type, size: file.size });
+        }
+      },
+    });
+  });
+  await signIn(page, fixture);
+  await page.setViewportSize(MOBILE_VIEWPORT);
+
+  const chatUrl = `/${fixture.slug}/chat/${fixture.doneChatId}`;
+  await page.goto(chatUrl);
+  const drawn = page.getByTestId('image-card').nth(0);
+  await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
+  await drawn.getByRole('button', { name: 'Preview image' }).click();
+  const preview = page.getByTestId('image-preview');
+  await expect(preview).toBeVisible();
+
+  // The picture was fetched when the preview opened, so the tap goes straight
+  // to the share sheet: no new window, no navigation.
+  let opened = 0;
+  page.context().on('page', () => opened++);
+  await fetchedAhead;
+  await preview.getByTestId('image-preview-download').click();
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, '__shared').length)).toBe(1);
+  const shared = await page.evaluate(() => Reflect.get(window, '__shared'));
+  expect(shared[0]).toEqual({ name: 'cute_polar_bear.png', type: 'image/png', size: png.length });
+  expect(opened).toBe(0);
+  expect(new URL(page.url()).pathname).toBe(chatUrl);
+  await expect(preview).toBeVisible();
+  await shot(page, testInfo, 'image-preview-ios-share.png');
+});
+
 test('a call waiting on permission shows no outline; once approved it is an outline in the shape asked for', async ({
   page,
 }, testInfo) => {
