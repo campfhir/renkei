@@ -1272,6 +1272,7 @@ export default function ChatThread({
               }
               code={codeActions}
               subagents={state.subagents}
+              artifacts={state.artifacts}
               onShowSubagent={setSubagent}
               onWidgetDecision={isOwner ? beginWidgetTurn : null}
               speech={

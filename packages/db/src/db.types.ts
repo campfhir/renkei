@@ -843,6 +843,22 @@ export interface FileShares {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ImageUsage {
+  created_at: Generated<Timestamp>;
+  height: number | null;
+  id: Generated<string>;
+  image_bytes: Generated<Int8>;
+  images: Generated<number>;
+  input_tokens: Generated<number>;
+  model: string | null;
+  output_tokens: Generated<number>;
+  provider: string | null;
+  subject: string;
+  surface: string;
+  tenant_id: string;
+  width: number | null;
+}
+
 export interface Identities {
   created_at: Generated<Timestamp>;
   display_name: string | null;
@@ -1560,6 +1576,7 @@ export interface DB {
   tenant_settings: TenantSettings;
   tenants: Tenants;
   tool_calls: ToolCalls;
+  image_usage: ImageUsage;
   upload_slots: UploadSlots;
   user_preferences: UserPreferences;
   voice_usage: VoiceUsage;

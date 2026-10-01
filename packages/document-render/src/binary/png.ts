@@ -11,6 +11,7 @@
 
 import { deflateSync, inflateSync } from 'node:zlib';
 import {
+  IMAGE_FILE_MAX_BYTES,
   IMAGE_MAX_PIXELS,
   IMAGE_MAX_RAW_BYTES,
   IMAGE_MAX_SIDE,
@@ -88,6 +89,9 @@ function scanlineGroups(
 }
 
 export function sanitizePng(input: Buffer): BinaryCheck {
+  if (input.length > IMAGE_FILE_MAX_BYTES) {
+    return refuse(`The PNG is larger than ${IMAGE_FILE_MAX_BYTES} bytes.`);
+  }
   if (input.length < 8 || !input.subarray(0, 8).equals(SIGNATURE)) {
     return refuse('This is not a PNG: the 8-byte PNG signature is missing.');
   }
@@ -201,11 +205,11 @@ export function sanitizePng(input: Buffer): BinaryCheck {
   const out = [SIGNATURE, chunk('IHDR', ihdr)];
   // Keep the original order, except that PLTE must precede tRNS/bKGD, which it already does in valid files.
   for (const { type, data } of kept) out.push(chunk(type, data));
-  out.push(chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0)));
+  out.push(chunk('IDAT', deflateSync(raw, { level: 6 })), chunk('IEND', Buffer.alloc(0)));
 
   const notes: string[] = [];
   if (dropped > 0)
     notes.push(`${dropped} non-pixel PNG chunk(s) (metadata, text, extras) were removed.`);
   if (pos < input.length) notes.push('Bytes after the end of the PNG were removed.');
-  return { ok: true, bytes: Buffer.concat(out), mediaType: 'image/png', notes };
+  return { ok: true, bytes: Buffer.concat(out), mediaType: 'image/png', notes, width, height };
 }

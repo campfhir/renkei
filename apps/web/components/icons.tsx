@@ -94,6 +94,8 @@ export const ICONS = {
   fileText: 'M6 21V3h8l4 4v14zM14 3v4h4M9 12h6M9 16h6',
   fileSheet: 'M6 21V3h8l4 4v14zM14 3v4h4M9 11h6v7H9zM9 14.5h6M12 11v7',
   fileImage: 'M6 21V3h8l4 4v14zM14 3v4h4M9.5 11h.01M8 17.5l3-3.5 2 2 1.5-1.5 1.5 2',
+  /** A picture in its frame — hills under a sun. A generated image's call, where the wrench would be. */
+  image: 'M4 5h16v14H4zM4 16l4.5-4.5 3.5 3.5 2.5-2.5L20 17M9 9.5h.01',
   /** The app menu's doors, one glyph each, so a row is known before it is read. */
   /** A house — Home. */
   home: 'M3 11l9-8 9 8v10h-6v-6h-6v6H3z',

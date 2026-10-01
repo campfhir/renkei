@@ -41,6 +41,13 @@ export interface OrgTokenTotals {
   chatProjects: SurfaceTokens;
   codeProjects: SurfaceTokens;
   agents: SurfaceTokens;
+  /**
+   * What image generation models billed (image_usage, migration 132). Only
+   * models that report tokens count here — gpt-image does, FLUX does not —
+   * so a FLUX-only org shows 0 even with pictures drawn; the Images card
+   * counts those by the picture and the byte.
+   */
+  images: SurfaceTokens;
 }
 
 export interface OrgActivityTotals {
@@ -65,6 +72,11 @@ export interface OrgDay {
   codeProjectOutputTokens: number;
   agentInputTokens: number;
   agentOutputTokens: number;
+  /** What image generation models billed this hour or day, and the pictures behind it. */
+  imageInputTokens: number;
+  imageOutputTokens: number;
+  images: number;
+  imageBytes: number;
   runs: number;
   failures: number;
   toolCalls: number;
@@ -116,7 +128,7 @@ export async function getSurfaceTokenTotals(
   timeZone: string,
   ownerSubject: string | null = null
 ): Promise<OrgTokenTotals> {
-  const [chatResult, agentRow] = await Promise.all([
+  const [chatResult, agentRow, imageRow] = await Promise.all([
     sql<ChatBucketRow>`
       SELECT
         ${CHAT_BUCKET_CASE} AS bucket,
@@ -137,6 +149,14 @@ export async function getSurfaceTokenTotals(
         AND ${inSpan('created_at', span, timeZone)}
         ${ownedBy('subject', ownerSubject)}
     `.execute(db),
+    sql<{ input_tokens: string; output_tokens: string }>`
+      SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens
+      FROM image_usage
+      WHERE tenant_id = ${tenantId}
+        AND ${inSpan('created_at', span, timeZone)}
+        ${ownedBy('subject', ownerSubject)}
+    `.execute(db),
   ]);
   return {
     chat: surfaceOf(chatResult.rows, 'chat'),
@@ -145,6 +165,10 @@ export async function getSurfaceTokenTotals(
     agents: {
       input: Number(agentRow.rows[0]?.input_tokens ?? 0),
       output: Number(agentRow.rows[0]?.output_tokens ?? 0),
+    },
+    images: {
+      input: Number(imageRow.rows[0]?.input_tokens ?? 0),
+      output: Number(imageRow.rows[0]?.output_tokens ?? 0),
     },
   };
 }
@@ -252,7 +276,7 @@ export async function getOrgDailySeries(
     .groupBy(sql`day`);
   if (ownerSubject !== null) callsQuery = callsQuery.where('subject', '=', ownerSubject);
 
-  const [chatRows, agentRows, runRows, callRows] = await Promise.all([
+  const [chatRows, agentRows, runRows, callRows, imageRows] = await Promise.all([
     sql<ChatBucketRow & { day: string }>`
       SELECT
         to_char(ct.started_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
@@ -278,6 +302,23 @@ export async function getOrgDailySeries(
     `.execute(db),
     runsQuery.execute(),
     callsQuery.execute(),
+    sql<{
+      day: string;
+      images: string;
+      bytes: string;
+      input_tokens: string;
+      output_tokens: string;
+    }>`
+      SELECT to_char(created_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
+             COALESCE(SUM(images), 0) AS images,
+             COALESCE(SUM(image_bytes), 0) AS bytes,
+             COALESCE(SUM(input_tokens), 0) AS input_tokens,
+             COALESCE(SUM(output_tokens), 0) AS output_tokens
+      FROM image_usage
+      WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
+        ${ownedBy('subject', ownerSubject)}
+      GROUP BY day
+    `.execute(db),
   ]);
 
   const byDay = new Map<string, OrgDay>();
@@ -294,6 +335,10 @@ export async function getOrgDailySeries(
       codeProjectOutputTokens: 0,
       agentInputTokens: 0,
       agentOutputTokens: 0,
+      imageInputTokens: 0,
+      imageOutputTokens: 0,
+      images: 0,
+      imageBytes: 0,
       runs: 0,
       failures: 0,
       toolCalls: 0,
@@ -321,6 +366,13 @@ export async function getOrgDailySeries(
     const point = dayOf(row.day);
     point.agentInputTokens += Number(row.input_tokens ?? 0);
     point.agentOutputTokens += Number(row.output_tokens ?? 0);
+  }
+  for (const row of imageRows.rows) {
+    const point = dayOf(row.day);
+    point.imageInputTokens += Number(row.input_tokens ?? 0);
+    point.imageOutputTokens += Number(row.output_tokens ?? 0);
+    point.images += Number(row.images ?? 0);
+    point.imageBytes += Number(row.bytes ?? 0);
   }
   for (const row of runRows) {
     const point = dayOf(row.day);

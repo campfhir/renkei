@@ -9,7 +9,13 @@
  * or 3 components are accepted.
  */
 
-import { IMAGE_MAX_PIXELS, IMAGE_MAX_SIDE, refuse, type BinaryCheck } from './types';
+import {
+  IMAGE_FILE_MAX_BYTES,
+  IMAGE_MAX_PIXELS,
+  IMAGE_MAX_SIDE,
+  refuse,
+  type BinaryCheck,
+} from './types';
 
 const SOF_BASELINE_AND_PROGRESSIVE = new Set([0xc0, 0xc1, 0xc2]);
 
@@ -46,12 +52,15 @@ function validDht(data: Buffer): boolean {
 }
 
 export function sanitizeJpeg(input: Buffer): BinaryCheck {
+  if (input.length > IMAGE_FILE_MAX_BYTES) {
+    return refuse(`The JPEG is larger than ${IMAGE_FILE_MAX_BYTES} bytes.`);
+  }
   if (input.length < 4 || input[0] !== 0xff || input[1] !== 0xd8 || input[2] !== 0xff) {
     return refuse('This is not a JPEG: it must start with the SOI marker (FF D8 FF).');
   }
   const out: Buffer[] = [Buffer.from([0xff, 0xd8])];
   let pos = 2;
-  let frame: { components: number } | null = null;
+  let frame: { components: number; width: number; height: number } | null = null;
   let tables = { dqt: false, dht: false };
   let scans = 0;
   let sawEoi = false;
@@ -109,7 +118,7 @@ export function sanitizeJpeg(input: Buffer): BinaryCheck {
           return refuse('The JPEG frame header has invalid component settings.');
         }
       }
-      frame = { components };
+      frame = { components, width, height };
       out.push(segmentOf(marker, data));
     } else if (marker === 0xdb) {
       if (!validDqt(data)) return refuse('A JPEG quantisation table is malformed.');
@@ -163,5 +172,12 @@ export function sanitizeJpeg(input: Buffer): BinaryCheck {
   if (dropped > 0)
     notes.push(`${dropped} JPEG metadata segment(s) (EXIF, comments, profiles) were removed.`);
   if (pos < input.length - 1) notes.push('Bytes after the end of the JPEG were removed.');
-  return { ok: true, bytes: Buffer.concat(out), mediaType: 'image/jpeg', notes };
+  return {
+    ok: true,
+    bytes: Buffer.concat(out),
+    mediaType: 'image/jpeg',
+    notes,
+    width: frame.width,
+    height: frame.height,
+  };
 }

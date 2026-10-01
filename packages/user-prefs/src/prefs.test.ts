@@ -25,6 +25,8 @@ import {
   DEFAULT_COACH_MARK_PREFS,
   type NotificationPrefs,
   type DeliveryPrefs,
+  DEFAULT_IMAGE_PREFS,
+  parseImagePrefs,
 } from './prefs';
 
 const prefs = (over: Partial<NotificationPrefs> = {}): NotificationPrefs => ({
@@ -411,6 +413,35 @@ describe('parseVoicePrefs', () => {
     expect(parseVoicePrefs({ pushToTalk: 'yes' }).pushToTalk).toBe(false);
     expect(parseVoicePrefs({ accent: 'plaid' }).accent).toBe('rainbow');
     expect(parseVoicePrefs({ userAccent: 'plaid' }).userAccent).toBe('emerald');
+  });
+});
+
+describe('parseImagePrefs', () => {
+  const id = '3f2b8c1e-9d4a-4e7b-8a21-5c6d7e8f9a0b';
+
+  it('keeps a model id, normalised to lower case', () => {
+    expect(parseImagePrefs({ modelId: id })).toEqual({ modelId: id });
+    expect(parseImagePrefs({ modelId: id.toUpperCase() })).toEqual({ modelId: id });
+  });
+
+  it('reads anything it does not recognise as no preference', () => {
+    for (const stored of [
+      undefined,
+      null,
+      'x',
+      [],
+      {},
+      { modelId: null },
+      { modelId: 42 },
+      { modelId: 'not-a-uuid' },
+      { modelId: `${id}; drop table` },
+    ]) {
+      expect(parseImagePrefs(stored)).toEqual(DEFAULT_IMAGE_PREFS);
+    }
+  });
+
+  it('is no preference by default', () => {
+    expect(DEFAULT_IMAGE_PREFS).toEqual({ modelId: null });
   });
 });
 

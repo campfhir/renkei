@@ -3,7 +3,7 @@
  * the session and never from the request, so there is no shape of body that
  * edits somebody else's settings.
  *
- * `notifications`, `theme`, `voice` and `coachMarks` are independent
+ * `notifications`, `theme`, `voice`, `image` and `coachMarks` are independent
  * documents, each a whole-document replace when its key is present in the
  * body — which is what each form on the preferences page (and the chat's
  * voice menu, and the Tutorials page) sends. Unknown connector and category keys are DROPPED rather than
@@ -15,14 +15,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getCoachMarkPrefs,
+  getImagePrefs,
   getNotificationPrefs,
   getThemePrefs,
   getVoicePrefs,
   parseCoachMarkPrefs,
+  parseImagePrefs,
   parseNotificationPrefs,
   parseThemePrefs,
   parseVoicePrefs,
   setCoachMarkPrefs,
+  setImagePrefs,
   setNotificationPrefs,
   setThemePrefs,
   setVoicePrefs,
@@ -37,13 +40,14 @@ export async function GET(
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const [notifications, theme, voice, coachMarks] = await Promise.all([
+  const [notifications, theme, voice, image, coachMarks] = await Promise.all([
     getNotificationPrefs(tenantId, session.subject, { fresh: true }),
     getThemePrefs(tenantId, session.subject, { fresh: true }),
     getVoicePrefs(tenantId, session.subject, { fresh: true }),
+    getImagePrefs(tenantId, session.subject, { fresh: true }),
     getCoachMarkPrefs(tenantId, session.subject, { fresh: true }),
   ]);
-  return NextResponse.json({ notifications, theme, voice, coachMarks });
+  return NextResponse.json({ notifications, theme, voice, image, coachMarks });
 }
 
 export async function PUT(
@@ -62,6 +66,7 @@ export async function PUT(
     notifications?: unknown;
     theme?: unknown;
     voice?: unknown;
+    image?: unknown;
     coachMarks?: unknown;
   } = body;
 
@@ -94,6 +99,13 @@ export async function PUT(
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 
+  let image = await getImagePrefs(tenantId, session.subject, { fresh: true });
+  if ('image' in payload) {
+    image = parseImagePrefs(payload.image);
+    const written = await setImagePrefs(tenantId, session.subject, image);
+    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  }
+
   let coachMarks = await getCoachMarkPrefs(tenantId, session.subject, { fresh: true });
   if ('coachMarks' in payload) {
     coachMarks = parseCoachMarkPrefs(payload.coachMarks);
@@ -101,5 +113,5 @@ export async function PUT(
     if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 
-  return NextResponse.json({ notifications, theme, voice, coachMarks });
+  return NextResponse.json({ notifications, theme, voice, image, coachMarks });
 }

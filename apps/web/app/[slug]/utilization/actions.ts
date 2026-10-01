@@ -29,6 +29,8 @@ import {
   type OrgTokenTotals,
 } from '@/lib/usage/org-usage';
 import { getVoiceTotals, ZERO_VOICE_TOTALS, type VoiceTotals } from '@/lib/usage/voice-usage';
+import { getImageTotals, ZERO_IMAGE_TOTALS, type ImageTotals } from '@/lib/usage/image-usage';
+import { listImageModels } from '@/lib/chat/models';
 import { resolveVoiceProvider } from '@/lib/voice/config';
 import {
   bucketUtilization,
@@ -54,6 +56,10 @@ export interface UtilizationReport {
   voice: VoiceTotals;
   /** The org has a speech service; with none, and nothing ever used, the voice card is left out. */
   voiceAvailable: boolean;
+  /** Pictures drawn for them. */
+  image: ImageTotals;
+  /** The org has an image generation model; with none, and nothing ever drawn, the image card is left out. */
+  imageAvailable: boolean;
   error?: string;
   signedOut?: boolean;
 }
@@ -72,6 +78,7 @@ const ZERO: UtilizationTotals = {
 const ZERO_SURFACE_TOKENS: OrgTokenTotals = {
   chat: { input: 0, output: 0 },
   chatProjects: { input: 0, output: 0 },
+  images: { input: 0, output: 0 },
   codeProjects: { input: 0, output: 0 },
   agents: { input: 0, output: 0 },
 };
@@ -97,6 +104,8 @@ export async function getUtilizationReport(
     efficientAgents: [],
     voice: ZERO_VOICE_TOTALS,
     voiceAvailable: false,
+    image: ZERO_IMAGE_TOTALS,
+    imageAvailable: false,
   };
 
   const session = await getSessionFromCookies(tenantId);
@@ -112,17 +121,29 @@ export async function getUtilizationReport(
   const span = { days: period.days, endOffsetDays: period.endOffsetDays };
 
   try {
-    const [totals, daily, agents, attention, surfaceTokens, efficientAgents, voice, voiceProvider] =
-      await Promise.all([
-        getUtilizationTotals(db, tenantId, subject, span, timeZone),
-        getUtilizationSeries(db, tenantId, subject, span, timeZone, seriesGranularity(period.days)),
-        getAgentUtilization(db, tenantId, subject, span, timeZone),
-        getFailureSignatures(db, tenantId, subject, span, timeZone),
-        getSurfaceTokenTotals(db, tenantId, span, timeZone, subject),
-        getMostEfficientAgents(db, tenantId, span, timeZone, 10, 3, subject),
-        getVoiceTotals(db, tenantId, span, timeZone, subject),
-        resolveVoiceProvider(tenantId),
-      ]);
+    const [
+      totals,
+      daily,
+      agents,
+      attention,
+      surfaceTokens,
+      efficientAgents,
+      voice,
+      voiceProvider,
+      image,
+      imageModels,
+    ] = await Promise.all([
+      getUtilizationTotals(db, tenantId, subject, span, timeZone),
+      getUtilizationSeries(db, tenantId, subject, span, timeZone, seriesGranularity(period.days)),
+      getAgentUtilization(db, tenantId, subject, span, timeZone),
+      getFailureSignatures(db, tenantId, subject, span, timeZone),
+      getSurfaceTokenTotals(db, tenantId, span, timeZone, subject),
+      getMostEfficientAgents(db, tenantId, span, timeZone, 10, 3, subject),
+      getVoiceTotals(db, tenantId, span, timeZone, subject),
+      resolveVoiceProvider(tenantId),
+      getImageTotals(db, tenantId, span, timeZone, subject),
+      listImageModels(db, tenantId),
+    ]);
     return {
       periodKey: period.key,
       days: period.days,
@@ -135,6 +156,8 @@ export async function getUtilizationReport(
       efficientAgents,
       voice,
       voiceAvailable: voiceProvider !== null,
+      image,
+      imageAvailable: imageModels.length > 0,
     };
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };

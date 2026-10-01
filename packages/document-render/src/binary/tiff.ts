@@ -10,7 +10,7 @@
  */
 
 import {
-  BINARY_MAX_BYTES,
+  IMAGE_FILE_MAX_BYTES,
   IMAGE_MAX_PIXELS,
   IMAGE_MAX_RAW_BYTES,
   IMAGE_MAX_SIDE,
@@ -86,6 +86,9 @@ interface Page {
 }
 
 export function sanitizeTiff(input: Buffer): BinaryCheck {
+  if (input.length > IMAGE_FILE_MAX_BYTES) {
+    return refuse(`The TIFF is larger than ${IMAGE_FILE_MAX_BYTES} bytes.`);
+  }
   if (input.length < 8) return refuse('This is not a TIFF: it is too short.');
   const order = input.toString('latin1', 0, 2);
   if (order !== 'II' && order !== 'MM')
@@ -148,7 +151,7 @@ export function sanitizeTiff(input: Buffer): BinaryCheck {
   if (pages.length === 0) return refuse('The TIFF has no image.');
 
   const bytes = write(pages);
-  if (bytes.length > BINARY_MAX_BYTES * 4) return refuse('The TIFF is too large once rebuilt.');
+  if (bytes.length > IMAGE_FILE_MAX_BYTES) return refuse('The TIFF is too large once rebuilt.');
   const notes: string[] = [];
   if (dropped > 0)
     notes.push(
@@ -225,7 +228,8 @@ export function sanitizeTiff(input: Buffer): BinaryCheck {
       if (length < 1 || start + length > file.length)
         return 'A TIFF strip points outside the file.';
       total += length;
-      if (total > BINARY_MAX_BYTES) return 'The TIFF strips are larger than the file allowance.';
+      if (total > IMAGE_FILE_MAX_BYTES)
+        return 'The TIFF strips are larger than the file allowance.';
       strips.push(file.subarray(start, start + length));
     }
     if (compression === 1 && total < rawBytes)

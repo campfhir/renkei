@@ -235,6 +235,27 @@ export interface ResolvedImageModel {
  * the first one the org has. Never a chat model: a row is an image model
  * only when its API surface is an image one.
  */
+/** `settings.fluxOptions` — BFL's advanced knobs; ranges are enforced where they are sent. */
+function fluxOptionsOf(row: ModelRow): ImageModelConfig['fluxOptions'] {
+  const settings: { fluxOptions?: unknown } =
+    typeof row.settings === 'object' && row.settings !== null && !Array.isArray(row.settings)
+      ? row.settings
+      : {};
+  const raw = settings.fluxOptions;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const pick = (key: string): number | undefined => {
+    const value: unknown = Reflect.get(raw, key);
+    return typeof value === 'number' ? value : undefined;
+  };
+  const upsampling: unknown = Reflect.get(raw, 'promptUpsampling');
+  return {
+    steps: pick('steps'),
+    guidance: pick('guidance'),
+    safetyTolerance: pick('safetyTolerance'),
+    ...(typeof upsampling === 'boolean' ? { promptUpsampling: upsampling } : {}),
+  };
+}
+
 export async function resolveImageModel(
   db: Kysely<DB>,
   tenantId: string,
@@ -272,6 +293,7 @@ export async function resolveImageModel(
       surface: imageSurfaceOf(row.settings) ?? 'images',
       baseUrl: row.base_url,
       apiVersion: settingString(row, 'apiVersion'),
+      fluxOptions: fluxOptionsOf(row),
     },
   });
 }

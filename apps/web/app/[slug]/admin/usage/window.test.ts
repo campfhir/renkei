@@ -23,6 +23,10 @@ const ZERO_DAY = {
   codeProjectOutputTokens: 0,
   agentInputTokens: 0,
   agentOutputTokens: 0,
+  imageInputTokens: 0,
+  imageOutputTokens: 0,
+  images: 0,
+  imageBytes: 0,
   runs: 0,
   failures: 0,
   toolCalls: 0,
@@ -237,5 +241,71 @@ describe('numbers', () => {
     expect(activeUserPercent(3, 10)).toBe(30);
     expect(activeUserPercent(1, 3)).toBe(33);
     expect(activeUserPercent(0, 0)).toBe(0);
+  });
+});
+
+describe('bucketOrgSeries — images', () => {
+  it('carries image tokens, pictures and bytes in each bucket beside the other surfaces', () => {
+    const buckets = bucketOrgSeries(
+      [
+        {
+          ...ZERO_DAY,
+          day: '2026-09-02T09',
+          chatInputTokens: 100,
+          chatOutputTokens: 20,
+          imageInputTokens: 61,
+          imageOutputTokens: 4_160,
+          images: 2,
+          imageBytes: 3_000_000,
+        },
+        { ...ZERO_DAY, day: '2026-09-02T14', images: 1, imageBytes: 500_000 },
+      ],
+      TODAY,
+      NOW,
+      'UTC'
+    );
+    expect(buckets).toHaveLength(24);
+    expect(buckets[9]).toMatchObject({
+      label: '9 AM',
+      chatTokens: 120,
+      imageTokens: 4_221,
+      images: 2,
+      imageBytes: 3_000_000,
+    });
+    // A picture from a model that bills no tokens still counts as a picture and its bytes.
+    expect(buckets[14]).toMatchObject({ imageTokens: 0, images: 1, imageBytes: 500_000 });
+    expect(buckets[0]).toMatchObject({ imageTokens: 0, images: 0, imageBytes: 0 });
+  });
+
+  it('sums a week’s worth into one bucket when the period folds days', () => {
+    const buckets = bucketOrgSeries(
+      [
+        {
+          ...ZERO_DAY,
+          day: '2026-08-31',
+          imageInputTokens: 10,
+          imageOutputTokens: 5,
+          images: 1,
+          imageBytes: 100,
+        },
+        {
+          ...ZERO_DAY,
+          day: '2026-09-01',
+          imageInputTokens: 1,
+          imageOutputTokens: 1,
+          images: 2,
+          imageBytes: 200,
+        },
+      ],
+      { days: 90, endOffsetDays: 0 },
+      NOW,
+      'UTC'
+    );
+    // 2026-08-31 is a Monday: both days share a week.
+    expect(buckets.find((b) => b.bucket === '2026-08-31')).toMatchObject({
+      imageTokens: 17,
+      images: 3,
+      imageBytes: 300,
+    });
   });
 });

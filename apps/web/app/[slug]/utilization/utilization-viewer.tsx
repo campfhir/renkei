@@ -25,6 +25,7 @@ import {
 } from './window';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
+import { ImageUsageCard } from '@/components/image-usage-card';
 import { Leaderboard } from '@/components/leaderboard';
 import type { EfficientAgentRow } from '@/lib/usage/org-usage';
 import type { AgentUtilizationRow } from '@/lib/usage/user-utilization';
@@ -54,7 +55,11 @@ function partsOf(bucket: UtilizationBucket, series: Series): { base: number; top
   }
 }
 
-function legendOf(series: Series): { base: string; top: string; topClass: string } {
+function legendOf(series: Series): {
+  base: string;
+  top: string;
+  topClass: string;
+} {
   switch (series) {
     case 'tokens':
       return { base: 'Tokens in', top: 'Tokens out', topClass: 'bg-purple-400' };
@@ -356,6 +361,13 @@ export default function UtilizationViewer({
         <VoiceUsageCard
           totals={report.voice}
           hint="Replies read aloud to you, and what you said to the chat by voice, over the period."
+        />
+      ) : null}
+
+      {report.imageAvailable || report.image.images > 0 ? (
+        <ImageUsageCard
+          totals={report.image}
+          hint="Images drawn for you: how many, how much space they take, and what the image model billed, over the period."
         />
       ) : null}
 

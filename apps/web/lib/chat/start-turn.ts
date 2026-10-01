@@ -58,6 +58,8 @@ import { openTurnChannel, type TurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS, type TurnResumeSeed } from './turn-runner';
 import { chatLocalTools } from './chat-local-tools';
+import { recordImageUsage, type ImageUsageReport } from '@/lib/image/usage';
+import { latestUserPrompt } from './prompt-text';
 import {
   AUTO_MAX_CONTINUES,
   AUTO_NUDGE_TEXT,
@@ -562,6 +564,14 @@ async function executeTurnBody(
       userEmail: person?.email ?? null,
       readOnly,
       llm: input.llm,
+      // The person's own words for this turn: the image tool's prompt, verbatim.
+      userPrompt: latestUserPrompt(rows),
+      recordImageUsage: (report: ImageUsageReport) =>
+        recordImageUsage(db, {
+          ...report,
+          tenantId: input.tenantId,
+          subject: input.session.subject,
+        }),
       recordUsage: (usage: LlmUsage, model?: LlmCallModel | null) =>
         store.recordUsage(usage, model),
       emitProgress: (progress: { foldedSoFar: number; totalToFold: number }) =>

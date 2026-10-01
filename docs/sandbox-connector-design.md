@@ -138,16 +138,37 @@ row whose **API surface** is an image one (`settings.apiSurface`):
 - `images` — the OpenAI Images API (`gpt-image-1`, `gpt-image-2`, or an
   Azure deployment of one): `POST {base}/images/generations` with `size`,
   `quality`, `output_format`, `background`.
-- `flux` — Black Forest Labs' FLUX models as Azure AI Foundry serves them
-  (`FLUX.2-flex`, …): the base URL is the model's own provider endpoint
-  (`https://{resource}.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex`,
-  api-version `preview`), the body carries `width`/`height` instead of
-  `size`, and the quality/format/background knobs are not sent.
+- `flux` — Black Forest Labs' FLUX models on Azure AI Foundry's native
+  provider route, which every FLUX model has (FLUX.2 included): the base URL is
+  the model's own provider endpoint
+  (`https://{resource}.api.cognitive.microsoft.com/providers/blackforestlabs/v1/flux-2-flex`
+  or the `.services.ai.azure.com` host, api-version `preview`; the path is
+  `flux-2-pro` or `flux-2-flex`). The body carries `width`/`height` instead of
+  `size`, `num_images: 1` and `output_format`; quality/background are not
+  sent. An edit sends the picture as base64 `input_image`. FLUX.1 Kontext Pro
+  and 1.1 Pro use other native paths (Kontext takes `aspect_ratio`, not
+  pixels) and also answer on the OpenAI-compatible route
+  (`/openai/v1/images/generations`); there they are an `images` row, like
+  gpt-image — use that for them.
 
-Both answer base64 (`b64_json`); `generateImage` in `@renkei/agent-llm`
+A `flux` row whose base URL is Black Forest Labs' own host
+(`https://api.bfl.ai/v1/flux-2-flex`) speaks BFL's asynchronous API: `x-key`
+auth, a body without `model`/`num_images`, then polling the returned
+`polling_url` (credentials only to the endpoint's origin or a `bfl.ai` host)
+until `Ready` and downloading `result.sample`. `Request/Content Moderated` is
+read as the safety system saying no. The submit's `cost`, `input_mp` and
+`output_mp` come back on the result (`GeneratedImage.cost`). Advanced knobs
+(`steps`, `guidance`, `safetyTolerance`, `promptUpsampling`) are read from the
+row's `settings.fluxOptions` and sent only inside BFL's documented ranges.
+
+Both answer base64 (`b64_json`), or a `url` the client downloads (public https only, no redirects, no credentials, size-capped) — the native route adds a `seed` and reports
+tokens as `prompt_tokens`/`completion_tokens`, which is read as input/output —
+and a moderation block comes back as a 400 whose message mentions content
+moderation, read as the safety system saying no rather than a bad request (so
+it is not retried at other sizes). `generateImage` in `@renkei/agent-llm`
 speaks either, with the OpenAI chat adapter's credential-header rules. The
 media type is taken from the returned bytes, not from the format asked
-for — FLUX answers PNG whatever is requested — and the tool saves under
+for, and the tool saves under
 the extension of what actually came back. Adding another vendor is a new
 surface in `IMAGE_SURFACES` and a branch in `requestFor`.
 
@@ -158,8 +179,58 @@ default.
 
 Chats whose org has an enabled image row are offered `chat_generate_image`
 (chat only; org agents do not get it, since the MCP server cannot tell
-which model is calling). It sends the prompt to the image model and keeps
-the PNG or JPEG under the chat's Artifacts.
+which model is calling). How it behaves:
+
+- **The prompt is the person's own message, word for word.** The tool takes
+  no prompt: the turn hands it the user's message (`LocalToolContext.userPrompt`,
+  from `latestUserPrompt`), so what is drawn is what was asked. A message
+  over 32,000 characters is refused, never clipped. The chat model chooses
+  only the file's name, the shape and — for a follow-up — the source picture.
+- **Follow-ups build on the earlier picture.** The tool does not see earlier
+  turns, but the chat model does: when the person's message refers to a
+  picture already in the chat ("make it bluer", "same bear, but in
+  winter") it sets `sourceImage` to that file's name, or `last` for the most
+  recent picture a tool drew. The tool finds it among this chat's own PNG and
+  JPEG files (`pickSourceImage`; the person's uploads count too), reads it back
+  and rebuilds it through the same validators, and sends it with the person's
+  unchanged message to the image model's EDIT endpoint — OpenAI's
+  `/images/edits` (multipart, `image`), or `input_image` (base64) for FLUX.
+  A name that is not there is answered with the names that are, so the chat
+  model can correct itself; a model that cannot edit is told to call again
+  without `sourceImage`. With no `sourceImage` a new picture is drawn. The
+  result follows the source picture's size unless `size` or `aspectRatio`
+  says otherwise.
+- **The chat model picks the shape**: `size` as pixels (`1792x1024`) or
+  `aspectRatio` (`16:9`, turned into about a megapixel of multiples of 16).
+  A size the image model rejects (`invalid_request`) is retried at the
+  nearest standard size (`1024x1024`, `1024x1536`, `1536x1024`), then — for
+  the OpenAI surface — left to the model (`auto`); the result tells the
+  model the size actually drawn. Other failures are not retried.
+- **Which image model**: the person's saved preference
+  (`user_preferences` key `image`, `modelId`) while the org still offers it,
+  else the org's first by name. The chat model cannot override it. Preferences
+  shows the picker whenever the org has at least one image model.
+- **Where it shows up**: inline in the thread, in the call that drew it —
+  never folded away with the other tool calls. The call is its own segment
+  kind (`image`): an outline of the requested aspect ratio while it is drawn
+  or waiting on permission, the picture when done (the file the call kept,
+  found by the tool_results row that carried it), the reason when it failed.
+  It has its own icon.
+- **Size limits**: a generated image may be up to 25 MB (the chat's artifact
+  limit); a PDF stays at 1 MiB.
+- **Usage**: every picture kept is counted in `image_usage` (migration 132),
+  content-free like the voice ledger: the file's bytes, its pixel size, and
+  the tokens the provider billed when it said (gpt-image does; FLUX reports
+  none). My usage and Organization usage show an Images card (pictures, space
+  in KB/MB/GB, tokens), and the org page ranks who has the most. The tokens
+  are a surface of their own — an Images row in "Tokens by surface", included
+  in the org headline total — and a pink **Images segment in the Tokens chart**
+  beside chat, chat projects, code projects and agents, by the hour for a
+  one-day window and by the day, week or month otherwise; its tooltip adds how
+  many pictures and how many bytes. (There is no separate Images chart or
+  switch. A model that bills no tokens, like FLUX, draws no segment, though its
+  pictures still count on the card.) Pruned with the other ledgers under the
+  usage retention.
 
 What comes back is still untrusted bytes from a remote service, so it goes
 through `@renkei/document-render`'s validators (`src/binary/`) and is kept
@@ -173,8 +244,8 @@ only as **rebuilt** output, never as given:
   a polyglot) is gone by construction. PNG pixel data is inflated under a
   size bound (decompression bombs refused) and re-deflated by our own zlib.
 - The extension names the format and the matching validator must accept the
-  bytes, so a `.png` that is really HTML or a JPEG is refused. At most 1 MiB
-  decoded, 16384 px a side, 50 MP.
+  bytes, so a `.png` that is really HTML or a JPEG is refused. At most 25 MB
+  for an image, 16384 px a side, 50 MP, and 96 MiB of raw pixels once inflated.
 - The validators also cover TIFF (rewritten from its strip tags only) and
   PDF (refused if it carries scripts, auto-run/launch/URI/submit actions,
   embedded files, forms, encryption, object streams or the JBIG2/JPX

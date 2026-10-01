@@ -11,6 +11,7 @@ describe('isAzureHost', () => {
   it('is true for an Azure host, false for anything else, and false for a bad URL', () => {
     expect(isAzureHost('https://myresource.openai.azure.com/openai/v1')).toBe(true);
     expect(isAzureHost('https://myresource.services.ai.azure.com/anthropic')).toBe(true);
+    expect(isAzureHost('https://myresource.api.cognitive.microsoft.com/providers/x')).toBe(true);
     expect(isAzureHost('https://api.openai.com/v1')).toBe(false);
     expect(isAzureHost('not a url')).toBe(false);
     expect(isAzureHost('')).toBe(false);

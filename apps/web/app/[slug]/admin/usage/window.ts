@@ -67,6 +67,10 @@ export interface OrgBucket {
   chatProjectTokens: number;
   codeProjectTokens: number;
   agentTokens: number;
+  /** Tokens image generation models billed, and the pictures and bytes behind them. */
+  imageTokens: number;
+  images: number;
+  imageBytes: number;
   runs: number;
   failures: number;
   toolCalls: number;
@@ -147,6 +151,9 @@ function emptyBucket(key: string, label: string): OrgBucket {
     chatProjectTokens: 0,
     codeProjectTokens: 0,
     agentTokens: 0,
+    imageTokens: 0,
+    images: 0,
+    imageBytes: 0,
     runs: 0,
     failures: 0,
     toolCalls: 0,
@@ -159,6 +166,9 @@ function addRow(bucket: OrgBucket, row: OrgDay): void {
   bucket.chatProjectTokens += row.chatProjectInputTokens + row.chatProjectOutputTokens;
   bucket.codeProjectTokens += row.codeProjectInputTokens + row.codeProjectOutputTokens;
   bucket.agentTokens += row.agentInputTokens + row.agentOutputTokens;
+  bucket.imageTokens += row.imageInputTokens + row.imageOutputTokens;
+  bucket.images += row.images;
+  bucket.imageBytes += row.imageBytes;
   bucket.runs += row.runs;
   bucket.failures += row.failures;
   bucket.toolCalls += row.toolCalls;
