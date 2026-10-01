@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
+import DownloadLink from '@/components/download-link';
 
 export default function ImagePreview({
   src,
@@ -63,16 +64,16 @@ export default function ImagePreview({
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold" title={filename}>
           {filename}
         </h2>
-        <a
+        <DownloadLink
           href={src}
-          download={filename}
+          filename={filename}
           className={button}
           data-testid="image-preview-download"
           aria-label="Download image"
         >
           <Icon path={ICONS.download} className="h-3.5 w-3.5" />
           Download
-        </a>
+        </DownloadLink>
         <button type="button" onClick={onClose} aria-label="Close" className={button}>
           <Icon path={ICONS.close} className="h-4 w-4" />
         </button>

@@ -1,6 +1,7 @@
 'use client';
 
 import { Icon, ICONS } from '@/components/icons';
+import DownloadLink from '@/components/download-link';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
 
@@ -22,13 +23,14 @@ export default function AttachmentChip({
   return (
     <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900">
       <Icon path={ICONS.paperclip} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-      <a
+      <DownloadLink
         href={chatClient.attachmentUrl(tenantId, attachment.id)}
+        filename={attachment.filename}
         className="truncate hover:underline"
         title={`${attachment.filename} · ${sizeOf(attachment.sizeBytes)}`}
       >
         {attachment.filename}
-      </a>
+      </DownloadLink>
       <span className="text-gray-400">{sizeOf(attachment.sizeBytes)}</span>
       {onRemove ? (
         <button

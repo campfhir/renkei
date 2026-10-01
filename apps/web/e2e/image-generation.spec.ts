@@ -530,6 +530,47 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await expect(phonePreview).toHaveCount(0);
 });
 
+test('installed to the iOS home screen, Download opens the file over the app instead of trapping it', async ({
+  page,
+}, testInfo) => {
+  await addModels(fixture, ['chat', 'painter']);
+  await seedDoneChat(fixture);
+  const png = solidPng(300, 200, [120, 170, 230]);
+  await page.route(
+    `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.attachmentId}`,
+    (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png })
+  );
+  // iOS WebKit's marker for a home-screen (standalone) launch; nothing else sets it.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'standalone', { value: true, configurable: true });
+  });
+  await signIn(page, fixture);
+  await page.setViewportSize(MOBILE_VIEWPORT);
+
+  const chatUrl = `/${fixture.slug}/chat/${fixture.doneChatId}`;
+  await page.goto(chatUrl);
+  const drawn = page.getByTestId('image-card').nth(0);
+  await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
+  await drawn.getByRole('button', { name: 'Preview image' }).click();
+  const preview = page.getByTestId('image-preview');
+  await expect(preview).toBeVisible();
+
+  // The file goes to a window of its own (iOS's closable in-app browser sheet),
+  // not an in-place navigation of the app's only webview.
+  const opened = page.context().waitForEvent('page');
+  await preview.getByTestId('image-preview-download').click();
+  const sheet = await opened;
+  await expect.poll(() => sheet.url()).toMatch(/\/chat\/attachments\/[0-9a-f-]{36}$/);
+  await sheet.close();
+
+  // The app underneath never left the chat, and its preview still closes.
+  expect(new URL(page.url()).pathname).toBe(chatUrl);
+  await expect(preview).toBeVisible();
+  await shot(page, testInfo, 'image-preview-ios-standalone.png');
+  await preview.getByRole('button', { name: 'Close' }).click();
+  await expect(preview).toHaveCount(0);
+});
+
 test('a call waiting on permission shows no outline; once approved it is an outline in the shape asked for', async ({
   page,
 }, testInfo) => {

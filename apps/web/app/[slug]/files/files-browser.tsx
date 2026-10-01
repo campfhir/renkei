@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { getJson, sendJson } from '@/lib/fetch-json';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
+import DownloadLink from '@/components/download-link';
 import { useDismiss } from '@/lib/use-dismiss';
 import { LoadingRegion, SkeletonHeading, SkeletonTable } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -997,13 +998,13 @@ function DetailsModal({
         onClose={onClose}
         action={
           entry.kind === 'file' ? (
-            <a
+            <DownloadLink
               href={fileUrl(tenantId, share.id, entry.path)}
               onClick={onClose}
               className={primaryButton}
             >
               Download
-            </a>
+            </DownloadLink>
           ) : null
         }
       />

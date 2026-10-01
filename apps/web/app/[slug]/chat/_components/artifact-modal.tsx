@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
+import DownloadLink from '@/components/download-link';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
 
@@ -99,15 +100,15 @@ export default function ArtifactModal({
             {sizeOf(artifact.sizeBytes)} · {artifact.contentType}
           </p>
         </div>
-        <a
+        <DownloadLink
           href={`/api/tenant/${tenantId}/chat/attachments/${artifact.id}`}
-          download={artifact.filename}
+          filename={artifact.filename}
           aria-label="Download"
           title="Download to this device"
           className="shrink-0 rounded-md border border-gray-300 p-2 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
         >
           <Icon path={ICONS.download} className="h-5 w-5" />
-        </a>
+        </DownloadLink>
       </div>
       <section className="mt-5 border-t border-gray-200 pt-4 dark:border-gray-800">
         <h3 className="mb-2 text-sm font-medium">Copy to a network share</h3>
