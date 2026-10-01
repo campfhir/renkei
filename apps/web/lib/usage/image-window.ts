@@ -42,31 +42,6 @@ export function rankImageUsers(
   };
 }
 
-/**
- * One hour (or one day) of pictures as the database cuts it: `day` is the
- * key in the viewer's zone, `YYYY-MM-DD` or `YYYY-MM-DDTHH` for an hourly
- * series — the same keys the token series uses.
- */
-export interface ImageDay {
-  day: string;
-  images: number;
-  bytes: number;
-  inputTokens: number;
-  outputTokens: number;
-}
-
-/** One bar of the chart: an hour, a day, a week or a month, sized for the period. */
-export interface ImageBucket {
-  /** Bucket start — the x-axis key. */
-  bucket: string;
-  /** "Aug 12", "Aug 2026" for a monthly bucket, or "1 PM" for an hourly one. */
-  label: string;
-  images: number;
-  bytes: number;
-  inputTokens: number;
-  outputTokens: number;
-}
-
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 
 /**

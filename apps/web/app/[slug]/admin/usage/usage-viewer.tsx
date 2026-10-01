@@ -34,7 +34,6 @@ import { modelLabel } from '@/lib/agents/model-label';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { ImageUsageCard } from '@/components/image-usage-card';
-import { ImageUsageChart } from '@/components/image-usage-chart';
 import { Leaderboard } from '@/components/leaderboard';
 import { boardRows, formatDuration, type RankedVoiceUserRow } from '@/lib/usage/voice-window';
 import {
@@ -47,17 +46,16 @@ import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
-type Series = 'tokens' | 'runs' | 'tools' | 'images';
+type Series = 'tokens' | 'runs' | 'tools';
 
 const SERIES: { key: Series; label: string }[] = [
   { key: 'tokens', label: 'Tokens' },
   { key: 'runs', label: 'Agent runs' },
   { key: 'tools', label: 'Tool calls' },
-  { key: 'images', label: 'Images' },
 ];
 
 const TOKEN_SEGMENTS: {
-  key: 'chatTokens' | 'chatProjectTokens' | 'codeProjectTokens' | 'agentTokens';
+  key: 'chatTokens' | 'chatProjectTokens' | 'codeProjectTokens' | 'agentTokens' | 'imageTokens';
   label: string;
   className: string;
 }[] = [
@@ -65,15 +63,19 @@ const TOKEN_SEGMENTS: {
   { key: 'chatProjectTokens', label: 'Chat projects', className: 'bg-teal-500' },
   { key: 'codeProjectTokens', label: 'Code projects', className: 'bg-amber-500' },
   { key: 'agentTokens', label: 'Agents', className: 'bg-purple-500' },
+  // Pink, distinct from the Agents purple; the breakdown's Images row and the leaderboard match.
+  { key: 'imageTokens', label: 'Images', className: 'bg-pink-500' },
 ];
 
 interface Segment {
   label: string;
   value: number;
   className: string;
+  /** Said beside the figure in the tooltip — for images, how many and how big. */
+  detail?: string;
 }
 
-function legendFor(series: Exclude<Series, 'images'>): { label: string; className: string }[] {
+function legendFor(series: Series): { label: string; className: string }[] {
   if (series === 'tokens')
     return TOKEN_SEGMENTS.map(({ label, className }) => ({ label, className }));
   if (series === 'runs')
@@ -87,12 +89,17 @@ function legendFor(series: Exclude<Series, 'images'>): { label: string; classNam
   ];
 }
 
-function segmentsOf(bucket: OrgBucket, series: Exclude<Series, 'images'>): Segment[] {
+function segmentsOf(bucket: OrgBucket, series: Series): Segment[] {
   if (series === 'tokens') {
     return TOKEN_SEGMENTS.map((seg) => ({
       label: seg.label,
       value: bucket[seg.key],
       className: seg.className,
+      ...(seg.key === 'imageTokens' && bucket.images > 0
+        ? {
+            detail: `${bucket.images.toLocaleString('en-US')} ${bucket.images === 1 ? 'image' : 'images'}, ${formatBytes(bucket.imageBytes)}`,
+          }
+        : {}),
     }));
   }
   if (series === 'runs') {
@@ -122,7 +129,7 @@ function segmentsOf(bucket: OrgBucket, series: Exclude<Series, 'images'>): Segme
  * anchors the base of the stack to the bar's bottom and the first-listed
  * category ends up on top, which is where its rounded corner belongs.
  */
-function Chart({ points, series }: { points: OrgBucket[]; series: Exclude<Series, 'images'> }) {
+function Chart({ points, series }: { points: OrgBucket[]; series: Series }) {
   const legend = legendFor(series);
   const rows = points.map((point) => segmentsOf(point, series));
   const totals = rows.map((segments) => segments.reduce((sum, seg) => sum + seg.value, 0));
@@ -143,7 +150,10 @@ function Chart({ points, series }: { points: OrgBucket[]; series: Exclude<Series
           const height = (total / peak) * 100;
           const tooltip = `${point.label}: ${segments
             .filter((seg) => seg.value > 0)
-            .map((seg) => `${seg.label} ${seg.value.toLocaleString('en-US')}`)
+            .map(
+              (seg) =>
+                `${seg.label} ${seg.value.toLocaleString('en-US')}${seg.detail ? ` (${seg.detail})` : ''}`
+            )
             .join(', ')}`;
           return (
             <div
@@ -637,7 +647,7 @@ export default function OrgUsageViewer({
             rankOf={(row) => row.rank}
             highlightOf={(row) => row.subject === subject}
             gapBefore={(row) => row.rank === imagers.gapAtRank}
-            barClassName="bg-violet-500"
+            barClassName="bg-pink-500"
           />
         </div>
       </div>
@@ -665,11 +675,7 @@ export default function OrgUsageViewer({
             ))}
           </span>
         </figcaption>
-        {series === 'images' ? (
-          <ImageUsageChart points={report.imageSeries} />
-        ) : (
-          <Chart points={report.series} series={series} />
-        )}
+        <Chart points={report.series} series={series} />
       </figure>
 
       <div className="grid gap-4 lg:grid-cols-3">

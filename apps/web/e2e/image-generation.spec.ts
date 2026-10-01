@@ -659,79 +659,56 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   await shot(page, testInfo, 'usage-images-org-mobile.png');
 });
 
-test('the usage charts bucket images by the hour or the day, with the size in KB/MB/GB', async ({
+test('the Tokens chart shows images by colour beside chat and agents, hour by hour and day by day', async ({
   page,
 }, testInfo) => {
   await addModels(fixture, ['chat', 'painter']);
   await seedUsage(fixture);
   await signIn(page, fixture);
   const main = page.getByRole('main');
-  const bars = main.getByTestId('image-usage-bar');
-  const filled = main.locator('[data-testid="image-usage-bar"]:not([data-bytes="0"])');
+  // The chart's bars carry a tooltip; the ones with any tokens are the filled ones.
+  const imageBars = main.locator('[role="img"] [title*="Images"]');
 
-  // Organization, 30 days: one bar per day, all three pictures in today's.
   await page.goto(`/${fixture.slug}/admin/usage`);
   await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
-  await main.getByRole('button', { name: 'Images', exact: true }).click();
-  await expect(main.getByTestId('image-usage-chart')).toBeVisible();
-  await expect(bars).toHaveCount(30);
-  await expect(filled).toHaveCount(1);
-  await expect(main.getByTestId('image-usage-peak')).toHaveText('Peak 4.3 MB');
-  await expect(main.getByTestId('image-usage-total')).toHaveText('4.3 MB in all');
-  // Hovering says how many, how big, and what the provider billed (500 KB came from FLUX, which bills none).
-  await expect(filled).toHaveAttribute('title', /: 4\.3 MB · 3 images · 101 tokens in, 5\.2k out$/);
-  await expect(filled).toHaveAttribute('data-images', '3');
-  await shot(page, testInfo, 'usage-images-chart-daily.png');
 
-  // Today: the same pictures, now by the hour — 24 bars, the current hour's holds them.
+  // There is no switch for images: the chart's own switch is Tokens, Agent runs, Tool calls.
+  await expect(main.getByRole('button', { name: 'Images', exact: true })).toHaveCount(0);
+  await expect(main.getByRole('button', { name: 'Tokens', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  );
+  // The legend names images with the other surfaces, in pink, distinct from the Agents purple.
+  const legend = main.locator('figure').getByText('Images', { exact: true });
+  await expect(legend).toBeVisible();
+  await expect(legend.locator('span').first()).toHaveClass(/bg-pink-500/);
+
+  // 30 days, by day: today's bar holds the image tokens, with how many pictures and how big.
+  await expect(imageBars).toHaveCount(1);
+  await expect(imageBars).toHaveAttribute('title', /Images 5,261 \(3 images, 4\.3 MB\)/);
+  await expect(imageBars.locator('div.bg-pink-500')).toHaveCount(1);
+  await shot(page, testInfo, 'usage-tokens-chart-images-daily.png');
+
+  // Today, by hour: the same pink segment in the current hour's bar.
   await main.getByRole('button', { name: 'Today', exact: true }).click();
-  await expect(bars).toHaveCount(24);
-  await expect(filled).toHaveCount(1);
-  await expect(filled).toHaveAttribute('data-images', '3');
-  await expect(main.getByTestId('image-usage-peak')).toHaveText('Peak 4.3 MB');
-  await shot(page, testInfo, 'usage-images-chart-hourly.png');
+  await expect(imageBars).toHaveCount(1);
+  await expect(imageBars).toHaveAttribute('title', /Images 5,261 \(3 images, 4\.3 MB\)/);
+  await expect(main.locator('figure').getByText('Today, by hour')).toBeVisible();
+  await shot(page, testInfo, 'usage-tokens-chart-images-hourly.png');
 
-  // A period with nothing says so, rather than draw empty bars.
-  await main.getByRole('button', { name: 'Yesterday', exact: true }).click();
-  await expect(main.getByText('Nothing in this period.')).toBeVisible();
-  await expect(bars).toHaveCount(0);
+  // The other series are untouched by images.
+  await main.getByRole('button', { name: 'Agent runs', exact: true }).click();
+  await expect(main.locator('[title*="Images"]')).toHaveCount(0);
 
-  // A year: folded into months.
-  await main.getByRole('button', { name: '1 year', exact: true }).click();
-  await expect(bars).toHaveCount(13);
-  await expect(filled).toHaveCount(1);
-
-  // My usage: the person's own two pictures, 3.8 MB, by the day.
+  // My usage keeps its own input/output chart, with no Images switch.
   await page.goto(`/${fixture.slug}/utilization`);
   await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
-  await main.getByRole('button', { name: 'Images', exact: true }).click();
-  await expect(main.getByTestId('image-usage-chart')).toBeVisible();
-  await expect(bars).toHaveCount(30);
-  await expect(main.getByTestId('image-usage-peak')).toHaveText('Peak 3.8 MB');
-  await expect(filled).toHaveAttribute('title', /: 3\.8 MB · 2 images/);
+  await expect(main.getByRole('button', { name: 'Images', exact: true })).toHaveCount(0);
 
   // Phone width.
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await expect(main.getByTestId('image-usage-chart')).toBeVisible();
-  const chart = await main.getByTestId('image-usage-chart').boundingBox();
-  expect(chart!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
-  await shot(page, testInfo, 'usage-images-chart-mobile.png');
-});
-
-test('My usage offers the Images chart only to someone whose org has image models or who has used one', async ({
-  page,
-}) => {
-  await addModels(fixture, ['chat']);
-  await signIn(page, fixture);
-  await page.goto(`/${fixture.slug}/utilization`);
-  const main = page.getByRole('main');
-  await expect(main.getByRole('button', { name: 'Tokens', exact: true })).toBeVisible(COLD);
-  await expect(main.getByRole('button', { name: 'Images', exact: true })).toHaveCount(0);
-  await expect(main.getByTestId('image-usage-card')).toHaveCount(0);
-
-  // Once the org has an image model, both appear.
-  await addModels(fixture, ['painter']);
-  await page.reload();
-  await expect(main.getByRole('button', { name: 'Images', exact: true })).toBeVisible(COLD);
-  await expect(main.getByTestId('image-usage-card')).toBeVisible();
+  await page.goto(`/${fixture.slug}/admin/usage`);
+  await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
+  await expect(imageBars).toHaveCount(1);
+  await shot(page, testInfo, 'usage-tokens-chart-images-mobile.png');
 });

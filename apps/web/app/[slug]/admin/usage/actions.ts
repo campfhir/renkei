@@ -40,20 +40,14 @@ import {
 } from '@/lib/usage/voice-usage';
 import { rankVoiceUsers, type RankedVoiceUserRow } from '@/lib/usage/voice-window';
 import {
-  getImageSeries,
   getImageTotals,
   getImageUsers,
   ZERO_IMAGE_TOTALS,
   type ImageTotals,
 } from '@/lib/usage/image-usage';
-import {
-  rankImageUsers,
-  type ImageBucket,
-  type RankedImageUserRow,
-} from '@/lib/usage/image-window';
+import { rankImageUsers, type RankedImageUserRow } from '@/lib/usage/image-window';
 import {
   activityCells,
-  bucketImageSeries,
   bucketOrgSeries,
   rankUsers,
   resolvePeriod,
@@ -101,8 +95,6 @@ export interface OrgUsageReport {
   /** Images over the window, scoped like the tokens. */
   image: ImageTotals;
   /** Who has the most images drawn (by the bytes kept), and the selected person's rank. */
-  /** The window's pictures by the hour, day, week or month — sized for the period like `series`. */
-  imageSeries: ImageBucket[];
   topImageUsers: RankedImageUserRow[];
   selectedImageUser: RankedImageUserRow | null;
   error?: string;
@@ -161,7 +153,6 @@ export async function getOrgUsageReport(
     topSpeakers: [],
     selectedSpeaker: null,
     image: ZERO_IMAGE_TOTALS,
-    imageSeries: [],
     topImageUsers: [],
     selectedImageUser: null,
   };
@@ -192,7 +183,6 @@ export async function getOrgUsageReport(
       voiceUsers,
       image,
       imageUsers,
-      imageDaily,
     ] = await Promise.all([
       getSurfaceTokenTotals(db, tenantId, period, timeZone, subject),
       getOrgActivityTotals(db, tenantId, period, timeZone, subject),
@@ -210,7 +200,6 @@ export async function getOrgUsageReport(
       getVoiceUsers(db, tenantId, period, timeZone),
       getImageTotals(db, tenantId, period, timeZone, subject),
       getImageUsers(db, tenantId, period, timeZone),
-      getImageSeries(db, tenantId, period, timeZone, subject, seriesGranularity(period.days)),
     ]);
     const now = new Date();
     const ranked = rankUsers(allUsers, subject, TOP_USERS);
@@ -241,7 +230,6 @@ export async function getOrgUsageReport(
       topSpeakers: speakers.top,
       selectedSpeaker: speakers.selected,
       image,
-      imageSeries: bucketImageSeries(imageDaily, period, now, timeZone),
       topImageUsers: imagers.top,
       selectedImageUser: imagers.selected,
     };

@@ -2,7 +2,6 @@ import {
   activeSummary,
   activeUserPercent,
   activityCells,
-  bucketImageSeries,
   bucketOrgSeries,
   calendarMonths,
   formatTokens,
@@ -24,6 +23,10 @@ const ZERO_DAY = {
   codeProjectOutputTokens: 0,
   agentInputTokens: 0,
   agentOutputTokens: 0,
+  imageInputTokens: 0,
+  imageOutputTokens: 0,
+  images: 0,
+  imageBytes: 0,
   runs: 0,
   failures: 0,
   toolCalls: 0,
@@ -241,110 +244,68 @@ describe('numbers', () => {
   });
 });
 
-describe('bucketImageSeries', () => {
-  const day = (key: string, images: number, bytes: number, inputTokens = 0, outputTokens = 0) => ({
-    day: key,
-    images,
-    bytes,
-    inputTokens,
-    outputTokens,
-  });
-
-  it('draws a one-day window by the hour — all 24, quiet ones zero', () => {
-    const buckets = bucketImageSeries(
-      [day('2026-09-02T09', 2, 3_000_000, 100, 4_000), day('2026-09-02T14', 1, 500_000)],
+describe('bucketOrgSeries — images', () => {
+  it('carries image tokens, pictures and bytes in each bucket beside the other surfaces', () => {
+    const buckets = bucketOrgSeries(
+      [
+        {
+          ...ZERO_DAY,
+          day: '2026-09-02T09',
+          chatInputTokens: 100,
+          chatOutputTokens: 20,
+          imageInputTokens: 61,
+          imageOutputTokens: 4_160,
+          images: 2,
+          imageBytes: 3_000_000,
+        },
+        { ...ZERO_DAY, day: '2026-09-02T14', images: 1, imageBytes: 500_000 },
+      ],
       TODAY,
       NOW,
       'UTC'
     );
     expect(buckets).toHaveLength(24);
-    expect(buckets[0]).toMatchObject({
-      bucket: '2026-09-02T00',
-      label: '12 AM',
-      images: 0,
-      bytes: 0,
-    });
     expect(buckets[9]).toMatchObject({
-      bucket: '2026-09-02T09',
       label: '9 AM',
+      chatTokens: 120,
+      imageTokens: 4_221,
       images: 2,
-      bytes: 3_000_000,
-      inputTokens: 100,
-      outputTokens: 4_000,
+      imageBytes: 3_000_000,
     });
-    expect(buckets[14]).toMatchObject({ label: '2 PM', images: 1, bytes: 500_000 });
-    expect(buckets.reduce((sum, b) => sum + b.bytes, 0)).toBe(3_500_000);
+    // A picture from a model that bills no tokens still counts as a picture and its bytes.
+    expect(buckets[14]).toMatchObject({ imageTokens: 0, images: 1, imageBytes: 500_000 });
+    expect(buckets[0]).toMatchObject({ imageTokens: 0, images: 0, imageBytes: 0 });
   });
 
-  it('reads yesterday by the hour too, on yesterday’s date', () => {
-    const buckets = bucketImageSeries([day('2026-09-01T23', 1, 10)], YESTERDAY, NOW, 'UTC');
-    expect(buckets).toHaveLength(24);
-    expect(buckets[0]!.bucket).toBe('2026-09-01T00');
-    expect(buckets[23]).toMatchObject({ label: '11 PM', bytes: 10 });
-  });
-
-  it('zero-fills every day of a week, oldest first', () => {
-    const buckets = bucketImageSeries([day('2026-09-01', 3, 4_000_000)], WEEK, NOW, 'UTC');
-    expect(buckets.map((b) => b.bucket)).toEqual([
-      '2026-08-27',
-      '2026-08-28',
-      '2026-08-29',
-      '2026-08-30',
-      '2026-08-31',
-      '2026-09-01',
-      '2026-09-02',
-    ]);
-    expect(buckets[5]).toMatchObject({ label: 'Sep 1', images: 3, bytes: 4_000_000 });
-    expect(buckets.filter((b) => b.bytes > 0)).toHaveLength(1);
-  });
-
-  it('folds a quarter into weeks starting Monday, summing what fell in each', () => {
-    const buckets = bucketImageSeries(
-      [day('2026-08-31', 1, 100), day('2026-09-01', 2, 200), day('2026-09-02', 1, 50, 7, 3)],
+  it('sums a week’s worth into one bucket when the period folds days', () => {
+    const buckets = bucketOrgSeries(
+      [
+        {
+          ...ZERO_DAY,
+          day: '2026-08-31',
+          imageInputTokens: 10,
+          imageOutputTokens: 5,
+          images: 1,
+          imageBytes: 100,
+        },
+        {
+          ...ZERO_DAY,
+          day: '2026-09-01',
+          imageInputTokens: 1,
+          imageOutputTokens: 1,
+          images: 2,
+          imageBytes: 200,
+        },
+      ],
       { days: 90, endOffsetDays: 0 },
       NOW,
       'UTC'
     );
-    // 2026-08-31 is a Monday: that day, the 1st and the 2nd share a week.
-    const week = buckets.find((b) => b.bucket === '2026-08-31')!;
-    expect(week).toMatchObject({ images: 4, bytes: 350, inputTokens: 7, outputTokens: 3 });
-    expect(buckets.length).toBeLessThan(20);
-    expect(buckets.reduce((sum, b) => sum + b.bytes, 0)).toBe(350);
-  });
-
-  it('folds a year into months', () => {
-    const buckets = bucketImageSeries(
-      [day('2026-08-15', 1, 1_000), day('2026-08-20', 1, 2_000), day('2026-09-02', 1, 5)],
-      { days: 365, endOffsetDays: 0 },
-      NOW,
-      'UTC'
-    );
-    expect(buckets).toHaveLength(13);
-    expect(buckets.find((b) => b.bucket === '2026-08-01')).toMatchObject({
-      label: 'Aug 2026',
-      images: 2,
-      bytes: 3_000,
+    // 2026-08-31 is a Monday: both days share a week.
+    expect(buckets.find((b) => b.bucket === '2026-08-31')).toMatchObject({
+      imageTokens: 17,
+      images: 3,
+      imageBytes: 300,
     });
-    expect(buckets[buckets.length - 1]).toMatchObject({ bucket: '2026-09-01', bytes: 5 });
-  });
-
-  it('is all zeros for a window with no pictures, and ignores rows outside the window', () => {
-    const empty = bucketImageSeries([], WEEK, NOW, 'UTC');
-    expect(empty).toHaveLength(7);
-    expect(empty.every((b) => b.images === 0 && b.bytes === 0)).toBe(true);
-    const stray = bucketImageSeries([day('2020-01-01', 9, 9)], WEEK, NOW, 'UTC');
-    expect(stray.every((b) => b.bytes === 0)).toBe(true);
-  });
-
-  it('cuts days in the viewer’s zone', () => {
-    // 15:00 UTC on the 2nd is 08:00 on the 2nd in Los Angeles; hours are local.
-    const buckets = bucketImageSeries(
-      [day('2026-09-02T08', 1, 1)],
-      TODAY,
-      NOW,
-      'America/Los_Angeles'
-    );
-    expect(buckets).toHaveLength(24);
-    expect(buckets[8]).toMatchObject({ bucket: '2026-09-02T08', label: '8 AM', bytes: 1 });
   });
 });

@@ -208,9 +208,16 @@ which model is calling). How it behaves:
 - **Usage**: every picture kept is counted in `image_usage` (migration 132),
   content-free like the voice ledger: the file's bytes, its pixel size, and
   the tokens the provider billed when it said (gpt-image does; FLUX reports
-  none). My usage and Organization usage show images, space (KB/MB/GB) and
-  tokens, and the org page ranks who has the most. Pruned with the other
-  ledgers under the usage retention.
+  none). My usage and Organization usage show an Images card (pictures, space
+  in KB/MB/GB, tokens), and the org page ranks who has the most. The tokens
+  are a surface of their own — an Images row in "Tokens by surface", included
+  in the org headline total — and a pink **Images segment in the Tokens chart**
+  beside chat, chat projects, code projects and agents, by the hour for a
+  one-day window and by the day, week or month otherwise; its tooltip adds how
+  many pictures and how many bytes. (There is no separate Images chart or
+  switch. A model that bills no tokens, like FLUX, draws no segment, though its
+  pictures still count on the card.) Pruned with the other ledgers under the
+  usage retention.
 
 What comes back is still untrusted bytes from a remote service, so it goes
 through `@renkei/document-render`'s validators (`src/binary/`) and is kept

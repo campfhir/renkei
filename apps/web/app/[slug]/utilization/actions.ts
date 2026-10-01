@@ -29,14 +29,7 @@ import {
   type OrgTokenTotals,
 } from '@/lib/usage/org-usage';
 import { getVoiceTotals, ZERO_VOICE_TOTALS, type VoiceTotals } from '@/lib/usage/voice-usage';
-import {
-  getImageSeries,
-  getImageTotals,
-  ZERO_IMAGE_TOTALS,
-  type ImageTotals,
-} from '@/lib/usage/image-usage';
-import type { ImageBucket } from '@/lib/usage/image-window';
-import { bucketImageSeries } from '../admin/usage/window';
+import { getImageTotals, ZERO_IMAGE_TOTALS, type ImageTotals } from '@/lib/usage/image-usage';
 import { listImageModels } from '@/lib/chat/models';
 import { resolveVoiceProvider } from '@/lib/voice/config';
 import {
@@ -65,8 +58,6 @@ export interface UtilizationReport {
   voiceAvailable: boolean;
   /** Pictures drawn for them. */
   image: ImageTotals;
-  /** Their pictures by the hour, day, week or month, sized for the period like `series`. */
-  imageSeries: ImageBucket[];
   /** The org has an image generation model; with none, and nothing ever drawn, the image card is left out. */
   imageAvailable: boolean;
   error?: string;
@@ -114,7 +105,6 @@ export async function getUtilizationReport(
     voice: ZERO_VOICE_TOTALS,
     voiceAvailable: false,
     image: ZERO_IMAGE_TOTALS,
-    imageSeries: [],
     imageAvailable: false,
   };
 
@@ -142,7 +132,6 @@ export async function getUtilizationReport(
       voiceProvider,
       image,
       imageModels,
-      imageDaily,
     ] = await Promise.all([
       getUtilizationTotals(db, tenantId, subject, span, timeZone),
       getUtilizationSeries(db, tenantId, subject, span, timeZone, seriesGranularity(period.days)),
@@ -154,7 +143,6 @@ export async function getUtilizationReport(
       resolveVoiceProvider(tenantId),
       getImageTotals(db, tenantId, span, timeZone, subject),
       listImageModels(db, tenantId),
-      getImageSeries(db, tenantId, span, timeZone, subject, seriesGranularity(period.days)),
     ]);
     return {
       periodKey: period.key,
@@ -169,7 +157,6 @@ export async function getUtilizationReport(
       voice,
       voiceAvailable: voiceProvider !== null,
       image,
-      imageSeries: bucketImageSeries(imageDaily, span, new Date(), timeZone),
       imageAvailable: imageModels.length > 0,
     };
   } catch (error) {

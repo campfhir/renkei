@@ -8,8 +8,8 @@
 
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { inSpan, localBucketOf, type UsageSpan } from './user-utilization';
-import type { ImageDay, ImageUserRow } from './image-window';
+import { inSpan, type UsageSpan } from './user-utilization';
+import type { ImageUserRow } from './image-window';
 
 export interface ImageTotals {
   /** Pictures drawn. */
@@ -100,39 +100,4 @@ export async function getImageUsers(
       outputTokens: Number(row.output_tokens),
     };
   });
-}
-
-/**
- * Pictures over the window, cut by the hour (a one-day window) or the day,
- * in the viewer's zone, org-wide or for one person. Only the hours or days
- * that had any are returned; the page zero-fills them (bucketImageSeries),
- * so a quiet stretch reads as honestly flat. The twin of the token series.
- */
-export async function getImageSeries(
-  db: Kysely<DB>,
-  tenantId: string,
-  span: UsageSpan,
-  timeZone: string,
-  ownerSubject: string | null = null,
-  granularity: 'day' | 'hour' = 'day'
-): Promise<ImageDay[]> {
-  const result = await sql<TotalsRow & { day: string }>`
-    SELECT ${localBucketOf('created_at', timeZone, granularity)} AS day,
-           COALESCE(SUM(images), 0) AS images,
-           COALESCE(SUM(image_bytes), 0) AS bytes,
-           COALESCE(SUM(input_tokens), 0) AS input_tokens,
-           COALESCE(SUM(output_tokens), 0) AS output_tokens
-    FROM image_usage
-    WHERE tenant_id = ${tenantId} AND ${inSpan('created_at', span, timeZone)}
-      ${ownedBy(ownerSubject)}
-    GROUP BY day
-    ORDER BY day
-  `.execute(db);
-  return result.rows.map((row) => ({
-    day: row.day,
-    images: Number(row.images),
-    bytes: Number(row.bytes),
-    inputTokens: Number(row.input_tokens),
-    outputTokens: Number(row.output_tokens),
-  }));
 }
