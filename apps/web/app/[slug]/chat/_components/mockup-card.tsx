@@ -19,6 +19,7 @@ import { chatClient } from '@/lib/chat/client';
 import type { MockupRequest } from '@/lib/mockups/request';
 import { clampFrameHeight, useFrameMessages, type FrameMessage } from './mockup-frame';
 import MockupViewer from './mockup-viewer';
+import SvgSaveButtons from './svg-save-buttons';
 
 /** How tall the preview may be before it is cropped to its top; the viewer shows the rest. */
 const INLINE_MAX_HEIGHT = 440;
@@ -85,6 +86,14 @@ export default function MockupCard({
         <span className="shrink-0 text-gray-400">
           {request.format} · {request.width}px
         </span>
+        {request.format === 'svg' ? (
+          <SvgSaveButtons
+            source={request.source}
+            name={request.title}
+            className="flex shrink-0 items-center gap-0.5"
+            buttonClassName="flex items-center gap-1 rounded-md px-1.5 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-50 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          />
+        ) : null}
         <button
           type="button"
           onClick={() => setOpen(true)}

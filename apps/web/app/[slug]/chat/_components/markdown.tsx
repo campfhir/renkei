@@ -43,7 +43,9 @@
  */
 
 import { isValidElement, useState, type ReactNode } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import { looksLikeSvg } from '@/lib/svg-image';
+import SvgSaveButtons from './svg-save-buttons';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Icon, ICONS } from '@/components/icons';
@@ -193,6 +195,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const lineNumbers = useCodeLineNumbers();
   const text = textOf(children);
   const label = languageLabel(languageOf(children));
+  const svg = looksLikeSvg(text);
   return (
     <div className={lineNumbers ? 'chat-code line-numbers' : 'chat-code'}>
       <div className="chat-code-head">
@@ -200,6 +203,14 @@ function CodeBlock({ children }: { children?: ReactNode }) {
       </div>
       <pre>{children}</pre>
       <div className="chat-code-foot">
+        {svg ? (
+          <SvgSaveButtons
+            source={text}
+            name="image"
+            className="chat-code-save"
+            buttonClassName="chat-code-copy"
+          />
+        ) : null}
         <button
           type="button"
           onClick={() => {
@@ -265,6 +276,25 @@ function withHardBreaks(text: string): string {
     .join('');
 }
 
+/**
+ * Module-level, not inline: a components object rebuilt on every render gives
+ * React a new `pre` component type each time, which remounts every code
+ * block (and loses its Copy / Save confirmation) whenever the thread re-renders.
+ */
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer nofollow">
+      {children}
+    </a>
+  ),
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  table: ({ children }) => (
+    <div className="chat-table overflow-x-auto">
+      <table>{children}</table>
+    </div>
+  ),
+};
+
 export default function Markdown({
   text,
   variant,
@@ -288,19 +318,7 @@ export default function Markdown({
           rehypeTableLabels,
         ]}
         skipHtml
-        components={{
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer nofollow">
-              {children}
-            </a>
-          ),
-          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
-          table: ({ children }) => (
-            <div className="chat-table overflow-x-auto">
-              <table>{children}</table>
-            </div>
-          ),
-        }}
+        components={MARKDOWN_COMPONENTS}
       >
         {variant === 'user' ? withHardBreaks(text) : text}
       </ReactMarkdown>
