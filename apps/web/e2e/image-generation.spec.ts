@@ -355,8 +355,16 @@ async function seedDoneChat(f: Fixture): Promise<void> {
   }
 }
 
-/** A running turn parked on the image call's permission ask: the call is waiting. */
-async function seedWaitingChat(f: Fixture, input: Record<string, unknown>): Promise<void> {
+/**
+ * A running turn on the image call. `parked`: it is waiting on the person's
+ * permission ask (nothing is being drawn yet); otherwise it is approved and
+ * the call is in flight.
+ */
+async function seedWaitingChat(
+  f: Fixture,
+  input: Record<string, unknown>,
+  { parked }: { parked: boolean }
+): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
@@ -375,9 +383,14 @@ async function seedWaitingChat(f: Fixture, input: Record<string, unknown>): Prom
       decidedAt: null,
     };
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)
-       VALUES ($1, $2, $3, 'running', $4, 1, 'permission:chat_generate_image', NOW(), $5::jsonb)`,
-      [f.waitingTurnId, f.tenantId, f.waitingChatId, f.chatModelId, JSON.stringify(ask)]
+      parked
+        ? `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)
+           VALUES ($1, $2, $3, 'running', $4, 1, 'permission:chat_generate_image', NOW(), $5::jsonb)`
+        : `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, stage_at)
+           VALUES ($1, $2, $3, 'running', $4, 1, NOW())`,
+      parked
+        ? [f.waitingTurnId, f.tenantId, f.waitingChatId, f.chatModelId, JSON.stringify(ask)]
+        : [f.waitingTurnId, f.tenantId, f.waitingChatId, f.chatModelId]
     );
     const ids = await seedRows(client, f, f.waitingChatId, f.waitingTurnId, [
       { seq: 1, role: 'user', kind: 'prompt', blocks: [{ type: 'text', text: PROMPT }] },
@@ -391,10 +404,12 @@ async function seedWaitingChat(f: Fixture, input: Record<string, unknown>): Prom
         ],
       },
     ]);
-    await client.query(
-      `UPDATE chat_turns SET tool_permission = tool_permission || $2::jsonb WHERE id = $1`,
-      [f.waitingTurnId, JSON.stringify({ messageId: ids.get(2) })]
-    );
+    if (parked) {
+      await client.query(
+        `UPDATE chat_turns SET tool_permission = tool_permission || $2::jsonb WHERE id = $1`,
+        [f.waitingTurnId, JSON.stringify({ messageId: ids.get(2) })]
+      );
+    }
   } finally {
     await client.end();
   }
@@ -478,14 +493,14 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await shot(page, testInfo, 'image-card-done-mobile.png');
 });
 
-test('a call still waiting is an outline in the shape the model asked for', async ({
+test('a call waiting on permission shows no outline; once approved it is an outline in the shape asked for', async ({
   page,
 }, testInfo) => {
   await addModels(fixture, ['chat', 'painter']);
   await signIn(page, fixture);
 
-  // Portrait pixels: width over height is 2/3.
-  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1024x1536' });
+  // Parked on the permission ask: nothing is being drawn, so no outline — only the caption.
+  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1024x1536' }, { parked: true });
   await page.goto(`/${fixture.slug}/chat/${fixture.waitingChatId}`);
   await expect(
     page.getByRole('heading', { level: 1, name: 'Waiting for a picture' })
@@ -494,33 +509,42 @@ test('a call still waiting is an outline in the shape the model asked for', asyn
   await expect(card).toBeVisible(COLD);
   await expect(card).toHaveAttribute('data-state', 'waiting');
   await expect(card).toContainText('Waiting for permission to generate an image');
+  await expect(card.getByTestId('image-card-skeleton')).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Permission needed' })).toBeVisible();
+  await shot(page, testInfo, 'image-card-waiting-no-outline.png');
+
+  // Approved and being drawn: portrait pixels, so width over height is 2/3.
+  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1024x1536' }, { parked: false });
+  await page.reload();
+  await expect(card).toHaveAttribute('data-state', 'pending', COLD);
+  await expect(card).toContainText('Generating image');
   const skeleton = card.getByTestId('image-card-skeleton');
   await expect(skeleton).toBeVisible();
   await expect(card).toHaveAttribute('data-ratio', '0.667');
   const portrait = await skeleton.boundingBox();
   expect(portrait!.width / portrait!.height).toBeCloseTo(2 / 3, 1);
-  await shot(page, testInfo, 'image-card-waiting-portrait.png');
+  await shot(page, testInfo, 'image-card-generating-portrait.png');
 
   // A ratio instead of pixels: 16:9 landscape.
-  await seedWaitingChat(fixture, { filename: 'bear.png', aspectRatio: '16:9' });
+  await seedWaitingChat(fixture, { filename: 'bear.png', aspectRatio: '16:9' }, { parked: false });
   await page.reload();
   await expect(card).toHaveAttribute('data-ratio', /^1\.7/, COLD);
   const landscape = await card.getByTestId('image-card-skeleton').boundingBox();
   expect(landscape!.width / landscape!.height).toBeCloseTo(16 / 9, 1);
 
   // Nothing asked: a square.
-  await seedWaitingChat(fixture, { filename: 'bear.png' });
+  await seedWaitingChat(fixture, { filename: 'bear.png' }, { parked: false });
   await page.reload();
   await expect(card).toHaveAttribute('data-ratio', '1.000', COLD);
 
   // Phone width: the outline keeps its shape and fits the screen.
-  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1536x1024' });
+  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1536x1024' }, { parked: false });
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.reload();
   const narrow = await card.getByTestId('image-card-skeleton').boundingBox();
   expect(narrow!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   expect(narrow!.width / narrow!.height).toBeCloseTo(1.5, 1);
-  await shot(page, testInfo, 'image-card-waiting-mobile.png');
+  await shot(page, testInfo, 'image-card-generating-mobile.png');
 });
 
 test('Preferences offers the org’s image models, saves the person’s pick, and is silent with none', async ({
@@ -590,7 +614,7 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
 
   // Mine: two pictures, 4 million bytes, 101 tokens in and 5.2k out.
   await page.goto(`/${fixture.slug}/utilization`);
-  const mine = page.getByTestId('image-usage-card');
+  const mine = page.getByRole('main').getByTestId('image-usage-card');
   await expect(mine).toBeVisible(COLD);
   await expect(mine.getByTestId('image-usage-count')).toHaveText('2');
   await expect(mine.getByTestId('image-usage-bytes')).toHaveText('3.8 MB');
@@ -600,7 +624,7 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
 
   // The organization: three pictures, and who has the most.
   await page.goto(`/${fixture.slug}/admin/usage`);
-  const org = page.getByTestId('image-usage-card');
+  const org = page.getByRole('main').getByTestId('image-usage-card');
   await expect(org).toBeVisible(COLD);
   await expect(org.getByTestId('image-usage-count')).toHaveText('3');
   await expect(org.getByTestId('image-usage-bytes')).toHaveText('4.3 MB');
@@ -616,6 +640,6 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
 
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.reload();
-  await expect(page.getByTestId('image-usage-card')).toBeVisible();
+  await expect(page.getByRole('main').getByTestId('image-usage-card')).toBeVisible();
   await shot(page, testInfo, 'usage-images-org-mobile.png');
 });

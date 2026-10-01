@@ -4,10 +4,12 @@
  * A picture the model had drawn (chat_generate_image), shown inline where
  * the call was made — never folded away with the other tool calls.
  *
- *   - While it is drawn (or waiting for the person's permission) the card
- *     is an outline of the picture's SHAPE — the aspect ratio of the
- *     `size` or `aspectRatio` the model chose, read even from half-arrived
- *     input — so the thread does not jump when the image lands.
+ *   - Waiting for the person's permission, the card is just its caption:
+ *     nothing is being drawn yet, so there is no outline to promise one.
+ *   - Once it is approved and being drawn, the card is an outline of the
+ *     picture's SHAPE — the aspect ratio of the `size` or `aspectRatio` the
+ *     model chose, read even from half-arrived input — so the thread does
+ *     not jump when the image lands.
  *   - When it is done the image appears in that outline, and opens full
  *     size in a new tab. It is the file the call kept (the chat's
  *     Artifacts), found by the tool_results row that carried it.
@@ -98,7 +100,7 @@ export default function ImageCard({
         ) : null}
       </figcaption>
 
-      {state === 'failed' ? (
+      {state === 'waiting' ? null : state === 'failed' ? (
         <p
           className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
           data-testid="image-card-error"
