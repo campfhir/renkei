@@ -48,6 +48,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Animated GIFs from the chat',
+        detail:
+          'Ask the chat for a GIF or an animation and it draws a few small frames (up to 512 pixels a side, so each costs little) and plays them as a looping GIF right in the conversation, saved under the chat’s Artifacts. It can also animate a picture already in the chat.',
+      },
+      {
+        kind: 'added',
         title: 'Chat preview window and Download button for generated pictures',
         detail:
           'Ask the chat to generate an image and it now shows in a preview window within the chat. Hover or tap to see the full image and download it as a file, keeping it alongside your conversation.',
