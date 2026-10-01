@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { recordImageUsage } from '@/lib/image/usage';
-import { getImageTotals, getImageUsers } from './image-usage';
+import { getImageSeries, getImageTotals, getImageUsers } from './image-usage';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -190,5 +190,103 @@ maybe('image usage ledger', () => {
         imageBytes: 1,
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+maybe('image usage series', () => {
+  let db: Kysely<DB>;
+  const tenantId = randomUUID();
+  const cy = `cy-${tenantId.slice(0, 8)}`;
+  const di = `di-${tenantId.slice(0, 8)}`;
+  const week = { days: 7, endOffsetDays: 0 };
+
+  /** `daysBack` days before today (UTC), at hh:mm UTC — a moment, and the keys it falls under. */
+  function moment(daysBack: number, hh: number, mm: number) {
+    const now = new Date();
+    const at = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysBack, hh, mm)
+    );
+    return { at, day: at.toISOString().slice(0, 10), hour: at.toISOString().slice(0, 13) };
+  }
+  const late = moment(3, 23, 30);
+  const later = moment(3, 23, 50);
+  const early = moment(1, 3, 0);
+
+  async function add(subject: string, when: Date, bytes: number, tokens = 0) {
+    await sql`
+      INSERT INTO image_usage (tenant_id, subject, surface, images, image_bytes, input_tokens, output_tokens, created_at)
+      VALUES (${tenantId}, ${subject}, 'images', 1, ${bytes}, ${tokens}, ${tokens * 2}, ${when})
+    `.execute(db);
+  }
+
+  beforeAll(async () => {
+    const result = getDatabase();
+    if (!result.ok) throw new Error('no database');
+    db = result.val;
+    await db
+      .insertInto('tenants')
+      .values({ id: tenantId, slug: `image-series-${tenantId.slice(0, 8)}` })
+      .execute();
+    await add(cy, late.at, 100, 5);
+    await add(cy, later.at, 50, 5);
+    await add(cy, early.at, 7);
+    await add(di, later.at, 1_000);
+  });
+
+  afterAll(async () => {
+    await sql`DELETE FROM image_usage WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    await closeDatabase();
+  });
+
+  it('cuts the window by the day, summing pictures, bytes and tokens, oldest first', async () => {
+    const rows = await getImageSeries(db, tenantId, week, 'UTC', null, 'day');
+    expect(rows).toEqual([
+      { day: late.day, images: 3, bytes: 1_150, inputTokens: 10, outputTokens: 20 },
+      { day: early.day, images: 1, bytes: 7, inputTokens: 0, outputTokens: 0 },
+    ]);
+  });
+
+  it('cuts it by the hour when asked — the key carries the hour', async () => {
+    const rows = await getImageSeries(db, tenantId, week, 'UTC', null, 'hour');
+    expect(rows.map((row) => [row.day, row.images, row.bytes])).toEqual([
+      [`${late.hour.replace(' ', 'T')}`, 3, 1_150],
+      [`${early.hour.replace(' ', 'T')}`, 1, 7],
+    ]);
+    expect(rows[0]!.day).toMatch(/^\d{4}-\d{2}-\d{2}T23$/);
+  });
+
+  it('puts a moment under the day it is in the viewer’s zone, not in UTC', async () => {
+    // 23:30 UTC is 08:30 the next morning in Tokyo.
+    const tokyo = await getImageSeries(db, tenantId, week, 'Asia/Tokyo', null, 'day');
+    const nextDay = new Date(late.at.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
+    expect(tokyo.map((row) => row.day)).toContain(nextDay);
+    expect(tokyo.find((row) => row.day === nextDay)).toMatchObject({ images: 3, bytes: 1_150 });
+  });
+
+  it('reads one person on their own', async () => {
+    const mine = await getImageSeries(db, tenantId, week, 'UTC', cy, 'day');
+    expect(mine).toEqual([
+      { day: late.day, images: 2, bytes: 150, inputTokens: 10, outputTokens: 20 },
+      { day: early.day, images: 1, bytes: 7, inputTokens: 0, outputTokens: 0 },
+    ]);
+    const theirs = await getImageSeries(db, tenantId, week, 'UTC', di, 'day');
+    expect(theirs).toEqual([
+      { day: late.day, images: 1, bytes: 1_000, inputTokens: 0, outputTokens: 0 },
+    ]);
+    expect(await getImageSeries(db, tenantId, week, 'UTC', 'nobody', 'day')).toEqual([]);
+  });
+
+  it('leaves out what is outside the window, and other orgs', async () => {
+    const narrow = await getImageSeries(
+      db,
+      tenantId,
+      { days: 1, endOffsetDays: 0 },
+      'UTC',
+      null,
+      'hour'
+    );
+    expect(narrow).toEqual([]);
+    expect(await getImageSeries(db, randomUUID(), week, 'UTC', null, 'day')).toEqual([]);
   });
 });

@@ -493,18 +493,21 @@ export default function ModelForms({ slug }: { slug: string }) {
                   sends the prompt to it.{' '}
                   {draft.apiSurface === 'flux' ? (
                     <>
-                      FLUX: set the base URL to the model&apos;s own endpoint, e.g.{' '}
+                      FLUX through its native provider route, which every FLUX model has (FLUX.2
+                      included): set the base URL to the model&apos;s own endpoint, e.g.{' '}
                       <span className="font-mono break-all">
                         https://&#123;resource&#125;.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex
                       </span>
                       , the model id to its name (FLUX.2-flex), and the API version to{' '}
-                      <span className="font-mono">preview</span>.
+                      <span className="font-mono">preview</span>. FLUX.1 Kontext and 1.1 Pro can
+                      instead use the OpenAI-compatible route — pick the Images API for those.
                     </>
                   ) : (
                     <>
                       gpt-image: leave the base URL blank for OpenAI, or on Azure set it to the
                       resource&apos;s <span className="font-mono">/openai/v1</span> surface and the
-                      model id to your deployment name.
+                      model id to your deployment name. FLUX.1 Kontext and 1.1 Pro deployed on Azure
+                      answer on this same route.
                     </>
                   )}
                 </p>

@@ -93,7 +93,11 @@ export interface GeneratedImage {
 export type ImageErrorKind = LlmErrorKind | 'content_filter';
 
 function errorKindOf(status: number, body: string): ImageErrorKind {
-  if (/content_?filter|content_policy_violation|moderation_blocked|safety system/i.test(body)) {
+  // The wording differs by route: OpenAI's codes, Azure's "safety system", and the
+  // gateway's "blocked due to content moderation policies" on the native FLUX route.
+  if (
+    /content_?filter|content_policy_violation|moderation|content safety|safety system/i.test(body)
+  ) {
     return 'content_filter';
   }
   if (looksLikeCredentialFailure(body)) return 'auth';
@@ -159,11 +163,16 @@ function requestFor(
   return { url: `${baseUrl}/images/edits${version}`, body: form };
 }
 
-/** `usage` as gpt-image sends it ({input_tokens, output_tokens}); null when absent or not numbers. */
+/**
+ * `usage` as the routes send it: gpt-image's {input_tokens, output_tokens},
+ * or Azure's native provider shape {prompt_tokens, completion_tokens}.
+ * Null when absent or not numbers.
+ */
 function usageOf(raw: unknown): ImageUsage | null {
   if (typeof raw !== 'object' || raw === null) return null;
-  const input: unknown = Reflect.get(raw, 'input_tokens');
-  const output: unknown = Reflect.get(raw, 'output_tokens');
+  const input: unknown = Reflect.get(raw, 'input_tokens') ?? Reflect.get(raw, 'prompt_tokens');
+  const output: unknown =
+    Reflect.get(raw, 'output_tokens') ?? Reflect.get(raw, 'completion_tokens');
   if (typeof input !== 'number' && typeof output !== 'number') return null;
   const whole = (value: unknown) =>
     typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;

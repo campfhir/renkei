@@ -5,6 +5,7 @@
  */
 
 import type { OrgDay, TopUserRow, UsageSpan } from '@/lib/usage/org-usage';
+import type { ImageBucket, ImageDay } from '@/lib/usage/image-window';
 
 export { formatTokens } from '@/lib/format-tokens';
 
@@ -190,6 +191,46 @@ export function bucketOrgSeries(
     }
     const row = found.get(key);
     if (row) addRow(bucket, row);
+  }
+  return [...buckets.values()];
+}
+
+/**
+ * Pictures over the window: every hour (a one-day window) or day, quiet
+ * ones included, folded into buckets sized for the period — the same keys,
+ * labels and folding as the token series, so the two charts line up.
+ * Both usage pages draw this one.
+ */
+export function bucketImageSeries(
+  rows: ImageDay[],
+  span: UsageSpan,
+  now: Date,
+  timeZone: string
+): ImageBucket[] {
+  const found = new Map(rows.map((row) => [row.day, row]));
+  const granularity = granularityFor(span.days);
+  const buckets = new Map<string, ImageBucket>();
+  for (const key of seriesKeys(span, now, timeZone)) {
+    const bucketKey = bucketKeyOf(key, granularity);
+    let bucket = buckets.get(bucketKey);
+    if (!bucket) {
+      bucket = {
+        bucket: bucketKey,
+        label: labelOf(bucketKey, granularity),
+        images: 0,
+        bytes: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+      buckets.set(bucketKey, bucket);
+    }
+    const row = found.get(key);
+    if (row) {
+      bucket.images += row.images;
+      bucket.bytes += row.bytes;
+      bucket.inputTokens += row.inputTokens;
+      bucket.outputTokens += row.outputTokens;
+    }
   }
   return [...buckets.values()];
 }

@@ -2,6 +2,7 @@ import {
   activeSummary,
   activeUserPercent,
   activityCells,
+  bucketImageSeries,
   bucketOrgSeries,
   calendarMonths,
   formatTokens,
@@ -237,5 +238,113 @@ describe('numbers', () => {
     expect(activeUserPercent(3, 10)).toBe(30);
     expect(activeUserPercent(1, 3)).toBe(33);
     expect(activeUserPercent(0, 0)).toBe(0);
+  });
+});
+
+describe('bucketImageSeries', () => {
+  const day = (key: string, images: number, bytes: number, inputTokens = 0, outputTokens = 0) => ({
+    day: key,
+    images,
+    bytes,
+    inputTokens,
+    outputTokens,
+  });
+
+  it('draws a one-day window by the hour — all 24, quiet ones zero', () => {
+    const buckets = bucketImageSeries(
+      [day('2026-09-02T09', 2, 3_000_000, 100, 4_000), day('2026-09-02T14', 1, 500_000)],
+      TODAY,
+      NOW,
+      'UTC'
+    );
+    expect(buckets).toHaveLength(24);
+    expect(buckets[0]).toMatchObject({
+      bucket: '2026-09-02T00',
+      label: '12 AM',
+      images: 0,
+      bytes: 0,
+    });
+    expect(buckets[9]).toMatchObject({
+      bucket: '2026-09-02T09',
+      label: '9 AM',
+      images: 2,
+      bytes: 3_000_000,
+      inputTokens: 100,
+      outputTokens: 4_000,
+    });
+    expect(buckets[14]).toMatchObject({ label: '2 PM', images: 1, bytes: 500_000 });
+    expect(buckets.reduce((sum, b) => sum + b.bytes, 0)).toBe(3_500_000);
+  });
+
+  it('reads yesterday by the hour too, on yesterday’s date', () => {
+    const buckets = bucketImageSeries([day('2026-09-01T23', 1, 10)], YESTERDAY, NOW, 'UTC');
+    expect(buckets).toHaveLength(24);
+    expect(buckets[0]!.bucket).toBe('2026-09-01T00');
+    expect(buckets[23]).toMatchObject({ label: '11 PM', bytes: 10 });
+  });
+
+  it('zero-fills every day of a week, oldest first', () => {
+    const buckets = bucketImageSeries([day('2026-09-01', 3, 4_000_000)], WEEK, NOW, 'UTC');
+    expect(buckets.map((b) => b.bucket)).toEqual([
+      '2026-08-27',
+      '2026-08-28',
+      '2026-08-29',
+      '2026-08-30',
+      '2026-08-31',
+      '2026-09-01',
+      '2026-09-02',
+    ]);
+    expect(buckets[5]).toMatchObject({ label: 'Sep 1', images: 3, bytes: 4_000_000 });
+    expect(buckets.filter((b) => b.bytes > 0)).toHaveLength(1);
+  });
+
+  it('folds a quarter into weeks starting Monday, summing what fell in each', () => {
+    const buckets = bucketImageSeries(
+      [day('2026-08-31', 1, 100), day('2026-09-01', 2, 200), day('2026-09-02', 1, 50, 7, 3)],
+      { days: 90, endOffsetDays: 0 },
+      NOW,
+      'UTC'
+    );
+    // 2026-08-31 is a Monday: that day, the 1st and the 2nd share a week.
+    const week = buckets.find((b) => b.bucket === '2026-08-31')!;
+    expect(week).toMatchObject({ images: 4, bytes: 350, inputTokens: 7, outputTokens: 3 });
+    expect(buckets.length).toBeLessThan(20);
+    expect(buckets.reduce((sum, b) => sum + b.bytes, 0)).toBe(350);
+  });
+
+  it('folds a year into months', () => {
+    const buckets = bucketImageSeries(
+      [day('2026-08-15', 1, 1_000), day('2026-08-20', 1, 2_000), day('2026-09-02', 1, 5)],
+      { days: 365, endOffsetDays: 0 },
+      NOW,
+      'UTC'
+    );
+    expect(buckets).toHaveLength(13);
+    expect(buckets.find((b) => b.bucket === '2026-08-01')).toMatchObject({
+      label: 'Aug 2026',
+      images: 2,
+      bytes: 3_000,
+    });
+    expect(buckets[buckets.length - 1]).toMatchObject({ bucket: '2026-09-01', bytes: 5 });
+  });
+
+  it('is all zeros for a window with no pictures, and ignores rows outside the window', () => {
+    const empty = bucketImageSeries([], WEEK, NOW, 'UTC');
+    expect(empty).toHaveLength(7);
+    expect(empty.every((b) => b.images === 0 && b.bytes === 0)).toBe(true);
+    const stray = bucketImageSeries([day('2020-01-01', 9, 9)], WEEK, NOW, 'UTC');
+    expect(stray.every((b) => b.bytes === 0)).toBe(true);
+  });
+
+  it('cuts days in the viewer’s zone', () => {
+    // 15:00 UTC on the 2nd is 08:00 on the 2nd in Los Angeles; hours are local.
+    const buckets = bucketImageSeries(
+      [day('2026-09-02T08', 1, 1)],
+      TODAY,
+      NOW,
+      'America/Los_Angeles'
+    );
+    expect(buckets).toHaveLength(24);
+    expect(buckets[8]).toMatchObject({ bucket: '2026-09-02T08', label: '8 AM', bytes: 1 });
   });
 });

@@ -34,6 +34,7 @@ import { modelLabel } from '@/lib/agents/model-label';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { ImageUsageCard } from '@/components/image-usage-card';
+import { ImageUsageChart } from '@/components/image-usage-chart';
 import { Leaderboard } from '@/components/leaderboard';
 import { boardRows, formatDuration, type RankedVoiceUserRow } from '@/lib/usage/voice-window';
 import {
@@ -46,12 +47,13 @@ import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
-type Series = 'tokens' | 'runs' | 'tools';
+type Series = 'tokens' | 'runs' | 'tools' | 'images';
 
 const SERIES: { key: Series; label: string }[] = [
   { key: 'tokens', label: 'Tokens' },
   { key: 'runs', label: 'Agent runs' },
   { key: 'tools', label: 'Tool calls' },
+  { key: 'images', label: 'Images' },
 ];
 
 const TOKEN_SEGMENTS: {
@@ -71,7 +73,7 @@ interface Segment {
   className: string;
 }
 
-function legendFor(series: Series): { label: string; className: string }[] {
+function legendFor(series: Exclude<Series, 'images'>): { label: string; className: string }[] {
   if (series === 'tokens')
     return TOKEN_SEGMENTS.map(({ label, className }) => ({ label, className }));
   if (series === 'runs')
@@ -85,7 +87,7 @@ function legendFor(series: Series): { label: string; className: string }[] {
   ];
 }
 
-function segmentsOf(bucket: OrgBucket, series: Series): Segment[] {
+function segmentsOf(bucket: OrgBucket, series: Exclude<Series, 'images'>): Segment[] {
   if (series === 'tokens') {
     return TOKEN_SEGMENTS.map((seg) => ({
       label: seg.label,
@@ -120,7 +122,7 @@ function segmentsOf(bucket: OrgBucket, series: Series): Segment[] {
  * anchors the base of the stack to the bar's bottom and the first-listed
  * category ends up on top, which is where its rounded corner belongs.
  */
-function Chart({ points, series }: { points: OrgBucket[]; series: Series }) {
+function Chart({ points, series }: { points: OrgBucket[]; series: Exclude<Series, 'images'> }) {
   const legend = legendFor(series);
   const rows = points.map((point) => segmentsOf(point, series));
   const totals = rows.map((segments) => segments.reduce((sum, seg) => sum + seg.value, 0));
@@ -664,7 +666,11 @@ export default function OrgUsageViewer({
             ))}
           </span>
         </figcaption>
-        <Chart points={report.series} series={series} />
+        {series === 'images' ? (
+          <ImageUsageChart points={report.imageSeries} />
+        ) : (
+          <Chart points={report.series} series={series} />
+        )}
       </figure>
 
       <div className="grid gap-4 lg:grid-cols-3">

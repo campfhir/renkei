@@ -26,25 +26,30 @@ import {
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { ImageUsageCard } from '@/components/image-usage-card';
+import { ImageUsageChart } from '@/components/image-usage-chart';
 import { Leaderboard } from '@/components/leaderboard';
 import type { EfficientAgentRow } from '@/lib/usage/org-usage';
 import type { AgentUtilizationRow } from '@/lib/usage/user-utilization';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
-type Series = 'tokens' | 'runs' | 'tools';
+type Series = 'tokens' | 'runs' | 'tools' | 'images';
 
 const SERIES: { key: Series; label: string }[] = [
   { key: 'tokens', label: 'Tokens' },
   { key: 'runs', label: 'Agent runs' },
   { key: 'tools', label: 'Tool calls' },
+  { key: 'images', label: 'Images' },
 ];
 
 /**
  * Which two numbers a bar stacks, per series: the base in blue and the
  * highlight on top — output tokens (purple) or failures (red).
  */
-function partsOf(bucket: UtilizationBucket, series: Series): { base: number; top: number } {
+function partsOf(
+  bucket: UtilizationBucket,
+  series: Exclude<Series, 'images'>
+): { base: number; top: number } {
   switch (series) {
     case 'tokens':
       return { base: bucket.inputTokens, top: bucket.outputTokens };
@@ -55,7 +60,11 @@ function partsOf(bucket: UtilizationBucket, series: Series): { base: number; top
   }
 }
 
-function legendOf(series: Series): { base: string; top: string; topClass: string } {
+function legendOf(series: Exclude<Series, 'images'>): {
+  base: string;
+  top: string;
+  topClass: string;
+} {
   switch (series) {
     case 'tokens':
       return { base: 'Tokens in', top: 'Tokens out', topClass: 'bg-purple-400' };
@@ -66,7 +75,7 @@ function legendOf(series: Series): { base: string; top: string; topClass: string
   }
 }
 
-function tooltipOf(bucket: UtilizationBucket, series: Series): string {
+function tooltipOf(bucket: UtilizationBucket, series: Exclude<Series, 'images'>): string {
   switch (series) {
     case 'tokens':
       return `${bucket.label}: ${formatTokens(bucket.inputTokens)} in, ${formatTokens(bucket.outputTokens)} out`;
@@ -78,7 +87,13 @@ function tooltipOf(bucket: UtilizationBucket, series: Series): string {
 }
 
 /** Stacked bars — inline markup, one series at a time, no chart dependency. */
-function Chart({ points, series }: { points: UtilizationBucket[]; series: Series }) {
+function Chart({
+  points,
+  series,
+}: {
+  points: UtilizationBucket[];
+  series: Exclude<Series, 'images'>;
+}) {
   const legend = legendOf(series);
   const totals = points.map((point) => {
     const { base, top } = partsOf(point, series);
@@ -371,7 +386,10 @@ export default function UtilizationViewer({
         <figcaption className="mb-3 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{caption}</span>
           <span className="ml-auto inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-700">
-            {SERIES.map((option) => (
+            {SERIES.filter(
+              (option) =>
+                option.key !== 'images' || report.imageAvailable || report.image.images > 0
+            ).map((option) => (
               <button
                 key={option.key}
                 type="button"
@@ -388,7 +406,11 @@ export default function UtilizationViewer({
             ))}
           </span>
         </figcaption>
-        <Chart points={report.series} series={series} />
+        {series === 'images' ? (
+          <ImageUsageChart points={report.imageSeries} />
+        ) : (
+          <Chart points={report.series} series={series} />
+        )}
       </figure>
 
       <Leaderboard<EfficientAgentRow>

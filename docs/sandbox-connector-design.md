@@ -138,13 +138,21 @@ row whose **API surface** is an image one (`settings.apiSurface`):
 - `images` — the OpenAI Images API (`gpt-image-1`, `gpt-image-2`, or an
   Azure deployment of one): `POST {base}/images/generations` with `size`,
   `quality`, `output_format`, `background`.
-- `flux` — Black Forest Labs' FLUX models as Azure AI Foundry serves them
-  (`FLUX.2-flex`, …): the base URL is the model's own provider endpoint
+- `flux` — Black Forest Labs' FLUX models on Azure AI Foundry's native
+  provider route, which every FLUX model has (FLUX.2 included): the base URL is
+  the model's own provider endpoint
   (`https://{resource}.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-flex`,
-  api-version `preview`), the body carries `width`/`height` instead of
-  `size`, and the quality/format/background knobs are not sent.
+  api-version `preview`), the body carries `width`/`height` instead of `size`,
+  and the quality/format/background knobs are not sent. FLUX.1 Kontext and
+  1.1 Pro also answer on the OpenAI-compatible route
+  (`/openai/v1/images/generations`); there they are an `images` row, like
+  gpt-image.
 
-Both answer base64 (`b64_json`); `generateImage` in `@renkei/agent-llm`
+Both answer base64 (`b64_json`) — the native route adds a `seed` and reports
+tokens as `prompt_tokens`/`completion_tokens`, which is read as input/output —
+and a moderation block comes back as a 400 whose message mentions content
+moderation, read as the safety system saying no rather than a bad request (so
+it is not retried at other sizes). `generateImage` in `@renkei/agent-llm`
 speaks either, with the OpenAI chat adapter's credential-header rules. The
 media type is taken from the returned bytes, not from the format asked
 for — FLUX answers PNG whatever is requested — and the tool saves under

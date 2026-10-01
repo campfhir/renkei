@@ -409,3 +409,49 @@ describe('generateImage — editing a source image', () => {
     expect(!result.ok && result.err.type).toBe('invalid_request');
   });
 });
+
+describe('generateImage — Azure FLUX routes', () => {
+  it('reads the native provider route’s answer: b64_json, a seed, and prompt/completion tokens', async () => {
+    respond(200, {
+      data: [{ b64_json: PNG_B64, seed: 42598132 }],
+      usage: { prompt_tokens: 12, completion_tokens: 0, total_tokens: 12 },
+    });
+    const result = await generateImage(
+      {
+        apiKey: 'k',
+        model: 'FLUX.2-pro',
+        surface: 'flux',
+        baseUrl: 'https://res.services.ai.azure.com/providers/blackforestlabs/v1/flux-2-pro',
+      },
+      { prompt: 'p' }
+    );
+    expect(result.ok && result.val.bytes.equals(PNG_BYTES)).toBe(true);
+    expect(result.ok && result.val.usage).toEqual({ inputTokens: 12, outputTokens: 0 });
+  });
+
+  it('reads the OpenAI-compatible route’s answer, revised_prompt and all', async () => {
+    respond(200, {
+      created: 1718000000,
+      data: [{ b64_json: PNG_B64, revised_prompt: 'A highly detailed photograph of a red fox…' }],
+    });
+    const result = await generateImage(
+      { apiKey: 'k', model: 'FLUX.1-Kontext-pro' },
+      { prompt: 'p' }
+    );
+    expect(result.ok && result.val.mediaType).toBe('image/png');
+    expect(result.ok && result.val.usage).toBeNull();
+  });
+
+  it('treats Azure’s moderation block as the safety system saying no, not a bad request', async () => {
+    respond(400, {
+      error: {
+        code: '400',
+        message: 'The response was blocked due to content moderation policies.',
+        target: 'prompt',
+        details: [],
+      },
+    });
+    const result = await generateImage({ apiKey: 'k', model: 'm' }, { prompt: 'p' });
+    expect(!result.ok && result.err.type).toBe('content_filter');
+  });
+});
