@@ -19,6 +19,8 @@ import { BINARY_MAX_BYTES, IMAGE_FILE_MAX_BYTES, refuse, type BinaryCheck } from
 
 export { BINARY_MAX_BYTES, IMAGE_FILE_MAX_BYTES } from './types';
 export type { BinaryCheck } from './types';
+export { coverRgba, decodePng, encodePng, fitWithin, resizeRgba, type RgbaImage } from './pixels';
+export { encodeGif, GIF_MAX_FRAMES } from './gif';
 
 const VALIDATORS: Record<string, (bytes: Buffer) => BinaryCheck> = {
   png: sanitizePng,

@@ -6,6 +6,8 @@
  */
 
 import {
+  animationSize,
+  isAnimationCall,
   nearestStandardSize,
   parseAspectRatio,
   parseSize,
@@ -109,6 +111,23 @@ describe('requestedShape', () => {
   });
 });
 
+describe('animationSize', () => {
+  it('is 512 square when no shape was asked for', () => {
+    expect(animationSize(null)).toEqual({ width: 512, height: 512 });
+  });
+
+  it('shrinks the shape asked for to fit 512 a side, in multiples of 16', () => {
+    expect(animationSize({ width: 1536, height: 1024 })).toEqual({ width: 512, height: 336 });
+    expect(animationSize({ width: 1024, height: 1792 })).toEqual({ width: 288, height: 512 });
+    expect(animationSize(sizeFromRatio(16 / 9))).toEqual({ width: 512, height: 288 });
+  });
+
+  it('keeps a size already small, and never goes under 64', () => {
+    expect(animationSize({ width: 256, height: 256 })).toEqual({ width: 256, height: 256 });
+    expect(animationSize({ width: 8000, height: 64 })).toEqual({ width: 512, height: 64 });
+  });
+});
+
 describe('sizeLadder', () => {
   it('is just auto when no size was asked', () => {
     expect(sizeLadder(null, true)).toEqual([null]);
@@ -143,5 +162,16 @@ describe('skeletonRatio', () => {
     expect(skeletonRatio({})).toBe(1);
     expect(skeletonRatio(null, '{"size": "wide"')).toBe(1);
     expect(skeletonRatio('nonsense')).toBe(1);
+  });
+});
+
+describe('isAnimationCall', () => {
+  it('is a .gif filename, from complete input or half-arrived JSON', () => {
+    expect(isAnimationCall({ filename: 'walk.gif' })).toBe(true);
+    expect(isAnimationCall({ filename: 'WALK.GIF' })).toBe(true);
+    expect(isAnimationCall({ filename: 'walk.png' })).toBe(false);
+    expect(isAnimationCall({})).toBe(false);
+    expect(isAnimationCall(null, '{"filename": "walk.gif", "fra')).toBe(true);
+    expect(isAnimationCall(null, '{"filename": "walk.g')).toBe(false);
   });
 });

@@ -14,6 +14,9 @@
  *     preview window with a Download button. It is the file the call kept (the chat's
  *     Artifacts), found by the tool_results row that carried it.
  *   - When it failed, the reason is shown plainly beside the image icon.
+ *
+ * A call for a .gif is an animation: the same card, worded as one, and the
+ * GIF plays in place once it is made.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -21,7 +24,7 @@ import { Icon, ICONS } from '@/components/icons';
 import FileCaption from './file-caption';
 import ImagePreview from './image-preview';
 import { chatClient } from '@/lib/chat/client';
-import { skeletonRatio } from '@/lib/chat/image-size';
+import { isAnimationCall, skeletonRatio } from '@/lib/chat/image-size';
 import type { ChatBlock } from '@/lib/chat/views';
 import type { AttachmentView } from '@/lib/chat/views';
 
@@ -72,14 +75,16 @@ export default function ImageCard({
     maxWidth: `min(100%, ${Math.round(MAX_HEIGHT * ratio)}px)`,
   } as const;
 
+  const animated = isAnimationCall(call.input, call.partialJson);
+  const noun = animated ? 'animation' : 'image';
   const label =
     state === 'waiting'
-      ? 'Waiting for permission to generate an image'
+      ? `Waiting for permission to generate an ${noun}`
       : state === 'pending'
-        ? 'Generating image'
+        ? `Generating ${noun}`
         : state === 'failed'
-          ? 'Image could not be generated'
-          : 'Generated image';
+          ? `${animated ? 'Animation' : 'Image'} could not be generated`
+          : `Generated ${noun}`;
 
   const showImage = state === 'done' && src !== null && !broken;
 
@@ -89,6 +94,7 @@ export default function ImageCard({
       data-testid="image-card"
       data-state={state}
       data-ratio={ratio.toFixed(3)}
+      data-kind={noun}
     >
       <figcaption className="mb-1.5 flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-400">
         <Icon path={ICONS.image} className="h-3.5 w-3.5 shrink-0" />

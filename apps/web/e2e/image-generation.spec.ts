@@ -8,6 +8,8 @@
  *   - a call still waiting is an outline in the SHAPE the model asked for
  *     (the aspect ratio of `size`, or of `aspectRatio`), at a phone's width
  *     too;
+ *   - a .gif call is worded as an animation, waiting and done, and the GIF
+ *     it made (a real one, written by the tool's own encoder) plays inline;
  *   - Preferences offers the org's image models and saves the person's pick,
  *     and leaves the section out when the org has none;
  *   - My usage and Organization usage count the pictures: how many, how much
@@ -27,6 +29,7 @@ import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { encodeGif } from '@renkei/document-render';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The first hit on a route compiles it (`next dev` builds lazily). */
@@ -66,6 +69,10 @@ function fixtureFor(projectName: string) {
     waitingChatId: id('waiting-chat'),
     waitingTurnId: id('waiting-turn'),
     attachmentId: id('attachment'),
+    gifChatId: id('gif-chat'),
+    gifTurnId: id('gif-turn'),
+    gifAttachmentId: id('gif-attachment'),
+    gifCall: `toolu_gif_${projectName}`,
     drawCall: `toolu_draw_${projectName}`,
     refusedCall: `toolu_refused_${projectName}`,
     waitingCall: `toolu_waiting_${projectName}`,
@@ -347,6 +354,91 @@ async function seedDoneChat(f: Fixture): Promise<void> {
         f.subject,
         f.doneChatId,
         `chat/${f.tenantId}/${f.doneTurnId}`,
+        ids.get(3),
+      ]
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+/** A 512x288 looping GIF: a red ball crossing a pale blue sky in four frames. */
+function ballGif(): Buffer {
+  const width = 512;
+  const height = 288;
+  const frames = [0, 1, 2, 3].map((step) => {
+    const data = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const ball = (x - 64 - step * 128) ** 2 + (y - 144) ** 2 < 48 ** 2;
+        data.set(ball ? [220, 40, 40, 255] : [200, 225, 245, 255], (y * width + x) * 4);
+      }
+    }
+    return { width, height, data };
+  });
+  return encodeGif(frames, { delayMs: 200 });
+}
+
+/** A finished chat whose one call made an animated GIF. */
+async function seedGifChat(f: Fixture, sizeBytes: number): Promise<void> {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query(
+      `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
+       VALUES ($1, $2, $3, 'Bouncing ball', $4, NOW())`,
+      [f.gifChatId, f.tenantId, f.subject, f.chatModelId]
+    );
+    await client.query(
+      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
+       VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
+      [f.gifTurnId, f.tenantId, f.gifChatId, f.chatModelId]
+    );
+    const ids = await seedRows(client, f, f.gifChatId, f.gifTurnId, [
+      {
+        seq: 1,
+        role: 'user',
+        kind: 'prompt',
+        blocks: [{ type: 'text', text: 'make a gif of a red ball rolling across the sky' }],
+      },
+      {
+        seq: 2,
+        role: 'assistant',
+        kind: 'assistant',
+        blocks: [
+          { type: 'text', text: 'Here is your animation.' },
+          {
+            type: 'tool_use',
+            id: f.gifCall,
+            name: 'chat_generate_image',
+            input: { filename: 'ball.gif', aspectRatio: '16:9', frames: 4 },
+          },
+        ],
+      },
+      {
+        seq: 3,
+        role: 'user',
+        kind: 'tool_results',
+        blocks: [
+          {
+            type: 'tool_result',
+            toolUseId: f.gifCall,
+            content: `Generated ball.gif with Painter (image/gif, a looping animation of 4 frames at 512x288 px, 200 ms each, ${sizeBytes} bytes). It is under this chat’s Artifacts.`,
+            durationMs: 95_000,
+          },
+        ],
+      },
+    ]);
+    await client.query(
+      `INSERT INTO chat_attachments (id, tenant_id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id)
+       VALUES ($1, $2, $3, $4, $5, 'ball.gif', 'image/gif', $6, 'none', 'model', $7)`,
+      [
+        f.gifAttachmentId,
+        f.tenantId,
+        f.subject,
+        f.gifChatId,
+        `chat/${f.tenantId}/${f.gifTurnId}`,
+        sizeBytes,
         ids.get(3),
       ]
     );
@@ -692,6 +784,72 @@ test('a call waiting on permission shows no outline; once approved it is an outl
   expect(narrow!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   expect(narrow!.width / narrow!.height).toBeCloseTo(1.5, 1);
   await shot(page, testInfo, 'image-card-generating-mobile.png');
+});
+
+test('an animated GIF is worded as an animation while it is made, and plays inline once it is', async ({
+  page,
+}, testInfo) => {
+  await addModels(fixture, ['chat', 'painter']);
+  await signIn(page, fixture);
+
+  // Being made: an animation, in the 16:9 shape asked for.
+  await seedWaitingChat(fixture, { filename: 'ball.gif', aspectRatio: '16:9' }, { parked: false });
+  await page.goto(`/${fixture.slug}/chat/${fixture.waitingChatId}`);
+  const waiting = page.getByTestId('image-card');
+  await expect(waiting).toHaveAttribute('data-state', 'pending', COLD);
+  await expect(waiting).toHaveAttribute('data-kind', 'animation');
+  await expect(waiting).toContainText('Generating animation');
+  await expect(waiting).toHaveAttribute('data-ratio', /^1\.7/);
+  await shot(page, testInfo, 'image-card-generating-animation.png');
+
+  // Made: the GIF itself, served as the stored file.
+  const gif = ballGif();
+  await seedGifChat(fixture, gif.byteLength);
+  await page.route(
+    `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.gifAttachmentId}`,
+    (route) => route.fulfill({ status: 200, contentType: 'image/gif', body: gif })
+  );
+  await page.goto(`/${fixture.slug}/chat/${fixture.gifChatId}`);
+  await expect(page.getByRole('heading', { level: 1, name: 'Bouncing ball' })).toBeVisible(COLD);
+  const card = page.getByTestId('image-card');
+  await expect(card).toHaveAttribute('data-state', 'done', COLD);
+  await expect(card).toHaveAttribute('data-kind', 'animation');
+  await expect(card).toContainText('Generated animation');
+  await expect(card).toContainText('1m 35s');
+  const picture = card.getByRole('img', { name: 'ball.gif' });
+  await expect(picture).toBeVisible();
+  await expect
+    .poll(() => picture.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight]))
+    .toEqual([512, 288]);
+  await expect(card.getByTestId('file-caption')).toContainText('ball.gif');
+
+  // It plays: what is on screen changes from one moment to the next. (A canvas
+  // cannot tell — drawImage always paints an animated image's first frame.)
+  const before = await picture.screenshot();
+  await expect
+    .poll(async () => (await picture.screenshot()).equals(before), { timeout: 5_000 })
+    .toBe(false);
+  await shot(page, testInfo, 'image-card-animation.png');
+
+  // The preview window shows the animation too.
+  await card.getByRole('button', { name: 'Preview image' }).click();
+  const preview = page.getByTestId('image-preview');
+  await expect(preview).toBeVisible();
+  await expect(preview.getByTestId('image-preview-download')).toHaveAttribute(
+    'download',
+    'ball.gif'
+  );
+  await page.keyboard.press('Escape');
+  await expect(preview).toHaveCount(0);
+
+  // Phone width: the animation stays inside the thread.
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  const box = await picture.boundingBox();
+  expect(box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true
+  );
+  await shot(page, testInfo, 'image-card-animation-mobile.png');
 });
 
 test('Preferences offers the org’s image models, saves the person’s pick, and is silent with none', async ({
