@@ -7,7 +7,9 @@
  * the three inputs it tells apart.
  */
 
+import { Readable } from 'node:stream';
 import { inflateSync } from 'node:zlib';
+import ExcelJS from 'exceljs';
 import { extractText } from '@renkei/document-text';
 import { parseMarkdown, plainText } from './markdown-blocks';
 import { renderDocument } from './index';
@@ -258,6 +260,58 @@ describe('workbook parsing', () => {
     expect(typedCell('007')).toBe(7);
     expect(typedCell('A12')).toBe('A12');
     expect(typedCell('  ')).toBeNull();
+  });
+
+  it('reads a leading = as a formula, and keeps the unsafe ones and escapes as text', () => {
+    expect(typedCell('=SUM(B2:B9)')).toEqual({ formula: 'SUM(B2:B9)' });
+    expect(typedCell(" ='Q3 Sales'!B4 ")).toEqual({ formula: "'Q3 Sales'!B4" });
+    expect(typedCell('=IF(A1="a|b",1,0)')).toEqual({ formula: 'IF(A1="a|b",1,0)' });
+    expect(typedCell("'=SUM(B2:B9)")).toBe('=SUM(B2:B9)');
+    expect(typedCell('=')).toBe('=');
+    expect(typedCell('== Notes ==')).toBe('== Notes ==');
+    expect(typedCell("=cmd|' /C calc'!A0")).toBe("=cmd|' /C calc'!A0");
+    expect(typedCell('=[Budget.xlsx]Sheet1!A1')).toBe('=[Budget.xlsx]Sheet1!A1');
+    expect(typedCell('=WEBSERVICE("https://example.com")')).toBe(
+      '=WEBSERVICE("https://example.com")'
+    );
+    expect(sheetsOfJson('[["a",{"formula":"A1*2"},{"formula":"=A1+1"}]]')?.[0]?.rows).toEqual([
+      ['a', { formula: 'A1*2' }, { formula: 'A1+1' }],
+    ]);
+  });
+
+  it('keeps a formula in a Markdown table as written, * and all', () => {
+    const markdown = '| a | b | c | total |\n|---|---|---|---|\n| 2 | 3 | 4 | =A2*B2*C2 |\n';
+    expect(sheetsOf(markdown, 'x')[0]?.rows[1]).toEqual([2, 3, 4, { formula: 'A2*B2*C2' }]);
+  });
+
+  it('writes formulas Excel recalculates on open, across sheets too', async () => {
+    const json = JSON.stringify({
+      sheets: [
+        {
+          name: 'Detail',
+          rows: [
+            ['Item', 'Qty', 'Price', 'Line'],
+            ['Apples', 12, 0.5, '=B2*C2'],
+            ['Pears', 3, 1.25, '=B3*C3'],
+            ['Total', '=SUM(B2:B3)', '', '=SUM(D2:D3)'],
+          ],
+        },
+        { name: 'Summary', rows: [['Grand total'], ['=Detail!D4']] },
+      ],
+    });
+    const rendered = await renderDocument('xlsx', 'order.xlsx', json);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.read(Readable.from([rendered.bytes]));
+    const detail = workbook.getWorksheet('Detail')!;
+    expect(detail.getCell('D2').value).toMatchObject({ formula: 'B2*C2' });
+    expect(detail.getCell('B4').value).toMatchObject({ formula: 'SUM(B2:B3)' });
+    expect(workbook.getWorksheet('Summary')!.getCell('A2').value).toMatchObject({
+      formula: 'Detail!D4',
+    });
+    // Never opened in Excel, so no cached result: read back as the formula.
+    const text = await textOf(rendered.bytes, 'order.xlsx');
+    expect(text).toContain('=SUM(D2:D3)');
+    expect(text).toContain('=Detail!D4');
   });
 
   it('keeps sheet names legal and unique', () => {

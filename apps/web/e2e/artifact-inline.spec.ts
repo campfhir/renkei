@@ -7,7 +7,8 @@
  *   - a PDF's first page painted by pdf.js; a Word file's first page laid
  *     out by docx-preview and a deck's first slide by pptx-preview, both in
  *     sandboxed frames; a workbook's first sheet as a spreadsheet grid
- *     (column letters, row numbers, bold, numbers set right); Markdown on a
+ *     (column letters, row numbers, bold, numbers set right, a formula
+ *     never computed shown as itself); Markdown on a
  *     page; a legacy deck as the text extracted at upload;
  *   - pages keep a page's shape and slides a slide's, with no border;
  *   - a file with no faithful picture (a zip) is its name and Download only;
@@ -119,6 +120,8 @@ async function filesFor(f: Fixture): Promise<Seeded[]> {
   sales.addRow(['Region', 'Units']).font = { bold: true };
   sales.addRow(['EMEA', 1200]);
   sales.addRow(['APAC', 900]);
+  // A formula as the renderer writes one: no cached result until Excel opens it.
+  sales.addRow(['Total', { formula: 'SUM(B2:B3)' }]);
   workbook.addWorksheet('Notes').addRow(['Checked by finance']);
   const xlsx = Buffer.from(await workbook.xlsx.writeBuffer());
   return [
@@ -432,6 +435,7 @@ test('the files a reply produced are shown as pictures of their first page, each
   await expect(sheet.getByRole('rowheader', { name: '1', exact: true })).toBeVisible();
   await expect(sheet.getByRole('cell', { name: 'Region' })).toHaveCSS('font-weight', '700');
   await expect(sheet.getByRole('cell', { name: '1200' })).toHaveCSS('text-align', 'right');
+  await expect(sheet.getByRole('cell', { name: '=SUM(B2:B3)' })).toBeVisible();
   await expect(sheet).toContainText('+1 more');
   await expect(sheet.getByText('Checked by finance')).toHaveCount(0);
 

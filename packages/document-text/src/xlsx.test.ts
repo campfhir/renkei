@@ -170,6 +170,23 @@ describe('xlsx extraction', () => {
     expect(text).not.toContain('SUM');
   });
 
+  it('reads a formula with no cached result as the formula', async () => {
+    const bytes = buildZip({
+      'xl/workbook.xml':
+        '<?xml version="1.0"?><workbook xmlns:r="r"><sheets><sheet name="S" sheetId="1" r:id="r1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels':
+        '<?xml version="1.0"?><Relationships><Relationship Id="r1" Target="worksheets/sheet1.xml"/></Relationships>',
+      'xl/worksheets/sheet1.xml':
+        '<?xml version="1.0"?><worksheet><sheetData><row>' +
+        '<c><v>7</v></c>' +
+        '<c><f>A1*2</f></c>' +
+        '</row></sheetData></worksheet>',
+    });
+    const text = await textOf(bytes);
+    expect(text).toContain('7');
+    expect(text).toContain('=A1*2');
+  });
+
   it('reports the sheet count', async () => {
     const result = await extractText(
       buildXlsx([

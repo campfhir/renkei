@@ -3,8 +3,8 @@
  * the thread draws in place of the file: the top-left window of cells,
  * with what makes a sheet read as one — column widths, bold, numbers set
  * right. Only that corner is ever drawn, so only that corner is read.
- * Values are what a reader would see: a formula's last result, a date as
- * a date, rich text flattened; never HTML (the thread renders text nodes).
+ * Values are what a reader would see: a formula's last result (the formula
+ * itself when it was never computed — a workbook we wrote), a date as a date, rich text flattened; never HTML (the thread renders text nodes).
  */
 
 import { Readable } from 'node:stream';
@@ -39,9 +39,12 @@ function cellOf(value: ExcelJS.CellValue): PreviewCell {
   if (typeof value === 'object') {
     if ('richText' in value) return { v: value.richText.map((run) => run.text).join('') };
     if ('text' in value && typeof value.text === 'string') return { v: value.text };
-    if ('result' in value) {
-      const result = value.result;
-      if (result === undefined || result === null) return { v: '' };
+    if ('formula' in value || 'sharedFormula' in value || 'result' in value) {
+      const result = 'result' in value ? value.result : undefined;
+      if (result === undefined || result === null) {
+        const formula = 'formula' in value ? value.formula : undefined;
+        return { v: formula ? `=${formula}` : '' };
+      }
       if (result instanceof Date) return { v: result.toISOString().slice(0, 10), n: true };
       if (typeof result === 'number') return { v: String(result), n: true };
       if (typeof result === 'object') return { v: 'error' in result ? String(result.error) : '' };

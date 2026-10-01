@@ -28,6 +28,7 @@ import {
   RENDER_INPUT_MAX_CHARS,
   resolveMediaType,
   WRITABLE_EXTENSIONS,
+  XLSX_FORMULA_GUIDE,
 } from '@renkei/document-render';
 import { errorResult, textResult, type LocalTool } from './local-tools';
 
@@ -76,7 +77,9 @@ export function fileTools(): LocalTool[] {
           'Document formats are rendered from your text: .docx (Word) and .pdf from Markdown — headings, paragraphs, bullet and numbered lists, tables, code blocks, quotes; ' +
           '.pptx (PowerPoint) from Markdown where every # or ## heading starts a slide and what follows is its body; ' +
           '.xlsx (Excel) from CSV, or JSON {"sheets":[{"name":…,"rows":[[…],…]}]} for several sheets, or Markdown tables (one sheet each, named by the heading above). ' +
-          'Numbers and dates in a workbook are typed as such. Each call writes one file; write again with the same name to hand over a corrected version.',
+          'Numbers and dates in a workbook are typed as such. ' +
+          XLSX_FORMULA_GUIDE +
+          ' Each call writes one file; write again with the same name to hand over a corrected version.',
         inputSchema: {
           type: 'object',
           properties: {

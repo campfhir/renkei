@@ -48,4 +48,11 @@ describe('sheetFromXlsx', () => {
     expect(sheet!.widths[0]).toBe(20);
     expect(sheet!.widths[1]).toBeCloseTo(8.43);
   });
+
+  it('shows a formula never computed (a workbook we wrote) as the formula', async () => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('S').addRow([2, { formula: 'A1*3' }]);
+    const sheet = await sheetFromXlsx(new Uint8Array(await workbook.xlsx.writeBuffer()));
+    expect(sheet!.rows[0]).toEqual([{ v: '2', n: true }, { v: '=A1*3' }]);
+  });
 });
