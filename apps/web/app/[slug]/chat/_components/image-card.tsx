@@ -10,14 +10,15 @@
  *     picture's SHAPE — the aspect ratio of the `size` or `aspectRatio` the
  *     model chose, read even from half-arrived input — so the thread does
  *     not jump when the image lands.
- *   - When it is done the image appears in that outline, and opens full
- *     size in a new tab. It is the file the call kept (the chat's
+ *   - When it is done the image appears in that outline, and opens in a
+ *     preview window with a Download button. It is the file the call kept (the chat's
  *     Artifacts), found by the tool_results row that carried it.
  *   - When it failed, the reason is shown plainly beside the image icon.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
+import ImagePreview from './image-preview';
 import { chatClient } from '@/lib/chat/client';
 import { skeletonRatio } from '@/lib/chat/image-size';
 import type { ChatBlock } from '@/lib/chat/views';
@@ -52,6 +53,7 @@ export default function ImageCard({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [broken, setBroken] = useState(false);
+  const [open, setOpen] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   // An image the server rendered (or the browser had cached) can finish
   // before React hydrates, and then onLoad never fires: ask the element.
@@ -118,8 +120,13 @@ export default function ImageCard({
           data-testid={showImage && loaded ? 'image-card-picture' : 'image-card-skeleton'}
         >
           {showImage ? (
-            // A picture the model drew is the person's to open full size.
-            <a href={src} target="_blank" rel="noreferrer" className="block">
+            // A picture the model drew opens in a preview window, where it can be saved.
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              aria-label="Preview image"
+              className="block cursor-zoom-in"
+            >
               <img
                 ref={imgRef}
                 src={src}
@@ -133,7 +140,7 @@ export default function ImageCard({
                 }
                 style={loaded ? { maxHeight: MAX_HEIGHT } : undefined}
               />
-            </a>
+            </button>
           ) : null}
           {!(showImage && loaded) ? (
             <div
@@ -145,6 +152,13 @@ export default function ImageCard({
           ) : null}
         </div>
       )}
+      {open && src ? (
+        <ImagePreview
+          src={src}
+          filename={image?.filename ?? 'image.png'}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
       {state === 'done' && broken ? (
         <p className="mt-1 text-xs text-gray-500">
           The image could not be loaded. It is under this chat&apos;s Artifacts.

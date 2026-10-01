@@ -444,7 +444,7 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await addModels(fixture, ['chat', 'painter']);
   await seedDoneChat(fixture);
   // 3:2, like the size asked for; the bytes stand in for the blob store.
-  const png = solidPng(150, 100, [120, 170, 230]);
+  const png = solidPng(3000, 2000, [120, 170, 230]);
   await page.route(
     `**/api/tenant/${fixture.tenantId}/chat/attachments/${fixture.attachmentId}`,
     (route) => route.fulfill({ status: 200, contentType: 'image/png', body: png })
@@ -464,14 +464,29 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   // The picture itself, loaded — the file this call kept, not the other's.
   const picture = drawn.getByRole('img', { name: 'cute_polar_bear.png' });
   await expect(picture).toBeVisible();
-  await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(150);
+  await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(3000);
   await expect(drawn.getByTestId('image-card-picture')).toBeVisible();
-  // It opens full size in a new tab.
-  await expect(drawn.getByRole('link')).toHaveAttribute('target', '_blank');
-  await expect(drawn.getByRole('link')).toHaveAttribute(
-    'href',
-    /\/chat\/attachments\/[0-9a-f-]{36}$/
-  );
+  // Clicking it opens a preview window with the picture and a Download button.
+  await drawn.getByRole('button', { name: 'Preview image' }).click();
+  const preview = page.getByTestId('image-preview');
+  await expect(preview).toBeVisible();
+  const big = preview.getByTestId('image-preview-picture');
+  await expect.poll(() => big.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(3000);
+  // A large picture is fitted to the window, not spilled past it.
+  const fitted = await big.boundingBox();
+  expect(fitted).not.toBeNull();
+  expect(fitted!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(fitted!.y + fitted!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  const download = preview.getByTestId('image-preview-download');
+  await expect(download).toHaveAttribute('download', 'cute_polar_bear.png');
+  await expect(download).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
+  const saved = page.waitForEvent('download');
+  await download.click();
+  expect((await saved).suggestedFilename()).toBe('cute_polar_bear.png');
+  await shot(page, testInfo, 'image-preview.png');
+  // Escape closes it and puts focus back on the picture's button.
+  await page.keyboard.press('Escape');
+  await expect(preview).toHaveCount(0);
 
   // Inline, not folded away with the other tool calls; and the image glyph, not the wrench.
   await expect(drawn.locator('xpath=ancestor::details')).toHaveCount(0);
@@ -491,6 +506,28 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   expect(box).not.toBeNull();
   expect(box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'image-card-done-mobile.png');
+
+  // The preview window at phone width: picture and both buttons inside the screen, no sideways scroll.
+  await drawn.getByRole('button', { name: 'Preview image' }).click();
+  const phonePreview = page.getByTestId('image-preview');
+  await expect(phonePreview).toBeVisible();
+  for (const target of [
+    phonePreview.getByTestId('image-preview-picture'),
+    phonePreview.getByTestId('image-preview-download'),
+    phonePreview.getByRole('button', { name: 'Close' }),
+  ]) {
+    const at = await target.boundingBox();
+    expect(at).not.toBeNull();
+    expect(at!.x).toBeGreaterThanOrEqual(0);
+    expect(at!.x + at!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+    expect(at!.y + at!.height).toBeLessThanOrEqual(MOBILE_VIEWPORT.height);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true
+  );
+  await shot(page, testInfo, 'image-preview-mobile.png');
+  await phonePreview.getByRole('button', { name: 'Close' }).click();
+  await expect(phonePreview).toHaveCount(0);
 });
 
 test('a call waiting on permission shows no outline; once approved it is an outline in the shape asked for', async ({
