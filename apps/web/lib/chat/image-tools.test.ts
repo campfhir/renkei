@@ -12,7 +12,14 @@
 import { err, ok } from '@campfhir/safe-functions/helpers';
 import type { generateImage, resolveImageModel } from '@renkei/agent-llm';
 import type { LocalToolContext } from './local-tools';
-import { IMAGE_TOOL, imageGenerationTool, pickImageModel } from './image-tools';
+import { decodePng, encodePng } from '@renkei/document-render';
+import {
+  frameLine,
+  GIF_MAX_FRAMES,
+  IMAGE_TOOL,
+  imageGenerationTool,
+  pickImageModel,
+} from './image-tools';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEX/AAAZ4gk3AAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC',
@@ -105,6 +112,8 @@ describe('chat_generate_image — offering', () => {
       'aspectRatio',
       'background',
       'filename',
+      'frameDelayMs',
+      'frames',
       'quality',
       'size',
       'sourceImage',
@@ -457,8 +466,14 @@ describe('chat_generate_image — refusing before spending anything', () => {
     const t = tool(generate);
     for (const input of [
       { filename: '../a.png' },
-      { filename: 'a.gif' },
+      { filename: 'a.webp' },
       { filename: 'a.tiff' },
+      { filename: 'a.gif', frames: 1 },
+      { filename: 'a.gif', frames: 7 },
+      { filename: 'a.gif', frames: 2.5 },
+      { filename: 'a.gif', frameDelayMs: 10 },
+      { filename: 'a.gif', frameDelayMs: 'slow' },
+      { filename: 'a.gif', background: 'transparent' },
       { filename: 'a.png', size: 'huge' },
       { filename: 'a.png', aspectRatio: 'wide' },
       { filename: 'a.jpg', background: 'transparent' },
@@ -491,5 +506,203 @@ describe('chat_generate_image — when the image model fails', () => {
       context({ recordImageUsage })
     );
     expect(recordImageUsage).not.toHaveBeenCalled();
+  });
+});
+
+describe('chat_generate_image — an animated GIF', () => {
+  /** A real w×h PNG of one colour, the way an image model would answer. */
+  const pngOf = (width: number, height: number, rgb: [number, number, number]) => {
+    const data = new Uint8Array(width * height * 4);
+    for (let i = 0; i < width * height; i++) data.set([...rgb, 255], i * 4);
+    return encodePng({ width, height, data });
+  };
+  const COLOURS: Array<[number, number, number]> = [
+    [255, 0, 0],
+    [0, 255, 0],
+    [0, 0, 255],
+    [255, 255, 0],
+    [0, 255, 255],
+    [255, 0, 255],
+  ];
+  /** Answers each call with the next colour, at the size asked for (or 1024 square). */
+  const drawingFrames = (usage: { inputTokens: number; outputTokens: number } | null = null) => {
+    let call = 0;
+    return jest.fn(async (_config: unknown, request: { size?: string }) => {
+      const [w, h] = (request.size ?? '1024x1024').split('x').map(Number);
+      return ok({
+        bytes: pngOf(w!, h!, COLOURS[call++ % COLOURS.length]!),
+        mediaType: 'image/png' as const,
+        usage,
+      });
+    }) as unknown as typeof generateImage;
+  };
+  const gifOf = (meta: Record<string, unknown>) => {
+    const [doc] = documentsOf(meta);
+    return Buffer.from(doc!.dataBase64, 'base64');
+  };
+  const callsOf = (generate: typeof generateImage) =>
+    (generate as unknown as jest.Mock).mock.calls.map(
+      ([, request]) =>
+        request as { prompt: string; size?: string; quality?: string; image?: { bytes: Buffer } }
+    );
+
+  it('draws the frames small and cheap, each from the one before, and keeps one looping GIF', async () => {
+    const recordImageUsage = jest.fn(async () => {});
+    const generate = drawingFrames({ inputTokens: 10, outputTokens: 200 });
+    const result = await tool(generate).execute(
+      { filename: 'walk.gif' },
+      context({ recordImageUsage })
+    );
+    expect(result.isError).toBe(false);
+    const calls = callsOf(generate);
+    expect(calls).toHaveLength(4);
+    // 512 square, low quality, PNG frames.
+    for (const call of calls) {
+      expect(call).toMatchObject({ size: '512x512', quality: 'low', outputFormat: 'png' });
+    }
+    // The person's words, then the tool's own frame line — never the chat model's.
+    expect(calls[0]!.prompt).toBe(USER_TEXT + frameLine(1, 4));
+    expect(calls[3]!.prompt).toBe(USER_TEXT + frameLine(4, 4));
+    expect(frameLine(4, 4)).toMatch(/last frame/);
+    // Frame 1 is drawn anew; each later one is built on the frame before it.
+    expect(calls[0]!.image).toBeUndefined();
+    const second = decodePng(calls[1]!.image!.bytes);
+    expect(second.ok && Array.from(second.image.data.subarray(0, 4))).toEqual([255, 0, 0, 255]);
+    const fourth = decodePng(calls[3]!.image!.bytes);
+    expect(fourth.ok && Array.from(fourth.image.data.subarray(0, 4))).toEqual([0, 0, 255, 255]);
+
+    const [doc] = documentsOf(result.meta);
+    expect(doc).toMatchObject({ mediaType: 'image/gif', title: 'walk.gif' });
+    const gif = gifOf(result.meta);
+    expect(gif.toString('latin1', 0, 6)).toBe('GIF89a');
+    expect([gif.readUInt16LE(6), gif.readUInt16LE(8)]).toEqual([512, 512]);
+    expect(gif.includes(Buffer.from('NETSCAPE2.0'))).toBe(true);
+    expect(result.meta.renkeiDocumentsShown).toBe(false);
+    expect(result.content[0]?.text).toMatch(
+      /Generated walk\.gif with Painter \(image\/gif, a looping animation of 4 frames at 512x512 px, 300 ms each, \d+ bytes\)/
+    );
+    // Every frame was paid for, so every frame is counted.
+    expect(recordImageUsage).toHaveBeenCalledTimes(4);
+    expect(recordImageUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 512, height: 512, inputTokens: 10, outputTokens: 200 })
+    );
+  });
+
+  it('keeps the shape asked for within 512 a side, with the frame count and delay chosen', async () => {
+    const generate = drawingFrames();
+    const result = await tool(generate).execute(
+      { filename: 'wave.gif', aspectRatio: '16:9', frames: 2, frameDelayMs: 120, quality: 'high' },
+      context()
+    );
+    expect(result.isError).toBe(false);
+    const calls = callsOf(generate);
+    expect(calls.map((call) => [call.size, call.quality])).toEqual([
+      ['512x288', 'high'],
+      ['512x288', 'high'],
+    ]);
+    const gif = gifOf(result.meta);
+    expect([gif.readUInt16LE(6), gif.readUInt16LE(8)]).toEqual([512, 288]);
+    // The graphic control block's delay, in hundredths of a second.
+    const control = gif.indexOf(Buffer.from([0x21, 0xf9, 0x04]));
+    expect(gif.readUInt16LE(control + 4)).toBe(12);
+    // A big size is shrunk to fit too.
+    const big = drawingFrames();
+    await tool(big).execute({ filename: 'b.gif', size: '1536x1024', frames: 2 }, context());
+    expect(callsOf(big)[0]!.size).toBe('512x336');
+  });
+
+  it('falls back once to a size the model draws, asks only that after, and shrinks it', async () => {
+    let call = 0;
+    const generate = jest.fn(async (_config: unknown, request: { size?: string }) => {
+      // gpt-image-1: no 512.
+      if (request.size === '512x512') return err('invalid_request' as never, { message: 'size' });
+      return ok({
+        bytes: pngOf(1024, 1024, COLOURS[call++]!),
+        mediaType: 'image/png' as const,
+        usage: null,
+      });
+    }) as unknown as typeof generateImage;
+    const result = await tool(generate).execute({ filename: 'a.gif', frames: 3 }, context());
+    expect(result.isError).toBe(false);
+    expect(callsOf(generate).map((c) => c.size)).toEqual([
+      '512x512',
+      '1024x1024',
+      '1024x1024',
+      '1024x1024',
+    ]);
+    // The next frame is started from the small frame, not the big one.
+    const source = decodePng(callsOf(generate)[2]!.image!.bytes);
+    expect(source.ok && [source.image.width, source.image.height]).toEqual([512, 512]);
+    const gif = gifOf(result.meta);
+    expect([gif.readUInt16LE(6), gif.readUInt16LE(8)]).toEqual([512, 512]);
+  });
+
+  it('trims a fallback frame of another shape to the one asked for', async () => {
+    const generate = jest.fn(async (_config: unknown, request: { size?: string }) =>
+      request.size === '512x288'
+        ? err('invalid_request' as never, { message: 'size' })
+        : ok({ bytes: pngOf(1536, 1024, [7, 7, 7]), mediaType: 'image/png' as const, usage: null })
+    ) as unknown as typeof generateImage;
+    const result = await tool(generate).execute(
+      { filename: 'a.gif', aspectRatio: '16:9', frames: 2 },
+      context()
+    );
+    expect(callsOf(generate).map((c) => c.size)).toEqual(['512x288', '1536x1024', '1536x1024']);
+    const gif = gifOf(result.meta);
+    expect([gif.readUInt16LE(6), gif.readUInt16LE(8)]).toEqual([512, 288]);
+  });
+
+  it('animates an earlier picture when one is named', async () => {
+    const SOURCE = {
+      bytes: pngOf(8, 8, [9, 9, 9]),
+      mediaType: 'image/png' as const,
+      filename: 'bear.png',
+    };
+    const generate = drawingFrames();
+    const loadSource = jest.fn(async () => ({ ok: true as const, image: SOURCE }));
+    const result = await imageGenerationTool({
+      models,
+      generate,
+      resolve: resolveOk,
+      loadSource,
+    })!.execute({ filename: 'bear.gif', sourceImage: 'last', frames: 2 }, context());
+    expect(result.isError).toBe(false);
+    expect(callsOf(generate)[0]!.image).toBe(SOURCE);
+    expect(result.content[0]?.text).toMatch(/built on bear\.png/);
+  });
+
+  it('keeps nothing when a later frame fails, but counts the frames already drawn', async () => {
+    const recordImageUsage = jest.fn(async () => {});
+    let call = 0;
+    const generate = jest.fn(async () =>
+      call++ === 0
+        ? ok({ bytes: pngOf(512, 512, [1, 2, 3]), mediaType: 'image/png' as const, usage: null })
+        : err('rate_limit' as never, { message: 'slow down' })
+    ) as unknown as typeof generateImage;
+    const result = await tool(generate).execute(
+      { filename: 'a.gif' },
+      context({ recordImageUsage })
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/rate-limited.*Frame 2 of 4 failed; no GIF was kept/);
+    expect(documentsOf(result.meta)).toEqual([]);
+    expect(recordImageUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a frame it cannot read, keeping nothing', async () => {
+    const generate = returning(PNG.subarray(0, 20));
+    const result = await tool(generate).execute({ filename: 'a.gif' }, context());
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/frame that could not be used/);
+    const jpeg = await tool(returning(PNG, 'image/jpeg')).execute({ filename: 'a.gif' }, context());
+    expect(jpeg.content[0]?.text).toMatch(/answered a JPEG/);
+  });
+
+  it('caps the frames at what the schema says', () => {
+    const schema = tool(returning()).def.inputSchema.properties as Record<
+      string,
+      { maximum?: number }
+    >;
+    expect(schema.frames?.maximum).toBe(GIF_MAX_FRAMES);
   });
 });

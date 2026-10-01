@@ -81,6 +81,25 @@ export function nearestStandardSize({
   return '1024x1024';
 }
 
+/**
+ * The longest side of an animated GIF's frames. Each frame is a separate
+ * picture the image model is paid to draw, so they are kept small: a
+ * smaller picture costs fewer tokens (gpt-image) or megapixels (FLUX).
+ */
+export const GIF_MAX_SIDE = 512;
+
+/**
+ * The size an animation's frames are kept at: the shape asked for (square
+ * when none was), shrunk to fit GIF_MAX_SIDE, in multiples of 16 (what the
+ * models that take any size want), never under MIN_SIDE.
+ */
+export function animationSize(requested: Dimensions | null): Dimensions {
+  const { width, height } = requested ?? { width: GIF_MAX_SIDE, height: GIF_MAX_SIDE };
+  const scale = Math.min(1, GIF_MAX_SIDE / Math.max(width, height));
+  const side = (value: number) => toMultipleOf16(value * scale, MIN_SIDE, GIF_MAX_SIDE);
+  return { width: side(width), height: side(height) };
+}
+
 export type RequestedShape = { ok: true; size: Dimensions | null } | { ok: false; reason: string };
 
 /**
@@ -147,4 +166,17 @@ export function skeletonRatio(input: unknown, partialJson?: string): number {
   const shape = requestedShape(record);
   if (shape.ok && shape.size) return shape.size.width / shape.size.height;
   return 1;
+}
+
+/**
+ * Whether the call asks for an animation — a .gif filename — from its
+ * input as it stands, complete or half-streamed; for the card's wording.
+ */
+export function isAnimationCall(input: unknown, partialJson?: string): boolean {
+  let filename: unknown =
+    typeof input === 'object' && input !== null && !Array.isArray(input)
+      ? Reflect.get(input, 'filename')
+      : undefined;
+  if (partialJson) filename = /"filename"\s*:\s*"([^"]*)"/.exec(partialJson)?.[1] ?? filename;
+  return typeof filename === 'string' && /\.gif\s*$/i.test(filename);
 }
