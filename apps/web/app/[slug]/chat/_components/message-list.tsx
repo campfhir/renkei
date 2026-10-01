@@ -49,6 +49,8 @@ import { parseTaskCompletion, TASK_COMPLETE_TOOL } from '@/lib/chat/auto-mode';
 import { CHAT_DELEGATE_TOOL, isSubagentTool } from '@/lib/chat/subagent-tools';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
+import ArtifactInline from './artifact-inline';
+import DownloadLink from '@/components/download-link';
 import CodePane from './code-pane';
 import ListenButton from './listen-button';
 import Markdown from './markdown';
@@ -460,6 +462,33 @@ function useCopyToClipboard(): [boolean, (text: string) => void] {
   return [copied, copy];
 }
 
+/** Saves one file the reply produced; with several, each says which. */
+function DownloadButton({
+  tenantId,
+  artifact,
+  named,
+}: {
+  tenantId: string;
+  artifact: AttachmentView;
+  named: boolean;
+}) {
+  return (
+    <DownloadLink
+      href={`/api/tenant/${tenantId}/chat/attachments/${artifact.id}`}
+      filename={artifact.filename}
+      title={`Download ${artifact.filename}`}
+      aria-label={`Download ${artifact.filename}`}
+      data-testid="reply-download"
+      className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+    >
+      <Icon path={ICONS.download} className="h-3.5 w-3.5 shrink-0" />
+      <span className={named ? 'max-w-[10rem] truncate' : undefined}>
+        {named ? artifact.filename : 'Download'}
+      </span>
+    </DownloadLink>
+  );
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, copy] = useCopyToClipboard();
   return (
@@ -549,6 +578,27 @@ function Reply({
     }
     return open;
   }, [messages, results]);
+  // The files this reply's tool calls kept: each hangs off the tool_results
+  // row that carried it. Images already drawn in their call's own card are
+  // not drawn twice; every file gets a Download beside Copy.
+  const produced = useMemo(() => {
+    const rows = new Set(messages.map((message) => message.id));
+    return artifacts.filter((artifact) => artifact.messageId && rows.has(artifact.messageId));
+  }, [messages, artifacts]);
+  const inline = useMemo(() => {
+    const drawn = new Set<string>();
+    for (const part of segments) {
+      if (part.kind !== 'image') continue;
+      const image = imageArtifactFor(
+        part.step.block.id,
+        resultRows,
+        artifacts,
+        part.step.result?.content ?? ''
+      );
+      if (image) drawn.add(image.id);
+    }
+    return produced.filter((artifact) => !drawn.has(artifact.id));
+  }, [segments, produced, resultRows, artifacts]);
   const last = messages[messages.length - 1];
   const lastIndex = segments.length - 1;
   return (
@@ -711,6 +761,9 @@ function Reply({
         }
       })}
       {segments.length === 0 && streaming ? <Cursor /> : null}
+      {inline.map((artifact) => (
+        <ArtifactInline key={artifact.id} tenantId={tenantId} artifact={artifact} />
+      ))}
       {permission ? <PermissionCard prompt={permission} call={askedCall} /> : null}
       {last.status === 'failed' && last.error ? (
         <p className="mt-1 text-xs text-red-600 dark:text-red-400">{last.error}</p>
@@ -719,16 +772,24 @@ function Reply({
       {last.status === 'interrupted' ? (
         <p className="mt-1 text-xs text-gray-400">Interrupted.</p>
       ) : null}
-      {copyText && !streaming ? (
+      {(copyText || produced.length > 0) && !streaming ? (
         // Shown on hover where there is a pointer to hover with; always on
         // a touch screen, where there is not.
         <div
-          className={`mt-1 flex gap-1 text-xs text-gray-500 transition-opacity lg:group-focus-within:opacity-100 lg:group-hover:opacity-100 ${
+          className={`mt-1 flex flex-wrap gap-1 text-xs text-gray-500 transition-opacity lg:group-focus-within:opacity-100 lg:group-hover:opacity-100 ${
             speech?.playingKey === speechKey ? '' : 'lg:opacity-0'
           }`}
         >
-          <CopyButton text={copyText} />
-          {speech ? (
+          {copyText ? <CopyButton text={copyText} /> : null}
+          {produced.map((artifact) => (
+            <DownloadButton
+              key={artifact.id}
+              tenantId={tenantId}
+              artifact={artifact}
+              named={produced.length > 1}
+            />
+          ))}
+          {speech && copyText ? (
             <ListenButton
               state={
                 speech.playingKey !== speechKey ? 'idle' : speech.paused ? 'paused' : 'playing'

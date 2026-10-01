@@ -169,18 +169,27 @@ importers:
       '@tryjsky/v9u-smb2':
         specifier: ^1.1.0
         version: 1.1.0(patch_hash=e424a978846b2cff34f5055f6ef3251a06f7d5ff272ca74f668e357544496682)
+      docx-preview:
+        specifier: 0.4.1
+        version: 0.4.1
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
       esbuild:
         specifier: ^0.28.1
         version: 0.28.1
+      exceljs:
+        specifier: ^4.4.0
+        version: 4.4.0
       highlight.js:
         specifier: ^11.11.2
         version: 11.11.2
       jose:
         specifier: ^6.2.5
         version: 6.2.5
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
@@ -3856,6 +3865,9 @@ packages:
   doctrine@2.1.0:
     resolution: {integrity: sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw==}
     engines: {node: '>=0.10.0'}
+
+  docx-preview@0.4.1:
+    resolution: {integrity: sha512-Dv4g+LeE0swHpPvNC0lAT0YsR5Zq5pAxw7d3vHQ8EChBLgIrqqe9VPL5nVt2HBJap8bEZbXUI0TJob7kBeNU9w==}
 
   docx@9.7.1:
     resolution: {integrity: sha512-ilXFf9Moz47ABjFpDiA5s1w9lpb4EFSp7+5iiJSbfyYDM+bpZdAgLlSr7fW4aXhVe/E+F6QCv0EvRVFEd5CsWg==}
@@ -8451,6 +8463,10 @@ snapshots:
   doctrine@2.1.0:
     dependencies:
       esutils: 2.0.3
+
+  docx-preview@0.4.1:
+    dependencies:
+      jszip: 3.10.1
 
   docx@9.7.1:
     dependencies:
