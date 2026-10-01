@@ -103,6 +103,7 @@ export default function ArtifactModal({
         <DownloadLink
           href={`/api/tenant/${tenantId}/chat/attachments/${artifact.id}`}
           filename={artifact.filename}
+          prefetch={artifact.sizeBytes <= 25 * 1024 * 1024}
           aria-label="Download"
           title="Download to this device"
           className="shrink-0 rounded-md border border-gray-300 p-2 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"

@@ -1000,6 +1000,7 @@ function DetailsModal({
           entry.kind === 'file' ? (
             <DownloadLink
               href={fileUrl(tenantId, share.id, entry.path)}
+              filename={entry.name}
               onClick={onClose}
               className={primaryButton}
             >
