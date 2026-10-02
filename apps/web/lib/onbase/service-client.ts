@@ -7,7 +7,8 @@
  * configuration. This client only ever names a tenant, an access token,
  * and an API path.
  *
- * Configuration: ONBASE_WORKER_URL + ONBASE_WORKER_API_KEY. Both
+ * Configuration: DELEGATE_WORKER_URL + DELEGATE_WORKER_API_KEY (the delegate
+ * forwards to the worker; see `config()`). Both
  * absent-or-set-together; a missing pair means every operation answers
  * 'unconfigured' — OnBase is down, never open.
  *
@@ -26,7 +27,7 @@
 import type { OnBaseIdpEndpoints } from '@renkei/connector-onbase';
 
 export type OnBaseClientError =
-  /** ONBASE_WORKER_URL / _API_KEY are not set. */
+  /** DELEGATE_WORKER_URL / _API_KEY are not set. */
   | { kind: 'unconfigured' }
   /** The worker could not be reached or answered garbage. */
   | { kind: 'unreachable'; message: string }
@@ -77,11 +78,18 @@ function optStr(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The worker is reached THROUGH the delegate (docs/delegate-key-design.md,
+ * decision 2): `forward/onbase/<op>` on DELEGATE_WORKER_URL. The delegate
+ * opens the person's credential — this process holds no key — and
+ * forwards the op to the worker with it attached; the answer comes back
+ * as the worker gave it. ONBASE_WORKER_URL is the delegate's setting now.
+ */
 function config(): { url: string; key: string } | null {
-  const url = process.env.ONBASE_WORKER_URL?.trim().replace(/\/$/, '');
-  const key = process.env.ONBASE_WORKER_API_KEY?.trim();
+  const url = process.env.DELEGATE_WORKER_URL?.trim().replace(/\/$/, '');
+  const key = process.env.DELEGATE_WORKER_API_KEY?.trim();
   if (!url || !key) return null;
-  return { url, key };
+  return { url: `${url}/v1/forward/onbase`, key };
 }
 
 /** Whether the web app can reach an OnBase worker at all. */
@@ -121,7 +129,7 @@ async function callOp(
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
-    response = await fetch(`${cfg.url}/v1/${op}${init?.query ?? ''}`, {
+    response = await fetch(`${cfg.url}/${op}${init?.query ?? ''}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${cfg.key}`,
@@ -362,7 +370,8 @@ export function onbaseClientFailure(error: OnBaseClientError): { status: number;
     case 'unconfigured':
       return {
         status: 503,
-        message: 'The OnBase worker is not configured (ONBASE_WORKER_URL / ONBASE_WORKER_API_KEY).',
+        message:
+          'The OnBase worker is not configured (DELEGATE_WORKER_URL / DELEGATE_WORKER_API_KEY).',
       };
     case 'unreachable':
       return { status: 502, message: `The OnBase worker could not be reached: ${error.message}` };

@@ -12,7 +12,10 @@
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
     "@campfhir/safe-functions": "^0.1.3",
+    "@renkei/connector-admanager": "workspace:*",
     "@renkei/connector-config": "workspace:*",
+    "@renkei/connector-fileshares": "workspace:*",
+    "@renkei/connector-mirth": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/provider-grants": "workspace:*",

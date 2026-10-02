@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The fileshare worker client's own contract: every op is a bearer-authed
- * POST to FILESHARES_WORKER_URL, a missing config answers 'unconfigured'
+ * POST to the delegate's forward/fileshares ops, a missing config answers 'unconfigured'
  * rather than an open call, a non-2xx or malformed body maps to a typed
  * error instead of throwing, and clientFailure phrases each error tag the
  * same way for every caller.
@@ -29,8 +29,8 @@ const ORIGINAL_ENV = process.env;
 beforeEach(() => {
   process.env = {
     ...ORIGINAL_ENV,
-    FILESHARES_WORKER_URL: 'http://fileshares.internal:8090',
-    FILESHARES_WORKER_API_KEY: 'test-key',
+    DELEGATE_WORKER_URL: 'http://delegate.internal:8096',
+    DELEGATE_WORKER_API_KEY: 'test-key',
   };
 });
 
@@ -46,7 +46,7 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
   });
 
   it('answers unconfigured without any network call when the worker is not set up', async () => {
-    delete process.env.FILESHARES_WORKER_URL;
+    delete process.env.DELEGATE_WORKER_URL;
     fetchSpy = jest.spyOn(globalThis, 'fetch');
 
     const result = await fsListFolder(TARGET, '/');
@@ -78,15 +78,19 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
       },
     });
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://fileshares.internal:8090/v1/list');
+    expect(url).toBe('http://delegate.internal:8096/v1/forward/fileshares/list');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer test-key');
     expect(JSON.parse(String(init.body))).toEqual({ ...TARGET, path: '/' });
   });
 
   it('refuses a listing with a malformed entry rather than dropping it silently', async () => {
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ share: SHARE, path: '/', entries: [{ name: 'a.txt' }] }), { status: 200 })
-    );
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ share: SHARE, path: '/', entries: [{ name: 'a.txt' }] }), {
+          status: 200,
+        })
+      );
 
     const result = await fsListFolder(TARGET, '/');
 
@@ -129,7 +133,9 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
 
   it('parses fsMoveEntry / fsRenameEntry relocations, including "unchanged"', async () => {
     const relocationResponse = () =>
-      new Response(JSON.stringify({ share: SHARE, path: '/b.txt', unchanged: false }), { status: 200 });
+      new Response(JSON.stringify({ share: SHARE, path: '/b.txt', unchanged: false }), {
+        status: 200,
+      });
     fetchSpy = jest
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(relocationResponse())
@@ -138,12 +144,20 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
     const moved = await fsMoveEntry(TARGET, '/a.txt', '/archive');
     expect(moved).toEqual({ ok: true, val: { share: SHARE, path: '/b.txt', unchanged: false } });
     const [, moveInit] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(JSON.parse(String(moveInit.body))).toEqual({ ...TARGET, path: '/a.txt', toFolder: '/archive' });
+    expect(JSON.parse(String(moveInit.body))).toEqual({
+      ...TARGET,
+      path: '/a.txt',
+      toFolder: '/archive',
+    });
 
     const renamed = await fsRenameEntry(TARGET, '/a.txt', 'b.txt');
     expect(renamed.ok).toBe(true);
     const [, renameInit] = fetchSpy.mock.calls[1] as [string, RequestInit];
-    expect(JSON.parse(String(renameInit.body))).toEqual({ ...TARGET, path: '/a.txt', newName: 'b.txt' });
+    expect(JSON.parse(String(renameInit.body))).toEqual({
+      ...TARGET,
+      path: '/a.txt',
+      newName: 'b.txt',
+    });
   });
 
   it('parses fsMakeFolder / fsRemoveEntry / fsPreviewRemove', async () => {
@@ -162,8 +176,14 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
         )
       );
 
-    expect(await fsMakeFolder(TARGET, '/new')).toEqual({ ok: true, val: { share: SHARE, path: '/new' } });
-    expect(await fsRemoveEntry(TARGET, '/old')).toEqual({ ok: true, val: { share: SHARE, path: '/old' } });
+    expect(await fsMakeFolder(TARGET, '/new')).toEqual({
+      ok: true,
+      val: { share: SHARE, path: '/new' },
+    });
+    expect(await fsRemoveEntry(TARGET, '/old')).toEqual({
+      ok: true,
+      val: { share: SHARE, path: '/old' },
+    });
     expect(await fsPreviewRemove(TARGET, '/old')).toEqual({
       ok: true,
       val: { share: SHARE, path: '/old', kind: 'file', size: 5, modifiedAt: null },
@@ -184,14 +204,16 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
 
     expect(result).toEqual({ ok: true, val: { entries: 4 } });
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://fileshares.internal:8090/v1/test-connection');
+    expect(url).toBe('http://delegate.internal:8096/v1/forward/fileshares/test-connection');
     expect(JSON.parse(String(init.body))).toEqual(payload);
   });
 
   it('maps a non-2xx response body to a typed op error', async () => {
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ error: { type: 'not_connected' } }), { status: 403 })
-    );
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { type: 'not_connected' } }), { status: 403 })
+      );
 
     const result = await fsStatEntry(TARGET, '/a.txt');
 
@@ -240,7 +262,7 @@ describe('fsWriteFile', () => {
   });
 
   it('answers unconfigured without any network call when the worker is not set up', async () => {
-    delete process.env.FILESHARES_WORKER_API_KEY;
+    delete process.env.DELEGATE_WORKER_API_KEY;
     fetchSpy = jest.spyOn(globalThis, 'fetch');
 
     const result = await fsWriteFile(TARGET, '/new.txt', new Uint8Array([1]));
@@ -259,18 +281,22 @@ describe('fsWriteFile', () => {
 
     expect(result).toEqual({ ok: true, val: { path: '/new.txt' } });
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/v1/write?');
+    expect(url).toContain('/forward/fileshares/write?');
     const query = new URL(url).searchParams;
     expect(query.get('tenantId')).toBe(TARGET.tenantId);
     expect(query.get('shareId')).toBe(TARGET.shareId);
     expect(query.get('subject')).toBe(TARGET.subject);
     expect(query.get('path')).toBe('/new.txt');
-    expect((init.headers as Record<string, string>)['content-type']).toBe('application/octet-stream');
+    expect((init.headers as Record<string, string>)['content-type']).toBe(
+      'application/octet-stream'
+    );
     expect(new Uint8Array(init.body as ArrayBuffer)).toEqual(bytes);
   });
 
   it('falls back to the requested path when the response has no usable body', async () => {
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('not json', { status: 200 }));
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('not json', { status: 200 }));
 
     const result = await fsWriteFile(TARGET, '/new.txt', new Uint8Array([1]));
 
@@ -278,9 +304,13 @@ describe('fsWriteFile', () => {
   });
 
   it('maps a non-2xx response to a typed op error', async () => {
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ error: { type: 'access_denied', message: 'no' } }), { status: 403 })
-    );
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { type: 'access_denied', message: 'no' } }), {
+          status: 403,
+        })
+      );
 
     const result = await fsWriteFile(TARGET, '/new.txt', new Uint8Array([1]));
 

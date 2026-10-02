@@ -521,9 +521,18 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/connector-admanager':
+        specifier: workspace:*
+        version: link:../../packages/connector-admanager
       '@renkei/connector-config':
         specifier: workspace:*
         version: link:../../packages/connector-config
+      '@renkei/connector-fileshares':
+        specifier: workspace:*
+        version: link:../../packages/connector-fileshares
+      '@renkei/connector-mirth':
+        specifier: workspace:*
+        version: link:../../packages/connector-mirth
       '@renkei/crypto':
         specifier: workspace:*
         version: link:../../packages/crypto
@@ -942,6 +951,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
@@ -1050,6 +1062,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
@@ -1184,6 +1199,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
@@ -1212,6 +1230,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates

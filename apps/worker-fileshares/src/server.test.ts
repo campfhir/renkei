@@ -76,7 +76,14 @@ function post(path: string, body: unknown, key: string | null = API_KEY): Promis
   });
 }
 
-const TARGET = { tenantId: 'tenant-1', shareId: 'share-1', subject: 'auth0|alice' };
+// The credential the delegate attaches rides on the target; these tests
+// mock the service, so none is needed and the parsed field reads null.
+const TARGET = {
+  tenantId: 'tenant-1',
+  shareId: 'share-1',
+  subject: 'auth0|alice',
+  credentials: null,
+};
 
 describe('authentication', () => {
   it('serves /health without a key', async () => {

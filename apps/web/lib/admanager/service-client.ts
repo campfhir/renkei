@@ -8,7 +8,8 @@
  * OWN stored authtoken. This client only ever names a tenant, an
  * instance, a subject, and an API path.
  *
- * Configuration: ADMANAGER_WORKER_URL + ADMANAGER_WORKER_API_KEY. Both
+ * Configuration: DELEGATE_WORKER_URL + DELEGATE_WORKER_API_KEY (the delegate
+ * forwards to the worker; see `config()`). Both
  * absent-or-set-together; a missing pair means every operation answers
  * 'unconfigured' — ADManager Plus is down, never open.
  *
@@ -20,7 +21,7 @@
 import type { HttpMethod, AdManagerCredentials } from '@renkei/connector-admanager';
 
 export type AdManagerClientError =
-  /** ADMANAGER_WORKER_URL / _API_KEY are not set. */
+  /** DELEGATE_WORKER_URL / _API_KEY are not set. */
   | { kind: 'unconfigured' }
   /** The worker could not be reached or answered garbage. */
   | { kind: 'unreachable'; message: string }
@@ -28,8 +29,7 @@ export type AdManagerClientError =
   | { kind: 'op'; type: string; message: string | undefined; status: number };
 
 export type AdManagerClientResult<T> =
-  | { ok: true; val: T }
-  | { ok: false; err: AdManagerClientError };
+  { ok: true; val: T } | { ok: false; err: AdManagerClientError };
 
 /** One ADManager Plus REST response, enveloped so the upstream status survives. */
 export interface WireApiResponse {
@@ -71,11 +71,18 @@ function optStr(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The worker is reached THROUGH the delegate (docs/delegate-key-design.md,
+ * decision 2): `forward/admanager/<op>` on DELEGATE_WORKER_URL. The delegate
+ * opens the person's credential — this process holds no key — and
+ * forwards the op to the worker with it attached; the answer comes back
+ * as the worker gave it. ADMANAGER_WORKER_URL is the delegate's setting now.
+ */
 function config(): { url: string; key: string } | null {
-  const url = process.env.ADMANAGER_WORKER_URL?.trim().replace(/\/$/, '');
-  const key = process.env.ADMANAGER_WORKER_API_KEY?.trim();
+  const url = process.env.DELEGATE_WORKER_URL?.trim().replace(/\/$/, '');
+  const key = process.env.DELEGATE_WORKER_API_KEY?.trim();
   if (!url || !key) return null;
-  return { url, key };
+  return { url: `${url}/v1/forward/admanager`, key };
 }
 
 /** Whether the web app can reach an ADManager Plus worker at all. */
@@ -111,7 +118,7 @@ async function callOp(op: string, body: unknown): Promise<AdManagerClientResult<
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
-    response = await fetch(`${cfg.url}/v1/${op}`, {
+    response = await fetch(`${cfg.url}/${op}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -208,7 +215,10 @@ export function admanagerClientFailure(error: AdManagerClientError): {
   message: string;
 } {
   if (error.kind === 'unconfigured') {
-    return { status: 503, message: 'The ADManager Plus service is not configured on this deployment' };
+    return {
+      status: 503,
+      message: 'The ADManager Plus service is not configured on this deployment',
+    };
   }
   if (error.kind === 'unreachable') {
     return { status: 502, message: 'The ADManager Plus service cannot be reached' };
@@ -225,14 +235,18 @@ export function admanagerClientFailure(error: AdManagerClientError): {
     case 'bad_credentials':
       return {
         status: 503,
-        message: 'Your stored authtoken for this instance cannot be read or was rejected — reconnect it',
+        message:
+          'Your stored authtoken for this instance cannot be read or was rejected — reconnect it',
       };
     case 'store':
       return { status: 500, message: 'Could not read ADManager Plus connections' };
     case 'timeout':
       return { status: 504, message: 'The ADManager Plus server did not answer in time' };
     case 'unreachable':
-      return { status: 502, message: error.message ?? 'The ADManager Plus server could not be reached' };
+      return {
+        status: 502,
+        message: error.message ?? 'The ADManager Plus server could not be reached',
+      };
     default:
       return { status: error.status, message: error.message ?? error.type };
   }

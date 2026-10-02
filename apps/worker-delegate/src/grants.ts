@@ -199,6 +199,22 @@ export class Grants {
     return { ok: true, grant, spec };
   }
 
+  /**
+   * The access token for a connector worker request the delegate forwards
+   * (forward.ts): same resolution as `api`, for a caller inside this
+   * process only. Never answered over the wire.
+   */
+  async accessFor(
+    tenantId: string,
+    provider: string,
+    by: { subject?: string; accountId?: string }
+  ): Promise<{ ok: true; token: string } | { ok: false; error: GrantError; status: number }> {
+    const access = await this.access(tenantId, provider, by);
+    if (!access.ok)
+      return { ok: false, error: access.error, status: statusForGrantError(access.error) };
+    return { ok: true, token: access.grant.accessToken };
+  }
+
   // ── api: the proxy ─────────────────────────────────────────────────────
 
   async api(request: IncomingMessage, response: ServerResponse): Promise<void> {

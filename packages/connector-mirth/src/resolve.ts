@@ -40,12 +40,21 @@ export async function resolveInstance(
   return ok(instance.val);
 }
 
+/**
+ * The instance and the person's credential. The credential is what the
+ * DELEGATE opened and attached to the request (`provided`) — the one
+ * process that holds a key (docs/delegate-key-design.md); a worker given
+ * none has nothing to open it with and answers `not_connected`.
+ */
 export async function resolveTarget(
   db: Kysely<DB>,
-  target: SubjectTarget
+  target: SubjectTarget,
+  provided?: MirthCredentials | null
 ): Promise<Result<ResolvedTarget, ResolveError>> {
   const instance = await resolveInstance(db, target.tenantId, target.instanceId);
   if (!instance.ok) return instance;
+  if (provided) return ok({ instance: instance.val, credentials: provided });
+  if (provided === null) return err('not_connected' as const);
 
   const ciphertext = await readConnectionCiphertext(
     db,

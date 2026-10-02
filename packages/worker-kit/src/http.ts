@@ -94,6 +94,13 @@ export interface CreateJsonRpcServerOptions {
    * body is read. The handler owns the request and the response.
    */
   rawHandlers?: Record<string, RawHandler>;
+  /**
+   * Called for an op neither map names, before `unknown_operation` — for a
+   * family of ops under one prefix (the delegate's `forward/<connector>/…`).
+   * The handler owns the request from here; it answers `unknown_operation`
+   * itself when the op is not one of its own.
+   */
+  fallback?: (op: string, request: IncomingMessage, response: ServerResponse) => Promise<void>;
   /** The connector's own sendError — typed to its own (wider) WorkerErrorType,
    *  which is always assignable here since it can handle every generic tag
    *  this function ever passes plus its own domain-specific ones. */
@@ -129,6 +136,7 @@ export function createJsonRpcServer(options: CreateJsonRpcServerOptions): Server
     if (rawHandler) return rawHandler(request, response);
     const handler = options.handlers[op];
     if (!handler) {
+      if (options.fallback) return options.fallback(op, request, response);
       return options.sendError(response, 'unknown_operation');
     }
     const raw = await readBody(request, options.maxBodyBytes);

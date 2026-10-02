@@ -23,6 +23,7 @@
  *
  * Token ops (grants.ts): api (raw, streaming), oauth/exchange,
  * grant/commit, grant/describe, grant/revoke, grant/delete.
+ * Connector workers (forward.ts): forward/<connector>/<op>.
  */
 
 import type { Server, ServerResponse } from 'node:http';
@@ -56,6 +57,7 @@ import {
 import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
 import { sendError } from './errors';
 import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
+import { Forwarder } from './forward';
 
 export interface DelegateServerDeps {
   db: Kysely<DB>;
@@ -119,6 +121,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
   const { db } = deps;
   const logger = deps.logger ?? silentDelegateLogger;
   const grants = new Grants(db, deps.encryptionKey, logger, deps.fetchImpl);
+  const forwarder = new Forwarder(db, grants, deps.fetchImpl);
 
   type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
 
@@ -315,6 +318,12 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     handlers,
     // The proxy streams a raw body in and the provider's answer out.
     rawHandlers: { api: (request, response) => grants.api(request, response) },
+    // forward/<connector>/<op>: the connector workers, with the person's
+    // credential attached here (forward.ts).
+    fallback: async (op, request, response) => {
+      if (!(await forwarder.handle(op, request, response)))
+        sendError(response, 'unknown_operation');
+    },
     sendError,
     onUnhandledError: (error) => {
       logger.error('delegate op failed: {error}', {

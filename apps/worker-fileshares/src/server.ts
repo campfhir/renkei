@@ -32,6 +32,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
   parseShareCredentials,
+  type ShareCredentials,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -102,12 +103,30 @@ function sendServiceError(
   });
 }
 
+/**
+ * The target plus the person's credential, which the delegate (the one
+ * process that holds a key) opened and attached to the request. Absent,
+ * the service answers `not_connected`: this process never reads a stored
+ * credential itself.
+ */
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
   const tenantId = str(body.tenantId);
   const shareId = str(body.shareId);
   const subject = str(body.subject);
   if (!tenantId || !shareId || !subject) return null;
-  return { tenantId, shareId, subject };
+  return { tenantId, shareId, subject, credentials: parseShareCredentials(body.credentials) };
+}
+
+/** For the raw `write` op, whose body is the file: the credential rides in a header. */
+function credentialsFromHeader(value: string | string[] | undefined): ShareCredentials | null {
+  const text = Array.isArray(value) ? value[0] : value;
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parseShareCredentials(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function iso(date: Date | null): string | null {
@@ -273,10 +292,11 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
     // Write is the one endpoint whose body IS the file: metadata rides the
     // query string so the payload needs no envelope (and no base64 tax).
     if (url.pathname === '/v1/write') {
-      const target = {
+      const target: SubjectTarget = {
         tenantId: url.searchParams.get('tenantId') ?? '',
         shareId: url.searchParams.get('shareId') ?? '',
         subject: url.searchParams.get('subject') ?? '',
+        credentials: credentialsFromHeader(request.headers['x-fileshare-credentials']),
       };
       const path = url.searchParams.get('path') ?? '';
       if (!target.tenantId || !target.shareId || !target.subject || !path) {

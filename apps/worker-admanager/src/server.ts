@@ -78,7 +78,10 @@ export interface AdManagerServerDeps {
   /** Injected in tests; production dials the real server. */
   dial?: UpstreamDialer;
   /** Injected in tests; production reads the store. */
-  resolveTarget?: (target: SubjectTarget) => Promise<Result<ResolvedTarget, ResolveError>>;
+  resolveTarget?: (
+    target: SubjectTarget,
+    provided: AdManagerCredentials | null
+  ) => Promise<Result<ResolvedTarget, ResolveError>>;
   resolveInstance?: (
     tenantId: string,
     instanceId: string
@@ -205,7 +208,12 @@ function isLegacyRestPath(path: string): boolean {
 
 export function createAdManagerServer(deps: AdManagerServerDeps): Server {
   const dial = deps.dial ?? dialUpstream;
-  const resolve = deps.resolveTarget ?? ((target) => resolveTarget(deps.db, target));
+  // The credential arrives WITH the request, opened by the delegate; this
+  // process holds no key and never reads a stored one.
+  const resolve =
+    deps.resolveTarget ??
+    ((target: SubjectTarget, provided: AdManagerCredentials | null) =>
+      resolveTarget(deps.db, target, provided));
   const resolveOne =
     deps.resolveInstance ??
     ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
@@ -295,7 +303,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         return sendError(response, 'bad_request', 'path is not a usable API path');
       }
 
-      const resolved = await resolve(target);
+      const resolved = await resolve(target, parseAdManagerCredentials(body.credentials));
       if (!resolved.ok) return sendError(response, resolved.err.type);
       const { instance, credentials } = resolved.val;
 

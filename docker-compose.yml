@@ -33,14 +33,9 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
       NODE_ENV: production
-      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
-      FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
-      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
-      ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
-      MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
-      MIRTH_WORKER_API_KEY: ${MIRTH_WORKER_API_KEY:-renkei-dev-mirth-key}
-      ADMANAGER_WORKER_URL: http://renkei-worker-admanager:8095
-      ADMANAGER_WORKER_API_KEY: ${ADMANAGER_WORKER_API_KEY:-renkei-dev-admanager-key}
+      # The connector workers (file shares, OnBase, Mirth, ADManager Plus) are
+      # reached through the delegate, which attaches the person's credential;
+      # the app holds neither their addresses nor their keys any more.
       DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
       DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
@@ -97,6 +92,10 @@ services:
     container_name: renkei-worker
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      # Reaches the delegate for chat keys (and, for the queue worker, the
+      # file-share ops its batch jobs run on a person's own credential).
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
       NODE_ENV: production
     depends_on:
       postgres:
@@ -143,6 +142,10 @@ services:
     command: ['pnpm', '--filter', '@renkei/worker-agents', 'start']
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      # Reaches the delegate for chat keys (and, for the queue worker, the
+      # file-share ops its batch jobs run on a person's own credential).
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
       RENKEI_WEB_INTERNAL_URL: http://app:3000
       # The chat retention sweep deletes attachment blobs; same emulator
       # settings as the app service.
@@ -282,6 +285,16 @@ services:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
       USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:?set USER_KEY_ENCRYPTION_KEY (openssl rand -base64 32) for the delegate}
+      # The connector workers the delegate forwards to, with the person's
+      # credential attached (forward/<connector>/<op>).
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
+      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
+      ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
+      MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
+      MIRTH_WORKER_API_KEY: ${MIRTH_WORKER_API_KEY:-renkei-dev-mirth-key}
+      ADMANAGER_WORKER_URL: http://renkei-worker-admanager:8095
+      ADMANAGER_WORKER_API_KEY: ${ADMANAGER_WORKER_API_KEY:-renkei-dev-admanager-key}
       NODE_ENV: production
     depends_on:
       postgres:

@@ -66,6 +66,14 @@ export interface SubjectTarget {
   tenantId: string;
   shareId: string;
   subject: string;
+  /**
+   * The person's credential as the DELEGATE opened and attached it — the
+   * one process that holds a key (docs/delegate-key-design.md). Null means
+   * the caller named none: the worker has nothing to open a stored one
+   * with and answers `not_connected`. Undefined keeps the stored lookup,
+   * for the package's own in-process callers and tests.
+   */
+  credentials?: ShareCredentials | null;
 }
 
 const TRAVERSAL_MESSAGE =
@@ -89,6 +97,8 @@ export async function resolveConnection(
   const share = await getShare(deps.db, target.tenantId, target.shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
+  if (target.credentials) return ok({ share: share.val.summary, credentials: target.credentials });
+  if (target.credentials === null) return err('not_connected' as const);
 
   const ciphertext = await readConnectionCiphertext(
     deps.db,
