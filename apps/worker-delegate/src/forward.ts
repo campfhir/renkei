@@ -357,7 +357,11 @@ export class Forwarder {
     worker: { url: string; apiKey: string },
     opAndQuery: string,
     response: ServerResponse,
-    init: { method: string; headers: Record<string, string>; body: string | Uint8Array }
+    init: {
+      method: string;
+      headers: Record<string, string>;
+      body: string | Uint8Array<ArrayBuffer>;
+    }
   ): Promise<void> {
     let upstream: Response;
     try {
