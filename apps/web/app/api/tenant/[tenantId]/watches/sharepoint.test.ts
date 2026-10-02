@@ -27,26 +27,29 @@ jest.mock('@/lib/session', () => ({
 jest.mock('@/lib/get-origin', () => ({
   getOrigin: jest.fn(async () => ({ ok: true, val: 'https://renkei.example.com' })),
 }));
-jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: jest.fn(async () => null) }));
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
-jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
+// The delegate holds the Microsoft grant: it describes the account the
+// watch records, and its fetcher is what the route sends Graph calls
+// through — here, straight to the stubbed global fetch below.
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({
+      describe: jest.fn(async () => ({ ok: true, val: { accountId: 'acct-1', metadata: {} } })),
+    }),
+    grantFetch: (ref: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch((url, init) => fetch(url, init), actual.grantKeyOf(ref)),
+  };
+});
 jest.mock('@renkei/provider-grants', () => ({
-  getGrant: jest.fn(async () => ({
-    ok: true,
-    val: {
-      accessToken: 'token-1',
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      metadata: { upn: 'alice@example.com', tid: 'tid-1' },
-    },
-  })),
-  refreshGrantTokens: jest.fn(),
   MICROSOFT: 'microsoft',
   ATLASSIAN: 'atlassian',
   ATLASSIAN_CONFLUENCE: 'atlassian-confluence',
-  MicrosoftAdapter: class {},
 }));
 /**
  * A query builder that accepts any chain and answers the same row.
@@ -159,7 +162,7 @@ describe('POST /watches — sharepoint', () => {
       label: 'Eng / Policies',
     });
     // scope_type 'drive', and the account whose grant the worker will poll
-    // with — taken from the same lookup that produced the token.
+    // with — taken from the same grant the delegate fetched with.
     expect(upsertWatch).toHaveBeenCalledWith(
       { tenantId: 'tenant-1', subject: 'subject-1', accountId: 'acct-1' },
       'sharepoint',

@@ -40,15 +40,14 @@ interface GitHubIssueCard {
 async function lookupJira(
   tenantId: string,
   subject: string,
-  origin: string,
   key: string
 ): Promise<JiraCard | null> {
-  const access = await resolveAtlassianUserAccess(tenantId, subject, ATLASSIAN, origin);
+  const access = await resolveAtlassianUserAccess(tenantId, subject, ATLASSIAN);
   if (typeof access === 'string') return null;
   try {
     const response = await jiraFetch(
       `https://api.atlassian.com/ex/jira/${access.cloudId}/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,status`,
-      access.accessToken
+      access.auth
     );
     if (!response.ok) return null;
     const body: unknown = await response.json().catch(() => null);
@@ -112,7 +111,7 @@ export async function GET(
   const origin = await getOrigin(request);
   const originVal = origin.ok ? origin.val : '';
   const [jira, github] = await Promise.all([
-    refs.jiraKey ? lookupJira(tenantId, session.subject, originVal, refs.jiraKey) : null,
+    refs.jiraKey ? lookupJira(tenantId, session.subject, refs.jiraKey) : null,
     refs.githubIssueNumber && project.repo!.provider === 'github'
       ? lookupGitHubIssue(
           tenantId,

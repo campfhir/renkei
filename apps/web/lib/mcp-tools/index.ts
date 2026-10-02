@@ -13,7 +13,7 @@ import { registerJiraServiceManagementTools } from './jira-service-management';
 import { withScopeGate } from './capability-gate';
 
 export type { MCPToolContext };
-export { ok, okWithLink, toolError, cacheTokenMetadata, cacheUserDisplayName } from './common';
+export { ok, okWithLink, toolError, cacheUserDisplayName } from './common';
 
 /**
  * Register all MCP tools with the server.
@@ -25,12 +25,12 @@ export async function registerAllTools(server: McpServer, context: MCPToolContex
     oauthJiraAuth(context)
   );
   // JSM/Ops tools run on the second Atlassian app's grant when the caller
-  // has connected it — its own token, cloud id, and scope gates. Without
+  // has connected it — its own grant, cloud id, and scope gates. Without
   // one, they fall back to the main grant (the pre-split single-app shape).
   const jsmContext: MCPToolContext = context.jsmGrant
     ? {
         ...context,
-        accessToken: context.jsmGrant.accessToken,
+        jiraAuth: context.jsmGrant.auth,
         accountId: context.jsmGrant.accountId,
         cloudId: context.jsmGrant.cloudId,
         apiBaseUrl: `https://api.atlassian.com/ex/jira/${context.jsmGrant.cloudId}`,

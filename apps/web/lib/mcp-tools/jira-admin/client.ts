@@ -4,11 +4,11 @@
  * lib/atlassian-scopes.ts for why it is its own app).
  *
  * Confluence's pattern (../confluence/client.ts), not Jira's: every tool
- * call resolves its access fresh from the grant, refreshing near expiry, so
- * a disconnect or a lapsed grant surfaces as a plain sentence rather than a
- * stale cached token — and the admin token never rides the Jira app's
- * context fields or its 401-refresh path (lib/tenant-operations.ts), which
- * only knows the Jira and JSM apps.
+ * call resolves its access fresh from the grant, so a disconnect or a
+ * lapsed grant surfaces as a plain sentence — and the admin grant never
+ * rides the Jira app's context fields. The token itself lives in the
+ * delegate worker (docs/delegate-key-design.md): the `auth` fetcher here
+ * attaches it, refreshes it when due and retries a 401.
  *
  * Everything lives on the Jira platform gateway,
  * api.atlassian.com/ex/jira/{cloudId}: configuration under /rest/api/3, the
@@ -16,28 +16,25 @@
  * /forms.
  */
 
+import { ATLASSIAN_ADMIN, readAtlassianMetadata } from '@renkei/provider-grants';
 import {
-  getGrant,
-  refreshGrantTokens,
-  ATLASSIAN_ADMIN,
-  AtlassianAdapter,
-  readAtlassianMetadata,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { getDatabase } from '@renkei/db';
-import { getAtlassianAdminApp } from '@/lib/atlassian-app';
+  delegateGrants,
+  delegateRefusal,
+  grantFetch,
+  type AuthedFetch,
+} from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import { grantRefusalText } from '@/lib/grant-refusals';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
-
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
 /**
  * The Jira platform gateway, less the cloud id. A deployment may point it
  * elsewhere (JIRA_ADMIN_API_BASE_URL) — the browser suite runs the app
  * against a stand-in for the few option endpoints a change request applies,
- * the way BITBUCKET_API_BASE_URL serves the Code pages.
+ * the way BITBUCKET_API_BASE_URL serves the Code pages. The delegate only
+ * forwards to Atlassian's own hosts, so a stand-in needs a delegate that
+ * allows it too.
  */
 const JIRA_ADMIN_API_BASE =
   process.env.JIRA_ADMIN_API_BASE_URL?.replace(/\/+$/, '') || 'https://api.atlassian.com/ex/jira';
@@ -47,58 +44,35 @@ export interface JiraAdminAccess {
   /** The site's browser URL (https://x.atlassian.net), for links; may be empty. */
   siteUrl: string;
   accountId: string;
-  /** The full `Authorization` header value — a Bearer token in production. */
-  authHeader: string;
+  /** The fetcher every call goes out through — the delegate's, for the caller's grant. */
+  auth: AuthedFetch;
 }
 
 /**
- * The caller's live Jira Admin token + site, refreshed when stale. Takes
- * only who is asking, so the apply route — a browser session, not an MCP
- * call — resolves the same grant the same way.
+ * The caller's Jira Admin grant as a fetcher, plus its site. Takes only who
+ * is asking, so the apply route — a browser session, not an MCP call —
+ * resolves the same grant the same way.
  */
 export async function resolveJiraAdminAccess(
   context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<JiraAdminAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
 
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', ATLASSIAN_ADMIN)
-    .where('subject', '=', context.subject)
-    .executeTakeFirst();
-  if (!row) {
-    return (
-      'Jira Administration is not connected. Connect it on the Connectors page (it is ' +
-      'separate from Jira), then try again.'
-    );
-  }
-
-  const grantResult = await getGrant(ATLASSIAN_ADMIN, context.tenantId, row.provider_account_id);
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the Jira Administration grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getAtlassianAdminApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'Jira Administration is no longer configured for this organization.';
-    const refreshed = await refreshGrantTokens(
-      new AtlassianAdapter(app.clientSecret, ATLASSIAN_ADMIN),
-      context.tenantId,
-      grant.accountId,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Jira Administration authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the Jira Administration token; try again shortly.';
+  const ref = { tenantId: context.tenantId, provider: ATLASSIAN_ADMIN, subject: context.subject };
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) {
+    if (described.err.type === 'NO_GRANT') {
+      return (
+        'Jira Administration is not connected. Connect it on the Connectors page (it is ' +
+        'separate from Jira), then try again.'
+      );
     }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
+    return described.err.type === 'GRANT_UNREADABLE' || described.err.type === 'DELEGATE_ERROR'
+      ? 'Could not read the Jira Administration grant.'
+      : grantRefusalText(described.err.type, 'Jira Administration');
   }
 
-  const site = readAtlassianMetadata(grant.metadata);
+  const site = readAtlassianMetadata(described.val.metadata);
   if (!site.cloudId) {
     return 'The Jira Administration grant is missing its site id; reconnect on the Connectors page.';
   }
@@ -106,8 +80,8 @@ export async function resolveJiraAdminAccess(
   return {
     cloudId: site.cloudId,
     siteUrl: site.siteUrl,
-    accountId: grant.accountId,
-    authHeader: `Bearer ${grant.accessToken}`,
+    accountId: described.val.accountId,
+    auth: grantFetch(ref),
   };
 }
 
@@ -228,10 +202,10 @@ async function jiraAdminRequest(
 ): Promise<JiraAdminResult> {
   let response: Response;
   try {
-    response = await fetch(`${JIRA_ADMIN_API_BASE}/${access.cloudId}${pathAndQuery}`, {
+    // No Authorization here: the fetcher's owner (the delegate) attaches it.
+    response = await access.auth(`${JIRA_ADMIN_API_BASE}/${access.cloudId}${pathAndQuery}`, {
       method,
       headers: {
-        Authorization: access.authHeader,
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
@@ -260,6 +234,20 @@ async function jiraAdminRequest(
           ? reason
           : `${reason} — the change may still have gone through; check Jira before retrying.`,
     };
+  }
+  const refusal = delegateRefusal(response);
+  if (refusal) {
+    // The delegate's own refusal never reached Jira — the resolver's words,
+    // not a Jira status.
+    logger.warn('Delegate refused the Jira admin call', {
+      component: 'jira-admin/fetch',
+      tenantId: scope.tenantId,
+      subject: scope.subject,
+      method,
+      path: pathAndQuery,
+      refusal,
+    });
+    return { ok: false, error: grantRefusalText(refusal, 'Jira Administration') };
   }
   const text = await response.text().catch(() => '');
   let parsed: unknown = null;

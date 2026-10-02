@@ -85,10 +85,13 @@ export async function collectConfluenceChanges(
   const cql = encodeURIComponent(
     `type in (page, blogpost) and lastModified >= "${since}" order by lastModified desc`
   );
-  const response = await fetch(
-    `https://api.atlassian.com/ex/confluence/${access.cloudId}/wiki/rest/api/search?cql=${cql}&limit=${MAX_ITEMS_PER_SECTION}&expand=content.version,content.space`,
-    { headers: { Authorization: `Bearer ${access.accessToken}`, Accept: 'application/json' } }
-  ).catch(() => null);
+  // Through the grant's fetcher: the delegate attaches the credential.
+  const response = await access
+    .auth(
+      `https://api.atlassian.com/ex/confluence/${access.cloudId}/wiki/rest/api/search?cql=${cql}&limit=${MAX_ITEMS_PER_SECTION}&expand=content.version,content.space`,
+      { headers: { Accept: 'application/json' } }
+    )
+    .catch(() => null);
   if (!response || !response.ok) return null;
 
   const body: unknown = await response.json().catch(() => null);

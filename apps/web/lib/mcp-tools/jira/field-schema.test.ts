@@ -64,7 +64,7 @@ const context = {
   accountId: 'acct-1',
   siteUrl: 'https://example.atlassian.net',
   apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-  accessToken: 'token-1',
+  jiraAuth: null,
   maxJqlResults: 100,
 } as MCPToolContext;
 

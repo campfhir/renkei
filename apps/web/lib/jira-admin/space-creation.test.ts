@@ -16,6 +16,7 @@ jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
 
+import { authedFetch } from '@renkei/delegate-client';
 import type { JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
 import { FAKE_BASE } from './fake-site.fixture';
 import {
@@ -34,7 +35,8 @@ const access: JiraAdminAccess = {
   cloudId: 'cloud-1',
   siteUrl: 'https://acme.atlassian.net',
   accountId: 'acct-1',
-  authHeader: 'Bearer t',
+  // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
+  auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
 };
 const scope = { tenantId: 'tenant-1', subject: 'subject-1' };
 

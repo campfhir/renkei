@@ -20,10 +20,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { atlassianFetch, listOf, str } from '@renkei/connector-atlassian';
 import { getSessionFromRequest } from '@/lib/session';
-import { getOrigin } from '@/lib/get-origin';
 import { resolveAtlassianUserAccess } from '@/lib/atlassian-user-access';
-import { resolveGraphAccess, graphGet, values, str as gstr } from '@/lib/mcp-tools/graph/client';
-import { resolveSite } from '@/lib/mcp-tools/graph/resolve';
+import {
+  graphStr as gstr,
+  graphValues,
+  resolveSharePointAccess,
+  resolveSharePointSite,
+  sharePointGet,
+} from '../sharepoint-access';
 
 export interface WatchOption {
   /** What gets stored as scope_key — a project key, a space id, or a driveId. */
@@ -49,13 +53,9 @@ export async function GET(
     );
   }
 
-  const originResult = await getOrigin(request);
-  if (!originResult.ok)
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-
   if (provider === 'sharepoint') {
     return sharePointOptions(
-      { tenantId, subject: session.subject, origin: originResult.val },
+      { tenantId, subject: session.subject },
       request.nextUrl.searchParams.get('site')?.trim() ?? '',
       request.nextUrl.searchParams.get('q')?.trim() ?? ''
     );
@@ -64,8 +64,7 @@ export async function GET(
   const access = await resolveAtlassianUserAccess(
     tenantId,
     session.subject,
-    provider === 'jira' ? ATLASSIAN : ATLASSIAN_CONFLUENCE,
-    originResult.val
+    provider === 'jira' ? ATLASSIAN : ATLASSIAN_CONFLUENCE
   );
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
@@ -73,7 +72,7 @@ export async function GET(
     const response = await atlassianFetch({
       product: 'jira',
       cloudId: access.cloudId,
-      accessToken: access.accessToken,
+      auth: access.auth,
       path: '/rest/api/3/project/search?maxResults=100&orderBy=key',
     });
     if (!response.ok) {
@@ -100,7 +99,7 @@ export async function GET(
   const response = await atlassianFetch({
     product: 'confluence',
     cloudId: access.cloudId,
-    accessToken: access.accessToken,
+    auth: access.auth,
     path: '/wiki/api/v2/spaces?limit=100&status=current',
   });
   if (!response.ok) {
@@ -129,26 +128,24 @@ export async function GET(
  * mistake one for the other and POST a siteId as a scope key.
  */
 async function sharePointOptions(
-  owner: { tenantId: string; subject: string; origin: string },
+  owner: { tenantId: string; subject: string },
   site: string,
   query: string
 ): Promise<NextResponse> {
-  const context = { tenantId: owner.tenantId, subject: owner.subject, origin: owner.origin };
-  const access = await resolveGraphAccess(context);
+  const access = await resolveSharePointAccess(owner.tenantId, owner.subject);
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   if (site) {
-    const resolved = await resolveSite(context, access.accessToken, site);
+    const resolved = await resolveSharePointSite(access, site);
     if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: 400 });
 
-    const drives = await graphGet(
-      context,
-      access.accessToken,
+    const drives = await sharePointGet(
+      access,
       `/sites/${resolved.siteId}/drives?$select=id,name,webUrl,driveType`
     );
     if (!drives.ok) return NextResponse.json({ error: drives.error }, { status: 400 });
 
-    const options: WatchOption[] = values(drives.body).map((drive) => ({
+    const options: WatchOption[] = graphValues(drives.body).map((drive) => ({
       key: gstr(drive.id),
       label: gstr(drive.name),
       hint: gstr(drive.webUrl),
@@ -159,10 +156,10 @@ async function sharePointOptions(
   const path = query
     ? `/sites?search=${encodeURIComponent(query)}&$top=25&$select=id,displayName,webUrl`
     : '/me/followedSites?$select=id,displayName,webUrl';
-  const found = await graphGet(context, access.accessToken, path);
+  const found = await sharePointGet(access, path);
   if (!found.ok) return NextResponse.json({ error: found.error }, { status: 400 });
 
-  const sites = values(found.body).map((entry) => ({
+  const sites = graphValues(found.body).map((entry) => ({
     id: gstr(entry.id),
     name: gstr(entry.displayName),
     webUrl: gstr(entry.webUrl),

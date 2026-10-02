@@ -9,7 +9,8 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
-import { deleteGrant, ATLASSIAN_ADMIN } from '@renkei/provider-grants';
+import { ATLASSIAN_ADMIN } from '@renkei/provider-grants';
+import { delegateGrants } from '@renkei/delegate-client';
 
 export async function DELETE(
   request: NextRequest,
@@ -38,7 +39,13 @@ export async function DELETE(
     return NextResponse.json({ message: 'Nothing to disconnect' });
   }
 
-  const deleted = await deleteGrant(ATLASSIAN_ADMIN, tenantId, grant.provider_account_id);
+  // The delegate owns the grant rows (docs/delegate-key-design.md); it
+  // deletes ours, and revokes at the provider where one can.
+  const deleted = await delegateGrants().delete({
+    tenantId,
+    provider: ATLASSIAN_ADMIN,
+    accountId: grant.provider_account_id,
+  });
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }

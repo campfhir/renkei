@@ -4,26 +4,27 @@
  * push — an Authorization header — for the length of one worker call.
  * `resolveWorkspaceGitCredential` dispatches on the project's
  * `repo.provider` (migration 102's `repo_provider`, one of
- * ATLASSIAN_BITBUCKET or GITHUB) to the matching provider's own
- * resolver, so a code project works the same way whichever host its
- * repository lives on — this module is the one seam that knows both.
+ * ATLASSIAN_BITBUCKET or GITHUB) to the matching provider's own scope
+ * rule, then asks the delegate for the header (`grant/git-credential`),
+ * so a code project works the same way whichever host its repository
+ * lives on — this module is the one seam that knows both.
  *
- * Bitbucket Cloud accepts an OAuth access token over git-https as Basic
- * auth with the fixed username `x-token-auth`; GitHub accepts a GitHub
- * App user-to-server token the same way with the fixed username
- * `x-access-token` (both documented conventions of their respective
- * providers — see e.g. GitHub's "Cloning a repository ... with a token").
- * The header is built here, forwarded to the sandbox worker in the
- * request body, and put in that one git process's environment; it is
- * never in a URL, never on disk, never in a tool result. The same
- * resolvers serve the MCP tools and the connectors page's clone form, so
- * both stand on the same scope checks.
+ * This is the one documented exception to "tokens never leave the
+ * delegate" (docs/delegate-key-design.md, "Phase 1 as built"): Bitbucket
+ * Cloud accepts an OAuth access token over git-https as Basic auth with
+ * the fixed username `x-token-auth`; GitHub accepts a GitHub App
+ * user-to-server token the same way with the fixed username
+ * `x-access-token`. The delegate builds that header and logs every issue;
+ * it is forwarded to the sandbox worker in the request body and put in
+ * that one git process's environment — never in a URL, never on disk,
+ * never in a tool result. To be replaced by a git proxy with short-lived
+ * tickets.
  */
 
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
-import { resolveBitbucketAccess } from '@/lib/mcp-tools/bitbucket/client';
-import { resolveGitHubAccess } from '@/lib/mcp-tools/github/client';
+import { delegateGrants } from '@renkei/delegate-client';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
+import { grantRefusalText } from '@/lib/grant-refusals';
 
 export interface WorkspaceGitCredential {
   authHeader: string;
@@ -46,49 +47,45 @@ export async function resolveWorkspaceGitCredential(
   context: GitContext,
   options: { write: boolean }
 ): Promise<WorkspaceGitCredential | string> {
-  if (context.provider === GITHUB) return resolveGitHubWorkspaceGitCredential(context, options);
+  if (context.provider === GITHUB) {
+    return resolveHostGitCredential(context, options, {
+      scopes: context.githubScopes,
+      label: 'GitHub',
+    });
+  }
   if (context.provider === ATLASSIAN_BITBUCKET) {
-    return resolveBitbucketWorkspaceGitCredential(context, options);
+    return resolveHostGitCredential(context, options, {
+      scopes: context.bitbucketScopes,
+      label: 'Bitbucket',
+    });
   }
   return `Unknown repository provider "${context.provider}".`;
 }
 
-async function resolveBitbucketWorkspaceGitCredential(
+async function resolveHostGitCredential(
   context: GitContext,
-  options: { write: boolean }
+  options: { write: boolean },
+  host: { scopes: string[] | undefined; label: string }
 ): Promise<WorkspaceGitCredential | string> {
   const needed = options.write ? 'repository:write' : 'repository';
-  if (context.bitbucketScopes !== undefined && !context.bitbucketScopes.includes(needed)) {
+  if (host.scopes !== undefined && !host.scopes.includes(needed)) {
     return (
-      `This needs the Bitbucket "${needed}" capability, which this connection does not carry. ` +
-      `Reconnect Bitbucket on the Connectors page with ${options.write ? 'code write' : 'code read'} enabled.`
+      `This needs the ${host.label} "${needed}" capability, which this connection does not carry. ` +
+      `Reconnect ${host.label} on the Connectors page with ${options.write ? 'code write' : 'code read'} enabled.`
     );
   }
-  const access = await resolveBitbucketAccess(context);
-  if (typeof access === 'string') return access;
-  return {
-    authHeader: `Basic ${Buffer.from(`x-token-auth:${access.accessToken}`, 'utf8').toString('base64')}`,
-    username: access.username,
-  };
-}
-
-async function resolveGitHubWorkspaceGitCredential(
-  context: GitContext,
-  options: { write: boolean }
-): Promise<WorkspaceGitCredential | string> {
-  const needed = options.write ? 'repository:write' : 'repository';
-  if (context.githubScopes !== undefined && !context.githubScopes.includes(needed)) {
-    return (
-      `This needs the GitHub "${needed}" capability, which this connection does not carry. ` +
-      `Reconnect GitHub on the Connectors page with ${options.write ? 'code write' : 'code read'} enabled.`
-    );
+  if (!context.subject) return 'No signed-in subject on this request.';
+  const credential = await delegateGrants().gitCredential({
+    tenantId: context.tenantId,
+    provider: context.provider,
+    subject: context.subject,
+  });
+  if (!credential.ok) {
+    return credential.err.type === 'GRANT_UNREADABLE' || credential.err.type === 'DELEGATE_ERROR'
+      ? `Could not read the ${host.label} grant.`
+      : grantRefusalText(credential.err.type, host.label);
   }
-  const access = await resolveGitHubAccess(context);
-  if (typeof access === 'string') return access;
-  return {
-    authHeader: `Basic ${Buffer.from(`x-access-token:${access.accessToken}`, 'utf8').toString('base64')}`,
-    username: access.login,
-  };
+  return { authHeader: credential.val.authHeader, username: credential.val.login ?? '' };
 }
 
 /** The https clone URL for `workspace/repo` on Bitbucket Cloud. */

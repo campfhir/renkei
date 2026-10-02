@@ -7,8 +7,9 @@
 import { z } from 'zod';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { refreshAtlassianTokenDirect } from '@/lib/tenant-operations';
+import { delegateRefusal, type AuthedFetch } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
+import { grantRefusalText } from '@/lib/grant-refusals';
 import {
   REQUEST_TIMEOUT_MS,
   UPLOAD_TIMEOUT_MS,
@@ -36,7 +37,14 @@ export interface MCPToolContext {
    * api.atlassian.com/ex/jira/{cloudId}/jsm/ops/api/v1.
    */
   cloudId?: string;
-  accessToken: string;
+  /**
+   * The caller's Jira grant as a fetcher (docs/delegate-key-design.md): the
+   * delegate worker holds the token, attaches it, refreshes it when due and
+   * retries once on a 401. Null when the caller has no Jira grant, and in
+   * the tool catalog's enumeration-only context, where nothing may reach
+   * Atlassian.
+   */
+  jiraAuth: AuthedFetch | null;
   maxJqlResults: number;
   /**
    * Public origin of this deployment (https://mcp.example.com), for links the
@@ -75,11 +83,12 @@ export interface MCPToolContext {
   zoomScopes?: string[];
   /**
    * The caller's grant on the second Atlassian app ("Renkei JSM": JSM + Ops
-   * scopes), when connected. JSM/Ops tools run on THIS token; absent, they
+   * scopes), when connected. JSM/Ops tools run on THIS grant; absent, they
    * fall back to the main grant — the pre-split single-app shape.
    */
   jsmGrant?: {
-    accessToken: string;
+    /** The JSM grant's fetcher; null in the enumeration-only catalog context. */
+    auth: AuthedFetch | null;
     cloudId: string;
     accountId: string;
     scopes?: string[];
@@ -87,7 +96,7 @@ export interface MCPToolContext {
   /**
    * Same, for the caller's grant on the third Atlassian app ("Renkei
    * Confluence"). Unlike jsmGrant above, Confluence tools don't reuse
-   * Jira's apiBaseUrl/accessToken context fields — Confluence is a
+   * Jira's apiBaseUrl/jiraAuth context fields — Confluence is a
    * different product with its own gateway path, so each tool resolves
    * its own access fresh per call (Outlook/WebEx/Zoom-style). Only the
    * scopes are needed on the context, for the registration-time gate.
@@ -240,21 +249,6 @@ export function requestUrl(siteUrl: string, requestKey: string): string {
 }
 
 /**
- * Cache for token -> {tenantId, accountId} mapping.
- * Updated whenever a token is used successfully, expires after 24h.
- */
-interface TokenMetadata {
-  tenantId: string;
-  accountId: string;
-  /** OIDC subject of the user this token acts for — scopes failure logs to a person. */
-  subject?: string;
-  /** Which Atlassian app minted this token: 'atlassian' (default) or 'atlassian-jsm'. */
-  provider: string;
-  expiresAt: number;
-}
-const tokenMetadataCache = new Map<string, TokenMetadata>();
-
-/**
  * Cache for accountId -> displayName mapping.
  * Updated whenever user info is fetched, expires after 24h.
  */
@@ -263,64 +257,6 @@ interface UserMetadata {
   expiresAt: number;
 }
 const userMetadataCache = new Map<string, UserMetadata>();
-
-/**
- * Cache for refresh-in-flight promises keyed by (tenantId:accountId).
- * Prevents thundering herd when multiple tools need token refresh simultaneously.
- */
-const refreshInFlight = new Map<string, Promise<string>>();
-
-/**
- * The freshest known access token per (tenantId:accountId).
- *
- * The MCP handler cache captures `context.accessToken` by value when the
- * handler is created, and that closure outlives the token. Without this map,
- * every call after the first expiry presented the stale token and paid a
- * 401 + refresh + retry round trip — forever. jiraFetch resolves the caller's
- * token through here first, and both a successful refresh and each incoming
- * request (via cacheTokenMetadata) keep it current.
- */
-const currentTokens = new Map<string, string>();
-
-function getRefreshKey(provider: string, tenantId: string, accountId: string): string {
-  // Provider is part of the key: the SAME Atlassian user holds one grant per
-  // app, and without it the Jira and JSM tokens would overwrite each other in
-  // the freshest-token map.
-  return `${provider}:${tenantId}:${accountId}`;
-}
-
-/**
- * Store token metadata for 24h TTL lookup during refresh, and record the
- * token as the freshest known one for its (tenantId, accountId).
- */
-export function cacheTokenMetadata(
-  accessToken: string,
-  tenantId: string,
-  accountId: string,
-  subject?: string,
-  provider: string = 'atlassian'
-): void {
-  tokenMetadataCache.set(accessToken, {
-    tenantId,
-    accountId,
-    subject,
-    provider,
-    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-  });
-  currentTokens.set(getRefreshKey(provider, tenantId, accountId), accessToken);
-}
-
-/**
- * Retrieve cached token metadata if still valid.
- */
-function getTokenMetadata(accessToken: string): TokenMetadata | undefined {
-  const cached = tokenMetadataCache.get(accessToken);
-  if (!cached || cached.expiresAt < Date.now()) {
-    tokenMetadataCache.delete(accessToken);
-    return undefined;
-  }
-  return cached;
-}
 
 /**
  * Store user displayName for 24h TTL lookup.
@@ -404,9 +340,22 @@ async function describeFailure(response: Response): Promise<Failure> {
 }
 
 /**
- * Make an authenticated request to Jira API with automatic token refresh on 401.
- * Looks up tenant/account from cached token metadata; requires prior cacheTokenMetadata() call.
- * Deduplicates concurrent refresh requests by (tenantId, accountId).
+ * The grant behind an `AuthedFetch`, read off its `grantKey`
+ * (`provider:tenant:account-or-subject`) for log context. Never a token:
+ * these records are persisted by the Postgres log adapter and are readable
+ * over HTTP.
+ */
+function grantScope(auth: AuthedFetch): { tenantId?: string; accountId?: string } {
+  const [, tenantId, accountId] = auth.grantKey.split(':');
+  return { tenantId: tenantId || undefined, accountId: accountId || undefined };
+}
+
+/**
+ * Make an authenticated request to the Jira API on the caller's grant. The
+ * delegate behind `auth` attaches the credential, refreshes it when due and
+ * retries once on a 401 — so a 401 that reaches here is Atlassian's final
+ * word, and a refusal the delegate issued itself (no grant, revoked, host
+ * not allowed) is told apart by `delegateRefusal`.
  *
  * Throws JiraApiError on any non-2xx. This previously returned the response
  * untouched "so callers can handle non-ok statuses" — but no caller ever did,
@@ -416,23 +365,15 @@ async function describeFailure(response: Response): Promise<Failure> {
  */
 export async function jiraFetch(
   url: string,
-  accessToken: string,
+  auth: AuthedFetch,
   options?: RequestInit
 ): Promise<Response> {
-  const metadata = getTokenMetadata(accessToken);
-  // The caller's token may be a stale capture from a cached handler closure;
-  // when its owner is known, use the freshest token recorded for that owner.
-  let token = metadata
-    ? (currentTokens.get(getRefreshKey(metadata.provider, metadata.tenantId, metadata.accountId)) ??
-      accessToken)
-    : accessToken;
-  const displayName = metadata?.accountId ? getCachedDisplayName(metadata.accountId) : undefined;
-  // Deliberately no token material here, not even a prefix: these records are
-  // persisted by the Postgres log adapter and are readable over HTTP.
+  const scope = grantScope(auth);
+  const displayName = scope.accountId ? getCachedDisplayName(scope.accountId) : undefined;
   logger.debug('Request', {
     component: 'jira/fetch',
-    tenantId: metadata?.tenantId,
-    accountId: metadata?.accountId,
+    tenantId: scope.tenantId,
+    accountId: scope.accountId,
     displayName,
     url,
     method: options?.method || 'GET',
@@ -446,129 +387,55 @@ export async function jiraFetch(
   // tool call that hangs while the MCP stream keepalives forever. Multipart
   // uploads get the long budget — 20MB on a slow link is minutes, not 15s.
   const timeoutMs = options?.body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
-  const guardedFetch = async (init: RequestInit): Promise<Response> => {
-    try {
-      return await fetch(url, { ...init, signal: timeoutSignal(init, timeoutMs) });
-    } catch (error) {
-      if (isTimeoutError(error)) {
-        throw new JiraApiError(
-          `Jira API request timed out after ${timeoutMs}ms — the site may be slow or unreachable`,
-          504
-        );
-      }
-      throw new JiraApiError('Could not reach the Jira API', 502);
-    }
-  };
 
-  // Make initial request
+  // No Authorization here: the delegate attaches it, and drops one a caller sets.
   const headers = {
-    Authorization: `Bearer ${token}`,
     Accept: 'application/json',
     ...contentTypeHeader,
     ...options?.headers,
   };
 
-  let response = await guardedFetch({
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await auth(url, {
+      ...options,
+      headers,
+      signal: timeoutSignal(options ?? {}, timeoutMs),
+    });
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new JiraApiError(
+        `Jira API request timed out after ${timeoutMs}ms — the site may be slow or unreachable`,
+        504
+      );
+    }
+    throw new JiraApiError('Could not reach the Jira API', 502);
+  }
   logger.debug('Response', {
     component: 'jira/fetch',
-    tenantId: metadata?.tenantId,
-    accountId: metadata?.accountId,
+    tenantId: scope.tenantId,
+    accountId: scope.accountId,
     url,
     status: response.status,
   });
 
-  // If 401, refresh token and retry
-  if (response.status === 401) {
-    if (!metadata) {
-      logger.warn('401 but no token metadata for refresh', { component: 'jira/fetch', url });
-      throw new JiraApiError(
-        'Jira rejected the credential and no refresh metadata was available',
-        401
-      );
-    }
-
-    const { tenantId, accountId, provider } = metadata;
-    const refreshKey = getRefreshKey(provider, tenantId, accountId);
-    logger.debug('401 response, refreshing token', {
+  // The delegate's own refusal never reached Atlassian: a missing or revoked
+  // grant, a failed refresh, a host outside the provider's own. Said in the
+  // words the resolvers used to return, so a handler renders it unchanged.
+  const refusal = delegateRefusal(response);
+  if (refusal) {
+    logger.warn('Delegate refused the Jira call', {
       component: 'jira/fetch',
-      tenantId,
-      accountId,
+      tenantId: scope.tenantId,
+      accountId: scope.accountId,
       url,
+      refusal,
     });
-
-    // Check if refresh is already in-flight
-    let refreshPromise = refreshInFlight.get(refreshKey);
-
-    if (!refreshPromise) {
-      // Start new refresh
-      refreshPromise = refreshAtlassianTokenDirect(tenantId, accountId, provider).then((result) => {
-        // Clean up cache after refresh completes
-        refreshInFlight.delete(refreshKey);
-
-        if (!result.ok) {
-          // safe-functions puts the error code at .err.type, not .val
-          const error =
-            result.err.type === 'GRANT_REVOKED' ? 'GRANT_REVOKED' : 'Token refresh failed';
-          logger.error('Token refresh failed', {
-            component: 'jira/fetch',
-            tenantId,
-            accountId,
-            error,
-          });
-          throw new Error(error);
-        }
-
-        logger.debug('Token refresh success', { component: 'jira/fetch', tenantId, accountId });
-        // Record the new token so later calls holding the stale capture skip
-        // the 401 round trip entirely. Subject carries over — a refresh does
-        // not change whose token this is.
-        cacheTokenMetadata(result.val.accessToken, tenantId, accountId, metadata.subject, provider);
-        return result.val.accessToken;
-      });
-
-      refreshInFlight.set(refreshKey, refreshPromise);
-    }
-
-    // Wait for refresh to complete (either this call or a concurrent one)
-    try {
-      token = await refreshPromise;
-    } catch (error) {
-      // If grant is revoked, return 401 response to signal need for reauth
-      if (error instanceof Error && error.message === 'GRANT_REVOKED') {
-        logger.warn('Grant revoked', { component: 'jira/fetch', url });
-        throw new JiraApiError('GRANT_REVOKED', 401, true);
-      }
-      throw error;
-    }
-
-    // Retry request with refreshed token
-    logger.debug('Retrying with refreshed token', {
-      component: 'jira/fetch',
-      tenantId: metadata.tenantId,
-      accountId: metadata.accountId,
-      url,
-    });
-    const retryHeaders = {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
-      ...contentTypeHeader,
-      ...options?.headers,
-    };
-
-    response = await guardedFetch({
-      ...options,
-      headers: retryHeaders,
-    });
-    logger.debug('Retry response', {
-      component: 'jira/fetch',
-      tenantId: metadata.tenantId,
-      accountId: metadata.accountId,
-      url,
-      status: response.status,
-    });
+    throw new JiraApiError(
+      refusal === 'GRANT_REVOKED' ? 'GRANT_REVOKED' : grantRefusalText(refusal, 'Jira'),
+      response.status,
+      refusal === 'GRANT_REVOKED' || refusal === 'NO_GRANT' || refusal === 'REFRESH_FAILED'
+    );
   }
 
   if (!response.ok) {
@@ -582,9 +449,8 @@ export async function jiraFetch(
     // encrypts them at rest once encrypt/decrypt keys are configured.
     logger.warn('Non-OK response', {
       component: 'jira/fetch',
-      tenantId: metadata?.tenantId,
-      accountId: metadata?.accountId,
-      subject: metadata?.subject,
+      tenantId: scope.tenantId,
+      accountId: scope.accountId,
       displayName,
       url,
       method: options?.method || 'GET',
@@ -592,10 +458,6 @@ export async function jiraFetch(
       reason: failure.reason,
       requestBody: secureOrAbsent(describeRequestBody(options?.body)),
       responseBody: secureOrAbsent(truncateForLog(failure.raw) || undefined),
-      // On auth failures, what the rejected bearer ACTUALLY carries — the
-      // grant row's scopes column can echo the request, so "the scope is
-      // there" in the DB proves nothing about the token Atlassian evaluated.
-      ...(response.status === 401 ? { tokenClaims: describeTokenClaims(token) } : {}),
     });
     throw new JiraApiError(
       `Jira API ${response.status}: ${failure.reason}`,
@@ -614,9 +476,8 @@ export async function jiraFetch(
     .catch(() => '');
   logger.debug('OK response', {
     component: 'jira/fetch',
-    tenantId: metadata?.tenantId,
-    accountId: metadata?.accountId,
-    subject: metadata?.subject,
+    tenantId: scope.tenantId,
+    accountId: scope.accountId,
     displayName,
     url,
     method: options?.method || 'GET',
@@ -651,35 +512,6 @@ function describeRequestBody(body: RequestInit['body'] | undefined): string | un
   if (typeof body === 'string') return truncateForLog(body);
   if (body instanceof FormData) return '[multipart form data]';
   return '[non-text body]';
-}
-
-/**
- * The identity/scope claims of an Atlassian access token, for 401 diagnosis.
- * Decodes the JWT payload without verification — this is our own outbound
- * credential being described, not untrusted input — and picks only the
- * claims that explain a scope mismatch. The token itself (and any signature
- * material) never reaches the log.
- */
-function describeTokenClaims(token: string): Record<string, unknown> | undefined {
-  const parts = token.split('.');
-  if (parts.length !== 3) return { format: 'opaque (not a JWT)' };
-  try {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<
-      string,
-      unknown
-    >;
-    const picked: Record<string, unknown> = { claimKeys: Object.keys(payload) };
-    for (const [key, value] of Object.entries(payload)) {
-      const lower = key.toLowerCase();
-      if (lower.includes('scope') || lower.includes('client') || key === 'aud' || key === 'iss') {
-        picked[key] = value;
-      }
-    }
-    return picked;
-  } catch {
-    return { format: 'undecodable JWT payload' };
-  }
 }
 
 export class JiraApiError extends Error {

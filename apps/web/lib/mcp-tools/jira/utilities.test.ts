@@ -12,12 +12,6 @@
 jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
-// utilities.ts → common.ts → tenant-operations → db, which cannot load in a
-// unit test environment; jira_connect only needs the injected context.db.
-jest.mock('@/lib/tenant-operations', () => ({
-  refreshAtlassianTokenDirect: jest.fn(),
-}));
-
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { registerUtilityTools } from './utilities';
@@ -60,7 +54,7 @@ function contextWith(db: MCPToolContext['db']): MCPToolContext {
     accountId: 'acct-caller',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-    accessToken: 'token',
+    jiraAuth: null,
     maxJqlResults: 100,
     origin: 'https://mcp.example.com',
     db,

@@ -51,9 +51,9 @@ export const GET = async (
       });
     }
 
-    // Read the site straight out of metadata rather than going through
-    // getJiraGrant, which decrypts both Atlassian tokens — and can trigger a
-    // refresh against Atlassian — to serve what is only a page-load probe.
+    // Read the site straight out of metadata rather than asking the delegate
+    // to describe the grant: this is only a page-load probe, and the row
+    // already holds what it needs.
     const metadata: Record<string, unknown> =
       typeof grant.metadata === 'object' && grant.metadata !== null ? { ...grant.metadata } : {};
 

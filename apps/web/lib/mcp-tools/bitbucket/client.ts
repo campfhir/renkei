@@ -1,116 +1,75 @@
 /**
  * Bitbucket Cloud REST client, over the caller's own delegated grant on
  * the fourth Atlassian app ("Renkei Bitbucket"). Follows the Confluence
- * pattern — each call resolves its own access fresh from the grant,
- * refreshing when near expiry — with one welcome simplification: there is
- * no cloud-id gateway. Everything lives under https://api.bitbucket.org/2.0
- * and descriptions, PR bodies and comments are plain markdown, so nothing
- * here converts formats.
+ * pattern — each call resolves its own access fresh from the grant; the
+ * token itself lives in the delegate worker (docs/delegate-key-design.md),
+ * whose fetcher attaches it, refreshes it when due and retries a 401 —
+ * with one welcome simplification: there is no cloud-id gateway.
+ * Everything lives under https://api.bitbucket.org/2.0 and descriptions,
+ * PR bodies and comments are plain markdown, so nothing here converts
+ * formats.
  */
 
+import { ATLASSIAN_BITBUCKET, readBitbucketMetadata } from '@renkei/provider-grants';
 import {
-  getGrant,
-  refreshGrantTokens,
-  ATLASSIAN_BITBUCKET,
-  BitbucketAdapter,
-  readBitbucketMetadata,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { getDatabase } from '@renkei/db';
-import { getAtlassianBitbucketApp } from '@/lib/atlassian-app';
+  delegateGrants,
+  delegateRefusal,
+  grantFetch,
+  type AuthedFetch,
+} from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import { grantRefusalText } from '@/lib/grant-refusals';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
-
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
 /**
  * Bitbucket Cloud's API. A deployment may point it elsewhere
  * (BITBUCKET_API_BASE_URL) — the browser suite runs the app against a
- * stand-in that answers the few endpoints the Code pages read.
+ * stand-in that answers the few endpoints the Code pages read. The
+ * delegate only forwards to Bitbucket's own hosts, so a stand-in needs a
+ * delegate that allows it too.
  */
 export const BITBUCKET_API_BASE =
   process.env.BITBUCKET_API_BASE_URL?.replace(/\/+$/, '') || 'https://api.bitbucket.org/2.0';
 
 export interface BitbucketAccess {
-  accessToken: string;
+  /**
+   * The fetcher every call goes out through. Production's is the delegate's
+   * for the caller's grant (Bearer attached there); a workspace API token
+   * (test support) would authenticate with Basic auth instead — carrying a
+   * fetcher here is what makes that swappable.
+   */
+  auth: AuthedFetch;
   /** The connected account's uuid — Bitbucket's durable identity key. */
   accountId: string;
   /** The connected account's username, for display and for API paths. */
   username: string;
-  /**
-   * The full `Authorization` header value to send. Production's delegated
-   * grant is a Bearer token; a workspace API token (test support) would
-   * authenticate with Basic auth instead — carrying the finished header
-   * here is what makes that swappable.
-   */
-  authHeader: string;
 }
 
-/** The caller's live Bitbucket token, refreshed when stale. */
+/** The caller's Bitbucket grant as a fetcher, plus who it is. */
 export async function resolveBitbucketAccess(
   context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<BitbucketAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
 
-  // Newest grant wins, deterministically. Rows are keyed by account id, so
-  // one subject CAN own several — a retried connect, or a reconnect as a
-  // different Bitbucket account — and an unordered take-first would pick
-  // arbitrarily between a live grant and a stale one from an earlier
-  // attempt, working or failing per pod.
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', ATLASSIAN_BITBUCKET)
-    .where('subject', '=', context.subject)
-    .orderBy('updated_at', 'desc')
-    .executeTakeFirst();
-  if (!row) {
-    return 'Bitbucket is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(
-    ATLASSIAN_BITBUCKET,
-    context.tenantId,
-    row.provider_account_id
-  );
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the Bitbucket grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getAtlassianBitbucketApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'Bitbucket integration is no longer configured.';
-    const refreshed = await refreshGrantTokens(
-      new BitbucketAdapter(app.clientSecret),
-      context.tenantId,
-      grant.accountId,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Bitbucket authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the Bitbucket token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  // Refused HERE, never sent: Bitbucket answers `Authorization: Bearer `
-  // (empty token) with the same anonymous 404 "no API hosted at this URL"
-  // it gives requests with no header at all — an error that reads like a
-  // wrong URL and says nothing about credentials.
-  if (!grant.accessToken) {
-    return 'The stored Bitbucket grant holds no access token. Reconnect it on the Connectors page.';
+  // By subject: the delegate picks the person's grant on this provider, the
+  // way the row lookup here used to (newest wins on a reconnect).
+  const ref = {
+    tenantId: context.tenantId,
+    provider: ATLASSIAN_BITBUCKET,
+    subject: context.subject,
+  };
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) {
+    return described.err.type === 'GRANT_UNREADABLE' || described.err.type === 'DELEGATE_ERROR'
+      ? 'Could not read the Bitbucket grant.'
+      : grantRefusalText(described.err.type, 'Bitbucket');
   }
 
   return {
-    accessToken: grant.accessToken,
-    accountId: grant.accountId,
-    username: readBitbucketMetadata(grant.metadata).username,
-    authHeader: `Bearer ${grant.accessToken}`,
+    auth: grantFetch(ref),
+    accountId: described.val.accountId,
+    username: readBitbucketMetadata(described.val.metadata).username,
   };
 }
 
@@ -144,10 +103,10 @@ export async function bitbucketRequest(
   const body = jsonBody ?? init?.form;
   let response: Response;
   try {
-    response = await fetch(`${BITBUCKET_API_BASE}${pathAndQuery}`, {
+    // No Authorization here: the fetcher's owner (the delegate) attaches it.
+    response = await access.auth(`${BITBUCKET_API_BASE}${pathAndQuery}`, {
       method: init?.method ?? 'GET',
       headers: {
-        Authorization: access.authHeader,
         Accept: init?.accept ?? 'application/json',
         ...(jsonBody !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
@@ -171,6 +130,19 @@ export async function bitbucketRequest(
         : 'Could not reach api.bitbucket.org',
     };
   }
+  const refusal = delegateRefusal(response);
+  if (refusal) {
+    // The delegate's own refusal never reached Bitbucket — the resolver's
+    // words, not Bitbucket's anonymous 404.
+    logger.warn('Delegate refused the Bitbucket call', {
+      component: 'bitbucket/fetch',
+      tenantId: scope.tenantId,
+      subject: scope.subject,
+      path: pathAndQuery,
+      refusal,
+    });
+    return { ok: false, error: grantRefusalText(refusal, 'Bitbucket') };
+  }
   if (!response.ok) {
     const responseBody = await response
       .clone()
@@ -183,10 +155,10 @@ export async function bitbucketRequest(
       path: pathAndQuery,
       method: init?.method ?? 'GET',
       status: response.status,
-      // Whether a credential was attached, never its bytes: Bitbucket
-      // answers credential-less requests with an anonymous 404 that reads
-      // like a wrong URL, and this is the field that tells them apart.
-      authTokenChars: access.accessToken.length,
+      // Which grant the call rode on, never its bytes: Bitbucket answers
+      // credential-less requests with an anonymous 404 that reads like a
+      // wrong URL, and this is the field that tells them apart.
+      grantKey: access.auth.grantKey,
       requestBody: jsonBody === undefined ? undefined : secure(truncateForLog(jsonBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });

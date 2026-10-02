@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The wire boundary: what oauthBitbucketAuth actually SENDS. The tool
- * suite stubs auth.fetch, so nothing there would catch the one failure
- * that matters most in the field — a request leaving without its
- * Authorization header, which Bitbucket answers with an anonymous 404
- * that reads like a wrong URL. This suite mocks nothing below
- * global.fetch: grant row → decrypted token → the exact header bytes.
+ * suite stubs auth.fetch, so nothing there would catch a request leaving
+ * for the wrong URL, or one carrying a credential this process should never
+ * hold. The delegate worker holds the token (docs/delegate-key-design.md):
+ * the grant's fetcher attaches it, so what leaves THIS process is a call on
+ * that fetcher with no Authorization of its own. This suite mocks nothing
+ * below the delegate client: grant described → fetcher → the exact request.
  */
 
 jest.mock('@/lib/logger', () => ({
@@ -13,56 +14,26 @@ jest.mock('@/lib/logger', () => ({
   secure: (value: unknown) => value,
 }));
 
-const grantRow: { provider_account_id: string } | undefined = { provider_account_id: '{u-1}' };
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: () => {
-        const chain = {
-          select: () => chain,
-          where: () => chain,
-          orderBy: () => chain,
-          executeTakeFirst: async () => grantRow,
-        };
-        return chain;
-      },
-    },
-  }),
-}));
+let describeResult: unknown;
+const fetchSpy = jest.fn();
 
-jest.mock('@renkei/crypto', () => ({
-  parseEncryptionKey: () => ({ ok: true, val: Buffer.alloc(32) }),
-}));
-
-let storedAccessToken = 'live-token-123';
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({ describe: async () => describeResult }),
+    grantFetch: (ref: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch((url, init) => fetchSpy(url, init), actual.grantKeyOf(ref)),
+  };
+});
 jest.mock('@renkei/provider-grants', () => ({
   ATLASSIAN_BITBUCKET: 'atlassian-bitbucket',
-  BitbucketAdapter: class {},
   readBitbucketMetadata: () => ({ username: 'scott' }),
-  getGrant: async () => ({
-    ok: true,
-    val: {
-      accountId: '{u-1}',
-      clientId: 'consumer-key',
-      accessToken: storedAccessToken,
-      refreshToken: 'refresh-1',
-      // Far future: the refresh path stays out of this suite's way.
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      metadata: { username: 'scott' },
-    },
-  }),
-  refreshGrantTokens: jest.fn(),
-}));
-
-jest.mock('@/lib/atlassian-app', () => ({
-  getAtlassianBitbucketApp: async () => null,
 }));
 
 import { oauthBitbucketAuth } from './bitbucket-auth';
 import type { MCPToolContext } from '../common';
-
-const fetchSpy = jest.fn();
 
 const context = {
   tenantId: 'tenant-1',
@@ -73,12 +44,11 @@ const context = {
 beforeEach(() => {
   fetchSpy.mockReset();
   fetchSpy.mockResolvedValue(new Response(JSON.stringify({ values: [] }), { status: 200 }));
-  global.fetch = fetchSpy as unknown as typeof fetch;
-  storedAccessToken = 'live-token-123';
+  describeResult = { ok: true, val: { accountId: '{u-1}', metadata: { username: 'scott' } } };
 });
 
 describe('what actually leaves the process', () => {
-  it('sends the decrypted token as a capital-B Bearer header', async () => {
+  it('sends through the grant’s fetcher, to Bitbucket, with no Authorization of its own', async () => {
     const auth = oauthBitbucketAuth(context);
     const response = await auth.fetch(['account'], '/workspaces?pagelen=50');
 
@@ -86,24 +56,37 @@ describe('what actually leaves the process', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.bitbucket.org/2.0/workspaces?pagelen=50');
-    // The exact header bytes: Bitbucket treats an empty token or an
-    // unrecognized scheme spelling (even lowercase "bearer") as ANONYMOUS
-    // and hides real endpoints behind a 404 — so this assertion is on the
-    // full value, not just presence.
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer live-token-123');
+    // The delegate attaches the credential (and Bitbucket is exact about its
+    // spelling — see describeBitbucketFailure); this process sends none.
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 
-  it('refuses to send at all when the stored token is empty', async () => {
-    storedAccessToken = '';
+  it('refuses locally, with the reconnect pointer, when there is no Bitbucket grant', async () => {
+    describeResult = { ok: false, err: { type: 'NO_GRANT' } };
     const auth = oauthBitbucketAuth(context);
     const response = await auth.fetch(['account'], '/workspaces?pagelen=50');
 
-    // Refused locally with the reconnect pointer — never "Bearer " on the
-    // wire, which Bitbucket would answer with the misleading anonymous 404.
+    // Refused locally — never a credential-less request on the wire, which
+    // Bitbucket would answer with the misleading anonymous 404.
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(response.status).toBe(401);
     const body = (await response.json()) as { message: string };
-    expect(body.message).toContain('no access token');
+    expect(body.message).toContain('Bitbucket is not connected');
+  });
+
+  it('renders a refusal the delegate issued itself in the resolver’s words', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: 'REFRESH_FAILED' } }), {
+        status: 401,
+        headers: { 'x-delegate-error': 'REFRESH_FAILED' },
+      })
+    );
+    const auth = oauthBitbucketAuth(context);
+    const response = await auth.fetch(['account'], '/user');
+
+    expect(response.ok).toBe(false);
+    const body = (await response.json()) as { message: string };
+    expect(body.message).toContain('Could not refresh the Bitbucket token');
   });
 
   it('a scope the connection lacks is refused before any network call', async () => {

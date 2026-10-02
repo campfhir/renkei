@@ -3,17 +3,7 @@ import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getDatabase } from '@renkei/db';
-import { readConnectorConfigCached } from '@renkei/connector-config';
-import {
-  ATLASSIAN,
-  AtlassianAdapter,
-  ATLASSIAN_JSM,
-  getGrant,
-  setGrant,
-  readAtlassianMetadata,
-  refreshGrantTokens,
-} from '@renkei/provider-grants';
-import { logger } from '@/lib/logger';
+import { ATLASSIAN, setGrant } from '@renkei/provider-grants';
 
 export { ATLASSIAN };
 
@@ -42,6 +32,12 @@ export interface TenantOidcClaims {
   groupsClaim?: string | null;
 }
 
+/**
+ * The shape the OAuth callback hands `setJiraGrant`. Token material lives
+ * here only on the way INTO the store (docs/delegate-key-design.md,
+ * "Phase 1 as built"): nothing in the web app reads a grant's tokens back —
+ * the delegate worker does, behind `@renkei/delegate-client`.
+ */
 export interface JiraGrant {
   accountId: string;
   atlassianClientId: string;
@@ -339,7 +335,9 @@ export async function setTenantOidcClaims(
  * A façade over @renkei/provider-grants: this module supplies the deployment
  * configuration (encryption key from env) and maps the Atlassian site
  * identity into the provider-shaped metadata; the lifecycle lives in the
- * package.
+ * package. Kept for the OAuth callback's current write path; once the
+ * callback commits through the delegate (`oauth/exchange` + `grant/commit`)
+ * this becomes unused and can go.
  */
 export async function setJiraGrant(
   tenantId: string,
@@ -359,88 +357,4 @@ export async function setJiraGrant(
     // than as columns every other provider would leave NULL.
     metadata: { cloudId: grant.cloudId, siteUrl: grant.siteUrl },
   });
-}
-
-/**
- * Get decrypted Jira grant for a tenant user. Façade over the package store,
- * flattening Atlassian's metadata into the JiraGrant shape callers expect.
- */
-export async function getJiraGrant(
-  tenantId: string,
-  accountId: string
-): Promise<Result<JiraGrant | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
-  const grantResult = await getGrant(ATLASSIAN, tenantId, accountId);
-  if (!grantResult.ok) return grantResult;
-
-  const grant = grantResult.val;
-  if (!grant) return ok(null);
-
-  const site = readAtlassianMetadata(grant.metadata);
-
-  // Return grant as-is; refresh on 401 is handled by the MCP tool layer.
-  return ok({
-    accountId: grant.accountId,
-    subject: grant.subject,
-    atlassianClientId: grant.clientId,
-    cloudId: site.cloudId,
-    siteUrl: site.siteUrl,
-    displayName: grant.displayName,
-    accessToken: grant.accessToken,
-    refreshToken: grant.refreshToken,
-    expiresAt: grant.expiresAt,
-    requestedScopes: grant.requestedScopes,
-    grantedScopes: grant.grantedScopes,
-  });
-}
-/**
- * Refresh an expired Atlassian OAuth token using the refresh token.
- * Updates the database with new tokens.
- * Exported for use by MCP tool layer (e.g., on 401 responses).
- *
- * Façade over @renkei/provider-grants: the cross-process locking, revoked-
- * grant cleanup, and persistence live in the package; this supplies the
- * Atlassian adapter (client secret from env), the encryption key, and the
- * app logger.
- */
-export async function refreshAtlassianTokenDirect(
-  tenantId: string,
-  accountId: string,
-  // Which Atlassian app's grant to refresh: ATLASSIAN (Jira) or
-  // ATLASSIAN_JSM — each has its own client secret in connector config.
-  provider: string = ATLASSIAN
-): Promise<
-  Result<
-    { accessToken: string; refreshToken: string; expiresAt: Date },
-    'REFRESH_FAILED' | 'GRANT_REVOKED'
-  >
-> {
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!encryptionKeyResult.ok) {
-    logger.error('Failed to parse encryption key', {
-      component: 'grants/refresh',
-      tenantId,
-      accountId,
-    });
-    return err('REFRESH_FAILED' as const);
-  }
-
-  // The client secret is org connector configuration in the database, like
-  // the rest of the Atlassian app registration.
-  const connector = provider === ATLASSIAN_JSM ? ATLASSIAN_JSM : ATLASSIAN;
-  const configResult = await readConnectorConfigCached(
-    tenantId,
-    connector,
-    encryptionKeyResult.val
-  );
-  if (!configResult.ok || !configResult.val?.secrets.clientSecret) {
-    logger.error('Atlassian connector config missing; cannot refresh', {
-      component: 'grants/refresh',
-      tenantId,
-      accountId,
-    });
-    return err('REFRESH_FAILED' as const);
-  }
-
-  const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret, provider);
-  return refreshGrantTokens(adapter, tenantId, accountId, logger);
 }

@@ -1,7 +1,7 @@
 /**
  * Live, best-effort field-type info for an approval card's editable
  * fields — resolved fresh from the approver's own Jira grant when the
- * card renders, the same grant/refresh path `executeCreateIssue`
+ * card renders, the same grant path `executeCreateIssue`
  * (lib/actionable-items.ts) already uses outside an MCP call. Never
  * throws: a card whose fetch fails, or whose Jira is not connected, still
  * renders — with its fields editable as plain text instead of the typed
@@ -16,10 +16,9 @@
  * pays the round trip.
  */
 
-import { getDatabase } from '@renkei/db';
-import { getJiraGrant, ATLASSIAN } from '@/lib/tenant-operations';
+import { ATLASSIAN, readAtlassianMetadata } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import type { MCPToolContext } from '../common';
-import { cacheTokenMetadata } from '../common';
 import { oauthJiraAuth } from './jira-auth';
 import {
   enrichFieldsWithAllowedValues,
@@ -34,32 +33,21 @@ export async function loadApprovalFieldSchema(
   source: EnrichmentSource
 ): Promise<JiraField[] | null> {
   try {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return null;
-
-    const grantRow = await dbResult.val
-      .selectFrom('provider_grants')
-      .select('provider_account_id')
-      .where('tenant_id', '=', tenantId)
-      .where('provider', '=', ATLASSIAN)
-      .where('subject', '=', subject)
-      .executeTakeFirst();
-    if (!grantRow) return null;
-
-    const grantResult = await getJiraGrant(tenantId, grantRow.provider_account_id);
-    if (!grantResult.ok || !grantResult.val) return null;
-    const grant = grantResult.val;
-
-    // Lets jiraFetch (common.ts) refresh on a 401 without a caller needing
-    // to orchestrate that itself — same as executeCreateIssue.
-    cacheTokenMetadata(grant.accessToken, tenantId, grant.accountId, grant.subject ?? undefined);
+    // The approver's own grant, by subject — described by the delegate for
+    // its site, fetched through the delegate for its token.
+    const ref = { tenantId, provider: ATLASSIAN, subject };
+    const described = await delegateGrants().describe(ref);
+    if (!described.ok) return null;
+    const grant = described.val;
+    const site = readAtlassianMetadata(grant.metadata);
+    if (!site.cloudId) return null;
 
     const context: MCPToolContext = {
       tenantId,
       accountId: grant.accountId,
-      siteUrl: grant.siteUrl,
-      apiBaseUrl: `https://api.atlassian.com/ex/jira/${grant.cloudId}`,
-      accessToken: grant.accessToken,
+      siteUrl: site.siteUrl,
+      apiBaseUrl: `https://api.atlassian.com/ex/jira/${site.cloudId}`,
+      jiraAuth: grantFetch(ref),
       maxJqlResults: 50,
       subject,
     };

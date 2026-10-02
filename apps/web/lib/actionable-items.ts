@@ -9,9 +9,9 @@
  * fallback here on purpose.
  */
 
-import { getDatabase } from '@renkei/db';
-import { getJiraGrant, ATLASSIAN } from '@/lib/tenant-operations';
-import { jiraFetch, cacheTokenMetadata } from '@/lib/mcp-tools/common';
+import { ATLASSIAN, readAtlassianMetadata } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch } from '@renkei/delegate-client';
+import { jiraFetch } from '@/lib/mcp-tools/common';
 import { markdownToAdf } from '@/lib/mcp-tools/jira/markdown';
 import { logger } from '@/lib/logger';
 
@@ -56,32 +56,25 @@ export async function executeCreateIssue(
   args: CreateIssueArgs,
   projectKey: string
 ): Promise<ExecutionResult> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ok: false, error: 'database unavailable' };
-
-  // The approver's own grant, by subject — never someone else's.
-  const grantRow = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', tenantId)
-    .where('provider', '=', ATLASSIAN)
-    .where('subject', '=', subject)
-    .executeTakeFirst();
-  if (!grantRow) {
-    return { ok: false, error: 'You have no Jira connection; connect Jira before approving.' };
+  // The approver's own grant, by subject — never someone else's. The
+  // delegate describes it (site, account) and carries its token; this
+  // process only ever holds the fetcher.
+  const ref = { tenantId, provider: ATLASSIAN, subject };
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) {
+    return described.err.type === 'NO_GRANT'
+      ? { ok: false, error: 'You have no Jira connection; connect Jira before approving.' }
+      : { ok: false, error: 'Your Jira grant could not be loaded; try reconnecting Jira.' };
   }
-
-  const grantResult = await getJiraGrant(tenantId, grantRow.provider_account_id);
-  if (!grantResult.ok || !grantResult.val) {
-    return { ok: false, error: 'Your Jira grant could not be loaded; try reconnecting Jira.' };
+  const site = readAtlassianMetadata(described.val.metadata);
+  if (!site.cloudId) {
+    return { ok: false, error: 'Your Jira grant is missing its site id; reconnect Jira.' };
   }
-  const grant = grantResult.val;
-
-  cacheTokenMetadata(grant.accessToken, tenantId, grant.accountId, grant.subject ?? undefined);
-  const apiBaseUrl = `https://api.atlassian.com/ex/jira/${grant.cloudId}`;
+  const auth = grantFetch(ref);
+  const apiBaseUrl = `https://api.atlassian.com/ex/jira/${site.cloudId}`;
 
   try {
-    const response = await jiraFetch(`${apiBaseUrl}/rest/api/3/issue`, grant.accessToken, {
+    const response = await jiraFetch(`${apiBaseUrl}/rest/api/3/issue`, auth, {
       method: 'POST',
       body: JSON.stringify({
         fields: {
@@ -102,7 +95,7 @@ export async function executeCreateIssue(
       subject,
       issueKey,
     });
-    return { ok: true, issueKey, url: `${grant.siteUrl}/browse/${issueKey}` };
+    return { ok: true, issueKey, url: `${site.siteUrl}/browse/${issueKey}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn('Issue creation failed', {

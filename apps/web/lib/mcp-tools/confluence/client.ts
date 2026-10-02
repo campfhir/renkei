@@ -4,9 +4,11 @@
  * WebEx/Zoom pattern, not the Jira/JSM one: Confluence is a different
  * product with its own gateway path
  * (api.atlassian.com/ex/confluence/{cloudId}/wiki/...), so there's no
- * benefit to reusing Jira's apiBaseUrl/accessToken context-swap trick —
- * each tool call resolves its own access fresh from the grant, refreshing
- * when near expiry.
+ * benefit to reusing Jira's apiBaseUrl/jiraAuth context-swap trick —
+ * each tool call resolves its own access fresh from the grant. The token
+ * itself lives in the delegate worker (docs/delegate-key-design.md): the
+ * `auth` fetcher here is what attaches it, refreshes it when due and
+ * retries a 401.
  *
  * Confluence's v2 REST API (`/wiki/api/v2/...`) is the intended target,
  * but has real gaps a new integration has to route around: no v2 search,
@@ -16,18 +18,16 @@
  * having two separate client instances.
  */
 
+import { ATLASSIAN_CONFLUENCE, readAtlassianMetadata } from '@renkei/provider-grants';
 import {
-  getGrant,
-  refreshGrantTokens,
-  ATLASSIAN_CONFLUENCE,
-  AtlassianAdapter,
-  readAtlassianMetadata,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { getDatabase } from '@renkei/db';
-import { getAtlassianConfluenceApp } from '@/lib/atlassian-app';
+  delegateGrants,
+  delegateRefusal,
+  grantFetch,
+  type AuthedFetch,
+} from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import { grantRefusalText } from '@/lib/grant-refusals';
 import {
   REQUEST_TIMEOUT_MS,
   UPLOAD_TIMEOUT_MS,
@@ -35,81 +35,45 @@ import {
   timeoutSignal,
 } from '../fetch-guard';
 
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
-
 export interface ConfluenceAccess {
-  accessToken: string;
+  /**
+   * The fetcher every call goes out through. Production's is the delegate's
+   * for the caller's grant (Bearer attached there); a personal API token
+   * (see ../test-support/atlassian-sandbox.ts's `patConfluenceAuth`)
+   * authenticates with Basic auth instead — confirmed directly against the
+   * sandbox that a personal token does NOT work as a Bearer token (404 on
+   * both the bare `/wiki/...` path and the `/ex/confluence/{cloudId}/wiki/...`
+   * gateway). Carrying a fetcher here, rather than building a header inline
+   * in confluenceRequest, is what makes that swappable.
+   */
+  auth: AuthedFetch;
   cloudId: string;
   accountId: string;
-  /**
-   * The full `Authorization` header value to send. Production's delegated
-   * grant is a Bearer token; a personal API token (see
-   * ../test-support/atlassian-sandbox.ts's `patConfluenceAuth`) authenticates
-   * with Basic auth instead — confirmed directly against the sandbox that a
-   * personal token does NOT work as a Bearer token (404 on both the bare
-   * `/wiki/...` path and the `/ex/confluence/{cloudId}/wiki/...` gateway).
-   * Carrying the finished header here, rather than building `Bearer
-   * ${accessToken}` inline in confluenceRequest, is what makes that
-   * swappable without ConfluenceAuth needing a fetch() of its own.
-   */
-  authHeader: string;
 }
 
-/** The caller's live Confluence token + cloud id, refreshed when stale. */
+/** The caller's Confluence grant as a fetcher, plus its cloud id. */
 export async function resolveConfluenceAccess(
   context: MCPToolContext
 ): Promise<ConfluenceAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
 
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', ATLASSIAN_CONFLUENCE)
-    .where('subject', '=', context.subject)
-    .executeTakeFirst();
-  if (!row) {
-    return 'Confluence is not connected. Connect it on the Connectors page, then try again.';
+  const ref = {
+    tenantId: context.tenantId,
+    provider: ATLASSIAN_CONFLUENCE,
+    subject: context.subject,
+  };
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) {
+    return described.err.type === 'GRANT_UNREADABLE' || described.err.type === 'DELEGATE_ERROR'
+      ? 'Could not read the Confluence grant.'
+      : grantRefusalText(described.err.type, 'Confluence');
   }
 
-  const grantResult = await getGrant(
-    ATLASSIAN_CONFLUENCE,
-    context.tenantId,
-    row.provider_account_id
-  );
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the Confluence grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getAtlassianConfluenceApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'Confluence integration is no longer configured.';
-    const refreshed = await refreshGrantTokens(
-      new AtlassianAdapter(app.clientSecret, ATLASSIAN_CONFLUENCE),
-      context.tenantId,
-      grant.accountId,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Confluence authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the Confluence token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  const site = readAtlassianMetadata(grant.metadata);
+  const site = readAtlassianMetadata(described.val.metadata);
   if (!site.cloudId)
     return 'Confluence grant is missing its site id; reconnect on the Connectors page.';
 
-  return {
-    accessToken: grant.accessToken,
-    cloudId: site.cloudId,
-    accountId: grant.accountId,
-    authHeader: `Bearer ${grant.accessToken}`,
-  };
+  return { auth: grantFetch(ref), cloudId: site.cloudId, accountId: described.val.accountId };
 }
 
 function describeStatus(status: number): string {
@@ -147,12 +111,12 @@ async function confluenceRequest(
   const timeoutMs = body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
   let response: Response;
   try {
-    response = await fetch(
+    // No Authorization here: the fetcher's owner (the delegate) attaches it.
+    response = await access.auth(
       `https://api.atlassian.com/ex/confluence/${access.cloudId}/wiki${pathAndQuery}`,
       {
         method: init?.method ?? 'GET',
         headers: {
-          Authorization: access.authHeader,
           Accept: 'application/json',
           ...(jsonBody !== undefined ? { 'Content-Type': 'application/json' } : {}),
           ...init?.extraHeaders,
@@ -177,6 +141,19 @@ async function confluenceRequest(
         ? `api.atlassian.com timed out after ${timeoutMs}ms`
         : 'Could not reach api.atlassian.com',
     };
+  }
+  // The delegate's own refusal never reached Confluence — say so in the
+  // resolver's words rather than as a Confluence status.
+  const refusal = delegateRefusal(response);
+  if (refusal) {
+    logger.warn('Delegate refused the Confluence call', {
+      component: 'confluence/fetch',
+      tenantId: scope.tenantId,
+      subject: scope.subject,
+      path: pathAndQuery,
+      refusal,
+    });
+    return { ok: false, error: grantRefusalText(refusal, 'Confluence') };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');

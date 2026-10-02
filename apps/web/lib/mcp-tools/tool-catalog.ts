@@ -126,9 +126,9 @@ async function jiraScopesFor(
   tenantId: string,
   subject: string
 ): Promise<{ connected: boolean; scopes: string[]; accountId: string | null }> {
-  // Read straight from the grant row rather than through `getJiraGrant`: that
-  // path refreshes the access token, and rendering a page must not mutate
-  // anyone's credentials.
+  // Read straight from the grant row rather than asking the delegate to
+  // describe the grant: rendering a page needs scopes only, and must not be
+  // able to reach a provider.
   const row = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
@@ -153,7 +153,7 @@ async function jiraScopesFor(
  * silently vanishes from the builder while the live server still serves it —
  * post-split, the main grant no longer carries the JSM scopes. Read straight
  * from the grant row like jiraScopesFor above: no token is decrypted or
- * refreshed, because enumeration must never be able to transact.
+ * resolved, because enumeration must never be able to transact.
  */
 async function jsmGrantScopesFor(
   db: Kysely<DB>,
@@ -275,7 +275,7 @@ export async function listAvailableTools(
     // Deliberately empty: enumeration must not be able to call a provider.
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: settings.maxJqlResults,
     maxAttachmentBytes: settings.maxAttachmentBytes,
     subject,
@@ -293,7 +293,7 @@ export async function listAvailableTools(
     // token fields above: the JSM scope gates read these at registration,
     // and nothing here may be able to reach Atlassian.
     jsmGrant: jsm
-      ? { accessToken: '', cloudId: '', accountId: jsm.accountId, scopes: jsm.scopes }
+      ? { auth: null, cloudId: '', accountId: jsm.accountId, scopes: jsm.scopes }
       : undefined,
     db,
   };

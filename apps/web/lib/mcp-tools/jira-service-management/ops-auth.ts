@@ -2,7 +2,7 @@
  * How jsm_ops_* tools reach the JSM Operations API — injected, not branched
  * on.
  *
- * Before this existed, ops.ts read `context.accessToken` and a hardcoded
+ * Before this existed, ops.ts read the context's Jira credential and a hardcoded
  * `opsBase()` directly, and there was exactly one way to call it: a real
  * OAuth grant. Proving the rotation-id fix (see ops.integration.test.ts)
  * against a real sandbox needed a SECOND way — a personal API token, since a
@@ -78,6 +78,12 @@ export function oauthJsmOpsAuth(context: MCPToolContext): JsmOpsAuth {
     kind: 'oauth',
     async fetch(requiredScopes, path, init) {
       if (!base) return authFailure('No Atlassian cloud id on this connection.');
+      if (!context.jiraAuth) {
+        return authFailure(
+          'Jira Service Management is not connected. Connect it on the Connectors page.',
+          401
+        );
+      }
       if (granted) {
         const missing = requiredScopes.filter((scope) => !granted.has(scope));
         if (missing.length > 0) {
@@ -89,7 +95,7 @@ export function oauthJsmOpsAuth(context: MCPToolContext): JsmOpsAuth {
           );
         }
       }
-      return jiraFetch(`${base}${path}`, context.accessToken, init);
+      return jiraFetch(`${base}${path}`, context.jiraAuth, init);
     },
   };
 }

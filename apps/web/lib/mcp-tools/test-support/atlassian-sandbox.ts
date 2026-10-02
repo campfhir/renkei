@@ -13,6 +13,7 @@ import type { JsmAuth } from '../jira-service-management/jsm-auth';
 import type { JiraAuth } from '../jira/jira-auth';
 import type { ConfluenceAuth } from '../confluence/confluence-auth';
 import type { ConfluenceAccess } from '../confluence/client';
+import { authedFetch } from '@renkei/delegate-client';
 
 export interface SandboxCredentials {
   email: string;
@@ -130,8 +131,8 @@ export function patJsmOpsAuth(creds: SandboxCredentials, cloudId: string): JsmOp
  * gateway (confirmed directly against the sandbox) — so client.ts's
  * existing gateway URL needs no swapping, only the auth header does.
  * Confirmed separately that a personal token does NOT work as a Bearer
- * token (404 on both paths) — hence ConfluenceAccess carrying a full
- * `authHeader` rather than client.ts hardcoding `Bearer ${accessToken}`.
+ * token (404 on both paths) — hence ConfluenceAccess carrying a fetcher
+ * (`auth`) that sets its own header, rather than client.ts hardcoding one.
  *
  * No scope enforcement, same reasoning as `patJsmOpsAuth`: a personal token
  * authenticates as a real user with that user's full standing.
@@ -208,10 +209,13 @@ export function patConfluenceAuth(
   accountId: string
 ): ConfluenceAuth {
   const access: ConfluenceAccess = {
-    accessToken: creds.apiToken,
+    auth: authedFetch(
+      (url, init) =>
+        fetch(url, { ...init, headers: { ...init?.headers, Authorization: authHeader(creds) } }),
+      `pat:confluence:${accountId}`
+    ),
     cloudId,
     accountId,
-    authHeader: authHeader(creds),
   };
   return {
     kind: 'pat',

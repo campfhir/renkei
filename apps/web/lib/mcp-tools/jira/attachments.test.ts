@@ -73,7 +73,7 @@ async function attachmentHandlers(maxBytes?: number): Promise<Map<string, ToolHa
     accountId: 'acct-1',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-    accessToken: 'token',
+    jiraAuth: null,
     maxJqlResults: 100,
     maxAttachmentBytes: maxBytes,
   };

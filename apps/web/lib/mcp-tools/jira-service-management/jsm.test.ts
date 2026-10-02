@@ -86,7 +86,7 @@ async function toolsOf(): Promise<Map<string, Handler>> {
     accountId: 'acct-1',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 100,
   } as unknown as MCPToolContext;
   await registerJsmTools(server, context, stubAuth);

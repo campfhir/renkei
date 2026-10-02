@@ -12,11 +12,10 @@ import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@renkei/db';
 import { attemptFromHeaders, withAttempt } from '@/lib/mcp-tools/attempt-context';
 import { getOrgSettings } from '@renkei/settings';
-import { getJiraGrant, type JiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
-import { cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
+import { cacheUserDisplayName } from '@/lib/mcp-tools';
 import { resolveConnectorAvailability, registerRenkeiTools } from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
 import { withToolAllowList } from '@/lib/mcp-tools/capability-gate';
@@ -28,7 +27,8 @@ import {
   knownDetectors,
   DEFAULT_MCP_POLICY,
 } from '@renkei/redaction';
-import { ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
+import { ATLASSIAN, ATLASSIAN_JSM, readAtlassianMetadata } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
 import { buildProjection } from '@/lib/mcp-tools/projection';
@@ -50,22 +50,57 @@ const redactionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY |
 const redactionKey = deriveRedactionKey(redactionKeyResult.ok ? redactionKeyResult.val : null);
 
 /**
- * The caller's grant on the second Atlassian app ("Renkei JSM"), decrypted —
- * or null when they have not connected it (JSM tools then fall back to the
- * main grant). Effective scopes prefer what the token actually carries.
+ * The caller's Jira grant as the context needs it: the site identity from
+ * the delegate's description of the grant, and a fetcher the delegate
+ * attaches the token to. `revoked` is the one failure the caller must act
+ * on — the grant row is gone, so a reconnect is the only way forward.
+ */
+interface JiraGrantContext {
+  auth: AuthedFetch;
+  accountId: string;
+  cloudId: string;
+  siteUrl: string;
+  displayName: string;
+  requestedScopes: string[];
+  grantedScopes: string[] | null;
+}
+
+async function resolveJiraGrant(
+  tenantId: string,
+  accountId: string
+): Promise<JiraGrantContext | 'revoked' | 'failed'> {
+  const ref = { tenantId, provider: ATLASSIAN, accountId };
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) return described.err.type === 'NO_GRANT' ? 'revoked' : 'failed';
+  const site = readAtlassianMetadata(described.val.metadata);
+  return {
+    auth: grantFetch(ref),
+    accountId: described.val.accountId,
+    cloudId: site.cloudId,
+    siteUrl: site.siteUrl,
+    displayName: described.val.displayName,
+    requestedScopes: described.val.requestedScopes,
+    grantedScopes: described.val.grantedScopes,
+  };
+}
+
+/**
+ * The caller's grant on the second Atlassian app ("Renkei JSM"), as a
+ * fetcher plus its site — or null when they have not connected it (JSM
+ * tools then fall back to the main grant). Effective scopes prefer what the
+ * token actually carries.
  *
  * Null for any OTHER reason is not a quiet fallback — the caller HAS a JSM
  * grant, and returning null makes every jsm_* tool vanish from this request's
- * tool list while the connect page still shows JSM connected. getGrant
- * refreshes the access token, so a transient Atlassian failure lands exactly
- * here; without the warns this presents as tools that "sometimes disappear"
- * with nothing in the logs to say why.
+ * tool list while the connect page still shows JSM connected. Without the
+ * warns this presents as tools that "sometimes disappear" with nothing in
+ * the logs to say why.
  */
 async function resolveJsmGrant(
   db: Kysely<DB>,
   tenantId: string,
   subject: string
-): Promise<{ accessToken: string; cloudId: string; accountId: string; scopes?: string[] } | null> {
+): Promise<{ auth: AuthedFetch; cloudId: string; accountId: string; scopes?: string[] } | null> {
   const row = await db
     .selectFrom('provider_grants')
     .select(['provider_account_id'])
@@ -84,14 +119,14 @@ async function resolveJsmGrant(
     return null;
   };
 
-  const grantResult = await getGrant(ATLASSIAN_JSM, tenantId, row.provider_account_id);
-  if (!grantResult.ok) return failed('grant read/refresh failed');
-  if (!grantResult.val) return failed('grant row disappeared');
-  const grant = grantResult.val;
+  const ref = { tenantId, provider: ATLASSIAN_JSM, accountId: row.provider_account_id };
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) return failed(`grant describe failed: ${described.err.type}`);
+  const grant = described.val;
   const site = readAtlassianMetadata(grant.metadata);
   if (!site.cloudId) return failed('no cloudId in grant metadata');
   return {
-    accessToken: grant.accessToken,
+    auth: grantFetch(ref),
     cloudId: site.cloudId,
     accountId: grant.accountId,
     scopes: grant.grantedScopes ?? grant.requestedScopes,
@@ -279,18 +314,17 @@ const handler = async (
       return await mcpHandler(request);
     }
 
-    let grant: JiraGrant | null = null;
+    let grant: JiraGrantContext | null = null;
     if (grants.length > 0) {
-      const grantResult = await getJiraGrant(tenantId, grants[0].account_id);
-      if (!grantResult.ok) {
+      const resolved = await resolveJiraGrant(tenantId, grants[0].account_id);
+      if (resolved === 'failed') {
         return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      grant = grantResult.val;
-      if (!grant) {
-        // Grant was deleted during refresh (GRANT_REVOKED) - direct user to re-authenticate.
+      if (resolved === 'revoked') {
+        // The grant row is gone (revoked and swept) - direct user to re-authenticate.
         // Link to the origin, not the Jira authorize endpoint: the user has to sign in to
         // the MCP first, otherwise the Atlassian grant would be bound without authentication.
         return new Response(
@@ -301,6 +335,7 @@ const handler = async (
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
       }
+      grant = resolved;
     }
     const accountId = grant ? grants[0].account_id : '';
 
@@ -311,21 +346,12 @@ const handler = async (
     }
     const settings = settingsResult.val;
 
-    if (grant) {
-      // Record the grant's token on every request, not just at handler creation:
-      // the cached handler's closure holds whatever token existed when it was
-      // built, and jiraFetch resolves the current one through this cache. This
-      // also picks up tokens rotated by another process, since the grant above
-      // is read fresh from the database each request.
-      cacheTokenMetadata(grant.accessToken, tenantId, accountId, subject);
-
-      // Seed the display-name cache from the grant's durable record. The cache
-      // is in-memory, so a restarted container logged every tool call with
-      // displayName: null until the user happened to reconnect or ask who they
-      // are — while provider_grants.display_name held the answer all along.
-      if (grant.displayName) {
-        cacheUserDisplayName(accountId, grant.displayName);
-      }
+    // Seed the display-name cache from the grant's durable record. The cache
+    // is in-memory, so a restarted container logged every tool call with
+    // displayName: null until the user happened to reconnect or ask who they
+    // are — while provider_grants.display_name held the answer all along.
+    if (grant?.displayName) {
+      cacheUserDisplayName(accountId, grant.displayName);
     }
 
     // The caller's recorded email (identity spine): what the knowledge gate
@@ -359,18 +385,9 @@ const handler = async (
     const jiraScopes = grant ? (grant.grantedScopes ?? grant.requestedScopes) : [];
 
     // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
-    // JSM/Ops tools run on this token when it exists; absent, they fall back
+    // JSM/Ops tools run on this grant when it exists; absent, they fall back
     // to the main grant, the pre-split single-app shape.
     const jsmGrant = await resolveJsmGrant(db, tenantId, subject);
-    if (jsmGrant) {
-      cacheTokenMetadata(
-        jsmGrant.accessToken,
-        tenantId,
-        jsmGrant.accountId,
-        subject,
-        ATLASSIAN_JSM
-      );
-    }
 
     // cacheKey (identity plus a version derived from the rows the tool
     // surface is built from) was captured above, before availability/settings/
@@ -420,7 +437,7 @@ const handler = async (
               siteUrl: grant?.siteUrl ?? '',
               apiBaseUrl: grant ? `https://api.atlassian.com/ex/jira/${grant.cloudId}` : '',
               cloudId: grant?.cloudId,
-              accessToken: grant?.accessToken ?? '',
+              jiraAuth: grant?.auth ?? null,
               maxJqlResults: settings.maxJqlResults,
               maxAttachmentBytes: settings.maxAttachmentBytes,
               origin,
