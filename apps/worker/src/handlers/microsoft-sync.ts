@@ -1,6 +1,21 @@
 /**
- * The Microsoft ingestion engine: ensure subscriptions exist for a grant,
- * and run delta rounds that turn mailbox changes into knowledge events.
+ * The Microsoft Graph subscription engine: ensure subscriptions exist for a
+ * grant, and run delta rounds over what they watch.
+ *
+ * Two kinds of subscription, with two different jobs:
+ *
+ * - The INBOX subscription is a trigger feed, not an index. Mail is
+ *   personal and is never written into the org knowledge index; new mail
+ *   surfacing in a delta round is published as the `mail.received` domain
+ *   event so agents with an "An email arrives" trigger wake, and subscribers
+ *   read the message live under the owner's own grant. Nothing about a
+ *   message is persisted here beyond that event's id-plus-preview payload.
+ * - The To Do (tasks) subscriptions are indexed: each task becomes an
+ *   ingest.object job on the embedding queue, deletions a delete.object.
+ *
+ * Calendar is neither: `me/events` is never subscribed any more (its
+ * chunks were dropped by migration 135), and a lingering row is torn down
+ * by the ensure pass below.
  *
  * Notifications never carry content — delta is the truth (RENKEI.md calls
  * delta queries the reliable sync backbone). Each webhook_subscriptions row
@@ -15,8 +30,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { sql, type Kysely } from 'kysely';
+import { getDatabase, type DB } from '@renkei/db';
 import {
   createGraphSubscription,
   renewGraphSubscription,
@@ -66,9 +81,13 @@ function rec(value: unknown): Record<string, unknown> {
 /**
  * Which resources this grant should have subscribed: scope AND the user's
  * explicit opt-in per category. Scopes alone are not consent — they exist
- * for the interactive tools too, and granting Calendars.Read to use the
- * calendar tools must not silently index the calendar. Nothing opted in
- * (the default) means nothing is indexed.
+ * for the interactive tools too, and granting Mail.Read to use the mail
+ * tools must not silently wire that mailbox to anyone's agents. Nothing
+ * opted in (the default) means no subscriptions at all.
+ *
+ * The inbox subscription exists ONLY for the `mail.received` trigger; it
+ * indexes nothing (see the module header). Calendar has no subscription:
+ * calendar content is personal and left out of the index entirely.
  */
 async function desiredResources(access: MicrosoftAccess): Promise<string[]> {
   const resources: string[] = [];
@@ -79,18 +98,12 @@ async function desiredResources(access: MicrosoftAccess): Promise<string[]> {
     resources.push("me/mailFolders('inbox')/messages");
   }
   if (
-    access.indexing.calendar &&
-    (access.scopes.includes('Calendars.Read') || access.scopes.includes('Calendars.ReadWrite'))
-  ) {
-    resources.push('me/events');
-  }
-  if (
     access.indexing.tasks &&
     (access.scopes.includes('Tasks.Read') || access.scopes.includes('Tasks.ReadWrite'))
   ) {
     // To Do subscriptions are per list; enumerate them live. Lists created
     // later are picked up by the sweep's next ensure pass.
-    const lists = await graphRequest(access.accessToken, '/me/todo/lists');
+    const lists = await graphRequest(access.auth, '/me/todo/lists');
     if (lists.ok && isRecord(lists.val) && Array.isArray(lists.val.value)) {
       for (const list of lists.val.value) {
         const listId = str(rec(list).id);
@@ -107,6 +120,11 @@ function changeTypeFor(resource: string): string {
   return resource.includes('/messages') ? 'created,updated' : 'created,updated,deleted';
 }
 
+/**
+ * The ref kind a subscription row's resource maps to. 'evt' is still
+ * recognised so a lingering `me/events` row (from before calendar left the
+ * index) is identified as such and skipped, never mistaken for a mailbox.
+ */
 export function refKindOfResource(resource: string): MicrosoftRefKind {
   if (resource.includes('/tasks')) return 'task';
   if (resource.includes('events')) return 'evt';
@@ -118,7 +136,6 @@ function deltaStartUrl(resource: string): string {
     const match = /me\/todo\/lists\/([^/]+)\/tasks/.exec(resource);
     return initialDeltaUrl('todo', { listId: match?.[1] ?? '' });
   }
-  if (resource.includes('events')) return initialDeltaUrl('calendar');
   return initialDeltaUrl('mail-inbox');
 }
 
@@ -178,11 +195,13 @@ export async function ensureMicrosoftSubscriptions(
   const desired: SubscriptionRow[] = [];
   for (const row of rows) {
     if (!wanted.has(row.resource)) {
-      // Opted out (or scope lost): stop Graph from notifying, but KEEP the
-      // row — its delta_link is the cursor that makes a later re-enable
-      // incremental. Already-indexed content stays, gated per read as ever.
+      // Opted out (or scope lost, or a resource this build no longer wants —
+      // `me/events` after calendar left the index): stop Graph from
+      // notifying, but KEEP the row — its delta_link is the cursor that
+      // makes a later re-enable incremental. Already-indexed To Do content
+      // stays, gated per read as ever.
       if (row.subscription_id !== null) {
-        const removed = await deleteGraphSubscription(access.accessToken, row.subscription_id);
+        const removed = await deleteGraphSubscription(access.auth, row.subscription_id);
         if (!removed.ok) {
           logger.warn('could not delete Graph subscription for {resource}', {
             component: COMPONENT,
@@ -204,7 +223,7 @@ export async function ensureMicrosoftSubscriptions(
       row.expires_at === null ||
       new Date(row.expires_at).getTime() < Date.now();
     if (needsCreate) {
-      const created = await createGraphSubscription(access.accessToken, {
+      const created = await createGraphSubscription(access.auth, {
         resource: row.resource,
         changeType: changeTypeFor(row.resource),
         notificationUrl,
@@ -241,7 +260,7 @@ export async function ensureMicrosoftSubscriptions(
     if (subscriptionId === null || expiresAt === null) continue;
 
     if (new Date(expiresAt).getTime() - Date.now() < RENEW_WITHIN_MS) {
-      const renewed = await renewGraphSubscription(access.accessToken, subscriptionId);
+      const renewed = await renewGraphSubscription(access.auth, subscriptionId);
       if (renewed.ok) {
         await db
           .updateTable('webhook_subscriptions')
@@ -271,50 +290,12 @@ export async function ensureMicrosoftSubscriptions(
   return desired;
 }
 
-/** A Graph message record as the connector-agnostic shape the sanitizer expects. */
 /**
- * The correspondents on a Graph item, resolved to names with the addresses
- * beside them.
- *
- * "Evan Jeing <evan.jeing@nems.org>" is what someone reads; the bare address
- * is what they search for. Recording both costs nothing here and cannot be
- * reconstructed later — the sanitized body does not carry it.
+ * A Graph message record as the connector-agnostic shape the sanitizer
+ * expects. Not used by the sync round any more — mail is never indexed —
+ * but the message-override handler (microsoft-events.ts) still re-fetches
+ * one message for the mail-review surface pending its removal.
  */
-function correspondents(item: Record<string, unknown>): Record<string, unknown> {
-  const one = (value: unknown): string => {
-    const address = rec(rec(value).emailAddress);
-    const name = str(address.name);
-    const email = str(address.address);
-    if (name && email && name.toLowerCase() !== email.toLowerCase()) return `${name} <${email}>`;
-    return email || name;
-  };
-  const many = (value: unknown): string[] =>
-    Array.isArray(value) ? value.map(one).filter((entry) => entry.length > 0) : [];
-  const addresses = (value: unknown): string[] =>
-    Array.isArray(value)
-      ? value
-          .map((entry) => str(rec(rec(entry).emailAddress).address))
-          .filter((entry) => entry.length > 0)
-      : [];
-
-  const from = one(item.from ?? item.sender);
-  const to = many(item.toRecipients);
-  const cc = many(item.ccRecipients);
-  const organizer = one(item.organizer);
-  const toAddresses = addresses(item.toRecipients);
-  const ccAddresses = addresses(item.ccRecipients);
-  return {
-    from: from || undefined,
-    fromAddress: str(rec(rec(item.from ?? item.sender).emailAddress).address) || undefined,
-    to: to.length > 0 ? to : undefined,
-    toAddresses: toAddresses.length > 0 ? toAddresses : undefined,
-    cc: cc.length > 0 ? cc : undefined,
-    ccAddresses: ccAddresses.length > 0 ? ccAddresses : undefined,
-    organizer: organizer || undefined,
-    hasAttachments: item.hasAttachments === true ? true : undefined,
-  };
-}
-
 export function rawEmailOf(item: Record<string, unknown>): RawEmail {
   const from = rec(rec(item.from).emailAddress);
   // `sender` is Graph's RFC 5322 Sender — the actual authenticated sender,
@@ -345,41 +326,23 @@ export function rawEmailOf(item: Record<string, unknown>): RawEmail {
   };
 }
 
-/** Text content per object kind — what gets embedded. Messages are handled separately (see sanitizeEmailForTenant). */
 /**
- * Is there anything here worth embedding, beyond scheduling scaffolding?
- *
- * A calendar entry with no subject, body or preview reduces to "Event:" and
- * a pair of timestamps. That embeds to near-nothing, matches queries by
- * accident, and — because events run months into the future — outranks real
- * content in any recency-ordered view. Mail is exempt: the sanitizer already
- * decides what mail is worth keeping.
+ * Is there anything here worth embedding? A To Do item with neither a title
+ * nor a body reduces to "Task:" and a status, which embeds to near-nothing
+ * and matches queries by accident.
  */
-function hasSubstance(kind: MicrosoftRefKind, item: Record<string, unknown>): boolean {
-  if (kind === 'evt') {
-    return Boolean(
-      str(item.subject).trim() || str(rec(item.body).content).trim() || str(item.bodyPreview).trim()
-    );
-  }
-  if (kind === 'task') {
-    return Boolean(str(item.title).trim() || str(rec(item.body).content).trim());
-  }
-  return true;
+function hasSubstance(item: Record<string, unknown>): boolean {
+  return Boolean(str(item.title).trim() || str(rec(item.body).content).trim());
 }
 
 /**
  * A Graph body reduced to the text worth embedding.
  *
- * Graph returns calendar and task bodies as HTML, and this used to embed
- * that HTML verbatim — tags, tracking blobs, and every link wrapped in a
- * `safelinks.protection.outlook.com` envelope (often wrapping a second
- * gateway inside it). An invite is mostly join links, so the stored chunk
- * ended up being mostly URL-encoding.
- *
- * That is all this does now: HTML to text, links decoded, whitespace
- * tidied. Deciding that a Teams join block is boilerplate — true for most
- * organizations, not all, and phrased differently in each — is a tenant's
- * call, made in a cleaner script pointed at the calendar kind.
+ * Graph returns task bodies as HTML, and this used to embed that HTML
+ * verbatim — tags, tracking blobs, and every link wrapped in a
+ * `safelinks.protection.outlook.com` envelope. That is all this does: HTML
+ * to text, links decoded, whitespace tidied. Anything beyond that is a
+ * tenant's call, made in a cleaner script pointed at the task kind.
  */
 function readableBody(item: Record<string, unknown>): string {
   const body = rec(item.body);
@@ -389,78 +352,26 @@ function readableBody(item: Record<string, unknown>): string {
   return decodeBody(normalizeBody({ content, contentType }));
 }
 
-/** The people on an invite, as names where Graph gave one. */
-function attendeeList(item: Record<string, unknown>): { display: string[]; addresses: string[] } {
-  const entries = Array.isArray(item.attendees) ? item.attendees : [];
-  const display: string[] = [];
-  const addresses: string[] = [];
-  for (const entry of entries) {
-    const address = rec(rec(entry).emailAddress);
-    const email = str(address.address);
-    const name = str(address.name);
-    if (!email && !name) continue;
-    display.push(
-      name && email && name.toLowerCase() !== email.toLowerCase()
-        ? `${name} <${email}>`
-        : email || name
-    );
-    if (email) addresses.push(email);
-  }
-  return { display, addresses };
-}
-
 /**
- * The tenant's own cleaner scripts, over an invite or a task.
- *
- * Mail has had this since scripts shipped; calendar and tasks reach the
- * same stage now, so an org can strip a conferencing block, a room-booking
- * footer or whatever its own tooling staples onto invites without waiting
- * for a release. Only scripts an admin has marked as applying to this kind
- * run — a mail-only script keeps its old reach.
- *
- * Scripts are the last word, after the built-in cleaning: they exist to
- * handle what the shared rules could not.
+ * The tenant's own cleaner scripts, over a task. Only scripts an admin has
+ * marked as applying to the task kind run. Scripts are the last word, after
+ * the built-in cleaning: they exist to handle what the shared rules could
+ * not.
  */
 async function scripted(
   tenantId: string,
-  kind: MicrosoftRefKind,
   item: Record<string, unknown>,
   content: string
 ): Promise<string> {
-  if (kind !== 'evt' && kind !== 'task') return content;
-  const organizer = rec(rec(item.organizer).emailAddress);
   return applyCleanerScriptsToItem({
     tenantId,
-    kind,
+    kind: 'task',
     content,
-    fields: {
-      subject: str(item.subject) || str(item.title),
-      organizer: str(organizer.name) || str(organizer.address) || null,
-      attendees: attendeeList(item).display,
-      location: str(rec(item.location).displayName) || null,
-      startsAt: str(rec(item.start).dateTime) || null,
-      endsAt: str(rec(item.end).dateTime) || null,
-      isOnline: item.isOnlineMeeting === true,
-    },
+    fields: { subject: str(item.title) },
   });
 }
 
-function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): string {
-  if (kind === 'evt') {
-    const organizer = rec(rec(item.organizer).emailAddress);
-    const attendees = attendeeList(item).display.join(', ');
-    const body = readableBody(item);
-    return [
-      `Event: ${str(item.subject)}`,
-      `When: ${str(rec(item.start).dateTime)} → ${str(rec(item.end).dateTime)}`,
-      `Organizer: ${str(organizer.name)} <${str(organizer.address)}>`,
-      attendees ? `Attendees: ${attendees}` : '',
-      '',
-      body,
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
+function contentOf(item: Record<string, unknown>): string {
   const body = readableBody(item);
   return [
     `Task: ${str(item.title)}`,
@@ -474,16 +385,19 @@ function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): strin
 }
 
 /**
- * One delta round for one subscription row: fetch what changed, enqueue it
- * for the embedding queue, persist the new cursor last (at-least-once — a
- * crashed round re-runs into idempotent enqueues-then-upserts).
+ * One delta round for one subscription row: fetch what changed, act on it,
+ * persist the new cursor last (at-least-once — a crashed round re-runs into
+ * idempotent enqueues/publishes).
  *
- * All index writes — purges, per-item ingests, @removed deletes — ride the
- * embedding queue as individual jobs (Decision #20). A cursorless full
- * rebuild that used to embed a whole mailbox inside this ONE event, easily
- * outliving the queue's 10-minute claim lease, becomes one purge event plus
- * one bounded, independently-retryable event per item. Lane FIFO under the
- * single embedding consumer keeps the purge ahead of its re-ingests.
+ * For a To Do row, "act" means index writes — purges, per-item ingests,
+ * @removed deletes — each riding the embedding queue as its own job
+ * (Decision #20), sharing one ordering key so the purge of a cursorless
+ * rebuild runs before its re-ingests.
+ *
+ * For the inbox row, "act" means publishing `mail.received` for genuinely
+ * new mail, and nothing else: no ingest, no purge, no delete. Mail never
+ * reaches the index, so the round needs no embedding provider either — the
+ * trigger works for an org with the knowledge layer off.
  */
 export async function runSubscriptionSync(
   tenantId: string,
@@ -495,12 +409,24 @@ export async function runSubscriptionSync(
   const db = dbResult.val;
 
   const kind = refKindOfResource(row.resource);
+  if (kind === 'evt') {
+    // Calendar left the index. desiredResources never returns me/events, so
+    // this row is being torn down by the ensure pass; until then it must not
+    // be polled — and it must never be mistaken for a mailbox feed.
+    logger.info('skipping delta round for retired resource {resource}', {
+      component: COMPONENT,
+      tenantId,
+      resource: row.resource,
+    });
+    return { changed: 0, removed: 0 };
+  }
+
   // The stored cursor is either a deltaLink (a closed round) or a nextLink
   // (a round the page cap cut short) — both resume the enumeration exactly
   // where it stopped. Only a NULL cursor opens a fresh series.
   const fullRebuild = row.delta_link === null;
   const startUrl = row.delta_link ?? deltaStartUrl(row.resource);
-  const round = await runDeltaRound(access.accessToken, startUrl);
+  const round = await runDeltaRound(access.auth, startUrl);
   if (!round.ok) {
     // An aged-out delta token (410: resyncRequired / SyncStateNotFound) is
     // not a failure — it is Graph's instruction to restart the series. The
@@ -527,18 +453,63 @@ export async function runSubscriptionSync(
     );
   }
 
+  let changed = 0;
+  let removed = 0;
+
+  if (kind === 'msg') {
+    for (const entry of round.val.items) {
+      if (!isRecord(entry)) continue;
+      const objectId = str(entry.id);
+      if (!objectId) continue;
+      if (entry['@removed'] !== undefined) {
+        // Nothing of this message was ever stored, so there is nothing to
+        // remove; counted so the feed's progress row still reflects the
+        // round.
+        removed += 1;
+        continue;
+      }
+      changed += 1;
+
+      // Domain event: only genuinely NEW mail. A full rebuild replays the
+      // whole mailbox and a delta round replays updated items (a
+      // read-status flip on old mail); the rebuild skip plus the recency
+      // window keep "an email arrives" meaning arrives. Subscribers (agent
+      // triggers) are resolved by the dispatch handler and read the message
+      // live, under the owner's grant — the event carries an id and a short
+      // preview, never a body.
+      const receivedAt = str(entry.receivedDateTime);
+      if (fullRebuild || !isRecentMail(receivedAt)) continue;
+      const ownerSubject = await subjectForMicrosoftAccount(tenantId, access.accountId);
+      if (!ownerSubject) continue;
+      await publishDomainEvent({
+        tenantId,
+        provider: 'microsoft',
+        type: 'mail.received',
+        ownerSubject,
+        data: {
+          subject: str(entry.subject),
+          body: str(entry.bodyPreview).slice(0, BODY_PREVIEW_CHARS),
+          from: str(rec(rec(entry.from).emailAddress).address),
+          messageId: objectId,
+        },
+        occurredAt: receivedAt,
+        orderingKey: `microsoft/${tenantId}/${access.accountId}`,
+      });
+    }
+    await persistCursor(db, row.id, round.val, changed);
+    return { changed, removed };
+  }
+
   // A cursorless round returns the resource's whole current state, so it is
   // the one moment the old chunks can be dropped safely: anything still
   // present upstream is about to be re-ingested from this very response.
   // Without it, re-index can only ADD — items deleted at the source, or now
-  // excluded by changed cleaning rules, would survive forever, and the
-  // content-free calendar shells this sweep learned to skip would never
-  // leave the index.
+  // excluded by changed cleaning rules, would survive forever.
   //
   // Enqueued AFTER the fetch succeeded, never before, and ahead of every
-  // per-item enqueue below. All of this round's jobs share the mailbox-kind
+  // per-item enqueue below. All of this round's jobs share the list-kind
   // ordering key, so the purge runs before its re-ingests and deletes land
-  // after ingests of the same resource — while different mailboxes drain in
+  // after ingests of the same resource — while different accounts drain in
   // parallel across however many embedding workers are running.
   const orderingKey = `microsoft/${access.upn.toLowerCase()}/${kind}`;
   if (fullRebuild) {
@@ -551,8 +522,6 @@ export async function runSubscriptionSync(
   }
 
   const embedder = await resolveEmbeddingProvider(tenantId);
-  let changed = 0;
-  let removed = 0;
 
   for (const entry of round.val.items) {
     if (!isRecord(entry)) continue;
@@ -573,79 +542,8 @@ export async function runSubscriptionSync(
 
     if (!embedder) continue; // knowledge layer off for this org
 
-    if (kind === 'msg') {
-      // Mail goes to the embedding queue as one ingest.email job per
-      // message; the sanitizer runs THERE, not here — its near-duplicate
-      // check is itself an embedding call, and this loop must stay free of
-      // the embeddings endpoint entirely. The sanitizer-derived metadata
-      // (senderKey, templateVersion) is merged in by that handler.
-      await enqueueKnowledgeEvent(
-        tenantId,
-        'ingest.email',
-        {
-          provider: MICROSOFT,
-          refId,
-          ownerUpn: access.upn,
-          accountId: access.accountId,
-          raw: rawEmailOf(entry),
-          metadata: {
-            kind,
-            upn: access.upn,
-            webLink: str(entry.webLink) || undefined,
-            url: str(entry.webLink) || undefined,
-            when: str(entry.receivedDateTime) || undefined,
-            subject: str(entry.subject) || undefined,
-            ...correspondents(entry),
-          },
-          sourceAt: str(entry.receivedDateTime) || null,
-        },
-        orderingKey
-      );
-      changed += 1;
-
-      // Domain event: only genuinely NEW mail. A full rebuild replays the
-      // whole mailbox and a delta round replays updated items (a
-      // read-status flip on old mail); the rebuild skip plus the recency
-      // window keep "an email arrives" meaning arrives. Subscribers
-      // (agent triggers) are resolved by the dispatch handler.
-      const receivedAt = str(entry.receivedDateTime);
-      if (!fullRebuild && isRecentMail(receivedAt)) {
-        const ownerSubject = await subjectForMicrosoftAccount(tenantId, access.accountId);
-        if (ownerSubject) {
-          await publishDomainEvent({
-            tenantId,
-            provider: 'microsoft',
-            type: 'mail.received',
-            ownerSubject,
-            data: {
-              subject: str(entry.subject),
-              body: str(entry.bodyPreview).slice(0, BODY_PREVIEW_CHARS),
-              from: str(rec(rec(entry.from).emailAddress).address),
-              messageId: objectId,
-            },
-            occurredAt: receivedAt,
-            orderingKey: `microsoft/${tenantId}/${access.accountId}`,
-          });
-        }
-      }
-      continue;
-    }
-
-    // Delta can hand back a bare shell — an id, a start and an end, with no
-    // subject, organizer or body. Embedding that produces a chunk whose only
-    // content is a timestamp: it matches nothing meaningfully, yet sorts to
-    // the top of any recency browse because calendars run into the future.
-    // One refetch recovers the full item when delta simply omitted it;
-    // anything still empty is dropped, and any earlier empty version of it
-    // removed, rather than left crowding the index.
-    let item = entry;
-    if (kind === 'evt' && !str(entry.subject) && !str(rec(entry.body).content)) {
-      const full = await graphRequest(access.accessToken, `/me/events/${objectId}`);
-      if (full.ok && isRecord(full.val)) item = full.val;
-    }
-
-    const content = await scripted(tenantId, kind, item, contentOf(kind, item));
-    if (!hasSubstance(kind, item)) {
+    const content = await scripted(tenantId, entry, contentOf(entry));
+    if (!hasSubstance(entry)) {
       await enqueueKnowledgeEvent(
         tenantId,
         'delete.object',
@@ -665,50 +563,41 @@ export async function runSubscriptionSync(
         metadata: {
           kind,
           upn: access.upn,
-          webLink: str(item.webLink) || undefined,
-          url: str(item.webLink) || undefined,
-          ...correspondents(item),
-          ...(() => {
-            const { display, addresses } = attendeeList(item);
-            return {
-              attendees: display.length > 0 ? display : undefined,
-              attendeeAddresses: addresses.length > 0 ? addresses : undefined,
-              attendeeCount: display.length > 0 ? display.length : undefined,
-              location: str(rec(item.location).displayName) || undefined,
-              isOnline: item.isOnlineMeeting === true ? true : undefined,
-            };
-          })(),
-          when:
-            str(item.receivedDateTime) ||
-            str(rec(item.start).dateTime) ||
-            str(item.lastModifiedDateTime) ||
-            undefined,
-          subject: str(item.subject) || str(item.title) || undefined,
+          webLink: str(entry.webLink) || undefined,
+          url: str(entry.webLink) || undefined,
+          when: str(entry.lastModifiedDateTime) || undefined,
+          subject: str(entry.title) || undefined,
         },
-        // Same precedence as `when` above: received (mail) → start (event) →
-        // last-modified (task), whichever this kind actually carries.
-        sourceAt:
-          str(item.receivedDateTime) ||
-          str(rec(item.start).dateTime) ||
-          str(item.lastModifiedDateTime) ||
-          null,
+        sourceAt: str(entry.lastModifiedDateTime) || null,
       },
       orderingKey
     );
     changed += 1;
   }
 
-  // Counters ride along with the cursor write, in the same statement, so
-  // progress can never claim more than the cursor actually covers. Totals
-  // are a running count, never a denominator: no Graph delta tells you up
-  // front how many items it will yield.
-  //
-  // A capped round persists its nextLink, not NULL: NULL would reopen the
-  // series next round, purge the index and re-fetch the same head pages
-  // forever on any mailbox larger than one round. The nextLink instead
-  // continues the enumeration where the cap stopped it; `sync_status` stays
-  // 'syncing' until Graph closes the series with a real deltaLink.
-  const cursor = round.val.deltaLink ?? round.val.nextLink;
+  await persistCursor(db, row.id, round.val, changed);
+  return { changed, removed };
+}
+
+/**
+ * Counters ride along with the cursor write, in the same statement, so
+ * progress can never claim more than the cursor actually covers. Totals
+ * are a running count, never a denominator: no Graph delta tells you up
+ * front how many items it will yield.
+ *
+ * A capped round persists its nextLink, not NULL: NULL would reopen the
+ * series next round, purge the index and re-fetch the same head pages
+ * forever on any mailbox larger than one round. The nextLink instead
+ * continues the enumeration where the cap stopped it; `sync_status` stays
+ * 'syncing' until Graph closes the series with a real deltaLink.
+ */
+async function persistCursor(
+  db: Kysely<DB>,
+  rowId: string,
+  round: { deltaLink: string | null; nextLink?: string | null },
+  changed: number
+): Promise<void> {
+  const cursor = round.deltaLink ?? round.nextLink ?? null;
   await db
     .updateTable('webhook_subscriptions')
     .set({
@@ -716,11 +605,9 @@ export async function runSubscriptionSync(
       last_synced_at: sql<Date>`NOW()`,
       last_run_items: changed,
       total_items: sql<number>`total_items + ${changed}`,
-      sync_status: round.val.deltaLink === null && cursor !== null ? 'syncing' : 'idle',
+      sync_status: round.deltaLink === null && cursor !== null ? 'syncing' : 'idle',
       updated_at: sql`NOW()`,
     })
-    .where('id', '=', row.id)
+    .where('id', '=', rowId)
     .execute();
-
-  return { changed, removed };
 }

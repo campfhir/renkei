@@ -26,7 +26,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Read mail',
     hint:
       'outlook_list_messages, outlook_get_message, outlook_search_messages, ' +
-      'outlook_list_mail_folders, and inbox ingestion into knowledge',
+      'outlook_list_mail_folders, and the "An email arrives" agent trigger',
     userHint: 'Read your email, including message contents, attachments and folders.',
     group: 'mail',
     defaultChecked: true,
@@ -74,7 +74,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     id: 'Calendars.Read',
     scopes: ['Calendars.Read'],
     label: 'Read calendar',
-    hint: 'outlook_list_events, outlook_get_event, and calendar ingestion into knowledge',
+    hint: 'outlook_list_events, outlook_get_event',
     userHint: 'Read your calendar: events, times, locations and who was invited.',
     group: 'calendar',
     defaultChecked: true,

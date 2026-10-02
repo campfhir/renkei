@@ -347,10 +347,10 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
       },
       {
         id: 'indexing',
-        title: 'What Outlook indexes',
+        title: 'What runs in the background',
         target: 'outlook-indexing',
         placement: 'auto',
-        body: 'Once connected, your mail and calendar power the tools straight away, but nothing is indexed into knowledge search until you opt in here, category by category.',
+        body: 'Once connected, your mail, calendar and tasks power the tools straight away. Nothing happens in the background until you opt in here: Mail lets new mail wake your agents (it is never indexed), Tasks puts your To Do items into knowledge search.',
       },
     ],
   },

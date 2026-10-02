@@ -8,8 +8,8 @@
  * these two lists are written in different files and nothing compared them.
  */
 export const SOURCE_OPTIONS: { id: string; label: string }[] = [
-  { id: 'outlook_mail', label: 'Email' },
-  { id: 'outlook_calendar', label: 'Calendar' },
+  // No Email or Calendar chip: Outlook mail and calendar are personal and
+  // are never indexed. Tasks (Microsoft To Do) are the one Outlook source.
   { id: 'outlook_tasks', label: 'Tasks' },
   { id: 'confluence', label: 'Confluence' },
   { id: 'jira', label: 'Jira' },

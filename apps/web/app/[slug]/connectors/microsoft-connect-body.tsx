@@ -152,10 +152,10 @@ export default function MicrosoftConnectBody({
             )}
           </div>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Replaces what Renkei has indexed: it clears the existing mail, calendar and task
-            entries, then re-fetches everything from Outlook and re-runs it through the current
-            cleaning rules. Nothing in Outlook itself is touched. Useful after changing classifier
-            rules or teaching a new sender template on Mail review.
+            Replaces what Renkei has indexed from Outlook: it clears the existing To Do entries,
+            then re-fetches them and re-runs them through the current cleaner scripts. Mail and
+            calendar are never indexed, so there is nothing of theirs to rebuild. Nothing in Outlook
+            itself is touched.
           </p>
         </div>
         <SyncProgress tenantId={tenantId} connector="microsoft" />

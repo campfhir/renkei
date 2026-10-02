@@ -56,22 +56,13 @@ function providerLabel(provider: string): string {
 /**
  * What a result IS, in the same words the filter chips use.
  *
- * The connector name alone can't say it: Microsoft covers mail, calendar
- * and tasks, so badging all three "Outlook" both contradicts the "Email"
- * chip the user just clicked and hides which of the three a result is.
- * Falls back to the connector name when a chunk carries no kind.
+ * The connector name alone can't say it: a Microsoft chunk is a To Do task
+ * (mail and calendar are never indexed), and badging it "Microsoft" would
+ * contradict the "Tasks" chip the user just clicked. Falls back to the
+ * connector name when a chunk carries no kind.
  */
 function sourceLabel(hit: KnowledgeSearchHit): string {
-  if (hit.provider === 'microsoft') {
-    switch (str(hit.metadata.kind)) {
-      case 'msg':
-        return 'Email';
-      case 'evt':
-        return 'Calendar';
-      case 'task':
-        return 'Tasks';
-    }
-  }
+  if (hit.provider === 'microsoft' && str(hit.metadata.kind) === 'task') return 'Tasks';
   return providerLabel(hit.provider);
 }
 

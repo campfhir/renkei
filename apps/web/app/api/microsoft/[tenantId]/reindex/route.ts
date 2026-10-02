@@ -5,11 +5,13 @@
  *
  * There is no bulk "reprocess everything" primitive to build here — Graph's
  * delta protocol already gives us one for free. A delta round with no
- * cursor returns the mailbox's/calendar's/task list's full current state as
- * "changed" (see packages/connector-microsoft/src/delta.ts and
+ * cursor returns the task list's full current state as "changed" (see
+ * packages/connector-microsoft/src/delta.ts and
  * apps/worker/src/handlers/microsoft-sync.ts's `deltaStartUrl` fallback), so
  * nulling `delta_link` on this account's subscription rows is a full
- * backfill request, not a new indexing mode. Re-enqueuing the existing
+ * backfill request, not a new indexing mode. The inbox row is reset too,
+ * but it indexes nothing — its cursorless round publishes no trigger
+ * events and simply re-opens the feed. Re-enqueuing the existing
  * `microsoft/change-notification` event per subscription reuses the exact
  * handler webhooks already drive — nothing new on the worker side.
  *

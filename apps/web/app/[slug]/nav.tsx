@@ -256,10 +256,11 @@ export default function AppNav({
       { href: `/${slug}/batch-jobs`, label: 'Batch jobs', icon: ICONS.layers },
       { href: `/${slug}/usage`, label: 'Tools', icon: ICONS.tool },
       { href: `/${slug}/utilization`, label: 'My usage', icon: ICONS.chart },
-      // Mail review is deliberately unlinked, not removed: it is the only
-      // place a person can correct how their own mail was classified, and
-      // there is no admin equivalent by design. The route still works for
-      // anyone who has it bookmarked or is sent there.
+      // Mail review is deliberately unlinked: it existed to correct how a
+      // person's own mail was classified on its way into the knowledge
+      // index, and mail is no longer indexed at all (it is personal — read
+      // live through the person's own grant). The route still answers
+      // pending its removal; nothing should lead a person there.
       { href: `/${slug}/logs`, label: 'Activity', icon: ICONS.activity },
     ],
     ...(isOperator

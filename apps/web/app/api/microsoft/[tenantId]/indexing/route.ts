@@ -1,16 +1,19 @@
 /**
- * The per-user Outlook indexing opt-in: which of mail / calendar / tasks
- * this user's grant may feed into the knowledge index. Default is OFF for
- * every category — granting a scope exists to power the interactive tools,
- * and consenting to background indexing is a separate decision this route
- * records explicitly (provider-grants/outlook-indexing.ts is the shared
- * contract the worker enforces).
+ * The per-user Outlook background opt-ins: `mail` lets new mail wake this
+ * user's agents (the inbox subscription behind the "An email arrives"
+ * trigger — mail itself is never indexed), `tasks` lets their To Do items
+ * into the knowledge index. Default is OFF for both — granting a scope
+ * exists to power the interactive tools, and consenting to anything in the
+ * background is a separate decision this route records explicitly
+ * (provider-grants/outlook-indexing.ts is the shared contract the worker
+ * enforces). A `calendar` flag in the request is dropped: calendar is
+ * neither indexed nor watched any more.
  *
  * Saving triggers the same bootstrap event a fresh connect does, so an
- * opt-in starts indexing within moments rather than waiting out the
- * 15-minute subscription sweep; an opt-out is likewise applied by that
- * pass, which tears down the Graph subscription while keeping the delta
- * cursor for a cheap re-enable.
+ * opt-in takes effect within moments rather than waiting out the 15-minute
+ * subscription sweep; an opt-out is likewise applied by that pass, which
+ * tears down the Graph subscription while keeping the delta cursor for a
+ * cheap re-enable.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

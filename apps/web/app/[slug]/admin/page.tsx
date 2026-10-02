@@ -117,11 +117,11 @@ function adminSections(slug: string): AdminSection[] {
           label: 'Sensitive data',
           detail: 'What is masked before it reaches a model, and how.',
         },
-        {
-          href: `${admin}/email-sanitizer`,
-          label: 'Email sanitizer',
-          detail: 'How mail is cleaned before it is indexed.',
-        },
+        // The Email sanitizer page (`${admin}/email-sanitizer`) is deliberately
+        // unlinked: it existed to clean mail on its way into the knowledge
+        // index, and mail is no longer indexed (it is personal — read live
+        // through each person's own grant). The route and its API still
+        // exist pending their removal; nothing should lead a person there.
         {
           href: `${admin}/settings`,
           label: 'Settings',

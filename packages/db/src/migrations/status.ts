@@ -164,6 +164,7 @@ export const EXPECTED_MIGRATIONS = [
   '132-image-usage',
   '133-user-encryption-keys',
   '134-user-own-keys',
+  '135-drop-mail-calendar-chunks',
 ];
 
 export interface MigrationStatus {

@@ -29,10 +29,19 @@ export interface SyncProgressItem {
 
 /** A Graph resource path as something a person recognizes. */
 function microsoftLabel(resource: string): string {
-  if (resource.includes('/messages')) return 'Mail (inbox)';
-  if (resource.includes('/events')) return 'Calendar';
   if (resource.includes('/tasks')) return 'To Do';
   return resource;
+}
+
+/**
+ * Only rows that INDEX belong in an indexing progress list. The inbox row
+ * is the delta feed behind the "An email arrives" agent trigger — its
+ * counts are messages seen, not stored, and "12 indexed" beside it would be
+ * false. A `me/events` row can linger until migration 135 has run and is
+ * never polled again, so showing it would read as a stuck sync.
+ */
+function isIndexingResource(resource: string): boolean {
+  return resource.includes('/tasks');
 }
 
 function iso(value: Date | string | null): string | null {
@@ -101,17 +110,19 @@ export async function GET(
       .execute(),
   ]);
 
-  const microsoft: SyncProgressItem[] = subscriptions.map((row) => ({
-    label: microsoftLabel(row.resource),
-    // A row with no delta cursor yet has never completed a round, which
-    // reads as "still working" rather than idle — otherwise a mailbox that
-    // has been churning for ten minutes claims to be done.
-    status: row.last_synced_at || row.delta_link ? row.sync_status : 'syncing',
-    lastSyncedAt: iso(row.last_synced_at),
-    lastRunItems: row.last_run_items,
-    totalItems: row.total_items,
-    error: null,
-  }));
+  const microsoft: SyncProgressItem[] = subscriptions
+    .filter((row) => isIndexingResource(row.resource))
+    .map((row) => ({
+      label: microsoftLabel(row.resource),
+      // A row with no delta cursor yet has never completed a round, which
+      // reads as "still working" rather than idle — otherwise a list that
+      // has been churning for ten minutes claims to be done.
+      status: row.last_synced_at || row.delta_link ? row.sync_status : 'syncing',
+      lastSyncedAt: iso(row.last_synced_at),
+      lastRunItems: row.last_run_items,
+      totalItems: row.total_items,
+      error: null,
+    }));
 
   const byProvider = (provider: string): SyncProgressItem[] =>
     watches

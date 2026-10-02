@@ -387,7 +387,7 @@ on separate disks (several hosts) never delete each other's rows early.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key
-(one mailbox's index writes, one subscription's delta rounds, one room's
+(one To Do list's index writes, one subscription's delta rounds, one room's
 messages) are delivered strictly in order, one at a time, across all
 instances — distinct keys drain in parallel. With docker compose, drop the
 hardcoded `container_name` and use `--scale embeddings-worker=N`.

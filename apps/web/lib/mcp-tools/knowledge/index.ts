@@ -263,10 +263,13 @@ function formatDistance(distance: number): string {
  * would name ('outlook'), and the finer split lives in `metadata.kind`
  * with a per-connector vocabulary. Mapping here means a caller never has
  * to know either, and the storage names stay free to change.
+ *
+ * Outlook mail and calendar are not here on purpose: they are personal and
+ * are never indexed (migration 135 dropped what had been). To Do tasks are
+ * the one Outlook kind in the index, and the kind pin keeps the filter
+ * honest should another Microsoft kind ever be stored.
  */
 const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
-  outlook_mail: { provider: 'microsoft', kind: 'msg' },
-  outlook_calendar: { provider: 'microsoft', kind: 'evt' },
   outlook_tasks: { provider: 'microsoft', kind: 'task' },
   zoom: { provider: 'zoom' },
   webex: { provider: 'webex' },
@@ -288,7 +291,7 @@ export const KNOWLEDGE_SOURCE_NAMES = Object.keys(SOURCE_FILTERS);
  * SOURCE_FILTERS. Results are labelled in the same vocabulary the `sources`
  * argument accepts, so a caller can narrow a follow-up query by copying the
  * token back; the storage provider alone can't do that, since `microsoft`
- * covers mail, calendar and tasks alike.
+ * is a connector name, not a source a person would type.
  */
 function sourceNameOf(hit: KnowledgeHit): string {
   const kind = typeof hit.metadata.kind === 'string' ? hit.metadata.kind : undefined;
@@ -304,9 +307,9 @@ function sourceNameOf(hit: KnowledgeHit): string {
  * layer ORs together.
  *
  * Each name keeps its own kind. An earlier version handed back separate
- * provider and kind lists, which the SQL then AND-ed: selecting Email plus
- * Jira had to drop the kind to keep Jira, and silently returned calendar
- * events under an "Email" filter.
+ * provider and kind lists, which the SQL then AND-ed: selecting a kinded
+ * source plus Jira had to drop the kind to keep Jira, and silently widened
+ * the kinded source to every kind its provider stored.
  */
 export function sourceFiltersFor(sources: readonly string[]): SourceFilter[] {
   return sources
@@ -396,8 +399,9 @@ export async function registerKnowledgeTools(
       title: 'Knowledge · Read — Search org knowledge',
       description:
         'Search over what Renkei has indexed from connected tools — ' +
-        'Outlook mail/calendar/tasks, Confluence, Jira, Zoom and WebEx, as far as ' +
-        'each has been indexed — plus your own notes (knowledge_create_note). Matches by ' +
+        'Outlook tasks, Confluence, Jira, Zoom, WebEx and SharePoint, as far as ' +
+        'each has been indexed — plus your own notes (knowledge_create_note). Mail and ' +
+        'calendar are never indexed; use the outlook_* tools to read them live. Matches by ' +
         "meaning AND by exact words, so a ticket key, file name or person's name in the " +
         'query finds the item that carries it; quote a phrase to require it. One result ' +
         'per document, best match first; ask for as many as you need in one call (k up ' +
@@ -423,17 +427,7 @@ export async function registerKnowledgeTools(
           .describe('Maximum results to return (1-10, default 5)'),
         sources: z
           .array(
-            z.enum([
-              'outlook_mail',
-              'outlook_calendar',
-              'outlook_tasks',
-              'zoom',
-              'webex',
-              'confluence',
-              'jira',
-              'sharepoint',
-              'notes',
-            ])
+            z.enum(['outlook_tasks', 'zoom', 'webex', 'confluence', 'jira', 'sharepoint', 'notes'])
           )
           .optional()
           .describe('Only search these sources (default: everything indexed)'),

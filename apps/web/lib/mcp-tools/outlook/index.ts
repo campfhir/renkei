@@ -33,17 +33,13 @@ import {
   hasClientSideFilter,
   headersForLog,
   matchesClientSide,
-  objectIdOfMicrosoftRefId,
   retryAfterSeconds,
   withCategoryChanges,
   type MailSearchFilters,
 } from '@renkei/connector-microsoft';
 import { actMeta } from '@renkei/tool-outcomes';
-import { resolveKnowledge, searchKnowledge } from '@renkei/knowledge';
-import { withheldNote } from '@renkei/gates';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
-import { buildKnowledgeVerifiers } from '../knowledge';
 import { withPresentationHint, type MCPToolContext } from '../common';
 import {
   APP_ONLY_META,
@@ -69,7 +65,11 @@ import { extractText } from '@renkei/document-text';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
-function describeStatus(status: number, responseBody = '', retryAfter: number | null = null): string {
+function describeStatus(
+  status: number,
+  responseBody = '',
+  retryAfter: number | null = null
+): string {
   const detail = graphErrorDetail(responseBody);
   const suffix = detail ? ` — ${detail}` : '';
   // What Microsoft asked for, when it said: the model reads this and the
@@ -181,7 +181,10 @@ async function graphGet(
       responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)),
+    };
   }
   let body: unknown = null;
   try {
@@ -240,7 +243,10 @@ async function graphPost(
       requestBody: secure(truncateForLog(requestBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)),
+    };
   }
   let body: unknown = null;
   try {
@@ -299,7 +305,10 @@ async function graphPatch(
       requestBody: secure(truncateForLog(requestBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)),
+    };
   }
   return { ok: true };
 }
@@ -324,7 +333,7 @@ async function graphDelete(
         subject: context.subject,
         path: pathAndQuery,
         status: response.status,
-      responseHeaders: headersForLog(response.headers),
+        responseHeaders: headersForLog(response.headers),
       });
     }
   } catch {
@@ -374,7 +383,10 @@ async function graphDeleteChecked(
       responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, responseBody, retryAfterSeconds(response.headers)),
+    };
   }
   return { ok: true };
 }
@@ -1651,124 +1663,6 @@ export async function registerOutlookTools(
           collected.map(bulkSearchLine).join('\n') + footer,
           'a table (Subject, From, Received, Read, Flag, Categories, id) usually scans faster ' +
             'than this flat list.'
-        )
-      );
-    }
-  );
-
-  server.registerTool(
-    'outlook_semantic_search_messages',
-    {
-      title: 'Outlook · Read — Find mail by meaning (semantic search)',
-      description:
-        'Search mail by MEANING rather than keywords — "the thread about renegotiating the ' +
-        'vendor contract" finds messages that never use those words. Use this when you know ' +
-        'roughly what a message was about but not what it literally said; use ' +
-        'outlook_bulk_search_messages when you need exhaustive or structured results ' +
-        '(unread, from a sender, a date range).\n\n' +
-        'IMPORTANT: this searches Renkei’s INDEX of your mail, not the live mailbox — it only ' +
-        'covers what has been ingested and embedded, so it can miss very recent or ' +
-        'never-indexed mail and is not a substitute for a real mailbox query. Results carry ' +
-        'message ids, so they feed outlook_start_bulk_mail_job directly.',
-      annotations: { readOnlyHint: true },
-      inputSchema: z.object({
-        query: z.string().min(1).max(2000).describe('What the mail is about, in natural language'),
-        max: z.number().int().min(1).max(25).describe('How many (default 10)').optional(),
-        after: z.string().describe('Only mail received on/after this ISO-8601 time').optional(),
-        before: z.string().describe('Only mail received before this ISO-8601 time').optional(),
-      }),
-    },
-    async (args: Record<string, any>) => {
-      const query = str(args.query);
-      if (!query.trim()) return errText('query is required');
-      const max = typeof args.max === 'number' ? args.max : 10;
-
-      // Same gate as search_knowledge: with no recorded email nothing can be
-      // verified at the source, so nothing is disclosed.
-      const userEmail = context.userEmail;
-      if (!userEmail) {
-        return errText(
-          'Renkei has no email on record for your identity, so access to indexed mail cannot be ' +
-            'verified. Sign in to Renkei again to refresh it.'
-        );
-      }
-
-      const knowledge = await resolveKnowledge(context.tenantId);
-      if (!knowledge) {
-        return errText(
-          'Semantic search needs the knowledge layer, which is not configured for this ' +
-            'organization. Use outlook_bulk_search_messages instead.'
-        );
-      }
-
-      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
-      const searched = await searchKnowledge({
-        tenantId: context.tenantId,
-        userEmail,
-        query,
-        k: max,
-        embedder: knowledge.embedder,
-        maxDistance: knowledge.maxDistance,
-        // One hit per message: the search collapses a long mail's chunks
-        // to its best-ranked one before the gate.
-        perDocument: true,
-        verifiers,
-        sources: [{ provider: 'microsoft', kind: 'msg' }],
-        ...(str(args.after) ? { after: str(args.after) } : {}),
-        ...(str(args.before) ? { before: str(args.before) } : {}),
-      });
-      if (!searched.ok) {
-        return errText(
-          searched.err.type === 'EMBEDDING_FAILED'
-            ? 'The embedding provider could not process that query.'
-            : 'The knowledge store could not be searched.'
-        );
-      }
-
-      // Already one hit per message, in fused-rank order (meaning and exact
-      // words together), which is why the list is NOT re-sorted by distance
-      // below: a keyword-found message may sit far in vector space and
-      // still be the answer. The map only guards the id derivation.
-      const byMessage = new Map<
-        string,
-        { messageId: string; subject: string; when: string | null; distance: number }
-      >();
-      for (const hit of searched.val.hits) {
-        const objectId = objectIdOfMicrosoftRefId(hit.refId);
-        if (!objectId) continue;
-        // Strip the `#0001` chunk suffix so the id is usable as a message id.
-        const messageId = objectId.split('#')[0] ?? objectId;
-        if (byMessage.has(messageId)) continue;
-        byMessage.set(messageId, {
-          messageId,
-          subject: typeof hit.metadata.subject === 'string' ? hit.metadata.subject : '',
-          when: hit.sourceAt,
-          distance: hit.distance,
-        });
-      }
-
-      const results = [...byMessage.values()].slice(0, max);
-      // A refusal and a timeout both withhold, but only one of them means the
-      // user lacks access; saying "no access" for a slow source would be a
-      // false statement about their permissions.
-      const withheld = withheldNote(searched.val.elided, searched.val.unverified);
-      if (results.length === 0) {
-        return textResult(
-          withheld ? `No accessible matches.${withheld}` : 'No matches in the indexed mail.'
-        );
-      }
-
-      const lines = results.map(
-        (result) =>
-          `${result.subject || '(no subject)'}` +
-          (result.when ? ` — ${result.when}` : '') +
-          ` — id: ${result.messageId}`
-      );
-      const footer = `\n\n${results.length} message(s), best match first.${withheld}`;
-      return textResult(
-        withPresentationHint(
-          lines.join('\n') + footer,
-          'a table (Subject, Received, id) usually scans faster than this flat list.'
         )
       );
     }
