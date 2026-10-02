@@ -27,9 +27,9 @@ viewport pass.
   (each `openssl rand -base64 32`; the last is the delegate's key-master,
   which the specs' seeding helper `e2e/keys.ts` reads too), plus
   `SANDBOX_WORKER_URL=http://127.0.0.1:8092`,
-  `SANDBOX_WORKER_API_KEY=e2e-sandbox-key` and
-  `SANDBOX_WORKSPACES_ENABLED=true` so the Code pages are on against the
-  sandbox stub; then `pnpm --filter @renkei/db migrate`. After that,
+  `SANDBOX_WORKER_API_KEY=e2e-sandbox-key`, `SANDBOX_WORKSPACES_ENABLED=true`
+  and `SANDBOX_SERVICES_ENABLED=true` so the Code pages and their services
+  are on against the sandbox stub; then `pnpm --filter @renkei/db migrate`. After that,
   `npx playwright test <spec>.spec.ts --project=desktop-light` from
   `apps/web` drives everything else (dev server, sandbox stub, the
   delegate worker) itself.
