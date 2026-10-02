@@ -34,6 +34,7 @@
  * against the edit screen would accept fields the create form will reject.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { atlassianFetch, listOf, rec, str } from './client';
 
 /** One field as this project and issue type present it. */
@@ -148,19 +149,19 @@ function parseField(id: string, raw: Record<string, unknown>): EditableField {
  */
 export async function fieldScreenFor(params: {
   cloudId: string;
-  accessToken: string;
+  auth: AuthedFetch;
   issueKey: string;
   projectKey: string;
   issueTypeId: string;
 }): Promise<FieldScreen | null> {
-  const { cloudId, accessToken, issueKey, projectKey, issueTypeId } = params;
+  const { cloudId, auth, issueKey, projectKey, issueTypeId } = params;
   if (!projectKey || !issueTypeId || !issueKey) return null;
 
   return cached(`edit/${cloudId}/${projectKey}/${issueTypeId}`, async () => {
     const response = await atlassianFetch({
       product: 'jira',
       cloudId,
-      accessToken,
+      auth,
       path: `/rest/api/3/issue/${encodeURIComponent(issueKey)}/editmeta`,
       // A person may be waiting on this through a tool call.
       lane: 'interactive',
@@ -185,18 +186,18 @@ export async function fieldScreenFor(params: {
  */
 export async function createScreenFor(params: {
   cloudId: string;
-  accessToken: string;
+  auth: AuthedFetch;
   projectKey: string;
   issueTypeId: string;
 }): Promise<FieldScreen | null> {
-  const { cloudId, accessToken, projectKey, issueTypeId } = params;
+  const { cloudId, auth, projectKey, issueTypeId } = params;
   if (!projectKey || !issueTypeId) return null;
 
   return cached(`create/${cloudId}/${projectKey}/${issueTypeId}`, async () => {
     const response = await atlassianFetch({
       product: 'jira',
       cloudId,
-      accessToken,
+      auth,
       // maxResults because this endpoint pages its fields; a create screen
       // with more than 200 is not a thing anyone has built on purpose.
       path:

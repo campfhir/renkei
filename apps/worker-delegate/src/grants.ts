@@ -27,6 +27,8 @@ import {
   refreshGrantTokens,
   scopesFromAccessToken,
   setGrant,
+  ATLASSIAN_BITBUCKET,
+  GITHUB,
   ONBASE,
   ONBASE_ADMIN,
   ZOOM,
@@ -460,6 +462,53 @@ export class Grants {
     });
     if (!saved.ok) return fail('GRANT_UNREADABLE', 'the grant could not be stored');
     sendJson(response, 200, { ok: true, accountId });
+  }
+
+  // ── grant/git-credential: the documented exception ─────────────────────
+
+  /**
+   * A `Basic` header for git over HTTPS in a code workspace — the one place
+   * a token still leaves this process (docs/delegate-key-design.md, "Phase 1
+   * as built"). GitHub and Bitbucket only, by subject, logged every time.
+   */
+  async gitCredential(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
+    const tenantId = str(body.tenantId);
+    const provider = str(body.provider);
+    const subject = str(body.subject);
+    if (!tenantId || !provider || !subject) {
+      return sendJson(response, 400, { error: { type: 'bad_request' } });
+    }
+    if (provider !== GITHUB && provider !== ATLASSIAN_BITBUCKET) {
+      return sendJson(response, 403, {
+        error: {
+          type: 'host_not_allowed',
+          message: 'git credentials exist for GitHub and Bitbucket only',
+        },
+      });
+    }
+    const access = await this.access(tenantId, provider, { subject });
+    if (!access.ok) {
+      return sendJson(response, statusForGrantError(access.error), {
+        error: { type: access.error },
+      });
+    }
+    const user = provider === GITHUB ? 'x-access-token' : 'x-token-auth';
+    this.logger.info('git credential issued', {
+      component: 'worker-delegate/grants',
+      tenantId,
+      provider,
+      subject,
+    });
+    const login =
+      typeof access.grant.metadata.login === 'string'
+        ? access.grant.metadata.login
+        : typeof access.grant.metadata.username === 'string'
+          ? access.grant.metadata.username
+          : null;
+    sendJson(response, 200, {
+      authHeader: `Basic ${Buffer.from(`${user}:${access.grant.accessToken}`).toString('base64')}`,
+      login,
+    });
   }
 
   // ── grant/describe, grant/revoke, grant/delete ─────────────────────────

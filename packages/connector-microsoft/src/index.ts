@@ -28,9 +28,10 @@
  *    Graph $batch for documents, where the provider's own answer is the only
  *    tractable and correct one.
  *
- * Ingestion is delegated-token scoped (each user's own OAuth grant via
- * @renkei/provider-grants' MicrosoftAdapter) — there is no org credential,
- * so the connector can never index more than each user can see.
+ * Ingestion is delegated-grant scoped: every function here takes the user's
+ * own `AuthedFetch` (@renkei/delegate-client), and the delegate worker holds
+ * the token and attaches it — there is no org credential and no token in
+ * this process, so the connector can never index more than each user can see.
  */
 
 /** The connector key used in connector_configs, capability descriptors, and event rows. */

@@ -21,20 +21,31 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+function fakeAuth() {
+  const send = jest.fn<Promise<Response>, [string, RequestInit?]>();
+  return Object.assign(send, { grantKey: 'grant-1' });
+}
+
+let auth: ReturnType<typeof fakeAuth>;
+
+beforeEach(() => {
+  auth = fakeAuth();
+});
+
 afterEach(() => {
   jest.restoreAllMocks();
 });
 
 describe('createGraphSubscription', () => {
   it('POSTs the registration and returns id + expiry', async () => {
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchMock = auth.mockResolvedValue(
       jsonResponse(201, {
         id: 'sub-1',
         expirationDateTime: '2026-08-12T00:00:00Z',
       })
     );
 
-    const result = await createGraphSubscription('token-1', {
+    const result = await createGraphSubscription(auth, {
       resource: "/me/mailFolders('inbox')/messages",
       changeType: 'created,updated',
       notificationUrl: 'https://renkei.example.com/hooks/graph',
@@ -66,9 +77,9 @@ describe('createGraphSubscription', () => {
   });
 
   it('fails when the response is missing id or expiry', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(201, { id: 'sub-1' }));
+    auth.mockResolvedValue(jsonResponse(201, { id: 'sub-1' }));
 
-    const result = await createGraphSubscription('token-1', {
+    const result = await createGraphSubscription(auth, {
       resource: 'r',
       changeType: 'created',
       notificationUrl: 'https://n.example.com',
@@ -82,11 +93,11 @@ describe('createGraphSubscription', () => {
 
 describe('renewGraphSubscription', () => {
   it('PATCHes only a new expiration and returns the granted one', async () => {
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse(200, { expirationDateTime: '2026-08-15T00:00:00Z' }));
+    const fetchMock = auth.mockResolvedValue(
+      jsonResponse(200, { expirationDateTime: '2026-08-15T00:00:00Z' })
+    );
 
-    const result = await renewGraphSubscription('token-1', 'sub-1', 120);
+    const result = await renewGraphSubscription(auth, 'sub-1', 120);
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.val.expiresAt.toISOString()).toBe('2026-08-15T00:00:00.000Z');
@@ -103,11 +114,9 @@ describe('renewGraphSubscription', () => {
 
 describe('deleteGraphSubscription', () => {
   it('DELETEs and succeeds on 204', async () => {
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(null, { status: 204 }));
+    const fetchMock = auth.mockResolvedValue(new Response(null, { status: 204 }));
 
-    const result = await deleteGraphSubscription('token-1', 'sub-1');
+    const result = await deleteGraphSubscription(auth, 'sub-1');
 
     expect(result.ok).toBe(true);
     const [url, init] = fetchMock.mock.calls[0]!;
@@ -116,19 +125,17 @@ describe('deleteGraphSubscription', () => {
   });
 
   it('treats a 404 as already deleted', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse(404, { error: { code: 'ResourceNotFound' } }));
+    auth.mockResolvedValue(jsonResponse(404, { error: { code: 'ResourceNotFound' } }));
 
-    const result = await deleteGraphSubscription('token-1', 'sub-gone');
+    const result = await deleteGraphSubscription(auth, 'sub-gone');
 
     expect(result.ok).toBe(true);
   });
 
   it('still fails on other errors', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(500, {}));
+    auth.mockResolvedValue(jsonResponse(500, {}));
 
-    const result = await deleteGraphSubscription('token-1', 'sub-1');
+    const result = await deleteGraphSubscription(auth, 'sub-1');
 
     expect(result.ok).toBe(false);
   });
@@ -136,7 +143,7 @@ describe('deleteGraphSubscription', () => {
 
 describe('listGraphSubscriptions', () => {
   it('returns the value[] rows it can read', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+    auth.mockResolvedValue(
       jsonResponse(200, {
         value: [
           {
@@ -151,7 +158,7 @@ describe('listGraphSubscriptions', () => {
       })
     );
 
-    const result = await listGraphSubscriptions('token-1');
+    const result = await listGraphSubscriptions(auth);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -168,8 +175,8 @@ describe('listGraphSubscriptions', () => {
   });
 
   it('fails when value[] is missing', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, {}));
+    auth.mockResolvedValue(jsonResponse(200, {}));
 
-    expect((await listGraphSubscriptions('token-1')).ok).toBe(false);
+    expect((await listGraphSubscriptions(auth)).ok).toBe(false);
   });
 });

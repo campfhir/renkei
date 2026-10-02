@@ -181,7 +181,8 @@ export class DelegateGrants {
       'x-delegate-url': url,
       'x-delegate-method': method,
       'x-delegate-headers': JSON.stringify(forward),
-      'x-delegate-redirect': options.redirect ?? 'follow',
+      // A caller's own `redirect: 'manual'` wins over the fetcher's default.
+      'x-delegate-redirect': init.redirect === 'manual' ? 'manual' : (options.redirect ?? 'follow'),
     };
     if (options.timeoutMs) headers['x-delegate-timeout-ms'] = String(options.timeoutMs);
     try {
@@ -279,6 +280,27 @@ export class DelegateGrants {
   }): Promise<Result<void, GrantOpError>> {
     const answer = await this.transport.call('grant/delete', { ...input });
     return answer.ok ? ok(undefined) : err(grantOpError(answer.err.type));
+  }
+
+  /**
+   * The one documented exception to "tokens never leave the delegate"
+   * (docs/delegate-key-design.md, "Phase 1 as built"): a code workspace's
+   * git over HTTPS needs a `Basic` header the sandbox worker can present
+   * to GitHub or Bitbucket. Only those two providers; the delegate logs
+   * every issue. To be replaced by a git proxy with short-lived tickets.
+   */
+  async gitCredential(input: {
+    tenantId: string;
+    provider: string;
+    subject: string;
+  }): Promise<Result<{ authHeader: string; login: string | null }, GrantOpError>> {
+    const answer = await this.transport.call('grant/git-credential', { ...input });
+    if (!answer.ok) return err(grantOpError(answer.err.type));
+    if (typeof answer.val.authHeader !== 'string') return err('DELEGATE_ERROR');
+    return ok({
+      authHeader: answer.val.authHeader,
+      login: typeof answer.val.login === 'string' ? answer.val.login : null,
+    });
   }
 }
 

@@ -6,12 +6,13 @@
  * Two properties of Graph's download surface shape this file:
  *
  * 1. `GET /drives/{d}/items/{i}/content` answers **302** to a pre-authenticated
- *    URL on a different host. That URL must NOT receive our Authorization
- *    header — it carries its own credential, it is a different origin, and
- *    Azure blob endpoints reject requests bearing both. Node's fetch strips
- *    cross-origin auth headers on redirect in recent undici, but that is
- *    version-dependent and far too load-bearing to inherit silently, so the
- *    redirect is followed manually with a bare second request.
+ *    URL on a different host. That URL must NOT receive the grant's
+ *    Authorization header — it carries its own credential, it is a different
+ *    origin, and Azure blob endpoints reject requests bearing both. Node's
+ *    fetch strips cross-origin auth headers on redirect in recent undici, but
+ *    that is version-dependent and far too load-bearing to inherit silently,
+ *    so the redirect is followed manually with a bare second request through
+ *    plain `fetch`, never through the grant's fetcher.
  *
  * 2. The preferred path avoids the redirect altogether: asking for the item
  *    with `$select=@microsoft.graph.downloadUrl` returns the same
@@ -26,6 +27,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 import { graphRequest, GRAPH_BASE_URL } from './client';
 
@@ -156,7 +158,7 @@ async function fetchUnauthenticated(
  * the older tag would mean skipping a version that was never indexed.
  */
 export async function graphDownload(
-  accessToken: string,
+  auth: AuthedFetch,
   driveId: string,
   itemId: string,
   options?: GraphDownloadOptions
@@ -166,7 +168,7 @@ export async function graphDownload(
   const base = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`;
 
   const metadata = await graphRequest(
-    accessToken,
+    auth,
     `${base}?$select=id,name,size,file,cTag,eTag,lastModifiedDateTime,webUrl,@microsoft.graph.downloadUrl`,
     { lane: options?.lane }
   );
@@ -188,13 +190,12 @@ export async function graphDownload(
     return ok({ bytes: fetched.val.bytes, contentType: fetched.val.contentType, item });
   }
 
-  // Fallback: /content, following the 302 by hand so the pre-authenticated
-  // target never sees our bearer token.
+  // Fallback: /content through the grant's fetcher, following the 302 by
+  // hand so the pre-authenticated target never sees the grant's credential.
   await downloadLimiter.take(options?.lane);
   let redirect: Response;
   try {
-    redirect = await fetch(`${GRAPH_BASE_URL}${base}/content`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    redirect = await auth(`${GRAPH_BASE_URL}${base}/content`, {
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });

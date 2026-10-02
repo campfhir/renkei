@@ -10,12 +10,13 @@
  * the whole run. Sub-requests that come back throttled (429/503) are retried
  * a few rounds, honoring Retry-After when Graph sends one.
  *
- * A chunk that fails at the transport/auth level (network error, bad token)
- * fails every item in that chunk with the same error; a chunk that succeeds
+ * A chunk that fails at the transport/auth level (network error, a grant
+ * the delegate refused) fails every item in that chunk with the same error; a chunk that succeeds
  * still reports each item's own status, since Graph settles sub-requests
  * independently.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import type { RequestLane } from '@renkei/rate-limit';
 import { graphRequest } from './client';
 
@@ -94,12 +95,12 @@ interface ChunkOutcome {
 
 /** Send one chunk (≤20) and map Graph's per-sub-request outcomes back onto the inputs. */
 async function runBatchChunk(
-  accessToken: string,
+  auth: AuthedFetch,
   chunk: readonly BatchRequestItem[],
   lane: RequestLane | undefined,
   sequential: boolean
 ): Promise<ChunkOutcome> {
-  const result = await graphRequest(accessToken, '/$batch', {
+  const result = await graphRequest(auth, '/$batch', {
     method: 'POST',
     lane,
     // The $batch POST itself is safe to re-send after a throttle only when
@@ -169,7 +170,7 @@ async function runBatchChunk(
 }
 
 export async function graphBatch(
-  accessToken: string,
+  auth: AuthedFetch,
   requests: readonly BatchRequestItem[],
   options: GraphBatchOptions = {}
 ): Promise<{ results: BatchResultItem[] }> {
@@ -184,7 +185,7 @@ export async function graphBatch(
     const settled: BatchResultItem[] = [];
     let pending: readonly BatchRequestItem[] = chunk;
     for (let round = 0; round <= BATCH_RETRY_ROUNDS && pending.length > 0; round += 1) {
-      const outcome = await runBatchChunk(accessToken, pending, options.lane, sequential);
+      const outcome = await runBatchChunk(auth, pending, options.lane, sequential);
       settled.push(...outcome.results);
       pending = outcome.retryable;
       if (pending.length === 0) break;

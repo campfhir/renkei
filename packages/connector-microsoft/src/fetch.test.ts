@@ -1,8 +1,9 @@
 /**
  * graphFetch's contract: throttled answers are re-sent after Retry-After
  * (idempotent methods only, unless the caller opts in), mailbox URLs share
- * a per-token concurrency gate while other Graph resources do not, and the
- * header helpers read what Graph sends.
+ * a per-grant concurrency gate while other Graph resources do not, every
+ * request goes out through the grant's own fetcher with no Authorization
+ * of ours, and the header helpers read what Graph sends.
  */
 
 import {
@@ -20,6 +21,12 @@ function jsonResponse(status: number, body: unknown, headers?: Record<string, st
     status,
     headers: { 'Content-Type': 'application/json', ...headers },
   });
+}
+
+/** A grant's fetcher as a test double: the mock IS the delegate. */
+function fakeAuth(grantKey = 'grant-1') {
+  const send = jest.fn<Promise<Response>, [string, RequestInit?]>();
+  return Object.assign(send, { grantKey });
 }
 
 const sleeps: number[] = [];
@@ -92,101 +99,116 @@ describe('Retry-After helpers', () => {
 
 describe('graphFetch retry', () => {
   it('re-sends a throttled GET after Retry-After and returns the eventual answer', async () => {
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse(503, { error: { code: 'CommandConcurrencyLimitReached' } }, { 'Retry-After': '2' }))
+    const auth = fakeAuth()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          503,
+          { error: { code: 'CommandConcurrencyLimitReached' } },
+          { 'Retry-After': '2' }
+        )
+      )
       .mockResolvedValueOnce(jsonResponse(200, { id: 'x' }));
 
-    const response = await graphFetch('token-1', '/me/messages', { lane: 'interactive' });
+    const response = await graphFetch(auth, '/me/messages', { lane: 'interactive' });
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(auth).toHaveBeenCalledTimes(2);
     expect(sleeps).toEqual([2000]);
   });
 
   it('backs off exponentially when Graph sends no Retry-After, then gives up with the last answer', async () => {
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse(429, { error: { code: 'TooManyRequests' } }));
+    const auth = fakeAuth().mockResolvedValue(
+      jsonResponse(429, { error: { code: 'TooManyRequests' } })
+    );
 
-    const response = await graphFetch('token-1', '/me/messages', { lane: 'interactive' });
+    const response = await graphFetch(auth, '/me/messages', { lane: 'interactive' });
 
     expect(response.status).toBe(429);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(auth).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([1000, 2000]);
   });
 
   it('caps a hostile Retry-After per lane', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
+    const auth = fakeAuth()
       .mockResolvedValueOnce(jsonResponse(503, {}, { 'Retry-After': '600' }))
       .mockResolvedValueOnce(jsonResponse(200, {}));
 
-    await graphFetch('token-1', '/me/messages', { lane: 'interactive' });
+    await graphFetch(auth, '/me/messages', { lane: 'interactive' });
 
     expect(sleeps).toEqual([10_000]);
   });
 
   it('never re-sends a POST on its own — Microsoft may have acted despite the 503', async () => {
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(503, {}));
+    const auth = fakeAuth().mockResolvedValue(jsonResponse(503, {}));
 
-    const response = await graphFetch('token-1', '/me/sendMail', {
+    const response = await graphFetch(auth, '/me/sendMail', {
       method: 'POST',
       body: '{}',
       lane: 'interactive',
     });
 
     expect(response.status).toBe(503);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(auth).toHaveBeenCalledTimes(1);
     expect(sleeps).toEqual([]);
   });
 
   it('re-sends a POST the caller vouched for', async () => {
-    const fetchMock = jest
-      .spyOn(globalThis, 'fetch')
+    const auth = fakeAuth()
       .mockResolvedValueOnce(jsonResponse(429, {}, { 'Retry-After': '1' }))
       .mockResolvedValueOnce(jsonResponse(200, {}));
 
-    const response = await graphFetch('token-1', '/$batch', {
+    const response = await graphFetch(auth, '/$batch', {
       method: 'POST',
       body: '{}',
       retry: true,
     });
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(auth).toHaveBeenCalledTimes(2);
   });
 
-  it('sends the bearer token and resolves relative paths', async () => {
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, {}));
+  it('sends through the grant fetcher, resolves relative paths, and sets no Authorization', async () => {
+    const auth = fakeAuth().mockResolvedValue(jsonResponse(200, {}));
+    const globalFetch = jest.spyOn(globalThis, 'fetch');
 
-    await graphFetch('token-9', '/me/messages');
+    await graphFetch(auth, '/me/messages', { headers: { Accept: 'application/json' } });
 
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe('https://graph.microsoft.com/v1.0/me/messages');
-    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer token-9');
+    expect(globalFetch).not.toHaveBeenCalled();
+    const [url, init] = auth.mock.calls[0]!;
+    expect(url).toBe('https://graph.microsoft.com/v1.0/me/messages');
+    const headers = new Headers(init?.headers);
+    expect(headers.get('Authorization')).toBeNull();
+    expect(headers.get('Accept')).toBe('application/json');
+    // A per-attempt deadline still rides on every request.
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 });
 
 describe('graphFetch mailbox gate', () => {
-  it('holds mailbox requests for one token to MAILBOX_CONCURRENCY in flight', async () => {
+  function slowAuth(grantKey: string, onCall: (settle: () => void) => void) {
+    return fakeAuth(grantKey).mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          onCall(() => resolve(jsonResponse(200, {})));
+        })
+    );
+  }
+
+  it('holds mailbox requests for one grant to MAILBOX_CONCURRENCY in flight', async () => {
     let inFlight = 0;
     let peak = 0;
     const settle: Array<() => void> = [];
-    jest.spyOn(globalThis, 'fetch').mockImplementation(
-      () =>
-        new Promise<Response>((resolve) => {
-          inFlight += 1;
-          peak = Math.max(peak, inFlight);
-          settle.push(() => {
-            inFlight -= 1;
-            resolve(jsonResponse(200, {}));
-          });
-        })
-    );
+    const auth = slowAuth('same-grant', (done) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      settle.push(() => {
+        inFlight -= 1;
+        done();
+      });
+    });
 
     const calls = Array.from({ length: 5 }, () =>
-      graphFetch('same-token', '/me/messages', { lane: 'interactive' })
+      graphFetch(auth, '/me/messages', { lane: 'interactive' })
     );
     // Let every call reach the gate.
     for (let i = 0; i < 10; i += 1) await Promise.resolve();
@@ -205,25 +227,54 @@ describe('graphFetch mailbox gate', () => {
     let inFlight = 0;
     let peak = 0;
     const settle: Array<() => void> = [];
-    jest.spyOn(globalThis, 'fetch').mockImplementation(
-      () =>
-        new Promise<Response>((resolve) => {
-          inFlight += 1;
-          peak = Math.max(peak, inFlight);
-          settle.push(() => {
-            inFlight -= 1;
-            resolve(jsonResponse(200, {}));
-          });
-        })
-    );
+    const auth = slowAuth('same-grant', (done) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      settle.push(() => {
+        inFlight -= 1;
+        done();
+      });
+    });
 
     const calls = Array.from({ length: 5 }, () =>
-      graphFetch('same-token', '/me/drive/root/children', { lane: 'interactive' })
+      graphFetch(auth, '/me/drive/root/children', { lane: 'interactive' })
     );
     for (let i = 0; i < 10; i += 1) await Promise.resolve();
     expect(inFlight).toBe(5);
     for (const next of settle) next();
     await Promise.all(calls);
     expect(peak).toBe(5);
+  });
+
+  it('keys the gate by grantKey, so two grants do not share a mailbox slot', async () => {
+    let inFlight = 0;
+    const settle: Array<() => void> = [];
+    const onCall = (done: () => void) => {
+      inFlight += 1;
+      settle.push(() => {
+        inFlight -= 1;
+        done();
+      });
+    };
+    const alice = slowAuth('grant-alice', onCall);
+    const bob = slowAuth('grant-bob', onCall);
+
+    const calls = [
+      graphFetch(alice, '/me/messages', { lane: 'interactive' }),
+      graphFetch(alice, '/me/messages', { lane: 'interactive' }),
+      graphFetch(bob, '/me/messages', { lane: 'interactive' }),
+      graphFetch(bob, '/me/messages', { lane: 'interactive' }),
+    ];
+    // Polled rather than counted in microtasks: the process-wide limiter
+    // may owe this test a refill after the suite above. One shared gate
+    // would hold the count at MAILBOX_CONCURRENCY until something settles.
+    const deadline = Date.now() + 2_000;
+    while (inFlight < 2 * MAILBOX_CONCURRENCY && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(inFlight).toBe(2 * MAILBOX_CONCURRENCY);
+
+    for (const next of settle) next();
+    await Promise.all(calls);
   });
 });

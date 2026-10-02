@@ -11,6 +11,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest } from './client';
 
 /** Uniform subscription lifetime: ~2.9 days, safely under every resource's ceiling. */
@@ -53,10 +54,10 @@ function expirationFromNow(minutes: number): string {
 }
 
 export async function createGraphSubscription(
-  accessToken: string,
+  auth: AuthedFetch,
   opts: CreateSubscriptionOptions
 ): Promise<Result<{ id: string; expiresAt: Date }, 'GRAPH_API_ERROR'>> {
-  const result = await graphRequest(accessToken, '/subscriptions', {
+  const result = await graphRequest(auth, '/subscriptions', {
     method: 'POST',
     body: JSON.stringify({
       resource: opts.resource,
@@ -83,20 +84,16 @@ export async function createGraphSubscription(
 }
 
 export async function renewGraphSubscription(
-  accessToken: string,
+  auth: AuthedFetch,
   subscriptionId: string,
   expirationMinutes?: number
 ): Promise<Result<{ expiresAt: Date }, 'GRAPH_API_ERROR'>> {
-  const result = await graphRequest(
-    accessToken,
-    `/subscriptions/${encodeURIComponent(subscriptionId)}`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify({
-        expirationDateTime: expirationFromNow(expirationMinutes ?? GRAPH_SUBSCRIPTION_MINUTES),
-      }),
-    }
-  );
+  const result = await graphRequest(auth, `/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      expirationDateTime: expirationFromNow(expirationMinutes ?? GRAPH_SUBSCRIPTION_MINUTES),
+    }),
+  });
   if (!result.ok) return result;
 
   const body = result.val;
@@ -109,14 +106,12 @@ export async function renewGraphSubscription(
 }
 
 export async function deleteGraphSubscription(
-  accessToken: string,
+  auth: AuthedFetch,
   subscriptionId: string
 ): Promise<Result<void, 'GRAPH_API_ERROR'>> {
-  const result = await graphRequest(
-    accessToken,
-    `/subscriptions/${encodeURIComponent(subscriptionId)}`,
-    { method: 'DELETE' }
-  );
+  const result = await graphRequest(auth, `/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+    method: 'DELETE',
+  });
   // A 404 means the subscription is already gone — Graph reaps expired ones
   // itself, so "not found" is the desired end state, not a failure.
   if (!result.ok) {
@@ -127,9 +122,9 @@ export async function deleteGraphSubscription(
 }
 
 export async function listGraphSubscriptions(
-  accessToken: string
+  auth: AuthedFetch
 ): Promise<Result<GraphSubscription[], 'GRAPH_API_ERROR'>> {
-  const result = await graphRequest(accessToken, '/subscriptions');
+  const result = await graphRequest(auth, '/subscriptions');
   if (!result.ok) return result;
 
   const body = result.val;

@@ -16,12 +16,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import {
   deleteConnection,
-  sealCredentialsForSubject,
   getConnection,
   getShare,
   updateConnectionExposure,
   upsertConnection,
 } from '@renkei/connector-fileshares';
+import { delegateClient } from '@renkei/delegate-client';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { clientFailure, fsTestConnection } from '@/lib/file-shares/service-client';
@@ -99,14 +99,22 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: failure.status });
   }
 
-  // Sealed under the connecting person's own key, never the deployment key.
-  const sealed = await sealCredentialsForSubject(db, tenantId, session.subject, parsed.credentials);
+  // Sealed under the connecting person's own key by the delegate — the one
+  // process that holds a key; this one never derives it.
+  const sealed = await delegateClient().sealForSubject(tenantId, session.subject, [
+    JSON.stringify(parsed.credentials),
+  ]);
   if (!sealed.ok) {
-    return NextResponse.json({ error: 'Encryption key unavailable' }, { status: 500 });
+    return sealed.err.type === 'KEY_LOCKED'
+      ? NextResponse.json(
+          { error: 'Your encryption key is locked. Unlock it in Preferences and try again.' },
+          { status: 423 }
+        )
+      : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
   }
 
   const stored = await upsertConnection(db, tenantId, shareId, session.subject, {
-    encryptedCredentials: sealed.val,
+    encryptedCredentials: sealed.val[0],
     username: parsed.credentials.username,
     toolAccess: parsed.toolAccess,
     allowDelete: parsed.allowDelete,

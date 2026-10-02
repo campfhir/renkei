@@ -310,6 +310,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'grant/describe': (body, response) => grants.describeOp(body, response),
     'grant/revoke': (body, response) => grants.revoke(body, response),
     'grant/delete': (body, response) => grants.deleteOp(body, response),
+    'grant/git-credential': (body, response) => grants.gitCredential(body, response),
   };
 
   return createJsonRpcServer({
