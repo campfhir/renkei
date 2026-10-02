@@ -13,12 +13,18 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
-jest.mock('../webex/webex-auth', () => ({
-  resolveWebexAccess: jest.fn(async () => ({
-    accessToken: 'token',
-    personEmail: 'alice@example.com',
-  })),
-}));
+// The grant's fetcher rides global fetch here, so the suite's routes see
+// each request as the delegate would forward it.
+jest.mock('../webex/webex-auth', () => {
+  const { authedFetch } =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    resolveWebexAccess: jest.fn(async () => ({
+      auth: authedFetch((url, init) => fetch(url, init), 'webex:tenant-1:acct-1'),
+      personEmail: 'alice@example.com',
+    })),
+  };
+});
 
 import { collectWebex } from './collect-webex';
 import { resolvePeriod } from './period';

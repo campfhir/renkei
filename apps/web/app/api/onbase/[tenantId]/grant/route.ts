@@ -2,10 +2,11 @@
  * Disconnect the caller's own OnBase grant. Subject-scoped: the session
  * decides whose grant dies, never a parameter.
  *
- * Revocation at the Hyland IdP is best-effort and runs through the OnBase
- * worker (the IdP is usually unreachable from this process); deletion of
- * our copy is what matters. Nothing is indexed from OnBase in v1, so there
- * are no knowledge chunks to purge.
+ * Revocation at the Hyland IdP is best-effort and runs from the delegate
+ * through the OnBase worker (the IdP is usually unreachable from this
+ * process, and the tokens never are); deletion of our copy is what
+ * matters. Nothing is indexed from OnBase in v1, so there are no
+ * knowledge chunks to purge.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,8 +14,8 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
-import { deleteGrant, getGrant, ONBASE } from '@renkei/provider-grants';
-import { obRevoke } from '@/lib/onbase/service-client';
+import { ONBASE } from '@renkei/provider-grants';
+import { delegateGrants } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
 
 export async function DELETE(
@@ -46,28 +47,22 @@ export async function DELETE(
   }
   const accountId = grantRow.provider_account_id;
 
-  // Best-effort revocation at the IdP while we still hold the tokens. The
-  // refresh token is the valuable one to kill; revoking it usually
-  // invalidates the pair.
-  const grant = await getGrant(ONBASE, tenantId, accountId);
-  if (grant.ok && grant.val) {
-    const token = grant.val.refreshToken || grant.val.accessToken;
-    const revoked = await obRevoke({
+  // The delegate revokes the refresh token at the IdP (the valuable one to
+  // kill; revoking it usually invalidates the pair), then deletes the grant.
+  const revoked = await delegateGrants().revoke({ tenantId, provider: ONBASE, accountId });
+  if (!revoked.ok) {
+    logger.error('OnBase grant could not be deleted: {reason}', {
+      component: 'connectors/onbase',
       tenantId,
-      token,
-      tokenTypeHint: grant.val.refreshToken ? 'refresh_token' : 'access_token',
+      reason: revoked.err.type,
     });
-    if (!revoked.ok || !revoked.val.revoked) {
-      logger.warn('OnBase token revocation failed; deleting the grant regardless', {
-        component: 'connectors/onbase',
-        tenantId,
-      });
-    }
-  }
-
-  const deleted = await deleteGrant(ONBASE, tenantId, accountId);
-  if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
+  }
+  if (!revoked.val.revokedAtProvider) {
+    logger.warn('OnBase token revocation failed; the grant was deleted regardless', {
+      component: 'connectors/onbase',
+      tenantId,
+    });
   }
   recordAuditEvent({
     tenantId,

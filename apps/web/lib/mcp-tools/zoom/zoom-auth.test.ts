@@ -2,47 +2,27 @@
 /**
  * `oauthZoomAuth` and `deniedZoomAuth` in isolation — the scope gate, and
  * that a denied credential never reaches the network. Mirrors
- * webex/webex-auth.test.ts.
+ * webex/webex-auth.test.ts, delegate fake included.
  */
 
-jest.mock('@renkei/provider-grants', () => ({
-  getGrant: jest.fn(async () => ({
-    ok: true,
-    val: {
-      accessToken: 'token-1',
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      accountId: 'acct-1',
-      metadata: { email: 'alice@example.com' },
-    },
-  })),
-  refreshGrantTokens: jest.fn(),
-  ZOOM: 'zoom',
-  ZoomAdapter: class {},
-}));
-jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
-jest.mock('@/lib/zoom-app', () => ({ getZoomApp: jest.fn(async () => null) }));
+const mockDescribe = jest.fn();
+
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({ describe: (...args: unknown[]) => mockDescribe(...args) }),
+    grantFetch: (grant: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch((url, init) => fetch(url, init), actual.grantKeyOf(grant)),
+  };
+});
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
 
-/** Accepts any chain, always resolves the one row resolveZoomAccess needs. */
-jest.mock('@renkei/db', () => {
-  const chain: unknown = new Proxy(
-    {},
-    {
-      get: (_t, property) => {
-        if (property === 'executeTakeFirst') {
-          return async () => ({ provider_account_id: 'acct-1' });
-        }
-        return () => chain;
-      },
-    }
-  );
-  return { getDatabase: () => ({ ok: true, val: chain }) };
-});
-
-import { oauthZoomAuth, deniedZoomAuth } from './zoom-auth';
+import { oauthZoomAuth, deniedZoomAuth, resolveZoomAccess } from './zoom-auth';
 import type { MCPToolContext } from '../common';
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
@@ -57,6 +37,10 @@ const realFetch = global.fetch;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDescribe.mockResolvedValue({
+    ok: true,
+    val: { accountId: 'acct-1', metadata: { email: 'alice@example.com' } },
+  });
   global.fetch = jest.fn(
     async () => new Response('{"id":"meeting-1"}', { status: 200 })
   ) as unknown as typeof fetch;
@@ -64,6 +48,32 @@ beforeEach(() => {
 
 afterAll(() => {
   global.fetch = realFetch;
+});
+
+describe('resolveZoomAccess', () => {
+  it('asks the delegate about the caller’s grant and hands back its fetcher plus the email', async () => {
+    const access = await resolveZoomAccess(context());
+
+    expect(typeof access).not.toBe('string');
+    if (typeof access === 'string') return;
+    expect(access.email).toBe('alice@example.com');
+    expect(access.auth.grantKey).toBe('zoom:tenant-1:subject-1');
+    expect(mockDescribe).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      provider: 'zoom',
+      subject: 'subject-1',
+    });
+  });
+
+  it('phrases a revoked grant the way the resolver always did', async () => {
+    mockDescribe.mockResolvedValue({ ok: false, err: { type: 'GRANT_REVOKED' } });
+
+    const access = await resolveZoomAccess(context());
+
+    expect(access).toBe(
+      'Your Zoom authorization was revoked. Reconnect it on the Connectors page.'
+    );
+  });
 });
 
 describe('oauthZoomAuth — the call-time scope gate', () => {
@@ -99,14 +109,15 @@ describe('oauthZoomAuth — the call-time scope gate', () => {
 });
 
 describe('oauthZoomAuth — the request itself', () => {
-  it('sends a bearer token against the api.zoom.us base', async () => {
+  it('sends the request on the grant fetcher against the api.zoom.us base, with no token of its own', async () => {
     const auth = oauthZoomAuth(context());
 
     await auth.fetch([], '/users/me/meetings?type=upcoming');
 
     const [url, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.zoom.us/v2/users/me/meetings?type=upcoming');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer token-1');
+    // The delegate attaches Authorization; nothing here may set one.
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 
   it('reports an unresolved grant as a Response, not a thrown error', async () => {
@@ -118,6 +129,23 @@ describe('oauthZoomAuth — the request itself', () => {
     expect(global.fetch).not.toHaveBeenCalled();
     const body = (await response.json()) as { message: string };
     expect(body.message).toContain('No signed-in subject');
+  });
+
+  it('turns a delegate refusal into the resolver’s own words, not a Zoom answer', async () => {
+    global.fetch = jest.fn(
+      async () =>
+        new Response('{"error":{"type":"REFRESH_FAILED"}}', {
+          status: 502,
+          headers: { 'x-delegate-error': 'REFRESH_FAILED' },
+        })
+    ) as unknown as typeof fetch;
+    const auth = oauthZoomAuth(context());
+
+    const response = await auth.fetch([], '/users/me/meetings');
+
+    expect(response.ok).toBe(false);
+    const body = (await response.json()) as { message: string };
+    expect(body.message).toBe('Could not refresh the Zoom token; try again shortly.');
   });
 });
 

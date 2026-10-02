@@ -236,6 +236,8 @@ export class DelegateGrants {
     displayName: string;
     clientId?: string;
     requestedScopes: string[];
+    /** For an opaque token: what the exchange answer said was granted (its `scope`, split). */
+    grantedScopes?: string[];
     metadata: Record<string, unknown>;
   }): Promise<Result<void, GrantOpError>> {
     const answer = await this.transport.call('grant/commit', { ...input });

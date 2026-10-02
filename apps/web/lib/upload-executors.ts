@@ -5,6 +5,12 @@
  * the same resolution the MCP transport uses, so an upload can do nothing
  * its requester's tools could not.
  *
+ * No token is read here (docs/delegate-key-design.md): every provider call
+ * rides an `AuthedFetch` from the delegate, which attaches the credential,
+ * refreshes it when due and retries once on a 401; OnBase calls name the
+ * uploader by subject and the delegate attaches their token on the way to
+ * the OnBase worker.
+ *
  * Every upstream call is bounded (jiraFetch/confluence/graph carry the
  * fetch-guard timeouts; upload-session chunks carry their own).
  */
@@ -12,13 +18,15 @@
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import type { DB } from '@renkei/db';
-import { ATLASSIAN, ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
+import { ATLASSIAN, ATLASSIAN_JSM, readAtlassianMetadata } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { graphUploadViaSession } from '@renkei/connector-microsoft';
 import { childPath as fileshareChildPath } from '@renkei/connector-fileshares';
 import { clientFailure, fsWriteFile } from '@/lib/file-shares/service-client';
-import { obApi, obPutBytes, onbaseClientFailure } from '@/lib/onbase/service-client';
-import { resolveOnBaseAccess } from '@/lib/mcp-tools/onbase/onbase-auth';
-import { cacheTokenMetadata, jiraFetch } from '@/lib/mcp-tools/common';
+import { obApi, obPutBytes } from '@/lib/onbase/service-client';
+import { onbaseFailureText, ONBASE_LABEL } from '@/lib/mcp-tools/onbase/onbase-auth';
+import { refusalTextOf } from '@/lib/grant-refusals';
+import { jiraFetch } from '@/lib/mcp-tools/common';
 import {
   graphPost,
   graphPutContent,
@@ -66,38 +74,29 @@ function destinationOf(slot: UploadSlotRow): Record<string, unknown> {
 }
 
 /**
- * The Atlassian gateway token + cloud id for a slot: the JSM grant when the
- * kind wants it and the user connected one, otherwise the main Jira grant.
- * cacheTokenMetadata arms jiraFetch's 401-refresh path, same as the MCP
- * transport does per request.
+ * The Atlassian gateway fetcher + cloud id for a slot: the JSM grant when
+ * the kind wants it and the user connected one, otherwise the main Jira
+ * grant. The delegate's `describe` is the existence probe and the source
+ * of the cloud id; the fetcher it hands back refreshes on its own.
  */
 async function resolveAtlassian(
-  db: Kysely<DB>,
   slot: UploadSlotRow,
   preferJsm: boolean
-): Promise<{ accessToken: string; cloudId: string } | string> {
-  const candidates: { provider: string; accountId: string }[] = [];
-  if (preferJsm) {
-    const jsmRow = await db
-      .selectFrom('provider_grants')
-      .select('provider_account_id')
-      .where('tenant_id', '=', slot.tenant_id)
-      .where('provider', '=', ATLASSIAN_JSM)
-      .where('subject', '=', slot.subject)
-      .limit(1)
-      .executeTakeFirst();
-    if (jsmRow) candidates.push({ provider: ATLASSIAN_JSM, accountId: jsmRow.provider_account_id });
-  }
+): Promise<{ auth: AuthedFetch; cloudId: string } | string> {
+  const candidates: { provider: string; subject?: string; accountId?: string }[] = [];
+  if (preferJsm) candidates.push({ provider: ATLASSIAN_JSM, subject: slot.subject });
   candidates.push({ provider: ATLASSIAN, accountId: slot.account_id });
 
   for (const candidate of candidates) {
-    const grantResult = await getGrant(candidate.provider, slot.tenant_id, candidate.accountId);
-    if (!grantResult.ok || !grantResult.val) continue;
-    const grant = grantResult.val;
-    const site = readAtlassianMetadata(grant.metadata);
+    const grant = { tenantId: slot.tenant_id, ...candidate };
+    const described = await delegateGrants().describe(grant);
+    if (!described.ok) continue;
+    const site = readAtlassianMetadata(described.val.metadata);
     if (!site.cloudId) continue;
-    cacheTokenMetadata(grant.accessToken, slot.tenant_id, grant.accountId, slot.subject);
-    return { accessToken: grant.accessToken, cloudId: site.cloudId };
+    return {
+      auth: grantFetch({ ...grant, accountId: described.val.accountId }),
+      cloudId: site.cloudId,
+    };
   }
   return 'No usable Atlassian grant for this upload — reconnect Jira and request a new endpoint.';
 }
@@ -106,14 +105,10 @@ function graphContextOf(slot: UploadSlotRow): { tenantId: string; subject: strin
   return { tenantId: slot.tenant_id, subject: slot.subject };
 }
 
-async function jiraAttachment(
-  db: Kysely<DB>,
-  slot: UploadSlotRow,
-  bytes: Buffer
-): Promise<UploadOutcome> {
+async function jiraAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   const issueKey = str(destinationOf(slot).issueKey);
   if (!issueKey) return { ok: false, detail: 'The upload slot carries no issue key.' };
-  const access = await resolveAtlassian(db, slot, false);
+  const access = await resolveAtlassian(slot, false);
   if (typeof access === 'string') return { ok: false, detail: access };
 
   const formData = new FormData();
@@ -121,7 +116,7 @@ async function jiraAttachment(
   try {
     const response = await jiraFetch(
       `https://api.atlassian.com/ex/jira/${access.cloudId}/rest/api/3/issue/${encodeURIComponent(issueKey)}/attachments`,
-      access.accessToken,
+      access.auth,
       { method: 'POST', headers: { 'X-Atlassian-Token': 'no-check' }, body: formData }
     );
     await response.text().catch(() => '');
@@ -131,14 +126,10 @@ async function jiraAttachment(
   }
 }
 
-async function jsmAttachment(
-  db: Kysely<DB>,
-  slot: UploadSlotRow,
-  bytes: Buffer
-): Promise<UploadOutcome> {
+async function jsmAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   const requestKey = str(destinationOf(slot).requestKey);
   if (!requestKey) return { ok: false, detail: 'The upload slot carries no request key.' };
-  const access = await resolveAtlassian(db, slot, true);
+  const access = await resolveAtlassian(slot, true);
   if (typeof access === 'string') return { ok: false, detail: access };
   const base = `https://api.atlassian.com/ex/jira/${access.cloudId}`;
 
@@ -148,7 +139,7 @@ async function jsmAttachment(
     // request as JSON (ported from the retired jsm_add_request_attachment).
     const reqResponse = await jiraFetch(
       `${base}/rest/servicedeskapi/request/${encodeURIComponent(requestKey)}`,
-      access.accessToken
+      access.auth
     );
     const reqBody = rec(await reqResponse.json().catch(() => ({})));
     const serviceDeskId = str(reqBody.serviceDeskId);
@@ -160,7 +151,7 @@ async function jsmAttachment(
     formData.append('file', new Blob([new Uint8Array(bytes)]), slot.filename);
     const upload = await jiraFetch(
       `${base}/rest/servicedeskapi/servicedesk/${serviceDeskId}/attachTemporaryFile`,
-      access.accessToken,
+      access.auth,
       { method: 'POST', headers: { 'X-Atlassian-Token': 'no-check' }, body: formData }
     );
     const uploaded = rec(await upload.json().catch(() => ({})));
@@ -175,7 +166,7 @@ async function jsmAttachment(
 
     const attach = await jiraFetch(
       `${base}/rest/servicedeskapi/request/${encodeURIComponent(requestKey)}/attachment`,
-      access.accessToken,
+      access.auth,
       {
         method: 'POST',
         body: JSON.stringify({ temporaryAttachmentIds, public: true }),
@@ -226,7 +217,7 @@ async function driveDocument(slot: UploadSlotRow, bytes: Buffer): Promise<Upload
   if (payload.byteLength <= DRIVE_SIMPLE_UPLOAD_MAX) {
     const uploaded = await graphPutContent(
       graphContextOf(slot),
-      access.accessToken,
+      access.auth,
       `/drives/${driveId}/items/${parentItemId}:/${name}:/content` +
         `?@microsoft.graph.conflictBehavior=${conflict}`,
       payload,
@@ -240,7 +231,7 @@ async function driveDocument(slot: UploadSlotRow, bytes: Buffer): Promise<Upload
   }
   // Past the simple-PUT ceiling Graph requires an upload session.
   const uploaded = await graphUploadViaSession(
-    access.accessToken,
+    access.auth,
     `/drives/${driveId}/items/${parentItemId}:/${name}:/createUploadSession`,
     { item: { '@microsoft.graph.conflictBehavior': conflict, name: slot.filename } },
     payload,
@@ -264,7 +255,7 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
   if (bytes.byteLength <= MESSAGE_ATTACHMENT_INLINE_MAX) {
     const result = await graphPost(
       graphContextOf(slot),
-      access.accessToken,
+      access.auth,
       `/me/messages/${encodeURIComponent(draftId)}/attachments`,
       {
         '@odata.type': '#microsoft.graph.fileAttachment',
@@ -277,7 +268,7 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
     return { ok: true, detail: `Attached "${slot.filename}" to the draft.` };
   }
   const uploaded = await graphUploadViaSession(
-    access.accessToken,
+    access.auth,
     `/me/messages/${encodeURIComponent(draftId)}/attachments/createUploadSession`,
     {
       AttachmentItem: {
@@ -299,10 +290,9 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
 /**
  * WebEx multipart send: the one file WebEx allows per message, alongside
  * whatever roomId/toPersonEmail/markdown/parentId webex_request_attachment_
- * upload recorded as the destination. resolveWebexAccess only reads
- * tenantId + subject off its context, same as resolveConfluenceAccess above
- * — graphContextOf's {tenantId, subject} stands in for the full
- * MCPToolContext the MCP tool layer normally supplies.
+ * upload recorded as the destination. resolveWebexAccess reads only
+ * tenantId + subject, which is all a slot row carries — the multipart POST
+ * itself goes through the grant's fetcher, which attaches the credential.
  */
 async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   const destination = destinationOf(slot);
@@ -312,8 +302,7 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
   if (!roomId && !toPersonEmail) {
     return { ok: false, detail: 'The upload slot carries no room or recipient.' };
   }
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  const access = await resolveWebexAccess(graphContextOf(slot) as MCPToolContext);
+  const access = await resolveWebexAccess(graphContextOf(slot));
   if (typeof access === 'string') return { ok: false, detail: access };
 
   const form = new FormData();
@@ -328,9 +317,8 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
 
   let response: Response;
   try {
-    response = await fetch(`${WEBEX_API_BASE}/messages`, {
+    response = await access.auth(`${WEBEX_API_BASE}/messages`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${access.accessToken}` },
       body: form,
       signal: timeoutSignal(undefined, UPLOAD_TIMEOUT_MS),
     });
@@ -344,6 +332,8 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
           : String(error),
     };
   }
+  const refused = refusalTextOf(response, 'WebEx');
+  if (refused) return { ok: false, detail: refused };
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     return {
@@ -362,7 +352,7 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
  * A file the user asked to have sent to themself, in the same order
  * webex_note_to_self delivers text: as a direct message from the org's bot
  * when there is one (it arrives unread — lib/webex-bot.ts says why), else
- * into the user's own "Note to Self" space with their token. The bytes
+ * into the user's own "Note to Self" space on their grant. The bytes
  * could not ride the tool call, so the two-step delivery happens here at
  * byte-arrival time instead.
  */
@@ -370,8 +360,7 @@ async function webexNoteToSelfAttachment(
   slot: UploadSlotRow,
   bytes: Buffer
 ): Promise<UploadOutcome> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  const access = await resolveWebexAccess(graphContextOf(slot) as MCPToolContext);
+  const access = await resolveWebexAccess(graphContextOf(slot));
   if (typeof access === 'string') return { ok: false, detail: access };
   const markdown = str(destinationOf(slot).markdown) || undefined;
   const file: OutgoingFile = {
@@ -397,7 +386,7 @@ async function webexNoteToSelfAttachment(
     });
   }
 
-  const user = new WebexClient(access.accessToken, { lane: 'interactive' });
+  const user = new WebexClient(access.auth, { lane: 'interactive' });
   const sent = await user.sendNoteToSelf(markdown ?? '', file);
   if (!sent.ok) return { ok: false, detail: sent.err.message ?? 'WebEx refused the note.' };
   await recordSentWebexMessage(slot.tenant_id, sent.val.id, slot.account_id);
@@ -414,11 +403,7 @@ async function webexNoteToSelfAttachment(
  * access that minted it — and the file server judges the write as that
  * account. This executor only names the destination.
  */
-async function fileshareFile(
-  _db: Kysely<DB>,
-  slot: UploadSlotRow,
-  bytes: Buffer
-): Promise<UploadOutcome> {
+async function fileshareFile(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   const destination = destinationOf(slot);
   const shareId = str(destination.shareId);
   const folder = str(destination.path) || '/';
@@ -450,40 +435,29 @@ async function fileshareFile(
  * parts), and record the staging reference on the slot so
  * onbase_archive_document can complete the three-step archive. Nothing is
  * a document yet — OnBase stores staged files transiently until archived.
+ *
+ * Every call names the uploader by subject: the delegate opens their
+ * OnBase grant (refreshing it, and retrying once on a 401 — the tools'
+ * session-lifecycle defensiveness, now the delegate's) and the worker
+ * reuses their OnBase session rather than opening one (and taking a
+ * license) per chunk of a multi-part upload.
  */
 async function onbaseDocument(
   db: Kysely<DB>,
   slot: UploadSlotRow,
   bytes: Buffer
 ): Promise<UploadOutcome> {
-  const target = { tenantId: slot.tenant_id, subject: slot.subject };
-  let access = await resolveOnBaseAccess(target);
-  if (typeof access === 'string') return { ok: false, detail: access };
-
   const extension = slot.filename.includes('.')
     ? slot.filename.slice(slot.filename.lastIndexOf('.') + 1)
     : 'dat';
-  const stageBody = { fileExtension: extension, fileSize: bytes.byteLength };
-  let staged = await obApi({
+  const staged = await obApi({
     tenantId: slot.tenant_id,
-    accessToken: access.accessToken,
+    subject: slot.subject,
     method: 'POST',
     path: '/documents/uploads',
-    body: stageBody,
+    body: { fileExtension: extension, fileSize: bytes.byteLength },
   });
-  // One forced refresh on a 401 — the tools' session-lifecycle defensiveness.
-  if (staged.ok && staged.val.status === 401) {
-    access = await resolveOnBaseAccess(target, { forceRefresh: true });
-    if (typeof access === 'string') return { ok: false, detail: access };
-    staged = await obApi({
-      tenantId: slot.tenant_id,
-      accessToken: access.accessToken,
-      method: 'POST',
-      path: '/documents/uploads',
-      body: stageBody,
-    });
-  }
-  if (!staged.ok) return { ok: false, detail: onbaseClientFailure(staged.err).message };
+  if (!staged.ok) return { ok: false, detail: onbaseFailureText(staged.err, ONBASE_LABEL) };
   if (staged.val.status < 200 || staged.val.status >= 300) {
     return { ok: false, detail: `OnBase refused to stage the upload (${staged.val.status}).` };
   }
@@ -509,15 +483,12 @@ async function onbaseDocument(
     const chunk = bytes.subarray(part * filePartSize, (part + 1) * filePartSize);
     const put = await obPutBytes({
       tenantId: slot.tenant_id,
-      // Every part reuses the uploader's OnBase session rather than opening
-      // one (and taking a license) per chunk of a multi-part upload.
       subject: slot.subject,
       uploadId: onbaseUploadId,
       filePart: part + 1,
-      accessToken: access.accessToken,
       bytes: new Uint8Array(chunk),
     });
-    if (!put.ok) return { ok: false, detail: onbaseClientFailure(put.err).message };
+    if (!put.ok) return { ok: false, detail: onbaseFailureText(put.err, ONBASE_LABEL) };
     if (put.val.status < 200 || put.val.status >= 300) {
       return {
         ok: false,
@@ -583,9 +554,9 @@ export async function executeUpload(
 ): Promise<UploadOutcome> {
   switch (slot.kind) {
     case 'jira-attachment':
-      return jiraAttachment(db, slot, bytes);
+      return jiraAttachment(slot, bytes);
     case 'jsm-attachment':
-      return jsmAttachment(db, slot, bytes);
+      return jsmAttachment(slot, bytes);
     case 'confluence-attachment':
       return confluenceAttachment(slot, bytes);
     case 'onedrive-document':
@@ -594,7 +565,7 @@ export async function executeUpload(
     case 'outlook-draft-attachment':
       return outlookDraftAttachment(slot, bytes);
     case 'fileshare-file':
-      return fileshareFile(db, slot, bytes);
+      return fileshareFile(slot, bytes);
     case 'onbase-document':
       return onbaseDocument(db, slot, bytes);
     case 'webex-attachment':

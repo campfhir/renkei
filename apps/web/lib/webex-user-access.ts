@@ -1,28 +1,23 @@
 /**
  * The caller's own WebEx OAuth access, by subject — the web-side twin of
  * the worker's resolver (apps/worker/src/handlers/webex-linked-user.ts).
- * Used by the all-spaces opt-in route, which registers webhooks with the
- * USER's token: no bot reads anything, so every WebEx capability stands
- * on a personal grant.
+ * Used by the all-spaces opt-in route, which registers webhooks as the
+ * USER: no bot reads anything, so every WebEx capability stands on a
+ * personal grant.
+ *
+ * No token is read here (docs/delegate-key-design.md): the delegate says
+ * whether the grant exists and what it recorded about the person, and
+ * hands back a fetcher that attaches and refreshes the credential itself.
  */
 
+import { WEBEX_USER } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { readConnectorConfigCached } from '@renkei/connector-config';
-import {
-  getGrant,
-  refreshGrantTokens,
-  WEBEX_USER,
-  WebexUserAdapter,
-} from '@renkei/provider-grants';
-import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
-import { logger } from '@/lib/logger';
-
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
 export interface WebexUserAccess {
   accountId: string;
-  accessToken: string;
+  /** `fetch` on this person's WebEx grant; the delegate supplies the credential. */
+  auth: AuthedFetch;
   metadata: Record<string, unknown>;
 }
 
@@ -30,47 +25,14 @@ export async function resolveWebexUserAccess(
   tenantId: string,
   subject: string
 ): Promise<WebexUserAccess | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return null;
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'metadata'])
-    .where('tenant_id', '=', tenantId)
-    .where('provider', '=', WEBEX_USER)
-    .where('subject', '=', subject)
-    .executeTakeFirst();
-  if (!row) return null;
-
-  const grantResult = await getGrant(WEBEX_USER, tenantId, row.provider_account_id);
-  if (!grantResult.ok || !grantResult.val) return null;
-  let grant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const configResult = await readConnectorConfigCached(
-      tenantId,
-      WEBEX_USER_CONNECTOR,
-      keyResult.val
-    );
-    const clientSecret = configResult.ok ? configResult.val?.secrets.clientSecret : undefined;
-    if (!clientSecret) return null;
-    const refreshed = await refreshGrantTokens(
-      new WebexUserAdapter(clientSecret),
-      tenantId,
-      grant.accountId,
-      logger
-    );
-    if (!refreshed.ok) return null;
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  const metadata: Record<string, unknown> =
-    typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
-      ? { ...row.metadata }
-      : {};
-  return { accountId: row.provider_account_id, accessToken: grant.accessToken, metadata };
+  const described = await delegateGrants().describe({ tenantId, provider: WEBEX_USER, subject });
+  if (!described.ok) return null;
+  const accountId = described.val.accountId;
+  return {
+    accountId,
+    auth: grantFetch({ tenantId, provider: WEBEX_USER, accountId }),
+    metadata: { ...described.val.metadata },
+  };
 }
 
 /**

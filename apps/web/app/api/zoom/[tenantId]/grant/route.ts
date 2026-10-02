@@ -2,10 +2,11 @@
  * Disconnect the caller's own Zoom grant. Subject-scoped: the session
  * decides whose grant dies, never a parameter.
  *
- * The token is also revoked at Zoom (best-effort — deletion of our copy is
- * what matters; revocation just closes the window on the provider's side),
- * and the knowledge chunks ingested from this host's meetings are purged:
- * consent to index was the grant.
+ * The delegate revokes the token at Zoom (best-effort — deletion of our
+ * copy is what matters; revocation just closes the window on the
+ * provider's side) and deletes the grant; this process never sees the
+ * token. The knowledge chunks ingested from this host's meetings are
+ * purged here: consent to index was the grant.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,10 +14,9 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
-import { deleteGrant, getGrant, ZOOM } from '@renkei/provider-grants';
+import { ZOOM } from '@renkei/provider-grants';
+import { delegateGrants } from '@renkei/delegate-client';
 import { deleteObjectChunks } from '@renkei/knowledge';
-import { getZoomApp } from '@/lib/zoom-app';
-import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
 
 export async function DELETE(
@@ -48,34 +48,6 @@ export async function DELETE(
   }
   const accountId = grantRow.provider_account_id;
 
-  // Best-effort revocation at Zoom while we still hold the token.
-  const originResult = await getOrigin(request);
-  if (originResult.ok) {
-    const [grant, app] = await Promise.all([
-      getGrant(ZOOM, tenantId, accountId),
-      getZoomApp(tenantId, originResult.val),
-    ]);
-    if (grant.ok && grant.val && app) {
-      try {
-        const basic = Buffer.from(`${app.clientId}:${app.clientSecret}`).toString('base64');
-        await fetch('https://zoom.us/oauth/revoke', {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${basic}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({ token: grant.val.accessToken }).toString(),
-        });
-      } catch (error) {
-        logger.warn('Zoom token revocation failed; deleting the grant regardless', {
-          component: 'connectors/zoom',
-          tenantId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
-
   // Purge this host's chunks. The refId prefix is the host's email.
   const metadata: Record<string, unknown> =
     typeof grantRow.metadata === 'object' &&
@@ -94,9 +66,21 @@ export async function DELETE(
     }
   }
 
-  const deleted = await deleteGrant(ZOOM, tenantId, accountId);
-  if (!deleted.ok) {
+  // Revoke at Zoom while the delegate still holds the token, then delete.
+  const revoked = await delegateGrants().revoke({ tenantId, provider: ZOOM, accountId });
+  if (!revoked.ok) {
+    logger.error('Zoom grant could not be deleted: {reason}', {
+      component: 'connectors/zoom',
+      tenantId,
+      reason: revoked.err.type,
+    });
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
+  }
+  if (!revoked.val.revokedAtProvider) {
+    logger.warn('Zoom token revocation failed; the grant was deleted regardless', {
+      component: 'connectors/zoom',
+      tenantId,
+    });
   }
   recordAuditEvent({
     tenantId,

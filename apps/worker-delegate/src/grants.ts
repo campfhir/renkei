@@ -420,10 +420,18 @@ export class Grants {
       scope: typeof tokens.scope === 'string' ? tokens.scope : null,
       createdAt: Date.now(),
     });
+    // Bitbucket echoes `scopes`, everyone else `scope`; relayed as given so the
+    // caller can record what was actually granted for an opaque token.
+    const scopeEcho =
+      typeof tokens.scope === 'string'
+        ? tokens.scope
+        : typeof tokens.scopes === 'string'
+          ? tokens.scopes
+          : null;
     sendJson(response, 200, {
       handle,
       expiresAt: refreshed.expiresAt.toISOString(),
-      scope: typeof tokens.scope === 'string' ? tokens.scope : null,
+      scope: scopeEcho,
       idToken: typeof tokens.id_token === 'string' ? tokens.id_token : null,
       grantedScopes: scopesFromAccessToken(refreshed.accessToken),
       hasRefreshToken: refreshed.refreshToken !== '',
@@ -456,7 +464,13 @@ export class Grants {
       refreshToken: pending.refreshToken,
       expiresAt: pending.expiresAt.toISOString(),
       requestedScopes,
-      grantedScopes: scopesFromAccessToken(pending.accessToken),
+      // Decoded from the token when it is a JWT; for an opaque token the
+      // caller may pass what the provider's exchange answer said was granted.
+      grantedScopes:
+        scopesFromAccessToken(pending.accessToken) ??
+        (Array.isArray(body.grantedScopes)
+          ? body.grantedScopes.filter((scope): scope is string => typeof scope === 'string')
+          : null),
       metadata: isRecord(body.metadata) ? body.metadata : {},
       subject,
     });
