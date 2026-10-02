@@ -92,6 +92,10 @@ export default defineConfig({
           : {}),
         DELEGATE_WORKER_API_KEY: 'e2e-delegate-key',
         DELEGATE_WORKER_PORT: '8096',
+        // The same stand-ins the dev server below is pointed at: the
+        // delegate lets a provider's token travel to them too.
+        BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
+        JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
       },
     },
     {

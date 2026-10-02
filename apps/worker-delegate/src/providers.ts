@@ -142,8 +142,37 @@ export function providerSpec(provider: string): ProviderSpec | null {
   return Object.prototype.hasOwnProperty.call(PROVIDERS, provider) ? PROVIDERS[provider] : null;
 }
 
+/**
+ * A stand-in for a provider's API, for the e2e and dev environments that
+ * point the web app's clients at a local stub (`GITHUB_API_BASE_URL`,
+ * `BITBUCKET_API_BASE_URL`, `JIRA_ADMIN_API_BASE_URL`,
+ * `ENTRA_DEVELOPER_API_BASE_URL`): the delegate honors the same variables,
+ * so a request to that origin may carry the provider's token too. Unset
+ * in production, where only the provider's own hosts are allowed.
+ */
+const STAND_IN_ENV: Readonly<Record<string, string>> = {
+  [GITHUB]: 'GITHUB_API_BASE_URL',
+  [ATLASSIAN_BITBUCKET]: 'BITBUCKET_API_BASE_URL',
+  [ATLASSIAN_ADMIN]: 'JIRA_ADMIN_API_BASE_URL',
+  [ENTRA_DEVELOPER]: 'ENTRA_DEVELOPER_API_BASE_URL',
+};
+
+function standInOrigin(provider: string): string | null {
+  const name = Object.prototype.hasOwnProperty.call(STAND_IN_ENV, provider)
+    ? STAND_IN_ENV[provider]
+    : null;
+  const value = name ? process.env[name]?.trim() : '';
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
 /** Whether `url` may carry this provider's token: exact host, or a subdomain of a dotted entry. */
-export function hostAllowed(spec: ProviderSpec, url: URL): boolean {
+export function hostAllowed(spec: ProviderSpec, url: URL, provider?: string): boolean {
+  if (provider && standInOrigin(provider) === url.origin) return true;
   if (url.protocol !== 'https:') return false;
   const host = url.hostname.toLowerCase();
   return spec.hosts.some((allowed) =>

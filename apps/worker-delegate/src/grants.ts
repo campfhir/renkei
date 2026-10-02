@@ -255,7 +255,7 @@ export class Grants {
     } catch {
       return fail('bad_request', 'x-delegate-url is not a URL');
     }
-    if (!hostAllowed(spec, url))
+    if (!hostAllowed(spec, url, provider))
       return fail('host_not_allowed', `${url.hostname} is not ${provider}`);
 
     const body = await readBody(request, MAX_REQUEST_BYTES);
