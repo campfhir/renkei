@@ -109,10 +109,14 @@ What this is not: end-to-end encryption. The model provider sees every prompt, a
 4. **Keypairs and sharing.** X25519 per person; `share` to a public key; project keys to members; the owner-derivation paths deleted.
 5. **Devices, rotation, deletion, and the end of the master.** Device approval, `rewrap`, account shredding, the master removed from the delegate and the derivation code deleted.
 
-## Decisions needed
+## Decisions taken
 
-1. **Published projects.** Content shared with everyone in the org cannot be under one person's key. Options: a tenant-wide "published" key the delegate holds for exactly that content, or published projects are stored in the clear, or the feature goes.
-2. **The connector workers.** Mirth, ADManager, file-share and OnBase workers exist because they dial private networks. They can keep doing so with credentials fetched from the delegate per request, which leaves them holding a plaintext credential in flight, or they can fold into the delegate so that one process is truly the only one. Folding is cleaner and a bigger move.
-3. **The knowledge index.** `knowledge_chunks` is ingested with people's tokens but stored as org knowledge with per-read access checks, not per-person encryption. This design leaves it as it is; saying so explicitly matters, because "only accessible to them" is not true of it.
-4. **The automation window's default.** The maximum is 30 days. Whether the default is 7 or 30 shapes how often people see "paused".
-5. **The web app's plaintext.** Accept that the web app sees plaintext in flight, as above, or move prompt assembly and model calls into the delegate as well, which makes it the LLM gateway too and a much larger service.
+1. **Published projects** get a shareable key of their own, wrapped to the public key of every person invited, like any project. "Published to the org" becomes "shared with everyone the owner invites"; there is no tenant-wide key.
+2. **The connector workers** stay where they are for the private-network dialing, but the delegate proxies their requests: the web app and the agents talk to the delegate, which opens the person's credential and forwards the request to the Mirth, ADManager, file-share or OnBase worker with the credential attached. Those workers hold a credential only in flight, never open storage, and need no key.
+3. **The knowledge index** stays org knowledge with per-read access checks, not per-person encryption. Outlook mail and calendar content leave the index, because they are personal; what the model needs from them it reads live through the person's own grant.
+4. **The automation window** defaults to its maximum, 30 days.
+5. **The web app sees plaintext in flight.** Prompt assembly and model calls stay in the web app; it is the person's own typing and the model's reply, and nothing stored. Moving them into the delegate is left for later if ever wanted.
+
+A sixth, made while cutting phase 1: the web app does not hold a person's key even for a request, but it does receive **a resource's data key** from the delegate for the request it is serving, so that the content layer (`ContentCipher`, synchronous `open` and `seal` on every chat path) keeps working unchanged. A data key opens one chat or one project, which is exactly what that request is about to read anyway. Person-only values (`uenc1`) are opened and sealed by the delegate itself. Phase 1 therefore adds `resource-key` (mint, unwrap for a subject, share, revoke, delete) and `user-sealed` (open, seal) to the delegate's operations, and `open`/`seal` of rows is not an operation at all.
+
+`TOKEN_ENCRYPTION_KEY` also seals org-wide secrets that are nobody's in particular: connector client secrets, model API keys, the blob store's account key. Those stay where they are and are not this design's concern; the variable stays in the web app for them. The user-key master, `USER_KEY_ENCRYPTION_KEY`, loses its fallback chain and is set on the delegate alone until phase 5 removes it.
