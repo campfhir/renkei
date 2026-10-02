@@ -28,7 +28,7 @@ Those forms are **retired**. No reader in the web app or a worker opens a `renc1
  renc2:<key id>:v1.<iv>.<tag>.<ciphertext>    on every row the resource owns
 ```
 
-**Master.** `USER_KEY_ENCRYPTION_KEY`, else `CONTENT_ENCRYPTION_KEY`, else `TOKEN_ENCRYPTION_KEY` — the fallback chain the content envelope used to have, so the feature needs no new deployment configuration. Set the dedicated variable to rotate it apart from the others.
+**Master.** `USER_KEY_ENCRYPTION_KEY`, with no fallback, set on exactly one process: the delegate (`apps/worker-delegate`, [`delegate-key-design.md`](./delegate-key-design.md)). Every other process asks the delegate for the one key its request needs — a chat's or project's data key — and never derives a person's key itself.
 
 **A person's managed KEK** is derived from the master, a random 32-byte salt kept for them in `user_encryption_keys`, and their identity (tenant id, OIDC subject) as the HKDF info. It is recomputed on every use and written nowhere. The salt is what makes it rotatable: `rotateUserKek` writes a new salt and, in the same transaction, rewraps everything the person holds — every `resource_key_grants` row and every `uenc1:` value in the registry `SEALED_FOR_SUBJECT` names (provider tokens, the three credential tables, personal memory) — bumping `version` so a wrapping says which KEK it is under. Deleting the row (`shredUserKek`) makes every wrapping for that person, and every value sealed directly under their KEK, unopenable at once.
 
@@ -60,7 +60,7 @@ The access grant is the decision; the wrapping follows it. If a share's rewrap d
 
 ## Who opens with what
 
-`resolveChatAccess` returns a `cipher` with the access; every read and write of a chat's rows takes one (there is no default on the message layer, so a row cannot be written under the wrong key by omission, and there is no deployment key to fall back to). `apps/web/lib/chat/chat-keys.ts` decides:
+`resolveChatAccess` returns a `cipher` with the access; every read and write of a chat's rows takes one (there is no default on the message layer, so a row cannot be written under the wrong key by omission, and there is no deployment key to fall back to). `apps/web/lib/chat/chat-keys.ts` decides who opens as whom and asks the delegate for that data key:
 
 | Reader                                                                       | Opens as                                                   |
 | ---------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -70,7 +70,7 @@ The access grant is the decision; the wrapping follows it. If a share's rewrap d
 | A process with nobody signed in: a resumed turn, a worker's note, the sweeps | The chat's owner                                           |
 | Search across the sidebar (`chatCiphersFor`)                                 | The viewer where they hold the key, else the owner         |
 
-"As the owner" is possible because every process holding the master can derive any _managed_ KEK. That is the honest statement of what this design is for a person on the managed key: **key separation** — per-person keys, per-resource keys, a cryptographic sharing model, rotation and a shred for one person — and not end-to-end encryption. It is also what lets a turn resume after the process that started it is gone, and what lets a worker drop a note into a chat while its owner is away.
+"As the owner" is possible because the delegate, holding the master, can derive any _managed_ KEK. That is the honest statement of what this design is for a person on the managed key: **key separation** — per-person keys, per-resource keys, a cryptographic sharing model, rotation and a shred for one person — and not end-to-end encryption. It is also what lets a turn resume after the process that started it is gone, and what lets a worker drop a note into a chat while its owner is away.
 
 A row the cipher cannot open (sealed under another key, under a key that is locked, or in a retired form) renders as one text block carrying a marker rather than failing the page; the marker says which case it is, and the chat page shows a notice with a link to Preferences when the reason is a locked key (`ChatView.keyLocked`).
 
