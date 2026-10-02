@@ -7,33 +7,27 @@
 import { outlookIndexingOf, OUTLOOK_INDEXING_CATEGORIES } from './outlook-indexing';
 
 describe('outlookIndexingOf', () => {
-  it('defaults every category off when the preference is absent', () => {
-    expect(outlookIndexingOf({})).toEqual({ mail: false, tasks: false });
-    expect(outlookIndexingOf({ upn: 'a@b.c', tid: 't' })).toEqual({ mail: false, tasks: false });
+  it('defaults off when the preference is absent', () => {
+    expect(outlookIndexingOf({})).toEqual({ mail: false });
+    expect(outlookIndexingOf({ upn: 'a@b.c', tid: 't' })).toEqual({ mail: false });
   });
 
-  it('reads explicit opt-ins and treats anything but true as off', () => {
-    expect(outlookIndexingOf({ indexing: { mail: true, tasks: 1 } })).toEqual({
-      mail: true,
-      tasks: false,
-    });
+  it('reads an explicit opt-in and treats anything but true as off', () => {
+    expect(outlookIndexingOf({ indexing: { mail: true } })).toEqual({ mail: true });
+    expect(outlookIndexingOf({ indexing: { mail: 1 } })).toEqual({ mail: false });
   });
 
-  it('ignores a calendar flag left on an older grant', () => {
-    // Calendar left the index; a stored opt-in must not resurrect it, and
-    // must not leak into the parsed shape either.
+  it('ignores calendar and tasks flags left on an older grant', () => {
+    // Calendar and To Do left the index; a stored opt-in must not resurrect
+    // either, and must not leak into the parsed shape.
     expect(outlookIndexingOf({ indexing: { mail: true, calendar: true, tasks: true } })).toEqual({
       mail: true,
-      tasks: true,
     });
-    expect(OUTLOOK_INDEXING_CATEGORIES).toEqual(['mail', 'tasks']);
+    expect(OUTLOOK_INDEXING_CATEGORIES).toEqual(['mail']);
   });
 
   it('tolerates a malformed preference shape', () => {
-    expect(outlookIndexingOf({ indexing: 'all' })).toEqual({ mail: false, tasks: false });
-    expect(outlookIndexingOf({ indexing: [true, true, true] })).toEqual({
-      mail: false,
-      tasks: false,
-    });
+    expect(outlookIndexingOf({ indexing: 'all' })).toEqual({ mail: false });
+    expect(outlookIndexingOf({ indexing: [true, true, true] })).toEqual({ mail: false });
   });
 });

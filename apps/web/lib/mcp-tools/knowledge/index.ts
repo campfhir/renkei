@@ -214,13 +214,11 @@ function formatDistance(distance: number): string {
  * with a per-connector vocabulary. Mapping here means a caller never has
  * to know either, and the storage names stay free to change.
  *
- * Outlook mail and calendar are not here on purpose: they are personal and
- * are never indexed (migration 135 dropped what had been). To Do tasks are
- * the one Outlook kind in the index, and the kind pin keeps the filter
- * honest should another Microsoft kind ever be stored.
+ * Nothing from Outlook is here on purpose: mail, calendar and To Do are
+ * personal and are never indexed (migrations 135 and 137 dropped what had
+ * been); the outlook_* tools read them live.
  */
 const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
-  outlook_tasks: { provider: 'microsoft', kind: 'task' },
   zoom: { provider: 'zoom' },
   webex: { provider: 'webex' },
   confluence: { provider: 'confluence' },
@@ -376,9 +374,7 @@ export async function registerKnowledgeTools(
           .optional()
           .describe('Maximum results to return (1-10, default 5)'),
         sources: z
-          .array(
-            z.enum(['outlook_tasks', 'zoom', 'webex', 'confluence', 'jira', 'sharepoint', 'notes'])
-          )
+          .array(z.enum(['zoom', 'webex', 'confluence', 'jira', 'sharepoint', 'notes']))
           .optional()
           .describe('Only search these sources (default: everything indexed)'),
         after: z

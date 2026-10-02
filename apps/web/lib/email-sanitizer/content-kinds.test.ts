@@ -36,8 +36,9 @@ describe('parseContentKinds', () => {
 });
 
 describe('isContentKind', () => {
-  it('accepts exactly the three known kinds', () => {
-    expect(['msg', 'evt', 'task'].every(isContentKind)).toBe(true);
+  it('accepts exactly the two known kinds', () => {
+    expect(['msg', 'evt'].every(isContentKind)).toBe(true);
+    expect(isContentKind('task')).toBe(false);
     expect(isContentKind('drive')).toBe(false);
     expect(isContentKind(null)).toBe(false);
   });

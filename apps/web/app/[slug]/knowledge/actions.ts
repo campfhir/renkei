@@ -139,8 +139,8 @@ export async function searchMyKnowledge(
   }
 
   // Source names map to provider/kind pairs in one place (the MCP tool's
-  // module) so this page and the tool can never drift apart on what
-  // 'outlook_tasks' means.
+  // module) so this page and the tool can never drift apart on what a
+  // source name means.
   const sourceFilters = sourceFiltersFor(filters.sources ?? []);
   const verifiers = await buildKnowledgeVerifiers(tenantId);
 

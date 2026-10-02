@@ -59,7 +59,7 @@ describe('sourceFiltersFor', () => {
 
   it('maps a product name onto the stored provider, not the product name', () => {
     // The column says 'microsoft'; nobody calling this tool would guess that.
-    expect(sourceFiltersFor(['outlook_tasks'])).toEqual([{ provider: 'microsoft', kind: 'task' }]);
+    expect(sourceFiltersFor(['sharepoint'])).toEqual([{ provider: 'sharepoint' }]);
   });
 
   it('offers no mail or calendar source — neither is indexed', () => {
@@ -75,8 +75,8 @@ describe('sourceFiltersFor', () => {
     // filter was dropped wholesale, so a kinded selection also returned
     // every other kind its provider stored. Each source now carries its own
     // kind and the pairs are OR-ed.
-    expect(sourceFiltersFor(['outlook_tasks', 'zoom'])).toEqual([
-      { provider: 'microsoft', kind: 'task' },
+    expect(sourceFiltersFor(['sharepoint', 'zoom'])).toEqual([
+      { provider: 'sharepoint' },
       { provider: 'zoom' },
     ]);
   });
@@ -88,7 +88,7 @@ describe('sourceFiltersFor', () => {
 
   it('exposes every source name the tool schema offers', () => {
     expect(KNOWLEDGE_SOURCE_NAMES).toEqual(
-      expect.arrayContaining(['outlook_tasks', 'zoom', 'webex', 'confluence', 'jira'])
+      expect.arrayContaining(['sharepoint', 'zoom', 'webex', 'confluence', 'jira'])
     );
   });
 });

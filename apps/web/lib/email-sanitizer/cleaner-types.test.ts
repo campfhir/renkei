@@ -45,11 +45,9 @@ describe('cleaner type declarations', () => {
   it('gives each kind its own type, discriminated on kind', () => {
     expect(CLEANER_TYPES).toContain('interface CleanerMessage extends CleanerItemBase');
     expect(CLEANER_TYPES).toContain('interface CleanerEvent extends CleanerItemBase');
-    expect(CLEANER_TYPES).toContain('interface CleanerTask extends CleanerItemBase');
-    expect(CLEANER_TYPES).toContain(
-      'type CleanerItem = CleanerMessage | CleanerEvent | CleanerTask'
-    );
-    for (const kind of ["kind: 'msg'", "kind: 'evt'", "kind: 'task'"]) {
+    expect(CLEANER_TYPES).toContain('type CleanerItem = CleanerMessage | CleanerEvent');
+    expect(CLEANER_TYPES).not.toContain('CleanerTask');
+    for (const kind of ["kind: 'msg'", "kind: 'evt'"]) {
       expect(CLEANER_TYPES).toContain(kind);
     }
   });
@@ -69,7 +67,7 @@ describe('cleaner type declarations', () => {
 
     const event = CLEANER_TYPES.slice(
       CLEANER_TYPES.indexOf('interface CleanerEvent'),
-      CLEANER_TYPES.indexOf('interface CleanerTask')
+      CLEANER_TYPES.indexOf('type CleanerItem')
     );
     for (const field of CALENDAR_ONLY_FIELDS) {
       expect(event).toContain(`${field}:`);
@@ -118,9 +116,8 @@ describe('cleaner library ambient declarations', () => {
       'interface CleanerItemBase',
       'interface CleanerMessage extends CleanerItemBase',
       'interface CleanerEvent extends CleanerItemBase',
-      'interface CleanerTask extends CleanerItemBase',
       'interface CleanerEmail extends CleanerItemBase',
-      'type CleanerItem = CleanerMessage | CleanerEvent | CleanerTask',
+      'type CleanerItem = CleanerMessage | CleanerEvent',
     ]) {
       expect(globals).toContain(name);
     }

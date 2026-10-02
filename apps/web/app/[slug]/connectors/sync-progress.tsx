@@ -26,7 +26,7 @@ interface ProgressItem {
   error: string | null;
 }
 
-type Connector = 'microsoft' | 'jira' | 'confluence';
+type Connector = 'jira' | 'confluence';
 
 function relativeTime(iso: string | null): string {
   if (!iso) return 'not yet';

@@ -181,7 +181,10 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await signIn(page, fixture);
   const projectUrl = `/${fixture.slug}/code/${fixture.projectId}`;
   const settingsUrl = `/${fixture.slug}/admin/settings`;
-  const limitText = page.getByTestId('size-limit');
+  // Scoped to the main region: across a navigation the dev server can leave
+  // the outgoing page's span in the DOM for a beat, and strict mode would
+  // count two.
+  const limitText = page.getByRole('main').getByTestId('size-limit');
 
   // ── Default: 8 GB, with the way to ask for more ──
   await page.goto(projectUrl);

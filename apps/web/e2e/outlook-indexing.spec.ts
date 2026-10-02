@@ -1,8 +1,9 @@
 /**
- * The Outlook background opt-ins on the connectors page, after mail and
- * calendar left the knowledge index: a Mail toggle that only wires new mail
- * to the "An email arrives" agent trigger (and says so), a Tasks toggle that
- * indexes To Do, and NO Calendar toggle. Driven against the real
+ * The Outlook background opt-in on the connectors page, after mail,
+ * calendar and To Do all left the knowledge index: one Mail toggle that
+ * only wires new mail to the "An email arrives" agent trigger (and says
+ * so), NO Tasks or Calendar toggle, and no indexing progress or re-index
+ * control, since nothing in Outlook indexes. Driven against the real
  * /api/microsoft/[tenantId]/indexing route — a PUT writes the grant's
  * metadata and enqueues the bootstrap event; neither touches Microsoft for
  * a grant whose token is a placeholder, since the worker is not running
@@ -131,7 +132,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
         fixture.subject,
         new Date(Date.now() + 365 * 24 * 3_600_000),
         ['Mail.Read', 'Tasks.Read', 'offline_access'],
-        { tid: 'e2e-dir', upn: 'e2e@example.com', indexing: { calendar: true } },
+        { tid: 'e2e-dir', upn: 'e2e@example.com', indexing: { calendar: true, tasks: true } },
       ]
     );
     await client.query(
@@ -140,9 +141,10 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       [fixture.tenantId, fixture.subject]
     );
     // Subscription rows as the worker would have left them: the inbox
-    // trigger feed and one To Do list, both having completed a round. Only
-    // the To Do row is indexing; the inbox row must stay out of the
-    // "Indexing" list, where "N indexed" beside it would be false.
+    // trigger feed, having completed a round, and a To Do list from before
+    // tasks left the index (the ensure pass tears it down on its next
+    // sweep). Neither indexes anything, so neither may appear under an
+    // "Indexing" heading, where "N indexed" beside it would be false.
     for (const [resource, total] of [
       ["me/mailFolders('inbox')/messages", 12],
       ['me/todo/lists/list-1/tasks', 7],
@@ -191,7 +193,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test('Outlook opt-ins: Mail is a trigger feed, Tasks indexes, Calendar is gone', async ({
+test('Outlook opt-in: Mail is a trigger feed; Tasks and Calendar are gone', async ({
   page,
 }, testInfo) => {
   const fixture = fixtureFor(testInfo.project.name);
@@ -205,54 +207,43 @@ test('Outlook opt-ins: Mail is a trigger feed, Tasks indexes, Calendar is gone',
   const prefs = card.locator('[data-coach="outlook-indexing"]');
   await expect(prefs.getByText('What runs in the background')).toBeVisible();
 
-  // Exactly the two toggles, with the Mail one saying what it now means.
+  // Exactly one toggle, saying what it now means.
   const mail = prefs.getByRole('checkbox', { name: /^Mail/ });
-  const tasks = prefs.getByRole('checkbox', { name: /^Tasks/ });
-  await expect(prefs.getByRole('checkbox')).toHaveCount(2);
+  await expect(prefs.getByRole('checkbox')).toHaveCount(1);
   await expect(prefs.getByText(/Calendar/)).toHaveCount(0);
+  await expect(prefs.getByText(/Tasks|To Do/)).toHaveCount(0);
   await expect(prefs.getByText(/"An email arrives" trigger/)).toBeVisible();
   await expect(prefs.getByText(/never indexed/)).toBeVisible();
-  // The stale calendar flag on the grant is not honoured as any opt-in.
+  // The stale calendar and tasks flags on the grant are not honoured as any opt-in.
   await expect(mail).toBeEnabled();
   await expect(mail).not.toBeChecked();
-  await expect(tasks).not.toBeChecked();
 
-  // The indexing progress list carries the To Do row only — the inbox feed
-  // indexes nothing, so it has no business under "Indexing". Each progress
-  // row is the one `li` on the card that reads "N indexed".
-  const progressRows = card.locator('li', { hasText: /indexed/ });
-  await expect(progressRows).toHaveCount(1);
-  await expect(progressRows.first()).toContainText('To Do');
-  await expect(progressRows.first()).toContainText('7 indexed');
-  await expect(progressRows.first()).not.toContainText(/inbox|12 indexed/i);
+  // Nothing in Outlook indexes, so the card carries no indexing progress
+  // and no re-index control: neither the inbox feed nor the leftover To Do
+  // row may read as "N indexed".
+  await expect(card.locator('li', { hasText: /indexed/ })).toHaveCount(0);
+  await expect(card.getByText('Indexing', { exact: true })).toHaveCount(0);
+  await expect(card.getByRole('button', { name: 'Re-index' })).toHaveCount(0);
   await shot(page, testInfo, 'outlook-indexing-01-off');
 
   // Opt into the trigger feed: the real PUT, then the saved shape — mail
-  // on, tasks off, and the old calendar key gone rather than carried.
+  // on, and the old calendar and tasks keys gone rather than carried.
   await mail.check();
   await expect(prefs.getByText(/start waking agents/)).toBeVisible({ timeout: 30_000 });
   await expect(prefs.getByText(/Nothing is indexed/)).toBeVisible();
-  await expect.poll(() => savedIndexing(fixture)).toEqual({ mail: true, tasks: false });
+  await expect.poll(() => savedIndexing(fixture)).toEqual({ mail: true });
   await shot(page, testInfo, 'outlook-indexing-02-mail-on');
 
   await mail.uncheck();
   await expect(prefs.getByText('New mail no longer wakes your agents.')).toBeVisible({
     timeout: 30_000,
   });
-  await expect.poll(() => savedIndexing(fixture)).toEqual({ mail: false, tasks: false });
-
-  // Tasks is the one Outlook category that indexes, and its notice says so.
-  await tasks.check();
-  await expect(prefs.getByText(/Indexing starts in the background/)).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect.poll(() => savedIndexing(fixture)).toEqual({ mail: false, tasks: true });
+  await expect.poll(() => savedIndexing(fixture)).toEqual({ mail: false });
 
   // Mobile: a resized Chromium viewport, not a device descriptor — see
   // AGENTS.md and llm-models.spec.ts's note on why.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await expect(prefs.getByText('What runs in the background')).toBeVisible();
   await expect(mail).toBeVisible();
-  await expect(tasks).toBeVisible();
   await shot(page, testInfo, 'outlook-indexing-03-mobile');
 });

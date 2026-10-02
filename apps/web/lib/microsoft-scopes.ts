@@ -97,7 +97,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     id: 'Tasks.Read',
     scopes: ['Tasks.Read'],
     label: 'Read tasks',
-    hint: 'outlook_list_task_lists, outlook_list_tasks, and To Do ingestion into knowledge',
+    hint: 'outlook_list_task_lists, outlook_list_tasks — read live, never indexed',
     userHint: 'Read your Microsoft To Do lists and tasks.',
     group: 'tasks',
     defaultChecked: true,

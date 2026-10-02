@@ -166,6 +166,7 @@ export const EXPECTED_MIGRATIONS = [
   '134-user-own-keys',
   '135-drop-mail-calendar-chunks',
   '136-delegate-git-tickets',
+  '137-drop-todo-chunks',
 ];
 
 export interface MigrationStatus {

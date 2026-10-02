@@ -33,7 +33,7 @@ export interface CleanerScript {
   lastError: string | null;
 }
 
-const KINDS: readonly CleanerScriptKind[] = ['msg', 'evt', 'task'];
+const KINDS: readonly CleanerScriptKind[] = ['msg', 'evt'];
 
 function isKind(value: string): value is CleanerScriptKind {
   return KINDS.some((kind) => kind === value);

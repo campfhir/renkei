@@ -274,7 +274,11 @@ test.describe('branch switcher', () => {
       has: page.getByRole('heading', { level: 2, name: 'Repository' }),
     });
     await expect(repository).toContainText('acme/billing-service');
-    await expect(repository.getByRole('button')).toHaveCount(0);
+    // The card's only control is the checkout-size request (size-request.tsx);
+    // nothing on it picks or names a branch.
+    await expect(
+      repository.getByRole('button').filter({ hasNotText: 'Ask for more space' })
+    ).toHaveCount(0);
     await expect(repository.getByText(/main|feature/)).toHaveCount(0);
     await shot(page, testInfo, 'branch-switcher-project-no-mention.png');
 

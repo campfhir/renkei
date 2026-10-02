@@ -100,8 +100,6 @@ jest.mock('@renkei/connector-microsoft', () => ({
   renewGraphSubscription: jest.fn(),
   runDeltaRound: jest.fn(),
   initialDeltaUrl: jest.fn(() => 'https://graph.microsoft.com/v1.0/delta'),
-  microsoftRefId: (upn: string, kind: string, id: string) => `${upn}/${kind}/${id}`,
-  graphRequest: jest.fn(),
 }));
 jest.mock('@renkei/connector-zoom', () => ({
   ZoomClient: class {
@@ -211,6 +209,9 @@ const { ingestObjectChunks: mockIngestObjectChunks } = jest.requireMock<{
 const { runDeltaRound: mockRunDeltaRound } = jest.requireMock<{ runDeltaRound: jest.Mock }>(
   '@renkei/connector-microsoft'
 );
+const { publishDomainEvent: mockPublishDomainEvent } = jest.requireMock<{
+  publishDomainEvent: jest.Mock;
+}>('./domain-events');
 
 type EmbedResult = Result<number[][], 'EMBEDDING_FAILED'>;
 
@@ -318,8 +319,8 @@ function microsoftAccess(): MicrosoftAccess {
     accountId: 'acct-1',
     auth,
     upn: 'alice@example.com',
-    scopes: ['Tasks.Read'],
-    indexing: { mail: false, tasks: true },
+    scopes: ['Mail.Read'],
+    indexing: { mail: true },
   };
 }
 
@@ -347,13 +348,15 @@ function registerAllHandlers(handled: Handled[]): void {
   // The real change-notification handler resolves its subscription row from
   // the database before calling runSubscriptionSync; the row lookup is not
   // what this suite exercises, so the wrapper hands the REAL sync a fixed
-  // row and the mocked delta round does the fanning out. A To Do row: it is
-  // the Microsoft resource that still feeds the embedding queue (the inbox
-  // row only publishes the mail.received trigger and indexes nothing).
+  // row and the mocked delta round supplies the entries. The inbox row: the
+  // one Microsoft resource left (nothing in Outlook is indexed), which
+  // publishes the mail.received trigger per new message and feeds the
+  // embedding queue nothing — so the Microsoft stream is a third
+  // interactive-latency stream here, not a saturation source.
   registerHandler('microsoft', 'change-notification', async (event) => {
     await runSubscriptionSync(event.tenant_id, microsoftAccess(), {
       id: 'sub-row-1',
-      resource: 'me/todo/lists/list-1/tasks',
+      resource: "me/mailFolders('inbox')/messages",
       subscription_id: 'graph-sub-1',
       client_state: 'state',
       expires_at: new Date(),
@@ -421,7 +424,7 @@ function insertMicrosoft(events: InMemoryQueue): void {
     type: 'change-notification',
     payload: { accountId: 'acct-1', subscriptionId: 'graph-sub-1' },
     // Deliberately NO ordering key here: the suite wants the two delta
-    // rounds claimable concurrently to saturate the embedding queue.
+    // rounds claimable concurrently.
   });
 }
 
@@ -468,21 +471,22 @@ beforeEach(() => {
   let deltaSeq = 0;
   mockRunDeltaRound.mockImplementation(async () => {
     deltaSeq += 1;
+    const receivedDateTime = new Date().toISOString();
     return ok({
       items: [
         {
-          id: `t-${deltaSeq}-1`,
-          title: 'Delta one',
-          status: 'notStarted',
-          lastModifiedDateTime: '2026-08-13T10:00:00Z',
-          body: { contentType: 'text', content: 'first' },
+          id: `m-${deltaSeq}-1`,
+          subject: 'Delta one',
+          from: { emailAddress: { address: 'bob@example.com' } },
+          receivedDateTime,
+          bodyPreview: 'first',
         },
         {
-          id: `t-${deltaSeq}-2`,
-          title: 'Delta two',
-          status: 'notStarted',
-          lastModifiedDateTime: '2026-08-13T10:01:00Z',
-          body: { contentType: 'text', content: 'second' },
+          id: `m-${deltaSeq}-2`,
+          subject: 'Delta two',
+          from: { emailAddress: { address: 'bob@example.com' } },
+          receivedDateTime,
+          bodyPreview: 'second',
         },
       ],
       deltaLink: 'delta-2',
@@ -528,15 +532,21 @@ describe('multi-stream: saturated embedding queue (Scenario A)', () => {
       expect(done.at - (insertedAt ?? 0)).toBeLessThan(1_000);
     }
 
-    // (3) Fan-out accounting: 3 zoom ingests, 2 microsoft rounds × 2 tasks
-    // — all processed. (WebEx no longer feeds the embedding queue: the bot
-    // capture pipeline is gone; webex_capture_message is a deliberate tool.
-    // Mail never did either: it is not indexed.)
+    // (3) Fan-out accounting: 3 zoom ingests — all processed. Nothing else
+    // feeds the embedding queue: WebEx's bot capture pipeline is gone
+    // (webex_capture_message is a deliberate tool), and nothing in Outlook
+    // is indexed — the two Microsoft rounds published 2 × 2 mail.received
+    // triggers and enqueued nothing.
     const jobs = embedding.snapshot();
     const byType = (type: string) => jobs.filter((row) => row.type === type);
-    expect(byType('ingest.object')).toHaveLength(7);
+    expect(byType('ingest.object')).toHaveLength(3);
     expect(byType('ingest.email')).toHaveLength(0);
     expect(jobs.every((row) => row.status === 'processed')).toBe(true);
+    expect(
+      mockPublishDomainEvent.mock.calls.filter(
+        ([event]: [{ type?: string }]) => event.type === 'mail.received'
+      )
+    ).toHaveLength(4);
   }, 15_000);
 });
 

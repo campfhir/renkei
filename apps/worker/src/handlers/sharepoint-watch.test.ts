@@ -59,7 +59,7 @@ const access = (): MicrosoftAccess => ({
   accountId: 'acct-1',
   upn: 'alice@example.com',
   scopes: ['Files.Read.All'],
-  indexing: { mail: false, tasks: false },
+  indexing: { mail: false },
 });
 
 const row = (over: Partial<DriveWatchRow> = {}): DriveWatchRow => ({

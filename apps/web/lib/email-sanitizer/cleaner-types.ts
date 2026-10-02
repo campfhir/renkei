@@ -55,11 +55,6 @@ interface CleanerEvent extends CleanerItemBase {
   isOnline: boolean;
 }
 
-/** A to-do item from Microsoft To Do or Planner. Bodies are short. */
-interface CleanerTask extends CleanerItemBase {
-  kind: 'task';
-}
-
 /**
  * Whatever this script was pointed at. Narrow on \`kind\` to reach the
  * fields that only one of them has:
@@ -69,13 +64,13 @@ interface CleanerTask extends CleanerItemBase {
  *       return item.attendees.length > 12 ? '' : item.text;
  *     }
  */
-type CleanerItem = CleanerMessage | CleanerEvent | CleanerTask;
+type CleanerItem = CleanerMessage | CleanerEvent;
 
 /**
  * Every field, whatever the kind — the shape the sandbox literally passes,
- * with the calendar fields null or empty for a message or a task.
+ * with the calendar fields null or empty for a message.
  *
- * Use \`CleanerMessage\`, \`CleanerEvent\` or \`CleanerTask\` when a script
+ * Use \`CleanerMessage\` or \`CleanerEvent\` when a script
  * handles one kind, and \`CleanerItem\` when it handles several: those say
  * what is really available and make the compiler stop you from reading an
  * attendee list off an email. This looser type stays because it is honest
@@ -83,7 +78,7 @@ type CleanerItem = CleanerMessage | CleanerEvent | CleanerTask;
  * working.
  */
 interface CleanerEmail extends CleanerItemBase {
-  kind: 'msg' | 'evt' | 'task';
+  kind: 'msg' | 'evt';
   organizer: string | null;
   attendees: string[];
   location: string | null;

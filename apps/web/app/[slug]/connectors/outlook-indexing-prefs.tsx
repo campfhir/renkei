@@ -10,11 +10,10 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
  * saves immediately and takes effect within moments (the save triggers the
  * same bootstrap a fresh connect runs).
  *
- * Mail is never indexed — it is personal. The Mail toggle only lets new
- * mail wake the person's agents through the "An email arrives" trigger;
- * agents then read the message live, as this person. Tasks (Microsoft To
- * Do) are the one Outlook category that goes into knowledge search.
- * Calendar has no toggle: it is neither indexed nor watched.
+ * Nothing in Outlook is indexed — it is all personal. The Mail toggle only
+ * lets new mail wake the person's agents through the "An email arrives"
+ * trigger; agents then read the message live, as this person. Calendar and
+ * To Do have no toggle: they are neither indexed nor watched.
  */
 
 const CATEGORIES = [
@@ -25,25 +24,15 @@ const CATEGORIES = [
       'New mail can wake your agents through the "An email arrives" trigger. Messages are read ' +
       'live as you and are never indexed.',
   },
-  {
-    key: 'tasks' as const,
-    label: 'Tasks',
-    hint: 'Microsoft To Do items, indexed into knowledge search',
-  },
 ];
 
-type Prefs = { mail: boolean; tasks: boolean };
+type Prefs = { mail: boolean };
 
-function noticeFor(key: keyof Prefs, on: boolean): string {
-  if (key === 'mail') {
-    return on
-      ? 'New mail will start waking agents with an "An email arrives" trigger within a few minutes. ' +
-          'Nothing is indexed.'
-      : 'New mail no longer wakes your agents.';
-  }
+function noticeFor(on: boolean): string {
   return on
-    ? 'Indexing starts in the background within a few minutes.'
-    : 'Indexing stopped. Already-indexed tasks stay searchable; turning it back on resumes where it left off.';
+    ? 'New mail will start waking agents with an "An email arrives" trigger within a few minutes. ' +
+        'Nothing is indexed.'
+    : 'New mail no longer wakes your agents.';
 }
 
 export default function OutlookIndexingPrefs({ tenantId }: { tenantId: string }) {
@@ -86,7 +75,7 @@ export default function OutlookIndexingPrefs({ tenantId }: { tenantId: string })
         setNotice(data.error ?? 'Could not save.');
         return;
       }
-      setNotice(noticeFor(key, on));
+      setNotice(noticeFor(on));
     } catch {
       setPrefs(prefs);
       setNotice('Could not reach the server.');

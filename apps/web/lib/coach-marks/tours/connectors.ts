@@ -350,7 +350,7 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
         title: 'What runs in the background',
         target: 'outlook-indexing',
         placement: 'auto',
-        body: 'Once connected, your mail, calendar and tasks power the tools straight away. Nothing happens in the background until you opt in here: Mail lets new mail wake your agents (it is never indexed), Tasks puts your To Do items into knowledge search.',
+        body: 'Once connected, your mail, calendar and tasks power the tools straight away, read live as you and never indexed. Nothing happens in the background until you opt in here: Mail lets new mail wake your agents.',
       },
     ],
   },
