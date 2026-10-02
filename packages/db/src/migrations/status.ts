@@ -165,6 +165,7 @@ export const EXPECTED_MIGRATIONS = [
   '133-user-encryption-keys',
   '134-user-own-keys',
   '135-drop-mail-calendar-chunks',
+  '136-delegate-git-tickets',
 ];
 
 export interface MigrationStatus {

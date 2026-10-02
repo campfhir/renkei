@@ -105,7 +105,10 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
       repoFullName: 'acme/billing-service',
       branch: 'main',
       cloneUrl: 'https://bitbucket.org/acme/billing-service.git',
-      authHeader: 'Basic e2e',
+      gitProxy: {
+        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
     }),
   });
   const { workspace }: { workspace: { id: string } } = await cloned.json();
@@ -201,7 +204,8 @@ async function mockDirtyThenCleanBranchRoute(page: Page, projectId: string): Pro
         status: 409,
         contentType: 'application/json',
         body: JSON.stringify({
-          error: 'There are uncommitted changes on the checkout. Commit or discard them before switching branches.',
+          error:
+            'There are uncommitted changes on the checkout. Commit or discard them before switching branches.',
           code: 'dirty',
         }),
       });
@@ -229,7 +233,14 @@ async function mockDirtyThenCleanBranchRoute(page: Page, projectId: string): Pro
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(import.meta.dirname, '..', 'test-results', 'screens', testInfo.project.name, name),
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      name
+    ),
     fullPage: false,
   });
 }
@@ -325,7 +336,9 @@ test.describe('branch switcher', () => {
       )
     ).toBeVisible();
     await expect(blocked.getByText(/anything not committed is lost/)).toBeVisible();
-    const discard = blocked.getByRole('button', { name: 'Discard changes and switch to feature/x' });
+    const discard = blocked.getByRole('button', {
+      name: 'Discard changes and switch to feature/x',
+    });
     await expect(discard).toBeVisible();
     await shot(page, testInfo, 'branch-switcher-dirty-modal.png');
 

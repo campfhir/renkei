@@ -24,6 +24,7 @@
  * Token ops (grants.ts): api (raw, streaming), oauth/exchange,
  * grant/commit, grant/describe, grant/revoke, grant/delete.
  * Connector workers (forward.ts): forward/<connector>/<op>.
+ * Git for code workspaces (git.ts): grant/git-ticket, and /git/<ticket>/….
  */
 
 import type { Server, ServerResponse } from 'node:http';
@@ -58,6 +59,7 @@ import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
 import { sendError } from './errors';
 import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
 import { Forwarder } from './forward';
+import { GitTickets, type GitDialer } from './git';
 
 export interface DelegateServerDeps {
   db: Kysely<DB>;
@@ -69,6 +71,8 @@ export interface DelegateServerDeps {
   fetchImpl?: typeof fetch;
   /** The worker's logger; silent when omitted (tests, in-process use). */
   logger?: DelegateLogger;
+  /** Injected in tests; production dials the git host with node's own client. */
+  gitDialer?: GitDialer;
 }
 
 /** A batch of values to seal or open; a chat's whole memory list fits many times over. */
@@ -122,6 +126,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
   const logger = deps.logger ?? silentDelegateLogger;
   const grants = new Grants(db, deps.encryptionKey, logger, deps.fetchImpl);
   const forwarder = new Forwarder(db, grants, deps.fetchImpl);
+  const git = new GitTickets(db, grants, deps.gitDialer);
 
   type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
 
@@ -310,7 +315,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'grant/describe': (body, response) => grants.describeOp(body, response),
     'grant/revoke': (body, response) => grants.revoke(body, response),
     'grant/delete': (body, response) => grants.deleteOp(body, response),
-    'grant/git-credential': (body, response) => grants.gitCredential(body, response),
+    'grant/git-ticket': (body, response) => git.issue(body, response),
   };
 
   return createJsonRpcServer({
@@ -319,6 +324,11 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     handlers,
     // The proxy streams a raw body in and the provider's answer out.
     rawHandlers: { api: (request, response) => grants.api(request, response) },
+    // Git over HTTPS for code workspaces: the ticket in the path is the
+    // credential, so these routes sit outside the bearer check (git.ts).
+    openPrefixes: [
+      { prefix: '/git/', handler: (request, response) => git.proxy(request, response) },
+    ],
     // forward/<connector>/<op>: the connector workers, with the person's
     // credential attached here (forward.ts).
     fallback: async (op, request, response) => {

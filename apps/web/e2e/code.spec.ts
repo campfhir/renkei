@@ -273,7 +273,10 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
       repoFullName: 'acme/billing-service',
       branch: 'main',
       cloneUrl: 'https://bitbucket.org/acme/billing-service.git',
-      authHeader: 'Basic e2e',
+      gitProxy: {
+        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
     }),
   });
   const { workspace }: { workspace: { id: string } } = await cloned.json();

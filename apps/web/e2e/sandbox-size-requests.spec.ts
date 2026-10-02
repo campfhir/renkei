@@ -71,7 +71,10 @@ async function seed(fixture: Fixture): Promise<void> {
       repoFullName: 'acme/monorepo',
       branch: 'main',
       cloneUrl: 'https://bitbucket.org/acme/monorepo.git',
-      authHeader: 'Basic e2e',
+      gitProxy: {
+        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
     }),
   });
   const { workspace }: { workspace: { id: string } } = await cloned.json();

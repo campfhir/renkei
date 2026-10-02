@@ -81,6 +81,15 @@ export interface ExchangeOutcome {
   hasRefreshToken: boolean;
 }
 
+/** Where a workspace's git should go instead of the host, for one operation. */
+export interface GitProxy {
+  /** `<delegate>/git/<ticket>/<host>/` — git's `url.<base>.insteadOf` target. */
+  base: string;
+  /** `https://<host>/` — what the remote URL starts with. */
+  insteadOf: string;
+  expiresAt: string;
+}
+
 export interface GrantDescription {
   provider: string;
   accountId: string;
@@ -285,24 +294,36 @@ export class DelegateGrants {
   }
 
   /**
-   * The one documented exception to "tokens never leave the delegate"
-   * (docs/delegate-key-design.md, "Phase 1 as built"): a code workspace's
-   * git over HTTPS needs a `Basic` header the sandbox worker can present
-   * to GitHub or Bitbucket. Only those two providers; the delegate logs
-   * every issue. To be replaced by a git proxy with short-lived tickets.
+   * A ticket for git over HTTPS through the delegate: the sandbox worker's
+   * git is pointed at `base` in place of `insteadOf` for one clone, pull or
+   * push, and the delegate attaches the person's token on the way to the
+   * host. No token reaches the sandbox. `base` is built from
+   * DELEGATE_GIT_URL (the delegate's address as the sandbox worker reaches
+   * it), else DELEGATE_WORKER_URL.
    */
-  async gitCredential(input: {
+  async gitTicket(input: {
     tenantId: string;
     provider: string;
     subject: string;
-  }): Promise<Result<{ authHeader: string; login: string | null }, GrantOpError>> {
-    const answer = await this.transport.call('grant/git-credential', { ...input });
+    write: boolean;
+  }): Promise<Result<GitProxy, GrantOpError>> {
+    const answer = await this.transport.call('grant/git-ticket', { ...input });
     if (!answer.ok) return err(grantOpError(answer.err.type));
-    if (typeof answer.val.authHeader !== 'string') return err('DELEGATE_ERROR');
-    return ok({
-      authHeader: answer.val.authHeader,
-      login: typeof answer.val.login === 'string' ? answer.val.login : null,
-    });
+    const ticket = answer.val.ticket;
+    const host = answer.val.host;
+    const insteadOf = answer.val.insteadOf;
+    const expiresAt = answer.val.expiresAt;
+    if (
+      typeof ticket !== 'string' ||
+      typeof host !== 'string' ||
+      typeof insteadOf !== 'string' ||
+      typeof expiresAt !== 'string'
+    ) {
+      return err('DELEGATE_ERROR');
+    }
+    const origin = (process.env.DELEGATE_GIT_URL?.trim() || this.url || '').replace(/\/+$/, '');
+    if (!origin) return err('DELEGATE_UNCONFIGURED');
+    return ok({ base: `${origin}/git/${ticket}/${host}/`, insteadOf, expiresAt });
   }
 }
 

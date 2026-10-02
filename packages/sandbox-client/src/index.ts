@@ -720,10 +720,22 @@ async function workspaceCall(
 /**
  * Start a clone. The worker answers at once with the row in `cloning`;
  * the clone itself runs on the worker, and `sbWorkspaceGet`/`sbWorkspaceList`
- * report when it is `ready` (or `failed`, with why). `authHeader` is the
- * git Authorization header for the one clone — built by the caller from
- * the person's own grant, forwarded once, kept nowhere.
+ * report when it is `ready` (or `failed`, with why). `gitProxy` is where
+ * git goes instead of the host for the one clone — a delegate ticket the
+ * web app asked for on the person's behalf; the sandbox holds no
+ * credential (docs/delegate-key-design.md).
  */
+/**
+ * Where a workspace's git goes instead of its host for one operation: the
+ * delegate's git proxy, `url.<base>.insteadOf = <insteadOf>` in git's
+ * terms (docs/delegate-key-design.md). The worker sets exactly that for
+ * the one git process and keeps nothing.
+ */
+export interface GitProxy {
+  base: string;
+  insteadOf: string;
+}
+
 export async function sbWorkspaceClone(
   target: SandboxTarget,
   input: {
@@ -732,7 +744,7 @@ export async function sbWorkspaceClone(
     branch?: string;
     depth?: number;
     cloneUrl: string;
-    authHeader: string;
+    gitProxy: GitProxy;
   }
 ): Promise<ClientResult<WireWorkspace>> {
   const result = await workspaceCall('clone', target, input);
@@ -1252,7 +1264,7 @@ export async function sbWorkspaceGitCommit(
 
 export async function sbWorkspaceGitPush(
   target: SandboxTarget,
-  input: { id: string; authHeader: string; branch?: string }
+  input: { id: string; gitProxy: GitProxy; branch?: string }
 ): Promise<ClientResult<{ branch: string; remoteBranch: string; output: string }>> {
   const result = await workspaceCall('git-push', target, input);
   if (!result.ok) return result;
@@ -1270,7 +1282,7 @@ export async function sbWorkspaceGitPush(
 
 export async function sbWorkspaceGitPull(
   target: SandboxTarget,
-  input: { id: string; authHeader: string; branch?: string }
+  input: { id: string; gitProxy: GitProxy; branch?: string }
 ): Promise<ClientResult<{ branch: string; output: string }>> {
   const result = await workspaceCall('git-pull', target, input);
   if (!result.ok) return result;

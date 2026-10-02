@@ -379,6 +379,7 @@ export {
   type AuthedFetch,
   type DelegateFetchOptions,
   type ExchangeOutcome,
+  type GitProxy,
   type GrantDescription,
   type GrantOpError,
   type GrantRef,

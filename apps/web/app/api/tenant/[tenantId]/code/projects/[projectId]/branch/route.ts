@@ -27,7 +27,7 @@ import { codeProjectTarget } from '@/lib/code/scope';
 import { hostAdapterFor } from '@/lib/code/repo-host';
 import { getActiveTurn } from '@/lib/chat/turns';
 import { getOrigin } from '@/lib/get-origin';
-import { resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
@@ -44,7 +44,8 @@ export async function GET(
     subject: session.subject,
     origin: origin.ok ? origin.val : '',
   });
-  if (!adapter) return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
+  if (!adapter)
+    return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
   const listed = await adapter.listBranches(project.repo!.fullName);
   if (!listed.ok) return jsonError(502, 'host', listed.error);
   return NextResponse.json({ branches: listed.branches });
@@ -93,7 +94,7 @@ export async function POST(
   }
 
   const origin = await getOrigin(request);
-  const credential = await resolveWorkspaceGitCredential(
+  const credential = await resolveWorkspaceGitAccess(
     {
       tenantId,
       subject: session.subject,
@@ -105,7 +106,7 @@ export async function POST(
   if (typeof credential === 'string') return jsonError(409, 'git-credential', credential);
   const pulled = await sbWorkspaceGitPull(target, {
     id: project.workspaceId,
-    authHeader: credential.authHeader,
+    gitProxy: credential.gitProxy,
     branch: ref.ref,
   });
   if (!pulled.ok) {

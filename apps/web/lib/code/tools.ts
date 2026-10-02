@@ -65,7 +65,7 @@ import {
 import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
 import type { McpToolResult } from '@renkei/mcp-client';
 import { GITHUB } from '@renkei/provider-grants';
-import { commitAuthorFor, resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { commitAuthorFor, resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { codeDelegateTool, type SubagentModelChoice } from './delegate';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
 
@@ -902,7 +902,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         const paths = Array.isArray(input.paths)
           ? input.paths.filter((entry): entry is string => typeof entry === 'string')
           : [];
-        const credential = await resolveWorkspaceGitCredential(
+        const credential = await resolveWorkspaceGitAccess(
           {
             tenantId: context.tenantId,
             subject: context.subject,
@@ -947,7 +947,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       },
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
-        const credential = await resolveWorkspaceGitCredential(
+        const credential = await resolveWorkspaceGitAccess(
           {
             tenantId: context.tenantId,
             subject: context.subject,
@@ -959,7 +959,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         if (typeof credential === 'string') return errorResult(credential);
         const pushed = await sbWorkspaceGitPush(target, {
           id: workspaceId,
-          authHeader: credential.authHeader,
+          gitProxy: credential.gitProxy,
           ...(str(input.branch) ? { branch: str(input.branch) } : {}),
         });
         if (!pushed.ok) return failed(pushed.err);
@@ -990,7 +990,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       },
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
-        const credential = await resolveWorkspaceGitCredential(
+        const credential = await resolveWorkspaceGitAccess(
           {
             tenantId: context.tenantId,
             subject: context.subject,
@@ -1002,7 +1002,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         if (typeof credential === 'string') return errorResult(credential);
         const pulled = await sbWorkspaceGitPull(target, {
           id: workspaceId,
-          authHeader: credential.authHeader,
+          gitProxy: credential.gitProxy,
           ...(str(input.branch) ? { branch: str(input.branch) } : {}),
         });
         if (!pulled.ok) return failed(pulled.err);

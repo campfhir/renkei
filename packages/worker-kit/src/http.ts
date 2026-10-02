@@ -101,6 +101,13 @@ export interface CreateJsonRpcServerOptions {
    * itself when the op is not one of its own.
    */
   fallback?: (op: string, request: IncomingMessage, response: ServerResponse) => Promise<void>;
+  /**
+   * Paths served BEFORE the bearer check, any method: for a route that
+   * carries its own credential in the path (the delegate's git proxy, whose
+   * tickets are single-grant and short-lived). The handler owns the whole
+   * request; nothing else on the server is reachable this way.
+   */
+  openPrefixes?: readonly { prefix: string; handler: RawHandler }[];
   /** The connector's own sendError — typed to its own (wider) WorkerErrorType,
    *  which is always assignable here since it can handle every generic tag
    *  this function ever passes plus its own domain-specific ones. */
@@ -124,6 +131,8 @@ export function createJsonRpcServer(options: CreateJsonRpcServerOptions): Server
     if (request.method === 'GET' && url.pathname === '/health') {
       return sendJson(response, 200, { ok: true });
     }
+    const open = options.openPrefixes?.find((entry) => url.pathname.startsWith(entry.prefix));
+    if (open) return open.handler(request, response);
     if (!authorized(request, options.apiKeys)) {
       return options.sendError(response, 'unauthorized');
     }

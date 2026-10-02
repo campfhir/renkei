@@ -31,7 +31,7 @@ import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools'
 import { listChatModels } from '@/lib/chat/models';
 import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import type { PreludeStep, TurnLimits } from '@/lib/chat/turn-runner';
-import { resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { startProjectClone } from './projects';
 import { codeProjectTarget } from './scope';
 import { codeTools, type CheckoutRecovery } from './tools';
@@ -93,7 +93,7 @@ async function recoverCheckout(
   let how: 'cloned' | 'adopted' = 'adopted';
   if (!current || current.status === 'failed') {
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
-    const credential = await resolveWorkspaceGitCredential(
+    const credential = await resolveWorkspaceGitAccess(
       {
         tenantId: project.tenantId,
         subject: actor.subject,
@@ -188,7 +188,7 @@ export async function codeProjectContext(
   let clonedNow = false;
   if (!workspace || workspace.status === 'failed') {
     const origin = actor.origin ?? getPublicBaseUrl() ?? '';
-    const credential = await resolveWorkspaceGitCredential(
+    const credential = await resolveWorkspaceGitAccess(
       {
         tenantId: project.tenantId,
         subject: actor.subject,

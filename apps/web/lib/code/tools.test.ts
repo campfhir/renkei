@@ -34,7 +34,7 @@ jest.mock('@renkei/sandbox-client', () => ({
 }));
 
 jest.mock('@/lib/sandbox/workspace-git', () => ({
-  resolveWorkspaceGitCredential: jest.fn(),
+  resolveWorkspaceGitAccess: jest.fn(),
   commitAuthorFor: (username: string, email?: string) => ({
     name: username,
     email: email ?? 'x@y',
@@ -474,17 +474,19 @@ describe('files', () => {
 });
 
 describe('git', () => {
-  it('pushes with the person’s own write credential and never echoes it', async () => {
-    git.resolveWorkspaceGitCredential.mockResolvedValue({
-      authHeader: 'Basic c2VjcmV0',
-      username: 'alice',
-    });
+  it('pushes through the person’s own write ticket and never echoes it', async () => {
+    const gitProxy = {
+      base: 'http://delegate:8096/git/ticket-c2VjcmV0/bitbucket.org/',
+      insteadOf: 'https://bitbucket.org/',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+    };
+    git.resolveWorkspaceGitAccess.mockResolvedValue({ gitProxy, username: 'alice' });
     client.sbWorkspaceGitPush.mockResolvedValue({
       ok: true,
       val: { branch: 'fix', remoteBranch: 'fix', output: '' },
     });
     const result = await tools().get('code_git_push')!.execute({}, context);
-    expect(git.resolveWorkspaceGitCredential).toHaveBeenCalledWith(
+    expect(git.resolveWorkspaceGitAccess).toHaveBeenCalledWith(
       {
         tenantId: 'tenant-1',
         subject: 'auth0|alice',
@@ -493,17 +495,18 @@ describe('git', () => {
       },
       { write: true }
     );
-    expect(client.sbWorkspaceGitPush).toHaveBeenCalledWith(TARGET, {
-      id: WS_ID,
-      authHeader: 'Basic c2VjcmV0',
-    });
+    expect(client.sbWorkspaceGitPush).toHaveBeenCalledWith(TARGET, { id: WS_ID, gitProxy });
     expect(result.content[0].type === 'text' && result.content[0].text).not.toContain('c2VjcmV0');
     expect(result.content[0].type === 'text' && result.content[0].text).toContain('acme/demo');
   });
 
   it('commits as the person, on a new branch when asked', async () => {
-    git.resolveWorkspaceGitCredential.mockResolvedValue({
-      authHeader: 'Basic r',
+    git.resolveWorkspaceGitAccess.mockResolvedValue({
+      gitProxy: {
+        base: 'http://delegate:8096/git/ticket-r/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+        expiresAt: '2030-01-01T00:00:00.000Z',
+      },
       username: 'alice',
     });
     client.sbWorkspaceGitCommit.mockResolvedValue({
@@ -523,7 +526,7 @@ describe('git', () => {
   });
 
   it('refuses a push the grant cannot cover', async () => {
-    git.resolveWorkspaceGitCredential.mockResolvedValue('Bitbucket is not connected.');
+    git.resolveWorkspaceGitAccess.mockResolvedValue('Bitbucket is not connected.');
     const result = await tools().get('code_git_push')!.execute({}, context);
     expect(result.isError).toBe(true);
     expect(client.sbWorkspaceGitPush).not.toHaveBeenCalled();

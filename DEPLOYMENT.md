@@ -38,6 +38,11 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 # tokens and the connector workers (compose wires the service name).
 # DELEGATE_WORKER_URL=http://renkei-worker-delegate:8096
 # DELEGATE_WORKER_API_KEY=<shared bearer key>
+# A code workspace's git goes through the delegate's /git/<ticket>/… proxy
+# (no bearer key; the short-lived ticket is the credential). The web app
+# builds that proxy URL from DELEGATE_WORKER_URL; set this only when the
+# sandbox worker reaches the delegate at a different address.
+# DELEGATE_GIT_URL=http://renkei-worker-delegate:8096
 
 # Database
 DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db
@@ -203,7 +208,14 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   (the `api` proxy attaches it; `oauth/exchange` trades a code for one
   without the app ever seeing it), and forwards Mirth, ADManager Plus,
   file-share and OnBase operations to their workers with the person's
-  credential attached. The app and every other worker reach it at
+  credential attached. A code workspace's git (clone, pull, push) runs
+  through its smart-HTTP proxy at `/git/<ticket>/<host>/…`: the app asks
+  for a fifteen-minute ticket (`grant/git-ticket`), the sandbox worker's
+  git dials the delegate with it, and the delegate attaches the person's
+  GitHub or Bitbucket token on the way out, so the sandbox never holds a
+  token. The sandbox must be able to reach the delegate; when it does so
+  at an address other than `DELEGATE_WORKER_URL`, set `DELEGATE_GIT_URL`
+  on the app. The app and every other worker reach it at
   `DELEGATE_WORKER_URL` with `DELEGATE_WORKER_API_KEY` (listen port
   `DELEGATE_WORKER_PORT`, default 8096). It also needs
   `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in connector config),

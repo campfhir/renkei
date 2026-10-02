@@ -15,7 +15,9 @@ import { parseEncryptionKey } from '@renkei/crypto';
 import { setGrant, GITHUB } from '@renkei/provider-grants';
 import { createInstance, upsertConnection } from '@renkei/connector-mirth';
 import { sealForSubject } from '@renkei/user-keys';
+import { Readable } from 'node:stream';
 import { createDelegateServer } from './server';
+import type { GitDialer } from './git';
 
 process.env.USER_KEY_ENCRYPTION_KEY ||= process.env.TOKEN_ENCRYPTION_KEY;
 
@@ -43,6 +45,8 @@ describeDb('worker-delegate', () => {
     method: string;
     body: string;
   }[] = [];
+  const gitCalls: { url: string; method: string; headers: Record<string, string>; body: string }[] =
+    [];
 
   beforeAll(async () => {
     const db = getDatabase();
@@ -75,11 +79,31 @@ describeDb('worker-delegate', () => {
         },
       });
     };
+    const gitDialer: GitDialer = async (target, init) => {
+      const chunks: Buffer[] = [];
+      if (init.body) for await (const chunk of init.body) chunks.push(Buffer.from(chunk));
+      gitCalls.push({
+        url: target.toString(),
+        method: init.method,
+        headers: init.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      });
+      return {
+        status: 200,
+        headers: {
+          'content-type': 'application/x-git-upload-pack-advertisement',
+          'transfer-encoding': 'chunked',
+          'x-git-upstream': 'yes',
+        },
+        body: Readable.from([Buffer.from('001e# service=git-upload-pack\n0000')]),
+      };
+    };
     server = createDelegateServer({
       db: db.val,
       encryptionKey: key.val,
       apiKeys: [API_KEY],
       fetchImpl,
+      gitDialer,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -92,6 +116,7 @@ describeDb('worker-delegate', () => {
     const db = getDatabase();
     if (db.ok) {
       await db.val.deleteFrom('provider_grants').where('tenant_id', '=', tenantId).execute();
+      await db.val.deleteFrom('delegate_git_tickets').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('resource_keys').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('user_encryption_keys').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('tenants').where('id', '=', tenantId).execute();
@@ -246,6 +271,121 @@ describeDb('worker-delegate', () => {
 
     expect((await op('grant/delete', { tenantId, provider: GITHUB, accountId })).status).toBe(200);
     expect((await op('grant/describe', grant)).status).toBe(404);
+  });
+
+  it('relays a workspace git exchange on a ticket with the token attached, and never a write on a read ticket', async () => {
+    const accountId = `gh-${randomUUID().slice(0, 8)}`;
+    const saved = await setGrant(GITHUB, tenantId, {
+      accountId,
+      clientId: 'client',
+      displayName: 'Octo',
+      accessToken: 'gho_git_secret',
+      refreshToken: 'ghr_secret',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      requestedScopes: ['repo'],
+      grantedScopes: null,
+      metadata: { login: 'octo' },
+      subject: owner,
+    });
+    expect(saved.ok).toBe(true);
+
+    // Nobody but GitHub and Bitbucket; nobody without a grant.
+    expect(
+      errorType(
+        (await op('grant/git-ticket', { tenantId, provider: 'webex', subject: owner })).json
+      )
+    ).toBe('host_not_allowed');
+    expect(
+      (await op('grant/git-ticket', { tenantId, provider: GITHUB, subject: friend })).status
+    ).toBe(404);
+
+    const read = await op('grant/git-ticket', { tenantId, provider: GITHUB, subject: owner });
+    expect(read.status).toBe(200);
+    expect(read.json.host).toBe('github.com');
+    expect(read.json.insteadOf).toBe('https://github.com/');
+    const ticket = typeof read.json.ticket === 'string' ? read.json.ticket : '';
+    expect(ticket).toMatch(/^[0-9a-f-]{36}\.[0-9a-f]{48}$/);
+    expect(JSON.stringify(read.json)).not.toContain('gho_git_secret');
+
+    // The route takes no bearer key: the ticket is the credential.
+    const refs = await fetch(
+      `${base}/git/${ticket}/github.com/acme/demo.git/info/refs?service=git-upload-pack`,
+      { headers: { 'git-protocol': 'version=2', authorization: 'Basic forged' } }
+    );
+    expect(refs.status).toBe(200);
+    expect(refs.headers.get('x-git-upstream')).toBe('yes');
+    expect(await refs.text()).toContain('# service=git-upload-pack');
+    const advertised = gitCalls.at(-1);
+    expect(advertised?.url).toBe(
+      'https://github.com/acme/demo.git/info/refs?service=git-upload-pack'
+    );
+    expect(advertised?.method).toBe('GET');
+    expect(advertised?.headers.authorization).toBe(
+      `Basic ${Buffer.from('x-access-token:gho_git_secret').toString('base64')}`
+    );
+    expect(advertised?.headers['git-protocol']).toBe('version=2');
+    expect(advertised?.headers.host).toBeUndefined();
+
+    const fetchPack = await fetch(
+      `${base}/git/${ticket}/github.com/acme/demo.git/git-upload-pack`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-git-upload-pack-request' },
+        body: '0032want deadbeef',
+      }
+    );
+    expect(fetchPack.status).toBe(200);
+    expect(gitCalls.at(-1)?.body).toBe('0032want deadbeef');
+
+    // A read ticket stops at receive-pack, before anything is dialed.
+    const dialed = gitCalls.length;
+    const pushRefs = await fetch(
+      `${base}/git/${ticket}/github.com/acme/demo.git/info/refs?service=git-receive-pack`
+    );
+    expect(pushRefs.status).toBe(403);
+    const push = await fetch(`${base}/git/${ticket}/github.com/acme/demo.git/git-receive-pack`, {
+      method: 'POST',
+      body: '0000',
+    });
+    expect(push.status).toBe(403);
+    expect(errorType(Object(await push.json()))).toBe('read_only_ticket');
+    expect(gitCalls.length).toBe(dialed);
+
+    // The ticket is good for its host, nothing else, and not for a guessed secret.
+    expect(
+      (
+        await fetch(
+          `${base}/git/${ticket}/bitbucket.org/acme/demo.git/info/refs?service=git-upload-pack`
+        )
+      ).status
+    ).toBe(404);
+    const [id] = ticket.split('.');
+    expect(
+      (
+        await fetch(
+          `${base}/git/${id}.${'0'.repeat(48)}/github.com/acme/demo.git/info/refs?service=git-upload-pack`
+        )
+      ).status
+    ).toBe(404);
+    expect((await fetch(`${base}/git/${ticket}/github.com/acme/demo.git/HEAD`)).status).toBe(404);
+    expect(gitCalls.length).toBe(dialed);
+
+    // A write ticket pushes.
+    const write = await op('grant/git-ticket', {
+      tenantId,
+      provider: GITHUB,
+      subject: owner,
+      write: true,
+    });
+    const writeTicket = typeof write.json.ticket === 'string' ? write.json.ticket : '';
+    const pushed = await fetch(
+      `${base}/git/${writeTicket}/github.com/acme/demo.git/git-receive-pack`,
+      { method: 'POST', body: '0000' }
+    );
+    expect(pushed.status).toBe(200);
+    expect(gitCalls.at(-1)?.url).toBe('https://github.com/acme/demo.git/git-receive-pack');
+
+    expect((await op('grant/delete', { tenantId, provider: GITHUB, accountId })).status).toBe(200);
   });
 
   it("forwards a Mirth op to its worker with the person's credential attached, never a stored one", async () => {

@@ -693,7 +693,10 @@ function handleWorkspaces(op, body, response) {
   const scope = scopeOf(body);
   switch (op) {
     case 'clone': {
-      if (!/^https:\/\/bitbucket\.org\/.+\.git$/.test(body.cloneUrl ?? '') || !body.authHeader) {
+      if (
+        !/^https:\/\/(bitbucket\.org|github\.com)\/.+\.git$/.test(body.cloneUrl ?? '') ||
+        !body.gitProxy?.base
+      ) {
         return error(response, 400, 'bad_request');
       }
       const now = new Date();
@@ -891,7 +894,7 @@ function handleWorkspaces(op, body, response) {
     case 'git-push': {
       const workspace = scope.workspaces.get(body.id ?? '');
       if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
-      if (!body.authHeader) return error(response, 400, 'bad_request');
+      if (!body.gitProxy?.base) return error(response, 400, 'bad_request');
       const remoteBranch = body.branch || workspace.branch;
       return json(response, 200, {
         branch: workspace.branch,

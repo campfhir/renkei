@@ -721,7 +721,10 @@ describe('env verbs', () => {
       provider: 'atlassian-bitbucket',
       repoFullName: 'acme/demo',
       cloneUrl: 'file:///etc',
-      authHeader: 'Basic x',
+      gitProxy: {
+        base: 'http://127.0.0.1:8096/git/t/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
     });
     expect(result.status).toBe(400);
     expect(workspaceStore.insertWorkspace).not.toHaveBeenCalled();

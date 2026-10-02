@@ -1331,6 +1331,18 @@ export interface SandboxServices {
   tenant_id: string;
 }
 
+export interface DelegateGitTickets {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  host: string;
+  id: string;
+  provider: string;
+  secret_hash: string;
+  subject: string;
+  tenant_id: string;
+  write: Generated<boolean>;
+}
+
 export interface SandboxWorkspaces {
   branch: string;
   created_at: Generated<Timestamp>;
@@ -1545,6 +1557,7 @@ export interface DB {
   chat_user_memories: ChatUserMemories;
   chat_widget_decisions: ChatWidgetDecisions;
   chats: Chats;
+  delegate_git_tickets: DelegateGitTickets;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;
   code_project_templates: CodeProjectTemplates;

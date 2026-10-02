@@ -271,7 +271,9 @@ services:
   # unwraps a chat's or project's data key, and opens a person's sealed
   # values, on behalf of the app and the other workers, which reach it via
   # DELEGATE_WORKER_URL with the shared DELEGATE_WORKER_API_KEY and hold no
-  # such key themselves.
+  # such key themselves. It also holds every provider token and relays a
+  # code workspace's git for the sandbox worker (/git/<ticket>/…), which
+  # reaches it by the same service name on this network.
   worker-delegate:
     build:
       context: .
