@@ -15,6 +15,7 @@ import { getDatabase } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { deleteGraphSubscription, listGraphSubscriptions } from '@renkei/connector-microsoft';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { logger } from '../logger';
@@ -38,10 +39,10 @@ async function reapOrphanedGraphSubscriptions(
   db: Kysely<DB>,
   tenantId: string,
   accountId: string,
-  accessToken: string,
+  auth: AuthedFetch,
   baseUrl: string
 ): Promise<void> {
-  const listed = await listGraphSubscriptions(accessToken);
+  const listed = await listGraphSubscriptions(auth);
   if (!listed.ok) {
     logger.warn('could not list Graph subscriptions to reconcile: {message}', {
       component: COMPONENT,
@@ -69,7 +70,7 @@ async function reapOrphanedGraphSubscriptions(
     const url = subscription.notificationUrl ?? '';
     if (!url.startsWith(baseUrl) || !url.includes(`/${tenantId}/${accountId}`)) continue;
 
-    const deleted = await deleteGraphSubscription(accessToken, subscription.id);
+    const deleted = await deleteGraphSubscription(auth, subscription.id);
     logger.warn('deleted orphaned Graph subscription {subscriptionId} (no row here)', {
       component: COMPONENT,
       tenantId,
@@ -146,7 +147,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
       // one Entra app registration is commonly shared by several
       // deployments, and a dev box reaping by table-absence alone would
       // happily delete production's subscriptions.
-      await reapOrphanedGraphSubscriptions(db, tenantId, accountId, access.accessToken, baseUrl);
+      await reapOrphanedGraphSubscriptions(db, tenantId, accountId, access.auth, baseUrl);
 
       const staleBefore = Date.now() - STALE_SYNC_MS;
       const stale = await db

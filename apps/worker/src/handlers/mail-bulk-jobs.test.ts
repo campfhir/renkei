@@ -30,6 +30,10 @@ jest.mock('../logger', () => ({
 
 import { createMailBulkJobHandler, MAX_JOB_MESSAGES } from './mail-bulk-jobs';
 import type { ClaimedEvent } from '../queue';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'microsoft:tenant-1:acct-1');
 
 const { getDatabase: getDatabaseMock } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { graphBatch: graphBatchMock, graphRequest: graphRequestMock } = jest.requireMock<{
@@ -100,7 +104,7 @@ beforeEach(() => {
   jobRow = undefined;
   getDatabaseMock.mockReturnValue({ ok: true, val: fakeDb() });
   resolveAccessMock.mockResolvedValue({
-    accessToken: 'token',
+    auth,
     accountId: 'acct-1',
     upn: 'u',
     scopes: [],

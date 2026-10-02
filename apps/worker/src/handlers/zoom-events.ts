@@ -6,7 +6,7 @@
  * is always re-fetched from the API under the HOST's own grant, never
  * trusted from the delivery and never fetched with a shared credential.
  * The payload's download_token is deliberately unused: the transcript
- * endpoint hands back a download_url our Bearer token authorizes.
+ * endpoint hands back a download_url the host's grant authorizes.
  *
  * refIds are `${hostEmail}/${uuid}/transcript` and `.../summary` — distinct
  * bases so re-ingesting one never clears the other's chunks, both owned by
@@ -75,7 +75,7 @@ export function createZoomTranscriptHandler(
       return 'skipped';
     }
 
-    const client = new ZoomClient(access.accessToken);
+    const client = new ZoomClient(access.auth);
     // The uuid names the exact occurrence; the transcript endpoint accepts it.
     const transcript = await client.getMeetingTranscript(facts.meetingUuid);
     if (!transcript.ok) {
@@ -193,7 +193,7 @@ export function createZoomSummaryHandler(
     }
 
     if (!facts.meetingId) throw new Error('summary event carries no meeting id');
-    const client = new ZoomClient(access.accessToken);
+    const client = new ZoomClient(access.auth);
     const summary = await client.getMeetingSummary(facts.meetingId);
     if (!summary.ok) {
       throw new Error(

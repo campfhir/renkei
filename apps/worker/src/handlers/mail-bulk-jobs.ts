@@ -28,6 +28,7 @@ import {
   type BatchResultItem,
   type MailSearchFilters,
 } from '@renkei/connector-microsoft';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
 import { logger } from '../logger';
@@ -64,7 +65,7 @@ function strings(value: unknown): string[] {
 
 /** The selection's message ids — explicit, or expanded from filters via Graph. */
 async function expandSelection(
-  accessToken: string,
+  auth: AuthedFetch,
   selection: Record<string, unknown>
 ): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
   const explicit = strings(selection.messageIds);
@@ -104,7 +105,7 @@ async function expandSelection(
     select: clientSideSelect(filters, 'id,subject'),
   });
   for (let page = 0; page < EXPANSION_PAGE_BUDGET && next && ids.length < maxMessages; page += 1) {
-    const result = await graphRequest(accessToken, next, { lane: 'background' });
+    const result = await graphRequest(auth, next, { lane: 'background' });
     if (!result.ok) {
       return { ok: false, error: str(result.err.message) || 'Graph API error during selection' };
     }
@@ -245,7 +246,7 @@ export function createMailBulkJobHandler(): EventHandler {
       const access = await resolveMicrosoftAccess(tenantId, job.account_id);
 
       const selection = isRecord(job.selection) ? job.selection : {};
-      const expanded = await expandSelection(access.accessToken, selection);
+      const expanded = await expandSelection(access.auth, selection);
       if (!expanded.ok) {
         await fail(expanded.error);
         return;
@@ -304,7 +305,7 @@ export function createMailBulkJobHandler(): EventHandler {
           categoriesFor = () => replace;
         } else {
           const readBatch = await graphBatch(
-            access.accessToken,
+            access.auth,
             ids.map((id) => ({
               id,
               method: 'GET' as const,
@@ -318,7 +319,7 @@ export function createMailBulkJobHandler(): EventHandler {
           }
           categoriesFor = (id) => withCategoryChanges(existingById.get(id) ?? [], add, remove);
         }
-        await graphBatch(access.accessToken, requestsFor(action, params, ids, categoriesFor), {
+        await graphBatch(access.auth, requestsFor(action, params, ids, categoriesFor), {
           lane: 'background',
           onChunk: record,
         });
@@ -328,7 +329,7 @@ export function createMailBulkJobHandler(): EventHandler {
         // so marking afterwards would need the post-move ids. A message
         // whose mark fails counts as failed and is not moved.
         const markBatch = await graphBatch(
-          access.accessToken,
+          access.auth,
           requestsFor('markRead', { isRead: true }, ids),
           { lane: 'background' }
         );
@@ -342,7 +343,7 @@ export function createMailBulkJobHandler(): EventHandler {
             }
           }
         }
-        await graphBatch(access.accessToken, requestsFor('archive', params, readyToMove), {
+        await graphBatch(access.auth, requestsFor('archive', params, readyToMove), {
           lane: 'background',
           onChunk: record,
         });
@@ -352,7 +353,7 @@ export function createMailBulkJobHandler(): EventHandler {
           await fail(`Unknown action "${action}".`);
           return;
         }
-        await graphBatch(access.accessToken, requests, { lane: 'background', onChunk: record });
+        await graphBatch(access.auth, requests, { lane: 'background', onChunk: record });
       }
 
       await db

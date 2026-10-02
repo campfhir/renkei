@@ -11,23 +11,21 @@
  * identity with no webex-user grant means an account that simply has not
  * connected WebEx yet — ambient capture still runs, just without the
  * cross-space forwarded-message search in webex-forward-context.ts.
+ *
+ * The worker holds no token (docs/delegate-key-design.md, "Phase 1 as
+ * built"): each resolver hands back the grant's fetcher, and the delegate
+ * behind it attaches the credential and refreshes it when due.
  */
 
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { readConnectorConfigCached } from '@renkei/connector-config';
 import {
-  getGrant,
-  refreshGrantTokens,
-  WEBEX_USER,
-  WebexUserAdapter,
-} from '@renkei/provider-grants';
+  delegateGrants,
+  grantFetch,
+  type AuthedFetch,
+  type GrantRef,
+} from '@renkei/delegate-client';
+import { WEBEX_USER } from '@renkei/provider-grants';
 import { logger } from '../logger';
-
-/** The webex-user connector key — see apps/web/lib/webex-app.ts. */
-const WEBEX_USER_CONNECTOR = 'webex-user';
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
 /**
  * Does this tenant have a recorded Renkei identity for this email — has this
@@ -48,28 +46,19 @@ export async function hasLinkedIdentity(tenantId: string, email: string): Promis
 }
 
 export interface LinkedWebexUserAccess {
-  accessToken: string;
+  /** The sender's grant fetcher; the delegate behind it supplies the credential. */
+  auth: AuthedFetch;
 }
 
 /**
- * The sender's own WebEx OAuth access token, or null when they have not
- * connected WebEx, the platform-level integration is unconfigured, or the
- * refresh failed. Always best-effort: the cross-space search this feeds is
- * an enrichment, never a reason to fail the event.
+ * The sender's own WebEx access, or null when they have not connected
+ * WebEx or their grant cannot be read. Always best-effort: the cross-space
+ * search this feeds is an enrichment, never a reason to fail the event.
  */
 export async function resolveLinkedWebexUserAccess(
   tenantId: string,
   email: string
 ): Promise<LinkedWebexUserAccess | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.warn('TOKEN_ENCRYPTION_KEY is missing or malformed; skipping cross-space search', {
-      component: 'webex/forward-context',
-      tenantId,
-    });
-    return null;
-  }
-
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     logger.warn('database unavailable; skipping cross-space search', {
@@ -104,133 +93,60 @@ export async function resolveLinkedWebexUserAccess(
     return null;
   }
 
-  const grantResult = await getGrant(WEBEX_USER, tenantId, row.provider_account_id);
-  if (!grantResult.ok || !grantResult.val) {
+  const grant: GrantRef = { tenantId, provider: WEBEX_USER, accountId: row.provider_account_id };
+  const described = await delegateGrants().describe(grant);
+  if (!described.ok) {
     logger.warn('webex-user grant row exists but could not be read: {error}', {
       component: 'webex/forward-context',
       tenantId,
       email,
-      error: grantResult.ok ? 'grant not found' : grantResult.err,
+      error: described.err.type,
     });
     return null;
   }
-  let grant = grantResult.val;
 
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    logger.debug('sender’s webex-user token is near expiry; refreshing', {
-      component: 'webex/forward-context',
-      tenantId,
-      email,
-    });
-    const configResult = await readConnectorConfigCached(
-      tenantId,
-      WEBEX_USER_CONNECTOR,
-      keyResult.val
-    );
-    const clientSecret = configResult.ok ? configResult.val?.secrets.clientSecret : undefined;
-    if (!clientSecret) {
-      logger.warn('webex-user connector has no clientSecret; skipping cross-space search', {
-        component: 'webex/forward-context',
-        tenantId,
-      });
-      return null;
-    }
-
-    const refreshed = await refreshGrantTokens(
-      new WebexUserAdapter(clientSecret),
-      tenantId,
-      grant.accountId,
-      logger
-    );
-    if (!refreshed.ok) {
-      logger.warn('could not refresh sender’s webex grant; skipping cross-space search', {
-        component: 'webex/forward-context',
-        tenantId,
-      });
-      return null;
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  return { accessToken: grant.accessToken };
+  return { auth: grantFetch(grant) };
 }
 
 export interface WebexUserGrantAccess {
-  accessToken: string;
+  /** The grant's fetcher; the delegate behind it supplies the credential. */
+  auth: AuthedFetch;
   subject: string;
   /** The WebEx address the grant recorded — how the org bot addresses this person. */
   personEmail: string | null;
 }
 
+/** The grant the ref names, as the handlers act with it; null when it has no subject or cannot be read. */
+async function resolveWebexUserAccess(ref: GrantRef): Promise<WebexUserGrantAccess | null> {
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) return null;
+  const grant = described.val;
+  if (!grant.subject) return null;
+  return {
+    auth: grantFetch({ tenantId: ref.tenantId, provider: WEBEX_USER, accountId: grant.accountId }),
+    subject: grant.subject,
+    personEmail: typeof grant.metadata.personEmail === 'string' ? grant.metadata.personEmail : null,
+  };
+}
+
 /**
  * A grant's own access by ACCOUNT id — how the all-spaces webhook handler
- * turns a delivery back into "whose webhook, acting with whose token".
- * Same refresh path as the by-email resolver above.
+ * turns a delivery back into "whose webhook, acting with whose grant".
  */
-export async function resolveWebexUserAccessByAccount(
+export function resolveWebexUserAccessByAccount(
   tenantId: string,
   accountId: string
 ): Promise<WebexUserGrantAccess | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return null;
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('subject')
-    .where('tenant_id', '=', tenantId)
-    .where('provider', '=', WEBEX_USER)
-    .where('provider_account_id', '=', accountId)
-    .executeTakeFirst();
-  if (!row?.subject) return null;
-
-  const grantResult = await getGrant(WEBEX_USER, tenantId, accountId);
-  if (!grantResult.ok || !grantResult.val) return null;
-  let grant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const configResult = await readConnectorConfigCached(
-      tenantId,
-      WEBEX_USER_CONNECTOR,
-      keyResult.val
-    );
-    const clientSecret = configResult.ok ? configResult.val?.secrets.clientSecret : undefined;
-    if (!clientSecret) return null;
-    const refreshed = await refreshGrantTokens(
-      new WebexUserAdapter(clientSecret),
-      tenantId,
-      grant.accountId,
-      logger
-    );
-    if (!refreshed.ok) return null;
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  return {
-    accessToken: grant.accessToken,
-    subject: row.subject,
-    personEmail: typeof grant.metadata.personEmail === 'string' ? grant.metadata.personEmail : null,
-  };
+  return resolveWebexUserAccess({ tenantId, provider: WEBEX_USER, accountId });
 }
 
 /**
  * The by-SUBJECT variant — the reply handler knows the run's owner, not
  * their account id.
  */
-export async function resolveWebexUserAccessBySubject(
+export function resolveWebexUserAccessBySubject(
   tenantId: string,
   subject: string
 ): Promise<WebexUserGrantAccess | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', tenantId)
-    .where('provider', '=', WEBEX_USER)
-    .where('subject', '=', subject)
-    .executeTakeFirst();
-  if (!row) return null;
-  return resolveWebexUserAccessByAccount(tenantId, row.provider_account_id);
+  return resolveWebexUserAccess({ tenantId, provider: WEBEX_USER, subject });
 }

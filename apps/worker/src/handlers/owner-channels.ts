@@ -66,7 +66,7 @@ export async function deliverToOwnerChannels(
           .executeTakeFirst();
         if (grant) {
           const access = await resolveMicrosoftAccess(tenantId, grant.provider_account_id);
-          const sent = await graphRequest(access.accessToken, '/me/sendMail', {
+          const sent = await graphRequest(access.auth, '/me/sendMail', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -97,7 +97,7 @@ export async function deliverToOwnerChannels(
       if (access) {
         const sent = await sendNoteToPerson({
           bot: await webexBotClient(tenantId),
-          user: new WebexClient(access.accessToken),
+          user: new WebexClient(access.auth),
           personEmail: access.personEmail,
           markdown: `**${message.heading}**\n\n${message.body}`,
         });

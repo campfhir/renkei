@@ -26,6 +26,7 @@
 
 import { getDatabase } from '@renkei/db';
 import { WebexClient, type WebexMessage } from '@renkei/connector-webex';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveWebexUserAccessByAccount } from './webex-linked-user';
@@ -101,14 +102,14 @@ function payloadOf(event: ClaimedEvent): { messageId: string; accountId: string 
 export function createWebexUserMessageHandler(
   deps: {
     resolveAccess?: typeof resolveWebexUserAccessByAccount;
-    makeClient?: (accessToken: string) => Pick<WebexClient, 'getMessage' | 'listMessages'>;
+    makeClient?: (auth: AuthedFetch) => Pick<WebexClient, 'getMessage' | 'listMessages'>;
     publish?: typeof publishDomainEvent;
     /** Injectable so a test can drive the loop guard without a database. */
     wasSentByRenkei?: (tenantId: string, messageId: string) => Promise<boolean>;
   } = {}
 ): EventHandler {
   const resolveAccess = deps.resolveAccess ?? resolveWebexUserAccessByAccount;
-  const makeClient = deps.makeClient ?? ((token: string) => new WebexClient(token));
+  const makeClient = deps.makeClient ?? ((auth: AuthedFetch) => new WebexClient(auth));
   const publish = deps.publish ?? publishDomainEvent;
   const wasSent = deps.wasSentByRenkei ?? wasSentByRenkei;
 
@@ -127,7 +128,7 @@ export function createWebexUserMessageHandler(
       return 'skipped';
     }
 
-    const client = makeClient(access.accessToken);
+    const client = makeClient(access.auth);
     const messageResult = await client.getMessage(payload.messageId);
     if (!messageResult.ok) {
       throw new Error(`could not fetch WebEx message ${payload.messageId}`);

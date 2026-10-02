@@ -1,31 +1,24 @@
 /**
- * Per-grant Microsoft access for the worker: read the grant, refresh
- * proactively through the adapter when it is near expiry, hand back the
- * token plus the identity facts (upn, effective scopes) ingestion builds
- * refIds and subscription sets from.
+ * Per-grant Microsoft access for the worker: describe the grant at the
+ * delegate, hand back its fetcher plus the identity facts (upn, effective
+ * scopes, indexing preferences) ingestion builds refIds and subscription
+ * sets from.
  *
- * Throws with operator-readable reasons — an unconfigured connector or a
- * revoked grant surfaces on the dead-lettered event's last_error, which is
- * where an operator will look.
+ * The worker holds no token (docs/delegate-key-design.md, "Phase 1 as
+ * built"): the fetcher rides the grant at the delegate, which attaches the
+ * credential, refreshes it when due and retries a 401 once.
+ *
+ * Throws with operator-readable reasons — a missing grant or an
+ * unreachable delegate surfaces on the dead-lettered event's last_error,
+ * which is where an operator will look.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
-import { readConnectorConfigCached } from '@renkei/connector-config';
-import {
-  getGrant,
-  refreshGrantTokens,
-  MICROSOFT,
-  MicrosoftAdapter,
-  outlookIndexingOf,
-  type OutlookIndexingPrefs,
-} from '@renkei/provider-grants';
-import { logger } from '../logger';
-
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
+import { MICROSOFT, outlookIndexingOf, type OutlookIndexingPrefs } from '@renkei/provider-grants';
 
 export interface MicrosoftAccess {
-  accessToken: string;
+  /** The grant's fetcher; the delegate behind it supplies the credential. */
+  auth: AuthedFetch;
   accountId: string;
   /** Lowercased — the refId owner segment and purge prefix. */
   upn: string;
@@ -39,59 +32,25 @@ export async function resolveMicrosoftAccess(
   tenantId: string,
   accountId: string
 ): Promise<MicrosoftAccess> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    throw new Error('TOKEN_ENCRYPTION_KEY is missing or malformed');
-  }
-
-  const configResult = await readConnectorConfigCached(tenantId, MICROSOFT, keyResult.val);
-  if (!configResult.ok) {
-    throw new Error(`could not read microsoft connector config for tenant ${tenantId}`);
-  }
-  const config = configResult.val;
-  const clientSecret = config?.secrets.clientSecret;
-  if (!config || !config.enabled || !clientSecret) {
-    throw new Error(`microsoft connector is not configured or disabled for tenant ${tenantId}`);
-  }
-
-  const grantResult = await getGrant(MICROSOFT, tenantId, accountId);
-  if (!grantResult.ok || !grantResult.val) {
-    throw new Error(`no microsoft grant for account ${accountId} (disconnected?)`);
-  }
-  let grant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const tid =
-      typeof grant.metadata.tid === 'string' && grant.metadata.tid
-        ? grant.metadata.tid
-        : typeof config.settings.directoryTenantId === 'string'
-          ? config.settings.directoryTenantId
-          : '';
-    if (!tid) throw new Error('microsoft grant has no directory tenant id to refresh against');
-    const refreshed = await refreshGrantTokens(
-      new MicrosoftAdapter(clientSecret, tid),
-      tenantId,
-      accountId,
-      logger
+  const grant = { tenantId, provider: MICROSOFT, accountId };
+  const described = await delegateGrants().describe(grant);
+  if (!described.ok) {
+    throw new Error(
+      described.err.type === 'NO_GRANT'
+        ? `no microsoft grant for account ${accountId} (disconnected?)`
+        : `could not read microsoft grant for ${accountId}: ${described.err.type}`
     );
-    if (!refreshed.ok) {
-      throw new Error(
-        refreshed.err.type === 'GRANT_REVOKED'
-          ? `microsoft grant for ${accountId} was revoked`
-          : `could not refresh microsoft token for ${accountId}`
-      );
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
   }
+  const { metadata, grantedScopes, requestedScopes } = described.val;
 
-  const upn = typeof grant.metadata.upn === 'string' ? grant.metadata.upn.toLowerCase() : '';
+  const upn = typeof metadata.upn === 'string' ? metadata.upn.toLowerCase() : '';
   if (!upn) throw new Error(`microsoft grant for ${accountId} carries no upn`);
 
   return {
-    accessToken: grant.accessToken,
+    auth: grantFetch(grant),
     accountId,
     upn,
-    scopes: grant.grantedScopes ?? grant.requestedScopes ?? [],
-    indexing: outlookIndexingOf(grant.metadata),
+    scopes: grantedScopes ?? requestedScopes,
+    indexing: outlookIndexingOf(metadata),
   };
 }

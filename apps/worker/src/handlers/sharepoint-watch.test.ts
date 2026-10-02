@@ -18,6 +18,10 @@ jest.mock('@renkei/connector-microsoft', () => ({
 
 import { runDriveWatchSync, type DriveWatchRow } from './sharepoint-watch';
 import type { MicrosoftAccess } from './microsoft-access';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'microsoft:tenant-1:acct-1');
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { runDeltaRound: mockRunDeltaRound } = jest.requireMock<{ runDeltaRound: jest.Mock }>(
@@ -51,11 +55,11 @@ beforeEach(() => {
 });
 
 const access = (): MicrosoftAccess => ({
-  accessToken: 'token',
+  auth,
   accountId: 'acct-1',
   upn: 'alice@example.com',
   scopes: ['Files.Read.All'],
-  indexing: { mail: false, calendar: false, tasks: false },
+  indexing: { mail: false, tasks: false },
 });
 
 const row = (over: Partial<DriveWatchRow> = {}): DriveWatchRow => ({

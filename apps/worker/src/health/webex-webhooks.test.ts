@@ -21,6 +21,10 @@ import { ok } from '@campfhir/safe-functions/helpers';
 import type { WebexWebhook, WebexWebhooksClient } from '@renkei/connector-webex';
 import { sweepWebexWebhooks } from './webex-webhooks';
 import { logger } from '../logger';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'webex:tenant-1:acct-1');
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getPublicBaseUrl: mockGetPublicBaseUrl, getOrgSettings: mockGetOrgSettings } =
@@ -118,7 +122,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
+      resolveAccess: async () => ({ auth, subject: 'subj-1', personEmail: null }),
     });
 
     expect(created).toHaveLength(1);
@@ -134,7 +138,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
+      resolveAccess: async () => ({ auth, subject: 'subj-1', personEmail: null }),
     });
 
     expect(created).toHaveLength(0);
@@ -149,7 +153,7 @@ describe('sweepWebexWebhooks', () => {
     await sweepWebexWebhooks({
       makeClient: () => client,
       resolveAccess: async (_tenantId, accountId) =>
-        accountId === 'acct-dead' ? null : { accessToken: 'user-token', subject: 'subj-1', personEmail: null },
+        accountId === 'acct-dead' ? null : { auth, subject: 'subj-1', personEmail: null },
     });
 
     // The dead grant registered nothing; the live one still got repaired.
@@ -195,7 +199,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
+      resolveAccess: async () => ({ auth, subject: 'subj-1', personEmail: null }),
       now: () => now,
     });
 
@@ -220,7 +224,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1', personEmail: null }),
+      resolveAccess: async () => ({ auth, subject: 'subj-1', personEmail: null }),
     });
 
     expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);
