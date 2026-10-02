@@ -3,8 +3,9 @@
  * `@renkei/user-keys` (which owns the rows). Three layers, each a plain
  * function over bytes so every process derives the same keys:
  *
- *  1. The MASTER is a deployment secret: USER_KEY_ENCRYPTION_KEY, falling
- *     back to CONTENT_ENCRYPTION_KEY and then TOKEN_ENCRYPTION_KEY (the
+ *  1. The MASTER is a deployment secret: USER_KEY_ENCRYPTION_KEY, set on the
+ *     delegate alone (docs/delegate-key-design.md) — no fallback to the
+ *     other keys any more, so no other process can derive a key by accident (the
  *     same chain the content envelope resolves, so nothing new has to be
  *     deployed to turn this on; set the dedicated variable to rotate it
  *     independently).
@@ -56,14 +57,11 @@ export function userKeyMaster(): Result<
   'MISSING_USER_KEY_MASTER' | 'INVALID_ENCRYPTION_KEY'
 > {
   const encoded =
-    process.env.USER_KEY_ENCRYPTION_KEY ||
-    process.env.CONTENT_ENCRYPTION_KEY ||
-    process.env.TOKEN_ENCRYPTION_KEY ||
-    '';
+    process.env.USER_KEY_ENCRYPTION_KEY || '';
   if (!encoded) {
     return err('MISSING_USER_KEY_MASTER' as const, {
       message:
-        'None of USER_KEY_ENCRYPTION_KEY, CONTENT_ENCRYPTION_KEY or TOKEN_ENCRYPTION_KEY is set — ' +
+        'USER_KEY_ENCRYPTION_KEY is not set — ' +
         'per-user keys cannot be derived.',
     });
   }

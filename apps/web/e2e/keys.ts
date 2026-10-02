@@ -15,8 +15,8 @@
  *
  * The person's key-encryption key is HKDF(master, salt, tenant ‖ subject)
  * over the salt this helper upserts into `user_encryption_keys`; the
- * master is the same chain the app resolves (USER_KEY_ENCRYPTION_KEY,
- * else CONTENT_ENCRYPTION_KEY, else TOKEN_ENCRYPTION_KEY).
+ * master is USER_KEY_ENCRYPTION_KEY, the one the delegate the Playwright
+ * config starts runs with (docs/delegate-key-design.md).
  */
 
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
@@ -25,15 +25,10 @@ import type { Client } from 'pg';
 const KEK_INFO = 'renkei/user-kek/v1';
 
 function master(): Buffer {
-  const encoded =
-    process.env.USER_KEY_ENCRYPTION_KEY ||
-    process.env.CONTENT_ENCRYPTION_KEY ||
-    process.env.TOKEN_ENCRYPTION_KEY ||
-    '';
-  const key = Buffer.from(encoded, 'base64');
+  const key = Buffer.from(process.env.USER_KEY_ENCRYPTION_KEY || '', 'base64');
   if (key.byteLength !== 32) {
     throw new Error(
-      'TOKEN_ENCRYPTION_KEY must decode to 32 bytes for the specs to seed sealed rows.'
+      'USER_KEY_ENCRYPTION_KEY must decode to 32 bytes for the specs to seed sealed rows (the same value the delegate runs with).'
     );
   }
   return key;

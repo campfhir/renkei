@@ -13,6 +13,8 @@ import type { Server } from 'node:http';
 import { getDatabase, closeDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { setGrant, GITHUB } from '@renkei/provider-grants';
+import { createInstance, upsertConnection } from '@renkei/connector-mirth';
+import { sealForSubject } from '@renkei/user-keys';
 import { createDelegateServer } from './server';
 
 process.env.USER_KEY_ENCRYPTION_KEY ||= process.env.TOKEN_ENCRYPTION_KEY;
@@ -244,5 +246,77 @@ describeDb('worker-delegate', () => {
 
     expect((await op('grant/delete', { tenantId, provider: GITHUB, accountId })).status).toBe(200);
     expect((await op('grant/describe', grant)).status).toBe(404);
+  });
+
+  it("forwards a Mirth op to its worker with the person's credential attached, never a stored one", async () => {
+    process.env.MIRTH_WORKER_URL = 'http://mirth.test';
+    process.env.MIRTH_WORKER_API_KEY = 'mirth-worker-key';
+    const dbResult = getDatabase();
+    if (!dbResult.ok) throw new Error('database unavailable');
+    const db = dbResult.val;
+    const instance = await createInstance(db, tenantId, {
+      name: 'Dev',
+      environment: 'dev',
+      baseUrl: 'https://mirth.example.com',
+      tlsVerify: true,
+      caPem: null,
+      allowInsecureHttp: false,
+      enabled: true,
+    });
+    if (!instance.ok) throw new Error('instance not created');
+    const sealed = await sealForSubject(
+      db,
+      tenantId,
+      owner,
+      JSON.stringify({ username: 'alice', password: 'pw-secret' })
+    );
+    if (!sealed.ok) throw new Error('credential not sealed');
+    const stored = await upsertConnection(db, tenantId, instance.val, owner, {
+      encryptedCredentials: sealed.val,
+      username: 'alice',
+      permissions: ['channels.read'],
+    });
+    if (!stored.ok) throw new Error('connection not stored');
+
+    const forwarded = await op('forward/mirth/api', {
+      tenantId,
+      instanceId: instance.val,
+      subject: owner,
+      method: 'GET',
+      path: '/channels/statuses',
+      credentials: { username: 'forged', password: 'forged' },
+    });
+    expect(forwarded.status).toBe(200);
+    expect(forwarded.json).toEqual({ hello: 'world' });
+    const call = upstreamCalls.at(-1);
+    expect(call?.url).toBe('http://mirth.test/v1/api');
+    expect(call?.authorization).toBe('Bearer mirth-worker-key');
+    const sent: unknown = JSON.parse(call?.body ?? '{}');
+    expect(isRecord(sent) ? sent.credentials : null).toEqual({
+      username: 'alice',
+      password: 'pw-secret',
+    });
+    expect(isRecord(sent) ? sent.subject : null).toBe(owner);
+
+    // Somebody else: the connection is not theirs.
+    const stranger = await op('forward/mirth/api', {
+      tenantId,
+      instanceId: instance.val,
+      subject: friend,
+      method: 'GET',
+      path: '/channels/statuses',
+    });
+    expect(stranger.status).toBe(403);
+    expect(errorType(stranger.json)).toBe('not_connected');
+
+    // A pass-through op carries no credential and reaches the worker as sent.
+    const probe = await op('forward/mirth/probe', { tenantId, instanceId: instance.val });
+    expect(probe.status).toBe(200);
+    expect(upstreamCalls.at(-1)?.url).toBe('http://mirth.test/v1/probe');
+
+    expect((await op('forward/mirth/nope', {})).status).toBe(404);
+    expect((await op('forward/elsewhere/api', {})).status).toBe(404);
+
+    await db.deleteFrom('mirth_instances').where('tenant_id', '=', tenantId).execute();
   });
 });

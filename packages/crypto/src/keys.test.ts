@@ -133,21 +133,17 @@ describe('userKeyMaster', () => {
     }
   });
 
-  it('resolves the dedicated key first, then the content chain', () => {
+  it('reads USER_KEY_ENCRYPTION_KEY alone — never the other keys', () => {
     delete process.env.USER_KEY_ENCRYPTION_KEY;
-    delete process.env.CONTENT_ENCRYPTION_KEY;
-    delete process.env.TOKEN_ENCRYPTION_KEY;
-    expect(userKeyMaster().ok).toBe(false);
-    const token = randomBytes(32);
-    process.env.TOKEN_ENCRYPTION_KEY = token.toString('base64');
-    const fromToken = userKeyMaster();
-    expect(fromToken.ok && fromToken.val.equals(token)).toBe(true);
+    process.env.CONTENT_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+    process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+    const missing = userKeyMaster();
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.err.type).toBe('MISSING_USER_KEY_MASTER');
     const dedicated = randomBytes(32);
     process.env.USER_KEY_ENCRYPTION_KEY = dedicated.toString('base64');
     const fromDedicated = userKeyMaster();
     expect(fromDedicated.ok && fromDedicated.val.equals(dedicated)).toBe(true);
-    process.env.USER_KEY_ENCRYPTION_KEY = 'short';
-    expect(userKeyMaster().ok).toBe(false);
   });
 });
 

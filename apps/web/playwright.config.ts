@@ -71,6 +71,30 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
+      // The delegate (apps/worker-delegate): the one process that holds a
+      // key. Chat pages, connector credentials and the own-key preferences
+      // all go through it, so the specs run the real one against the dev
+      // database, on the same USER_KEY_ENCRYPTION_KEY e2e/keys.ts seeds with.
+      command: 'pnpm --filter @renkei/worker-delegate start',
+      url: 'http://127.0.0.1:8096/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+      env: {
+        ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
+        ...(process.env.TOKEN_ENCRYPTION_KEY
+          ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
+          : {}),
+        ...(process.env.USER_KEY_ENCRYPTION_KEY
+          ? { USER_KEY_ENCRYPTION_KEY: process.env.USER_KEY_ENCRYPTION_KEY }
+          : {}),
+        ...(process.env.LOG_ENCRYPTION_KEY
+          ? { LOG_ENCRYPTION_KEY: process.env.LOG_ENCRYPTION_KEY }
+          : {}),
+        DELEGATE_WORKER_API_KEY: 'e2e-delegate-key',
+        DELEGATE_WORKER_PORT: '8096',
+      },
+    },
+    {
       command: 'pnpm dev',
       url: BASE_URL,
       reuseExistingServer: !process.env.CI,
@@ -80,6 +104,9 @@ export default defineConfig({
         ...(process.env.TOKEN_ENCRYPTION_KEY
           ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
           : {}),
+        // Every key the app needs it gets from the delegate above.
+        DELEGATE_WORKER_URL: 'http://127.0.0.1:8096',
+        DELEGATE_WORKER_API_KEY: 'e2e-delegate-key',
         // instrumentation.ts refuses to boot without this, so a shot run dies
         // before the first page loads. Passed through when set, exactly like
         // the other two — no key is invented here.
