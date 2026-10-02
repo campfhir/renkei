@@ -41,6 +41,8 @@ services:
       MIRTH_WORKER_API_KEY: ${MIRTH_WORKER_API_KEY:-renkei-dev-mirth-key}
       ADMANAGER_WORKER_URL: http://renkei-worker-admanager:8095
       ADMANAGER_WORKER_API_KEY: ${ADMANAGER_WORKER_API_KEY:-renkei-dev-admanager-key}
+      DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
       # On in dev so the sandbox_browser_* tools are there to try; must
@@ -253,6 +255,33 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       MIRTH_WORKER_API_KEY: ${MIRTH_WORKER_API_KEY:-renkei-dev-mirth-key}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The delegate — the one process that holds a key
+  # (docs/delegate-key-design.md). The only container that reads
+  # USER_KEY_ENCRYPTION_KEY: it derives a person's key-encryption key,
+  # unwraps a chat's or project's data key, and opens a person's sealed
+  # values, on behalf of the app and the other workers, which reach it via
+  # DELEGATE_WORKER_URL with the shared DELEGATE_WORKER_API_KEY and hold no
+  # such key themselves.
+  worker-delegate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: delegate
+    image: renkei-delegate:latest
+    container_name: renkei-worker-delegate
+    env_file:
+      - apps/web/.env.development
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      DELEGATE_WORKER_API_KEY: ${DELEGATE_WORKER_API_KEY:-renkei-dev-delegate-key}
+      USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:?set USER_KEY_ENCRYPTION_KEY (openssl rand -base64 32) for the delegate}
       NODE_ENV: production
     depends_on:
       postgres:

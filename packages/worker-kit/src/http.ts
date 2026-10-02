@@ -74,6 +74,8 @@ export type GenericWorkerError =
   | 'method_not_allowed'
   | 'internal';
 
+export type RawHandler = (request: IncomingMessage, response: ServerResponse) => Promise<void>;
+
 export type JsonRpcHandler = (
   body: Record<string, unknown>,
   response: ServerResponse
@@ -86,6 +88,12 @@ export interface CreateJsonRpcServerOptions {
   maxBodyBytes: number;
   /** Keyed by the `/v1/<op>` pathname segment. */
   handlers: Record<string, JsonRpcHandler>;
+  /**
+   * Ops whose body is not JSON — a streamed upload, a proxied request —
+   * keyed the same way, dispatched after the bearer check and before any
+   * body is read. The handler owns the request and the response.
+   */
+  rawHandlers?: Record<string, RawHandler>;
   /** The connector's own sendError — typed to its own (wider) WorkerErrorType,
    *  which is always assignable here since it can handle every generic tag
    *  this function ever passes plus its own domain-specific ones. */
@@ -117,6 +125,8 @@ export function createJsonRpcServer(options: CreateJsonRpcServerOptions): Server
     }
 
     const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';
+    const rawHandler = options.rawHandlers?.[op];
+    if (rawHandler) return rawHandler(request, response);
     const handler = options.handlers[op];
     if (!handler) {
       return options.sendError(response, 'unknown_operation');

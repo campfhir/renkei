@@ -109,6 +109,17 @@ What this is not: end-to-end encryption. The model provider sees every prompt, a
 4. **Keypairs and sharing.** X25519 per person; `share` to a public key; project keys to members; the owner-derivation paths deleted.
 5. **Devices, rotation, deletion, and the end of the master.** Device approval, `rewrap`, account shredding, the master removed from the delegate and the derivation code deleted.
 
+## Phase 1 as built
+
+What the map of the code turned up, and how phase 1 answers it:
+
+- **Tokens are consumed as bearer strings in about thirty places**, from `jiraFetch` (one choke point for some 150 Jira and JSM calls) and `graphFetch` to a raw `fetch` per connector client and two client classes (`WebexClient`, `ZoomClient`) that take a token in their constructor. Phase 1 replaces the token with an `AuthedFetch`: a function shaped like `fetch` that the delegate client builds for a grant (`grantFetch({tenantId, provider, subject})`). The delegate's `api` op attaches the token, refreshes it when due and once more on a 401, and allows only the provider's own hosts. The connector packages' fetch layers take a fetcher instead of a token.
+- **Pre-authenticated URLs** (Graph upload sessions and download URLs, which carry their own credential) are fetched directly by the caller, as before; no token of ours is involved.
+- **The OAuth connect flow** does its code exchange in the delegate (`oauth/exchange`); the tokens wait behind a handle for the identity calls the callback makes next (`api` with `pending`), then `grant/commit` seals them. The web app never sees a token, even at connect time.
+- **OnBase** tokens come from a customer-hosted IdP that only the OnBase worker dials; the delegate asks that worker to exchange, refresh and revoke, and holds what comes back.
+- **One exception remains in phase 1: git over HTTPS in the sandbox.** A code workspace clones, pulls and pushes with a `Basic` header built from the person's GitHub or Bitbucket token, sent to the sandbox worker. Routing git through the delegate (a smart-HTTP proxy the workspace clones from, with a short-lived ticket instead of a token) is designed but deferred; until then that one path still carries a token outside the delegate, and the sandbox worker is the second process that sees one.
+- **Mail and calendar leave the index** (decision 3), with two things kept: the `mail.received` agent trigger, which rode on the inbox subscription the indexing created and now keeps its subscription without ingesting; and To Do tasks, which the same pipeline indexes and which this decision did not name, so they stay for now and are flagged.
+
 ## Decisions taken
 
 1. **Published projects** get a shareable key of their own, wrapped to the public key of every person invited, like any project. "Published to the org" becomes "shared with everyone the owner invites"; there is no tenant-wide key.
