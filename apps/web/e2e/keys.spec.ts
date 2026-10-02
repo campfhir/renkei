@@ -238,12 +238,15 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   await seed(fixture, { chat: false });
   await signIn(page, fixture);
 
-  // Nothing asked of the person: the key exists by the time the page settles.
+  // Nothing asked of the person: the key exists by the time the page settles,
+  // and is shown front and center in a dialog nothing else can dismiss.
   await page.goto(`/${fixture.slug}`);
-  const banner = page.getByTestId('key-banner-write-down');
-  await expect(banner).toBeVisible({ timeout: 30_000 });
-  await expect(banner).toContainText('Your encryption key is ready.');
-  await shot(page, testInfo, 'keys-01-enrolled-banner');
+  const dialog = page.getByRole('dialog', { name: 'Your encryption key is ready' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByRole('button', { name: 'Close' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await shot(page, testInfo, 'keys-01-enrolled-dialog');
   const enrolled = await withDb(async (client) => {
     const row = await client.query<{ mode: string; public_key: string | null }>(
       `SELECT mode, public_key FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2`,
@@ -257,17 +260,15 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   expect(await delegationCount(fixture, 'automation')).toBeGreaterThan(0);
 
   // Shown once, in the written-down form, until the person says they have it.
-  await banner.getByRole('button', { name: 'Show my key' }).click();
   const reveal = page.getByTestId('key-reveal');
   await expect(reveal).toBeVisible();
   const shown = (await page.getByTestId('key-reveal-text').innerText()).trim();
   expect(shown).toMatch(KEY_PATTERN);
-  await shot(page, testInfo, 'keys-02-reveal');
   await page.getByTestId('key-reveal-confirm').click();
   await expect(reveal).toHaveCount(0);
-  await expect(banner).toHaveCount(0);
+  await expect(dialog).toHaveCount(0);
   await recheck(page);
-  await expect(page.getByTestId('key-banner-write-down')).toHaveCount(0);
+  await expect(page.getByTestId('key-modal-write-down')).toHaveCount(0);
 
   // The preferences section says what the person now has.
   await page.goto(`/${fixture.slug}/preferences`);
@@ -293,7 +294,7 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   await expect
     .poll(() => delegationCount(fixture, 'session'), { timeout: 30_000 })
     .toBeGreaterThan(0);
-  await expect(page.getByTestId('key-banner-needs-key')).toHaveCount(0);
+  await expect(page.getByTestId('key-modal-needs-key')).toHaveCount(0);
 
   // Forget the device, lose the delegation: now the person must bring the key.
   await section.getByRole('button', { name: 'Forget this device' }).click();
@@ -302,10 +303,18 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   );
   await dropDelegations(fixture);
   await recheck(page);
-  const needsKey = page.getByTestId('key-banner-needs-key');
+  const needsKey = page.getByTestId('key-modal-needs-key');
   await expect(needsKey).toBeVisible({ timeout: 30_000 });
   await shot(page, testInfo, 'keys-04-needs-key');
-  await needsKey.getByRole('button', { name: 'Add my key' }).click();
+  // Dismissable — the key is needed, but maybe not for this page — with a
+  // banner left behind as the way back in.
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(needsKey).toHaveCount(0);
+  const needsKeyBanner = page.getByTestId('key-banner-needs-key');
+  await expect(needsKeyBanner).toBeVisible();
+  await shot(page, testInfo, 'keys-04b-needs-key-banner');
+  await needsKeyBanner.getByRole('button', { name: 'Add my key' }).click();
+  await expect(needsKey).toBeVisible();
   const unlock = page.getByTestId('key-unlock');
   await unlock
     .getByLabel('Type the key you wrote down')
@@ -333,7 +342,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
 
   // Readable through the seeded delegation, with no key on this device yet.
   await expectChatReadable(page, fixture);
-  await expect(page.getByTestId('key-banner-needs-key')).toHaveCount(0);
+  await expect(page.getByTestId('key-modal-needs-key')).toHaveCount(0);
 
   // The delegate forgets: the chat says why, and the page asks for the key.
   await dropDelegations(fixture);
@@ -343,9 +352,8 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   await expect(notice).toContainText('not connected to this session');
   await expect(page.getByText(PROMPT_TEXT)).toHaveCount(0);
   await shot(page, testInfo, 'keys-05-chat-not-connected');
-  const needsKey = page.getByTestId('key-banner-needs-key');
+  const needsKey = page.getByTestId('key-modal-needs-key');
   await expect(needsKey).toBeVisible();
-  await needsKey.getByRole('button', { name: 'Add my key' }).click();
   await page
     .getByTestId('key-unlock')
     .getByLabel('Type the key you wrote down')
@@ -389,9 +397,8 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   const other = await second.newPage();
   await signIn(other, fixture, secondSession);
   await other.goto(`/${fixture.slug}/chat/${fixture.chatId}`);
-  const otherNeeds = other.getByTestId('key-banner-needs-key');
+  const otherNeeds = other.getByTestId('key-modal-needs-key');
   await expect(otherNeeds).toBeVisible({ timeout: 30_000 });
-  await otherNeeds.getByRole('button', { name: 'Add my key' }).click();
   await other.getByRole('button', { name: 'Ask my other devices' }).click();
   const codeText = await other.getByTestId('key-unlock-code').innerText();
   const code = /([A-Z2-7]{3}-[A-Z2-7]{3})/.exec(codeText)?.[1] ?? '';
@@ -399,7 +406,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   await shot(other, testInfo, 'keys-07-second-device-asks');
 
   await recheck(page);
-  const approve = page.getByTestId('key-banner-approve');
+  const approve = page.getByTestId('key-modal-approve');
   await expect(approve).toBeVisible({ timeout: 30_000 });
   await expect(approve).toContainText(code);
   await shot(page, testInfo, 'keys-08-first-device-approves');
@@ -413,21 +420,19 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   await second.close();
 });
 
-test('the banner and the section at phone width', async ({ page }, testInfo) => {
+test('the key dialog and the section at phone width', async ({ page }, testInfo) => {
   const fixture = fixtureFor(`mobile-${testInfo.project.name}`);
   await seed(fixture, { chat: false });
   await signIn(page, fixture);
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/${fixture.slug}`);
-  const banner = page.getByTestId('key-banner-write-down');
-  await expect(banner).toBeVisible({ timeout: 30_000 });
-  const box = await banner.boundingBox();
+  const dialog = page.getByTestId('key-modal-write-down');
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  const box = await dialog.boundingBox();
   expect(box).not.toBeNull();
   expect(box!.x + box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
-  await shot(page, testInfo, 'keys-mobile-01-banner');
-  await banner.getByRole('button', { name: 'Show my key' }).click();
   await expect(page.getByTestId('key-reveal-text')).toBeVisible();
-  await shot(page, testInfo, 'keys-mobile-02-reveal');
+  await shot(page, testInfo, 'keys-mobile-01-dialog');
   await page.getByTestId('key-reveal-confirm').click();
   await page.goto(`/${fixture.slug}/preferences`);
   const section = page.getByTestId('encryption-key');

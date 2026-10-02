@@ -62,7 +62,11 @@ type Banner =
 export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: string }) {
   const router = useRouter();
   const [banner, setBanner] = useState<Banner>({ kind: 'none' });
-  const [dialog, setDialog] = useState<'reveal' | 'unlock' | 'passphrase' | null>(null);
+  // The attention-demanding states open front and center as a dialog.
+  // Dismissing one (the key is needed, but not for this page) leaves a
+  // banner with a way back; the shown-once key cannot be dismissed, only
+  // confirmed written down.
+  const [dismissed, setDismissed] = useState<Banner['kind'] | null>(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [typed, setTyped] = useState('');
@@ -188,7 +192,6 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
           return;
         }
         await saveUserKey(tenantId, answer, { acknowledged: true });
-        setDialog(null);
         setBanner({ kind: 'none' });
         settle();
       })();
@@ -216,7 +219,6 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
       return;
     }
     setTyped('');
-    setDialog(null);
     setBanner({ kind: 'none' });
     settle();
   }
@@ -246,7 +248,6 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
       return;
     }
     setPassphrase('');
-    setDialog('reveal');
     setBanner({ kind: 'write-down', shown: enrolled.outcome.shown });
     settle();
   }
@@ -269,7 +270,6 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
 
   async function confirmWrittenDown(): Promise<void> {
     await acknowledgeKey(tenantId);
-    setDialog(null);
     setBanner({ kind: 'none' });
   }
 
@@ -279,177 +279,132 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
     'rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50';
   const quietButtonClass =
     'rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-white/50 disabled:opacity-50 dark:border-gray-600';
+  const open = dismissed !== banner.kind;
+  const dismiss = () => setDismissed(banner.kind);
+
+  const unlockForm = (
+    <div className="space-y-4 text-sm" data-testid="key-unlock">
+      <div className="space-y-2">
+        <label className="block font-medium" htmlFor="key-typed">
+          Type the key you wrote down
+        </label>
+        <textarea
+          id="key-typed"
+          className="w-full rounded-md border border-gray-300 p-2 font-mono text-sm dark:border-gray-700 dark:bg-gray-900"
+          rows={3}
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+          placeholder="abcd-efgh-ijkl-…"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <button
+          type="button"
+          className={buttonClass}
+          disabled={busy || typed.trim().length === 0}
+          data-testid="key-unlock-submit"
+          onClick={() => void submitTypedKey()}
+        >
+          Use this key
+        </button>
+      </div>
+      <div className="border-t border-gray-200 pt-3 dark:border-gray-800">
+        <p className="mb-2 font-medium">Or approve from a device that has it</p>
+        {ask ? (
+          <p data-testid="key-unlock-code">
+            On that device, open Renkei and approve the request showing the code{' '}
+            <code className="rounded bg-gray-100 px-2 py-0.5 font-mono text-base tracking-widest dark:bg-gray-800">
+              {ask.code}
+            </code>
+            . This page picks the key up by itself.
+          </p>
+        ) : (
+          <button type="button" className={quietButtonClass} onClick={() => void startAsk()}>
+            Ask my other devices
+          </button>
+        )}
+      </div>
+      {failure ? (
+        <p className="text-red-600 dark:text-red-400" role="alert">
+          {failure}
+        </p>
+      ) : null}
+    </div>
+  );
 
   return (
     <>
       {banner.kind === 'write-down' ? (
-        <div className={bannerClass} role="status" data-testid="key-banner-write-down">
-          <span>
-            <span className="font-medium">Your encryption key is ready.</span> Write it down: it is
-            the only way back into your chats on a device that does not have it.
-          </span>
-          <button type="button" className={buttonClass} onClick={() => setDialog('reveal')}>
-            Show my key
-          </button>
-        </div>
+        <Modal title="Your encryption key is ready" onClose={() => undefined} dismissible={false}>
+          <div className="space-y-3 text-sm" data-testid="key-modal-write-down">
+            <p>
+              <span className="font-medium">Write it down.</span> It is the only way back into your
+              chats on a device that does not have it.
+            </p>
+            <div className="space-y-3" data-testid="key-reveal">
+              <p>
+                This key protects everything of yours in Renkei. Nobody else has it — not Renkei,
+                not your administrator. Keep it somewhere safe. On a new device you will type it, or
+                approve the device from one that already has it.
+              </p>
+              <p
+                className="select-all rounded-md border border-gray-300 bg-gray-50 p-3 font-mono text-sm leading-7 break-words dark:border-gray-700 dark:bg-gray-900"
+                data-testid="key-reveal-text"
+              >
+                {banner.shown}
+              </p>
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                If every device that holds it is lost and you did not write it down, your chats and
+                connections are lost with it. There is no recovery by design.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  className={quietButtonClass}
+                  onClick={() => void navigator.clipboard?.writeText(banner.shown)}
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass}
+                  data-testid="key-reveal-confirm"
+                  onClick={() => void confirmWrittenDown()}
+                >
+                  I have written it down
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
       ) : null}
-      {banner.kind === 'needs-key' ? (
+
+      {banner.kind === 'needs-key' && open ? (
+        <Modal title="This device does not have your encryption key" onClose={dismiss}>
+          <div className="space-y-4" data-testid="key-modal-needs-key">
+            <p className="text-sm">
+              Your chats and connectors stay closed here until it does. Type the key you wrote down,
+              or approve this device from one that has it.
+            </p>
+            {unlockForm}
+          </div>
+        </Modal>
+      ) : null}
+      {banner.kind === 'needs-key' && !open ? (
         <div className={bannerClass} role="status" data-testid="key-banner-needs-key">
           <span>
             <span className="font-medium">This device does not have your encryption key.</span> Your
             chats and connectors stay closed here until it does.
           </span>
-          <button type="button" className={buttonClass} onClick={() => setDialog('unlock')}>
+          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
             Add my key
           </button>
         </div>
       ) : null}
-      {banner.kind === 'passphrase' ? (
-        <div className={bannerClass} role="status" data-testid="key-banner-passphrase">
-          <span>
-            <span className="font-medium">Finish setting up your encryption key.</span> Your earlier
-            key was passphrase-protected; enter it once to move your data to the new key.
-          </span>
-          <button type="button" className={buttonClass} onClick={() => setDialog('passphrase')}>
-            Continue
-          </button>
-        </div>
-      ) : null}
-      {banner.kind === 'approve' ? (
-        <div className={bannerClass} role="status" data-testid="key-banner-approve">
-          <span>
-            <span className="font-medium">Another device is asking for your encryption key.</span>{' '}
-            Approve only if the code matches what that device shows.
-          </span>
-          {banner.requests.map((request) => (
-            <span key={request.id} className="flex items-center gap-2">
-              <code className="rounded bg-white/60 px-2 py-0.5 font-mono text-base tracking-widest dark:bg-black/30">
-                {request.code}
-              </code>
-              <button
-                type="button"
-                className={buttonClass}
-                disabled={busy}
-                onClick={() => void decideAsk(request.id, true)}
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                className={quietButtonClass}
-                disabled={busy}
-                onClick={() => void decideAsk(request.id, false)}
-              >
-                Deny
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {banner.kind === 'unavailable' ? (
-        <div className={bannerClass} role="status" data-testid="key-banner-unavailable">
-          <span>
-            <span className="font-medium">The key service cannot be reached.</span> Your chats and
-            connectors stay closed until it is back; this page keeps trying.
-            {failure ? ` (${failure})` : ''}
-          </span>
-        </div>
-      ) : null}
 
-      {dialog === 'reveal' && banner.kind === 'write-down' ? (
-        <Modal title="Your encryption key" onClose={() => setDialog(null)}>
-          <div className="space-y-3 text-sm" data-testid="key-reveal">
-            <p>
-              This key protects everything of yours in Renkei. Nobody else has it — not Renkei, not
-              your administrator. Write it down somewhere safe. On a new device you will type it, or
-              approve the device from one that already has it.
-            </p>
-            <p
-              className="select-all rounded-md border border-gray-300 bg-gray-50 p-3 font-mono text-sm leading-7 break-words dark:border-gray-700 dark:bg-gray-900"
-              data-testid="key-reveal-text"
-            >
-              {banner.shown}
-            </p>
-            <p className="text-xs text-gray-600 dark:text-gray-400">
-              If every device that holds it is lost and you did not write it down, your chats and
-              connections are lost with it. There is no recovery by design.
-            </p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                className={buttonClass}
-                onClick={() => void navigator.clipboard?.writeText(banner.shown)}
-              >
-                Copy
-              </button>
-              <button
-                type="button"
-                className={quietButtonClass}
-                data-testid="key-reveal-confirm"
-                onClick={() => void confirmWrittenDown()}
-              >
-                I have written it down
-              </button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
-
-      {dialog === 'unlock' ? (
-        <Modal title="Add your encryption key to this device" onClose={() => setDialog(null)}>
-          <div className="space-y-4 text-sm" data-testid="key-unlock">
-            <div className="space-y-2">
-              <label className="block font-medium" htmlFor="key-typed">
-                Type the key you wrote down
-              </label>
-              <textarea
-                id="key-typed"
-                className="w-full rounded-md border border-gray-300 p-2 font-mono text-sm dark:border-gray-700 dark:bg-gray-900"
-                rows={3}
-                value={typed}
-                onChange={(event) => setTyped(event.target.value)}
-                placeholder="abcd-efgh-ijkl-…"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                className={buttonClass}
-                disabled={busy || typed.trim().length === 0}
-                data-testid="key-unlock-submit"
-                onClick={() => void submitTypedKey()}
-              >
-                Use this key
-              </button>
-            </div>
-            <div className="border-t border-gray-200 pt-3 dark:border-gray-800">
-              <p className="mb-2 font-medium">Or approve from a device that has it</p>
-              {ask ? (
-                <p data-testid="key-unlock-code">
-                  On that device, open Renkei and approve the request showing the code{' '}
-                  <code className="rounded bg-gray-100 px-2 py-0.5 font-mono text-base tracking-widest dark:bg-gray-800">
-                    {ask.code}
-                  </code>
-                  . This page picks the key up by itself.
-                </p>
-              ) : (
-                <button type="button" className={quietButtonClass} onClick={() => void startAsk()}>
-                  Ask my other devices
-                </button>
-              )}
-            </div>
-            {failure ? (
-              <p className="text-red-600 dark:text-red-400" role="alert">
-                {failure}
-              </p>
-            ) : null}
-          </div>
-        </Modal>
-      ) : null}
-
-      {dialog === 'passphrase' ? (
-        <Modal title="Move to your new encryption key" onClose={() => setDialog(null)}>
-          <div className="space-y-3 text-sm">
+      {banner.kind === 'passphrase' && open ? (
+        <Modal title="Finish setting up your encryption key" onClose={dismiss}>
+          <div className="space-y-3 text-sm" data-testid="key-modal-passphrase">
             <p>
               Your chats and connections are under a passphrase-protected key from an earlier
               version of Renkei. Enter that passphrase once; everything moves to a key this browser
@@ -478,6 +433,75 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
             ) : null}
           </div>
         </Modal>
+      ) : null}
+      {banner.kind === 'passphrase' && !open ? (
+        <div className={bannerClass} role="status" data-testid="key-banner-passphrase">
+          <span>
+            <span className="font-medium">Finish setting up your encryption key.</span> Your earlier
+            key was passphrase-protected; enter it once to move your data to the new key.
+          </span>
+          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
+            Continue
+          </button>
+        </div>
+      ) : null}
+
+      {banner.kind === 'approve' && open ? (
+        <Modal title="Another device is asking for your encryption key" onClose={dismiss}>
+          <div className="space-y-3 text-sm" data-testid="key-modal-approve">
+            <p>Approve only if the code matches what that device shows.</p>
+            <ul className="space-y-2">
+              {banner.requests.map((request) => (
+                <li key={request.id} className="flex flex-wrap items-center gap-3">
+                  <code className="rounded bg-gray-100 px-2 py-1 font-mono text-lg tracking-widest dark:bg-gray-800">
+                    {request.code}
+                  </code>
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    disabled={busy}
+                    onClick={() => void decideAsk(request.id, true)}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    className={quietButtonClass}
+                    disabled={busy}
+                    onClick={() => void decideAsk(request.id, false)}
+                  >
+                    Deny
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {failure ? (
+              <p className="text-red-600 dark:text-red-400" role="alert">
+                {failure}
+              </p>
+            ) : null}
+          </div>
+        </Modal>
+      ) : null}
+      {banner.kind === 'approve' && !open ? (
+        <div className={bannerClass} role="status" data-testid="key-banner-approve">
+          <span>
+            <span className="font-medium">Another device is asking for your encryption key.</span>
+          </span>
+          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
+            Review
+          </button>
+        </div>
+      ) : null}
+
+      {banner.kind === 'unavailable' ? (
+        <div className={bannerClass} role="status" data-testid="key-banner-unavailable">
+          <span>
+            <span className="font-medium">The key service cannot be reached.</span> Your chats and
+            connectors stay closed until it is back; this page keeps trying.
+            {failure ? ` (${failure})` : ''}
+          </span>
+        </div>
       ) : null}
       <span hidden data-slug={slug} />
     </>
