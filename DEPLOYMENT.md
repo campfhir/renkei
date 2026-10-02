@@ -23,16 +23,21 @@ ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
 # Encryption
 # Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
-# Optional. The master that every person's managed key-encryption key is
-# derived from (docs/user-encryption-keys-design.md). Falls back to
-# CONTENT_ENCRYPTION_KEY, then TOKEN_ENCRYPTION_KEY — set it to rotate the
-# per-user key space apart from the other two. Chat content and connector
+# The master that every person's managed key-encryption key is derived
+# from (docs/user-encryption-keys-design.md, docs/delegate-key-design.md).
+# Set it on the DELEGATE service only — no other process reads it, and
+# there is no fallback to the other keys. Chat content and connector
 # credentials are sealed only under per-person and per-chat keys: before
 # the first deploy of a build with user keys, run
 #   pnpm --filter @renkei/user-keys rekey-chats --all
-# against the database, which moves every row still under the deployment
-# keys above. The app does not read those forms.
+# with this variable (and TOKEN_ENCRYPTION_KEY) in the environment, which
+# moves every row still under the deployment keys above. The app does not
+# read those forms.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
+# Every process but the delegate reaches it here, for keys, provider
+# tokens and the connector workers (compose wires the service name).
+# DELEGATE_WORKER_URL=http://renkei-worker-delegate:8096
+# DELEGATE_WORKER_API_KEY=<shared bearer key>
 
 # Database
 DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db
@@ -191,6 +196,21 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
+- `worker-delegate` — the one process that holds a key
+  (docs/delegate-key-design.md). It alone reads `USER_KEY_ENCRYPTION_KEY`,
+  answers a chat's or project's data key to the request that needs it,
+  opens and seals a person's own values, holds every OAuth provider token
+  (the `api` proxy attaches it; `oauth/exchange` trades a code for one
+  without the app ever seeing it), and forwards Mirth, ADManager Plus,
+  file-share and OnBase operations to their workers with the person's
+  credential attached. The app and every other worker reach it at
+  `DELEGATE_WORKER_URL` with `DELEGATE_WORKER_API_KEY` (listen port
+  `DELEGATE_WORKER_PORT`, default 8096). It also needs
+  `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in connector config),
+  `DATABASE_URL`, and the `*_WORKER_URL` / `*_WORKER_API_KEY` pairs of the
+  connector workers below, which the app no longer holds. Without it, no
+  chat opens and no connector acts: fail closed, never open. Entrypoint:
+  `pnpm --filter @renkei/worker-delegate start`; image target `delegate`.
 - `worker-mirth` — the same shape for Mirth Connect (NextGen Connect
   4.5.2): an internal HTTP service on its **own image** (`renkei-mirth`, the
   `mirth` target in `docker/Dockerfile`, opt-in prompts in the build/push
