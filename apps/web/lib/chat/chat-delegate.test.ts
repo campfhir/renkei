@@ -19,6 +19,7 @@ import {
   CHAT_DELEGATE_WALL_CLOCK_MS,
   chatDelegateTool,
 } from './chat-delegate';
+import { legacyCipher } from './content-crypto';
 
 function provider(replies: LlmResponse[]): {
   provider: LlmProvider;
@@ -134,6 +135,7 @@ function context(extra: Partial<LocalToolContext>): LocalToolContext {
     tenantId: 't',
     subject: 'u',
     chatId: 'c',
+    cipher: legacyCipher,
     projectId: null,
     readOnly: false,
     ...extra,

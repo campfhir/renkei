@@ -13,6 +13,7 @@ import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';
+import { legacyCipher } from './content-crypto';
 import type { WidgetDecisionState } from './views';
 import { getWidgetDecision, recordWidgetDecision } from './widget-tools';
 import { widgetStateTools, WIDGET_LIST_TOOL, WIDGET_RESOLVE_TOOL } from './widget-state-tools';
@@ -48,6 +49,7 @@ maybe('chat_widget_resolve', () => {
       chatId,
       projectId: null,
       readOnly: false,
+      cipher: legacyCipher,
       emitWidgetDecision: (decision) => {
         emitted.push(decision);
       },
@@ -79,6 +81,7 @@ maybe('chat_widget_resolve', () => {
       role: 'assistant',
       kind: 'assistant',
       status: 'complete',
+      cipher: legacyCipher,
       blocks: [
         { type: 'text', text: 'Two cards: the email, and a task.' },
         { type: 'tool_use', id: 'tu_mail', name: 'outlook_send_mail_preview', input: {} },
@@ -92,6 +95,7 @@ maybe('chat_widget_resolve', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
+      cipher: legacyCipher,
       blocks: [
         {
           type: 'tool_result',
@@ -127,6 +131,7 @@ maybe('chat_widget_resolve', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
+      cipher: legacyCipher,
       blocks: [
         {
           type: 'tool_result',
@@ -271,6 +276,7 @@ maybe('chat_widget_resolve', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
+      cipher: legacyCipher,
       blocks: [
         {
           type: 'tool_result',

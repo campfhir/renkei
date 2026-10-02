@@ -12,6 +12,7 @@ jest.mock('./content-crypto', () => ({
 }));
 
 import { createSubagentRecorder, parseTranscript } from './subagent-runs';
+import { legacyCipher } from './content-crypto';
 
 describe('parseTranscript', () => {
   it('reads the messages back as chat blocks and drops what it cannot read', () => {
@@ -77,7 +78,7 @@ describe('createSubagentRecorder', () => {
     const recorder = createSubagentRecorder(
       // The fake stands in for exactly the calls the recorder makes.
       db as never,
-      { tenantId: 't', chatId: 'c', turnId: 'turn' },
+      { tenantId: 't', chatId: 'c', turnId: 'turn', cipher: legacyCipher },
       (event) => events.push(event),
       (message) => logged.push(message)
     );

@@ -12,6 +12,7 @@
     "skipLibCheck": true,
     "types": ["node", "jest"],
     "paths": {
+      "@renkei/user-keys": ["../../packages/user-keys/src/index.ts"],
       "@renkei/db": ["../../packages/db/src/index.ts"],
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"]
     }

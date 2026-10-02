@@ -10,12 +10,14 @@
 
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { checkFilename, fileTools, resolveMediaType, WRITE_FILE_MAX_CHARS } from './file-tools';
+import { legacyCipher } from './content-crypto';
 
 const context: LocalToolContext = {
   db: null as unknown as LocalToolContext['db'],
   tenantId: 't1',
   subject: 'u1',
   chatId: 'c1',
+  cipher: legacyCipher,
   projectId: null,
   readOnly: false,
 };

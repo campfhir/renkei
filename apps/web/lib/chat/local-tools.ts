@@ -14,6 +14,7 @@ import type { LlmCallModel } from '@renkei/agents/runs';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { ImageUsageReport } from '@/lib/image/usage';
 import type { SubagentRecorder } from './subagent-runs';
+import type { ContentCipher } from './content-crypto';
 import type { WidgetDecisionState } from './views';
 
 export interface LocalToolContext {
@@ -21,6 +22,8 @@ export interface LocalToolContext {
   tenantId: string;
   subject: string;
   chatId: string;
+  /** How this chat's rows are sealed and opened (access.cipher). */
+  cipher: ContentCipher;
   projectId: string | null;
   /** The person's email from the identity spine, when known — a commit author needs one. */
   userEmail?: string | null;

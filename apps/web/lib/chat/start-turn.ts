@@ -39,6 +39,7 @@ import { logger } from '@/lib/logger';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
+import type { ContentCipher } from './content-crypto';
 import { compactChat, latestChatSummary, needsCompaction } from './compaction';
 import { listMessages, insertMessage, type InsertedMessage } from './messages';
 import { createTurn, finishTurn, heartbeatTurn, suspendTurn } from './turns';
@@ -184,7 +185,6 @@ export async function startChatTurn(
   const text = input.text.trim();
   if (!text && (input.extraBlocks ?? []).length === 0) return err('EMPTY' as const);
   if (text.length > USER_MESSAGE_MAX_CHARS) return err('TOO_LONG' as const);
-
   const access = await resolveChatAccess(db, input.tenantId, input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
@@ -244,6 +244,7 @@ export async function startChatTurn(
           kind: input.kind ?? 'prompt',
           status: 'complete',
           blocks,
+          cipher: access.cipher,
         });
         if (!inserted) return err('CONTENT_KEY' as const);
         user = inserted;
@@ -260,6 +261,7 @@ export async function startChatTurn(
         llmModelId: llm.modelConfigId,
         provider: llm.providerName,
         model: llm.model,
+        cipher: access.cipher,
       });
       if (!assistant) return err('CONTENT_KEY' as const);
       if (input.attachmentIds && input.attachmentIds.length > 0) {
@@ -313,6 +315,7 @@ export async function startChatTurn(
         tenantId: input.tenantId,
         session: input.session,
         chat: { ...chat, llmModelId: llm.modelConfigId },
+        cipher: access.cipher,
         turnId: started.turnId,
         assistantMessage: assistantRow,
         llm,
@@ -336,6 +339,8 @@ export interface ExecuteTurnInput {
   tenantId: string;
   session: { subject: string; roles: string[] };
   chat: ChatRow;
+  /** The chat's cipher (access.cipher; chat-keys.ts for a resumed turn). */
+  cipher: ContentCipher;
   turnId: string;
   assistantMessage: { id: string; seq: number; createdAt: Date };
   llm: ResolvedLlm;
@@ -409,6 +414,7 @@ async function executeTurnBody(
     turnId: input.turnId,
     subject: input.session.subject,
     chatTitle: input.chat.title,
+    cipher: input.cipher,
     model: {
       provider: input.llm.providerName,
       model: input.llm.model,
@@ -496,7 +502,7 @@ async function executeTurnBody(
 
     const readOnly = input.settings?.readOnly ?? false;
     const [initialRows, person, filesAllowed, code, context, models, surface] = await Promise.all([
-      listMessages(db, input.tenantId, input.chat.id),
+      listMessages(db, input.tenantId, input.chat.id, input.cipher),
       getIdentityDisplay(input.tenantId, input.session.subject),
       tenantBlobStoreConfigured(input.tenantId),
       // A code project's checkout, when it is there to work in: the code_*
@@ -527,11 +533,12 @@ async function executeTurnBody(
           chatId: input.chat.id,
           llm: input.llm,
           createdBy: 'auto',
+          cipher: input.cipher,
           messages: rows,
           onProgress: (progress) =>
             channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
-        if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id);
+        if (compacted) rows = await listMessages(db, input.tenantId, input.chat.id, input.cipher);
         // The pass's own end, so the thread's card does not take a reply
         // that fails later for a fold that did not.
         channel.emit({
@@ -554,12 +561,13 @@ async function executeTurnBody(
         });
       }
     }
-    const chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id);
+    const chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id, input.cipher);
     const localContext = {
       db,
       tenantId: input.tenantId,
       subject: input.session.subject,
       chatId: input.chat.id,
+      cipher: input.cipher,
       projectId: input.chat.projectId,
       userEmail: person?.email ?? null,
       readOnly,
@@ -587,7 +595,12 @@ async function executeTurnBody(
       // turn's history but the report.
       subagents: createSubagentRecorder(
         db,
-        { tenantId: input.tenantId, chatId: input.chat.id, turnId: input.turnId },
+        {
+          tenantId: input.tenantId,
+          chatId: input.chat.id,
+          turnId: input.turnId,
+          cipher: input.cipher,
+        },
         (subagent) => channel.emit({ type: 'subagent_progress', turnId: input.turnId, subagent }),
         log
       ),

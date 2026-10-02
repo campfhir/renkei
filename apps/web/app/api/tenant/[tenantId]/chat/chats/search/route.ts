@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { CHAT_SEARCH_MIN_CHARS, normalizeQuery, searchChatMessages } from '@/lib/chat/search';
+import { chatCiphersFor } from '@/lib/chat/chat-keys';
 
 export async function GET(
   request: NextRequest,
@@ -27,7 +28,8 @@ export async function GET(
     db,
     tenantId,
     sidebar.chats.map((chat) => chat.id),
-    query
+    query,
+    await chatCiphersFor(db, tenantId, session.subject, sidebar.chats)
   );
   return NextResponse.json({ query, hits });
 }

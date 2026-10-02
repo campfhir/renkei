@@ -52,7 +52,7 @@ export async function GET(
   const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
   if (!access) return problem(404, 'No such chat.');
 
-  const messages = await listMessages(db, tenantId, chatId);
+  const messages = await listMessages(db, tenantId, chatId, access.cipher);
   for (const message of messages) {
     for (const block of toMessageView(message).blocks) {
       if (block.type !== 'tool_use' || block.id !== toolUseId) continue;

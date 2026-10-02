@@ -7,6 +7,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { insertMessage } from '@/lib/chat/messages';
+import { chatCipherById } from '@/lib/chat/chat-keys';
 import { getActiveTurn } from '@/lib/chat/turns';
 import type { ChatMessageView } from '@/lib/chat/views';
 import { noteText, type ChatNote } from './note-text';
@@ -43,6 +44,7 @@ export async function appendChatNote(
       kind: 'note',
       status: 'complete',
       blocks: [{ type: 'text', text }],
+      cipher: await chatCipherById(trx, input.tenantId, input.chatId),
     });
     if (!inserted) return { ok: false, reason: 'failed' };
     return {

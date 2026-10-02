@@ -1,7 +1,9 @@
 /**
  * A system note dropped into a chat's own transcript — the same
- * envelope apps/web/lib/chat/content-crypto.ts's sealBlocks writes
- * (renc1: + secretbox under CONTENT_ENCRYPTION_KEY, falling back to
+ * envelope apps/web/lib/chat/content-crypto.ts's sealBlocks writes: the
+ * chat's own key (`renc2`, migration 133) opened on its owner's behalf
+ * through @renkei/user-keys, or — for a chat that has no key yet — the
+ * `renc1` content envelope under CONTENT_ENCRYPTION_KEY (falling back to
  * TOKEN_ENCRYPTION_KEY, both already present on this service), so the
  * chat page reads it exactly like a person's own note from the code
  * pane (lib/code/chat-commits.ts's own doc comment on that pattern).
@@ -16,19 +18,52 @@
  * whoever opens the chat next.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
-import { contentEncryptionKey, encryptContent } from '@renkei/crypto';
+import { sql, type Kysely } from 'kysely';
+import { getDatabase, type DB } from '@renkei/db';
+import { contentEncryptionKey, encryptContent, encryptWithResourceKey } from '@renkei/crypto';
+import { openResourceKey } from '@renkei/user-keys';
 
-export async function insertChatNote(tenantId: string, chatId: string, text: string): Promise<void> {
+/** The note's blocks sealed the way the chat's own rows are: under its key, or the legacy envelope. */
+async function sealNote(
+  db: Kysely<DB>,
+  tenantId: string,
+  chatId: string,
+  text: string
+): Promise<string> {
+  const json = JSON.stringify([{ type: 'text', text }]);
+  const chat = await db
+    .selectFrom('chats')
+    .select('owner_subject')
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', chatId)
+    .executeTakeFirst();
+  if (chat) {
+    const key = await openResourceKey(
+      db,
+      { tenantId, kind: 'chat', resourceId: chatId },
+      chat.owner_subject
+    );
+    if (key.ok) return encryptWithResourceKey(json, key.val.id, key.val.key);
+    if (key.err.type !== 'NO_KEY') {
+      throw new Error(`the chat's key could not be opened (${key.err.type})`);
+    }
+  }
   const keyResult = contentEncryptionKey();
   if (!keyResult.ok) throw new Error('content encryption key is not configured');
-  const sealed = encryptContent(JSON.stringify([{ type: 'text', text }]), keyResult.val);
+  return encryptContent(json, keyResult.val);
+}
 
+export async function insertChatNote(
+  tenantId: string,
+  chatId: string,
+  text: string
+): Promise<void> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable');
+  const db = dbResult.val;
+  const sealed = await sealNote(db, tenantId, chatId, text);
 
-  await dbResult.val
+  await db
     .insertInto('chat_messages')
     .values({
       tenant_id: tenantId,

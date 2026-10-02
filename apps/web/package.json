@@ -52,6 +52,7 @@
     "@renkei/sandbox-client": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/tool-outcomes": "workspace:*",
+    "@renkei/user-keys": "workspace:*",
     "@renkei/user-prefs": "workspace:*",
     "@renkei/voice": "workspace:*",
     "@tailwindcss/browser": "^4.3.3",

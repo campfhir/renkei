@@ -20,6 +20,7 @@ import {
   imageGenerationTool,
   pickImageModel,
 } from './image-tools';
+import { legacyCipher } from './content-crypto';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEX/AAAZ4gk3AAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC',
@@ -39,6 +40,7 @@ function context(extra: Partial<LocalToolContext> = {}): LocalToolContext {
     tenantId: 't',
     subject: 'u',
     chatId: 'c',
+    cipher: legacyCipher,
     projectId: null,
     readOnly: false,
     userPrompt: USER_TEXT,

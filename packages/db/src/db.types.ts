@@ -1258,6 +1258,24 @@ export interface ResourceAccessGrants {
   tenant_id: string;
 }
 
+export interface ResourceKeyGrants {
+  created_at: Generated<Timestamp>;
+  granted_by: string | null;
+  kek_version: number;
+  resource_key_id: string;
+  subject: string;
+  tenant_id: string;
+  wrapped_key: string;
+}
+
+export interface ResourceKeys {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  resource_id: string;
+  resource_kind: string;
+  tenant_id: string;
+}
+
 export interface SandboxEnvSecrets {
   created_at: Generated<Timestamp>;
   id: string;
@@ -1422,6 +1440,15 @@ export interface UploadSlots {
   token_hash: string;
 }
 
+export interface UserEncryptionKeys {
+  created_at: Generated<Timestamp>;
+  rotated_at: Timestamp | null;
+  salt: string;
+  subject: string;
+  tenant_id: string;
+  version: Generated<number>;
+}
+
 export interface UserPreferences {
   key: string;
   subject: string;
@@ -1562,6 +1589,8 @@ export interface DB {
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;
   resource_access_grants: ResourceAccessGrants;
+  resource_key_grants: ResourceKeyGrants;
+  resource_keys: ResourceKeys;
   sandbox_env_secrets: SandboxEnvSecrets;
   sandbox_files: SandboxFiles;
   sandbox_size_requests: SandboxSizeRequests;
@@ -1578,6 +1607,7 @@ export interface DB {
   tool_calls: ToolCalls;
   image_usage: ImageUsage;
   upload_slots: UploadSlots;
+  user_encryption_keys: UserEncryptionKeys;
   user_preferences: UserPreferences;
   voice_usage: VoiceUsage;
   webex_dirty_windows: WebexDirtyWindows;

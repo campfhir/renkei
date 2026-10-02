@@ -21,8 +21,13 @@ ATLASSIAN_CLIENT_SECRET=<your-client-secret>
 ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
 
 # Encryption
-# Generate with: openssl rand -base64 32
+# Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
+# Optional. The master that every person's key-encryption key is derived
+# from (docs/user-encryption-keys-design.md). Falls back to
+# CONTENT_ENCRYPTION_KEY, then TOKEN_ENCRYPTION_KEY — set it to rotate the
+# per-user key space apart from the other two.
+# USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
 
 # Database
 DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db

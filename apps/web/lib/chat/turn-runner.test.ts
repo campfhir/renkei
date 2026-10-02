@@ -23,6 +23,7 @@ import {
 import { applyStreamEvent, initialThreadState, type ThreadState } from './stream-events';
 import type { ChatStreamEvent } from './stream-events';
 import type { LocalToolContext } from './local-tools';
+import { legacyCipher } from './content-crypto';
 
 interface Row {
   id: string;
@@ -201,6 +202,7 @@ const localContext: LocalToolContext = {
   tenantId: 't',
   subject: 'u',
   chatId: 'c',
+  cipher: legacyCipher,
   projectId: null,
   readOnly: false,
 };

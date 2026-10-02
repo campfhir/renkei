@@ -2,6 +2,11 @@
  * Sharing a chat, read-only: who has it, and giving it to someone. The
  * role is always viewer — a shared chat can be read and watched, never
  * continued by anyone but its owner.
+ *
+ * A share is two writes: the access grant (who may), and the chat's key
+ * rewrapped for the grantee (how they open it — chat-keys.ts). The grant
+ * is the decision; if the rewrap fails here, the grantee's first read
+ * heals it from the grant.
  */
 
 import type { NextRequest } from 'next/server';
@@ -11,6 +16,7 @@ import { grantResourceAccess, listResourceGrants } from '@/lib/chat/access';
 import { parseExpiry } from '@/lib/chat/grant-input';
 import { getChatRow } from '@/lib/chat/store';
 import { notifyChatShared } from '@/lib/chat/share-notification';
+import { shareChatKey } from '@/lib/chat/chat-keys';
 
 export async function GET(
   request: NextRequest,
@@ -46,6 +52,7 @@ export async function POST(
   if (outcome === 'NOT_FOUND') return jsonError(404, 'not-found', 'No such chat');
   if (outcome === 'SELF') return jsonError(400, 'self', 'That is you');
   if (outcome === 'INVALID_ROLE') return jsonError(400, 'invalid', 'Chats are shared read-only');
+  await shareChatKey(db, tenantId, chatId, session.subject, granteeSubject);
   const chat = await getChatRow(db, tenantId, chatId);
   notifyChatShared({
     tenantId,

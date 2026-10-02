@@ -11,6 +11,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
+import { createChatKey, deleteChatKey } from './chat-keys';
 
 export interface ChatRow {
   id: string;
@@ -218,6 +219,9 @@ export async function createChat(
     })
     .returning('id')
     .executeTakeFirstOrThrow();
+  // The chat's own key, wrapped for its owner (chat-keys.ts): every row
+  // the chat will hold is sealed under it.
+  await createChatKey(db, input.tenantId, inserted.id, input.ownerSubject);
   return inserted.id;
 }
 
@@ -300,6 +304,7 @@ export async function deleteChat(
       .where('resource_kind', '=', 'chat')
       .where('resource_id', '=', chatId)
       .execute();
+    await deleteChatKey(db, tenantId, chatId);
   }
   return deleted;
 }

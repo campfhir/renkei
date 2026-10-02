@@ -21,13 +21,16 @@
  *
  * Orphaned grants: resource_access_grants has no foreign key to the
  * polymorphic resource it names; the app deletes grants with their
- * resource, and this catches whatever a crash between the two left.
+ * resource, and this catches whatever a crash between the two left. The
+ * same goes for a chat's encryption key (resource_keys, migration 133):
+ * deleted with the chat, pruned here when that did not land.
  */
 
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
+import { pruneOrphanChatKeys } from '@renkei/user-keys';
 import { logger } from './logger';
 
 export const CHAT_JANITOR_INTERVAL_MS = 5 * 60_000;
@@ -190,6 +193,7 @@ async function pruneOrphanGrants(db: Kysely<DB>): Promise<void> {
         OR (g.resource_kind = 'chat_project' AND NOT EXISTS (SELECT 1 FROM chat_projects p WHERE p.id = g.resource_id))
         OR (g.resource_kind = 'prompt_library' AND NOT EXISTS (SELECT 1 FROM prompt_libraries l WHERE l.id = g.resource_id))
   `.execute(db);
+  await pruneOrphanChatKeys(db);
 }
 
 async function blobStore(tenantId: string): Promise<BlobStore | null> {

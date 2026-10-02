@@ -52,7 +52,7 @@ export async function loadChatView(
 ): Promise<{ chat: ChatView; messages: ChatMessageView[] }> {
   const { chat } = access;
   const [rows, active, project, owner, attachments, widgetDecisions, queue] = await Promise.all([
-    listMessages(db, tenantId, chat.id),
+    listMessages(db, tenantId, chat.id, access.cipher),
     getActiveTurn(db, chat.id),
     chat.projectId ? getProjectRow(db, tenantId, chat.projectId) : Promise.resolve(null),
     chat.ownerSubject === viewerSubject

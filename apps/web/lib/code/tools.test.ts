@@ -52,6 +52,7 @@ import {
 } from './tools';
 import { EXEC_MAX_TIMEOUT_MS } from '@renkei/connector-sandbox';
 import type { LocalToolContext } from '@/lib/chat/local-tools';
+import { legacyCipher } from '@/lib/chat/content-crypto';
 
 const client = jest.requireMock<Record<string, jest.Mock>>('@renkei/sandbox-client');
 const git = jest.requireMock<Record<string, jest.Mock>>('@/lib/sandbox/workspace-git');
@@ -63,6 +64,7 @@ const context: LocalToolContext = {
   tenantId: 'tenant-1',
   subject: 'auth0|alice',
   chatId: 'chat-1',
+  cipher: legacyCipher,
   projectId: 'p1',
   userEmail: 'alice@example.com',
   readOnly: false,

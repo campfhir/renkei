@@ -17,12 +17,14 @@ import {
   WIDGET_LIST_TOOL,
   WIDGET_RESOLVE_TOOL,
 } from './widget-state-tools';
+import { legacyCipher } from './content-crypto';
 
 const context: LocalToolContext = {
   db: null as unknown as LocalToolContext['db'],
   tenantId: 't1',
   subject: 'u1',
   chatId: 'c1',
+  cipher: legacyCipher,
   projectId: null,
   readOnly: false,
 };

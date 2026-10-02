@@ -25,6 +25,7 @@ import {
   matchSubagentModel,
   type SubagentModelChoice,
 } from './delegate';
+import { legacyCipher } from '@/lib/chat/content-crypto';
 
 function provider(replies: LlmResponse[]): LlmProvider {
   let index = 0;
@@ -76,6 +77,7 @@ function context(extra: Partial<LocalToolContext>): LocalToolContext {
     tenantId: 't',
     subject: 'u',
     chatId: 'c',
+    cipher: legacyCipher,
     projectId: 'p',
     readOnly: false,
     ...extra,

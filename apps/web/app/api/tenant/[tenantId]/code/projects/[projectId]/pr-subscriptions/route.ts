@@ -16,6 +16,7 @@ import type { DB } from '@renkei/db';
 import { jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { listMessages, toMessageView } from '@/lib/chat/messages';
+import { chatCipherById } from '@/lib/chat/chat-keys';
 import { latestPrInTranscript } from '@/lib/code/chat-commits';
 
 interface EventView {
@@ -62,7 +63,12 @@ async function chatForPr(
   prNumber: number
 ): Promise<string | null> {
   if (!activeChatId) return null;
-  const rows = await listMessages(db, tenantId, activeChatId);
+  const rows = await listMessages(
+    db,
+    tenantId,
+    activeChatId,
+    await chatCipherById(db, tenantId, activeChatId)
+  );
   const pr = latestPrInTranscript(rows.map(toMessageView));
   return pr?.number === prNumber ? activeChatId : null;
 }

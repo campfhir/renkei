@@ -14,10 +14,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import {
   deleteConnection,
-  encryptCredentials,
+  sealCredentialsForSubject,
   getConnection,
   getInstance,
   updateConnectionPermissions,
@@ -106,13 +105,14 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: failure.status });
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
+  // Sealed under the connecting person's own key, never the deployment key.
+  const sealed = await sealCredentialsForSubject(db, tenantId, session.subject, parsed.credentials);
+  if (!sealed.ok) {
     return NextResponse.json({ error: 'Encryption key unavailable' }, { status: 500 });
   }
 
   const stored = await upsertConnection(db, tenantId, instanceId, session.subject, {
-    encryptedCredentials: encryptCredentials(parsed.credentials, keyResult.val),
+    encryptedCredentials: sealed.val,
     technicianName: parsed.technicianName,
     permissions: parsed.permissions,
   });

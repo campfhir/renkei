@@ -101,7 +101,7 @@ export async function GET(
   const chatAccess = await resolveChatAccess(db, tenantId, session.subject, chatId);
   if (!chatAccess) return jsonError(404, 'not-found', 'No such chat');
 
-  const rows = await listMessages(db, tenantId, chatId);
+  const rows = await listMessages(db, tenantId, chatId, chatAccess.cipher);
   const pullRequest = latestPrInTranscript(rows.map(toMessageView));
   const refs = detectIssueRefs({
     branch: project.repo!.branch,

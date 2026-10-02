@@ -12,7 +12,8 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { decryptCredentials, type AdManagerCredentials } from './credentials';
+import type { AdManagerCredentials } from './credentials';
+import { openCredentialsForSubject } from './user-credentials';
 import { getInstance, readConnectionCiphertext, type InstanceRow } from './store';
 
 export interface ResolvedTarget {
@@ -57,7 +58,13 @@ export async function resolveTarget(
   if (!ciphertext.ok) return err('store' as const);
   if (ciphertext.val === null) return err('not_connected' as const);
 
-  const credentials = decryptCredentials(ciphertext.val, encryptionKey);
+  const credentials = await openCredentialsForSubject(
+    db,
+    target.tenantId,
+    target.subject,
+    ciphertext.val,
+    encryptionKey
+  );
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ instance: instance.val, credentials: credentials.val });
 }

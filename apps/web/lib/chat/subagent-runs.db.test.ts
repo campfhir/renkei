@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { createSubagentRun, finishSubagentRun, getSubagentRunByCall } from './subagent-runs';
+import { legacyCipher } from './content-crypto';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -79,17 +80,23 @@ maybe('chat_subagent_runs model', () => {
       readOnly: true,
       maxSteps: 10,
       model: { provider: 'anthropic', model: 'claude-haiku-4-5', llmModelId: fastModelId },
+      cipher: legacyCipher,
     });
     expect(runId).not.toBeNull();
-    await finishSubagentRun(db, runId!, {
-      status: 'completed',
-      transcript: [],
-      report: 'three callers',
-      error: null,
-      steps: 2,
-      toolCalls: 3,
-    });
-    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast');
+    await finishSubagentRun(
+      db,
+      runId!,
+      {
+        status: 'completed',
+        transcript: [],
+        report: 'three callers',
+        error: null,
+        steps: 2,
+        toolCalls: 3,
+      },
+      legacyCipher
+    );
+    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast', legacyCipher);
     expect(run?.model).toEqual({
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
@@ -98,7 +105,7 @@ maybe('chat_subagent_runs model', () => {
 
     // The config removed: the run still says what answered, by name.
     await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
-    const later = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast');
+    const later = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_fast', legacyCipher);
     expect(later?.model).toEqual({ provider: 'anthropic', model: 'claude-haiku-4-5', label: null });
   });
 
@@ -113,9 +120,10 @@ maybe('chat_subagent_runs model', () => {
       readOnly: false,
       maxSteps: 10,
       model: null,
+      cipher: legacyCipher,
     });
     expect(runId).not.toBeNull();
-    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_plain');
+    const run = await getSubagentRunByCall(db, tenantId, chatId, 'toolu_plain', legacyCipher);
     expect(run?.model).toBeNull();
   });
 });

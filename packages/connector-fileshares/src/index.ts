@@ -97,3 +97,8 @@ export {
   type StoreError,
   type ToolExposure,
 } from './store';
+export {
+  sealCredentialsForSubject,
+  openCredentialsForSubject,
+  type SealCredentialsError,
+} from './user-credentials';

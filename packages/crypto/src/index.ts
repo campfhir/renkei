@@ -15,3 +15,21 @@ export {
   revealContent,
   CONTENT_ENVELOPE_PREFIX,
 } from './content';
+export {
+  userKeyMaster,
+  generateDataKey,
+  generateUserKeySalt,
+  deriveUserKek,
+  wrapKey,
+  unwrapKey,
+  encryptWithResourceKey,
+  decryptWithResourceKey,
+  parseResourceEnvelope,
+  isResourceEncrypted,
+  sealForUser,
+  openForUser,
+  isUserSealed,
+  RESOURCE_ENVELOPE_PREFIX,
+  USER_ENVELOPE_PREFIX,
+  DATA_KEY_BYTES,
+} from './keys';

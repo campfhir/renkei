@@ -35,6 +35,7 @@
     "@renkei/agents": "workspace:*",
     "@renkei/batch-jobs-store": "workspace:*",
     "@renkei/settings": "workspace:*",
+    "@renkei/user-keys": "workspace:*",
     "@renkei/user-prefs": "workspace:*",
     "@renkei/worker-loop": "workspace:*",
     "kysely": "^0.29.4",

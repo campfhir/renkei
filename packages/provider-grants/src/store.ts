@@ -2,11 +2,20 @@
  * The provider-agnostic grant store: encrypted at rest, subject-bound,
  * keyed (tenant, provider, provider account). Provider-specific identity
  * lives in the metadata jsonb and is round-tripped untouched.
+ *
+ * Tokens are sealed under their OWNER's key (`uenc1:`, @renkei/user-keys,
+ * docs/user-encryption-keys-design.md) whenever the grant has a subject:
+ * a person's credential under a key derived for that person, not the
+ * one deployment key every grant used to share. A grant with no subject
+ * (rows predating per-user ownership) and every row written before this
+ * stay under the deployment key the caller passes, and open with it; the
+ * next write — a reconnect, a refresh — moves the row over.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
-import { encrypt, decrypt } from '@renkei/crypto';
+import { sql, type Kysely } from 'kysely';
+import { getDatabase, type DB } from '@renkei/db';
+import { encrypt } from '@renkei/crypto';
+import { openForSubject, sealForSubject } from '@renkei/user-keys';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { NewProviderGrant, ProviderGrant } from './types';
@@ -14,6 +23,33 @@ import type { NewProviderGrant, ProviderGrant } from './types';
 function readMetadata(metadata: unknown): Record<string, unknown> {
   if (typeof metadata !== 'object' || metadata === null) return {};
   return { ...metadata };
+}
+
+/** A token as stored: under the owner's key when the grant has one, else the deployment key. */
+export async function sealGrantToken(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string | null,
+  token: string,
+  legacyKey: Buffer
+): Promise<Result<string, 'SEAL_ERROR'>> {
+  if (!subject) return ok(encrypt(token, legacyKey));
+  const sealed = await sealForSubject(db, tenantId, subject, token);
+  if (!sealed.ok) return err('SEAL_ERROR' as const, { message: sealed.err.type });
+  return ok(sealed.val);
+}
+
+/** The stored token opened: `uenc1:` under the owner's key, anything else under the deployment key. */
+async function openGrantToken(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string | null,
+  stored: string,
+  legacyKey: Buffer
+): Promise<Result<string, 'DECRYPTION_ERROR'>> {
+  const opened = await openForSubject(db, tenantId, subject ?? '', stored, legacyKey);
+  if (!opened.ok) return err('DECRYPTION_ERROR' as const, { message: opened.err.type });
+  return ok(opened.val);
 }
 
 export async function setGrant(
@@ -26,8 +62,23 @@ export async function setGrant(
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const encryptedAccessToken = encrypt(grant.accessToken, encryptionKey);
-  const encryptedRefreshToken = encrypt(grant.refreshToken, encryptionKey);
+  const sealedAccess = await sealGrantToken(
+    db,
+    tenantId,
+    grant.subject,
+    grant.accessToken,
+    encryptionKey
+  );
+  const sealedRefresh = await sealGrantToken(
+    db,
+    tenantId,
+    grant.subject,
+    grant.refreshToken,
+    encryptionKey
+  );
+  if (!sealedAccess.ok || !sealedRefresh.ok) return err('DB_ERROR' as const);
+  const encryptedAccessToken = sealedAccess.val;
+  const encryptedRefreshToken = sealedRefresh.val;
   const metadata = JSON.stringify(grant.metadata);
 
   const result = await wrapAsync(
@@ -123,10 +174,22 @@ export async function getGrant(
   const row = rowResult.val;
   if (!row) return ok(null);
 
-  const accessTokenResult = decrypt(row.encrypted_access_token, encryptionKey);
+  const accessTokenResult = await openGrantToken(
+    db,
+    tenantId,
+    row.subject,
+    row.encrypted_access_token,
+    encryptionKey
+  );
   if (!accessTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
-  const refreshTokenResult = decrypt(row.encrypted_refresh_token, encryptionKey);
+  const refreshTokenResult = await openGrantToken(
+    db,
+    tenantId,
+    row.subject,
+    row.encrypted_refresh_token,
+    encryptionKey
+  );
   if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
   return ok({

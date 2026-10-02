@@ -58,6 +58,7 @@ import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { resolveChatAccess } from './access';
 import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
+import { openStoredText, sealText, type ContentCipher } from './content-crypto';
 import { getProjectRow } from './projects';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
@@ -99,7 +100,8 @@ function creatorOf(value: string): ChatSummaryCreator {
 export async function latestChatSummary(
   db: Kysely<DB>,
   tenantId: string,
-  chatId: string
+  chatId: string,
+  cipher: ContentCipher
 ): Promise<ChatSummaryRow | null> {
   const row = await db
     .selectFrom('chat_summaries')
@@ -112,7 +114,9 @@ export async function latestChatSummary(
   if (!row) return null;
   return {
     id: row.id,
-    content: row.content,
+    // Sealed under the chat's cipher since migration 133; a summary written
+    // before that is plaintext, and read as such.
+    content: openStoredText(row.content, cipher),
     throughSeq: row.through_seq,
     foldedCount: row.folded_count,
     createdBy: creatorOf(row.created_by),
@@ -304,6 +308,8 @@ export interface CompactChatInput {
   chatId: string;
   llm: ResolvedLlm;
   createdBy: ChatSummaryCreator;
+  /** The chat's cipher: the rows it reads and the summary it writes. */
+  cipher: ContentCipher;
   /** Already-fetched rows, when the caller has them (start-turn.ts does). */
   messages?: StoredMessage[];
   /** Called after each batch — real counts, since a batch is a real unit of work. */
@@ -357,7 +363,8 @@ export async function compactChat(
   db: Kysely<DB>,
   input: CompactChatInput
 ): Promise<CompactChatResult | null> {
-  const messages = input.messages ?? (await listMessages(db, input.tenantId, input.chatId));
+  const messages =
+    input.messages ?? (await listMessages(db, input.tenantId, input.chatId, input.cipher));
   const unfolded = unfoldedOf(messages);
   const candidates = foldCandidates(unfolded);
   const calls = callsById(unfolded);
@@ -368,7 +375,8 @@ export async function compactChat(
   input.onProgress?.({ foldedSoFar: 0, totalToFold: total });
   if (candidates.length < CHAT_COMPACT_MIN_FOLD) return null;
 
-  let runningSummary = (await latestChatSummary(db, input.tenantId, input.chatId))?.content ?? null;
+  let runningSummary =
+    (await latestChatSummary(db, input.tenantId, input.chatId, input.cipher))?.content ?? null;
   for (let start = 0; start < candidates.length; start += CHAT_COMPACT_BATCH_MESSAGES) {
     const batch = candidates.slice(start, start + CHAT_COMPACT_BATCH_MESSAGES);
     runningSummary = await foldBatch(input.llm, runningSummary, batch, calls);
@@ -380,12 +388,14 @@ export async function compactChat(
   if (runningSummary === null) throw new Error('unreachable: no batch ran');
   // Candidates are in seq order, so the last is the highest folded.
   const throughSeq = candidates[candidates.length - 1].seq;
+  const sealed = sealText(runningSummary, input.cipher);
+  if (!sealed.ok) throw new Error(sealed.err.message ?? 'the content key is not configured');
   const inserted = await db
     .insertInto('chat_summaries')
     .values({
       tenant_id: input.tenantId,
       chat_id: input.chatId,
-      content: runningSummary,
+      content: sealed.val,
       through_seq: throughSeq,
       folded_count: candidates.length,
       created_by: input.createdBy,
@@ -473,13 +483,27 @@ export async function startCompactionTurn(
     );
   }
   const turnId = turn.val;
-  defer(() => runCompactionTurn(db, { tenantId: input.tenantId, chatId: chat.id, turnId, llm }));
+  defer(() =>
+    runCompactionTurn(db, {
+      tenantId: input.tenantId,
+      chatId: chat.id,
+      turnId,
+      llm,
+      cipher: access.cipher,
+    })
+  );
   return ok({ turnId });
 }
 
 async function runCompactionTurn(
   db: Kysely<DB>,
-  input: { tenantId: string; chatId: string; turnId: string; llm: ResolvedLlm }
+  input: {
+    tenantId: string;
+    chatId: string;
+    turnId: string;
+    llm: ResolvedLlm;
+    cipher: ContentCipher;
+  }
 ): Promise<void> {
   const channel = openTurnChannel(input.turnId);
   let status: 'completed' | 'failed' = 'completed';
@@ -490,6 +514,7 @@ async function runCompactionTurn(
       chatId: input.chatId,
       llm: input.llm,
       createdBy: 'user',
+      cipher: input.cipher,
       onProgress: (progress) =>
         channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
     });

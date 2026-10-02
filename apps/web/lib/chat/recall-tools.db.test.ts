@@ -11,6 +11,7 @@ import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';
+import { legacyCipher } from './content-crypto';
 import { recallTools } from './recall-tools';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -43,6 +44,7 @@ maybe('chat_recall_chats', () => {
     tenantId,
     subject: me,
     chatId,
+    cipher: legacyCipher,
     projectId: inProject,
     readOnly: false,
   });
@@ -86,6 +88,7 @@ maybe('chat_recall_chats', () => {
         role: 'user',
         kind: 'prompt',
         status: 'complete',
+        cipher: legacyCipher,
         blocks: [{ type: 'text', text }],
       });
       if (!row) throw new Error('message not sealed — is TOKEN_ENCRYPTION_KEY set?');

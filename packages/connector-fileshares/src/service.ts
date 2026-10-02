@@ -28,7 +28,8 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { EntryKind, ShareEntry, ShareSummary } from './types';
 import { childPath, normalizePath, parentPath, type PathError } from './paths';
-import { decryptCredentials, type ShareCredentials } from './credentials';
+import type { ShareCredentials } from './credentials';
+import { openCredentialsForSubject } from './user-credentials';
 import { openBackend, type BackendError, type ShareBackend } from './backend';
 import { withSessionLimits } from './limits';
 import { getShare, readConnectionCiphertext } from './store';
@@ -99,7 +100,13 @@ export async function resolveConnection(
   );
   if (!ciphertext.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (ciphertext.val === null) return err('not_connected' as const);
-  const credentials = decryptCredentials(ciphertext.val, deps.encryptionKey);
+  const credentials = await openCredentialsForSubject(
+    deps.db,
+    target.tenantId,
+    target.subject,
+    ciphertext.val,
+    deps.encryptionKey
+  );
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ share: share.val.summary, credentials: credentials.val });
 }

@@ -96,3 +96,8 @@ export {
   type ResolvedTarget,
   type SubjectTarget,
 } from './resolve';
+export {
+  sealCredentialsForSubject,
+  openCredentialsForSubject,
+  type SealCredentialsError,
+} from './user-credentials';

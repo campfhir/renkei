@@ -7,6 +7,7 @@ export default {
   // (same carve-out apps/web's jest config makes).
   transformIgnorePatterns: ['/node_modules/(?!.*kysely)'],
   moduleNameMapper: {
+    '^@renkei/user-keys$': '<rootDir>/../../packages/user-keys/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
   },

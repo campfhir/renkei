@@ -23,6 +23,8 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { getChatRow, type ChatRow } from './store';
+import { chatCipherFor } from './chat-keys';
+import type { ContentCipher } from './content-crypto';
 
 export type ResourceKind = 'chat' | 'chat_project' | 'prompt_library';
 export type GrantRole = 'viewer' | 'editor';
@@ -38,6 +40,13 @@ export interface ResourceAccess {
 export interface ChatAccess extends ResourceAccess {
   chat: ChatRow;
   role: 'owner' | 'viewer';
+  /**
+   * How this viewer opens the chat's content (chat-keys.ts): under the
+   * chat's key as themselves, or — a project member, a chat without a key
+   * yet — as its owner. Every read and write of the chat's rows goes
+   * through it.
+   */
+  cipher: ContentCipher;
 }
 
 export interface GrantView {
@@ -143,11 +152,19 @@ export async function resolveChatAccess(
 ): Promise<ChatAccess | null> {
   const chat = await getChatRow(db, tenantId, chatId);
   if (!chat) return null;
-  if (chat.ownerSubject === viewerSubject) {
-    return { chat, role: 'owner', ownerSubject: chat.ownerSubject, via: 'owner' };
-  }
+  const grant = async (
+    role: 'owner' | 'viewer',
+    via: 'owner' | 'grant' | 'project'
+  ): Promise<ChatAccess> => ({
+    chat,
+    role,
+    ownerSubject: chat.ownerSubject,
+    via,
+    cipher: await chatCipherFor(db, chat, viewerSubject, via),
+  });
+  if (chat.ownerSubject === viewerSubject) return grant('owner', 'owner');
   const granted = await activeGrant(db, tenantId, 'chat', chatId, viewerSubject);
-  if (granted) return { chat, role: 'viewer', ownerSubject: chat.ownerSubject, via: 'grant' };
+  if (granted) return grant('viewer', 'grant');
   if (chat.projectId) {
     const project = await resolveResourceAccess(
       db,
@@ -156,7 +173,7 @@ export async function resolveChatAccess(
       'chat_project',
       chat.projectId
     );
-    if (project) return { chat, role: 'viewer', ownerSubject: chat.ownerSubject, via: 'project' };
+    if (project) return grant('viewer', 'project');
   }
   return null;
 }
@@ -269,6 +286,7 @@ export async function listResourceGrants(
   }));
 }
 
+/** Returns the revoked grantee's subject (so a chat's key wrapping can follow), or null when nothing matched. */
 export async function revokeResourceGrant(
   db: Kysely<DB>,
   tenantId: string,
@@ -276,17 +294,18 @@ export async function revokeResourceGrant(
   kind: ResourceKind,
   resourceId: string,
   grantId: string
-): Promise<boolean> {
-  if (!isUuid(resourceId) || !isUuid(grantId)) return false;
-  const result = await db
+): Promise<string | null> {
+  if (!isUuid(resourceId) || !isUuid(grantId)) return null;
+  const deleted = await db
     .deleteFrom('resource_access_grants')
     .where('tenant_id', '=', tenantId)
     .where('resource_kind', '=', kind)
     .where('resource_id', '=', resourceId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', grantId)
+    .returning('grantee_subject')
     .executeTakeFirst();
-  return Number(result.numDeletedRows) > 0;
+  return deleted?.grantee_subject ?? null;
 }
 
 /** Everything of one kind shared with this person, unexpired. */

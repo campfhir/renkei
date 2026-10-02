@@ -17,7 +17,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
-import { openBlocks } from './content-crypto';
+import { openBlocks, legacyCipher, type ContentCipher } from './content-crypto';
 import {
   CHAT_SEARCH_MAX_HITS,
   CHAT_SEARCH_MAX_ROWS,
@@ -45,13 +45,17 @@ const PAGE_SIZE = 500;
 /**
  * The chats among `chatIds` whose prompts or replies contain `query`,
  * newest chat first, one hit each. `chatIds` is the caller's statement
- * of what the viewer may read — pass the sidebar's list, nothing wider.
+ * of what the viewer may read — pass the sidebar's list, nothing wider —
+ * and `ciphers` how each of those chats opens for the viewer
+ * (chat-keys.ts's `chatCiphersFor`); a chat with no entry opens with the
+ * legacy cipher, which reads only rows from before it had a key.
  */
 export async function searchChatMessages(
   db: Kysely<DB>,
   tenantId: string,
   chatIds: string[],
-  query: string
+  query: string,
+  ciphers: Map<string, ContentCipher> = new Map()
 ): Promise<ChatSearchHit[]> {
   const needle = normalizeQuery(query);
   const ids = chatIds.filter(isUuid);
@@ -79,7 +83,10 @@ export async function searchChatMessages(
     for (const row of rows) {
       // Newest message first within a chat: the first match is the one kept.
       if (hits.has(row.chat_id)) continue;
-      const snippet = snippetAround(searchableText(openBlocks(row.content)), needle);
+      const snippet = snippetAround(
+        searchableText(openBlocks(row.content, ciphers.get(row.chat_id) ?? legacyCipher)),
+        needle
+      );
       if (snippet === null) continue;
       hits.set(row.chat_id, { chatId: row.chat_id, messageId: row.id, snippet });
       if (hits.size >= CHAT_SEARCH_MAX_HITS) break;

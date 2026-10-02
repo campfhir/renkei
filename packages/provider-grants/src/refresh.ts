@@ -12,10 +12,9 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getDatabase } from '@renkei/db';
-import { encrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { getGrant, deleteGrant } from './store';
+import { getGrant, deleteGrant, sealGrantToken } from './store';
 import { scopesFromAccessToken } from './token-claims';
 import { silentLogger } from './types';
 import type { GrantLogger, ProviderAdapter, RefreshedTokens, RefreshError } from './types';
@@ -177,13 +176,33 @@ export async function refreshGrantTokens(
     // null and leave the column untouched (unknown ≠ revoked).
     const grantedScopes = scopesFromAccessToken(accessToken);
 
+    // Re-sealed under the owner's key (store.ts): a refresh is also how a
+    // row from before per-user keys moves over.
+    const sealedAccess = await sealGrantToken(
+      db,
+      tenantId,
+      grant.subject,
+      accessToken,
+      encryptionKey
+    );
+    const sealedRefresh = await sealGrantToken(
+      db,
+      tenantId,
+      grant.subject,
+      refreshToken,
+      encryptionKey
+    );
+    if (!sealedAccess.ok || !sealedRefresh.ok) {
+      logger.error('[Refresh] Could not seal refreshed tokens', { provider, tenantId, accountId });
+      return err('REFRESH_FAILED' as const);
+    }
     const updateResult = await wrapAsync(
       () =>
         db
           .updateTable('provider_grants')
           .set({
-            encrypted_access_token: encrypt(accessToken, encryptionKey),
-            encrypted_refresh_token: encrypt(refreshToken, encryptionKey),
+            encrypted_access_token: sealedAccess.val,
+            encrypted_refresh_token: sealedRefresh.val,
             expires_at: expiresAt,
             updated_at: new Date(),
             ...(grantedScopes ? { granted_scopes: grantedScopes } : {}),

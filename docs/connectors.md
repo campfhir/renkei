@@ -228,4 +228,5 @@ In the order the tests will complain about it:
 
 ## Cross-cutting
 
-The batch/live `verifyAccess` contract itself, and why every candidate is checked at object level rather than a coarser container/space granularity, is Decision #18 in [`RENKEI.md`](../RENKEI.md).
+- **Per-user credentials are sealed under the person's own key.** Provider tokens (`provider_grants`, when the grant has a subject) and the Mirth, ADManager Plus and file-share connections are `uenc1:` envelopes under a key-encryption key derived for that person (`@renkei/user-keys`; [`user-encryption-keys-design.md`](./user-encryption-keys-design.md)). Workers open them with the person's key, falling back to `TOKEN_ENCRYPTION_KEY` for rows written before this; `pnpm --filter @renkei/user-keys rekey-chats --connectors` moves the rest.
+  The batch/live `verifyAccess` contract itself, and why every candidate is checked at object level rather than a coarser container/space granularity, is Decision #18 in [`RENKEI.md`](../RENKEI.md).
