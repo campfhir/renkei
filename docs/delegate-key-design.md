@@ -120,6 +120,14 @@ What the map of the code turned up, and how phase 1 answers it:
 - **One exception remains in phase 1: git over HTTPS in the sandbox.** A code workspace clones, pulls and pushes with a `Basic` header built from the person's GitHub or Bitbucket token, sent to the sandbox worker. Routing git through the delegate (a smart-HTTP proxy the workspace clones from, with a short-lived ticket instead of a token) is designed but deferred; until then that one path still carries a token outside the delegate, and the sandbox worker is the second process that sees one.
 - **Mail and calendar leave the index** (decision 3), with two things kept: the `mail.received` agent trigger, which rode on the inbox subscription the indexing created and now keeps its subscription without ingesting; and To Do tasks, which the same pipeline indexes and which this decision did not name, so they stay for now and are flagged.
 
+### Phase 1: things to know
+
+- **Atlassian identity at connect time.** The callback used to read the account id and site ARIs off the access token's claims; it never sees the token now. The site comes from `accessible-resources` on the pending token, else the authorization code's claims, else a prior grant. The account id comes from `/myself` (Jira), or for JSM, Confluence and Admin from the authorization code's `sub`, else the caller's existing Atlassian grant, else `/myself` on the pending token. Worth confirming against a real connect that Atlassian's code JWT carries `sub` as the account id.
+- **Opaque tokens' granted scopes.** The delegate decodes scopes from a JWT access token; for an opaque one (Bitbucket) the callback hands over what the exchange answer echoed.
+- **Provider stand-ins.** The e2e and dev environments point some clients at a local stub (`GITHUB_API_BASE_URL`, `BITBUCKET_API_BASE_URL`, `JIRA_ADMIN_API_BASE_URL`, `ENTRA_DEVELOPER_API_BASE_URL`). The delegate honors the same variables and lets a provider's token travel to that origin; unset in production, only the provider's own hosts are allowed.
+- **Connector workers answer `not_connected` without a delegate-attached credential.** A web app or worker still pointed straight at a connector worker gets that, by design: the worker has no key.
+- **The git exception** (`grant/git-credential`) is logged on every issue and limited to GitHub and Bitbucket. Replacing it with a smart-HTTP git proxy and short-lived tickets is the next step for the sandbox.
+
 ### Phase 1: what runs where
 
 | Process                                                  | Holds                                                                                                                                                            | Reaches                                                                 |
