@@ -8,20 +8,30 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 
-jest.mock('@renkei/provider-grants', () => ({
-  getGrant: async () => ({
-    ok: true,
-    val: {
-      accessToken: 'token-1',
-      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-      accountId: 'acct-1',
-      metadata: { upn: 'scott@example.com' },
-    },
-  }),
-  refreshGrantTokens: async () => ({ ok: true, val: { accessToken: 'token-1' } }),
-  MICROSOFT: 'microsoft',
-  MicrosoftAdapter: class {},
-}));
+jest.mock('@renkei/provider-grants', () => ({ MICROSOFT: 'microsoft' }));
+// The delegate, standing in: `describe` answers the one grant these suites
+// need, and the fetcher it hands out sends through global fetch (the Graph
+// stub each test installs) — with no Authorization of its own, since the
+// real delegate attaches that on its side of the wire.
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({
+      describe: jest.fn(async () => ({
+        ok: true,
+        val: { accountId: 'acct-1', metadata: { upn: 'scott@example.com' } },
+      })),
+    }),
+    grantFetch: jest.fn((ref: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch(
+        jest.fn((url: string, init?: RequestInit) => fetch(url, init)),
+        actual.grantKeyOf(ref)
+      )
+    ),
+  };
+});
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
 jest.mock('@renkei/db', () => ({
   getDatabase: () => ({
@@ -54,7 +64,6 @@ jest.mock('@renkei/connector-microsoft', () => ({
   buildMailQueryPath: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
     .buildMailQueryPath,
 }));
-jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: async () => null }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: async () => null,
   resolveKnowledge: async () => null,
@@ -117,7 +126,7 @@ async function findMeetingTimes(args: Record<string, unknown>): Promise<ToolResu
     subject: 'subject-1',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 100,
   } as MCPToolContext;
 

@@ -13,6 +13,7 @@
  *  - the `$select`, which decides whether a result has an address at all.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphGet, str, values, type GraphCallContext } from './client';
 
 /** `$search` against the directory requires the eventual-consistency header. */
@@ -32,7 +33,7 @@ export const DIRECTORY_USER_SELECT =
  */
 export async function searchDirectoryUsers(
   context: GraphCallContext,
-  accessToken: string,
+  auth: AuthedFetch,
   query: string | string[],
   max: number
 ): Promise<Record<string, unknown>[] | string> {
@@ -46,7 +47,7 @@ export async function searchDirectoryUsers(
   const search = encodeURIComponent(clauses.join(' OR '));
   const result = await graphGet(
     context,
-    accessToken,
+    auth,
     `/users?$search=${search}&$count=true&$top=${max}&${DIRECTORY_USER_SELECT}`,
     DIRECTORY_SEARCH_HEADERS
   );

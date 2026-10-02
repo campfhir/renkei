@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import type { GraphAuth } from '../graph/graph-auth';
 import { withPresentationHint } from '../common';
 import { htmlToDocumentText } from '@renkei/document-text';
@@ -109,13 +110,13 @@ function textCanvas(html: string): Record<string, unknown> {
 
 async function publishPage(
   context: MCPToolContext,
-  token: string,
+  auth: AuthedFetch,
   siteId: string,
   pageId: string
 ): Promise<string | null> {
   const published = await graphPost(
     context,
-    token,
+    auth,
     `/sites/${siteId}/pages/${pageId}/${PAGE_CAST}/publish`,
     undefined
   );
@@ -142,13 +143,13 @@ export function registerPageTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
 
       const max = num(args.max) ?? 50;
       const listing = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/sites/${resolved.siteId}/pages?$top=${max}` +
           '&$select=id,name,title,webUrl,pageLayout,lastModifiedDateTime'
       );
@@ -189,12 +190,12 @@ export function registerPageTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
 
       const page = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/sites/${resolved.siteId}/pages/${encodeURIComponent(String(args.pageId))}/${PAGE_CAST}` +
           '?$expand=canvasLayout'
       );
@@ -241,7 +242,7 @@ export function registerPageTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
 
       const rawName =
@@ -251,19 +252,14 @@ export function registerPageTools(
           .trim();
       const name = rawName.toLowerCase().endsWith('.aspx') ? rawName : `${rawName}.aspx`;
 
-      const created = await graphPost(
-        context,
-        access.accessToken,
-        `/sites/${resolved.siteId}/pages`,
-        {
-          // Required in the body — Graph cannot infer the page kind without it.
-          '@odata.type': '#microsoft.graph.sitePage',
-          name,
-          title: String(args.title),
-          pageLayout: 'article',
-          ...(str(args.contentHtml) ? { canvasLayout: textCanvas(str(args.contentHtml)) } : {}),
-        }
-      );
+      const created = await graphPost(context, access.auth, `/sites/${resolved.siteId}/pages`, {
+        // Required in the body — Graph cannot infer the page kind without it.
+        '@odata.type': '#microsoft.graph.sitePage',
+        name,
+        title: String(args.title),
+        pageLayout: 'article',
+        ...(str(args.contentHtml) ? { canvasLayout: textCanvas(str(args.contentHtml)) } : {}),
+      });
       if (!created.ok) return errText(created.error);
 
       const pageId = str(created.body.id);
@@ -273,7 +269,7 @@ export function registerPageTools(
             'It is NOT visible to anyone else until published — use sharepoint_publish_page.'
         );
       }
-      const failure = await publishPage(context, access.accessToken, resolved.siteId, pageId);
+      const failure = await publishPage(context, access.auth, resolved.siteId, pageId);
       if (failure) {
         return textResult(
           `Created page "${String(args.title)}" (pageId: ${pageId}), but publishing failed: ` +
@@ -310,13 +306,13 @@ export function registerPageTools(
         return errText('Give a title, contentHtml, or both.');
       }
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
       const pageId = encodeURIComponent(String(args.pageId));
 
       const updated = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/sites/${resolved.siteId}/pages/${pageId}/${PAGE_CAST}`,
         {
           '@odata.type': '#microsoft.graph.sitePage',
@@ -329,12 +325,7 @@ export function registerPageTools(
       if (args.publish === false) {
         return textResult('Updated the page as a draft. Others still see the published version.');
       }
-      const failure = await publishPage(
-        context,
-        access.accessToken,
-        resolved.siteId,
-        String(args.pageId)
-      );
+      const failure = await publishPage(context, access.auth, resolved.siteId, String(args.pageId));
       return textResult(
         failure
           ? `Updated the page, but publishing failed: ${failure}\nThe change is still a draft.`
@@ -358,15 +349,10 @@ export function registerPageTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
 
-      const failure = await publishPage(
-        context,
-        access.accessToken,
-        resolved.siteId,
-        String(args.pageId)
-      );
+      const failure = await publishPage(context, access.auth, resolved.siteId, String(args.pageId));
       return failure ? errText(failure) : textResult('Published the page.');
     }
   );
@@ -386,12 +372,12 @@ export function registerPageTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveSite(context, access.accessToken, String(args.site));
+      const resolved = await resolveSite(context, access.auth, String(args.site));
       if (!resolved.ok) return errText(resolved.error);
 
       const deleted = await graphDelete(
         context,
-        access.accessToken,
+        access.auth,
         `/sites/${resolved.siteId}/pages/${encodeURIComponent(String(args.pageId))}`
       );
       if (!deleted.ok) return errText(deleted.error);

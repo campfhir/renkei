@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Outlook (Microsoft Graph) MCP tools over the caller's own delegated grant
- * ("Renkei reads my mailbox as me"). Every call runs with that user's
- * token, so the tools see exactly what the user can see — nothing more.
+ * ("Renkei reads my mailbox as me"). Every call runs on that user's grant
+ * — an AuthedFetch the delegate authenticates — so the tools see exactly
+ * what the user can see, nothing more, and no token enters this process.
  *
  * Mostly reads — list/get/search mail, calendar view, To Do tasks, the
  * employee directory — plus three acting tools the user asked Renkei to be
@@ -15,10 +16,10 @@
  * resolved inline — production passes the caller's own Microsoft grant,
  * shared with the SharePoint/OneDrive tools since all three close over the
  * same context (see registry.ts). auth.resolve() is called fresh on every
- * tool invocation rather than once at registration: tokens rotate on
- * refresh, handlers are cached, and a stale closure was exactly the failure
- * mode the Jira tools solved with a token-cache layer. Tool volume here is
- * low enough to resolve fresh per call.
+ * tool invocation rather than once at registration: grants are revoked and
+ * reconnected, handlers are cached, and a stale closure was exactly the
+ * failure mode the Jira tools solved with a token-cache layer. Tool volume
+ * here is low enough to resolve fresh per call.
  */
 
 import { z } from 'zod';
@@ -38,6 +39,7 @@ import {
   type MailSearchFilters,
 } from '@renkei/connector-microsoft';
 import { actMeta } from '@renkei/tool-outcomes';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
@@ -144,15 +146,14 @@ function truncateForLog(text: string): string {
 
 async function graphGet(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   pathAndQuery: string,
   extraHeaders?: Record<string, string>
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
   let response: Response;
   try {
-    response = await graphFetch(accessToken, pathAndQuery, {
+    response = await graphFetch(auth, pathAndQuery, {
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         Prefer: 'outlook.body-content-type="text"',
         ...extraHeaders,
       },
@@ -202,17 +203,16 @@ async function graphGet(
 /** POST to Graph; 202/204 answers have no body, JSON answers are parsed. */
 async function graphPost(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   pathAndQuery: string,
   json: unknown
 ): Promise<{ ok: true; body: Record<string, unknown> | null } | { ok: false; error: string }> {
   let response: Response;
   const requestBody = JSON.stringify(json);
   try {
-    response = await graphFetch(accessToken, pathAndQuery, {
+    response = await graphFetch(auth, pathAndQuery, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
       body: requestBody,
@@ -264,17 +264,16 @@ async function graphPost(
 /** PATCH to Graph; puts the comment and any added recipients on a reply/forward draft before it is sent. */
 async function graphPatch(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   pathAndQuery: string,
   json: unknown
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const requestBody = JSON.stringify(json);
   let response: Response;
   try {
-    response = await graphFetch(accessToken, pathAndQuery, {
+    response = await graphFetch(auth, pathAndQuery, {
       method: 'PATCH',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
       body: requestBody,
@@ -316,13 +315,12 @@ async function graphPatch(
 /** DELETE a Graph resource — used only as best-effort cleanup of an orphaned draft. */
 async function graphDelete(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   pathAndQuery: string
 ): Promise<void> {
   try {
-    const response = await graphFetch(accessToken, pathAndQuery, {
+    const response = await graphFetch(auth, pathAndQuery, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${accessToken}` },
       lane: 'interactive',
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
@@ -349,14 +347,13 @@ async function graphDelete(
  */
 async function graphDeleteChecked(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   pathAndQuery: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   let response: Response;
   try {
-    response = await graphFetch(accessToken, pathAndQuery, {
+    response = await graphFetch(auth, pathAndQuery, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${accessToken}` },
       lane: 'interactive',
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
@@ -629,7 +626,7 @@ interface DraftInfo {
 
 async function createDraftAction(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   messageId: string,
   action: 'createReply' | 'createReplyAll' | 'createForward',
   options: {
@@ -641,7 +638,7 @@ async function createDraftAction(
 ): Promise<DraftInfo | { ok: false; error: string }> {
   const created = await graphPost(
     context,
-    accessToken,
+    auth,
     `/me/messages/${encodeURIComponent(messageId)}/${action}`,
     {}
   );
@@ -660,28 +657,21 @@ async function createDraftAction(
       // Forward auto-populates nothing, so this only fires for a forward
       // whose caller-supplied "to" turned out empty — reply/reply-all always
       // have Graph's own auto-populated sender/all to fall back to.
-      await graphDelete(context, accessToken, `/me/messages/${encodeURIComponent(draftId)}`);
+      await graphDelete(context, auth, `/me/messages/${encodeURIComponent(draftId)}`);
       return { ok: false, error: 'No recipient to send to' };
     }
-    const patched = await graphPatch(
-      context,
-      accessToken,
-      `/me/messages/${encodeURIComponent(draftId)}`,
-      {
-        ...(options.comment ? { body: prependComment(rec(draft.body), options.comment) } : {}),
-        ...(needsRecipientPatch
-          ? {
-              toRecipients: toRecipients.map(recipientOf),
-              ...(ccRecipients.length > 0 ? { ccRecipients: ccRecipients.map(recipientOf) } : {}),
-              ...(bccRecipients.length > 0
-                ? { bccRecipients: bccRecipients.map(recipientOf) }
-                : {}),
-            }
-          : {}),
-      }
-    );
+    const patched = await graphPatch(context, auth, `/me/messages/${encodeURIComponent(draftId)}`, {
+      ...(options.comment ? { body: prependComment(rec(draft.body), options.comment) } : {}),
+      ...(needsRecipientPatch
+        ? {
+            toRecipients: toRecipients.map(recipientOf),
+            ...(ccRecipients.length > 0 ? { ccRecipients: ccRecipients.map(recipientOf) } : {}),
+            ...(bccRecipients.length > 0 ? { bccRecipients: bccRecipients.map(recipientOf) } : {}),
+          }
+        : {}),
+    });
     if (!patched.ok) {
-      await graphDelete(context, accessToken, `/me/messages/${encodeURIComponent(draftId)}`);
+      await graphDelete(context, auth, `/me/messages/${encodeURIComponent(draftId)}`);
       return patched;
     }
   }
@@ -701,25 +691,25 @@ async function createDraftAction(
 /** Send an existing draft. `keepOnFailure` leaves it in Drafts for a retry. */
 async function sendDraft(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   draftId: string,
   keepOnFailure = false
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const sent = await graphPost(
     context,
-    accessToken,
+    auth,
     `/me/messages/${encodeURIComponent(draftId)}/send`,
     {}
   );
   if (!sent.ok && !keepOnFailure) {
-    await graphDelete(context, accessToken, `/me/messages/${encodeURIComponent(draftId)}`);
+    await graphDelete(context, auth, `/me/messages/${encodeURIComponent(draftId)}`);
   }
   return sent.ok ? { ok: true } : sent;
 }
 
 async function sendDraftAction(
   context: MCPToolContext,
-  accessToken: string,
+  auth: AuthedFetch,
   messageId: string,
   action: 'createReply' | 'createReplyAll' | 'createForward',
   options: {
@@ -729,9 +719,9 @@ async function sendDraftAction(
     bcc: readonly string[];
   }
 ): Promise<{ ok: true; webLink: string; subject: string } | { ok: false; error: string }> {
-  const created = await createDraftAction(context, accessToken, messageId, action, options);
+  const created = await createDraftAction(context, auth, messageId, action, options);
   if (!created.ok) return created;
-  const sent = await sendDraft(context, accessToken, created.draftId);
+  const sent = await sendDraft(context, auth, created.draftId);
   if (!sent.ok) return sent;
   return { ok: true, webLink: created.webLink, subject: created.subject };
 }
@@ -956,7 +946,7 @@ export async function registerOutlookTools(
         : '/me/mailFolders';
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `${path}?$top=${max}&$select=id,displayName,unreadItemCount,totalItemCount,childFolderCount`
       );
       if (!result.ok) return errText(result.error);
@@ -1006,7 +996,7 @@ export async function registerOutlookTools(
         `/me/mailFolders/${encodeURIComponent(folder)}/messages` +
         `?$top=${max}&$orderby=receivedDateTime desc` +
         `&$select=id,subject,from,receivedDateTime,bodyPreview,isRead`;
-      const result = await graphGet(context, access.accessToken, query);
+      const result = await graphGet(context, access.auth, query);
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(messageLine);
       if (lines.length === 0) return textResult('No messages.');
@@ -1037,7 +1027,7 @@ export async function registerOutlookTools(
       if (!messageId) return errText('messageId is required');
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages/${encodeURIComponent(messageId)}` +
           `?$select=id,subject,from,toRecipients,receivedDateTime,body,isRead,flag,categories`
       );
@@ -1104,7 +1094,7 @@ export async function registerOutlookTools(
 
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages/${encodeURIComponent(messageId)}/attachments` +
           `?$select=id,name,contentType,size,isInline`
       );
@@ -1156,7 +1146,7 @@ export async function registerOutlookTools(
       const basePath =
         `/me/messages/${encodeURIComponent(messageId)}` +
         `/attachments/${encodeURIComponent(attachmentId)}`;
-      const result = await graphGet(context, access.accessToken, basePath);
+      const result = await graphGet(context, access.auth, basePath);
       if (!result.ok) return errText(result.error);
       const attachment = result.body;
       const name = str(attachment.name) || '(unnamed)';
@@ -1179,7 +1169,7 @@ export async function registerOutlookTools(
       if (kind === 'item') {
         const expanded = await graphGet(
           context,
-          access.accessToken,
+          access.auth,
           `${basePath}?$expand=microsoft.graph.itemattachment/item`
         );
         const item = expanded.ok ? rec(rec(expanded.body).item) : {};
@@ -1313,7 +1303,7 @@ export async function registerOutlookTools(
       if (messageIds.length === 0) return errText('messageIds is required');
 
       const batch = await graphBatch(
-        access.accessToken,
+        access.auth,
         messageIds.map((id) => ({
           id,
           method: 'GET' as const,
@@ -1382,7 +1372,7 @@ export async function registerOutlookTools(
       const max = typeof args.max === 'number' ? args.max : 20;
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages?$search=${encodeURIComponent(`"${query.replace(/"/g, '')}"`)}` +
           `&$top=${max}&$select=id,subject,from,receivedDateTime,bodyPreview,isRead`
       );
@@ -1547,7 +1537,7 @@ export async function registerOutlookTools(
         let serverTotal: number | null = null;
         let next: string | null = buildQuery(100, true);
         for (let page = 0; page < COUNT_SCAN_PAGE_BUDGET && next; page += 1) {
-          const result = await graphGet(context, access.accessToken, next);
+          const result = await graphGet(context, access.auth, next);
           if (!result.ok) return errText(result.error);
           if (serverTotal === null && typeof result.body['@odata.count'] === 'number') {
             serverTotal = result.body['@odata.count'];
@@ -1604,7 +1594,7 @@ export async function registerOutlookTools(
       const pageBudget = scanning ? SUBJECT_SCAN_PAGE_BUDGET : 1;
 
       while (next && collected.length < max && pagesFetched < pageBudget) {
-        const result = await graphGet(context, access.accessToken, next);
+        const result = await graphGet(context, access.auth, next);
         if (!result.ok) return errText(result.error);
         pagesFetched += 1;
         for (const message of values(result.body)) {
@@ -1695,7 +1685,7 @@ export async function registerOutlookTools(
       const max = typeof args.max === 'number' ? args.max : 25;
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/calendarView?startDateTime=${encodeURIComponent(from)}&endDateTime=${encodeURIComponent(to)}` +
           `&$top=${max}&$orderby=start/dateTime` +
           `&$select=id,subject,start,end,organizer,location,type,seriesMasterId`
@@ -1732,7 +1722,7 @@ export async function registerOutlookTools(
       if (!eventId) return errText('eventId is required');
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(eventId)}` +
           `?$select=id,subject,start,end,organizer,location,attendees,body,webLink,type,seriesMasterId,recurrence`
       );
@@ -1766,7 +1756,7 @@ export async function registerOutlookTools(
     async () => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const result = await graphGet(context, access.accessToken, '/me/todo/lists');
+      const result = await graphGet(context, access.auth, '/me/todo/lists');
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(
         (list) => `${str(list.displayName) || '(unnamed)'} — id: ${str(list.id)}`
@@ -1800,7 +1790,7 @@ export async function registerOutlookTools(
       const filter = status ? `&$filter=status eq '${status}'` : '';
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks?$top=${max}${filter}`
       );
       if (!result.ok) return errText(result.error);
@@ -1860,7 +1850,7 @@ export async function registerOutlookTools(
         .filter((query: string) => query.replace(/"/g, '').trim());
       if (queries.length === 0) return errText('query is required');
       const max = typeof args.max === 'number' ? args.max : Math.min(100, 15 * queries.length);
-      const found = await searchDirectoryUsers(context, access.accessToken, queries, max);
+      const found = await searchDirectoryUsers(context, access.auth, queries, max);
       if (typeof found === 'string') return errText(found);
       const lines = found.map((user) => `${userLine(user)} — id: ${str(user.id)}`);
       if (lines.length === 0) return textResult('No directory matches.');
@@ -1892,18 +1882,14 @@ export async function registerOutlookTools(
       if (!user) return errText('user is required');
       const encoded = encodeURIComponent(user);
 
-      const profile = await graphGet(
-        context,
-        access.accessToken,
-        `/users/${encoded}?${USER_SELECT}`
-      );
+      const profile = await graphGet(context, access.auth, `/users/${encoded}?${USER_SELECT}`);
       if (!profile.ok) return errText(profile.error);
 
       // Manager and reports are separate calls; either may legitimately be
       // empty (the CEO, a leaf IC) — absence is an answer, not an error.
       const [manager, reports] = await Promise.all([
-        graphGet(context, access.accessToken, `/users/${encoded}/manager?${USER_SELECT}`),
-        graphGet(context, access.accessToken, `/users/${encoded}/directReports?${USER_SELECT}`),
+        graphGet(context, access.auth, `/users/${encoded}/manager?${USER_SELECT}`),
+        graphGet(context, access.auth, `/users/${encoded}/directReports?${USER_SELECT}`),
       ]);
 
       const lines = [userLine(profile.body)];
@@ -1959,7 +1945,7 @@ export async function registerOutlookTools(
       if (args.mailingListsOnly === true) parts.push('$filter=mailEnabled eq true');
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/groups?${parts.join('&')}`,
         DIRECTORY_SEARCH_HEADERS
       );
@@ -2000,7 +1986,7 @@ export async function registerOutlookTools(
       const max = typeof args.max === 'number' ? args.max : 50;
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/groups/${encodeURIComponent(groupId)}/members?$top=${max}&${USER_SELECT}`
       );
       if (!result.ok) return errText(result.error);
@@ -2039,7 +2025,7 @@ export async function registerOutlookTools(
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const recipient = (address: string) => ({ emailAddress: { address } });
 
-      const result = await graphPost(context, access.accessToken, '/me/sendMail', {
+      const result = await graphPost(context, access.auth, '/me/sendMail', {
         message: {
           subject: str(args.subject),
           body: { contentType: 'HTML', content: markdownToHtml(str(args.body)) },
@@ -2121,7 +2107,7 @@ export async function registerOutlookTools(
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
 
-      const result = await sendDraftAction(context, access.accessToken, messageId, 'createReply', {
+      const result = await sendDraftAction(context, access.auth, messageId, 'createReply', {
         comment,
         additionalTo,
         cc,
@@ -2182,18 +2168,12 @@ export async function registerOutlookTools(
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
 
-      const result = await sendDraftAction(
-        context,
-        access.accessToken,
-        messageId,
-        'createReplyAll',
-        {
-          comment,
-          additionalTo,
-          cc,
-          bcc,
-        }
-      );
+      const result = await sendDraftAction(context, access.auth, messageId, 'createReplyAll', {
+        comment,
+        additionalTo,
+        cc,
+        bcc,
+      });
       if (!result.ok) return errText(result.error);
       logger.info('outlook_reply_all_message sent', {
         component: 'mcp/tool',
@@ -2242,18 +2222,12 @@ export async function registerOutlookTools(
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
 
-      const result = await sendDraftAction(
-        context,
-        access.accessToken,
-        messageId,
-        'createForward',
-        {
-          comment: str(args.comment) || undefined,
-          additionalTo: to,
-          cc,
-          bcc,
-        }
-      );
+      const result = await sendDraftAction(context, access.auth, messageId, 'createForward', {
+        comment: str(args.comment) || undefined,
+        additionalTo: to,
+        cc,
+        bcc,
+      });
       if (!result.ok) return errText(result.error);
       logger.info('outlook_forward_message sent', {
         component: 'mcp/tool',
@@ -2325,7 +2299,7 @@ export async function registerOutlookTools(
       const subject = str(args.subject);
       const body = str(args.body);
 
-      const created = await graphPost(context, access.accessToken, '/me/messages', {
+      const created = await graphPost(context, access.auth, '/me/messages', {
         subject,
         body: { contentType: 'HTML', content: markdownToHtml(body) },
         toRecipients: to.map(recipientOf),
@@ -2414,20 +2388,14 @@ export async function registerOutlookTools(
         const comment = str(args.comment);
         if (!comment) return errText('comment is required');
 
-        const created = await createDraftAction(
-          context,
-          access.accessToken,
-          messageId,
-          preview.action,
-          {
-            comment,
-            additionalTo: Array.isArray(args.additionalTo)
-              ? args.additionalTo.map(String).filter(Boolean)
-              : [],
-            cc: Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [],
-            bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
-          }
-        );
+        const created = await createDraftAction(context, access.auth, messageId, preview.action, {
+          comment,
+          additionalTo: Array.isArray(args.additionalTo)
+            ? args.additionalTo.map(String).filter(Boolean)
+            : [],
+          cc: Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [],
+          bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
+        });
         if (!created.ok) return errText(created.error);
         logger.info(`${preview.name} drafted`, {
           component: 'mcp/tool',
@@ -2471,18 +2439,12 @@ export async function registerOutlookTools(
       const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
       if (to.length === 0) return errText('to is required');
 
-      const created = await createDraftAction(
-        context,
-        access.accessToken,
-        messageId,
-        'createForward',
-        {
-          comment: str(args.comment) || undefined,
-          additionalTo: to,
-          cc: Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [],
-          bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
-        }
-      );
+      const created = await createDraftAction(context, access.auth, messageId, 'createForward', {
+        comment: str(args.comment) || undefined,
+        additionalTo: to,
+        cc: Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [],
+        bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
+      });
       if (!created.ok) return errText(created.error);
       logger.info('outlook_forward_preview drafted', {
         component: 'mcp/tool',
@@ -2539,7 +2501,7 @@ export async function registerOutlookTools(
       if (Object.keys(patch).length > 0) {
         const patched = await graphPatch(
           context,
-          access.accessToken,
+          access.auth,
           `/me/messages/${encodeURIComponent(draftId)}`,
           patch
         );
@@ -2547,7 +2509,7 @@ export async function registerOutlookTools(
         if (!patched.ok) return errText(patched.error);
       }
 
-      const sent = await sendDraft(context, access.accessToken, draftId, true);
+      const sent = await sendDraft(context, access.auth, draftId, true);
       if (!sent.ok) return errText(sent.error);
       logger.info('outlook_send_draft_confirm sent', {
         component: 'mcp/tool',
@@ -2578,7 +2540,7 @@ export async function registerOutlookTools(
       if (!draftId) return errText('draftId is required');
       const deleted = await graphDeleteChecked(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages/${encodeURIComponent(draftId)}`
       );
       if (!deleted.ok) return errText(deleted.error);
@@ -2616,7 +2578,7 @@ export async function registerOutlookTools(
 
       const result = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages/${encodeURIComponent(messageId)}`,
         { isRead: args.isRead }
       );
@@ -2652,7 +2614,7 @@ export async function registerOutlookTools(
 
       const result = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages/${encodeURIComponent(messageId)}`,
         { flag: { flagStatus: status } }
       );
@@ -2705,7 +2667,7 @@ export async function registerOutlookTools(
         }
         const current = await graphGet(
           context,
-          access.accessToken,
+          access.auth,
           `/me/messages/${encodeURIComponent(messageId)}?$select=categories`
         );
         if (!current.ok) return errText(current.error);
@@ -2719,7 +2681,7 @@ export async function registerOutlookTools(
 
       const result = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages/${encodeURIComponent(messageId)}`,
         { categories }
       );
@@ -2762,7 +2724,7 @@ export async function registerOutlookTools(
 
       const result = await graphPost(
         context,
-        access.accessToken,
+        access.auth,
         `/me/messages/${encodeURIComponent(messageId)}/move`,
         { destinationId: destinationFolder }
       );
@@ -2797,7 +2759,7 @@ export async function registerOutlookTools(
         ? `/me/mailFolders/${encodeURIComponent(parentFolderId)}/childFolders`
         : '/me/mailFolders';
 
-      const result = await graphPost(context, access.accessToken, path, { displayName });
+      const result = await graphPost(context, access.auth, path, { displayName });
       if (!result.ok) return errText(result.error);
       const folder = result.body ?? {};
       return textResult(
@@ -2827,7 +2789,7 @@ export async function registerOutlookTools(
 
       const result = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/me/mailFolders/${encodeURIComponent(folderId)}`,
         { displayName }
       );
@@ -2857,7 +2819,7 @@ export async function registerOutlookTools(
 
       const result = await graphDeleteChecked(
         context,
-        access.accessToken,
+        access.auth,
         `/me/mailFolders/${encodeURIComponent(folderId)}`
       );
       if (!result.ok) return errText(result.error);
@@ -2926,7 +2888,7 @@ export async function registerOutlookTools(
         ...optionalAttendees.map((address) => ({ emailAddress: { address }, type: 'optional' })),
       ];
 
-      const result = await graphPost(context, access.accessToken, '/me/events', {
+      const result = await graphPost(context, access.auth, '/me/events', {
         subject: str(args.subject),
         start: { dateTime: str(args.start), timeZone: timezone },
         end: { dateTime: str(args.end), timeZone: timezone },
@@ -3024,7 +2986,7 @@ export async function registerOutlookTools(
       const select = '$select=id,subject,type,seriesMasterId,start,end';
       const lookup = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(eventId)}?${select}`
       );
       if (!lookup.ok) return errText(lookup.error);
@@ -3038,7 +3000,7 @@ export async function registerOutlookTools(
       if (target.id !== eventId) {
         const master = await graphGet(
           context,
-          access.accessToken,
+          access.auth,
           `/me/events/${encodeURIComponent(target.id)}?${select}`
         );
         if (!master.ok) return errText(master.error);
@@ -3076,7 +3038,7 @@ export async function registerOutlookTools(
 
       const result = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(target.id)}`,
         patch
       );
@@ -3180,7 +3142,7 @@ export async function registerOutlookTools(
       const timezone = str(args.timezone) || 'UTC';
       const max = typeof args.max === 'number' ? args.max : 10;
 
-      const result = await graphPost(context, access.accessToken, '/me/findMeetingTimes', {
+      const result = await graphPost(context, access.auth, '/me/findMeetingTimes', {
         attendees: [
           ...requiredAttendees.map((address) => ({ emailAddress: { address }, type: 'required' })),
           ...optionalAttendees.map((address) => ({ emailAddress: { address }, type: 'optional' })),
@@ -3304,7 +3266,7 @@ export async function registerOutlookTools(
 
       const result = await graphPost(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(eventId)}/${action}`,
         {
           sendResponse: true,
@@ -3345,7 +3307,7 @@ export async function registerOutlookTools(
             : 'Declined a meeting invitation';
       const still = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(eventId)}?$select=subject,webLink`
       );
       const event = still.ok ? (still.body ?? {}) : {};
@@ -3400,7 +3362,7 @@ export async function registerOutlookTools(
       if (!eventId) return errText('eventId is required');
       const result = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(eventId)}` +
           `?$select=id,subject,start,end,organizer,attendees,location,isOrganizer,type,seriesMasterId`
       );
@@ -3489,7 +3451,7 @@ export async function registerOutlookTools(
       // organizer-cancel vs self-remove must not be forgeable (or stale).
       const lookup = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(eventId)}?$select=id,subject,isOrganizer,type,seriesMasterId`
       );
       if (!lookup.ok) return errText(lookup.error);
@@ -3510,7 +3472,7 @@ export async function registerOutlookTools(
         const comment = str(args.comment);
         const result = await graphPost(
           context,
-          access.accessToken,
+          access.auth,
           `/me/events/${encodeURIComponent(target.id)}/cancel`,
           comment ? { comment } : {}
         );
@@ -3527,7 +3489,7 @@ export async function registerOutlookTools(
 
       const removal = await graphDeleteChecked(
         context,
-        access.accessToken,
+        access.auth,
         `/me/events/${encodeURIComponent(target.id)}`
       );
       if (!removal.ok) return errText(removal.error);

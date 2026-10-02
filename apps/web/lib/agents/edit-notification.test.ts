@@ -51,7 +51,11 @@ import { notifyAgentEdited } from './edit-notification';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
 import { authedFetch } from '@renkei/delegate-client';
 
-/** The owner's WebEx grant as the delegate hands it out: a fetcher, never a token. */
+/** The owner's grants as the delegate hands them out: fetchers, never tokens. */
+const graphAuth = authedFetch(
+  async () => new Response('{}', { status: 202 }),
+  'microsoft:tenant-1:ms-account-1'
+);
 const webexAuth = authedFetch(
   async () => new Response('{}', { status: 200 }),
   'webex:tenant-1:webex-account-1'
@@ -114,7 +118,7 @@ beforeEach(() => {
       : { email: 'editor@example.com', displayName: 'Editor' }
   );
   mockResolveGraphAccess.mockResolvedValue({
-    accessToken: 'ms-token',
+    auth: graphAuth,
     upn: 'owner@example.com',
     accountId: 'ms-account-1',
   });

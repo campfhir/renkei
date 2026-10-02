@@ -23,6 +23,7 @@ import type { MCPToolContext } from '../common';
 import type { GraphAuth } from '../graph/graph-auth';
 import { ACT_META_KEY } from '@renkei/tool-outcomes';
 import { bulkJobLabel, registerBulkJobTools } from './bulk-jobs';
+import { authedFetch } from '@renkei/delegate-client';
 
 const getDatabaseMock = getDatabase as jest.Mock;
 
@@ -77,7 +78,11 @@ function fakeDb() {
 
 function stubAuth(): GraphAuth {
   return {
-    resolve: async () => ({ accessToken: 'token', upn: 'user@example.com', accountId: 'acct-1' }),
+    resolve: async () => ({
+      auth: authedFetch(async () => new Response('{}'), 'microsoft:tenant-1:acct-1'),
+      upn: 'user@example.com',
+      accountId: 'acct-1',
+    }),
   } as unknown as GraphAuth;
 }
 
@@ -94,7 +99,6 @@ function tools(): Map<string, ToolHandler> {
     subject: 'user-1',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
     maxJqlResults: 100,
   } as unknown as MCPToolContext;
   registerBulkJobTools(server, context, stubAuth());

@@ -43,7 +43,7 @@ export async function collectSharePointChanges(
     // has no $filter on driveItem lastModifiedDateTime for a children listing.
     const result = await graphGet(
       context,
-      access.accessToken,
+      access.auth,
       `/drives/${watch.scopeKey}/root/children?$top=50` +
         '&$orderby=lastModifiedDateTime desc' +
         '&$select=name,webUrl,lastModifiedDateTime,lastModifiedBy,folder'

@@ -88,7 +88,7 @@ export function registerMetadataTools(
       let driveId = str(args.driveId);
       if (!driveId) {
         if (!str(args.site)) return errText('Give a site (or a driveId).');
-        const resolved = await resolveDriveItem(context, access.accessToken, {
+        const resolved = await resolveDriveItem(context, access.auth, {
           site: str(args.site),
           library: str(args.library) || undefined,
         });
@@ -96,11 +96,7 @@ export function registerMetadataTools(
         driveId = resolved.item.driveId;
       }
 
-      const columns = await graphGet(
-        context,
-        access.accessToken,
-        `/drives/${driveId}/list/columns`
-      );
+      const columns = await graphGet(context, access.auth, `/drives/${driveId}/list/columns`);
       if (!columns.ok) return errText(columns.error);
 
       const entries = values(columns.body).filter((column) => !str(column.name).startsWith('_'));
@@ -142,12 +138,12 @@ export function registerMetadataTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const resolved = await resolveDriveItem(context, access.accessToken, selectorOf(args));
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args));
       if (!resolved.ok) return errText(resolved.error);
 
       const listItem = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}/listItem?$expand=fields`
       );
       if (!listItem.ok) return errText(listItem.error);
@@ -193,12 +189,12 @@ export function registerMetadataTools(
       const fields = rec(args.fields);
       if (Object.keys(fields).length === 0) return errText('No fields given.');
 
-      const resolved = await resolveDriveItem(context, access.accessToken, selectorOf(args));
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args));
       if (!resolved.ok) return errText(resolved.error);
 
       const updated = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}/listItem/fields`,
         fields
       );

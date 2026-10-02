@@ -31,15 +31,12 @@ import {
   CONFLUENCE_KNOWLEDGE_PROVIDER,
 } from '@renkei/connector-atlassian';
 import {
-  getGrant,
-  refreshGrantTokens,
   readAtlassianMetadata,
   ATLASSIAN,
   ATLASSIAN_CONFLUENCE,
   MICROSOFT,
-  MicrosoftAdapter,
 } from '@renkei/provider-grants';
-import { getMicrosoftApp } from '@/lib/microsoft-app';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
 import { withheldNote } from '@renkei/gates';
@@ -85,7 +82,7 @@ export async function buildKnowledgeVerifiers(
       const { resolveWebexUserAccessByEmail } = await import('@/lib/webex-user-access');
       const access = await resolveWebexUserAccessByEmail(tenantId, userEmail);
       // Interactive: this client exists to answer a live search.
-      return access ? new WebexClient(access.accessToken, { lane: 'interactive' }) : null;
+      return access ? new WebexClient(access.auth, { lane: 'interactive' }) : null;
     })
   );
 
@@ -117,8 +114,8 @@ export async function buildKnowledgeVerifiers(
   );
 
   // Drive documents are the one Microsoft surface where ownership is NOT the
-  // ACL — a file is shared — so this asks Graph live with the caller's own
-  // token rather than reading an owner out of the ref. Registered
+  // ACL — a file is shared — so this asks Graph live on the caller's own
+  // grant rather than reading an owner out of the ref. Registered
   // unconditionally for the same reason as the pair above.
   verifiers.set(
     SHAREPOINT_KNOWLEDGE_PROVIDER,
@@ -129,128 +126,81 @@ export async function buildKnowledgeVerifiers(
 }
 
 /**
- * The caller's own Atlassian credential, found from their email.
- *
- * The gate hands verifiers an EMAIL (the identity spine's key), while
- * grants are keyed by OIDC subject — so this hops identities → provider
- * grants. Anything missing returns null, which denies: a user who has not
- * connected the product cannot be shown its content on the index's word
- * alone.
+ * The OIDC subject behind an email, or null. The gate hands verifiers an
+ * EMAIL (the identity spine's key), while grants are keyed by subject — so
+ * every credential lookup below hops identities → the delegate's grant.
+ */
+async function subjectOf(tenantId: string, userEmail: string): Promise<string | null> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+  const row = await dbResult.val
+    .selectFrom('identities')
+    .select('subject')
+    .where('tenant_id', '=', tenantId)
+    .where('email', '=', userEmail)
+    .limit(1)
+    .executeTakeFirst();
+  return row?.subject ?? null;
+}
+
+/**
+ * The caller's own Atlassian credential, found from their email: a fetcher
+ * on their grant and the site it was minted for. Anything missing returns
+ * null, which denies: a user who has not connected the product cannot be
+ * shown its content on the index's word alone. No token is read here — the
+ * delegate describes the grant (for the cloud id) and authenticates the
+ * fetcher itself.
  */
 async function atlassianCredentialFor(
   tenantId: string,
   userEmail: string,
   provider: string
-): Promise<{ accessToken: string; cloudId: string } | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
+): Promise<{ auth: AuthedFetch; cloudId: string } | null> {
+  const subject = await subjectOf(tenantId, userEmail);
+  if (!subject) return null;
 
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .innerJoin('provider_grants', (join) =>
-      join
-        .onRef('provider_grants.subject', '=', 'identities.subject')
-        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
-    )
-    .select('provider_grants.provider_account_id')
-    .where('identities.tenant_id', '=', tenantId)
-    .where('identities.email', '=', userEmail)
-    .where('provider_grants.provider', '=', provider)
-    .limit(1)
-    .executeTakeFirst();
-  if (!row) return null;
-
-  const grantResult = await getGrant(provider, tenantId, row.provider_account_id);
-  if (!grantResult.ok || !grantResult.val) return null;
-  const site = readAtlassianMetadata(grantResult.val.metadata);
+  const described = await delegateGrants().describe({ tenantId, provider, subject });
+  if (!described.ok) return null;
+  const site = readAtlassianMetadata(described.val.metadata);
   if (!site.cloudId) return null;
-  return { accessToken: grantResult.val.accessToken, cloudId: site.cloudId };
+  return {
+    auth: grantFetch({ tenantId, provider, accountId: described.val.accountId }),
+    cloudId: site.cloudId,
+  };
 }
 
-/** Refresh when the token is inside this window of expiry. */
-const MICROSOFT_REFRESH_MARGIN_MS = 2 * 60 * 1000;
-
 /**
- * The caller's own Microsoft credential, found from their email — REFRESHED.
+ * The caller's own Microsoft credential, found from their email.
  *
- * Do not simplify this into atlassianCredentialFor's shape. That one hands
- * back the stored access token as-is, which is survivable for Atlassian's
- * long-lived tokens and is NOT here: Microsoft access tokens live about an
- * hour, so a stored one is usually stale. Every $batch sub-request would
- * 401, the gate would deny on anything short of an affirmative 200, and the
- * symptom is "SharePoint search returns nothing" — indistinguishable from
- * "nothing is indexed", with no error anywhere. Refresh proactively; there
- * is no room to retry a 401 inside the gate's budget.
- *
- * Returning null on a missing Files.Read.All is the same instinct: denying
- * immediately is cheaper than 20 sub-request 403s, and it gives one place to
- * see why a user's SharePoint results are empty.
+ * Freshness is the delegate's job now: the fetcher it hands back refreshes
+ * the hour-long Graph token before a call and retries once on a 401, so a
+ * stale token no longer presents as "SharePoint search returns nothing".
+ * What stays here is the scope check — returning null on a missing
+ * Files.Read.All denies immediately, which is cheaper than 20 sub-request
+ * 403s and gives one place to see why a user's SharePoint results are empty.
  */
 async function microsoftCredentialFor(
   tenantId: string,
   userEmail: string
-): Promise<{ accessToken: string } | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
+): Promise<{ auth: AuthedFetch } | null> {
+  const subject = await subjectOf(tenantId, userEmail);
+  if (!subject) return null;
 
-  // The gate keys on email (the identity spine); grants key on OIDC subject.
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .innerJoin('provider_grants', (join) =>
-      join
-        .onRef('provider_grants.subject', '=', 'identities.subject')
-        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
-    )
-    .select('provider_grants.provider_account_id')
-    .where('identities.tenant_id', '=', tenantId)
-    .where('identities.email', '=', userEmail)
-    .where('provider_grants.provider', '=', MICROSOFT)
-    .limit(1)
-    .executeTakeFirst();
-  if (!row) return null;
+  const described = await delegateGrants().describe({ tenantId, provider: MICROSOFT, subject });
+  if (!described.ok) return null;
+  const { accountId, grantedScopes, requestedScopes } = described.val;
 
-  const grantResult = await getGrant(MICROSOFT, tenantId, row.provider_account_id);
-  if (!grantResult.ok || !grantResult.val) return null;
-  const grant = grantResult.val;
-
-  const scopes = grant.grantedScopes ?? grant.requestedScopes ?? [];
+  const scopes = grantedScopes ?? requestedScopes;
   if (!scopes.includes('Files.Read.All')) {
     logger.info('microsoft grant lacks Files.Read.All; withholding drive results', {
       component: 'knowledge/verify',
       tenantId,
-      accountId: row.provider_account_id,
+      accountId,
     });
     return null;
   }
 
-  if (new Date(grant.expiresAt).getTime() - Date.now() >= MICROSOFT_REFRESH_MARGIN_MS) {
-    return { accessToken: grant.accessToken };
-  }
-
-  const app = await getMicrosoftApp(tenantId, '');
-  if (!app) return null;
-  const tid =
-    typeof grant.metadata.tid === 'string' && grant.metadata.tid
-      ? grant.metadata.tid
-      : app.directoryTenantId;
-  if (!tid) return null;
-
-  const refreshed = await refreshGrantTokens(
-    new MicrosoftAdapter(app.clientSecret, tid),
-    tenantId,
-    row.provider_account_id,
-    logger
-  );
-  if (!refreshed.ok) {
-    logger.warn('could not refresh microsoft token for drive verification', {
-      component: 'knowledge/verify',
-      tenantId,
-      accountId: row.provider_account_id,
-      error: refreshed.err.type,
-    });
-    return null;
-  }
-  return { accessToken: refreshed.val.accessToken };
+  return { auth: grantFetch({ tenantId, provider: MICROSOFT, accountId }) };
 }
 
 function formatDistance(distance: number): string {
