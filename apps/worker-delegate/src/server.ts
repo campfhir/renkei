@@ -4,20 +4,25 @@
  * caller has already authenticated, and what comes back is the least the
  * caller's request needs.
  *
- * Key ops (phase 1; the token proxy and the connector forwarders join
- * them in their own modules):
+ * Key ops (the token proxy and the connector forwarders join them in
+ * their own modules):
  *
- *   resource-key/ensure, open, open-many, create, share, revoke, delete,
- *   has, holders      — a chat's or project's data key, wrapped per holder.
+ *   keys/instances    — the live delegate instances and their public keys:
+ *                       what a browser seals a person's key to.
+ *   keys/status       — a person's enrollment and what is delegated for
+ *                       them, for the browser and the agents worker.
+ *   keys/enroll       — first sign-in: the browser's keys recorded, the
+ *                       person's earlier rows moved, delegations stored.
+ *   keys/delegate     — a later sign-in or a re-seal: fresh delegations.
+ *   keys/revoke-automation, keys/rotate, keys/shred, keys/census.
+ *   resource-key/ensure, open, open-many, create, share, wrap-under,
+ *   grant-automation, revoke, delete, has, holders
+ *                     — a chat's or project's data key, wrapped per holder.
  *                       `ensure`/`open`/`open-many` answer the key itself
  *                       (base64), for the caller's ContentCipher.
  *   user-sealed/seal, open
- *                     — values that belong to one person only (`uenc1:`),
- *                       opened and sealed here; the key never leaves.
- *   own-key/status, adopt, unlock, lock, revert
- *                     — a person's passphrase-derived key.
- *   user-key/rotate, shred
- *                     — the managed key's salt rotation and the shred.
+ *                     — values that belong to one person only, opened and
+ *                       sealed here under the key their scope names.
  *   maintenance/prune-orphan-keys
  *                     — the sweep's orphan prune.
  *
@@ -31,29 +36,34 @@ import type { Server, ServerResponse } from 'node:http';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
-  adoptOwnKey,
   createResourceKey,
+  delegationStatus,
   deleteResourceKey,
+  enroll,
+  enrollmentCensus,
   ensureResourceKey,
-  getUserKeyStatus,
+  grantAutomationAccess,
   hasResourceKey,
   listResourceKeyHolders,
-  lockOwnKey,
+  liveInstances,
   openForSubject,
   openResourceKey,
   openResourceKeys,
   pruneOrphanResourceKeys,
-  revertToManagedKey,
+  revokeAutomation,
   revokeResourceKey,
-  rotateUserKek,
+  rotateUserKey,
   sealForSubject,
   shareResourceKey,
-  shredUserKek,
-  unlockOwnKey,
+  shredUserKey,
+  storeDelegations,
+  wrapResourceKeyUnder,
+  type DelegationInput,
   type ResourceKey,
   type ResourceKeyKind,
   type ResourceRef,
-  type UserKeyStatus,
+  type SealedDelegation,
+  type SealScope,
 } from '@renkei/user-keys';
 import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
 import { sendError } from './errors';
@@ -106,19 +116,46 @@ function keyView(key: ResourceKey): { id: string; key: string } {
   return { id: key.id, key: key.key.toString('base64') };
 }
 
-function statusView(status: UserKeyStatus): Record<string, unknown> {
-  return {
-    mode: status.mode,
-    version: status.version,
-    locked: status.locked,
-    unlockedUntil: status.unlockedUntil ? status.unlockedUntil.toISOString() : null,
-    createdAt: status.createdAt ? status.createdAt.toISOString() : null,
-    rotatedAt: status.rotatedAt ? status.rotatedAt.toISOString() : null,
-  };
+function iso(value: Date | null): string | null {
+  return value ? value.toISOString() : null;
 }
 
-function unlockMsOf(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+function sealedDelegationsOf(value: unknown): SealedDelegation[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: SealedDelegation[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) return null;
+    const record: Record<string, unknown> = Object.fromEntries(Object.entries(item));
+    const instanceId = str(record.instanceId);
+    const sealedKey = str(record.sealedKey);
+    if (!instanceId || !sealedKey) return null;
+    out.push({ instanceId, sealedKey });
+  }
+  return out;
+}
+
+function dateOf(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** The delegation half of an enroll/delegate/rotate body, or null when malformed. */
+function delegationInputOf(body: Record<string, unknown>): DelegationInput | null {
+  const tenantId = str(body.tenantId);
+  const subject = str(body.subject);
+  const sessionId = str(body.sessionId);
+  const session = sealedDelegationsOf(body.session ?? []);
+  const automation = sealedDelegationsOf(body.automation ?? []);
+  if (!tenantId || !subject || !sessionId || !session || !automation) return null;
+  return {
+    tenantId,
+    subject,
+    sessionId,
+    session,
+    automation,
+    automationUntil: dateOf(body.automationUntil),
+  };
 }
 
 export function createDelegateServer(deps: DelegateServerDeps): Server {
@@ -131,12 +168,94 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
   type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
 
   const handlers: Record<string, Handler> = {
+    // ── the person's keys ──────────────────────────────────────────────────
+    'keys/instances': async (_body, response) => {
+      sendJson(response, 200, { instances: await liveInstances(db) });
+    },
+    'keys/status': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      const status = await delegationStatus(
+        db,
+        tenantId,
+        subject,
+        str(body.sessionId) || undefined
+      );
+      sendJson(response, 200, {
+        ...status,
+        enrolledAt: iso(status.enrolledAt),
+        automationUntil: iso(status.automationUntil),
+      });
+    },
+    'keys/enroll': async (body, response) => {
+      const delegation = delegationInputOf(body);
+      const publicKey = str(body.publicKey);
+      const wrappedPrivateKey = str(body.wrappedPrivateKey);
+      const wrappedAutomationKey = str(body.wrappedAutomationKey);
+      if (!delegation || !publicKey || !wrappedPrivateKey || !wrappedAutomationKey) {
+        return sendError(response, 'bad_request');
+      }
+      const enrolled = await enroll(db, {
+        ...delegation,
+        publicKey,
+        wrappedPrivateKey,
+        wrappedAutomationKey,
+        passphrase: str(body.passphrase) || undefined,
+      });
+      if (!enrolled.ok) return sendError(response, enrolled.err.type);
+      sendJson(response, 200, {
+        version: enrolled.val.version,
+        enrolledAt: iso(enrolled.val.enrolledAt),
+        migrated: enrolled.val.migrated,
+      });
+    },
+    'keys/delegate': async (body, response) => {
+      const delegation = delegationInputOf(body);
+      if (!delegation) return sendError(response, 'bad_request');
+      const stored = await storeDelegations(db, delegation);
+      if (!stored.ok) return sendError(response, stored.err.type);
+      sendJson(response, 200, { ok: true });
+    },
+    'keys/revoke-automation': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      sendJson(response, 200, { revoked: await revokeAutomation(db, tenantId, subject) });
+    },
+    'keys/rotate': async (body, response) => {
+      const delegation = delegationInputOf(body);
+      const wrappedPrivateKey = str(body.wrappedPrivateKey);
+      const wrappedAutomationKey = str(body.wrappedAutomationKey);
+      if (!delegation || !wrappedPrivateKey || !wrappedAutomationKey) {
+        return sendError(response, 'bad_request');
+      }
+      const rotated = await rotateUserKey(db, {
+        ...delegation,
+        wrappedPrivateKey,
+        wrappedAutomationKey,
+      });
+      if (!rotated.ok) return sendError(response, rotated.err.type);
+      sendJson(response, 200, rotated.val);
+    },
+    'keys/shred': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      sendJson(response, 200, { shredded: await shredUserKey(db, tenantId, subject) });
+    },
+    'keys/census': async (body, response) => {
+      sendJson(response, 200, await enrollmentCensus(db, str(body.tenantId) || undefined));
+    },
+
     // ── resource keys ──────────────────────────────────────────────────────
     'resource-key/ensure': async (body, response) => {
       const ref = refOf(body);
       const ownerSubject = str(body.ownerSubject);
       if (!ref || !ownerSubject) return sendError(response, 'bad_request');
-      const key = await ensureResourceKey(db, ref, ownerSubject);
+      const key = await ensureResourceKey(db, ref, ownerSubject, {
+        automation: body.automation === true,
+      });
       if (!key.ok) return sendError(response, key.err.type);
       sendJson(response, 200, keyView(key.val));
     },
@@ -144,7 +263,9 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const ref = refOf(body);
       const ownerSubject = str(body.ownerSubject);
       if (!ref || !ownerSubject) return sendError(response, 'bad_request');
-      const key = await createResourceKey(db, ref, ownerSubject);
+      const key = await createResourceKey(db, ref, ownerSubject, {
+        automation: body.automation === true,
+      });
       if (!key.ok) return sendError(response, key.err.type);
       sendJson(response, 200, keyView(key.val));
     },
@@ -185,6 +306,28 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       if (!shared.ok) return sendError(response, shared.err.type);
       sendJson(response, 200, { ok: true });
     },
+    'resource-key/wrap-under': async (body, response) => {
+      const ref = refOf(body);
+      const bySubject = str(body.bySubject);
+      const parentKind = kindOf(body.parentKind);
+      const parentId = str(body.parentResourceId);
+      if (!ref || !bySubject || !parentKind || !parentId) return sendError(response, 'bad_request');
+      const wrapped = await wrapResourceKeyUnder(db, ref, bySubject, {
+        tenantId: ref.tenantId,
+        kind: parentKind,
+        resourceId: parentId,
+      });
+      if (!wrapped.ok) return sendError(response, wrapped.err.type);
+      sendJson(response, 200, { ok: true });
+    },
+    'resource-key/grant-automation': async (body, response) => {
+      const ref = refOf(body);
+      const subject = str(body.subject);
+      if (!ref || !subject) return sendError(response, 'bad_request');
+      const granted = await grantAutomationAccess(db, ref, subject);
+      if (!granted.ok) return sendError(response, granted.err.type);
+      sendJson(response, 200, { ok: true });
+    },
     'resource-key/revoke': async (body, response) => {
       const ref = refOf(body);
       const subject = str(body.subject);
@@ -213,10 +356,11 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const tenantId = str(body.tenantId);
       const subject = str(body.subject);
       const values = strings(body.values);
+      const scope: SealScope = body.scope === 'session' ? 'session' : 'automation';
       if (!tenantId || !subject || !values) return sendError(response, 'bad_request');
       const sealed: string[] = [];
       for (const value of values) {
-        const result = await sealForSubject(db, tenantId, subject, value);
+        const result = await sealForSubject(db, tenantId, subject, value, scope);
         if (!result.ok) return sendError(response, result.err.type);
         sealed.push(result.val);
       }
@@ -228,7 +372,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const stored = strings(body.stored);
       if (!tenantId || !subject || !stored) return sendError(response, 'bad_request');
       // A value that will not open is null in its slot; a key that is
-      // missing or locked fails the whole batch, since nothing would open.
+      // missing or not delegated fails the whole batch, since nothing would open.
       const opened: (string | null)[] = [];
       for (const value of stored) {
         const result = await openForSubject(db, tenantId, subject, value);
@@ -241,67 +385,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
         }
       }
       sendJson(response, 200, { opened });
-    },
-
-    // ── a person's own key ─────────────────────────────────────────────────
-    'own-key/status': async (body, response) => {
-      const tenantId = str(body.tenantId);
-      const subject = str(body.subject);
-      if (!tenantId || !subject) return sendError(response, 'bad_request');
-      sendJson(response, 200, statusView(await getUserKeyStatus(db, tenantId, subject)));
-    },
-    'own-key/adopt': async (body, response) => {
-      const tenantId = str(body.tenantId);
-      const subject = str(body.subject);
-      const passphrase = str(body.passphrase);
-      if (!tenantId || !subject || !passphrase) return sendError(response, 'bad_request');
-      const adopted = await adoptOwnKey(db, tenantId, subject, passphrase, {
-        unlockMs: unlockMsOf(body.unlockMs),
-      });
-      if (!adopted.ok) return sendError(response, adopted.err.type);
-      sendJson(response, 200, statusView(adopted.val));
-    },
-    'own-key/unlock': async (body, response) => {
-      const tenantId = str(body.tenantId);
-      const subject = str(body.subject);
-      const passphrase = str(body.passphrase);
-      if (!tenantId || !subject || !passphrase) return sendError(response, 'bad_request');
-      const unlocked = await unlockOwnKey(db, tenantId, subject, passphrase, {
-        unlockMs: unlockMsOf(body.unlockMs),
-      });
-      if (!unlocked.ok) return sendError(response, unlocked.err.type);
-      sendJson(response, 200, statusView(unlocked.val));
-    },
-    'own-key/lock': async (body, response) => {
-      const tenantId = str(body.tenantId);
-      const subject = str(body.subject);
-      if (!tenantId || !subject) return sendError(response, 'bad_request');
-      sendJson(response, 200, statusView(await lockOwnKey(db, tenantId, subject)));
-    },
-    'own-key/revert': async (body, response) => {
-      const tenantId = str(body.tenantId);
-      const subject = str(body.subject);
-      const passphrase = str(body.passphrase);
-      if (!tenantId || !subject || !passphrase) return sendError(response, 'bad_request');
-      const reverted = await revertToManagedKey(db, tenantId, subject, passphrase);
-      if (!reverted.ok) return sendError(response, reverted.err.type);
-      sendJson(response, 200, statusView(reverted.val));
-    },
-
-    // ── the managed key itself ─────────────────────────────────────────────
-    'user-key/rotate': async (body, response) => {
-      const tenantId = str(body.tenantId);
-      const subject = str(body.subject);
-      if (!tenantId || !subject) return sendError(response, 'bad_request');
-      const rotated = await rotateUserKek(db, tenantId, subject);
-      if (!rotated.ok) return sendError(response, rotated.err.type);
-      sendJson(response, 200, rotated.val);
-    },
-    'user-key/shred': async (body, response) => {
-      const tenantId = str(body.tenantId);
-      const subject = str(body.subject);
-      if (!tenantId || !subject) return sendError(response, 'bad_request');
-      sendJson(response, 200, { shredded: await shredUserKek(db, tenantId, subject) });
     },
 
     // ── maintenance ────────────────────────────────────────────────────────

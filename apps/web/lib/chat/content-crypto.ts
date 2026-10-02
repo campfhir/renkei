@@ -32,8 +32,10 @@ import type { LlmContentBlock } from '@renkei/agent-llm';
 
 /** Why a cipher has no key to work with. */
 export type CipherUnavailable =
-  /** The owner is on their own key and has not unlocked it. */
-  | 'locked'
+  /** The person's key is not delegated to the delegate right now: their browser must seal it again, or they must sign in. */
+  | 'delegation'
+  /** The person has not enrolled yet (a key row from before held keys); their next sign-in does it. */
+  | 'not-enrolled'
   /** The resource has no key (not yet re-sealed by the sweep) or none could be opened. */
   | 'no-key'
   /** The delegate, the one process that holds keys, could not be reached. */
@@ -50,7 +52,8 @@ export interface ContentCipher {
 }
 
 const MARKERS = {
-  locked: '[content unavailable: your encryption key is locked — unlock it in Preferences]',
+  delegation: '[content unavailable: your encryption key is not connected — sign in again]',
+  'not-enrolled': '[content unavailable: your encryption key is not set up yet — sign in again]',
   'no-key': '[content unavailable: no key for this content — run the rekey sweep]',
   delegate: '[content unavailable: the key service could not be reached — try again shortly]',
   legacy: '[content unavailable: sealed under the retired deployment key — run the rekey sweep]',
@@ -91,11 +94,13 @@ export function unavailableMarker(reason: CipherUnavailable | 'failed'): string 
  */
 export function unavailableCipher(reason: CipherUnavailable): ContentCipher {
   const message =
-    reason === 'locked'
-      ? 'Your encryption key is locked. Unlock it in Preferences to continue.'
-      : reason === 'delegate'
-        ? 'The key service could not be reached. Try again shortly.'
-        : 'No encryption key is available for this content.';
+    reason === 'delegation'
+      ? 'Your encryption key is not connected to this session. Sign in again to continue.'
+      : reason === 'not-enrolled'
+        ? 'Your encryption key is not set up yet. Sign in again to finish setting it up.'
+        : reason === 'delegate'
+          ? 'The key service could not be reached. Try again shortly.'
+          : 'No encryption key is available for this content.';
   return {
     keyId: null,
     unavailable: reason,

@@ -23,9 +23,10 @@ viewport pass.
 - **Local setup** (once per environment): a Postgres 16 server with the
   `vector` extension (`apt-get install postgresql-16-pgvector` if it's not
   already on the box), a repo-root `.env.development` with `DATABASE_URL`,
-  `TOKEN_ENCRYPTION_KEY`, `LOG_ENCRYPTION_KEY` and `USER_KEY_ENCRYPTION_KEY`
-  (each `openssl rand -base64 32`; the last is the delegate's key-master,
-  which the specs' seeding helper `e2e/keys.ts` reads too), plus
+  `TOKEN_ENCRYPTION_KEY` and `LOG_ENCRYPTION_KEY` (each `openssl rand
+-base64 32`; `USER_KEY_ENCRYPTION_KEY` is optional and migration-only —
+  people hold their own keys, and `e2e/keys.ts` enrolls a spec's person the
+  way a browser would, against the delegate the config starts), plus
   `SANDBOX_WORKER_URL=http://127.0.0.1:8092`,
   `SANDBOX_WORKER_API_KEY=e2e-sandbox-key`, `SANDBOX_WORKSPACES_ENABLED=true`
   and `SANDBOX_SERVICES_ENABLED=true` so the Code pages and their services

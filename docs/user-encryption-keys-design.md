@@ -28,6 +28,8 @@ Those forms are **retired**. No reader in the web app or a worker opens a `renc1
  renc2:<key id>:v1.<iv>.<tag>.<ciphertext>    on every row the resource owns
 ```
 
+> **Superseded in part.** Since phases 2–5 of [`delegate-key-design.md`](./delegate-key-design.md) a person's key-encryption key is the user key their browser holds, not a derivation from a master; the resource keys, envelopes and sharing model below are unchanged, the "Your own key" passphrase section is retired, and the master is a migration-only aid. Read that document first.
+
 **Master.** `USER_KEY_ENCRYPTION_KEY`, with no fallback, set on exactly one process: the delegate (`apps/worker-delegate`, [`delegate-key-design.md`](./delegate-key-design.md)). Every other process asks the delegate for the one key its request needs — a chat's or project's data key — and never derives a person's key itself.
 
 **A person's managed KEK** is derived from the master, a random 32-byte salt kept for them in `user_encryption_keys`, and their identity (tenant id, OIDC subject) as the HKDF info. It is recomputed on every use and written nowhere. The salt is what makes it rotatable: `rotateUserKek` writes a new salt and, in the same transaction, rewraps everything the person holds — every `resource_key_grants` row and every `uenc1:` value in the registry `SEALED_FOR_SUBJECT` names (provider tokens, the three credential tables, personal memory) — bumping `version` so a wrapping says which KEK it is under. Deleting the row (`shredUserKek`) makes every wrapping for that person, and every value sealed directly under their KEK, unopenable at once.

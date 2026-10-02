@@ -23,16 +23,16 @@ ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
 # Encryption
 # Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
-# The master that every person's managed key-encryption key is derived
-# from (docs/user-encryption-keys-design.md, docs/delegate-key-design.md).
-# Set it on the DELEGATE service only — no other process reads it, and
-# there is no fallback to the other keys. Chat content and connector
-# credentials are sealed only under per-person and per-chat keys: before
-# the first deploy of a build with user keys, run
+# MIGRATION ONLY (docs/delegate-key-design.md, "Phases 2–5 as built"): the
+# master that pre-enrollment (managed) keys were derived from. People hold
+# their own keys now; the delegate reads this variable in exactly one
+# place, the enrollment that moves a person's existing rows off their old
+# key on their first sign-in. Set it on the DELEGATE service only, keep it
+# while `keys/census` reports people who have not enrolled, and remove it
+# once that count is zero. Builds with user keys from before the delegate
+# also needed, once, before serving traffic:
 #   pnpm --filter @renkei/user-keys rekey-chats --all
-# with this variable (and TOKEN_ENCRYPTION_KEY) in the environment, which
-# moves every row still under the deployment keys above. The app does not
-# read those forms.
+# with this variable (and TOKEN_ENCRYPTION_KEY) in the environment.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
 # Every process but the delegate reaches it here, for keys, provider
 # tokens and the connector workers (compose wires the service name).
@@ -202,8 +202,12 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
 - `worker-delegate` — the one process that holds a key
-  (docs/delegate-key-design.md). It alone reads `USER_KEY_ENCRYPTION_KEY`,
-  answers a chat's or project's data key to the request that needs it,
+  (docs/delegate-key-design.md). It derives nothing: at boot it generates
+  an X25519 keypair and registers itself in `delegate_instances`; a
+  signed-in browser seals its person's user key (and automation key) to
+  that public key, and the delegate opens those delegations to act. Run
+  several and the browser seals to each. It answers a chat's or project's
+  data key to the request that needs it,
   opens and seals a person's own values, holds every OAuth provider token
   (the `api` proxy attaches it; `oauth/exchange` trades a code for one
   without the app ever seeing it), and forwards Mirth, ADManager Plus,
@@ -220,8 +224,11 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `DELEGATE_WORKER_PORT`, default 8096). It also needs
   `TOKEN_ENCRYPTION_KEY` (the OAuth client secrets in connector config),
   `DATABASE_URL`, and the `*_WORKER_URL` / `*_WORKER_API_KEY` pairs of the
-  connector workers below, which the app no longer holds. Without it, no
-  chat opens and no connector acts: fail closed, never open. Entrypoint:
+  connector workers below, which the app no longer holds; and, only while
+  people who have not enrolled remain, `USER_KEY_ENCRYPTION_KEY` (above).
+  Without it, no chat opens and no connector acts: fail closed, never
+  open. A restart is a new instance: browsers seal again on their next
+  page load, and runs in flight resume then. Entrypoint:
   `pnpm --filter @renkei/worker-delegate start`; image target `delegate`.
 - `worker-mirth` — the same shape for Mirth Connect (NextGen Connect
   4.5.2): an internal HTTP service on its **own image** (`renkei-mirth`, the

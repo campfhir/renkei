@@ -27,7 +27,7 @@ function textOf(result: McpToolResult): string {
 }
 
 maybe('chat_recall_chats', () => {
-  useTestDelegate();
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;
@@ -64,6 +64,8 @@ maybe('chat_recall_chats', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await delegate.enroll(tenantId, me);
+    await delegate.enroll(tenantId, colleague);
     await db
       .insertInto('chat_projects')
       .values([

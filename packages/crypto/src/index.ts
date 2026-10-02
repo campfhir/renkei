@@ -39,3 +39,13 @@ export {
   OWN_KEY_PASSPHRASE_MIN_CHARS,
   OWN_KEY_PASSPHRASE_MAX_CHARS,
 } from './keys';
+export {
+  generateX25519KeyPair,
+  x25519PublicKeyOf,
+  sealToPublicKey,
+  openSealedBox,
+  isSealedBox,
+  SEALED_BOX_PREFIX,
+  type X25519KeyPair,
+} from './sealed-box';
+export { formatUserKey, parseUserKey, deviceCodeOf, USER_KEY_BYTES } from './browser/key-display';

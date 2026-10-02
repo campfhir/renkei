@@ -16,6 +16,8 @@ export function grantRefusalText(error: string, label: string): string {
       return `${label} is not connected. Connect it on the Connectors page, then try again.`;
     case 'GRANT_UNREADABLE':
       return `Could not read the ${label} grant.`;
+    case 'NEEDS_DELEGATION':
+      return `Your encryption key is not available to Renkei right now, so ${label} cannot act for you. Sign in again to continue.`;
     case 'GRANT_REVOKED':
       return `Your ${label} authorization was revoked. Reconnect it on the Connectors page.`;
     case 'REFRESH_FAILED':

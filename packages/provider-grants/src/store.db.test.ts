@@ -8,6 +8,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { decrypt, encrypt, isUserSealed } from '@renkei/crypto';
+import { setKeyVault } from '@renkei/user-keys';
+import { enrollTestPerson, registerTestInstance } from '@renkei/user-keys/test-support';
 import { sql } from 'kysely';
 import { getGrant, setGrant } from './store';
 
@@ -26,19 +28,33 @@ maybe('provider grant store under per-user keys', () => {
     metadata: { cloudId: 'cloud-1' },
   };
 
+  let instanceId = '';
+
   beforeAll(async () => {
-    process.env.USER_KEY_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     await result.val
       .insertInto('tenants')
       .values({ id: tenantId, slug: `grants-${tenantId.slice(0, 8)}` })
       .execute();
+    // The owner holds a key, as their browser would have enrolled them, with
+    // a session delegation to this test's own delegate instance.
+    const instance = await registerTestInstance(result.val);
+    instanceId = instance.id;
+    await enrollTestPerson(result.val, {
+      tenantId,
+      subject,
+      instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
+    });
   });
 
   afterAll(async () => {
+    setKeyVault(null);
     const result = getDatabase();
-    if (result.ok) await result.val.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    if (result.ok) {
+      await result.val.deleteFrom('delegate_instances').where('id', '=', instanceId).execute();
+      await result.val.deleteFrom('tenants').where('id', '=', tenantId).execute();
+    }
     await closeDatabase();
   });
 

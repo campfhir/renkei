@@ -29,7 +29,7 @@ const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
 
 maybe('recordWidgetModelContext', () => {
-  useTestDelegate();
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   /** A tenant with no model configured at all. */
@@ -59,6 +59,8 @@ maybe('recordWidgetModelContext', () => {
         { id: modellessTenantId, slug: modellessTenantId },
       ])
       .execute();
+    await delegate.enroll(tenantId, me);
+    await delegate.enroll(modellessTenantId, me);
     await db
       .insertInto('llm_model_configs')
       .values({
@@ -189,7 +191,7 @@ maybe('recordWidgetModelContext', () => {
  * (chat-view.ts's batch read for one chat's whole message list).
  */
 maybe('chat widget decisions', () => {
-  useTestDelegate();
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;
@@ -202,6 +204,7 @@ maybe('chat widget decisions', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await delegate.enroll(tenantId, me);
     await db
       .insertInto('chats')
       .values([
@@ -290,7 +293,7 @@ maybe('chat widget decisions', () => {
  * have a recorded decision — opens exactly one turn, informed by both.
  */
 maybe('recordWidgetModelContext: batches decisions from one reply', () => {
-  useTestDelegate();
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;
@@ -314,6 +317,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
     if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await delegate.enroll(tenantId, me);
     await db
       .insertInto('llm_model_configs')
       .values({

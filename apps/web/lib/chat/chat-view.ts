@@ -124,7 +124,7 @@ export async function loadChatView(
       ownerName: owner ? (owner.display_name ?? owner.email ?? null) : null,
       role: access.role,
       archived: chat.archivedAt !== null,
-      keyLocked: access.cipher.unavailable === 'locked',
+      keyUnavailable: access.cipher.unavailable,
       createdAt: chat.createdAt.toISOString(),
       updatedAt: chat.updatedAt.toISOString(),
       activeTurn: active ? toTurnView(active) : null,

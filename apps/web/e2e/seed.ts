@@ -20,6 +20,7 @@
  */
 
 import type { Client } from 'pg';
+import { enrollForE2E } from './keys';
 
 export const E2E_TENANT_ID = '11111111-1111-4111-8111-111111111111';
 export const E2E_SLUG = 'e2e';
@@ -387,6 +388,12 @@ export async function seed(client: Client): Promise<void> {
      VALUES ($1, $2, $3, $4)`,
     [E2E_TENANT_ID, E2E_SUBJECT, E2E_SUBJECT, 'E2E Tester']
   );
+
+  // The person holds their own encryption key (docs/delegate-key-design.md):
+  // enrolled here the way their browser would be, with a session delegation
+  // to the running delegate, so every page opens their chats without the
+  // KeyGuard having to enroll them first.
+  await enrollForE2E(client, E2E_TENANT_ID, E2E_SUBJECT);
 
   // The coach marks stay out of every other spec's way: this person has
   // tours switched off, so no card lands on a page a screenshot is about

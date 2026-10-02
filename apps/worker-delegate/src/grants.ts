@@ -83,6 +83,8 @@ export type GrantError =
   | 'host_not_allowed'
   | 'NO_GRANT'
   | 'GRANT_UNREADABLE'
+  /** The owner's key is not delegated to this instance: nothing of theirs opens until they sign in. */
+  | 'NEEDS_DELEGATION'
   | 'GRANT_REVOKED'
   | 'REFRESH_FAILED'
   | 'NOT_CONFIGURED'
@@ -105,6 +107,8 @@ export function statusForGrantError(type: GrantError): number {
       return 404;
     case 'too_large':
       return 413;
+    case 'NEEDS_DELEGATION':
+      return 423;
     case 'GRANT_UNREADABLE':
     case 'REFRESH_FAILED':
     case 'EXCHANGE_FAILED':
@@ -173,7 +177,18 @@ export class Grants {
     const row = await grantRow(this.db, tenantId, provider, by);
     if (!row) return { ok: false, error: 'NO_GRANT' };
     const read = await getGrant(provider, tenantId, row.provider_account_id);
-    if (!read.ok || !read.val) return { ok: false, error: 'GRANT_UNREADABLE' };
+    if (!read.ok) {
+      // The store names the key verdict in its message; the one a caller
+      // can act on is "the owner must sign in", which travels as its own tag.
+      const reason = read.err.message ?? '';
+      return {
+        ok: false,
+        error: /NEEDS_DELEGATION|NEEDS_SESSION|NOT_ENROLLED/.test(reason)
+          ? 'NEEDS_DELEGATION'
+          : 'GRANT_UNREADABLE',
+      };
+    }
+    if (!read.val) return { ok: false, error: 'GRANT_UNREADABLE' };
     let grant = read.val;
     const due = new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS;
     if ((due || force) && grant.refreshToken) {

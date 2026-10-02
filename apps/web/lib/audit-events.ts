@@ -58,14 +58,14 @@ export type AuditAction =
   | 'admanager.connected'
   | 'admanager.disconnected'
   /**
-   * A person's own encryption key (docs/user-encryption-keys-design.md):
-   * adopted a passphrase-derived key, unlocked or locked it, or went back
-   * to the managed one. Never the passphrase, never the key.
+   * A person's encryption key (docs/delegate-key-design.md): enrolled on
+   * their first sign-in, replaced by rotation, their agents' delegation
+   * revoked, another device approved to hold it.
    */
-  | 'encryption-key.adopted'
-  | 'encryption-key.unlocked'
-  | 'encryption-key.locked'
-  | 'encryption-key.reverted'
+  | 'encryption-key.enrolled'
+  | 'encryption-key.rotated'
+  | 'encryption-key.automation-revoked'
+  | 'encryption-key.device-approved'
   | 'sandbox.secret.created'
   | 'sandbox.secret.unlocked'
   | 'sandbox.secret.locked'

@@ -1309,22 +1309,27 @@ export default function ChatThread({
               </p>
             ) : null}
 
-            {chat.keyLocked ? (
+            {chat.keyUnavailable === 'delegation' || chat.keyUnavailable === 'not-enrolled' ? (
               <div
-                data-testid="chat-key-locked-notice"
+                data-testid="chat-key-unavailable-notice"
                 role="status"
                 className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
               >
                 <p>
-                  <span className="font-medium">Your encryption key is locked.</span> This chat
-                  cannot be read or continued until you unlock it.
+                  <span className="font-medium">
+                    {chat.keyUnavailable === 'not-enrolled'
+                      ? 'Your encryption key is not set up yet.'
+                      : 'Your encryption key is not connected to this session.'}
+                  </span>{' '}
+                  This chat cannot be read or continued until it is. Renkei reconnects it from this
+                  browser; if that does not happen within a moment, sign in again.
                 </p>
                 <div className="mt-2">
                   <Link
                     href={`/${slug}/preferences`}
                     className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
                   >
-                    Unlock in Preferences
+                    Encryption key in Preferences
                   </Link>
                 </div>
               </div>

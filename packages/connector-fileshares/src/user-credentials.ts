@@ -9,13 +9,12 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { openForSubject, sealForSubject } from '@renkei/user-keys';
+import { openForSubject, sealForSubject, type SealError } from '@renkei/user-keys';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { parseShareCredentials, type ShareCredentials, type CredentialError } from './credentials';
 
-export type SealCredentialsError =
-  'MISSING_USER_KEY_MASTER' | 'INVALID_ENCRYPTION_KEY' | 'KEY_LOCKED';
+export type SealCredentialsError = SealError;
 
 /** Seal the credential under the connecting person's own key. */
 export async function sealCredentialsForSubject(

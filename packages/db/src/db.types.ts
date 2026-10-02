@@ -1261,9 +1261,10 @@ export interface ResourceAccessGrants {
 export interface ResourceKeyGrants {
   created_at: Generated<Timestamp>;
   granted_by: string | null;
+  holder: string;
+  holder_kind: Generated<string>;
   kek_version: number;
   resource_key_id: string;
-  subject: string;
   tenant_id: string;
   wrapped_key: string;
 }
@@ -1327,6 +1328,36 @@ export interface SandboxServices {
   name: string;
   ports: Generated<Json>;
   status: Generated<string>;
+  subject: string;
+  tenant_id: string;
+}
+
+export interface DelegateInstances {
+  heartbeat_at: Generated<Timestamp>;
+  id: string;
+  public_key: string;
+  started_at: Generated<Timestamp>;
+}
+
+export interface DeviceKeyRequests {
+  code: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  public_key: string;
+  sealed_key: string | null;
+  subject: string;
+  tenant_id: string;
+}
+
+export interface KeyDelegations {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  instance_id: string;
+  scope: string;
+  sealed_key: string;
+  session_id: string | null;
   subject: string;
   tenant_id: string;
 }
@@ -1454,7 +1485,9 @@ export interface UploadSlots {
 
 export interface UserEncryptionKeys {
   created_at: Generated<Timestamp>;
+  enrolled_at: Timestamp | null;
   mode: Generated<string>;
+  public_key: string | null;
   rotated_at: Timestamp | null;
   salt: string;
   sealed_kek: string | null;
@@ -1463,6 +1496,8 @@ export interface UserEncryptionKeys {
   unlocked_until: Timestamp | null;
   verifier: string | null;
   version: Generated<number>;
+  wrapped_automation_key: string | null;
+  wrapped_private_key: string | null;
 }
 
 export interface UserPreferences {
@@ -1558,6 +1593,9 @@ export interface DB {
   chat_widget_decisions: ChatWidgetDecisions;
   chats: Chats;
   delegate_git_tickets: DelegateGitTickets;
+  delegate_instances: DelegateInstances;
+  device_key_requests: DeviceKeyRequests;
+  key_delegations: KeyDelegations;
   coach_mark_progress: CoachMarkProgress;
   code_language_gaps: CodeLanguageGaps;
   code_project_templates: CodeProjectTemplates;

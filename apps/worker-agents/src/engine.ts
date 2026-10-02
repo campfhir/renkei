@@ -75,6 +75,7 @@ import {
   type Notifier,
 } from './notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
+import { delegateClient } from '@renkei/delegate-client';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { MessageReleased } from '@renkei/worker-loop';
 import { AgentMcpClient } from './mcp-client';
@@ -210,6 +211,8 @@ interface RunRow {
   /** The step the latest resume picked back up at; its attempts get the guidance. */
   resume_step_id: string | null;
   resume_guidance: string | null;
+  /** Why the run stopped or waits; 'needs-sign-in' marks a run parked for its owner's key. */
+  error_kind: string | null;
 }
 
 /** actionable_items decision → the gate's outcome vocabulary. */
@@ -1017,6 +1020,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         'resumed_at',
         'resume_step_id',
         'resume_guidance',
+        'error_kind',
       ])
       .where('id', '=', runId)
       .executeTakeFirst();
@@ -1084,6 +1088,40 @@ export function createAgentRunHandler(deps: EngineDeps) {
       await finalizeRun(run, 'failed', 'config', 'The agent no longer exists.', {});
       return;
     }
+    // The owner's key must be delegated for anything of theirs to open
+    // (docs/delegate-key-design.md): their automation key while they are
+    // away, or their session's while they are signed in. Without either,
+    // the run is PARKED — 'waiting', with error_kind 'needs-sign-in' —
+    // rather than failed: the owner's next sign-in (the web app's
+    // keys/delegate route) re-queues it, and it runs then with a note on
+    // why it is late. A key service that cannot be reached is transient.
+    const owner = await delegateClient().keyStatus(tenantId, run.owner_subject);
+    if (!owner.ok) throw new TransientFailure('key service unavailable');
+    const delegated =
+      owner.val.enrolled &&
+      (owner.val.automationInstances.length > 0 || owner.val.sessionInstances.length > 0);
+    if (!delegated && !run.cancel_requested_at) {
+      await db
+        .updateTable('agent_runs')
+        .set({
+          status: 'waiting',
+          waiting_until: null,
+          error_kind: 'needs-sign-in',
+          error: owner.val.enrolled
+            ? 'Paused: your encryption key is not available to your agents. Sign in to resume.'
+            : 'Paused: finish setting up your encryption key by signing in, then this run resumes.',
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', runId)
+        .execute();
+      logger.info('run {runId} parked: owner key not delegated', {
+        component: 'worker-agents/engine',
+        runId,
+        tenantId,
+      });
+      return;
+    }
+
     // A cancel request wins over resuming, same as a disabled agent does —
     // both are reasons this run must not go any further, checked before
     // either gets a chance to look "resumable" below. Run-status
@@ -1151,6 +1189,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           started_at: startedAt,
           waiting_until: null,
           llm_model_id: llm.modelConfigId,
+          // A run parked for the owner's sign-in carries that note; it is running now.
+          ...(run.error_kind === 'needs-sign-in' ? { error_kind: null, error: null } : {}),
           updated_at: sql`NOW()`,
         })
         .where('id', '=', runId)

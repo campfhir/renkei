@@ -1,8 +1,11 @@
 /**
  * The delegate's error vocabulary: the generic worker tags plus every
  * verdict @renkei/user-keys can hand back, so a caller hears the same
- * word the key store said and can act on it (`KEY_LOCKED` is the one the
- * chat page turns into "unlock it in Preferences").
+ * word the key store said and can act on it. The three that matter to a
+ * page: NEEDS_DELEGATION (the browser must seal the person's key to this
+ * instance again), NEEDS_SESSION (only the automation key is delegated
+ * and the operation needs the person present) and NOT_ENROLLED (their
+ * next sign-in enrolls them).
  */
 
 import type { ServerResponse } from 'node:http';
@@ -11,27 +14,30 @@ import { sendJson } from '@renkei/worker-kit';
 
 export type DelegateErrorType =
   | GenericWorkerError
-  // @renkei/user-keys: KekError
-  | 'MISSING_USER_KEY_MASTER'
-  | 'INVALID_ENCRYPTION_KEY'
+  // @renkei/user-keys: KeyError
   | 'NO_USER_KEY'
-  | 'KEY_LOCKED'
-  // OpenKeyError
+  | 'NOT_ENROLLED'
+  | 'NEEDS_DELEGATION'
+  | 'NEEDS_SESSION'
+  | 'NO_VAULT'
+  | 'DECRYPTION_ERROR'
+  // OpenKeyError, ShareKeyError
   | 'NO_KEY'
   | 'NO_ACCESS'
-  | 'DECRYPTION_ERROR'
-  // own-key moves
-  | 'PASSPHRASE_TOO_SHORT'
-  | 'PASSPHRASE_TOO_LONG'
-  | 'NOT_OWN_KEY'
-  | 'NOT_MANAGED'
+  | 'GRANTEE_NOT_ENROLLED'
+  // enrollment, delegation, rotation
+  | 'BAD_DELEGATION'
+  | 'KEY_MISMATCH'
+  | 'ALREADY_ENROLLED'
+  | 'MIGRATION_UNAVAILABLE'
+  | 'KEY_LOCKED'
   | 'WRONG_PASSPHRASE';
 
 export function statusForError(type: DelegateErrorType): number {
   switch (type) {
     case 'bad_request':
-    case 'PASSPHRASE_TOO_SHORT':
-    case 'PASSPHRASE_TOO_LONG':
+    case 'BAD_DELEGATION':
+    case 'KEY_MISMATCH':
       return 400;
     case 'unauthorized':
       return 401;
@@ -44,18 +50,22 @@ export function statusForError(type: DelegateErrorType): number {
       return 404;
     case 'method_not_allowed':
       return 405;
-    case 'NOT_OWN_KEY':
-    case 'NOT_MANAGED':
+    case 'ALREADY_ENROLLED':
+    case 'GRANTEE_NOT_ENROLLED':
       return 409;
     case 'too_large':
       return 413;
+    case 'NEEDS_DELEGATION':
+    case 'NEEDS_SESSION':
+    case 'NOT_ENROLLED':
     case 'KEY_LOCKED':
       return 423;
-    case 'MISSING_USER_KEY_MASTER':
-    case 'INVALID_ENCRYPTION_KEY':
+    case 'NO_VAULT':
     case 'DECRYPTION_ERROR':
     case 'internal':
       return 500;
+    case 'MIGRATION_UNAVAILABLE':
+      return 503;
   }
 }
 

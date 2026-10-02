@@ -5,11 +5,12 @@
  * message first — and no others.
  */
 
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import type { LlmContentBlock } from '@renkei/agent-llm';
-import { createResourceKey } from '@renkei/user-keys';
+import { createResourceKey, setKeyVault } from '@renkei/user-keys';
+import { enrollTestPerson, registerTestInstance } from '@renkei/user-keys/test-support';
 import { resourceCipher, sealBlocks, type ContentCipher } from './content-crypto';
 import { searchChatMessages } from './search';
 
@@ -55,8 +56,9 @@ maybe('searchChatMessages', () => {
       })
       .execute();
 
+  let instanceId = '';
+
   beforeAll(async () => {
-    process.env.USER_KEY_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
@@ -64,6 +66,15 @@ maybe('searchChatMessages', () => {
       .insertInto('tenants')
       .values({ id: tenantId, slug: `search-${tenantId.slice(0, 8)}` })
       .execute();
+    // The keys are minted in this process: it registers a delegate instance
+    // of its own and enrolls the person as their browser would.
+    const instance = await registerTestInstance(db);
+    instanceId = instance.id;
+    await enrollTestPerson(db, {
+      tenantId,
+      subject,
+      instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
+    });
     for (const [id, title, updatedAt] of [
       [chatA, 'Sprint review', '2026-01-03'],
       [chatB, 'Older chat', '2026-01-02'],
@@ -108,6 +119,8 @@ maybe('searchChatMessages', () => {
   });
 
   afterAll(async () => {
+    setKeyVault(null);
+    await db.deleteFrom('delegate_instances').where('id', '=', instanceId).execute();
     await sql`DELETE FROM chats WHERE tenant_id = ${tenantId}`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();

@@ -2,10 +2,10 @@
  * The delegate against the dev database: the key ops answer a resource's
  * key exactly as @renkei/user-keys would, person-only values round-trip,
  * and the proxy attaches a stored grant's token to a request bound for
- * the provider's own host — and to nowhere else. Needs DATABASE_URL and
- * a 32-byte USER_KEY_ENCRYPTION_KEY (TOKEN_ENCRYPTION_KEY stands in when
- * the dedicated one is unset, as the repo-root .env.development has only
- * that one).
+ * the provider's own host — and to nowhere else. The people in it enroll
+ * the way a browser would (user-keys' test support), so every key op runs
+ * through a delegation sealed to the test's own instance; no master is
+ * involved. Needs DATABASE_URL and TOKEN_ENCRYPTION_KEY.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -16,10 +16,16 @@ import { setGrant, GITHUB } from '@renkei/provider-grants';
 import { createInstance, upsertConnection } from '@renkei/connector-mirth';
 import { sealForSubject } from '@renkei/user-keys';
 import { Readable } from 'node:stream';
+import { setKeyVault } from '@renkei/user-keys';
+import {
+  enrollTestPerson,
+  registerTestInstance,
+  sealDelegations,
+  type BrowserKeys,
+  type TestInstance,
+} from '@renkei/user-keys/test-support';
 import { createDelegateServer } from './server';
 import type { GitDialer } from './git';
-
-process.env.USER_KEY_ENCRYPTION_KEY ||= process.env.TOKEN_ENCRYPTION_KEY;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -39,6 +45,9 @@ describeDb('worker-delegate', () => {
   const friend = `friend-${randomUUID()}@example.com`;
   let server: Server;
   let base = '';
+  let instance: TestInstance;
+  let ownerSessionId = '';
+  let ownerKeys: BrowserKeys | null = null;
   const upstreamCalls: {
     url: string;
     authorization: string | null;
@@ -57,6 +66,16 @@ describeDb('worker-delegate', () => {
       .execute();
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
     if (!key.ok) throw new Error('bad key');
+    instance = await registerTestInstance(db.val);
+    const targets = [{ id: instance.id, publicKey: instance.pair.publicKey }];
+    const enrolledOwner = await enrollTestPerson(db.val, {
+      tenantId,
+      subject: owner,
+      instances: targets,
+    });
+    ownerSessionId = enrolledOwner.sessionId;
+    ownerKeys = enrolledOwner.keys;
+    await enrollTestPerson(db.val, { tenantId, subject: friend, instances: targets });
     const fetchImpl: typeof fetch = async (input, init) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -113,8 +132,10 @@ describeDb('worker-delegate', () => {
 
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    setKeyVault(null);
     const db = getDatabase();
     if (db.ok) {
+      await db.val.deleteFrom('delegate_instances').where('id', '=', instance.id).execute();
       await db.val.deleteFrom('provider_grants').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('delegate_git_tickets').where('tenant_id', '=', tenantId).execute();
       await db.val.deleteFrom('resource_keys').where('tenant_id', '=', tenantId).execute();
@@ -206,10 +227,80 @@ describeDb('worker-delegate', () => {
     expect(other.json.opened).toEqual([null]);
   });
 
-  it('reports a managed key status', async () => {
-    const status = await op('own-key/status', { tenantId, subject: owner });
-    expect(status.json.mode).toBe('managed');
-    expect(status.json.locked).toBe(false);
+  it('reports enrollment and delegations, takes fresh ones, and revokes automation', async () => {
+    const instances = await op('keys/instances', {});
+    expect(instances.json.instances).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: instance.id,
+          publicKey: instance.pair.publicKey.toString('base64'),
+        }),
+      ])
+    );
+    const status = await op('keys/status', { tenantId, subject: owner, sessionId: ownerSessionId });
+    expect(status.json.enrolled).toBe(true);
+    expect(status.json.legacy).toBe(false);
+    expect(status.json.sessionInstances).toEqual([instance.id]);
+    expect(status.json.thisSessionInstances).toEqual([instance.id]);
+    expect(status.json.automationInstances).toEqual([instance.id]);
+    expect(typeof status.json.wrappedAutomationKey).toBe('string');
+    expect(JSON.stringify(status.json)).not.toContain('"privateKey"');
+
+    const nobody = await op('keys/status', { tenantId, subject: 'nobody@example.com' });
+    expect(nobody.json.enrolled).toBe(false);
+    expect(nobody.json.legacy).toBe(false);
+
+    expect((await op('keys/revoke-automation', { tenantId, subject: owner })).json.revoked).toBe(1);
+    const revoked = await op('keys/status', { tenantId, subject: owner });
+    expect(revoked.json.automationInstances).toEqual([]);
+    expect(revoked.json.automationUntil).toBeNull();
+
+    // A delegation for an instance nobody runs is dropped; a malformed one is refused.
+    const stale = await op('keys/delegate', {
+      tenantId,
+      subject: owner,
+      sessionId: ownerSessionId,
+      session: [{ instanceId: randomUUID(), sealedKey: 'sbox1:x:y' }],
+      automation: [],
+    });
+    expect(stale.status).toBe(200);
+    const bad = await op('keys/delegate', {
+      tenantId,
+      subject: owner,
+      sessionId: ownerSessionId,
+      session: [{ instanceId: instance.id, sealedKey: 'sbox1:not:real' }],
+      automation: [],
+    });
+    expect(bad.status).toBe(400);
+    expect(errorType(bad.json)).toBe('BAD_DELEGATION');
+    // The stale call replaced this session's delegations with none: nothing opens for the owner now.
+    const closed = await op('resource-key/ensure', {
+      tenantId,
+      kind: 'chat',
+      resourceId: randomUUID(),
+      ownerSubject: owner,
+    });
+    expect(closed.status).toBe(423);
+    expect(errorType(closed.json)).toBe('NEEDS_DELEGATION');
+    const census = await op('keys/census', { tenantId });
+    expect(census.json).toEqual({ held: 2, managed: 0, own: 0 });
+
+    // The browser seals again, and the owner is back for the tests below.
+    if (!ownerKeys) throw new Error('owner not enrolled');
+    const sealed = sealDelegations(ownerKeys, {
+      instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
+    });
+    const restored = await op('keys/delegate', {
+      tenantId,
+      subject: owner,
+      sessionId: ownerSessionId,
+      session: sealed.session,
+      automation: sealed.automation,
+    });
+    expect(restored.status).toBe(200);
+    expect((await op('keys/status', { tenantId, subject: owner })).json.sessionInstances).toEqual([
+      instance.id,
+    ]);
   });
 
   it('proxies a request on a stored grant with the token attached, and only to the provider', async () => {

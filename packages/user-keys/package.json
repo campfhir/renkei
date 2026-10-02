@@ -25,6 +25,7 @@
     "typescript": "^5"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./test-support": "./src/test-support/enroll.ts"
   }
 }

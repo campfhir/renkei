@@ -111,9 +111,11 @@ export async function POST(
     JSON.stringify(parsed.credentials),
   ]);
   if (!sealed.ok) {
-    return sealed.err.type === 'KEY_LOCKED'
+    return sealed.err.type === 'NEEDS_DELEGATION' ||
+      sealed.err.type === 'NEEDS_SESSION' ||
+      sealed.err.type === 'NOT_ENROLLED'
       ? NextResponse.json(
-          { error: 'Your encryption key is locked. Unlock it in Preferences and try again.' },
+          { error: 'Your encryption key is not connected to this session. Sign in again and retry.' },
           { status: 423 }
         )
       : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });

@@ -111,9 +111,14 @@ export async function appendUserMemory(
 ): Promise<string | null> {
   const content = clip(input.content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!content) return null;
-  const sealed = await delegateClient().sealForSubject(input.tenantId, input.ownerSubject, [
-    content,
-  ]);
+  // Memory is the person's alone: under their user key, never the
+  // automation key, so nothing unattended reads it.
+  const sealed = await delegateClient().sealForSubject(
+    input.tenantId,
+    input.ownerSubject,
+    [content],
+    'session'
+  );
   if (!sealed.ok) return null;
   const inserted = await db
     .insertInto('chat_user_memories')
@@ -149,7 +154,12 @@ export async function editUserMemory(
 ): Promise<boolean> {
   const clipped = clip(content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!clipped) return false;
-  const sealed = await delegateClient().sealForSubject(tenantId, ownerSubject, [clipped]);
+  const sealed = await delegateClient().sealForSubject(
+    tenantId,
+    ownerSubject,
+    [clipped],
+    'session'
+  );
   if (!sealed.ok) return false;
   const result = await db
     .updateTable('chat_user_memories')

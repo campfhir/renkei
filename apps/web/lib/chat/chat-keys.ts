@@ -25,13 +25,16 @@
  * around that, so the web app handles exactly the key of the thing the
  * request is about and never a person's.
  *
- * "As the owner" works because the delegate derives a managed KEK from the
- * master. A person on their OWN key (bring-your-own-key) changes that:
- * while their key is locked, nothing of theirs opens as them — not a
- * resumed turn, not a worker's note. Every path here answers that with an
- * `unavailableCipher('locked')`, which reads as a marker and refuses to
- * write. A viewer's own wrapping of a shared chat still opens, since it
- * is under the viewer's key.
+ * Nothing is derived, so "as the owner" works only while the owner's key
+ * is DELEGATED to the delegate (docs/delegate-key-design.md): their
+ * browser session's delegation while they are signed in, their automation
+ * delegation for the chats their agents write into while they are away.
+ * A viewer therefore opens a shared chat through their own wrapping first
+ * (a sealed box to their public key, or the project key's wrapping of a
+ * member's chat); only a reader with no wrapping of their own falls back
+ * to the owner. When nothing opens, the cipher says why —
+ * `unavailableCipher('delegation')` or `('not-enrolled')` — reads as a
+ * marker and refuses to write.
  */
 
 import type { Kysely } from 'kysely';
@@ -65,9 +68,10 @@ function warn(message: string, fields: Record<string, unknown>): void {
   logger.warn(message, { component: 'chat/keys', ...fields });
 }
 
-/** Why content is unavailable, from the key op's verdict: locked, the delegate out of reach, or no key. */
+/** Why content is unavailable, from the key op's verdict: not delegated, not enrolled, the delegate out of reach, or no key. */
 export function unavailableReasonOf(reason: KeyOpError): CipherUnavailable {
-  if (reason === 'KEY_LOCKED') return 'locked';
+  if (reason === 'NEEDS_DELEGATION' || reason === 'NEEDS_SESSION') return 'delegation';
+  if (reason === 'NOT_ENROLLED' || reason === 'NO_USER_KEY') return 'not-enrolled';
   if (
     reason === 'DELEGATE_UNCONFIGURED' ||
     reason === 'DELEGATE_UNREACHABLE' ||
@@ -161,32 +165,49 @@ export async function createKey(
 
 /**
  * The cipher for one person opening one resource, given how access.ts let
- * them in. Owners mint; named viewers are healed; everyone else reads as
- * the owner.
+ * them in. Owners mint. Everyone else opens through a wrapping of their
+ * own first — the share's sealed box, or the project key's wrapping of a
+ * member's chat — and a wrapping that is missing while the access stands
+ * is healed on the spot when the owner's key is delegated: the grant is
+ * the decision, the wrapping follows it. Only when nothing of the
+ * viewer's own opens does the read fall back to the owner's key.
  */
 export async function cipherFor(
   db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource,
   viewerSubject: string,
-  via: 'owner' | 'grant' | 'project' | 'published'
+  via: 'owner' | 'grant' | 'project' | 'published',
+  projectId: string | null = null
 ): Promise<ContentCipher> {
   const target = ref(kind, resource.tenantId, resource.id);
   if (via === 'owner') {
     const key = await ensureKey(db, kind, resource);
     return typeof key === 'string' ? failedCipher(key) : resourceCipher(key);
   }
-  if (via === 'grant') {
-    const keys = delegateClient();
-    const own = await keys.openResourceKey(target, viewerSubject);
-    if (own.ok) return resourceCipher(own.val);
-    if (own.err.type === 'KEY_LOCKED') return unavailableCipher('locked');
-    if (own.err.type === 'NO_ACCESS') {
-      // The access grant stands; the wrapping is missing. Heal it.
-      const healed = await keys.shareResourceKey(target, resource.ownerSubject, viewerSubject);
+  const keys = delegateClient();
+  const own = await keys.openResourceKey(target, viewerSubject);
+  if (own.ok) return resourceCipher(own.val);
+  if (own.err.type === 'NEEDS_DELEGATION' || own.err.type === 'NEEDS_SESSION') {
+    return unavailableCipher('delegation');
+  }
+  if (own.err.type === 'NO_ACCESS' || own.err.type === 'NO_KEY') {
+    // The access stands; the wrapping is missing. Heal it, as the owner.
+    const minted = await ensureKey(db, kind, resource);
+    if (typeof minted !== 'string') {
+      const healed =
+        via === 'project' && kind === 'chat' && projectId
+          ? await keys.wrapResourceKeyUnder(
+              target,
+              resource.ownerSubject,
+              ref('chat_project', resource.tenantId, projectId)
+            )
+          : await keys.shareResourceKey(target, resource.ownerSubject, viewerSubject);
       if (healed.ok) {
         const reopened = await keys.openResourceKey(target, viewerSubject);
         if (reopened.ok) return resourceCipher(reopened.val);
+      } else if (healed.err.type === 'GRANTEE_NOT_ENROLLED') {
+        return unavailableCipher('not-enrolled');
       }
     }
   }
@@ -194,9 +215,10 @@ export async function cipherFor(
 }
 
 /**
- * The resource opened on its owner's behalf — a project member's read, a
- * published project's reader, and every process acting while nobody is
- * signed in.
+ * The resource opened on its owner's behalf — every process acting while
+ * nobody is signed in (a resumed turn, a worker's note, a sweep), which
+ * works while the owner's key is delegated: their session's, or their
+ * automation key for the chats their agents write into.
  */
 export async function cipherAsOwner(
   db: Kysely<DB>,

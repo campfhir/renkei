@@ -15,15 +15,14 @@ import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
 import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
 import { listImageModels } from '@/lib/chat/models';
-import { delegateClient } from '@renkei/delegate-client';
-import { toEncryptionKeyView } from '@/lib/encryption-key-view';
+import { keyStatusView } from '@/lib/keys/status';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
 import ToolPermissionsForm from './tool-permissions-form';
 import ThemeForm from './theme-form';
 import VoiceForm from './voice-form';
 import ImageModelForm from './image-model-form';
-import EncryptionKeyForm from './encryption-key-form';
+import EncryptionKeySection from './encryption-key-section';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -85,7 +84,7 @@ export default async function PreferencesPage({
     dbResult.ok ? listImageModels(dbResult.val, tenant.id) : [],
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
-    delegateClient().getUserKeyStatus(tenant.id, session.subject),
+    keyStatusView(tenant.id, session),
   ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
@@ -161,9 +160,9 @@ export default async function PreferencesPage({
           <ImageModelForm tenantId={tenant.id} initial={imagePrefs} models={imageModels} />
         </div>
       ) : null}
-      {keyStatus.ok ? (
+      {keyStatus ? (
         <div className="mb-6">
-          <EncryptionKeyForm tenantId={tenant.id} initial={toEncryptionKeyView(keyStatus.val)} />
+          <EncryptionKeySection tenantId={tenant.id} initial={keyStatus} />
         </div>
       ) : null}
       <div className="mb-6">

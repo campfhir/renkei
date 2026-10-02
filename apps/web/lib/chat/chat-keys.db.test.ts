@@ -8,7 +8,7 @@
  * with it. The same for a project's instructions and memory.
  */
 
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { isResourceEncrypted } from '@renkei/crypto';
@@ -35,7 +35,7 @@ import { useTestDelegate } from '@/lib/test-support/delegate';
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('chat and project keys through the chat', () => {
-  useTestDelegate();
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const owner = `owner-${tenantId.slice(0, 8)}`;
@@ -61,7 +61,6 @@ maybe('chat and project keys through the chat', () => {
     rows.map((row) => row.blocks.map((b) => (b.type === 'text' ? b.text : `[${b.type}]`)).join(''));
 
   beforeAll(async () => {
-    process.env.USER_KEY_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
@@ -69,6 +68,10 @@ maybe('chat and project keys through the chat', () => {
       .insertInto('tenants')
       .values({ id: tenantId, slug: `chatkeys-${tenantId.slice(0, 8)}` })
       .execute();
+    // The owner and the friend hold keys, as their browsers would have
+    // enrolled them; the stranger never enrolled and holds nothing.
+    await delegate.enroll(tenantId, owner);
+    await delegate.enroll(tenantId, friend);
   });
 
   afterAll(async () => {
@@ -125,7 +128,7 @@ maybe('chat and project keys through the chat', () => {
     expect(await shareKey(db, 'chat', { id: chatId, tenantId, ownerSubject: owner }, friend)).toBe(
       true
     );
-    expect((await listResourceKeyHolders(db, ref(chatId))).map((h) => h.subject).sort()).toEqual(
+    expect((await listResourceKeyHolders(db, ref(chatId))).map((h) => h.holder).sort()).toEqual(
       [friend, owner].sort()
     );
 
@@ -142,6 +145,9 @@ maybe('chat and project keys through the chat', () => {
   });
 
   it('a grant whose rewrap never landed is healed on the grantee’s first read', async () => {
+    // Healing seals the key to the grantee's public key, so the grantee
+    // must hold one: the stranger enrolls now, the way their browser would.
+    await delegate.enroll(tenantId, stranger);
     await grantResourceAccess(db, tenantId, owner, 'chat', chatId, {
       granteeSubject: stranger,
       role: 'viewer',
@@ -189,7 +195,7 @@ maybe('chat and project keys through the chat', () => {
     expect(asViewer?.cipher.keyId).not.toBeNull();
     if (!asViewer) return;
     // Opening as the owner minted the key (and wrapped it for the viewer).
-    expect((await listResourceKeyHolders(db, ref(bareId))).map((h) => h.subject).sort()).toEqual(
+    expect((await listResourceKeyHolders(db, ref(bareId))).map((h) => h.holder).sort()).toEqual(
       [friend, owner].sort()
     );
     const asOwner = await resolveChatAccess(db, tenantId, owner, bareId);
@@ -289,7 +295,8 @@ maybe('chat and project keys through the chat', () => {
       .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', owner)
       .executeTakeFirstOrThrow();
-    expect(stored.content.startsWith('uenc1:')).toBe(true);
+    // Under the person's user key alone (`upriv1:`), never the automation key.
+    expect(stored.content.startsWith('upriv1:')).toBe(true);
     expect((await readUserMemory(db, tenantId, owner)).entries.map((e) => e.content)).toEqual([
       'prefers tables',
     ]);

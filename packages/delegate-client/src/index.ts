@@ -1,23 +1,33 @@
 /**
  * The delegate client (docs/delegate-key-design.md): what the web app and
  * the workers call instead of @renkei/user-keys. Same verbs, same error
- * words, one difference — no key is derived in the calling process. A
+ * words, one difference — no key exists in the calling process. A
  * resource op answers the resource's data key, which is what the caller's
  * request is about to read anyway; a person-only value is opened and
- * sealed by the delegate itself.
+ * sealed by the delegate itself; enrollment and delegations carry only
+ * what the browser sealed.
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type {
-  KekError,
-  KekMode,
+  CreateKeyOptions,
+  DelegateError,
+  DelegationInput,
+  DelegationStatus,
+  EnrollError,
+  EnrollInput,
+  KeyError,
+  LiveInstance,
   OpenKeyError,
   ResourceKey,
+  ResourceKeyHolder,
   ResourceKeyKind,
   ResourceRef,
-  PassphraseError,
-  UnlockError,
+  RotateError,
+  RotateInput,
+  SealScope,
+  ShareKeyError,
 } from '@renkei/user-keys';
 import {
   DelegateTransport,
@@ -37,49 +47,40 @@ export {
   type FetchLike,
 } from './transport';
 
-/** The status the preferences page shows; dates as ISO strings over the wire. */
-export interface DelegateKeyStatus {
-  mode: KekMode;
-  version: number;
-  locked: boolean;
-  unlockedUntil: Date | null;
-  createdAt: Date | null;
-  rotatedAt: Date | null;
-}
-
 /** Every verdict a key op can come back with, the delegate's transport ones included. */
-export type KeyOpError = OpenKeyError | 'NO_USER_KEY' | DelegateTransportError | 'DELEGATE_ERROR';
-export type OwnKeyError =
-  | KekError
-  | PassphraseError
-  | UnlockError
-  | 'NOT_MANAGED'
-  | 'DECRYPTION_ERROR'
-  | DelegateTransportError
-  | 'DELEGATE_ERROR';
+export type KeyOpError =
+  OpenKeyError | ShareKeyError | 'NO_USER_KEY' | DelegateTransportError | 'DELEGATE_ERROR';
+
+/** The enrollment, delegation and rotation verdicts. */
+export type KeysOpError =
+  KeyError | EnrollError | DelegateError | RotateError | DelegateTransportError | 'DELEGATE_ERROR';
 
 const KEY_OP_ERRORS: readonly KeyOpError[] = [
   'DELEGATE_UNCONFIGURED',
   'DELEGATE_UNREACHABLE',
-  'MISSING_USER_KEY_MASTER',
-  'INVALID_ENCRYPTION_KEY',
-  'KEY_LOCKED',
+  'NO_USER_KEY',
+  'NOT_ENROLLED',
+  'NEEDS_DELEGATION',
+  'NEEDS_SESSION',
+  'NO_VAULT',
   'NO_KEY',
   'NO_ACCESS',
+  'GRANTEE_NOT_ENROLLED',
   'DECRYPTION_ERROR',
-  'NO_USER_KEY',
 ];
-const OWN_KEY_ERRORS: readonly OwnKeyError[] = [
+const KEYS_OP_ERRORS: readonly KeysOpError[] = [
   'DELEGATE_UNCONFIGURED',
   'DELEGATE_UNREACHABLE',
-  'MISSING_USER_KEY_MASTER',
-  'INVALID_ENCRYPTION_KEY',
   'NO_USER_KEY',
+  'NOT_ENROLLED',
+  'NEEDS_DELEGATION',
+  'NEEDS_SESSION',
+  'NO_VAULT',
+  'BAD_DELEGATION',
+  'KEY_MISMATCH',
+  'ALREADY_ENROLLED',
+  'MIGRATION_UNAVAILABLE',
   'KEY_LOCKED',
-  'PASSPHRASE_TOO_SHORT',
-  'PASSPHRASE_TOO_LONG',
-  'NOT_OWN_KEY',
-  'NOT_MANAGED',
   'WRONG_PASSPHRASE',
   'DECRYPTION_ERROR',
 ];
@@ -88,8 +89,8 @@ function keyOpError(error: DelegateCallError): KeyOpError {
   return KEY_OP_ERRORS.find((known) => known === error.type) ?? 'DELEGATE_ERROR';
 }
 
-function ownKeyError(error: DelegateCallError): OwnKeyError {
-  return OWN_KEY_ERRORS.find((known) => known === error.type) ?? 'DELEGATE_ERROR';
+function keysOpError(error: DelegateCallError): KeysOpError {
+  return KEYS_OP_ERRORS.find((known) => known === error.type) ?? 'DELEGATE_ERROR';
 }
 
 function keyOf(json: Record<string, unknown>): ResourceKey | null {
@@ -105,19 +106,50 @@ function dateOf(value: unknown): Date | null {
   return Number.isNaN(at.getTime()) ? null : at;
 }
 
-function statusOf(json: Record<string, unknown>): DelegateKeyStatus {
-  return {
-    mode: json.mode === 'own' ? 'own' : 'managed',
-    version: typeof json.version === 'number' ? json.version : 0,
-    locked: json.locked === true,
-    unlockedUntil: dateOf(json.unlockedUntil),
-    createdAt: dateOf(json.createdAt),
-    rotatedAt: dateOf(json.rotatedAt),
-  };
+function stringsOf(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 function refBody(ref: ResourceRef): Record<string, unknown> {
   return { tenantId: ref.tenantId, kind: ref.kind, resourceId: ref.resourceId };
+}
+
+/** A person's enrollment and delegations as the delegate reports them; dates parsed. */
+export interface KeyStatus extends Omit<DelegationStatus, 'enrolledAt' | 'automationUntil'> {
+  enrolledAt: Date | null;
+  automationUntil: Date | null;
+}
+
+function statusOf(json: Record<string, unknown>): KeyStatus {
+  return {
+    enrolled: json.enrolled === true,
+    legacy: json.legacy === true,
+    legacyNeedsPassphrase: json.legacyNeedsPassphrase === true,
+    publicKey: typeof json.publicKey === 'string' ? json.publicKey : null,
+    wrappedPrivateKey: typeof json.wrappedPrivateKey === 'string' ? json.wrappedPrivateKey : null,
+    wrappedAutomationKey:
+      typeof json.wrappedAutomationKey === 'string' ? json.wrappedAutomationKey : null,
+    version: typeof json.version === 'number' ? json.version : 0,
+    enrolledAt: dateOf(json.enrolledAt),
+    sessionInstances: stringsOf(json.sessionInstances),
+    thisSessionInstances: stringsOf(json.thisSessionInstances),
+    automationInstances: stringsOf(json.automationInstances),
+    automationUntil: dateOf(json.automationUntil),
+  };
+}
+
+/** The delegation half of an enroll, delegate or rotate request, as the wire carries it. */
+function delegationBody(input: DelegationInput): Record<string, unknown> {
+  return {
+    tenantId: input.tenantId,
+    subject: input.subject,
+    sessionId: input.sessionId,
+    session: input.session,
+    automation: input.automation,
+    automationUntil: input.automationUntil ? input.automationUntil.toISOString() : null,
+  };
 }
 
 export class DelegateClient {
@@ -142,21 +174,133 @@ export class DelegateClient {
     return key ? ok(key) : err('DELEGATE_ERROR' as const);
   }
 
+  private async keys(
+    op: string,
+    body: Record<string, unknown>
+  ): Promise<Result<Record<string, unknown>, KeysOpError>> {
+    const answer = await this.transport.call(op, body);
+    return answer.ok ? ok(answer.val) : err(keysOpError(answer.err));
+  }
+
+  // ── the person's keys ────────────────────────────────────────────────────
+
+  /** The live delegate instances: what a browser seals a person's key to. */
+  async keyInstances(): Promise<Result<LiveInstance[], KeysOpError>> {
+    const answer = await this.keys('keys/instances', {});
+    if (!answer.ok) return answer;
+    const instances: LiveInstance[] = [];
+    if (Array.isArray(answer.val.instances)) {
+      for (const item of answer.val.instances) {
+        if (!isRecord(item) || typeof item.id !== 'string' || typeof item.publicKey !== 'string')
+          continue;
+        instances.push({ id: item.id, publicKey: item.publicKey });
+      }
+    }
+    return ok(instances);
+  }
+
+  /** A person's enrollment and what is delegated for them, as of this session when given. */
+  async keyStatus(
+    tenantId: string,
+    subject: string,
+    sessionId?: string
+  ): Promise<Result<KeyStatus, KeysOpError>> {
+    const answer = await this.keys('keys/status', { tenantId, subject, sessionId });
+    return answer.ok ? ok(statusOf(answer.val)) : answer;
+  }
+
+  async enroll(
+    input: EnrollInput
+  ): Promise<
+    Result<{ version: number; migrated: { grants: number; values: number } }, KeysOpError>
+  > {
+    const answer = await this.keys('keys/enroll', {
+      ...delegationBody(input),
+      publicKey: input.publicKey,
+      wrappedPrivateKey: input.wrappedPrivateKey,
+      wrappedAutomationKey: input.wrappedAutomationKey,
+      passphrase: input.passphrase,
+    });
+    if (!answer.ok) return answer;
+    const migrated = isRecord(answer.val.migrated) ? answer.val.migrated : {};
+    return ok({
+      version: typeof answer.val.version === 'number' ? answer.val.version : 0,
+      migrated: {
+        grants: typeof migrated.grants === 'number' ? migrated.grants : 0,
+        values: typeof migrated.values === 'number' ? migrated.values : 0,
+      },
+    });
+  }
+
+  async delegate(input: DelegationInput): Promise<Result<void, KeysOpError>> {
+    const answer = await this.keys('keys/delegate', delegationBody(input));
+    return answer.ok ? ok(undefined) : answer;
+  }
+
+  async revokeAutomation(tenantId: string, subject: string): Promise<Result<number, KeysOpError>> {
+    const answer = await this.keys('keys/revoke-automation', { tenantId, subject });
+    if (!answer.ok) return answer;
+    return ok(typeof answer.val.revoked === 'number' ? answer.val.revoked : 0);
+  }
+
+  async rotateUserKey(
+    input: RotateInput
+  ): Promise<Result<{ version: number; moved: number }, KeysOpError>> {
+    const answer = await this.keys('keys/rotate', {
+      ...delegationBody(input),
+      wrappedPrivateKey: input.wrappedPrivateKey,
+      wrappedAutomationKey: input.wrappedAutomationKey,
+    });
+    if (!answer.ok) return answer;
+    return ok({
+      version: typeof answer.val.version === 'number' ? answer.val.version : 0,
+      moved: typeof answer.val.moved === 'number' ? answer.val.moved : 0,
+    });
+  }
+
+  async shredUserKey(tenantId: string, subject: string): Promise<Result<boolean, KeysOpError>> {
+    const answer = await this.keys('keys/shred', { tenantId, subject });
+    return answer.ok ? ok(answer.val.shredded === true) : answer;
+  }
+
+  async enrollmentCensus(
+    tenantId?: string
+  ): Promise<Result<{ held: number; managed: number; own: number }, KeysOpError>> {
+    const answer = await this.keys('keys/census', { tenantId });
+    if (!answer.ok) return answer;
+    const count = (value: unknown): number => (typeof value === 'number' ? value : 0);
+    return ok({
+      held: count(answer.val.held),
+      managed: count(answer.val.managed),
+      own: count(answer.val.own),
+    });
+  }
+
   // ── resource keys ────────────────────────────────────────────────────────
 
   /** The resource's key, minted and wrapped for its owner if it has none yet. */
   ensureResourceKey(
     ref: ResourceRef,
-    ownerSubject: string
+    ownerSubject: string,
+    options: CreateKeyOptions = {}
   ): Promise<Result<ResourceKey, KeyOpError>> {
-    return this.key('resource-key/ensure', { ...refBody(ref), ownerSubject });
+    return this.key('resource-key/ensure', {
+      ...refBody(ref),
+      ownerSubject,
+      automation: options.automation === true,
+    });
   }
 
   createResourceKey(
     ref: ResourceRef,
-    ownerSubject: string
+    ownerSubject: string,
+    options: CreateKeyOptions = {}
   ): Promise<Result<ResourceKey, KeyOpError>> {
-    return this.key('resource-key/create', { ...refBody(ref), ownerSubject });
+    return this.key('resource-key/create', {
+      ...refBody(ref),
+      ownerSubject,
+      automation: options.automation === true,
+    });
   }
 
   /** The resource's key as this person holds it. */
@@ -196,6 +340,33 @@ export class DelegateClient {
     return answer.ok ? ok(undefined) : err(keyOpError(answer.err));
   }
 
+  /** A chat's key under its project's: whoever opens the project opens the chat. */
+  async wrapResourceKeyUnder(
+    ref: ResourceRef,
+    bySubject: string,
+    parent: ResourceRef
+  ): Promise<Result<void, KeyOpError>> {
+    const answer = await this.transport.call('resource-key/wrap-under', {
+      ...refBody(ref),
+      bySubject,
+      parentKind: parent.kind,
+      parentResourceId: parent.resourceId,
+    });
+    return answer.ok ? ok(undefined) : err(keyOpError(answer.err));
+  }
+
+  /** Let the person's agents at the resource while they are away. */
+  async grantAutomationAccess(
+    ref: ResourceRef,
+    subject: string
+  ): Promise<Result<void, KeyOpError>> {
+    const answer = await this.transport.call('resource-key/grant-automation', {
+      ...refBody(ref),
+      subject,
+    });
+    return answer.ok ? ok(undefined) : err(keyOpError(answer.err));
+  }
+
   async revokeResourceKey(ref: ResourceRef, subject: string): Promise<Result<boolean, KeyOpError>> {
     const answer = await this.transport.call('resource-key/revoke', { ...refBody(ref), subject });
     return answer.ok ? ok(answer.val.revoked === true) : err(keyOpError(answer.err));
@@ -211,19 +382,18 @@ export class DelegateClient {
     return answer.ok ? ok(answer.val.exists === true) : err(keyOpError(answer.err));
   }
 
-  async listResourceKeyHolders(
-    ref: ResourceRef
-  ): Promise<
-    Result<{ subject: string; grantedBy: string | null; kekVersion: number }[], KeyOpError>
-  > {
+  async listResourceKeyHolders(ref: ResourceRef): Promise<Result<ResourceKeyHolder[], KeyOpError>> {
     const answer = await this.transport.call('resource-key/holders', refBody(ref));
     if (!answer.ok) return err(keyOpError(answer.err));
-    const holders: { subject: string; grantedBy: string | null; kekVersion: number }[] = [];
+    const holders: ResourceKeyHolder[] = [];
     if (Array.isArray(answer.val.holders)) {
       for (const item of answer.val.holders) {
-        if (!isRecord(item) || typeof item.subject !== 'string') continue;
+        if (!isRecord(item) || typeof item.holder !== 'string') continue;
+        const kind = item.holderKind;
         holders.push({
-          subject: item.subject,
+          holderKind:
+            kind === 'automation' || kind === 'public' || kind === 'resource' ? kind : 'user',
+          holder: item.holder,
           grantedBy: typeof item.grantedBy === 'string' ? item.grantedBy : null,
           kekVersion: typeof item.kekVersion === 'number' ? item.kekVersion : 0,
         });
@@ -234,14 +404,20 @@ export class DelegateClient {
 
   // ── person-only values ───────────────────────────────────────────────────
 
-  /** `uenc1:` envelopes under this person's key, one per value, in order. */
+  /** Envelopes under this person's key for the scope, one per value, in order. */
   async sealForSubject(
     tenantId: string,
     subject: string,
-    values: string[]
+    values: string[],
+    scope: SealScope = 'automation'
   ): Promise<Result<string[], KeyOpError>> {
     if (values.length === 0) return ok([]);
-    const answer = await this.transport.call('user-sealed/seal', { tenantId, subject, values });
+    const answer = await this.transport.call('user-sealed/seal', {
+      tenantId,
+      subject,
+      values,
+      scope,
+    });
     if (!answer.ok) return err(keyOpError(answer.err));
     const sealed = Array.isArray(answer.val.sealed) ? answer.val.sealed : [];
     const out: string[] = [];
@@ -253,7 +429,7 @@ export class DelegateClient {
     return ok(out);
   }
 
-  /** The values opened, in order; null where one would not open. A missing or locked key fails the batch. */
+  /** The values opened, in order; null where one would not open. A key that is missing or not delegated fails the batch. */
   async openForSubject(
     tenantId: string,
     subject: string,
@@ -272,81 +448,7 @@ export class DelegateClient {
     return ok(out);
   }
 
-  // ── a person's own key ───────────────────────────────────────────────────
-
-  private async ownKey(
-    op: string,
-    body: Record<string, unknown>
-  ): Promise<Result<DelegateKeyStatus, OwnKeyError>> {
-    const answer = await this.transport.call(op, body);
-    return answer.ok ? ok(statusOf(answer.val)) : err(ownKeyError(answer.err));
-  }
-
-  getUserKeyStatus(
-    tenantId: string,
-    subject: string
-  ): Promise<Result<DelegateKeyStatus, OwnKeyError>> {
-    return this.ownKey('own-key/status', { tenantId, subject });
-  }
-
-  adoptOwnKey(
-    tenantId: string,
-    subject: string,
-    passphrase: string,
-    options: { unlockMs?: number } = {}
-  ): Promise<Result<DelegateKeyStatus, OwnKeyError>> {
-    return this.ownKey('own-key/adopt', {
-      tenantId,
-      subject,
-      passphrase,
-      unlockMs: options.unlockMs,
-    });
-  }
-
-  unlockOwnKey(
-    tenantId: string,
-    subject: string,
-    passphrase: string,
-    options: { unlockMs?: number } = {}
-  ): Promise<Result<DelegateKeyStatus, OwnKeyError>> {
-    return this.ownKey('own-key/unlock', {
-      tenantId,
-      subject,
-      passphrase,
-      unlockMs: options.unlockMs,
-    });
-  }
-
-  lockOwnKey(tenantId: string, subject: string): Promise<Result<DelegateKeyStatus, OwnKeyError>> {
-    return this.ownKey('own-key/lock', { tenantId, subject });
-  }
-
-  revertToManagedKey(
-    tenantId: string,
-    subject: string,
-    passphrase: string
-  ): Promise<Result<DelegateKeyStatus, OwnKeyError>> {
-    return this.ownKey('own-key/revert', { tenantId, subject, passphrase });
-  }
-
-  // ── the managed key itself, and maintenance ──────────────────────────────
-
-  async rotateUserKek(
-    tenantId: string,
-    subject: string
-  ): Promise<Result<{ version: number; rewrapped: number }, OwnKeyError>> {
-    const answer = await this.transport.call('user-key/rotate', { tenantId, subject });
-    if (!answer.ok) return err(ownKeyError(answer.err));
-    return ok({
-      version: typeof answer.val.version === 'number' ? answer.val.version : 0,
-      rewrapped: typeof answer.val.rewrapped === 'number' ? answer.val.rewrapped : 0,
-    });
-  }
-
-  async shredUserKek(tenantId: string, subject: string): Promise<Result<boolean, OwnKeyError>> {
-    const answer = await this.transport.call('user-key/shred', { tenantId, subject });
-    return answer.ok ? ok(answer.val.shredded === true) : err(ownKeyError(answer.err));
-  }
+  // ── maintenance ──────────────────────────────────────────────────────────
 
   async pruneOrphanResourceKeys(): Promise<Result<number, KeyOpError>> {
     const answer = await this.transport.call('maintenance/prune-orphan-keys', {});

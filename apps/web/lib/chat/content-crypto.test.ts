@@ -69,12 +69,12 @@ describe('resourceCipher', () => {
 
 describe('unavailableCipher', () => {
   it('refuses to seal and says why it cannot open', () => {
-    const locked = unavailableCipher('locked');
-    expect(locked.unavailable).toBe('locked');
+    const locked = unavailableCipher('delegation');
+    expect(locked.unavailable).toBe('delegation');
     const sealed = sealText('x', locked);
     expect(!sealed.ok && sealed.err.type).toBe('CONTENT_KEY');
-    expect(openText('anything', locked)).toContain('locked');
-    expect(openText('anything', locked)).toContain('Preferences');
+    expect(openText('anything', locked)).toContain('not connected');
+    expect(openText('anything', locked)).toContain('sign in again');
     const missing = unavailableCipher('no-key');
     expect(openText('anything', missing)).toContain('no key');
     expect(openBlocks('anything', missing)).toEqual([

@@ -21,7 +21,10 @@
  *   DATABASE_URL=postgres://… pnpm rekey-chats --all
  *
  * A chat's or project's key is wrapped for its owner and for everyone the
- * resource is currently shared with; an owner with no salt yet gets one.
+ * resource is currently shared with, under MANAGED keys (legacy.ts): the
+ * sweep runs before anyone has enrolled, and enrollment moves each
+ * person's wrappings to the key they hold. A person already enrolled is
+ * skipped here — their rows are theirs to move, and `enroll` did.
  * `chat_summaries.content` predates both envelopes and may be plaintext:
  * such a row is sealed too.
  */
@@ -40,7 +43,11 @@ import {
   RESOURCE_ENVELOPE_PREFIX,
   USER_ENVELOPE_PREFIX,
 } from '@renkei/crypto';
-import { ensureResourceKey, sealForSubject, shareResourceKey } from '../src/index';
+import {
+  legacyEnsureResourceKey,
+  legacySealForSubject,
+  legacyShareResourceKey,
+} from '../src/index';
 
 const BATCH = 200;
 
@@ -72,7 +79,7 @@ async function resealerFor(
   contentKey: Buffer
 ): Promise<Resealer | null> {
   const ref = { tenantId: resource.tenant_id, kind, resourceId: resource.id };
-  const key = await ensureResourceKey(db, ref, resource.owner_subject);
+  const key = await legacyEnsureResourceKey(db, ref, resource.owner_subject);
   if (!key.ok) {
     console.warn(`  ${kind} ${resource.id}: no key (${key.err.type}); skipped`);
     return null;
@@ -86,7 +93,13 @@ async function resealerFor(
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
     .execute();
   for (const grantee of grantees) {
-    const shared = await shareResourceKey(db, ref, resource.owner_subject, grantee.grantee_subject);
+    const shared = await legacyShareResourceKey(
+      db,
+      key.val,
+      resource.tenant_id,
+      resource.owner_subject,
+      grantee.grantee_subject
+    );
     if (!shared.ok) {
       console.warn(
         `  ${kind} ${resource.id}: key not wrapped for ${grantee.grantee_subject} (${shared.err.type})`
@@ -273,7 +286,7 @@ async function rekeyUserMemories(db: Kysely<DB>, contentKey: Buffer): Promise<vo
   for (const row of rows) {
     const text = openLegacy(row.content, contentKey, false);
     if (text === null) continue;
-    const sealed = await sealForSubject(db, row.tenant_id, row.owner_subject, text);
+    const sealed = await legacySealForSubject(db, row.tenant_id, row.owner_subject, text);
     if (!sealed.ok) continue;
     await db
       .updateTable('chat_user_memories')
@@ -342,7 +355,7 @@ async function rekeyCredentials(
       );
       continue;
     }
-    const sealed = await sealForSubject(db, row.tenant_id, row.subject, opened.val);
+    const sealed = await legacySealForSubject(db, row.tenant_id, row.subject, opened.val);
     if (!sealed.ok) {
       console.warn(`  ${table}: ${row.subject} could not be sealed (${sealed.err.type}); skipped`);
       continue;
@@ -391,7 +404,7 @@ async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<v
         broken = true;
         break;
       }
-      const sealed = await sealForSubject(db, row.tenant_id, row.subject, opened.val);
+      const sealed = await legacySealForSubject(db, row.tenant_id, row.subject, opened.val);
       if (!sealed.ok) {
         broken = true;
         break;

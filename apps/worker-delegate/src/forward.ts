@@ -275,12 +275,16 @@ export class Forwarder {
   > {
     const opened = await openForSubject(this.db, tenantId, subject, ciphertext);
     if (!opened.ok) {
-      if (opened.err.type === 'KEY_LOCKED') {
+      if (
+        opened.err.type === 'NEEDS_DELEGATION' ||
+        opened.err.type === 'NEEDS_SESSION' ||
+        opened.err.type === 'NOT_ENROLLED'
+      ) {
         return {
           ok: false,
           status: 423,
-          type: 'KEY_LOCKED',
-          message: 'Your encryption key is locked; unlock it in Preferences.',
+          type: opened.err.type,
+          message: 'Your key is not available to Renkei right now; sign in again to continue.',
         };
       }
       return { ok: false, status: 503, type: 'bad_credentials' };
