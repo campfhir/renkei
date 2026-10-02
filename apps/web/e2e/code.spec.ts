@@ -11,11 +11,11 @@
  * test-results/screens/<project>/code-*.png for the eye.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor, sealForSubject } from './keys';
 
 test.use({
   // The mobile project's device descriptor asks for WebKit, which is not
@@ -26,26 +26,6 @@ test.use({
     args: ['--no-sandbox'],
   },
 });
-
-/**
- * `@renkei/crypto`'s secretbox, reproduced: `v1.<iv>.<tag>.<ciphertext>`
- * (aes-256-gcm, base64 parts) under TOKEN_ENCRYPTION_KEY — what a stored
- * grant token looks like, so the app can open the seeded Bitbucket grant.
- */
-function secretbox(plaintext: string): string {
-  const encoded = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encoded) throw new Error('TOKEN_ENCRYPTION_KEY is not set');
-  const key = Buffer.from(encoded, 'base64');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
 
 /** Per-project fixtures: the three Playwright projects share one database. */
 function idsFor(project: string) {
@@ -90,8 +70,8 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
       [
         E2E_TENANT_ID,
         E2E_SUBJECT,
-        secretbox('e2e-access-token'),
-        secretbox('e2e-refresh-token'),
+        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-access-token'),
+        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-refresh-token'),
         new Date(Date.now() + 365 * 86_400_000),
         ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
         JSON.stringify({ username: 'e2e-dev' }),
@@ -146,11 +126,6 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(overflow).toBeLessThanOrEqual(0);
-}
-
-/** `chat_messages.content`: the content envelope — `renc1:` + the secretbox. */
-function sealContent(plaintext: string): string {
-  return `renc1:${secretbox(plaintext)}`;
 }
 
 /**
@@ -244,6 +219,12 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
     },
   ];
   const client = await db();
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: ids.seededChatId,
+    ownerSubject: E2E_SUBJECT,
+  });
   try {
     await client.query(
       `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
@@ -261,7 +242,7 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
           row.seq,
           row.role,
           row.kind,
-          sealContent(JSON.stringify(row.blocks)),
+          chatKey.seal(JSON.stringify(row.blocks)),
           row.stop,
         ]
       );

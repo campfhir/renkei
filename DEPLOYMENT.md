@@ -23,10 +23,15 @@ ATLASSIAN_REDIRECT_URI=https://yourdomain.com/api/oauth/callback
 # Encryption
 # Generate each with: openssl rand -base64 32
 TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
-# Optional. The master that every person's key-encryption key is derived
-# from (docs/user-encryption-keys-design.md). Falls back to
+# Optional. The master that every person's managed key-encryption key is
+# derived from (docs/user-encryption-keys-design.md). Falls back to
 # CONTENT_ENCRYPTION_KEY, then TOKEN_ENCRYPTION_KEY — set it to rotate the
-# per-user key space apart from the other two.
+# per-user key space apart from the other two. Chat content and connector
+# credentials are sealed only under per-person and per-chat keys: before
+# the first deploy of a build with user keys, run
+#   pnpm --filter @renkei/user-keys rekey-chats --all
+# against the database, which moves every row still under the deployment
+# keys above. The app does not read those forms.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
 
 # Database

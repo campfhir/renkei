@@ -135,6 +135,7 @@ export function createTurnStore(
           maxBytes: ARTIFACT_MAX_BYTES,
           // Tool output was redacted at the MCP boundary already.
           redactor: null,
+          cipher: scope.cipher,
           origin: 'model',
           messageId,
         });

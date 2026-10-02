@@ -14,6 +14,7 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import type { VoiceInfo } from '@renkei/voice';
 import { E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 export const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 
@@ -101,23 +102,6 @@ function secretbox(plaintext: string): string {
   ].join('.');
 }
 
-function seal(plaintext: string): string {
-  const encoded = process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || '';
-  const key = Buffer.from(encoded, 'base64');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return (
-    'renc1:' +
-    [
-      'v1',
-      iv.toString('base64'),
-      cipher.getAuthTag().toString('base64'),
-      ciphertext.toString('base64'),
-    ].join('.')
-  );
-}
-
 /**
  * The voice fixtures, delete-then-insert like the rest of the seed. Every
  * voice spec seeds them in its own beforeAll, and Playwright runs spec
@@ -195,6 +179,12 @@ async function seedVoiceRows(client: Client): Promise<void> {
      VALUES ($1, $2, $3, $4, $5, false, NOW())`,
     [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, CHAT_TITLE, MODEL_ID]
   );
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: CHAT_ID,
+    ownerSubject: E2E_SUBJECT,
+  });
   await client.query(
     `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)
      VALUES ($1, $2, $3, 'completed', $4, 1, 800, 210, NOW())`,
@@ -226,7 +216,7 @@ async function seedVoiceRows(client: Client): Promise<void> {
         row.seq,
         row.role,
         row.kind,
-        seal(JSON.stringify(row.blocks)),
+        chatKey.seal(JSON.stringify(row.blocks)),
         assistant ? MODEL_ID : null,
         assistant ? 'anthropic' : null,
         assistant ? 'claude-sonnet-5' : null,

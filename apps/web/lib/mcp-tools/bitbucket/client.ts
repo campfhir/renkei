@@ -16,7 +16,6 @@ import {
   readBitbucketMetadata,
   type ProviderGrant,
 } from '@renkei/provider-grants';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import { getAtlassianBitbucketApp } from '@/lib/atlassian-app';
 import { logger, secure } from '@/lib/logger';
@@ -54,8 +53,6 @@ export async function resolveBitbucketAccess(
   context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<BitbucketAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'Database unavailable.';
 
@@ -79,8 +76,7 @@ export async function resolveBitbucketAccess(
   const grantResult = await getGrant(
     ATLASSIAN_BITBUCKET,
     context.tenantId,
-    row.provider_account_id,
-    keyResult.val
+    row.provider_account_id
   );
   if (!grantResult.ok || !grantResult.val) return 'Could not read the Bitbucket grant.';
   let grant: ProviderGrant = grantResult.val;
@@ -92,7 +88,6 @@ export async function resolveBitbucketAccess(
       new BitbucketAdapter(app.clientSecret),
       context.tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {

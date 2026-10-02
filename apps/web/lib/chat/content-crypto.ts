@@ -1,131 +1,127 @@
 /**
  * Chat content at rest: one encrypted JSON document of content blocks per
- * message.
+ * message, and every other sealed column of the chat's tables.
  *
- * Two envelopes, one reader. A chat with a key of its own
- * (`resource_keys`, migration 133; lib/chat/chat-keys.ts) seals under that
- * key as `renc2:<key id>:…` — the per-chat, per-person model described in
- * docs/user-encryption-keys-design.md. Rows from before a chat had a key
- * are `renc1` envelopes under the deployment content key, and every
- * cipher here still opens those, so a chat is readable through the
- * rollout and re-sealed by its next write or the rekey sweep.
+ * One rule: a row is sealed under the KEY OF THE THING IT BELONGS TO, and
+ * under nothing else (docs/user-encryption-keys-design.md). A chat's
+ * messages, summaries, sub-agent runs and files are under the chat's key
+ * (`renc2:<key id>:…`); a project's instructions, memory and files under
+ * the project's key (the same envelope); a person's own memory directly
+ * under that person's key (`uenc1:…`). There is no deployment-wide key
+ * for any of it any more, so a `ContentCipher` is never optional: every
+ * seal and open takes one, and the key behind it is the whole access
+ * story.
  *
- * A `ContentCipher` is what a caller threads through: `legacyCipher` is
- * the deployment key alone (what every seal did before keys, and what the
- * tables not yet keyed — project instructions, memories, attachment
- * text — still use); `resourceCipher(key)` seals under a chat's key.
- *
- * Opening is total. A row whose envelope cannot be opened (a rotated key,
- * a chat key this cipher does not hold, a pre-encryption row that should
- * not exist) renders as one text block carrying a marker rather than
- * failing the page — the conversation around it is still worth showing.
+ * Opening is total. A row the cipher cannot open — sealed under another
+ * key, under a key that is locked, or in a form from before keys — renders
+ * as one text block carrying a marker rather than failing the page; the
+ * conversation around it is still worth showing, and the marker says
+ * which case it is.
  */
 
 import {
-  contentEncryptionKey,
   decryptWithResourceKey,
-  encryptContent,
   encryptWithResourceKey,
-  isEncryptedContent,
   isResourceEncrypted,
+  isUserSealed,
+  openForUser,
   parseResourceEnvelope,
-  revealContent,
+  sealForUser,
 } from '@renkei/crypto';
 import type { ResourceKey } from '@renkei/user-keys';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmContentBlock } from '@renkei/agent-llm';
 
-function key(): Buffer | null {
-  const result = contentEncryptionKey();
-  return result.ok ? result.val : null;
-}
+/** Why a cipher has no key to work with. */
+export type CipherUnavailable =
+  /** The owner is on their own key and has not unlocked it. */
+  | 'locked'
+  /** The resource has no key (not yet re-sealed by the sweep) or none could be opened. */
+  | 'no-key';
 
-/** How one chat's (or table's) content is sealed and opened. */
+/** How one chat's, project's or person's content is sealed and opened. */
 export interface ContentCipher {
-  /** The resource key this cipher seals under, or null for the deployment key alone. */
+  /** The resource key this cipher seals under; null for a person's own key and for an unavailable cipher. */
   readonly keyId: string | null;
+  /** Set when there is no key: sealing fails and opening yields a marker. */
+  readonly unavailable: CipherUnavailable | null;
   seal(text: string): Result<string, 'CONTENT_KEY'>;
   open(stored: string): string;
 }
 
-function sealLegacy(text: string): Result<string, 'CONTENT_KEY'> {
-  const k = key();
-  if (!k) {
-    return err('CONTENT_KEY' as const, {
-      message: 'The content encryption key is not configured.',
-    });
-  }
-  return ok(encryptContent(text, k));
-}
-
-/** A `renc1` row opened under the deployment key; anything else, a marker. */
-function openLegacy(stored: string): string {
-  if (isResourceEncrypted(stored)) {
-    return "[content unavailable: this chat's key was not opened]";
-  }
-  return revealContent(stored, key());
-}
-
-/**
- * The deployment content key alone — every row written before chats had
- * keys, and the tables that are not keyed yet.
- */
-export const legacyCipher: ContentCipher = {
-  keyId: null,
-  seal: sealLegacy,
-  open: openLegacy,
+const MARKERS = {
+  locked: '[content unavailable: your encryption key is locked — unlock it in Preferences]',
+  'no-key': '[content unavailable: no key for this content — run the rekey sweep]',
+  legacy: '[content unavailable: sealed under the retired deployment key — run the rekey sweep]',
+  other: '[content unavailable: sealed under another key]',
+  failed: '[content unavailable: decryption failed]',
 };
 
 /**
- * A chat's own key: seals `renc2` under it; opens `renc2` rows sealed
- * under it and `renc1` rows from before the chat had one.
+ * A chat's or project's own key: seals `renc2` under it and opens only
+ * rows sealed under it.
  */
 export function resourceCipher(resource: ResourceKey): ContentCipher {
   return {
     keyId: resource.id,
+    unavailable: null,
     seal: (text) => ok(encryptWithResourceKey(text, resource.id, resource.key)),
     open: (stored) => {
-      if (!isResourceEncrypted(stored)) return revealContent(stored, key());
+      if (!isResourceEncrypted(stored)) return MARKERS.legacy;
       const opened = decryptWithResourceKey(stored, resource.id, resource.key);
       if (opened.ok) return opened.val;
-      const names = parseResourceEnvelope(stored)?.keyId;
-      return opened.err.type === 'WRONG_KEY'
-        ? `[content unavailable: sealed under another key${names ? ` (${names.slice(0, 8)}…)` : ''}]`
-        : '[content unavailable: decryption failed]';
+      if (opened.err.type === 'WRONG_KEY') {
+        const names = parseResourceEnvelope(stored)?.keyId;
+        return `${MARKERS.other.slice(0, -1)}${names ? ` (${names.slice(0, 8)}…)` : ''}]`;
+      }
+      return MARKERS.failed;
     },
   };
 }
 
-/** Whether a stored value is any envelope this module knows — `renc1` or `renc2`. */
-export function isSealed(stored: string): boolean {
-  return isEncryptedContent(stored) || isResourceEncrypted(stored);
-}
-
-export function sealText(
-  text: string,
-  cipher: ContentCipher = legacyCipher
-): Result<string, 'CONTENT_KEY'> {
-  return cipher.seal(text);
-}
-
-export function openText(stored: string, cipher: ContentCipher = legacyCipher): string {
-  return cipher.open(stored);
+/** A person's own key, for content that is theirs alone (`uenc1`). */
+export function userCipher(kek: Buffer): ContentCipher {
+  return {
+    keyId: null,
+    unavailable: null,
+    seal: (text) => ok(sealForUser(text, kek)),
+    open: (stored) => {
+      if (!isUserSealed(stored)) return MARKERS.legacy;
+      const opened = openForUser(stored, kek);
+      return opened.ok ? opened.val : MARKERS.failed;
+    },
+  };
 }
 
 /**
- * A column that was plaintext before it was sealed (chat_summaries.content
- * predates both envelopes): an envelope opens, anything else is the text
- * itself. Only for columns with that history — everywhere else a bare
- * value is an error (`openText`), never a passthrough.
+ * No key to work with: every seal fails closed and every open is the
+ * marker for why. Reads stay total; writes cannot land under a wrong key.
  */
-export function openStoredText(stored: string, cipher: ContentCipher): string {
-  return isSealed(stored) ? cipher.open(stored) : stored;
+export function unavailableCipher(reason: CipherUnavailable): ContentCipher {
+  const message =
+    reason === 'locked'
+      ? 'Your encryption key is locked. Unlock it in Preferences to continue.'
+      : 'No encryption key is available for this content.';
+  return {
+    keyId: null,
+    unavailable: reason,
+    seal: () => err('CONTENT_KEY' as const, { message }),
+    open: () => MARKERS[reason],
+  };
+}
+
+export function sealText(text: string, cipher: ContentCipher): Result<string, 'CONTENT_KEY'> {
+  return cipher.seal(text);
+}
+
+export function openText(stored: string, cipher: ContentCipher): string {
+  return cipher.open(stored);
 }
 
 export function sealBlocks(
   blocks: LlmContentBlock[],
-  cipher: ContentCipher = legacyCipher
+  cipher: ContentCipher
 ): Result<string, 'CONTENT_KEY'> {
   return sealText(JSON.stringify(blocks), cipher);
 }
@@ -192,16 +188,13 @@ export function parseBlock(value: unknown): LlmContentBlock | null {
   }
 }
 
-export function openBlocks(
-  stored: string,
-  cipher: ContentCipher = legacyCipher
-): LlmContentBlock[] {
+export function openBlocks(stored: string, cipher: ContentCipher): LlmContentBlock[] {
   const text = openText(stored, cipher);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    // Not JSON: the reveal marker for an unopenable envelope, shown as-is.
+    // Not JSON: the marker for an unopenable envelope, shown as-is.
     return [{ type: 'text', text }];
   }
   if (!Array.isArray(parsed)) return [];

@@ -49,8 +49,6 @@ export {
 export { dedupeGroupNames, groupNamesFromDns, groupsPresent, groupsToAdd } from './groups';
 
 export {
-  decryptCredentials,
-  encryptCredentials,
   parseAdManagerCredentials,
   type AdManagerCredentials,
   type CredentialError,

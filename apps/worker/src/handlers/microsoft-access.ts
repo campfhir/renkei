@@ -54,7 +54,7 @@ export async function resolveMicrosoftAccess(
     throw new Error(`microsoft connector is not configured or disabled for tenant ${tenantId}`);
   }
 
-  const grantResult = await getGrant(MICROSOFT, tenantId, accountId, keyResult.val);
+  const grantResult = await getGrant(MICROSOFT, tenantId, accountId);
   if (!grantResult.ok || !grantResult.val) {
     throw new Error(`no microsoft grant for account ${accountId} (disconnected?)`);
   }
@@ -72,7 +72,6 @@ export async function resolveMicrosoftAccess(
       new MicrosoftAdapter(clientSecret, tid),
       tenantId,
       accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {

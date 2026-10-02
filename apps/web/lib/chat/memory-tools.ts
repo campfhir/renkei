@@ -23,7 +23,9 @@ export function memoryTools(): LocalTool[] {
         },
       },
       async execute(input, context) {
-        if (!context.projectId) return errorResult('This chat is not in a project.');
+        if (!context.projectId || !context.projectCipher) {
+          return errorResult('This chat is not in a project.');
+        }
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const note = typeof input.note === 'string' ? input.note.trim() : '';
         if (!note) return errorResult('Nothing to remember: `note` is empty.');
@@ -32,6 +34,7 @@ export function memoryTools(): LocalTool[] {
           projectId: context.projectId,
           content: note,
           authorSubject: context.subject,
+          cipher: context.projectCipher,
           chatId: context.chatId,
         });
         return id
@@ -51,7 +54,9 @@ export function memoryTools(): LocalTool[] {
         },
       },
       async execute(input, context) {
-        if (!context.projectId) return errorResult('This chat is not in a project.');
+        if (!context.projectId || !context.projectCipher) {
+          return errorResult('This chat is not in a project.');
+        }
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const id = typeof input.id === 'string' ? input.id : '';
         const deleted = await forgetProjectMemory(context.db, context.tenantId, context.projectId, {
@@ -69,10 +74,18 @@ export function memoryTools(): LocalTool[] {
       },
       readOnly: true,
       async execute(_input, context) {
-        if (!context.projectId) return errorResult('This chat is not in a project.');
-        const memory = await readProjectMemory(context.db, context.tenantId, context.projectId, {
-          maxEntries: 100,
-        });
+        if (!context.projectId || !context.projectCipher) {
+          return errorResult('This chat is not in a project.');
+        }
+        const memory = await readProjectMemory(
+          context.db,
+          context.tenantId,
+          context.projectId,
+          context.projectCipher,
+          {
+            maxEntries: 100,
+          }
+        );
         if (!memory.summary && memory.entries.length === 0)
           return textResult('The project has no memory yet.');
         const lines = [

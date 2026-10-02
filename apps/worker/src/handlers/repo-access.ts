@@ -62,13 +62,14 @@ async function resolveSubjectAccess(
     .executeTakeFirst();
   if (!row) return null;
 
-  const grantResult = await getGrant(provider, tenantId, row.provider_account_id, keyResult.val);
+  const grantResult = await getGrant(provider, tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return null;
   let grant = grantResult.val;
 
   if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const adapter = provider === GITHUB ? new GitHubAdapter(clientSecret) : new BitbucketAdapter(clientSecret);
-    const refreshed = await refreshGrantTokens(adapter, tenantId, grant.accountId, keyResult.val, logger);
+    const adapter =
+      provider === GITHUB ? new GitHubAdapter(clientSecret) : new BitbucketAdapter(clientSecret);
+    const refreshed = await refreshGrantTokens(adapter, tenantId, grant.accountId, logger);
     if (!refreshed.ok) {
       if (refreshed.err.type === 'GRANT_REVOKED') {
         logger.warn('{provider} grant revoked during refresh; skipping', {

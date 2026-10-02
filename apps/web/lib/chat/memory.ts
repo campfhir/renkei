@@ -11,7 +11,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
-import { openText, sealText } from './content-crypto';
+import { openText, sealText, type ContentCipher } from './content-crypto';
 
 export const PROJECT_MEMORY_ENTRY_MAX_CHARS = 500;
 export const PROJECT_MEMORY_SUMMARY_MAX_CHARS = 3_000;
@@ -41,6 +41,7 @@ export async function readProjectMemory(
   db: Kysely<DB>,
   tenantId: string,
   projectId: string,
+  cipher: ContentCipher,
   options: { maxEntries?: number } = {}
 ): Promise<ProjectMemory> {
   if (!isUuid(projectId)) return { summary: null, entries: [] };
@@ -54,13 +55,13 @@ export async function readProjectMemory(
     .execute();
   const summary = rows.find((row) => row.kind === 'summary');
   return {
-    summary: summary ? openText(summary.content) : null,
+    summary: summary ? openText(summary.content, cipher) : null,
     entries: rows
       .filter((row) => row.kind === 'entry')
       .slice(0, options.maxEntries ?? PROJECT_MEMORY_INJECT_MAX_ENTRIES)
       .map((row) => ({
         id: row.id,
-        content: openText(row.content),
+        content: openText(row.content, cipher),
         authorSubject: row.author_subject,
         chatId: row.chat_id,
         createdAt: row.created_at,
@@ -95,11 +96,13 @@ export async function appendProjectMemory(
     content: string;
     authorSubject: string;
     chatId: string | null;
+    /** The project's cipher (access.ts's ProjectAccess, or LocalToolContext.projectCipher). */
+    cipher: ContentCipher;
   }
 ): Promise<string | null> {
   const content = clip(input.content.trim(), PROJECT_MEMORY_ENTRY_MAX_CHARS);
   if (!content) return null;
-  const sealed = sealText(content);
+  const sealed = sealText(content, input.cipher);
   if (!sealed.ok) return null;
   const inserted = await db
     .insertInto('chat_project_memories')

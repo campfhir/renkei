@@ -16,7 +16,7 @@ import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistr
 import { getOrgSettings } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
-import { openText, sealText } from './content-crypto';
+import { openText, sealText, type ContentCipher } from './content-crypto';
 import type { OutboundRedactor } from './outbound-redaction';
 import type { AttachmentView } from './views';
 
@@ -176,7 +176,8 @@ async function ocrOne(
   db: Kysely<DB>,
   tenantId: string,
   row: AttachmentRow,
-  redactor: OutboundRedactor | null
+  redactor: OutboundRedactor | null,
+  cipher: ContentCipher
 ): Promise<string> {
   const config = await resolveMistralOcrConfig(tenantId);
   if (!config.ok) return NEEDS_OCR;
@@ -199,7 +200,7 @@ async function ocrOne(
     // An unreachable service is worth another try; anything else is the file.
     return ocr.ok || ocr.err.type !== 'unreachable' ? 'ocr_failed' : NEEDS_OCR;
   }
-  const sealed = sealText(redactor ? redactor.apply(markdown).text : markdown);
+  const sealed = sealText(redactor ? redactor.apply(markdown).text : markdown, cipher);
   if (!sealed.ok) return NEEDS_OCR;
   await db
     .updateTable('chat_attachments')
@@ -224,6 +225,8 @@ export async function ocrChatAttachments(
     chatId: string;
     attachmentIds: string[];
     redactor: OutboundRedactor | null;
+    /** The chat's cipher: the text lands under the chat's key. */
+    cipher: ContentCipher;
   }
 ): Promise<Array<{ id: string; extractStatus: string }>> {
   const ids = input.attachmentIds.filter(isUuid);
@@ -246,7 +249,7 @@ export async function ocrChatAttachments(
       const row = rows[next++];
       results.push({
         id: row.id,
-        extractStatus: await ocrOne(db, input.tenantId, row, input.redactor),
+        extractStatus: await ocrOne(db, input.tenantId, row, input.redactor, input.cipher),
       });
     }
   };
@@ -266,6 +269,8 @@ export async function createAttachment(
     bytes: Uint8Array;
     maxBytes: number;
     redactor: OutboundRedactor | null;
+    /** The cipher of the file's home — the chat's, or the project's. */
+    cipher: ContentCipher;
     /** A file a tool produced hangs off the tool-results row it came with. */
     origin?: 'upload' | 'model';
     messageId?: string | null;
@@ -284,7 +289,7 @@ export async function createAttachment(
   let sealedText: string | null = null;
   if (extracted.text !== null) {
     const text = input.redactor ? input.redactor.apply(extracted.text).text : extracted.text;
-    const sealed = sealText(text);
+    const sealed = sealText(text, input.cipher);
     if (!sealed.ok) return err('CONTENT_KEY' as const);
     sealedText = sealed.val;
   }
@@ -358,7 +363,8 @@ export async function getAttachment(
 export async function getAttachmentText(
   db: Kysely<DB>,
   tenantId: string,
-  attachmentId: string
+  attachmentId: string,
+  cipher: ContentCipher
 ): Promise<string | null> {
   if (!isUuid(attachmentId)) return null;
   const raw = await db
@@ -367,7 +373,7 @@ export async function getAttachmentText(
     .where('tenant_id', '=', tenantId)
     .where('id', '=', attachmentId)
     .executeTakeFirst();
-  return raw?.extracted_text ? openText(raw.extracted_text) : null;
+  return raw?.extracted_text ? openText(raw.extracted_text, cipher) : null;
 }
 
 export async function listAttachments(
@@ -412,7 +418,8 @@ export async function attachmentPromptBlocks(
   tenantId: string,
   ownerSubject: string,
   chatId: string,
-  attachmentIds: string[]
+  attachmentIds: string[],
+  cipher: ContentCipher
 ): Promise<LlmContentBlock[]> {
   const ids = attachmentIds.filter(isUuid);
   if (ids.length === 0) return [];
@@ -433,7 +440,7 @@ export async function attachmentPromptBlocks(
   const store = await resolveTenantBlobStore(tenantId);
   for (const raw of rows) {
     const row = rowOf(raw);
-    const text = raw.extracted_text ? openText(raw.extracted_text) : null;
+    const text = raw.extracted_text ? openText(raw.extracted_text, cipher) : null;
     const excerpt = text ? text.slice(0, INLINE_EXCERPT_CHARS) : null;
     const clipped = text !== null && text.length > INLINE_EXCERPT_CHARS;
     blocks.push({

@@ -1,13 +1,14 @@
 /**
  * The grant store against a real database (skipped without DATABASE_URL):
- * a grant with an owner is sealed under THEIR key, not the deployment key
- * the caller passes; a grant without one, and a row written before
- * per-user keys, still open under that deployment key.
+ * a grant is sealed under its OWNER's key and under nothing else — a row
+ * under the old deployment key, or one with no owner at all, does not
+ * open.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { decrypt, encrypt, isUserSealed } from '@renkei/crypto';
+import { sql } from 'kysely';
 import { getGrant, setGrant } from './store';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -42,12 +43,13 @@ maybe('provider grant store under per-user keys', () => {
   });
 
   it('seals an owned grant under the owner’s key and opens it back', async () => {
-    const set = await setGrant(
-      'atlassian',
-      tenantId,
-      { ...base, accountId: 'acct-1', subject, accessToken: 'access-1', refreshToken: 'refresh-1' },
-      legacyKey
-    );
+    const set = await setGrant('atlassian', tenantId, {
+      ...base,
+      accountId: 'acct-1',
+      subject,
+      accessToken: 'access-1',
+      refreshToken: 'refresh-1',
+    });
     expect(set.ok).toBe(true);
     const db = getDatabase();
     if (!db.ok) throw new Error('db');
@@ -62,46 +64,26 @@ maybe('provider grant store under per-user keys', () => {
     // Not the deployment key: that key opens nothing here.
     expect(decrypt(row.encrypted_access_token.slice('uenc1:'.length), legacyKey).ok).toBe(false);
 
-    const got = await getGrant('atlassian', tenantId, 'acct-1', legacyKey);
+    const got = await getGrant('atlassian', tenantId, 'acct-1');
     expect(got.ok && got.val?.accessToken).toBe('access-1');
     expect(got.ok && got.val?.refreshToken).toBe('refresh-1');
   });
 
   it('a reconnect with an empty refresh token keeps the stored one, re-sealed or not', async () => {
-    const set = await setGrant(
-      'atlassian',
-      tenantId,
-      { ...base, accountId: 'acct-1', subject, accessToken: 'access-2', refreshToken: '' },
-      legacyKey
-    );
+    const set = await setGrant('atlassian', tenantId, {
+      ...base,
+      accountId: 'acct-1',
+      subject,
+      accessToken: 'access-2',
+      refreshToken: '',
+    });
     expect(set.ok).toBe(true);
-    const got = await getGrant('atlassian', tenantId, 'acct-1', legacyKey);
+    const got = await getGrant('atlassian', tenantId, 'acct-1');
     expect(got.ok && got.val?.accessToken).toBe('access-2');
     expect(got.ok && got.val?.refreshToken).toBe('refresh-1');
   });
 
-  it('a grant with no owner stays under the deployment key', async () => {
-    await setGrant(
-      'atlassian',
-      tenantId,
-      { ...base, accountId: 'acct-2', subject: null, accessToken: 'a', refreshToken: 'r' },
-      legacyKey
-    );
-    const db = getDatabase();
-    if (!db.ok) throw new Error('db');
-    const row = await db.val
-      .selectFrom('provider_grants')
-      .select('encrypted_access_token')
-      .where('tenant_id', '=', tenantId)
-      .where('provider_account_id', '=', 'acct-2')
-      .executeTakeFirstOrThrow();
-    expect(isUserSealed(row.encrypted_access_token)).toBe(false);
-    expect(decrypt(row.encrypted_access_token, legacyKey)).toMatchObject({ ok: true, val: 'a' });
-    const got = await getGrant('atlassian', tenantId, 'acct-2', legacyKey);
-    expect(got.ok && got.val?.accessToken).toBe('a');
-  });
-
-  it('a row written before per-user keys opens under the deployment key', async () => {
+  it('a row written under the old deployment key does not open', async () => {
     const db = getDatabase();
     if (!db.ok) throw new Error('db');
     await db.val
@@ -113,8 +95,25 @@ maybe('provider grant store under per-user keys', () => {
       .where('tenant_id', '=', tenantId)
       .where('provider_account_id', '=', 'acct-1')
       .execute();
-    const got = await getGrant('atlassian', tenantId, 'acct-1', legacyKey);
-    expect(got.ok && got.val?.accessToken).toBe('legacy-access');
-    expect(got.ok && got.val?.refreshToken).toBe('legacy-refresh');
+    const got = await getGrant('atlassian', tenantId, 'acct-1');
+    expect(!got.ok && got.err.type).toBe('DECRYPTION_ERROR');
+  });
+
+  it('a row with no owner has no key and does not open', async () => {
+    const db = getDatabase();
+    if (!db.ok) throw new Error('db');
+    const set = await setGrant('atlassian', tenantId, {
+      ...base,
+      accountId: 'acct-2',
+      subject,
+      accessToken: 'a',
+      refreshToken: 'r',
+    });
+    expect(set.ok).toBe(true);
+    await sql`UPDATE provider_grants SET subject = NULL WHERE tenant_id = ${tenantId} AND provider_account_id = 'acct-2'`.execute(
+      db.val
+    );
+    const got = await getGrant('atlassian', tenantId, 'acct-2');
+    expect(!got.ok && got.err.type).toBe('DECRYPTION_ERROR');
   });
 });

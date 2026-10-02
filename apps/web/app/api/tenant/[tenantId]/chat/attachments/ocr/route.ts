@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
-import { getChatForOwner } from '@/lib/chat/store';
+import { resolveChatAccess } from '@/lib/chat/access';
 import { ocrChatAttachments } from '@/lib/chat/attachments';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
@@ -37,9 +37,10 @@ export async function POST(
           .filter((id): id is string => typeof id === 'string')
           .slice(0, MAX_IDS_PER_REQUEST)
       : [];
-  if (!isUuid(chatId) || !(await getChatForOwner(db, tenantId, session.subject, chatId))) {
-    return jsonError(404, 'not-found', 'No such chat');
-  }
+  const access = isUuid(chatId)
+    ? await resolveChatAccess(db, tenantId, session.subject, chatId)
+    : null;
+  if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
 
   const settings = await getOrgSettings(tenantId);
   const results = await ocrChatAttachments(db, {
@@ -48,6 +49,7 @@ export async function POST(
     chatId,
     attachmentIds: ids,
     redactor: settings.ok ? createOutboundRedactor(tenantId, settings.val) : null,
+    cipher: access.cipher,
   });
   return NextResponse.json({ results });
 }

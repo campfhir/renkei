@@ -3,14 +3,20 @@ import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { findToolsTool, FIND_TOOLS_NAME, recallDiscoveredTools } from './tool-discovery';
 import type { LlmMessage } from '@renkei/agent-llm';
 import type { DiscoverableTool } from './tool-surface';
-import { legacyCipher } from './content-crypto';
+import { resourceCipher } from './content-crypto';
+
+/** A chat key for the fixtures: the ciphers under test only care that one is there. */
+const testCipher = resourceCipher({
+  id: '00000000-0000-4000-8000-00000000c1fe',
+  key: Buffer.alloc(32, 7),
+});
 
 const context: LocalToolContext = {
   db: null as unknown as LocalToolContext['db'],
   tenantId: 't1',
   subject: 'u1',
   chatId: 'c1',
-  cipher: legacyCipher,
+  cipher: testCipher,
   projectId: null,
   readOnly: false,
 };

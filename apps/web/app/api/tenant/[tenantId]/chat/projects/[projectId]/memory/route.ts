@@ -6,7 +6,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
-import { resolveResourceAccess } from '@/lib/chat/access';
+import { resolveProjectAccess } from '@/lib/chat/access';
 import { appendProjectMemory, forgetProjectMemory, readProjectMemory } from '@/lib/chat/memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
@@ -18,15 +18,11 @@ export async function GET(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    tenantId,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const memory = await readProjectMemory(db, tenantId, projectId, { maxEntries: 300 });
+  const memory = await readProjectMemory(db, tenantId, projectId, access.cipher, {
+    maxEntries: 300,
+  });
   return NextResponse.json({
     summary: memory.summary,
     entries: memory.entries.map((entry) => ({
@@ -47,13 +43,7 @@ export async function POST(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    tenantId,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer') return jsonError(403, 'read-only', 'Only editors can add notes.');
   const body = await readJsonBody(request);
@@ -67,6 +57,7 @@ export async function POST(
     content: redactor ? redactor.apply(content).text : content,
     authorSubject: session.subject,
     chatId: null,
+    cipher: access.cipher,
   });
   if (!id) return jsonError(500, 'content-key', 'The note could not be saved.');
   return NextResponse.json({ id }, { status: 201 });
@@ -80,13 +71,7 @@ export async function DELETE(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    tenantId,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can remove notes.');

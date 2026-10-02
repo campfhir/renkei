@@ -267,15 +267,16 @@ export async function listResourceKeyHolders(
 }
 
 /**
- * Keys whose chat no longer exists — the sweep's half of "the app deletes
- * a resource's key with the resource" (chats are the only keyed kind so
- * far). Returns how many were removed.
+ * Keys whose resource no longer exists — the sweep's half of "the app
+ * deletes a resource's key with the resource". Returns how many were
+ * removed.
  */
-export async function pruneOrphanChatKeys(db: Kysely<DB>): Promise<number> {
+export async function pruneOrphanResourceKeys(db: Kysely<DB>): Promise<number> {
   const result = await sql<{ id: string }>`
     DELETE FROM resource_keys k
-     WHERE k.resource_kind = 'chat'
-       AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = k.resource_id)
+     WHERE (k.resource_kind = 'chat' AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = k.resource_id))
+        OR (k.resource_kind = 'chat_project' AND NOT EXISTS (SELECT 1 FROM chat_projects p WHERE p.id = k.resource_id))
+        OR (k.resource_kind = 'prompt_library' AND NOT EXISTS (SELECT 1 FROM prompt_libraries l WHERE l.id = k.resource_id))
     RETURNING k.id
   `.execute(db);
   return result.rows.length;

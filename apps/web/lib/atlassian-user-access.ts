@@ -13,7 +13,6 @@
  * the one thing the page is for.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import {
   getGrant,
@@ -51,8 +50,6 @@ export async function resolveAtlassianUserAccess(
   origin: string
 ): Promise<AtlassianUserAccess | string> {
   const label = LABELS[provider] ?? provider;
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'Database unavailable.';
 
@@ -65,7 +62,7 @@ export async function resolveAtlassianUserAccess(
     .executeTakeFirst();
   if (!row) return `${label} is not connected. Connect it above, then try again.`;
 
-  const grantResult = await getGrant(provider, tenantId, row.provider_account_id, keyResult.val);
+  const grantResult = await getGrant(provider, tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return `Could not read the ${label} grant.`;
   let grant: ProviderGrant = grantResult.val;
 
@@ -79,7 +76,6 @@ export async function resolveAtlassianUserAccess(
       new AtlassianAdapter(app.clientSecret, provider),
       tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {

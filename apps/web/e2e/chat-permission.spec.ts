@@ -18,6 +18,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 test.use({
   launchOptions: {
@@ -54,12 +55,6 @@ function secretbox(plaintext: string, encoded: string): string {
     ciphertext.toString('base64'),
   ].join('.');
 }
-const seal = (plaintext: string) =>
-  'renc1:' +
-  secretbox(
-    plaintext,
-    process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || ''
-  );
 const sealSecret = (plaintext: string) =>
   secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
 
@@ -89,6 +84,12 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
      VALUES ($1, $2, $3, $4, $5, NOW())`,
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: ids.chatId,
+    ownerSubject: E2E_SUBJECT,
+  });
   const ask = {
     toolUseId: ids.toolUseId,
     messageId: 'pending',
@@ -134,7 +135,7 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
         row.role,
         row.kind,
         row.status,
-        seal(JSON.stringify(row.blocks)),
+        chatKey.seal(JSON.stringify(row.blocks)),
         assistant ? ids.modelId : null,
         assistant ? 'anthropic' : null,
         assistant ? 'e2e-model' : null,

@@ -7,10 +7,10 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import type { ResourceAccess } from './access';
+import type { ProjectAccess } from './access';
 import { listAttachments, toAttachmentView } from './attachments';
 import { readProjectMemory } from './memory';
-import { getProjectRow } from './projects';
+import { getProjectRow, openProjectInstructions } from './projects';
 import { listProjectChats } from './store';
 import { isHistoryChat } from '@/lib/code/active-chat';
 import type { AttachmentView, ChatListItem, ChatToolConfigView } from './views';
@@ -50,13 +50,13 @@ export async function loadProjectView(
   tenantId: string,
   viewerSubject: string,
   projectId: string,
-  access: ResourceAccess
+  access: ProjectAccess
 ): Promise<ProjectView | null> {
   const project = await getProjectRow(db, tenantId, projectId);
   if (!project) return null;
   const [files, memory, chats] = await Promise.all([
     listAttachments(db, tenantId, { projectId }),
-    readProjectMemory(db, tenantId, projectId, { maxEntries: 300 }),
+    readProjectMemory(db, tenantId, projectId, access.cipher, { maxEntries: 300 }),
     listProjectChats(db, tenantId, [projectId], null),
   ]);
   const subjects = [
@@ -81,7 +81,7 @@ export async function loadProjectView(
       id: project.id,
       name: project.name,
       description: project.description,
-      instructions: project.instructions,
+      instructions: openProjectInstructions(project, access.cipher),
       toolConfig: project.toolConfig,
       publishedToOrg: project.publishedToOrg,
       ownerSubject: project.ownerSubject,

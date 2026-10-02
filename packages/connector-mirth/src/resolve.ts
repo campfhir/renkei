@@ -1,8 +1,7 @@
 /**
  * The worker's one resolution step: from (tenant, instance, subject) to the
- * instance's connection details plus the CALLER'S OWN decrypted credential.
- * Only the Mirth worker calls this — it is the only process holding the
- * encryption key for a purpose other than sealing on the way in. Every
+ * instance's connection details plus the CALLER'S OWN decrypted credential,
+ * opened under the caller's own key (user-credentials.ts). Every
  * uncertain outcome denies, and "no such instance" and "not connected"
  * are distinguished here but collapsed by the tools before a model sees
  * them (ids must not become an existence oracle).
@@ -43,7 +42,6 @@ export async function resolveInstance(
 
 export async function resolveTarget(
   db: Kysely<DB>,
-  encryptionKey: Buffer,
   target: SubjectTarget
 ): Promise<Result<ResolvedTarget, ResolveError>> {
   const instance = await resolveInstance(db, target.tenantId, target.instanceId);
@@ -62,8 +60,7 @@ export async function resolveTarget(
     db,
     target.tenantId,
     target.subject,
-    ciphertext.val,
-    encryptionKey
+    ciphertext.val
   );
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ instance: instance.val, credentials: credentials.val });

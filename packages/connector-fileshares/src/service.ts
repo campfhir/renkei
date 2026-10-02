@@ -49,8 +49,6 @@ export type ServiceError =
 
 export interface ServiceDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY, for opening stored credentials. */
-  encryptionKey: Buffer;
 }
 
 /** The share fields responses echo so callers can name it without a DB read. */
@@ -104,8 +102,7 @@ export async function resolveConnection(
     deps.db,
     target.tenantId,
     target.subject,
-    ciphertext.val,
-    deps.encryptionKey
+    ciphertext.val
   );
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ share: share.val.summary, credentials: credentials.val });

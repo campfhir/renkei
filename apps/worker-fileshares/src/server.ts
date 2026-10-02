@@ -48,8 +48,6 @@ import { logger } from './logger';
 
 export interface FileshareServerDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY. */
-  encryptionKey: Buffer;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /**
@@ -122,7 +120,9 @@ type JsonHandler = (
   response: ServerResponse
 ) => Promise<void>;
 
-function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>): Record<string, JsonHandler> {
+function makeJsonHandlers(
+  transferLimit: (tenantId: string) => Promise<number>
+): Record<string, JsonHandler> {
   return {
     async list(deps, body, response) {
       const target = targetOf(body);
@@ -163,7 +163,8 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const limit = await transferLimit(target.tenantId);
-      const requested = typeof body.maxBytes === 'number' && body.maxBytes > 0 ? body.maxBytes : limit;
+      const requested =
+        typeof body.maxBytes === 'number' && body.maxBytes > 0 ? body.maxBytes : limit;
       const content = await serviceReadFile(
         deps,
         target,
@@ -252,7 +253,7 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
 }
 
 export function createFileshareServer(deps: FileshareServerDeps): Server {
-  const serviceDeps: ServiceDeps = { db: deps.db, encryptionKey: deps.encryptionKey };
+  const serviceDeps: ServiceDeps = { db: deps.db };
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const jsonHandlers = makeJsonHandlers(transferLimit);
 

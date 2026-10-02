@@ -32,4 +32,10 @@ export {
   RESOURCE_ENVELOPE_PREFIX,
   USER_ENVELOPE_PREFIX,
   DATA_KEY_BYTES,
+  deriveOwnKek,
+  deriveUnlockKey,
+  kekVerifier,
+  verifierMatches,
+  OWN_KEY_PASSPHRASE_MIN_CHARS,
+  OWN_KEY_PASSPHRASE_MAX_CHARS,
 } from './keys';

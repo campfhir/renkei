@@ -9,7 +9,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import type { LlmContentBlock } from '@renkei/agent-llm';
-import { sealBlocks } from './content-crypto';
+import { createResourceKey } from '@renkei/user-keys';
+import { resourceCipher, sealBlocks, type ContentCipher } from './content-crypto';
 import { searchChatMessages } from './search';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -24,9 +25,14 @@ maybe('searchChatMessages', () => {
   const chatOutside = randomUUID();
   const ids = [chatA, chatB, chatC];
   let seq = 0;
+  // Each chat's rows under that chat's own key, the way the app writes them;
+  // the search is handed the same ciphers the sidebar's viewer would get.
+  const ciphers = new Map<string, ContentCipher>();
 
-  const seal = (blocks: LlmContentBlock[]): string => {
-    const sealed = sealBlocks(blocks);
+  const seal = (chatId: string, blocks: LlmContentBlock[]): string => {
+    const cipher = ciphers.get(chatId);
+    if (!cipher) throw new Error('no cipher for chat');
+    const sealed = sealBlocks(blocks, cipher);
     if (!sealed.ok) throw new Error(sealed.err.message);
     return sealed.val;
   };
@@ -45,12 +51,12 @@ maybe('searchChatMessages', () => {
         seq: ++seq,
         role: kind === 'assistant' ? 'assistant' : 'user',
         kind,
-        content: seal(blocks),
+        content: seal(chatId, blocks),
       })
       .execute();
 
   beforeAll(async () => {
-    process.env.CONTENT_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
+    process.env.USER_KEY_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
@@ -74,6 +80,9 @@ maybe('searchChatMessages', () => {
           updated_at: new Date(updatedAt),
         })
         .execute();
+      const key = await createResourceKey(db, { tenantId, kind: 'chat', resourceId: id }, subject);
+      if (!key.ok) throw new Error('no chat key');
+      ciphers.set(id, resourceCipher(key.val));
     }
     // Chat A: the phrase appears in an early reply and a later prompt.
     await message(chatA, 'prompt', [{ type: 'text', text: 'Which issues slipped?' }]);
@@ -105,24 +114,32 @@ maybe('searchChatMessages', () => {
   });
 
   it('finds prompts and replies, newest chat first, one hit per chat with the newest match', async () => {
-    const hits = await searchChatMessages(db, tenantId, ids, '  Zoom   webhook ');
+    const hits = await searchChatMessages(db, tenantId, ids, '  Zoom   webhook ', ciphers);
     expect(hits.map((hit) => hit.chatId)).toEqual([chatA, chatB]);
     expect(hits[0]?.snippet).toBe('Then move the Zoom webhook rotation to the next sprint.');
     expect(hits[1]?.snippet).toBe('Who owns the zoom WEBHOOK?');
   });
 
   it('never opens tool calls, tool results or thinking', async () => {
-    expect(await searchChatMessages(db, tenantId, ids, 'jira_search_issues')).toEqual([]);
-    expect(await searchChatMessages(db, tenantId, ids, 'think about')).toEqual([]);
+    expect(await searchChatMessages(db, tenantId, ids, 'jira_search_issues', ciphers)).toEqual([]);
+    expect(await searchChatMessages(db, tenantId, ids, 'think about', ciphers)).toEqual([]);
   });
 
   it('stays within the chats it was handed', async () => {
-    const hits = await searchChatMessages(db, tenantId, [chatOutside, chatB], 'zoom webhook');
+    const hits = await searchChatMessages(
+      db,
+      tenantId,
+      [chatOutside, chatB],
+      'zoom webhook',
+      ciphers
+    );
     expect(hits.map((hit) => hit.chatId)).toEqual([chatOutside, chatB]);
-    expect(await searchChatMessages(db, tenantId, ['not-a-uuid'], 'zoom webhook')).toEqual([]);
+    expect(await searchChatMessages(db, tenantId, ['not-a-uuid'], 'zoom webhook', ciphers)).toEqual(
+      []
+    );
   });
 
   it('answers nothing to a query too short to mean anything', async () => {
-    expect(await searchChatMessages(db, tenantId, ids, 'z')).toEqual([]);
+    expect(await searchChatMessages(db, tenantId, ids, 'z', ciphers)).toEqual([]);
   });
 });

@@ -11,7 +11,7 @@ import { NextResponse } from 'next/server';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { getAttachment, getAttachmentText } from '@/lib/chat/attachments';
-import { mayReadAttachment } from '@/lib/chat/attachment-access';
+import { attachmentCipherFor } from '@/lib/chat/attachment-access';
 import { extensionOf, previewKind } from '@/lib/chat/preview-kind';
 import { sheetFromCsv, sheetFromXlsx } from '@/lib/chat/sheet-preview';
 
@@ -29,7 +29,8 @@ export async function GET(
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
   const row = await getAttachment(db, tenantId, attachmentId);
-  if (!row || !(await mayReadAttachment(db, tenantId, session.subject, row))) {
+  const cipher = row ? await attachmentCipherFor(db, tenantId, session.subject, row) : null;
+  if (!row || !cipher) {
     return jsonError(404, 'not-found', 'No such file');
   }
   const headers = { 'Cache-Control': 'private, no-store' };
@@ -53,7 +54,7 @@ export async function GET(
   }
 
   if (kind === 'extract') {
-    const text = await getAttachmentText(db, tenantId, row.id);
+    const text = await getAttachmentText(db, tenantId, row.id, cipher);
     if (text === null) return jsonError(422, 'no-text', 'No text was extracted from this file.');
     return NextResponse.json(
       {

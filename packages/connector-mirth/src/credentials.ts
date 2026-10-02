@@ -7,10 +7,6 @@
  * reconnects, never a guess at what was meant.
  */
 
-import { decrypt, encrypt } from '@renkei/crypto';
-import { ok, err } from '@campfhir/safe-functions/helpers';
-import type { Result } from '@campfhir/safe-functions/types';
-
 export interface MirthCredentials {
   username: string;
   password: string;
@@ -34,27 +30,4 @@ export function parseMirthCredentials(value: unknown): MirthCredentials | null {
   const password = typeof value.password === 'string' ? value.password : '';
   if (!username || !password) return null;
   return { username, password };
-}
-
-export function encryptCredentials(credentials: MirthCredentials, key: Buffer): string {
-  return encrypt(JSON.stringify(credentials), key);
-}
-
-export function decryptCredentials(
-  payload: string,
-  key: Buffer
-): Result<MirthCredentials, CredentialError> {
-  const opened = decrypt(payload, key);
-  if (!opened.ok) return err('DECRYPTION_ERROR' as const);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(opened.val);
-  } catch {
-    return err('MALFORMED_CREDENTIALS' as const);
-  }
-
-  const credentials = parseMirthCredentials(parsed);
-  if (!credentials) return err('MALFORMED_CREDENTIALS' as const);
-  return ok(credentials);
 }

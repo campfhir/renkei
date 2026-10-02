@@ -1,27 +1,31 @@
 /**
- * A chat's key, as a cipher — the bridge from the key store
- * (`@renkei/user-keys`) to the chat's content modules
+ * The keys behind the chat's content, as ciphers — the bridge from the key
+ * store (`@renkei/user-keys`) to the chat's content modules
  * (docs/user-encryption-keys-design.md).
  *
- * Who opens with what:
- *   - the OWNER opens with their own wrapping, and a chat from before
- *     keys gets one on the owner's first keyed act (wrapped for everyone
- *     the chat was already shared with, so no viewer loses the rows that
- *     follow);
- *   - a NAMED VIEWER (`resource_access_grants`) opens with the wrapping
- *     the share made for them; a grant from before the key store, or a
- *     share whose rewrap did not land, is healed on the spot — the access
- *     grant is the decision, the wrapping follows it;
- *   - a PROJECT MEMBER reading a fellow member's chat, and every process
- *     acting on the chat while nobody is looking (a resumed turn, a
- *     worker's note, a sweep), open AS THE OWNER — the server can derive
- *     any KEK from the master, and these readers are the ones that
- *     derivation exists for. A key hierarchy for projects is the noted
- *     follow-up.
+ * Three kinds of key, one rule each:
  *
- * A chat with no key at all (not yet re-sealed) gets the legacy cipher:
- * its `renc1` rows open, and nothing new is written under it except by
- * its owner, whose first write mints the key.
+ *   - A CHAT's key, and a PROJECT's key, are resource keys: minted with
+ *     the resource, held wrapped by each person who may open it. The
+ *     OWNER opens with their own wrapping (and a resource from before keys
+ *     gets one on the owner's first act, wrapped for everyone it was
+ *     already shared with). A NAMED VIEWER (`resource_access_grants`)
+ *     opens with the wrapping the share made for them; a wrapping that is
+ *     missing while the grant stands is healed on the spot — the grant is
+ *     the decision, the wrapping follows it. A PROJECT MEMBER reading a
+ *     fellow member's chat, a reader of a PUBLISHED project, and every
+ *     process acting while nobody is signed in (a resumed turn, a
+ *     worker's note, a sweep) open AS THE OWNER.
+ *   - A PERSON's key is theirs alone: their own memory is sealed directly
+ *     under it, never wrapped for anyone else.
+ *
+ * "As the owner" works because the server derives a managed KEK from the
+ * master. A person on their OWN key (bring-your-own-key) changes that:
+ * while their key is locked, nothing of theirs opens as them — not a
+ * resumed turn, not a worker's note. Every path here answers that with an
+ * `unavailableCipher('locked')`, which reads as a marker and refuses to
+ * write. A viewer's own wrapping of a shared chat still opens, since it
+ * is under the viewer's key.
  */
 
 import type { Kysely } from 'kysely';
@@ -30,71 +34,96 @@ import {
   createResourceKey,
   deleteResourceKey,
   ensureResourceKey,
+  ensureUserKek,
   openResourceKey,
   openResourceKeys,
   revokeResourceKey,
   shareResourceKey,
+  type OpenKeyError,
   type ResourceKey,
+  type ResourceKeyKind,
   type ResourceRef,
 } from '@renkei/user-keys';
 import { logger } from '@/lib/logger';
-import { legacyCipher, resourceCipher, type ContentCipher } from './content-crypto';
-import type { ChatRow } from './store';
+import {
+  resourceCipher,
+  unavailableCipher,
+  userCipher,
+  type ContentCipher,
+} from './content-crypto';
 
-const ref = (tenantId: string, chatId: string): ResourceRef => ({
+/** What a keyed resource is to this module: its id, tenant and owner. */
+export interface KeyedResource {
+  id: string;
+  tenantId: string;
+  ownerSubject: string;
+}
+
+export type KeyedKind = Extract<ResourceKeyKind, 'chat' | 'chat_project'>;
+
+const ref = (kind: KeyedKind, tenantId: string, resourceId: string): ResourceRef => ({
   tenantId,
-  kind: 'chat',
-  resourceId: chatId,
+  kind,
+  resourceId,
 });
 
 function warn(message: string, fields: Record<string, unknown>): void {
   logger.warn(message, { component: 'chat/keys', ...fields });
 }
 
-/** Everyone the chat is currently shared with, for wrapping a newly minted key. */
-async function activeGrantees(db: Kysely<DB>, tenantId: string, chatId: string): Promise<string[]> {
+/** The cipher for a key-store failure: locked reads as locked, everything else as no key. */
+function failedCipher(reason: OpenKeyError): ContentCipher {
+  return unavailableCipher(reason === 'KEY_LOCKED' ? 'locked' : 'no-key');
+}
+
+/** Everyone the resource is currently shared with, for wrapping a newly minted key. */
+async function activeGrantees(
+  db: Kysely<DB>,
+  kind: KeyedKind,
+  tenantId: string,
+  resourceId: string
+): Promise<string[]> {
   const rows = await db
     .selectFrom('resource_access_grants')
     .select('grantee_subject')
     .where('tenant_id', '=', tenantId)
-    .where('resource_kind', '=', 'chat')
-    .where('resource_id', '=', chatId)
+    .where('resource_kind', '=', kind)
+    .where('resource_id', '=', resourceId)
     .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
     .execute();
   return rows.map((row) => row.grantee_subject);
 }
 
 /**
- * The chat's key for its owner, minted if the chat has none yet. A fresh
- * key is wrapped for every current grantee in the same breath.
+ * The resource's key for its owner, minted if it has none yet. A fresh key
+ * is wrapped for every current grantee in the same breath.
  */
-export async function ensureChatKey(
+async function ensureKey(
   db: Kysely<DB>,
-  tenantId: string,
-  chatId: string,
-  ownerSubject: string
-): Promise<ResourceKey | null> {
-  const before = await openResourceKey(db, ref(tenantId, chatId), ownerSubject);
+  kind: KeyedKind,
+  resource: KeyedResource
+): Promise<ResourceKey | OpenKeyError> {
+  const target = ref(kind, resource.tenantId, resource.id);
+  const before = await openResourceKey(db, target, resource.ownerSubject);
   if (before.ok) return before.val;
-  if (before.err.type !== 'NO_KEY') {
-    warn('chat key could not be opened for its owner: {reason}', {
-      tenantId,
-      chatId,
-      reason: before.err.type,
-    });
-    return null;
-  }
-  const created = await ensureResourceKey(db, ref(tenantId, chatId), ownerSubject);
+  if (before.err.type !== 'NO_KEY') return before.err.type;
+  const created = await ensureResourceKey(db, target, resource.ownerSubject);
   if (!created.ok) {
-    warn('chat key could not be created: {reason}', { tenantId, chatId, reason: created.err.type });
-    return null;
+    warn('key could not be created: {reason}', {
+      kind,
+      tenantId: resource.tenantId,
+      resourceId: resource.id,
+      reason: created.err.type,
+    });
+    return created.err.type;
   }
-  for (const grantee of await activeGrantees(db, tenantId, chatId)) {
-    const shared = await shareResourceKey(db, ref(tenantId, chatId), ownerSubject, grantee);
+  for (const grantee of await activeGrantees(db, kind, resource.tenantId, resource.id)) {
+    const shared = await shareResourceKey(db, target, resource.ownerSubject, grantee);
     if (!shared.ok) {
-      warn('chat key could not be wrapped for an existing viewer: {reason}', {
-        tenantId,
-        chatId,
+      warn('key could not be wrapped for an existing viewer: {reason}', {
+        kind,
+        tenantId: resource.tenantId,
+        resourceId: resource.id,
         reason: shared.err.type,
       });
     }
@@ -102,73 +131,75 @@ export async function ensureChatKey(
   return created.val;
 }
 
-/** A new chat's key, wrapped for its owner; null (and a warning) only on a key-store failure. */
-export async function createChatKey(
+/** A new resource's key, wrapped for its owner; null, with a warning, on a key-store failure. */
+export async function createKey(
   db: Kysely<DB>,
-  tenantId: string,
-  chatId: string,
-  ownerSubject: string
+  kind: KeyedKind,
+  resource: KeyedResource
 ): Promise<ResourceKey | null> {
-  const created = await createResourceKey(db, ref(tenantId, chatId), ownerSubject);
+  const created = await createResourceKey(
+    db,
+    ref(kind, resource.tenantId, resource.id),
+    resource.ownerSubject
+  );
   if (created.ok) return created.val;
-  warn('chat key could not be created: {reason}', { tenantId, chatId, reason: created.err.type });
+  warn('key could not be created: {reason}', {
+    kind,
+    tenantId: resource.tenantId,
+    resourceId: resource.id,
+    reason: created.err.type,
+  });
   return null;
 }
 
 /**
- * The cipher for one person opening one chat, given how access.ts let
+ * The cipher for one person opening one resource, given how access.ts let
  * them in. Owners mint; named viewers are healed; everyone else reads as
  * the owner.
  */
-export async function chatCipherFor(
+export async function cipherFor(
   db: Kysely<DB>,
-  chat: ChatRow,
+  kind: KeyedKind,
+  resource: KeyedResource,
   viewerSubject: string,
-  via: 'owner' | 'grant' | 'project'
+  via: 'owner' | 'grant' | 'project' | 'published'
 ): Promise<ContentCipher> {
+  const target = ref(kind, resource.tenantId, resource.id);
   if (via === 'owner') {
-    const key = await ensureChatKey(db, chat.tenantId, chat.id, chat.ownerSubject);
-    return key ? resourceCipher(key) : legacyCipher;
+    const key = await ensureKey(db, kind, resource);
+    return typeof key === 'string' ? failedCipher(key) : resourceCipher(key);
   }
   if (via === 'grant') {
-    const own = await openResourceKey(db, ref(chat.tenantId, chat.id), viewerSubject);
+    const own = await openResourceKey(db, target, viewerSubject);
     if (own.ok) return resourceCipher(own.val);
-    if (own.err.type === 'NO_KEY') return legacyCipher;
+    if (own.err.type === 'KEY_LOCKED') return unavailableCipher('locked');
     if (own.err.type === 'NO_ACCESS') {
       // The access grant stands; the wrapping is missing. Heal it.
-      const healed = await shareResourceKey(
-        db,
-        ref(chat.tenantId, chat.id),
-        chat.ownerSubject,
-        viewerSubject
-      );
+      const healed = await shareResourceKey(db, target, resource.ownerSubject, viewerSubject);
       if (healed.ok) {
-        const reopened = await openResourceKey(db, ref(chat.tenantId, chat.id), viewerSubject);
+        const reopened = await openResourceKey(db, target, viewerSubject);
         if (reopened.ok) return resourceCipher(reopened.val);
       }
     }
   }
-  return chatCipherAsOwner(db, chat);
+  return cipherAsOwner(db, kind, resource);
 }
 
 /**
- * The chat opened on its owner's behalf — for a project member's read and
- * for every process acting on a chat while nobody is signed in.
+ * The resource opened on its owner's behalf — a project member's read, a
+ * published project's reader, and every process acting while nobody is
+ * signed in.
  */
-export async function chatCipherAsOwner(db: Kysely<DB>, chat: ChatRow): Promise<ContentCipher> {
-  const opened = await openResourceKey(db, ref(chat.tenantId, chat.id), chat.ownerSubject);
-  if (opened.ok) return resourceCipher(opened.val);
-  if (opened.err.type !== 'NO_KEY') {
-    warn('chat key could not be opened as its owner: {reason}', {
-      tenantId: chat.tenantId,
-      chatId: chat.id,
-      reason: opened.err.type,
-    });
-  }
-  return legacyCipher;
+export async function cipherAsOwner(
+  db: Kysely<DB>,
+  kind: KeyedKind,
+  resource: KeyedResource
+): Promise<ContentCipher> {
+  const key = await ensureKey(db, kind, resource);
+  return typeof key === 'string' ? failedCipher(key) : resourceCipher(key);
 }
 
-/** `chatCipherAsOwner` by id, for callers holding only the chat id. */
+/** `cipherAsOwner` for a chat, by id — for callers holding only the chat id. */
 export async function chatCipherById(
   db: Kysely<DB>,
   tenantId: string,
@@ -180,16 +211,46 @@ export async function chatCipherById(
     .where('tenant_id', '=', tenantId)
     .where('id', '=', chatId)
     .executeTakeFirst();
-  if (!row) return legacyCipher;
-  const opened = await openResourceKey(db, ref(tenantId, chatId), row.owner_subject);
-  return opened.ok ? resourceCipher(opened.val) : legacyCipher;
+  if (!row) return unavailableCipher('no-key');
+  return cipherAsOwner(db, 'chat', { id: chatId, tenantId, ownerSubject: row.owner_subject });
+}
+
+/** `cipherAsOwner` for a project, by id. */
+export async function projectCipherById(
+  db: Kysely<DB>,
+  tenantId: string,
+  projectId: string
+): Promise<ContentCipher> {
+  const row = await db
+    .selectFrom('chat_projects')
+    .select('owner_subject')
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', projectId)
+    .executeTakeFirst();
+  if (!row) return unavailableCipher('no-key');
+  return cipherAsOwner(db, 'chat_project', {
+    id: projectId,
+    tenantId,
+    ownerSubject: row.owner_subject,
+  });
+}
+
+/** A person's own key as a cipher — for their memory, which is theirs alone. */
+export async function userCipherFor(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string
+): Promise<ContentCipher> {
+  const kek = await ensureUserKek(db, tenantId, subject);
+  if (kek.ok) return userCipher(kek.val.key);
+  return unavailableCipher(kek.err.type === 'KEY_LOCKED' ? 'locked' : 'no-key');
 }
 
 /**
  * Ciphers for many chats one person may read — the sidebar's set, for
  * search. Each chat is first tried as the viewer (their own chats and
  * the ones shared with them), then as its owner (the project members'
- * chats). A chat with no key opens with the legacy cipher.
+ * chats). A chat that opens neither way gets an unavailable cipher.
  */
 export async function chatCiphersFor(
   db: Kysely<DB>,
@@ -216,30 +277,35 @@ export async function chatCiphersFor(
   );
   for (const chat of chats) {
     const key = asViewer.get(chat.id) ?? asOwner.get(chat.id);
-    out.set(chat.id, key ? resourceCipher(key) : legacyCipher);
+    out.set(chat.id, key ? resourceCipher(key) : unavailableCipher('no-key'));
   }
   return out;
 }
 
 /**
  * Sharing: the owner's unwrap and the grantee's wrap, in the key store's
- * terms. A chat with no key yet gets one first, so the share is a share
- * of a key and not only a row.
+ * terms. A resource with no key yet gets one first, so the share is a
+ * share of a key and not only a row.
  */
-export async function shareChatKey(
+export async function shareKey(
   db: Kysely<DB>,
-  tenantId: string,
-  chatId: string,
-  ownerSubject: string,
+  kind: KeyedKind,
+  resource: KeyedResource,
   granteeSubject: string
 ): Promise<boolean> {
-  const key = await ensureChatKey(db, tenantId, chatId, ownerSubject);
-  if (!key) return false;
-  const shared = await shareResourceKey(db, ref(tenantId, chatId), ownerSubject, granteeSubject);
+  const key = await ensureKey(db, kind, resource);
+  if (typeof key === 'string') return false;
+  const shared = await shareResourceKey(
+    db,
+    ref(kind, resource.tenantId, resource.id),
+    resource.ownerSubject,
+    granteeSubject
+  );
   if (!shared.ok) {
-    warn('chat key could not be shared: {reason}', {
-      tenantId,
-      chatId,
+    warn('key could not be shared: {reason}', {
+      kind,
+      tenantId: resource.tenantId,
+      resourceId: resource.id,
       reason: shared.err.type,
     });
   }
@@ -247,20 +313,22 @@ export async function shareChatKey(
 }
 
 /** Unsharing: the grantee's wrapping is forgotten; the key and the owner's stay. */
-export async function revokeChatKey(
+export async function revokeKey(
   db: Kysely<DB>,
+  kind: KeyedKind,
   tenantId: string,
-  chatId: string,
+  resourceId: string,
   granteeSubject: string
 ): Promise<void> {
-  await revokeResourceKey(db, ref(tenantId, chatId), granteeSubject);
+  await revokeResourceKey(db, ref(kind, tenantId, resourceId), granteeSubject);
 }
 
-/** The chat is gone: so is its key, with every wrapping. */
-export async function deleteChatKey(
+/** The resource is gone: so is its key, with every wrapping. */
+export async function deleteKey(
   db: Kysely<DB>,
+  kind: KeyedKind,
   tenantId: string,
-  chatId: string
+  resourceId: string
 ): Promise<void> {
-  await deleteResourceKey(db, ref(tenantId, chatId));
+  await deleteResourceKey(db, ref(kind, tenantId, resourceId));
 }

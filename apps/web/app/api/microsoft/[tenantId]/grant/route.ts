@@ -12,7 +12,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -51,27 +50,24 @@ export async function DELETE(
   const accountId = grantRow.provider_account_id;
 
   // Best-effort provider-side cleanup while the credential still exists.
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (keyResult.ok) {
-    const grant = await getGrant(MICROSOFT, tenantId, accountId, keyResult.val);
-    if (grant.ok && grant.val) {
-      const subscriptions = await db
-        .selectFrom('webhook_subscriptions')
-        .select(['subscription_id'])
-        .where('tenant_id', '=', tenantId)
-        .where('provider', '=', MICROSOFT)
-        .where('account_id', '=', accountId)
-        .execute();
-      for (const row of subscriptions) {
-        if (!row.subscription_id) continue;
-        const deleted = await deleteGraphSubscription(grant.val.accessToken, row.subscription_id);
-        if (!deleted.ok) {
-          logger.warn('Could not delete Graph subscription on disconnect; it will lapse', {
-            component: 'connectors/microsoft',
-            tenantId,
-            subscriptionId: row.subscription_id,
-          });
-        }
+  const grant = await getGrant(MICROSOFT, tenantId, accountId);
+  if (grant.ok && grant.val) {
+    const subscriptions = await db
+      .selectFrom('webhook_subscriptions')
+      .select(['subscription_id'])
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', MICROSOFT)
+      .where('account_id', '=', accountId)
+      .execute();
+    for (const row of subscriptions) {
+      if (!row.subscription_id) continue;
+      const deleted = await deleteGraphSubscription(grant.val.accessToken, row.subscription_id);
+      if (!deleted.ok) {
+        logger.warn('Could not delete Graph subscription on disconnect; it will lapse', {
+          component: 'connectors/microsoft',
+          tenantId,
+          subscriptionId: row.subscription_id,
+        });
       }
     }
   }

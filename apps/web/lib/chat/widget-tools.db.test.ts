@@ -18,7 +18,7 @@ import {
   recordWidgetDecision,
 } from './widget-tools';
 import { insertMessage } from './messages';
-import { legacyCipher } from './content-crypto';
+import { chatCipherById } from './chat-keys';
 
 const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
@@ -344,7 +344,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'assistant',
       kind: 'assistant',
       status: 'complete',
-      cipher: legacyCipher,
+      cipher: await chatCipherById(db, tenantId, chatId),
       blocks: [
         { type: 'text', text: 'Two role assignments to review.' },
         { type: 'tool_use', id: toolUseIdA, name: 'entra_assign_app_role_preview', input: {} },
@@ -358,7 +358,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
-      cipher: legacyCipher,
+      cipher: await chatCipherById(db, tenantId, chatId),
       blocks: [
         {
           type: 'tool_result',

@@ -4,17 +4,15 @@
  * lives in the metadata jsonb and is round-tripped untouched.
  *
  * Tokens are sealed under their OWNER's key (`uenc1:`, @renkei/user-keys,
- * docs/user-encryption-keys-design.md) whenever the grant has a subject:
- * a person's credential under a key derived for that person, not the
- * one deployment key every grant used to share. A grant with no subject
- * (rows predating per-user ownership) and every row written before this
- * stay under the deployment key the caller passes, and open with it; the
- * next write — a reconnect, a refresh — moves the row over.
+ * docs/user-encryption-keys-design.md): a person's credential under a key
+ * derived for that person, never shared and never under a deployment-wide
+ * key. A grant row is therefore unusable without a subject — the owner is
+ * the key — and a row from before per-user keys opens only once the
+ * rekey sweep has moved it (`pnpm rekey-chats --connectors`).
  */
 
 import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
-import { encrypt } from '@renkei/crypto';
 import { openForSubject, sealForSubject } from '@renkei/user-keys';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -25,29 +23,34 @@ function readMetadata(metadata: unknown): Record<string, unknown> {
   return { ...metadata };
 }
 
-/** A token as stored: under the owner's key when the grant has one, else the deployment key. */
+/** A token as stored: under its owner's key. */
 export async function sealGrantToken(
   db: Kysely<DB>,
   tenantId: string,
-  subject: string | null,
-  token: string,
-  legacyKey: Buffer
+  subject: string,
+  token: string
 ): Promise<Result<string, 'SEAL_ERROR'>> {
-  if (!subject) return ok(encrypt(token, legacyKey));
   const sealed = await sealForSubject(db, tenantId, subject, token);
   if (!sealed.ok) return err('SEAL_ERROR' as const, { message: sealed.err.type });
   return ok(sealed.val);
 }
 
-/** The stored token opened: `uenc1:` under the owner's key, anything else under the deployment key. */
+/**
+ * The stored token opened under its owner's key. A row with no subject
+ * has no key and cannot be opened; a KEY_LOCKED owner (their own key,
+ * not unlocked) reads the same way to a caller — the grant is not usable
+ * right now.
+ */
 async function openGrantToken(
   db: Kysely<DB>,
   tenantId: string,
   subject: string | null,
-  stored: string,
-  legacyKey: Buffer
+  stored: string
 ): Promise<Result<string, 'DECRYPTION_ERROR'>> {
-  const opened = await openForSubject(db, tenantId, subject ?? '', stored, legacyKey);
+  if (!subject) {
+    return err('DECRYPTION_ERROR' as const, { message: 'grant has no owner, so no key' });
+  }
+  const opened = await openForSubject(db, tenantId, subject, stored);
   if (!opened.ok) return err('DECRYPTION_ERROR' as const, { message: opened.err.type });
   return ok(opened.val);
 }
@@ -55,27 +58,14 @@ async function openGrantToken(
 export async function setGrant(
   provider: string,
   tenantId: string,
-  grant: NewProviderGrant,
-  encryptionKey: Buffer
+  grant: NewProviderGrant
 ): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const sealedAccess = await sealGrantToken(
-    db,
-    tenantId,
-    grant.subject,
-    grant.accessToken,
-    encryptionKey
-  );
-  const sealedRefresh = await sealGrantToken(
-    db,
-    tenantId,
-    grant.subject,
-    grant.refreshToken,
-    encryptionKey
-  );
+  const sealedAccess = await sealGrantToken(db, tenantId, grant.subject, grant.accessToken);
+  const sealedRefresh = await sealGrantToken(db, tenantId, grant.subject, grant.refreshToken);
   if (!sealedAccess.ok || !sealedRefresh.ok) return err('DB_ERROR' as const);
   const encryptedAccessToken = sealedAccess.val;
   const encryptedRefreshToken = sealedRefresh.val;
@@ -139,8 +129,7 @@ export async function setGrant(
 export async function getGrant(
   provider: string,
   tenantId: string,
-  accountId: string,
-  encryptionKey: Buffer
+  accountId: string
 ): Promise<Result<ProviderGrant | null, 'DB_ERROR' | 'DECRYPTION_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -178,8 +167,7 @@ export async function getGrant(
     db,
     tenantId,
     row.subject,
-    row.encrypted_access_token,
-    encryptionKey
+    row.encrypted_access_token
   );
   if (!accessTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
@@ -187,8 +175,7 @@ export async function getGrant(
     db,
     tenantId,
     row.subject,
-    row.encrypted_refresh_token,
-    encryptionKey
+    row.encrypted_refresh_token
   );
   if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 

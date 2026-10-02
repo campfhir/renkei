@@ -36,7 +36,7 @@ import {
   type ChatRow,
 } from './store';
 import { listMessages } from './messages';
-import { chatCipherAsOwner } from './chat-keys';
+import { cipherAsOwner } from './chat-keys';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 
 const LIST_LIMIT_DEFAULT = 8;
@@ -68,7 +68,7 @@ async function transcriptOf(
 ): Promise<string> {
   // The person's own chat, or a fellow member's in the project: opened as
   // its owner either way (chat-keys.ts), the way a project read is.
-  const rows = await listMessages(db, tenantId, chat.id, await chatCipherAsOwner(db, chat));
+  const rows = await listMessages(db, tenantId, chat.id, await cipherAsOwner(db, 'chat', chat));
   const lines: string[] = [];
   let spent = 0;
   for (const row of rows) {

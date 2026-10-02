@@ -19,10 +19,11 @@
  * see voice.spec.ts's note); "mobile" is a resized viewport, per AGENTS.md.
  */
 
-import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { sealForSubject } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -44,21 +45,6 @@ function uuidFrom(seed: string): string {
     `8${hex.slice(17, 20)}`,
     hex.slice(20, 32),
   ].join('-');
-}
-
-/** `@renkei/crypto`'s secretbox, reproduced (see code.spec.ts). */
-function secretbox(plaintext: string): string {
-  const encoded = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encoded) throw new Error('TOKEN_ENCRYPTION_KEY is not set');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', Buffer.from(encoded, 'base64'), iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
 }
 
 function fixtureFor(projectName: string) {
@@ -134,8 +120,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       [
         fixture.tenantId,
         fixture.subject,
-        secretbox('e2e-admin-access-token'),
-        secretbox('e2e-admin-refresh-token'),
+        await sealForSubject(client, fixture.tenantId, fixture.subject, 'e2e-admin-access-token'),
+        await sealForSubject(client, fixture.tenantId, fixture.subject, 'e2e-admin-refresh-token'),
         new Date(Date.now() + 365 * 24 * 3_600_000),
         [
           'read:jira-user',

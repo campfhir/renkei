@@ -12,7 +12,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { parseEncryptionKey } from '@renkei/crypto';
 import {
   WEBEX_CONNECTOR,
   WebexClient,
@@ -75,8 +74,6 @@ export async function buildKnowledgeVerifiers(
   tenantId: string
 ): Promise<ReadonlyMap<string, AccessVerifier>> {
   const verifiers = new Map<string, AccessVerifier>();
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return verifiers;
 
   // WebEx verifies with the CALLING user's own grant — there is no bot.
   // No grant on file → webex chunks stay default-denied, the gate's
@@ -108,17 +105,14 @@ export async function buildKnowledgeVerifiers(
   // with the CALLING user's own grant. Registered unconditionally for the
   // same reason as above: absent them, every jira/confluence chunk is
   // silently withheld, which looks identical to "nothing is indexed".
-  const encryptionKey = keyResult.val;
   verifiers.set(
     JIRA_KNOWLEDGE_PROVIDER,
-    createJiraAccessVerifier((userEmail) =>
-      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN, encryptionKey)
-    )
+    createJiraAccessVerifier((userEmail) => atlassianCredentialFor(tenantId, userEmail, ATLASSIAN))
   );
   verifiers.set(
     CONFLUENCE_KNOWLEDGE_PROVIDER,
     createConfluenceAccessVerifier((userEmail) =>
-      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE, encryptionKey)
+      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE)
     )
   );
 
@@ -128,9 +122,7 @@ export async function buildKnowledgeVerifiers(
   // unconditionally for the same reason as the pair above.
   verifiers.set(
     SHAREPOINT_KNOWLEDGE_PROVIDER,
-    createSharepointAccessVerifier((userEmail) =>
-      microsoftCredentialFor(tenantId, userEmail, encryptionKey)
-    )
+    createSharepointAccessVerifier((userEmail) => microsoftCredentialFor(tenantId, userEmail))
   );
 
   return verifiers;
@@ -148,8 +140,7 @@ export async function buildKnowledgeVerifiers(
 async function atlassianCredentialFor(
   tenantId: string,
   userEmail: string,
-  provider: string,
-  encryptionKey: Parameters<typeof getGrant>[3]
+  provider: string
 ): Promise<{ accessToken: string; cloudId: string } | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
@@ -169,7 +160,7 @@ async function atlassianCredentialFor(
     .executeTakeFirst();
   if (!row) return null;
 
-  const grantResult = await getGrant(provider, tenantId, row.provider_account_id, encryptionKey);
+  const grantResult = await getGrant(provider, tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return null;
   const site = readAtlassianMetadata(grantResult.val.metadata);
   if (!site.cloudId) return null;
@@ -197,8 +188,7 @@ const MICROSOFT_REFRESH_MARGIN_MS = 2 * 60 * 1000;
  */
 async function microsoftCredentialFor(
   tenantId: string,
-  userEmail: string,
-  encryptionKey: Parameters<typeof getGrant>[3]
+  userEmail: string
 ): Promise<{ accessToken: string } | null> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
@@ -219,7 +209,7 @@ async function microsoftCredentialFor(
     .executeTakeFirst();
   if (!row) return null;
 
-  const grantResult = await getGrant(MICROSOFT, tenantId, row.provider_account_id, encryptionKey);
+  const grantResult = await getGrant(MICROSOFT, tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return null;
   const grant = grantResult.val;
 
@@ -249,7 +239,6 @@ async function microsoftCredentialFor(
     new MicrosoftAdapter(app.clientSecret, tid),
     tenantId,
     row.provider_account_id,
-    encryptionKey,
     logger
   );
   if (!refreshed.ok) {

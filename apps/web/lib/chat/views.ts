@@ -171,6 +171,12 @@ export interface ChatView {
   ownerName: string | null;
   role: ChatRole;
   archived: boolean;
+  /**
+   * The content could not be opened because the key it is under is locked
+   * (the owner's own key, not unlocked — docs/user-encryption-keys-design.md).
+   * The page shows a notice instead of a thread of markers.
+   */
+  keyLocked: boolean;
   createdAt: string;
   updatedAt: string;
   /** The running turn, if one is in flight when the page loads. */

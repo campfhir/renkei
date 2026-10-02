@@ -104,7 +104,7 @@ export async function resolveLinkedWebexUserAccess(
     return null;
   }
 
-  const grantResult = await getGrant(WEBEX_USER, tenantId, row.provider_account_id, keyResult.val);
+  const grantResult = await getGrant(WEBEX_USER, tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) {
     logger.warn('webex-user grant row exists but could not be read: {error}', {
       component: 'webex/forward-context',
@@ -140,7 +140,6 @@ export async function resolveLinkedWebexUserAccess(
       new WebexUserAdapter(clientSecret),
       tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {
@@ -186,7 +185,7 @@ export async function resolveWebexUserAccessByAccount(
     .executeTakeFirst();
   if (!row?.subject) return null;
 
-  const grantResult = await getGrant(WEBEX_USER, tenantId, accountId, keyResult.val);
+  const grantResult = await getGrant(WEBEX_USER, tenantId, accountId);
   if (!grantResult.ok || !grantResult.val) return null;
   let grant = grantResult.val;
 
@@ -202,7 +201,6 @@ export async function resolveWebexUserAccessByAccount(
       new WebexUserAdapter(clientSecret),
       tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) return null;

@@ -43,7 +43,6 @@ export async function resolveInstance(
 
 export async function resolveTarget(
   db: Kysely<DB>,
-  encryptionKey: Buffer,
   target: SubjectTarget
 ): Promise<Result<ResolvedTarget, ResolveError>> {
   const instance = await resolveInstance(db, target.tenantId, target.instanceId);
@@ -62,8 +61,7 @@ export async function resolveTarget(
     db,
     target.tenantId,
     target.subject,
-    ciphertext.val,
-    encryptionKey
+    ciphertext.val
   );
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ instance: instance.val, credentials: credentials.val });

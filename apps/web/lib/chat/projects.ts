@@ -8,7 +8,8 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
-import { openText, sealText } from './content-crypto';
+import { openText, resourceCipher, sealText, type ContentCipher } from './content-crypto';
+import { createKey, deleteKey } from './chat-keys';
 
 /**
  * A chat project, or a code project: the latter is the same row with a
@@ -32,8 +33,13 @@ export interface ProjectRow {
   kind: ProjectKind;
   name: string;
   description: string | null;
-  /** Decrypted; null when none set. */
-  instructions: string | null;
+  /**
+   * The instructions as stored — sealed under the project's key. Opened
+   * with `openProjectInstructions` by the callers that need the text and
+   * hold the project's cipher (access.ts's ProjectAccess); most readers of
+   * a row need only its metadata.
+   */
+  sealedInstructions: string | null;
   toolConfig: ChatToolConfig | null;
   publishedToOrg: boolean;
   /** A code project's repository; null on a chat project. */
@@ -97,7 +103,7 @@ function rowOf(raw: {
     kind: raw.kind === 'code' ? 'code' : 'chat',
     name: raw.name,
     description: raw.description,
-    instructions: raw.instructions ? openText(raw.instructions) : null,
+    sealedInstructions: raw.instructions,
     toolConfig: parseToolConfig(raw.tool_config),
     publishedToOrg: raw.published_to_org,
     repo:
@@ -113,6 +119,14 @@ function rowOf(raw: {
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   };
+}
+
+/** The project's instructions, opened under its cipher; null when none are set. */
+export function openProjectInstructions(
+  project: Pick<ProjectRow, 'sealedInstructions'>,
+  cipher: ContentCipher
+): string | null {
+  return project.sealedInstructions ? openText(project.sealedInstructions, cipher) : null;
 }
 
 export async function getProjectRow(
@@ -189,12 +203,6 @@ export async function createProject(
     repo?: ProjectRepo;
   }
 ): Promise<string | null> {
-  let instructions: string | null = null;
-  if (input.instructions) {
-    const sealed = sealText(input.instructions);
-    if (!sealed.ok) return null;
-    instructions = sealed.val;
-  }
   const inserted = await db
     .insertInto('chat_projects')
     .values({
@@ -202,7 +210,7 @@ export async function createProject(
       owner_subject: input.ownerSubject,
       name: input.name,
       description: input.description,
-      instructions,
+      instructions: null,
       tool_config: input.toolConfig ? toolConfigJson(input.toolConfig) : null,
       ...(input.repo
         ? {
@@ -215,6 +223,25 @@ export async function createProject(
     })
     .returning('id')
     .executeTakeFirstOrThrow();
+  // The project's own key, wrapped for its owner (chat-keys.ts): its
+  // instructions, memory and files are sealed under it.
+  const key = await createKey(db, 'chat_project', {
+    id: inserted.id,
+    tenantId: input.tenantId,
+    ownerSubject: input.ownerSubject,
+  });
+  if (input.instructions) {
+    const sealed = key ? sealText(input.instructions, resourceCipher(key)) : null;
+    if (!sealed || !sealed.ok) {
+      await db.deleteFrom('chat_projects').where('id', '=', inserted.id).execute();
+      return null;
+    }
+    await db
+      .updateTable('chat_projects')
+      .set({ instructions: sealed.val })
+      .where('id', '=', inserted.id)
+      .execute();
+  }
   return inserted.id;
 }
 
@@ -232,18 +259,24 @@ export interface ProjectPatch {
   activeChatId?: string | null;
 }
 
-/** Keyed by project id only — the caller has already resolved edit rights. */
+/**
+ * Keyed by project id only — the caller has already resolved edit rights,
+ * and hands over the project's cipher (ProjectAccess.cipher) when the
+ * patch carries instructions to seal.
+ */
 export async function updateProject(
   db: Kysely<DB>,
   tenantId: string,
   projectId: string,
-  patch: ProjectPatch
+  patch: ProjectPatch,
+  cipher?: ContentCipher
 ): Promise<boolean> {
   if (!isUuid(projectId)) return false;
   let instructions: string | null | undefined;
   if (patch.instructions !== undefined) {
     if (patch.instructions) {
-      const sealed = sealText(patch.instructions);
+      if (!cipher) return false;
+      const sealed = sealText(patch.instructions, cipher);
       if (!sealed.ok) return false;
       instructions = sealed.val;
     } else {
@@ -298,6 +331,7 @@ export async function deleteProject(
       .where('resource_kind', '=', 'chat_project')
       .where('resource_id', '=', projectId)
       .execute();
+    await deleteKey(db, 'chat_project', tenantId, projectId);
   }
   return deleted;
 }

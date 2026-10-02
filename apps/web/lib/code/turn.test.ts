@@ -63,7 +63,7 @@ function project(workspaceId: string | null): ProjectRow {
     ownerSubject: 'alice',
     name: 'Billing',
     description: null,
-    instructions: null,
+    sealedInstructions: null,
     toolConfig: null,
     publishedToOrg: false,
     kind: 'code',

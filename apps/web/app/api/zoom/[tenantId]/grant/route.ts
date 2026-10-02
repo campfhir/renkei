@@ -10,7 +10,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -50,11 +49,10 @@ export async function DELETE(
   const accountId = grantRow.provider_account_id;
 
   // Best-effort revocation at Zoom while we still hold the token.
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   const originResult = await getOrigin(request);
-  if (keyResult.ok && originResult.ok) {
+  if (originResult.ok) {
     const [grant, app] = await Promise.all([
-      getGrant(ZOOM, tenantId, accountId, keyResult.val),
+      getGrant(ZOOM, tenantId, accountId),
       getZoomApp(tenantId, originResult.val),
     ]);
     if (grant.ok && grant.val && app) {

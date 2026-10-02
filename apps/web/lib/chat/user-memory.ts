@@ -13,6 +13,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { openText, sealText } from './content-crypto';
+import { userCipherFor } from './chat-keys';
 
 export const USER_MEMORY_ENTRY_MAX_CHARS = 500;
 export const USER_MEMORY_SUMMARY_MAX_CHARS = 3_000;
@@ -43,6 +44,9 @@ export async function readUserMemory(
   ownerSubject: string,
   options: { maxEntries?: number } = {}
 ): Promise<UserMemory> {
+  // A person's memory is theirs alone: sealed under their own key
+  // (chat-keys.ts), never under a chat's or a project's.
+  const cipher = await userCipherFor(db, tenantId, ownerSubject);
   const rows = await db
     .selectFrom('chat_user_memories')
     .select(['id', 'kind', 'content', 'chat_id', 'created_at'])
@@ -53,13 +57,13 @@ export async function readUserMemory(
     .execute();
   const summary = rows.find((row) => row.kind === 'summary');
   return {
-    summary: summary ? openText(summary.content) : null,
+    summary: summary ? openText(summary.content, cipher) : null,
     entries: rows
       .filter((row) => row.kind === 'entry')
       .slice(0, options.maxEntries ?? USER_MEMORY_INJECT_MAX_ENTRIES)
       .map((row) => ({
         id: row.id,
-        content: openText(row.content),
+        content: openText(row.content, cipher),
         chatId: row.chat_id,
         createdAt: row.created_at,
       })),
@@ -96,7 +100,7 @@ export async function appendUserMemory(
 ): Promise<string | null> {
   const content = clip(input.content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!content) return null;
-  const sealed = sealText(content);
+  const sealed = sealText(content, await userCipherFor(db, input.tenantId, input.ownerSubject));
   if (!sealed.ok) return null;
   const inserted = await db
     .insertInto('chat_user_memories')
@@ -132,7 +136,7 @@ export async function editUserMemory(
 ): Promise<boolean> {
   const clipped = clip(content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!clipped) return false;
-  const sealed = sealText(clipped);
+  const sealed = sealText(clipped, await userCipherFor(db, tenantId, ownerSubject));
   if (!sealed.ok) return false;
   const result = await db
     .updateTable('chat_user_memories')

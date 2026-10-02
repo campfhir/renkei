@@ -1,11 +1,10 @@
 /**
  * A person's Mirth credential sealed under THEIR key — `uenc1:` through
- * @renkei/user-keys (docs/user-encryption-keys-design.md) — rather than
- * the deployment key every connection used to share. Reading accepts
- * both: a row sealed before this opens under the deployment key the
- * worker still holds, and is re-sealed the next time the person
- * reconnects. The credential's shape and its deployment-key form live in
- * credentials.ts; this file only changes whose key is on the outside.
+ * @renkei/user-keys (docs/user-encryption-keys-design.md) — and under
+ * nothing else: a credential belongs to the one person who connected,
+ * is never shared, and is never under a deployment-wide key. The
+ * credential's shape lives in credentials.ts; this file is whose key is
+ * on the outside.
  */
 
 import type { Kysely } from 'kysely';
@@ -15,7 +14,8 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { parseMirthCredentials, type MirthCredentials, type CredentialError } from './credentials';
 
-export type SealCredentialsError = 'MISSING_USER_KEY_MASTER' | 'INVALID_ENCRYPTION_KEY';
+export type SealCredentialsError =
+  'MISSING_USER_KEY_MASTER' | 'INVALID_ENCRYPTION_KEY' | 'KEY_LOCKED';
 
 /** Seal the credential under the connecting person's own key. */
 export async function sealCredentialsForSubject(
@@ -28,18 +28,17 @@ export async function sealCredentialsForSubject(
 }
 
 /**
- * Open the stored credential as its owner: under their key when it was
- * sealed there, under `legacyKey` (the deployment key) when it predates
- * per-user keys. Parsing fails closed, as in credentials.ts.
+ * Open the stored credential as its owner. Fails closed on anything but a
+ * `uenc1:` envelope under their key — including an owner whose own key is
+ * locked, which to a caller is simply "not usable right now".
  */
 export async function openCredentialsForSubject(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  stored: string,
-  legacyKey: Buffer
+  stored: string
 ): Promise<Result<MirthCredentials, CredentialError>> {
-  const opened = await openForSubject(db, tenantId, subject, stored, legacyKey);
+  const opened = await openForSubject(db, tenantId, subject, stored);
   if (!opened.ok) return err('DECRYPTION_ERROR' as const);
   let parsed: unknown;
   try {

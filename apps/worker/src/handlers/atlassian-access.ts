@@ -64,7 +64,7 @@ export async function resolveAtlassianAccess(
     throw new Error(`${provider} connector is not configured or disabled for tenant ${tenantId}`);
   }
 
-  const grantResult = await getGrant(provider, tenantId, accountId, keyResult.val);
+  const grantResult = await getGrant(provider, tenantId, accountId);
   if (!grantResult.ok || !grantResult.val) {
     throw new Error(`no ${provider} grant for account ${accountId} (disconnected?)`);
   }
@@ -77,7 +77,6 @@ export async function resolveAtlassianAccess(
       new AtlassianAdapter(clientSecret, provider),
       tenantId,
       accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {

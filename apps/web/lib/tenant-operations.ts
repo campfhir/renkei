@@ -345,28 +345,20 @@ export async function setJiraGrant(
   tenantId: string,
   grant: NewJiraGrant
 ): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
-
-  return setGrant(
-    ATLASSIAN,
-    tenantId,
-    {
-      accountId: grant.accountId,
-      clientId: grant.atlassianClientId,
-      displayName: grant.displayName,
-      subject: grant.subject,
-      accessToken: grant.accessToken,
-      refreshToken: grant.refreshToken,
-      expiresAt: grant.expiresAt,
-      requestedScopes: grant.requestedScopes,
-      grantedScopes: grant.grantedScopes,
-      // Site identity is Atlassian-specific, so it lives in metadata rather
-      // than as columns every other provider would leave NULL.
-      metadata: { cloudId: grant.cloudId, siteUrl: grant.siteUrl },
-    },
-    encryptionKeyResult.val
-  );
+  return setGrant(ATLASSIAN, tenantId, {
+    accountId: grant.accountId,
+    clientId: grant.atlassianClientId,
+    displayName: grant.displayName,
+    subject: grant.subject,
+    accessToken: grant.accessToken,
+    refreshToken: grant.refreshToken,
+    expiresAt: grant.expiresAt,
+    requestedScopes: grant.requestedScopes,
+    grantedScopes: grant.grantedScopes,
+    // Site identity is Atlassian-specific, so it lives in metadata rather
+    // than as columns every other provider would leave NULL.
+    metadata: { cloudId: grant.cloudId, siteUrl: grant.siteUrl },
+  });
 }
 
 /**
@@ -377,10 +369,7 @@ export async function getJiraGrant(
   tenantId: string,
   accountId: string
 ): Promise<Result<JiraGrant | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
-  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
-
-  const grantResult = await getGrant(ATLASSIAN, tenantId, accountId, encryptionKeyResult.val);
+  const grantResult = await getGrant(ATLASSIAN, tenantId, accountId);
   if (!grantResult.ok) return grantResult;
 
   const grant = grantResult.val;
@@ -453,5 +442,5 @@ export async function refreshAtlassianTokenDirect(
   }
 
   const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret, provider);
-  return refreshGrantTokens(adapter, tenantId, accountId, encryptionKeyResult.val, logger);
+  return refreshGrantTokens(adapter, tenantId, accountId, logger);
 }

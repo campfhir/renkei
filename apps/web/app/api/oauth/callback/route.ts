@@ -33,7 +33,6 @@ import {
   getAtlassianBitbucketApp,
   getAtlassianAdminApp,
 } from '@/lib/atlassian-app';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
 import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
@@ -674,35 +673,21 @@ async function handleWebexUserCallback(
   const displayName = typeof me?.displayName === 'string' ? me.displayName : personId;
   const emails = Array.isArray(me?.emails) ? me.emails.filter((e) => typeof e === 'string') : [];
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store WebEx grant', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-    });
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    WEBEX_USER,
-    tenant.id,
-    {
-      accountId: personId,
-      clientId: app.clientId,
-      displayName,
-      accessToken,
-      refreshToken,
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      // WebEx does not echo scopes in its token response, so the (possibly
-      // user-narrowed) request carried through the pending row is the record.
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      // WebEx access tokens are opaque, so this stays null: unknown, honestly.
-      grantedScopes: scopesFromAccessToken(accessToken),
-      metadata: { personEmail: emails[0] ?? null },
-      subject,
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(WEBEX_USER, tenant.id, {
+    accountId: personId,
+    clientId: app.clientId,
+    displayName,
+    accessToken,
+    refreshToken,
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    // WebEx does not echo scopes in its token response, so the (possibly
+    // user-narrowed) request carried through the pending row is the record.
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    // WebEx access tokens are opaque, so this stays null: unknown, honestly.
+    grantedScopes: scopesFromAccessToken(accessToken),
+    metadata: { personEmail: emails[0] ?? null },
+    subject,
+  });
   if (!stored.ok) {
     logger.error('Failed to store WebEx grant', { component: 'auth/oauth', tenantId: tenant.id });
     return NextResponse.json({ error: 'Failed to store WebEx grant' }, { status: 500 });
@@ -819,35 +804,21 @@ async function handleGitHubCallback(
   }
   const displayName = typeof me?.name === 'string' && me.name ? me.name : login;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store GitHub grant', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-    });
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    GITHUB,
-    tenant.id,
-    {
-      accountId,
-      clientId: app.clientId,
-      displayName,
-      accessToken,
-      refreshToken,
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      // GitHub App tokens carry no scope claim of their own kind; the
-      // token-response echo (usually empty for a GitHub App) is the only
-      // signal, same fallback shape as Zoom/WebEx.
-      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
-      metadata: { login },
-      subject,
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(GITHUB, tenant.id, {
+    accountId,
+    clientId: app.clientId,
+    displayName,
+    accessToken,
+    refreshToken,
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    // GitHub App tokens carry no scope claim of their own kind; the
+    // token-response echo (usually empty for a GitHub App) is the only
+    // signal, same fallback shape as Zoom/WebEx.
+    grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+    metadata: { login },
+    subject,
+  });
   if (!stored.ok) {
     logger.error('Failed to store GitHub grant', { component: 'auth/oauth', tenantId: tenant.id });
     return NextResponse.json({ error: 'Failed to store GitHub grant' }, { status: 500 });
@@ -908,15 +879,6 @@ async function handleMicrosoftCallback(
   const { accessToken, refreshToken, expiresIn, scopeEcho, oid, tid, upn, displayName, email } =
     exchanged;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store Microsoft grant', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-    });
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
   // A reconnect replaces the metadata wholesale, and the indexing opt-in
   // lives there — carry it over, or reconnecting silently turns a user's
   // indexing off.
@@ -943,27 +905,22 @@ async function handleMicrosoftCallback(
     }
   }
 
-  const stored = await setGrant(
-    MICROSOFT,
-    tenant.id,
-    {
-      accountId: oid,
-      clientId: app.clientId,
-      displayName: displayName ?? upn,
-      accessToken,
-      refreshToken,
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      // Graph access tokens carry scp; the token-response echo is the
-      // fallback. Both describe what was actually minted.
-      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
-      // tid keeps refresh pointed at the right authority; upn/email are what
-      // the refIds and the access verifier are built from.
-      metadata: { tid, upn, email: email ?? null, ...carriedIndexing },
-      subject,
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(MICROSOFT, tenant.id, {
+    accountId: oid,
+    clientId: app.clientId,
+    displayName: displayName ?? upn,
+    accessToken,
+    refreshToken,
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    // Graph access tokens carry scp; the token-response echo is the
+    // fallback. Both describe what was actually minted.
+    grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+    // tid keeps refresh pointed at the right authority; upn/email are what
+    // the refIds and the access verifier are built from.
+    metadata: { tid, upn, email: email ?? null, ...carriedIndexing },
+    subject,
+  });
   if (!stored.ok) {
     logger.error('Failed to store Microsoft grant', {
       component: 'auth/oauth',
@@ -1147,34 +1104,20 @@ async function handleEntraDeveloperCallback(
   const { accessToken, refreshToken, expiresIn, scopeEcho, oid, tid, upn, displayName, email } =
     exchanged;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store Entra Developer grant', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-    });
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    ENTRA_DEVELOPER,
-    tenant.id,
-    {
-      accountId: oid,
-      clientId: app.clientId,
-      displayName: displayName ?? upn,
-      accessToken,
-      refreshToken,
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
-      // tid keeps refresh pointed at the right authority; upn names the
-      // person on the card and in the tools' "connected as" line.
-      metadata: { tid, upn, email: email ?? null },
-      subject,
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(ENTRA_DEVELOPER, tenant.id, {
+    accountId: oid,
+    clientId: app.clientId,
+    displayName: displayName ?? upn,
+    accessToken,
+    refreshToken,
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+    // tid keeps refresh pointed at the right authority; upn names the
+    // person on the card and in the tools' "connected as" line.
+    metadata: { tid, upn, email: email ?? null },
+    subject,
+  });
   if (!stored.ok) {
     logger.error('Failed to store Entra Developer grant', {
       component: 'auth/oauth',
@@ -1338,35 +1281,21 @@ async function handleZoomCallback(
       : [me?.first_name, me?.last_name].filter((part) => typeof part === 'string').join(' ') ||
         zoomUserId;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store Zoom grant', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-    });
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    ZOOM,
-    tenant.id,
-    {
-      accountId: zoomUserId,
-      clientId: app.clientId,
-      displayName,
-      accessToken,
-      refreshToken,
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      // Zoom access tokens carry no scope claim; the token-response echo is
-      // the record of what the app was actually minted — always the full
-      // Marketplace set, which is exactly why narrowing gates on requested.
-      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
-      metadata: { email, zoomAccountId: typeof me?.account_id === 'string' ? me.account_id : null },
-      subject,
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(ZOOM, tenant.id, {
+    accountId: zoomUserId,
+    clientId: app.clientId,
+    displayName,
+    accessToken,
+    refreshToken,
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    // Zoom access tokens carry no scope claim; the token-response echo is
+    // the record of what the app was actually minted — always the full
+    // Marketplace set, which is exactly why narrowing gates on requested.
+    grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+    metadata: { email, zoomAccountId: typeof me?.account_id === 'string' ? me.account_id : null },
+    subject,
+  });
   if (!stored.ok) {
     logger.error('Failed to store Zoom grant', { component: 'auth/oauth', tenantId: tenant.id });
     return NextResponse.json({ error: 'Failed to store Zoom grant' }, { status: 500 });
@@ -1491,31 +1420,21 @@ async function handleAtlassianJsmCallback(
     .executeTakeFirst();
   const displayName = jiraGrantRow?.display_name || accountId;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    ATLASSIAN_JSM,
-    tenant.id,
-    {
-      accountId,
-      clientId: app.clientId,
-      displayName,
-      subject,
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token || '',
-      expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      grantedScopes:
-        scopesFromAccessToken(tokenData.access_token) ??
-        ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
-        null,
-      metadata: { cloudId, siteUrl: '' },
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(ATLASSIAN_JSM, tenant.id, {
+    accountId,
+    clientId: app.clientId,
+    displayName,
+    subject,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token || '',
+    expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    grantedScopes:
+      scopesFromAccessToken(tokenData.access_token) ??
+      ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
+      null,
+    metadata: { cloudId, siteUrl: '' },
+  });
   if (!stored.ok) {
     logger.error('Failed to store Atlassian JSM grant', {
       component: 'auth/oauth',
@@ -1656,31 +1575,21 @@ async function handleAtlassianConfluenceCallback(
     .executeTakeFirst();
   const displayName = jiraGrantRow?.display_name || accountId;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    ATLASSIAN_CONFLUENCE,
-    tenant.id,
-    {
-      accountId,
-      clientId: app.clientId,
-      displayName,
-      subject,
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token || '',
-      expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      grantedScopes:
-        scopesFromAccessToken(tokenData.access_token) ??
-        ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
-        null,
-      metadata: { cloudId, siteUrl: '' },
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(ATLASSIAN_CONFLUENCE, tenant.id, {
+    accountId,
+    clientId: app.clientId,
+    displayName,
+    subject,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token || '',
+    expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    grantedScopes:
+      scopesFromAccessToken(tokenData.access_token) ??
+      ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
+      null,
+    metadata: { cloudId, siteUrl: '' },
+  });
   if (!stored.ok) {
     logger.error('Failed to store Atlassian Confluence grant', {
       component: 'auth/oauth',
@@ -1829,31 +1738,21 @@ async function handleAtlassianAdminCallback(
     // The borrowed name above stands.
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    ATLASSIAN_ADMIN,
-    tenant.id,
-    {
-      accountId,
-      clientId: app.clientId,
-      displayName,
-      subject,
-      accessToken: tokenData.access_token,
-      refreshToken: tokenData.refresh_token || '',
-      expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      grantedScopes:
-        scopesFromAccessToken(tokenData.access_token) ??
-        ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
-        null,
-      metadata: { cloudId, siteUrl },
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(ATLASSIAN_ADMIN, tenant.id, {
+    accountId,
+    clientId: app.clientId,
+    displayName,
+    subject,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token || '',
+    expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    grantedScopes:
+      scopesFromAccessToken(tokenData.access_token) ??
+      ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
+      null,
+    metadata: { cloudId, siteUrl },
+  });
   if (!stored.ok) {
     logger.error('Failed to store Atlassian Jira Admin grant', {
       component: 'auth/oauth',
@@ -1965,34 +1864,24 @@ async function handleAtlassianBitbucketCallback(
   const displayName =
     (typeof user.display_name === 'string' && user.display_name) || username || accountId;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
   const expiresIn = typeof tokenData.expires_in === 'number' ? tokenData.expires_in : 7200;
-  const stored = await setGrant(
-    ATLASSIAN_BITBUCKET,
-    tenant.id,
-    {
-      accountId,
-      clientId: app.clientId,
-      displayName,
-      subject,
-      accessToken,
-      refreshToken: typeof tokenData.refresh_token === 'string' ? tokenData.refresh_token : '',
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      requestedScopes: (requestedScopes || app.scopes).split(' '),
-      // The consumer's fixed set, from the token response — Bitbucket cannot
-      // narrow at consent, so this is always the full configured list.
-      // Read under both spellings: Bitbucket documents `scopes`, RFC 6749
-      // says `scope`, and a NULL here (observed in the field) quietly turns
-      // the requested ∩ granted narrowing into bare-requested.
-      grantedScopes: grantedScopesOf(tokenData),
-      metadata: { username },
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(ATLASSIAN_BITBUCKET, tenant.id, {
+    accountId,
+    clientId: app.clientId,
+    displayName,
+    subject,
+    accessToken,
+    refreshToken: typeof tokenData.refresh_token === 'string' ? tokenData.refresh_token : '',
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    requestedScopes: (requestedScopes || app.scopes).split(' '),
+    // The consumer's fixed set, from the token response — Bitbucket cannot
+    // narrow at consent, so this is always the full configured list.
+    // Read under both spellings: Bitbucket documents `scopes`, RFC 6749
+    // says `scope`, and a NULL here (observed in the field) quietly turns
+    // the requested ∩ granted narrowing into bare-requested.
+    grantedScopes: grantedScopesOf(tokenData),
+    metadata: { username },
+  });
   if (!stored.ok) {
     logger.error('Failed to store Bitbucket grant', {
       component: 'auth/oauth',
@@ -2144,33 +2033,18 @@ async function handleOnBaseCallback(
     (typeof idClaims?.preferred_username === 'string' && idClaims.preferred_username) ||
     accountId;
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store {label} grant', {
-      component: 'auth/oauth',
-      tenantId: tenant.id,
-      label: spec.label,
-    });
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  const stored = await setGrant(
-    spec.grantProvider,
-    tenant.id,
-    {
-      accountId,
-      clientId: app.clientId,
-      displayName,
-      accessToken: tokens.access_token,
-      refreshToken,
-      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      requestedScopes: (requestedScopes || `openid offline_access ${app.idpScopeName}`).split(' '),
-      grantedScopes: scopesFromAccessToken(tokens.access_token) ?? scopeEcho?.split(/\s+/) ?? null,
-      metadata: { issuer: app.idpIssuer },
-      subject,
-    },
-    keyResult.val
-  );
+  const stored = await setGrant(spec.grantProvider, tenant.id, {
+    accountId,
+    clientId: app.clientId,
+    displayName,
+    accessToken: tokens.access_token,
+    refreshToken,
+    expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    requestedScopes: (requestedScopes || `openid offline_access ${app.idpScopeName}`).split(' '),
+    grantedScopes: scopesFromAccessToken(tokens.access_token) ?? scopeEcho?.split(/\s+/) ?? null,
+    metadata: { issuer: app.idpIssuer },
+    subject,
+  });
   if (!stored.ok) {
     logger.error('Failed to store {label} grant', {
       component: 'auth/oauth',

@@ -20,7 +20,6 @@ import {
   headersForLog,
   retryAfterSeconds,
 } from '@renkei/connector-microsoft';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getGrant, refreshGrantTokens, MICROSOFT, MicrosoftAdapter } from '@renkei/provider-grants';
 import { getDatabase } from '@renkei/db';
 import { getMicrosoftApp } from '@/lib/microsoft-app';
@@ -96,8 +95,6 @@ function truncateForLog(text: string): string {
  */
 export async function resolveGraphAccess(context: GraphCallContext): Promise<GraphAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Token encryption is not configured on this deployment.';
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'Database unavailable.';
@@ -114,12 +111,7 @@ export async function resolveGraphAccess(context: GraphCallContext): Promise<Gra
     return 'Microsoft is not connected. Connect it on the Connectors page, then try again.';
   }
 
-  const grantResult = await getGrant(
-    MICROSOFT,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
+  const grantResult = await getGrant(MICROSOFT, context.tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) {
     return 'Your Microsoft connection could not be read. Reconnect on the Connectors page.';
   }
@@ -138,7 +130,6 @@ export async function resolveGraphAccess(context: GraphCallContext): Promise<Gra
       new MicrosoftAdapter(app.clientSecret, tid),
       context.tenantId,
       row.provider_account_id,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {
@@ -204,7 +195,10 @@ async function graphCall(
       responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, retryAfterSeconds(response.headers)),
+    };
   }
 
   // 202 (accepted, e.g. copy) and 204 (deleted) carry no body.
@@ -295,7 +289,10 @@ export async function graphPutContent(
       responseHeaders: headersForLog(response.headers),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status, retryAfterSeconds(response.headers)) };
+    return {
+      ok: false,
+      error: describeStatus(response.status, retryAfterSeconds(response.headers)),
+    };
   }
   try {
     const parsed: unknown = JSON.parse(responseBody);

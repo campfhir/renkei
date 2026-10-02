@@ -23,7 +23,13 @@ import {
 import { applyStreamEvent, initialThreadState, type ThreadState } from './stream-events';
 import type { ChatStreamEvent } from './stream-events';
 import type { LocalToolContext } from './local-tools';
-import { legacyCipher } from './content-crypto';
+import { resourceCipher } from './content-crypto';
+
+/** A chat key for the fixtures: the ciphers under test only care that one is there. */
+const testCipher = resourceCipher({
+  id: '00000000-0000-4000-8000-00000000c1fe',
+  key: Buffer.alloc(32, 7),
+});
 
 interface Row {
   id: string;
@@ -202,7 +208,7 @@ const localContext: LocalToolContext = {
   tenantId: 't',
   subject: 'u',
   chatId: 'c',
-  cipher: legacyCipher,
+  cipher: testCipher,
   projectId: null,
   readOnly: false,
 };

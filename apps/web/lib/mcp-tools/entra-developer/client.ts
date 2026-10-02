@@ -15,7 +15,6 @@
  */
 
 import { GRAPH_BASE_URL } from '@renkei/connector-microsoft';
-import { parseEncryptionKey } from '@renkei/crypto';
 import {
   getGrant,
   refreshGrantTokens,
@@ -61,8 +60,6 @@ export interface EntraCallContext {
  */
 export async function resolveEntraAccess(context: EntraCallContext): Promise<EntraAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Token encryption is not configured on this deployment.';
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'Database unavailable.';
 
@@ -81,12 +78,7 @@ export async function resolveEntraAccess(context: EntraCallContext): Promise<Ent
     );
   }
 
-  const grantResult = await getGrant(
-    ENTRA_DEVELOPER,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
+  const grantResult = await getGrant(ENTRA_DEVELOPER, context.tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) {
     return 'Your Entra Developer connection could not be read. Reconnect on the Connectors page.';
   }
@@ -103,7 +95,6 @@ export async function resolveEntraAccess(context: EntraCallContext): Promise<Ent
       new MicrosoftAdapter(app.clientSecret, tid, ENTRA_DEVELOPER),
       context.tenantId,
       row.provider_account_id,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {

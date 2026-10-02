@@ -74,7 +74,7 @@ export async function resolveZoomHostAccess(
   }
   if (!row) return null;
 
-  const grantResult = await getGrant(ZOOM, tenantId, row.provider_account_id, keyResult.val);
+  const grantResult = await getGrant(ZOOM, tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return null;
   let grant = grantResult.val;
 
@@ -83,7 +83,6 @@ export async function resolveZoomHostAccess(
       new ZoomAdapter(clientSecret),
       tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {

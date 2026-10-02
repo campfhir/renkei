@@ -24,7 +24,7 @@ import {
   listResourceKeyHolders,
   openResourceKey,
   openResourceKeys,
-  pruneOrphanChatKeys,
+  pruneOrphanResourceKeys,
   revokeResourceKey,
   shareResourceKey,
 } from './resource-keys';
@@ -204,26 +204,17 @@ maybe('user keys and the resource key store', () => {
     expect((await openResourceKey(db, ref, owner)).ok).toBe(true);
   });
 
-  it('seals a person-only value under their KEK and still opens legacy envelopes', async () => {
-    const legacyKey = randomBytes(32);
+  it('seals a person-only value under their KEK and opens nothing else', async () => {
     const sealed = await sealForSubject(db, tenantId, stranger, 'secret-token');
     expect(sealed.ok && sealed.val.startsWith('uenc1:')).toBe(true);
     if (!sealed.ok) return;
-    const opened = await openForSubject(db, tenantId, stranger, sealed.val, legacyKey);
+    const opened = await openForSubject(db, tenantId, stranger, sealed.val);
     expect(opened.ok && opened.val).toBe('secret-token');
-    expect((await openForSubject(db, tenantId, owner, sealed.val, legacyKey)).ok).toBe(false);
+    // Somebody else's key: the tag fails. A deployment-key envelope: not accepted at all.
+    expect((await openForSubject(db, tenantId, owner, sealed.val)).ok).toBe(false);
     const { encrypt } = await import('@renkei/crypto');
-    const legacy = await openForSubject(
-      db,
-      tenantId,
-      stranger,
-      encrypt('old', legacyKey),
-      legacyKey
-    );
-    expect(legacy.ok && legacy.val).toBe('old');
-    expect((await openForSubject(db, tenantId, stranger, encrypt('old', legacyKey), null)).ok).toBe(
-      false
-    );
+    const legacy = await openForSubject(db, tenantId, stranger, encrypt('old', randomBytes(32)));
+    expect(!legacy.ok && legacy.err.type).toBe('DECRYPTION_ERROR');
   });
 
   it('shredding a salt makes everything that person held unopenable', async () => {
@@ -255,7 +246,7 @@ maybe('user keys and the resource key store', () => {
     const key = await createResourceKey(db, { ...ref, resourceId: orphan }, owner);
     expect(key.ok).toBe(true);
     await db.deleteFrom('chats').where('id', '=', orphan).execute();
-    expect(await pruneOrphanChatKeys(db)).toBeGreaterThanOrEqual(1);
+    expect(await pruneOrphanResourceKeys(db)).toBeGreaterThanOrEqual(1);
     expect(await openResourceKey(db, { ...ref, resourceId: orphan }, owner)).toMatchObject({
       ok: false,
       err: { type: 'NO_KEY' },

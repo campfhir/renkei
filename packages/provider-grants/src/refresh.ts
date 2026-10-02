@@ -93,7 +93,6 @@ export async function refreshGrantTokens(
   adapter: ProviderAdapter,
   tenantId: string,
   accountId: string,
-  encryptionKey: Buffer,
   logger: GrantLogger = silentLogger
 ): Promise<Result<RefreshedTokens, RefreshError>> {
   const provider = adapter.provider;
@@ -116,7 +115,7 @@ export async function refreshGrantTokens(
       });
       await waitForRefreshLock(db, provider, tenantId, accountId);
       // The other process may have refreshed already — reuse its result.
-      const refetch = await getGrant(provider, tenantId, accountId, encryptionKey);
+      const refetch = await getGrant(provider, tenantId, accountId);
       if (refetch.ok && refetch.val) {
         logger.debug('[Refresh] Using refreshed token from other process', {
           provider,
@@ -136,7 +135,7 @@ export async function refreshGrantTokens(
       });
     }
 
-    const grantResult = await getGrant(provider, tenantId, accountId, encryptionKey);
+    const grantResult = await getGrant(provider, tenantId, accountId);
     if (!grantResult.ok || !grantResult.val) {
       logger.error('[Refresh] No usable grant found', { provider, tenantId, accountId });
       return err('REFRESH_FAILED' as const);
@@ -176,22 +175,11 @@ export async function refreshGrantTokens(
     // null and leave the column untouched (unknown ≠ revoked).
     const grantedScopes = scopesFromAccessToken(accessToken);
 
-    // Re-sealed under the owner's key (store.ts): a refresh is also how a
-    // row from before per-user keys moves over.
-    const sealedAccess = await sealGrantToken(
-      db,
-      tenantId,
-      grant.subject,
-      accessToken,
-      encryptionKey
-    );
-    const sealedRefresh = await sealGrantToken(
-      db,
-      tenantId,
-      grant.subject,
-      refreshToken,
-      encryptionKey
-    );
+    // Sealed under the owner's key (store.ts). A grant that opened has an
+    // owner, so the subject is there to seal for.
+    if (!grant.subject) return err('REFRESH_FAILED' as const);
+    const sealedAccess = await sealGrantToken(db, tenantId, grant.subject, accessToken);
+    const sealedRefresh = await sealGrantToken(db, tenantId, grant.subject, refreshToken);
     if (!sealedAccess.ok || !sealedRefresh.ok) {
       logger.error('[Refresh] Could not seal refreshed tokens', { provider, tenantId, accountId });
       return err('REFRESH_FAILED' as const);

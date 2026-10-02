@@ -163,6 +163,7 @@ export const EXPECTED_MIGRATIONS = [
   '131-sandbox-size-requests',
   '132-image-usage',
   '133-user-encryption-keys',
+  '134-user-own-keys',
 ];
 
 export interface MigrationStatus {

@@ -23,7 +23,6 @@ import {
   readGitHubMetadata,
   type ProviderGrant,
 } from '@renkei/provider-grants';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import { getGitHubApp } from '@/lib/github-app';
 import { logger, secure } from '@/lib/logger';
@@ -55,8 +54,6 @@ export async function resolveGitHubAccess(
   context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<GitHubAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'Database unavailable.';
 
@@ -76,7 +73,7 @@ export async function resolveGitHubAccess(
     return 'GitHub is not connected. Connect it on the Connectors page, then try again.';
   }
 
-  const grantResult = await getGrant(GITHUB, context.tenantId, row.provider_account_id, keyResult.val);
+  const grantResult = await getGrant(GITHUB, context.tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return 'Could not read the GitHub grant.';
   let grant: ProviderGrant = grantResult.val;
 
@@ -87,7 +84,6 @@ export async function resolveGitHubAccess(
       new GitHubAdapter(app.clientSecret),
       context.tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {
@@ -220,7 +216,8 @@ export async function describeGitHubFailure(response: Response): Promise<string>
     );
   }
   if (message) return `GitHub API ${response.status}: ${message}`;
-  if (response.status === 422) return 'GitHub could not process this request (422) — check the arguments.';
+  if (response.status === 422)
+    return 'GitHub could not process this request (422) — check the arguments.';
   return `GitHub API answered ${response.status}`;
 }
 
@@ -272,7 +269,9 @@ export async function ghRawText(
 /** A list response as an array of records, defensively. */
 export function arr(body: unknown): Record<string, unknown>[] {
   return Array.isArray(body)
-    ? body.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+    ? body.filter(
+        (item): item is Record<string, unknown> => typeof item === 'object' && item !== null
+      )
     : [];
 }
 

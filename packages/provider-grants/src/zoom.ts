@@ -49,7 +49,9 @@ export class ZoomAdapter implements ProviderAdapter {
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
       return err('REFRESH_FAILED' as const, {
-        message: timedOut ? 'zoom.us token endpoint timed out after 15000ms' : 'Could not reach zoom.us',
+        message: timedOut
+          ? 'zoom.us token endpoint timed out after 15000ms'
+          : 'Could not reach zoom.us',
       });
     }
 

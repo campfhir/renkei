@@ -10,7 +10,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -50,22 +49,19 @@ export async function DELETE(
   // Best-effort revocation at the IdP while we still hold the tokens. The
   // refresh token is the valuable one to kill; revoking it usually
   // invalidates the pair.
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (keyResult.ok) {
-    const grant = await getGrant(ONBASE, tenantId, accountId, keyResult.val);
-    if (grant.ok && grant.val) {
-      const token = grant.val.refreshToken || grant.val.accessToken;
-      const revoked = await obRevoke({
+  const grant = await getGrant(ONBASE, tenantId, accountId);
+  if (grant.ok && grant.val) {
+    const token = grant.val.refreshToken || grant.val.accessToken;
+    const revoked = await obRevoke({
+      tenantId,
+      token,
+      tokenTypeHint: grant.val.refreshToken ? 'refresh_token' : 'access_token',
+    });
+    if (!revoked.ok || !revoked.val.revoked) {
+      logger.warn('OnBase token revocation failed; deleting the grant regardless', {
+        component: 'connectors/onbase',
         tenantId,
-        token,
-        tokenTypeHint: grant.val.refreshToken ? 'refresh_token' : 'access_token',
       });
-      if (!revoked.ok || !revoked.val.revoked) {
-        logger.warn('OnBase token revocation failed; deleting the grant regardless', {
-          component: 'connectors/onbase',
-          tenantId,
-        });
-      }
     }
   }
 

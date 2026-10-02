@@ -23,7 +23,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { getChatRow, type ChatRow } from './store';
-import { chatCipherFor } from './chat-keys';
+import { cipherFor } from './chat-keys';
 import type { ContentCipher } from './content-crypto';
 
 export type ResourceKind = 'chat' | 'chat_project' | 'prompt_library';
@@ -42,10 +42,14 @@ export interface ChatAccess extends ResourceAccess {
   role: 'owner' | 'viewer';
   /**
    * How this viewer opens the chat's content (chat-keys.ts): under the
-   * chat's key as themselves, or — a project member, a chat without a key
-   * yet — as its owner. Every read and write of the chat's rows goes
-   * through it.
+   * chat's key as themselves, or — a project member — as its owner. Every
+   * read and write of the chat's rows goes through it.
    */
+  cipher: ContentCipher;
+}
+
+/** A project's access with the cipher for its instructions, memory and files. */
+export interface ProjectAccess extends ResourceAccess {
   cipher: ContentCipher;
 }
 
@@ -143,6 +147,33 @@ export async function resolveResourceAccess(
   return null;
 }
 
+/** A project, with the cipher its content opens under (chat-keys.ts). */
+export async function resolveProjectAccess(
+  db: Kysely<DB>,
+  tenantId: string,
+  viewerSubject: string,
+  projectId: string
+): Promise<ProjectAccess | null> {
+  const access = await resolveResourceAccess(
+    db,
+    tenantId,
+    viewerSubject,
+    'chat_project',
+    projectId
+  );
+  if (!access) return null;
+  return {
+    ...access,
+    cipher: await cipherFor(
+      db,
+      'chat_project',
+      { id: projectId, tenantId, ownerSubject: access.ownerSubject },
+      viewerSubject,
+      access.via
+    ),
+  };
+}
+
 /** Chats: owner, named viewer, or a fellow member of the chat's project. */
 export async function resolveChatAccess(
   db: Kysely<DB>,
@@ -160,7 +191,7 @@ export async function resolveChatAccess(
     role,
     ownerSubject: chat.ownerSubject,
     via,
-    cipher: await chatCipherFor(db, chat, viewerSubject, via),
+    cipher: await cipherFor(db, 'chat', chat, viewerSubject, via),
   });
   if (chat.ownerSubject === viewerSubject) return grant('owner', 'owner');
   const granted = await activeGrant(db, tenantId, 'chat', chatId, viewerSubject);

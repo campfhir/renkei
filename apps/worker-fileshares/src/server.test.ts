@@ -49,7 +49,6 @@ let base: string;
 beforeAll(async () => {
   server = createFileshareServer({
     db: {} as Kysely<DB>,
-    encryptionKey: Buffer.alloc(32, 7),
     apiKeys: [API_KEY],
     maxTransferBytes: async () => 1024,
   });
@@ -96,7 +95,6 @@ describe('authentication', () => {
   it('refuses everything when no keys are configured', async () => {
     const closed = createFileshareServer({
       db: {} as Kysely<DB>,
-      encryptionKey: Buffer.alloc(32, 7),
       apiKeys: [],
     });
     await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
@@ -148,7 +146,7 @@ describe('dispatch and serialization', () => {
       ],
     });
     expect(mocked.serviceListFolder).toHaveBeenCalledWith(
-      expect.objectContaining({ encryptionKey: expect.any(Buffer) }),
+      expect.objectContaining({ db: expect.anything() }),
       TARGET,
       '/docs'
     );
@@ -280,7 +278,11 @@ describe('test-connection payload validation', () => {
   });
 
   it('refuses malformed or missing credentials before touching the service', async () => {
-    for (const credentials of [undefined, { protocol: 'sftp' }, { protocol: 'ftp', username: 'x' }]) {
+    for (const credentials of [
+      undefined,
+      { protocol: 'sftp' },
+      { protocol: 'ftp', username: 'x' },
+    ]) {
       const response = await post('/v1/test-connection', {
         tenantId: 'tenant-1',
         shareId: 'share-1',

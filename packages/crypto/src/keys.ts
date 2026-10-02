@@ -36,7 +36,7 @@
  * turns resume and notes land while the person is away.
  */
 
-import { hkdfSync, randomBytes } from 'node:crypto';
+import { createHash, hkdfSync, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { encrypt, decrypt, parseEncryptionKey } from './secretbox';
@@ -166,4 +166,68 @@ export function openForUser(value: string, kek: Buffer): Result<string, 'DECRYPT
     return err('DECRYPTION_ERROR' as const, { message: 'value is not a uenc1 envelope' });
   }
   return decrypt(value.slice(USER_ENVELOPE_PREFIX.length), kek);
+}
+
+/**
+ * Bring-your-own-key. A person who opts out of the managed KEK holds one
+ * derived from a PASSPHRASE instead: scrypt over the passphrase and their
+ * salt, then HKDF into a key space of its own, so the deployment master
+ * plays no part and nothing Renkei stores can produce it. scrypt's cost
+ * (32MB, ~50–100ms) is paid once per unlock, never per row.
+ */
+const OWN_KEK_INFO_VERSION = 'renkei/user-kek-own/v1';
+const UNLOCK_KEY_INFO_VERSION = 'renkei/user-kek-unlock/v1';
+const VERIFIER_INFO = 'renkei/user-kek-verifier/v1';
+const SCRYPT = { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+
+export const OWN_KEY_PASSPHRASE_MIN_CHARS = 12;
+export const OWN_KEY_PASSPHRASE_MAX_CHARS = 256;
+
+export function deriveOwnKek(
+  passphrase: string,
+  salt: Buffer,
+  tenantId: string,
+  subject: string
+): Buffer {
+  const ikm = scryptSync(
+    Buffer.from(passphrase.normalize('NFKC'), 'utf8'),
+    salt,
+    DATA_KEY_BYTES,
+    SCRYPT
+  );
+  const info = Buffer.from(`${OWN_KEK_INFO_VERSION}\0${tenantId}\0${subject}`, 'utf8');
+  return Buffer.from(hkdfSync('sha256', ikm, salt, info, DATA_KEY_BYTES));
+}
+
+/**
+ * While a person's own key is UNLOCKED it is kept sealed under this key —
+ * derived from the master like a managed KEK, in a key space of its own —
+ * so every process can use it for the window and none can once the row
+ * is cleared.
+ */
+export function deriveUnlockKey(
+  master: Buffer,
+  salt: Buffer,
+  tenantId: string,
+  subject: string
+): Buffer {
+  const info = Buffer.from(`${UNLOCK_KEY_INFO_VERSION}\0${tenantId}\0${subject}`, 'utf8');
+  return Buffer.from(hkdfSync('sha256', master, salt, info, DATA_KEY_BYTES));
+}
+
+/** A tag that proves a KEK without revealing it — what a stored passphrase check compares against. */
+export function kekVerifier(kek: Buffer): string {
+  return createHash('sha256')
+    .update(
+      Buffer.from(
+        hkdfSync('sha256', kek, Buffer.alloc(0), Buffer.from(VERIFIER_INFO), DATA_KEY_BYTES)
+      )
+    )
+    .digest('hex');
+}
+
+export function verifierMatches(kek: Buffer, verifier: string): boolean {
+  const left = Buffer.from(kekVerifier(kek), 'hex');
+  const right = Buffer.from(verifier, 'hex');
+  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
 }

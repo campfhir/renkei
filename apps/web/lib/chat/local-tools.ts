@@ -25,6 +25,8 @@ export interface LocalToolContext {
   /** How this chat's rows are sealed and opened (access.cipher). */
   cipher: ContentCipher;
   projectId: string | null;
+  /** The project's cipher (its memory and files), when the chat is in one. */
+  projectCipher?: ContentCipher;
   /** The person's email from the identity spine, when known — a commit author needs one. */
   userEmail?: string | null;
   /** Org read-only mode: local tools that write refuse under it. */

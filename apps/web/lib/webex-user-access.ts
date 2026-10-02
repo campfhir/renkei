@@ -44,7 +44,7 @@ export async function resolveWebexUserAccess(
     .executeTakeFirst();
   if (!row) return null;
 
-  const grantResult = await getGrant(WEBEX_USER, tenantId, row.provider_account_id, keyResult.val);
+  const grantResult = await getGrant(WEBEX_USER, tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return null;
   let grant = grantResult.val;
 
@@ -60,7 +60,6 @@ export async function resolveWebexUserAccess(
       new WebexUserAdapter(clientSecret),
       tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) return null;

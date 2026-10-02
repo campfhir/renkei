@@ -33,10 +33,9 @@ void runWorker({
   defaultPort: 8095,
   logger,
   attachPersistentLogging,
-  createServer: ({ db, encryptionKey, apiKeys }) =>
+  createServer: ({ db, apiKeys }) =>
     createAdManagerServer({
       db,
-      encryptionKey,
       apiKeys,
       legacyProductName: process.env.ADMANAGER_PRODUCT_NAME,
     }),

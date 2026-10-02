@@ -1442,10 +1442,14 @@ export interface UploadSlots {
 
 export interface UserEncryptionKeys {
   created_at: Generated<Timestamp>;
+  mode: Generated<string>;
   rotated_at: Timestamp | null;
   salt: string;
+  sealed_kek: string | null;
   subject: string;
   tenant_id: string;
+  unlocked_until: Timestamp | null;
+  verifier: string | null;
   version: Generated<number>;
 }
 

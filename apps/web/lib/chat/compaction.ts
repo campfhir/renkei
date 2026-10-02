@@ -58,7 +58,7 @@ import { resolveAgentLlm, type LlmContentBlock, type ResolvedLlm } from '@renkei
 import { isHistoryChat } from '@/lib/code/active-chat';
 import { resolveChatAccess } from './access';
 import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
-import { openStoredText, sealText, type ContentCipher } from './content-crypto';
+import { openText, sealText, type ContentCipher } from './content-crypto';
 import { getProjectRow } from './projects';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
@@ -114,9 +114,7 @@ export async function latestChatSummary(
   if (!row) return null;
   return {
     id: row.id,
-    // Sealed under the chat's cipher since migration 133; a summary written
-    // before that is plaintext, and read as such.
-    content: openStoredText(row.content, cipher),
+    content: openText(row.content, cipher),
     throughSeq: row.through_seq,
     foldedCount: row.folded_count,
     createdBy: creatorOf(row.created_by),

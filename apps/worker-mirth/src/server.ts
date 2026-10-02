@@ -65,8 +65,6 @@ import {
 
 export interface MirthServerDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY; opens stored credentials. */
-  encryptionKey: Buffer;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /** Injected in tests; production dials the real server. */
@@ -169,8 +167,7 @@ function withQuery(url: string, query: unknown): string {
 
 export function createMirthServer(deps: MirthServerDeps): Server {
   const dial = deps.dial ?? dialUpstream;
-  const resolve =
-    deps.resolveTarget ?? ((target) => resolveTarget(deps.db, deps.encryptionKey, target));
+  const resolve = deps.resolveTarget ?? ((target) => resolveTarget(deps.db, target));
   const resolveOne =
     deps.resolveInstance ??
     ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));

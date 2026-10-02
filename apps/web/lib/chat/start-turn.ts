@@ -40,6 +40,9 @@ import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
 import type { ContentCipher } from './content-crypto';
+import { projectCipherById } from './chat-keys';
+import { attachmentPromptBlocks } from './attachments';
+import { openProjectInstructions } from './projects';
 import { compactChat, latestChatSummary, needsCompaction } from './compaction';
 import { listMessages, insertMessage, type InsertedMessage } from './messages';
 import { createTurn, finishTurn, heartbeatTurn, suspendTurn } from './turns';
@@ -159,9 +162,13 @@ export interface StartTurnInput {
   session: { subject: string; roles: string[] };
   chatId: string;
   text: string;
-  /** Extra blocks a caller adds behind the text (attachment excerpts). */
+  /**
+   * Extra blocks a caller adds behind the text. The excerpts of the
+   * prompt's own attachments are added here, under the chat's cipher, so
+   * callers pass only `attachmentIds`.
+   */
   extraBlocks?: LlmContentBlock[];
-  /** Attachment ids to link to the prompt row (Phase 5). */
+  /** Attachment ids to link to the prompt row, and to excerpt into it. */
   attachmentIds?: string[];
   llmModelId?: string | null;
   /** The message came from a voice conversation; the reply is written to be heard. */
@@ -183,12 +190,29 @@ export async function startChatTurn(
 ): Promise<Result<StartedTurn, StartTurnError>> {
   const defer = input.defer ?? ((task) => after(task));
   const text = input.text.trim();
-  if (!text && (input.extraBlocks ?? []).length === 0) return err('EMPTY' as const);
+  if (!text && (input.extraBlocks ?? []).length === 0 && (input.attachmentIds ?? []).length === 0) {
+    return err('EMPTY' as const);
+  }
   if (text.length > USER_MESSAGE_MAX_CHARS) return err('TOO_LONG' as const);
   const access = await resolveChatAccess(db, input.tenantId, input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
+  // The prompt's files, excerpted under the chat's key.
+  const extraBlocks = [
+    ...(input.extraBlocks ?? []),
+    ...(input.attachmentIds && input.attachmentIds.length > 0
+      ? await attachmentPromptBlocks(
+          db,
+          input.tenantId,
+          input.session.subject,
+          chat.id,
+          input.attachmentIds,
+          access.cipher
+        )
+      : []),
+  ];
+  if (!text && extraBlocks.length === 0) return err('EMPTY' as const);
   // A code project's history chat is read-only, its owner's or not: the
   // project's checkout is the active chat's to work in.
   if (chat.projectId) {
@@ -235,7 +259,7 @@ export async function startChatTurn(
       });
       if (!turn.ok) return turn;
       let user: InsertedMessage | null = null;
-      for (const blocks of chunkedUserBlocks(redacted.text, input.extraBlocks ?? [])) {
+      for (const blocks of chunkedUserBlocks(redacted.text, extraBlocks)) {
         const inserted = await insertMessage(trx, {
           tenantId: input.tenantId,
           chatId: chat.id,
@@ -446,6 +470,8 @@ async function executeTurnBody(
     const project = input.chat.projectId
       ? await getProjectRow(db, input.tenantId, input.chat.projectId)
       : null;
+    // The project's content — instructions, memory, files — under its own key.
+    const projectCipher = project ? await projectCipherById(db, input.tenantId, project.id) : null;
     const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
     // Only consulted when neither the chat nor the project has its own
     // toolset, so a cache miss here never costs a chat that already has
@@ -514,7 +540,7 @@ async function executeTurnBody(
             auto: input.chat.autoMode && !readOnly,
           })
         : null,
-      chatPromptContext(db, input.tenantId, input.chat, project),
+      chatPromptContext(db, input.tenantId, input.chat, project, projectCipher),
       // The roster a chat's sub-agent picks from; a code project's chat has
       // no such sub-agent (see `delegate` below), nor does a caller with
       // its own local tools.
@@ -568,6 +594,7 @@ async function executeTurnBody(
       subject: input.session.subject,
       chatId: input.chat.id,
       cipher: input.cipher,
+      ...(projectCipher ? { projectCipher } : {}),
       projectId: input.chat.projectId,
       userEmail: person?.email ?? null,
       readOnly,
@@ -808,7 +835,9 @@ export async function chatPromptContext(
   db: Kysely<DB>,
   tenantId: string,
   chat: ChatRow,
-  project: Awaited<ReturnType<typeof getProjectRow>>
+  project: Awaited<ReturnType<typeof getProjectRow>>,
+  /** The project's cipher (chat-keys.ts), when the chat is in one. */
+  projectCipher: ContentCipher | null
 ): Promise<{
   project: Parameters<typeof buildSystemPrompt>[0]['project'];
   userMemoryText: Parameters<typeof buildSystemPrompt>[0]['userMemoryText'];
@@ -830,15 +859,16 @@ export async function chatPromptContext(
     sizeBytes: Number(row.size_bytes),
   });
   return {
-    project: project
-      ? {
-          name: project.name,
-          instructions: project.instructions,
-          memoryText: await projectMemoryText(db, tenantId, project.id),
-          files: files.filter((row) => row.project_id === project.id).map(shape),
-          code: null,
-        }
-      : null,
+    project:
+      project && projectCipher
+        ? {
+            name: project.name,
+            instructions: openProjectInstructions(project, projectCipher),
+            memoryText: await projectMemoryText(db, tenantId, project.id, projectCipher),
+            files: files.filter((row) => row.project_id === project.id).map(shape),
+            code: null,
+          }
+        : null,
     userMemoryText: project
       ? null
       : renderUserMemory(await readUserMemory(db, tenantId, chat.ownerSubject)),
@@ -849,7 +879,8 @@ export async function chatPromptContext(
 async function projectMemoryText(
   db: Kysely<DB>,
   tenantId: string,
-  projectId: string
+  projectId: string,
+  cipher: ContentCipher
 ): Promise<string | null> {
-  return renderProjectMemory(await readProjectMemory(db, tenantId, projectId));
+  return renderProjectMemory(await readProjectMemory(db, tenantId, projectId, cipher));
 }

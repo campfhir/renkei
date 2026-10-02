@@ -23,6 +23,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 test.use({
   launchOptions: {
@@ -90,12 +91,6 @@ function secretbox(plaintext: string, encoded: string): string {
     ciphertext.toString('base64'),
   ].join('.');
 }
-const seal = (plaintext: string) =>
-  'renc1:' +
-  secretbox(
-    plaintext,
-    process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || ''
-  );
 const sealSecret = (plaintext: string) =>
   secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
 
@@ -145,6 +140,12 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
      VALUES ($1, $2, $3, $4, $5, NOW())`,
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: ids.chatId,
+    ownerSubject: E2E_SUBJECT,
+  });
   await client.query(
     `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
      VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
@@ -200,7 +201,7 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
         row.seq,
         row.role,
         row.kind,
-        seal(JSON.stringify(row.blocks)),
+        chatKey.seal(JSON.stringify(row.blocks)),
         assistant ? ids.modelId : null,
         assistant ? 'anthropic' : null,
         assistant ? 'e2e-model' : null,
@@ -234,6 +235,12 @@ async function seedTwoCardChat(
      VALUES ($1, $2, $3, $4, $5, NOW())`,
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: ids.chatId,
+    ownerSubject: E2E_SUBJECT,
+  });
   await client.query(
     `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
      VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
@@ -302,7 +309,7 @@ async function seedTwoCardChat(
         row.seq,
         row.role,
         row.kind,
-        seal(JSON.stringify(row.blocks)),
+        chatKey.seal(JSON.stringify(row.blocks)),
         assistant ? ids.modelId : null,
         assistant ? 'anthropic' : null,
         assistant ? 'e2e-model' : null,
@@ -478,10 +485,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
       await freshPage.goto(`/${E2E_SLUG}/chat/${ids.chatId}`);
       await expect(freshPage.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
       const freshFrame = freshPage.frameLocator('iframe[title="Preview card"]');
-      await expect(freshFrame.locator('.done-headline')).toHaveText(
-        'Created issue OPS-99.',
-        COLD
-      );
+      await expect(freshFrame.locator('.done-headline')).toHaveText('Created issue OPS-99.', COLD);
       await expect(freshFrame.getByRole('button', { name: 'Create' })).toHaveCount(0);
     } finally {
       await freshContext.close();

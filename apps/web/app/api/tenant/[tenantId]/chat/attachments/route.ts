@@ -12,8 +12,8 @@ import { getOrgSettings } from '@renkei/settings';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
-import { resolveResourceAccess } from '@/lib/chat/access';
-import { getChatForOwner } from '@/lib/chat/store';
+import { resolveChatAccess, resolveProjectAccess } from '@/lib/chat/access';
+import type { ContentCipher } from '@/lib/chat/content-crypto';
 import { createAttachment, toAttachmentView } from '@/lib/chat/attachments';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
@@ -41,23 +41,22 @@ export async function PUT(
   const filename = url.searchParams.get('filename') ?? 'file';
   const contentType = url.searchParams.get('contentType') ?? request.headers.get('content-type');
 
+  // The file's text is sealed under the key of where it lives.
+  let cipher: ContentCipher;
   if (chatId) {
-    if (!isUuid(chatId) || !(await getChatForOwner(db, tenantId, session.subject, chatId))) {
-      return jsonError(404, 'not-found', 'No such chat');
-    }
+    const access = isUuid(chatId)
+      ? await resolveChatAccess(db, tenantId, session.subject, chatId)
+      : null;
+    if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
+    cipher = access.cipher;
   } else if (projectId) {
     if (!isUuid(projectId)) return jsonError(404, 'not-found', 'No such project');
-    const access = await resolveResourceAccess(
-      db,
-      tenantId,
-      session.subject,
-      'chat_project',
-      projectId
-    );
+    const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     if (access.role === 'viewer') {
       return jsonError(403, 'read-only', 'Only editors can add files to this project.');
     }
+    cipher = access.cipher;
   } else {
     return jsonError(400, 'invalid', 'Say which chat or project the file belongs to.');
   }
@@ -93,6 +92,7 @@ export async function PUT(
     bytes,
     maxBytes,
     redactor: settings ? createOutboundRedactor(tenantId, settings) : null,
+    cipher,
   });
   if (!created.ok) {
     switch (created.err.type) {

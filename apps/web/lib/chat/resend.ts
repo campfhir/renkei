@@ -22,7 +22,6 @@ import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
-import { attachmentPromptBlocks } from './attachments';
 import { openBlocks, type ContentCipher } from './content-crypto';
 import { getActiveTurn } from './turns';
 import { startChatTurn, type StartTurnError, type StartedTurn } from './start-turn';
@@ -192,22 +191,11 @@ export async function resendFromMessage(
     }
   }
 
-  const extraBlocks =
-    attachmentIds.length > 0
-      ? await attachmentPromptBlocks(
-          db,
-          input.tenantId,
-          input.session.subject,
-          access.chat.id,
-          attachmentIds
-        )
-      : [];
   const started = await startChatTurn(db, {
     tenantId: input.tenantId,
     session: input.session,
     chatId: access.chat.id,
     text,
-    extraBlocks,
     attachmentIds,
     llmModelId: input.llmModelId ?? null,
     voice: input.voice === true,

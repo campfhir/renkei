@@ -1,38 +1,23 @@
 /**
- * The two ciphers over the two envelopes: a chat's cipher seals `renc2`
- * and opens both its own rows and the deployment-key rows from before the
- * chat had a key; the legacy cipher opens only those, and names what it
- * cannot open instead of leaking bytes or throwing.
+ * The ciphers over the envelopes, strictly: a chat's cipher seals `renc2`
+ * under its key and opens only rows under that key — a row under another
+ * key, under the retired deployment key, or in plaintext is a marker,
+ * never bytes and never a throw; a person's cipher does the same over
+ * `uenc1`; an unavailable cipher refuses to seal and names why it cannot
+ * open.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import { encryptContent, parseEncryptionKey } from '@renkei/crypto';
+import { encryptContent, sealForUser } from '@renkei/crypto';
 import {
-  isSealed,
-  legacyCipher,
   openBlocks,
-  openStoredText,
   openText,
   resourceCipher,
   sealBlocks,
   sealText,
+  unavailableCipher,
+  userCipher,
 } from './content-crypto';
-
-const contentKey = randomBytes(32);
-const saved = {
-  content: process.env.CONTENT_ENCRYPTION_KEY,
-  token: process.env.TOKEN_ENCRYPTION_KEY,
-};
-
-beforeAll(() => {
-  process.env.CONTENT_ENCRYPTION_KEY = contentKey.toString('base64');
-});
-afterAll(() => {
-  if (saved.content === undefined) delete process.env.CONTENT_ENCRYPTION_KEY;
-  else process.env.CONTENT_ENCRYPTION_KEY = saved.content;
-  if (saved.token === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
-  else process.env.TOKEN_ENCRYPTION_KEY = saved.token;
-});
 
 const chatKey = { id: randomUUID(), key: randomBytes(32) };
 const otherKey = { id: randomUUID(), key: randomBytes(32) };
@@ -46,11 +31,13 @@ describe('resourceCipher', () => {
     if (!sealed.ok) return;
     expect(openText(sealed.val, cipher)).toBe('hello');
     expect(cipher.keyId).toBe(chatKey.id);
+    expect(cipher.unavailable).toBeNull();
   });
 
-  it('opens a legacy renc1 row from before the chat had a key', () => {
-    const legacy = encryptContent('older', contentKey);
-    expect(openText(legacy, cipher)).toBe('older');
+  it('does not open the retired deployment-key envelope, or plaintext', () => {
+    expect(openText(encryptContent('older', randomBytes(32)), cipher)).toContain('retired');
+    expect(openText('plain text', cipher)).toContain('content unavailable');
+    expect(openText('plain text', cipher)).not.toContain('plain text');
   });
 
   it('names a row sealed under another key, and never returns its bytes', () => {
@@ -74,48 +61,43 @@ describe('resourceCipher', () => {
     const sealed = sealBlocks(blocks, cipher);
     if (!sealed.ok) throw new Error('seal');
     expect(openBlocks(sealed.val, cipher)).toEqual(blocks);
-  });
-});
-
-describe('legacyCipher', () => {
-  it('is the default, seals renc1, and refuses renc2 with a marker', () => {
-    const sealed = sealText('plain default');
-    expect(sealed.ok && sealed.val.startsWith('renc1:')).toBe(true);
-    if (!sealed.ok) return;
-    expect(openText(sealed.val)).toBe('plain default');
-    expect(legacyCipher.keyId).toBeNull();
-    const keyed = sealText('keyed', resourceCipher(chatKey));
-    if (!keyed.ok) throw new Error('seal');
-    expect(openText(keyed.val)).toBe("[content unavailable: this chat's key was not opened]");
-    expect(openBlocks(keyed.val)).toEqual([
-      { type: 'text', text: "[content unavailable: this chat's key was not opened]" },
+    // A marker reads back as one text block, so a thread still renders.
+    expect(openBlocks('plain', cipher)).toEqual([
+      { type: 'text', text: expect.stringContaining('content unavailable') },
     ]);
   });
+});
 
-  it('fails to seal without a content key', () => {
-    const key = process.env.CONTENT_ENCRYPTION_KEY;
-    delete process.env.CONTENT_ENCRYPTION_KEY;
-    delete process.env.TOKEN_ENCRYPTION_KEY;
-    try {
-      expect(sealText('x').ok).toBe(false);
-      // A keyed cipher needs no deployment key to seal.
-      expect(sealText('x', resourceCipher(chatKey)).ok).toBe(true);
-    } finally {
-      process.env.CONTENT_ENCRYPTION_KEY = key;
-    }
+describe('userCipher', () => {
+  it('seals uenc1 under the person’s key and opens nothing else', () => {
+    const kek = randomBytes(32);
+    const cipher = userCipher(kek);
+    const sealed = sealText('a note', cipher);
+    expect(sealed.ok && sealed.val.startsWith('uenc1:')).toBe(true);
+    if (!sealed.ok) return;
+    expect(openText(sealed.val, cipher)).toBe('a note');
+    expect(openText(sealed.val, userCipher(randomBytes(32)))).toBe(
+      '[content unavailable: decryption failed]'
+    );
+    expect(openText(sealForUser('x', randomBytes(32)), cipher)).toContain('decryption failed');
+    const underChatKey = sealText('x', resourceCipher(chatKey));
+    expect(underChatKey.ok && openText(underChatKey.val, cipher)).toContain('retired');
+    expect(cipher.keyId).toBeNull();
   });
 });
 
-describe('openStoredText', () => {
-  it('opens an envelope and passes through a pre-envelope plaintext column', () => {
-    const cipher = resourceCipher(chatKey);
-    expect(openStoredText('a plaintext summary', cipher)).toBe('a plaintext summary');
-    const sealed = sealText('sealed summary', cipher);
-    if (!sealed.ok) throw new Error('seal');
-    expect(openStoredText(sealed.val, cipher)).toBe('sealed summary');
-    expect(isSealed(sealed.val)).toBe(true);
-    expect(isSealed(encryptContent('x', contentKey))).toBe(true);
-    expect(isSealed('v1.a.b.c')).toBe(false);
-    expect(parseEncryptionKey(contentKey.toString('base64')).ok).toBe(true);
+describe('unavailableCipher', () => {
+  it('refuses to seal and says why it cannot open', () => {
+    const locked = unavailableCipher('locked');
+    expect(locked.unavailable).toBe('locked');
+    const sealed = sealText('x', locked);
+    expect(!sealed.ok && sealed.err.type).toBe('CONTENT_KEY');
+    expect(openText('anything', locked)).toContain('locked');
+    expect(openText('anything', locked)).toContain('Preferences');
+    const missing = unavailableCipher('no-key');
+    expect(openText('anything', missing)).toContain('no key');
+    expect(openBlocks('anything', missing)).toEqual([
+      { type: 'text', text: expect.stringContaining('no key') },
+    ]);
   });
 });

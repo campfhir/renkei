@@ -38,7 +38,6 @@ import {
   type ProviderGrant,
 } from '@renkei/provider-grants';
 import { ok, err } from '@campfhir/safe-functions/helpers';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import {
   obApi,
@@ -110,8 +109,6 @@ function makeResolveAccess(spec: OnBaseConnectorSpec) {
     options?: { forceRefresh?: boolean }
   ): Promise<OnBaseAccess | string> {
     if (!context.subject) return 'No signed-in subject on this MCP session.';
-    const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-    if (!keyResult.ok) return 'Server misconfigured (encryption key).';
     const dbResult = getDatabase();
     if (!dbResult.ok) return 'Database unavailable.';
 
@@ -126,12 +123,7 @@ function makeResolveAccess(spec: OnBaseConnectorSpec) {
       return `${spec.label} is not connected. Connect it on the Connectors page, then try again.`;
     }
 
-    const grantResult = await getGrant(
-      spec.connector,
-      context.tenantId,
-      row.provider_account_id,
-      keyResult.val
-    );
+    const grantResult = await getGrant(spec.connector, context.tenantId, row.provider_account_id);
     if (!grantResult.ok || !grantResult.val) return `Could not read the ${spec.label} grant.`;
     let grant: ProviderGrant = grantResult.val;
 
@@ -175,7 +167,6 @@ function makeResolveAccess(spec: OnBaseConnectorSpec) {
         adapter,
         context.tenantId,
         grant.accountId,
-        keyResult.val,
         logger
       );
       if (!refreshed.ok) {

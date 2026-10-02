@@ -57,6 +57,15 @@ export type AuditAction =
   | 'admanager.instance.deleted'
   | 'admanager.connected'
   | 'admanager.disconnected'
+  /**
+   * A person's own encryption key (docs/user-encryption-keys-design.md):
+   * adopted a passphrase-derived key, unlocked or locked it, or went back
+   * to the managed one. Never the passphrase, never the key.
+   */
+  | 'encryption-key.adopted'
+  | 'encryption-key.unlocked'
+  | 'encryption-key.locked'
+  | 'encryption-key.reverted'
   | 'sandbox.secret.created'
   | 'sandbox.secret.unlocked'
   | 'sandbox.secret.locked'

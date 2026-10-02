@@ -150,3 +150,30 @@ describe('userKeyMaster', () => {
     expect(userKeyMaster().ok).toBe(false);
   });
 });
+
+describe('own-key derivation', () => {
+  it('derives from the passphrase alone, distinct from the managed key space', async () => {
+    const { deriveOwnKek, deriveUnlockKey, kekVerifier, verifierMatches } = await import('./keys');
+    const salt = generateUserKeySalt();
+    const a = deriveOwnKek('correct horse battery staple', salt, 't', 'alice');
+    expect(a.byteLength).toBe(32);
+    expect(deriveOwnKek('correct horse battery staple', salt, 't', 'alice').equals(a)).toBe(true);
+    expect(deriveOwnKek('correct horse battery stapl', salt, 't', 'alice').equals(a)).toBe(false);
+    expect(deriveOwnKek('correct horse battery staple', salt, 't', 'bob').equals(a)).toBe(false);
+    // NFKC: the same passphrase typed in a different normalization form is the same key.
+    expect(
+      deriveOwnKek('café', salt, 't', 'alice').equals(deriveOwnKek('café', salt, 't', 'alice'))
+    ).toBe(true);
+    // Not the managed KEK, and not the unlock key either.
+    expect(deriveUserKek(master, salt, 't', 'alice').equals(a)).toBe(false);
+    expect(
+      deriveUnlockKey(master, salt, 't', 'alice').equals(deriveUserKek(master, salt, 't', 'alice'))
+    ).toBe(false);
+
+    const verifier = kekVerifier(a);
+    expect(verifier).toMatch(/^[0-9a-f]{64}$/);
+    expect(verifierMatches(a, verifier)).toBe(true);
+    expect(verifierMatches(randomBytes(32), verifier)).toBe(false);
+    expect(verifierMatches(a, 'abc')).toBe(false);
+  });
+});

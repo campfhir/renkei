@@ -41,8 +41,8 @@ import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
 import { TASK_COMPLETE_TOOL } from './auto-mode';
 import { insertMessage, listTurnMessages, type StoredMessage } from './messages';
-import { chatCipherAsOwner } from './chat-keys';
-import { legacyCipher } from './content-crypto';
+import { cipherAsOwner } from './chat-keys';
+import { unavailableCipher } from './content-crypto';
 import { executeChatTurn } from './start-turn';
 import { getChatRow } from './store';
 import { interruptSubagentRunsOfTurn } from './subagent-runs';
@@ -195,7 +195,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   // and written as its owner (chat-keys.ts). A chat already gone leaves
   // the rows unopenable and the turn ends below either way.
   const chat = await getChatRow(db, turn.tenantId, turn.chatId);
-  const cipher = chat ? await chatCipherAsOwner(db, chat) : legacyCipher;
+  const cipher = chat ? await cipherAsOwner(db, 'chat', chat) : unavailableCipher('no-key');
   const rows = await listTurnMessages(db, turn.tenantId, turn.id, cipher);
   const seed = resumeSeedOf(rows, turn.startedAt);
   const plan = planResume(rows);

@@ -65,8 +65,6 @@ import {
 
 export interface AdManagerServerDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY; opens stored credentials. */
-  encryptionKey: Buffer;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /**
@@ -207,8 +205,7 @@ function isLegacyRestPath(path: string): boolean {
 
 export function createAdManagerServer(deps: AdManagerServerDeps): Server {
   const dial = deps.dial ?? dialUpstream;
-  const resolve =
-    deps.resolveTarget ?? ((target) => resolveTarget(deps.db, deps.encryptionKey, target));
+  const resolve = deps.resolveTarget ?? ((target) => resolveTarget(deps.db, target));
   const resolveOne =
     deps.resolveInstance ??
     ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
@@ -322,9 +319,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       // the web app seals and saves it.
       const tenantId = str(body.tenantId);
       const instanceId = str(body.instanceId);
-      const credentials: AdManagerCredentials | null = parseAdManagerCredentials(
-        body.credentials
-      );
+      const credentials: AdManagerCredentials | null = parseAdManagerCredentials(body.credentials);
       if (!tenantId || !instanceId || !credentials) {
         return sendError(
           response,

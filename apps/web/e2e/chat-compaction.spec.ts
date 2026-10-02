@@ -27,6 +27,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 test.use({
   // The mobile project's device descriptor asks for WebKit, which is not
@@ -80,11 +81,6 @@ function secretbox(plaintext: string, encoded: string, name: string): string {
   ].join('.');
 }
 
-function seal(plaintext: string): string {
-  const encoded = process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || '';
-  return 'renc1:' + secretbox(plaintext, encoded, 'TOKEN_ENCRYPTION_KEY');
-}
-
 function sealSecret(plaintext: string): string {
   return secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '', 'TOKEN_ENCRYPTION_KEY');
 }
@@ -116,6 +112,12 @@ async function insertMessage(
   }
 ): Promise<void> {
   const assistant = input.role === 'assistant';
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: input.chatId,
+    ownerSubject: E2E_SUBJECT,
+  });
   await client.query(
     `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
      VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10)`,
@@ -126,7 +128,7 @@ async function insertMessage(
       input.seq,
       input.role,
       input.kind,
-      seal(JSON.stringify(input.blocks)),
+      chatKey.seal(JSON.stringify(input.blocks)),
       assistant ? (input.modelId ?? null) : null,
       assistant ? 'anthropic' : null,
       assistant ? 'e2e-model' : null,

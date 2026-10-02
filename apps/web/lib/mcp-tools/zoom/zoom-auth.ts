@@ -27,7 +27,6 @@ import {
   ZoomAdapter,
   type ProviderGrant,
 } from '@renkei/provider-grants';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import { getZoomApp } from '@/lib/zoom-app';
 import { logger, secure } from '@/lib/logger';
@@ -54,8 +53,6 @@ export interface ZoomAccess {
  */
 export async function resolveZoomAccess(context: MCPToolContext): Promise<ZoomAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'Database unavailable.';
 
@@ -70,12 +67,7 @@ export async function resolveZoomAccess(context: MCPToolContext): Promise<ZoomAc
     return 'Zoom is not connected. Connect it on the Connectors page, then try again.';
   }
 
-  const grantResult = await getGrant(
-    ZOOM,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
+  const grantResult = await getGrant(ZOOM, context.tenantId, row.provider_account_id);
   if (!grantResult.ok || !grantResult.val) return 'Could not read the Zoom grant.';
   let grant: ProviderGrant = grantResult.val;
 
@@ -86,7 +78,6 @@ export async function resolveZoomAccess(context: MCPToolContext): Promise<ZoomAc
       new ZoomAdapter(app.clientSecret),
       context.tenantId,
       grant.accountId,
-      keyResult.val,
       logger
     );
     if (!refreshed.ok) {

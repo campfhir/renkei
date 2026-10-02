@@ -22,6 +22,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { keyFor } from './keys';
 
 test.use({
   launchOptions: {
@@ -74,12 +75,6 @@ function secretbox(plaintext: string, encoded: string): string {
     ciphertext.toString('base64'),
   ].join('.');
 }
-const seal = (plaintext: string) =>
-  'renc1:' +
-  secretbox(
-    plaintext,
-    process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || ''
-  );
 const sealSecret = (plaintext: string) =>
   secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
 
@@ -130,6 +125,12 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
      VALUES ($1, $2, $3, $4, $5, NOW())`,
     [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
   );
+  const chatKey = await keyFor(client, {
+    tenantId: E2E_TENANT_ID,
+    kind: 'chat',
+    resourceId: ids.chatId,
+    ownerSubject: E2E_SUBJECT,
+  });
   await client.query(
     `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
      VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
@@ -140,9 +141,7 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
       seq: 1,
       role: 'user',
       kind: 'prompt',
-      blocks: [
-        { type: 'text', text: 'Give Jane Doe the same groups as Sam Source.' },
-      ],
+      blocks: [{ type: 'text', text: 'Give Jane Doe the same groups as Sam Source.' }],
     },
     {
       seq: 2,
@@ -154,7 +153,12 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
           type: 'tool_use',
           id: ids.toolUseId,
           name: 'admanager_copy_group_membership_preview',
-          input: { instanceId: 'i1', domainName: 'corp.example.com', targetSam: 'jdoe', sourceSam: 'ssource' },
+          input: {
+            instanceId: 'i1',
+            domainName: 'corp.example.com',
+            targetSam: 'jdoe',
+            sourceSam: 'ssource',
+          },
         },
       ],
     },
@@ -187,7 +191,7 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
         row.seq,
         row.role,
         row.kind,
-        seal(JSON.stringify(row.blocks)),
+        chatKey.seal(JSON.stringify(row.blocks)),
         assistant ? ids.modelId : null,
         assistant ? 'anthropic' : null,
         assistant ? 'e2e-model' : null,
@@ -346,9 +350,7 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
   }
 });
 
-test('the card still renders at phone width with a long group list', async ({
-  page,
-}, testInfo) => {
+test('the card still renders at phone width with a long group list', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();

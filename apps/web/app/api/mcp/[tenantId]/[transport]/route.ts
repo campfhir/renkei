@@ -84,14 +84,7 @@ async function resolveJsmGrant(
     return null;
   };
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return failed('encryption key unavailable');
-  const grantResult = await getGrant(
-    ATLASSIAN_JSM,
-    tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
+  const grantResult = await getGrant(ATLASSIAN_JSM, tenantId, row.provider_account_id);
   if (!grantResult.ok) return failed('grant read/refresh failed');
   if (!grantResult.val) return failed('grant row disappeared');
   const grant = grantResult.val;

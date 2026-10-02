@@ -12,7 +12,6 @@
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import type { DB } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { ATLASSIAN, ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
 import { graphUploadViaSession } from '@renkei/connector-microsoft';
 import { childPath as fileshareChildPath } from '@renkei/connector-fileshares';
@@ -77,9 +76,6 @@ async function resolveAtlassian(
   slot: UploadSlotRow,
   preferJsm: boolean
 ): Promise<{ accessToken: string; cloudId: string } | string> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Token encryption is not configured on this deployment.';
-
   const candidates: { provider: string; accountId: string }[] = [];
   if (preferJsm) {
     const jsmRow = await db
@@ -95,12 +91,7 @@ async function resolveAtlassian(
   candidates.push({ provider: ATLASSIAN, accountId: slot.account_id });
 
   for (const candidate of candidates) {
-    const grantResult = await getGrant(
-      candidate.provider,
-      slot.tenant_id,
-      candidate.accountId,
-      keyResult.val
-    );
+    const grantResult = await getGrant(candidate.provider, slot.tenant_id, candidate.accountId);
     if (!grantResult.ok || !grantResult.val) continue;
     const grant = grantResult.val;
     const site = readAtlassianMetadata(grant.metadata);
@@ -375,7 +366,10 @@ async function webexAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<Uplo
  * could not ride the tool call, so the two-step delivery happens here at
  * byte-arrival time instead.
  */
-async function webexNoteToSelfAttachment(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+async function webexNoteToSelfAttachment(
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   const access = await resolveWebexAccess(graphContextOf(slot) as MCPToolContext);
   if (typeof access === 'string') return { ok: false, detail: access };
@@ -563,7 +557,11 @@ export async function finalizeUploadSlot(
 ): Promise<UploadOutcome> {
   await db
     .updateTable('upload_slots')
-    .set({ status: outcome.ok ? 'completed' : 'failed', result: outcome.detail, completed_at: sql`NOW()` })
+    .set({
+      status: outcome.ok ? 'completed' : 'failed',
+      result: outcome.detail,
+      completed_at: sql`NOW()`,
+    })
     .where('id', '=', slot.id)
     .execute();
   return outcome;
