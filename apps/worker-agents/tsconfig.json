@@ -13,6 +13,7 @@
     "types": ["node", "jest"],
     "paths": {
       "@renkei/user-keys": ["../../packages/user-keys/src/index.ts"],
+      "@renkei/delegate-client": ["../../packages/delegate-client/src/index.ts"],
       "@renkei/db": ["../../packages/db/src/index.ts"],
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
       "@renkei/notifications": ["../../packages/notifications/src/index.ts"],

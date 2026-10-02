@@ -6,7 +6,7 @@
  * can be rendered on the server and refreshed from the route.
  */
 
-import type { UserKeyStatus } from '@renkei/user-keys';
+import type { DelegateKeyStatus } from '@renkei/delegate-client';
 
 export interface EncryptionKeyView {
   mode: 'managed' | 'own';
@@ -17,7 +17,7 @@ export interface EncryptionKeyView {
   rotatedAt: string | null;
 }
 
-export function toEncryptionKeyView(status: UserKeyStatus): EncryptionKeyView {
+export function toEncryptionKeyView(status: DelegateKeyStatus): EncryptionKeyView {
   return {
     mode: status.mode,
     locked: status.locked,

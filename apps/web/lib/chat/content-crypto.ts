@@ -23,10 +23,7 @@ import {
   decryptWithResourceKey,
   encryptWithResourceKey,
   isResourceEncrypted,
-  isUserSealed,
-  openForUser,
   parseResourceEnvelope,
-  sealForUser,
 } from '@renkei/crypto';
 import type { ResourceKey } from '@renkei/user-keys';
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -38,7 +35,9 @@ export type CipherUnavailable =
   /** The owner is on their own key and has not unlocked it. */
   | 'locked'
   /** The resource has no key (not yet re-sealed by the sweep) or none could be opened. */
-  | 'no-key';
+  | 'no-key'
+  /** The delegate, the one process that holds keys, could not be reached. */
+  | 'delegate';
 
 /** How one chat's, project's or person's content is sealed and opened. */
 export interface ContentCipher {
@@ -53,6 +52,7 @@ export interface ContentCipher {
 const MARKERS = {
   locked: '[content unavailable: your encryption key is locked — unlock it in Preferences]',
   'no-key': '[content unavailable: no key for this content — run the rekey sweep]',
+  delegate: '[content unavailable: the key service could not be reached — try again shortly]',
   legacy: '[content unavailable: sealed under the retired deployment key — run the rekey sweep]',
   other: '[content unavailable: sealed under another key]',
   failed: '[content unavailable: decryption failed]',
@@ -80,18 +80,9 @@ export function resourceCipher(resource: ResourceKey): ContentCipher {
   };
 }
 
-/** A person's own key, for content that is theirs alone (`uenc1`). */
-export function userCipher(kek: Buffer): ContentCipher {
-  return {
-    keyId: null,
-    unavailable: null,
-    seal: (text) => ok(sealForUser(text, kek)),
-    open: (stored) => {
-      if (!isUserSealed(stored)) return MARKERS.legacy;
-      const opened = openForUser(stored, kek);
-      return opened.ok ? opened.val : MARKERS.failed;
-    },
-  };
+/** The marker a row renders as when it cannot be opened for the given reason. */
+export function unavailableMarker(reason: CipherUnavailable | 'failed'): string {
+  return MARKERS[reason];
 }
 
 /**
@@ -102,7 +93,9 @@ export function unavailableCipher(reason: CipherUnavailable): ContentCipher {
   const message =
     reason === 'locked'
       ? 'Your encryption key is locked. Unlock it in Preferences to continue.'
-      : 'No encryption key is available for this content.';
+      : reason === 'delegate'
+        ? 'The key service could not be reached. Try again shortly.'
+        : 'No encryption key is available for this content.';
   return {
     keyId: null,
     unavailable: reason,

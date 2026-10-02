@@ -18,6 +18,12 @@ export default {
     '^@renkei/agents/step-prompts$': '<rootDir>/../../packages/agents/src/step-prompts.ts',
     '^@renkei/agent-llm$': '<rootDir>/../../packages/agent-llm/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
+    '^@renkei/user-keys$': '<rootDir>/../../packages/user-keys/src/index.ts',
+    '^@renkei/delegate-client$': '<rootDir>/../../packages/delegate-client/src/index.ts',
+    // Tests run the delegate in-process (lib/test-support/delegate.ts); the
+    // web app itself only ever reaches it over HTTP.
+    '^@renkei/worker-delegate$': '<rootDir>/../../apps/worker-delegate/src/server.ts',
+    '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
     '^@renkei/notifications$': '<rootDir>/../../packages/notifications/src/index.ts',
     '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',

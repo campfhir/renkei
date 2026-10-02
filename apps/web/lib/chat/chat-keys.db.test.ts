@@ -27,9 +27,15 @@ import { appendProjectMemory, readProjectMemory } from './memory';
 import { appendUserMemory, readUserMemory } from './user-memory';
 import { searchChatMessages } from './search';
 
+// The delegate is the one process that holds keys; the web app reaches it
+// over HTTP, so these tests run it in-process on a loopback port, one per
+// describe block (each block opens and closes its own database pool).
+import { useTestDelegate } from '@/lib/test-support/delegate';
+
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('chat and project keys through the chat', () => {
+  useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const owner = `owner-${tenantId.slice(0, 8)}`;

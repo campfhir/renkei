@@ -8,7 +8,7 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import { encryptContent, sealForUser } from '@renkei/crypto';
+import { encryptContent } from '@renkei/crypto';
 import {
   openBlocks,
   openText,
@@ -16,7 +16,6 @@ import {
   sealBlocks,
   sealText,
   unavailableCipher,
-  userCipher,
 } from './content-crypto';
 
 const chatKey = { id: randomUUID(), key: randomBytes(32) };
@@ -65,24 +64,6 @@ describe('resourceCipher', () => {
     expect(openBlocks('plain', cipher)).toEqual([
       { type: 'text', text: expect.stringContaining('content unavailable') },
     ]);
-  });
-});
-
-describe('userCipher', () => {
-  it('seals uenc1 under the person’s key and opens nothing else', () => {
-    const kek = randomBytes(32);
-    const cipher = userCipher(kek);
-    const sealed = sealText('a note', cipher);
-    expect(sealed.ok && sealed.val.startsWith('uenc1:')).toBe(true);
-    if (!sealed.ok) return;
-    expect(openText(sealed.val, cipher)).toBe('a note');
-    expect(openText(sealed.val, userCipher(randomBytes(32)))).toBe(
-      '[content unavailable: decryption failed]'
-    );
-    expect(openText(sealForUser('x', randomBytes(32)), cipher)).toContain('decryption failed');
-    const underChatKey = sealText('x', resourceCipher(chatKey));
-    expect(underChatKey.ok && openText(underChatKey.val, cipher)).toContain('retired');
-    expect(cipher.keyId).toBeNull();
   });
 });
 

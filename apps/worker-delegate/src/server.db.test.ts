@@ -9,7 +9,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { getDatabase, closeDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
@@ -17,6 +16,14 @@ import { setGrant, GITHUB } from '@renkei/provider-grants';
 import { createDelegateServer } from './server';
 
 process.env.USER_KEY_ENCRYPTION_KEY ||= process.env.TOKEN_ENCRYPTION_KEY;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorType(json: Record<string, unknown>): string | null {
+  return isRecord(json.error) && typeof json.error.type === 'string' ? json.error.type : null;
+}
 
 const describeDb =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
@@ -73,7 +80,8 @@ describeDb('worker-delegate', () => {
       fetchImpl,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address() as AddressInfo;
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('no port');
     base = `http://127.0.0.1:${address.port}`;
   });
 
@@ -125,7 +133,7 @@ describeDb('worker-delegate', () => {
 
     const stranger = await op('resource-key/open', { ...ref, subject: friend });
     expect(stranger.status).toBe(403);
-    expect((stranger.json.error as { type: string }).type).toBe('NO_ACCESS');
+    expect(errorType(stranger.json)).toBe('NO_ACCESS');
 
     expect(
       (await op('resource-key/share', { ...ref, fromSubject: owner, toSubject: friend })).status
@@ -141,7 +149,7 @@ describeDb('worker-delegate', () => {
         { resourceId: randomUUID(), subject: friend },
       ],
     });
-    expect(Object.keys(many.json.keys as object)).toEqual([chatId]);
+    expect(Object.keys(isRecord(many.json.keys) ? many.json.keys : {})).toEqual([chatId]);
 
     expect((await op('resource-key/revoke', { ...ref, subject: friend })).json.revoked).toBe(true);
     expect((await op('resource-key/open', { ...ref, subject: friend })).status).toBe(403);
@@ -157,7 +165,9 @@ describeDb('worker-delegate', () => {
       values: ['one', 'two'],
     });
     expect(sealed.status).toBe(200);
-    const [a, b] = sealed.json.sealed as string[];
+    const list = Array.isArray(sealed.json.sealed) ? sealed.json.sealed : [];
+    const a = String(list[0]);
+    const b = String(list[1]);
     expect(a.startsWith('uenc1:')).toBe(true);
     const opened = await op('user-sealed/open', {
       tenantId,

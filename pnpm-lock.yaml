@@ -115,6 +115,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../../packages/delegate-client
       '@renkei/document-render':
         specifier: workspace:*
         version: link:../../packages/document-render
@@ -329,6 +332,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../../packages/delegate-client
       '@renkei/document-text':
         specifier: workspace:*
         version: link:../../packages/document-text
@@ -359,9 +365,6 @@ importers:
       '@renkei/settings':
         specifier: workspace:*
         version: link:../../packages/settings
-      '@renkei/user-keys':
-        specifier: workspace:*
-        version: link:../../packages/user-keys
       '@renkei/user-prefs':
         specifier: workspace:*
         version: link:../../packages/user-prefs
@@ -463,6 +466,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../../packages/delegate-client
       '@renkei/mcp-client':
         specifier: workspace:*
         version: link:../../packages/mcp-client
@@ -478,9 +484,6 @@ importers:
       '@renkei/tool-outcomes':
         specifier: workspace:*
         version: link:../../packages/tool-outcomes
-      '@renkei/user-keys':
-        specifier: workspace:*
-        version: link:../../packages/user-keys
       '@renkei/user-prefs':
         specifier: workspace:*
         version: link:../../packages/user-prefs

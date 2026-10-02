@@ -15,7 +15,7 @@ import { getChatToolPermissionPrefs } from '@/lib/chat/permission-prefs';
 import { listChatActToolGroups } from '@/lib/chat/permission-catalog';
 import { loadVoiceAvailability } from '@/lib/voice/availability';
 import { listImageModels } from '@/lib/chat/models';
-import { getUserKeyStatus } from '@renkei/user-keys';
+import { delegateClient } from '@renkei/delegate-client';
 import { toEncryptionKeyView } from '@/lib/encryption-key-view';
 import PreferencesForm from './preferences-form';
 import DefaultToolsForm from './default-tools-form';
@@ -84,7 +84,8 @@ export default async function PreferencesPage({
     // Empty when the org has no image generation model; the section is then left out.
     dbResult.ok ? listImageModels(dbResult.val, tenant.id) : [],
     // Managed until they say otherwise; a missing row reads as managed too.
-    dbResult.ok ? getUserKeyStatus(dbResult.val, tenant.id, session.subject) : null,
+    // The delegate answers; unreachable, and the section is left out.
+    delegateClient().getUserKeyStatus(tenant.id, session.subject),
   ]);
 
   const chatToolOptions = chatConnectors.map((option) => ({
@@ -160,9 +161,9 @@ export default async function PreferencesPage({
           <ImageModelForm tenantId={tenant.id} initial={imagePrefs} models={imageModels} />
         </div>
       ) : null}
-      {keyStatus ? (
+      {keyStatus.ok ? (
         <div className="mb-6">
-          <EncryptionKeyForm tenantId={tenant.id} initial={toEncryptionKeyView(keyStatus)} />
+          <EncryptionKeyForm tenantId={tenant.id} initial={toEncryptionKeyView(keyStatus.val)} />
         </div>
       ) : null}
       <div className="mb-6">

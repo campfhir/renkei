@@ -19,7 +19,13 @@
  *   - A PERSON's key is theirs alone: their own memory is sealed directly
  *     under it, never wrapped for anyone else.
  *
- * "As the owner" works because the server derives a managed KEK from the
+ * No key is derived here. Every key comes from the delegate
+ * (docs/delegate-key-design.md), the one process that holds the master:
+ * this module asks it for a resource's data key and builds the cipher
+ * around that, so the web app handles exactly the key of the thing the
+ * request is about and never a person's.
+ *
+ * "As the owner" works because the delegate derives a managed KEK from the
  * master. A person on their OWN key (bring-your-own-key) changes that:
  * while their key is locked, nothing of theirs opens as them — not a
  * resumed turn, not a worker's note. Every path here answers that with an
@@ -30,25 +36,13 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import {
-  createResourceKey,
-  deleteResourceKey,
-  ensureResourceKey,
-  ensureUserKek,
-  openResourceKey,
-  openResourceKeys,
-  revokeResourceKey,
-  shareResourceKey,
-  type OpenKeyError,
-  type ResourceKey,
-  type ResourceKeyKind,
-  type ResourceRef,
-} from '@renkei/user-keys';
+import type { ResourceKey, ResourceKeyKind, ResourceRef } from '@renkei/user-keys';
+import { delegateClient, type KeyOpError } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
 import {
   resourceCipher,
   unavailableCipher,
-  userCipher,
+  type CipherUnavailable,
   type ContentCipher,
 } from './content-crypto';
 
@@ -71,9 +65,22 @@ function warn(message: string, fields: Record<string, unknown>): void {
   logger.warn(message, { component: 'chat/keys', ...fields });
 }
 
-/** The cipher for a key-store failure: locked reads as locked, everything else as no key. */
-function failedCipher(reason: OpenKeyError): ContentCipher {
-  return unavailableCipher(reason === 'KEY_LOCKED' ? 'locked' : 'no-key');
+/** Why content is unavailable, from the key op's verdict: locked, the delegate out of reach, or no key. */
+export function unavailableReasonOf(reason: KeyOpError): CipherUnavailable {
+  if (reason === 'KEY_LOCKED') return 'locked';
+  if (
+    reason === 'DELEGATE_UNCONFIGURED' ||
+    reason === 'DELEGATE_UNREACHABLE' ||
+    reason === 'DELEGATE_ERROR'
+  ) {
+    return 'delegate';
+  }
+  return 'no-key';
+}
+
+/** The cipher for a key-store failure. */
+function failedCipher(reason: KeyOpError): ContentCipher {
+  return unavailableCipher(unavailableReasonOf(reason));
 }
 
 /** Everyone the resource is currently shared with, for wrapping a newly minted key. */
@@ -102,12 +109,13 @@ async function ensureKey(
   db: Kysely<DB>,
   kind: KeyedKind,
   resource: KeyedResource
-): Promise<ResourceKey | OpenKeyError> {
+): Promise<ResourceKey | KeyOpError> {
+  const keys = delegateClient();
   const target = ref(kind, resource.tenantId, resource.id);
-  const before = await openResourceKey(db, target, resource.ownerSubject);
+  const before = await keys.openResourceKey(target, resource.ownerSubject);
   if (before.ok) return before.val;
   if (before.err.type !== 'NO_KEY') return before.err.type;
-  const created = await ensureResourceKey(db, target, resource.ownerSubject);
+  const created = await keys.ensureResourceKey(target, resource.ownerSubject);
   if (!created.ok) {
     warn('key could not be created: {reason}', {
       kind,
@@ -118,7 +126,7 @@ async function ensureKey(
     return created.err.type;
   }
   for (const grantee of await activeGrantees(db, kind, resource.tenantId, resource.id)) {
-    const shared = await shareResourceKey(db, target, resource.ownerSubject, grantee);
+    const shared = await keys.shareResourceKey(target, resource.ownerSubject, grantee);
     if (!shared.ok) {
       warn('key could not be wrapped for an existing viewer: {reason}', {
         kind,
@@ -137,8 +145,7 @@ export async function createKey(
   kind: KeyedKind,
   resource: KeyedResource
 ): Promise<ResourceKey | null> {
-  const created = await createResourceKey(
-    db,
+  const created = await delegateClient().createResourceKey(
     ref(kind, resource.tenantId, resource.id),
     resource.ownerSubject
   );
@@ -170,14 +177,15 @@ export async function cipherFor(
     return typeof key === 'string' ? failedCipher(key) : resourceCipher(key);
   }
   if (via === 'grant') {
-    const own = await openResourceKey(db, target, viewerSubject);
+    const keys = delegateClient();
+    const own = await keys.openResourceKey(target, viewerSubject);
     if (own.ok) return resourceCipher(own.val);
     if (own.err.type === 'KEY_LOCKED') return unavailableCipher('locked');
     if (own.err.type === 'NO_ACCESS') {
       // The access grant stands; the wrapping is missing. Heal it.
-      const healed = await shareResourceKey(db, target, resource.ownerSubject, viewerSubject);
+      const healed = await keys.shareResourceKey(target, resource.ownerSubject, viewerSubject);
       if (healed.ok) {
-        const reopened = await openResourceKey(db, target, viewerSubject);
+        const reopened = await keys.openResourceKey(target, viewerSubject);
         if (reopened.ok) return resourceCipher(reopened.val);
       }
     }
@@ -235,17 +243,6 @@ export async function projectCipherById(
   });
 }
 
-/** A person's own key as a cipher — for their memory, which is theirs alone. */
-export async function userCipherFor(
-  db: Kysely<DB>,
-  tenantId: string,
-  subject: string
-): Promise<ContentCipher> {
-  const kek = await ensureUserKek(db, tenantId, subject);
-  if (kek.ok) return userCipher(kek.val.key);
-  return unavailableCipher(kek.err.type === 'KEY_LOCKED' ? 'locked' : 'no-key');
-}
-
 /**
  * Ciphers for many chats one person may read — the sidebar's set, for
  * search. Each chat is first tried as the viewer (their own chats and
@@ -260,23 +257,26 @@ export async function chatCiphersFor(
 ): Promise<Map<string, ContentCipher>> {
   const out = new Map<string, ContentCipher>();
   if (chats.length === 0) return out;
-  const asViewer = await openResourceKeys(
-    db,
+  const keys = delegateClient();
+  const asViewer = await keys.openResourceKeys(
     tenantId,
     'chat',
     chats.map((chat) => ({ resourceId: chat.id, subject: viewerSubject }))
   );
+  if (!asViewer.ok) {
+    for (const chat of chats) out.set(chat.id, failedCipher(asViewer.err.type));
+    return out;
+  }
   const rest = chats.filter(
-    (chat) => !asViewer.has(chat.id) && chat.ownerSubject !== viewerSubject
+    (chat) => !asViewer.val.has(chat.id) && chat.ownerSubject !== viewerSubject
   );
-  const asOwner = await openResourceKeys(
-    db,
+  const asOwner = await keys.openResourceKeys(
     tenantId,
     'chat',
     rest.map((chat) => ({ resourceId: chat.id, subject: chat.ownerSubject }))
   );
   for (const chat of chats) {
-    const key = asViewer.get(chat.id) ?? asOwner.get(chat.id);
+    const key = asViewer.val.get(chat.id) ?? (asOwner.ok ? asOwner.val.get(chat.id) : undefined);
     out.set(chat.id, key ? resourceCipher(key) : unavailableCipher('no-key'));
   }
   return out;
@@ -295,8 +295,7 @@ export async function shareKey(
 ): Promise<boolean> {
   const key = await ensureKey(db, kind, resource);
   if (typeof key === 'string') return false;
-  const shared = await shareResourceKey(
-    db,
+  const shared = await delegateClient().shareResourceKey(
     ref(kind, resource.tenantId, resource.id),
     resource.ownerSubject,
     granteeSubject
@@ -314,21 +313,21 @@ export async function shareKey(
 
 /** Unsharing: the grantee's wrapping is forgotten; the key and the owner's stay. */
 export async function revokeKey(
-  db: Kysely<DB>,
+  _db: Kysely<DB>,
   kind: KeyedKind,
   tenantId: string,
   resourceId: string,
   granteeSubject: string
 ): Promise<void> {
-  await revokeResourceKey(db, ref(kind, tenantId, resourceId), granteeSubject);
+  await delegateClient().revokeResourceKey(ref(kind, tenantId, resourceId), granteeSubject);
 }
 
 /** The resource is gone: so is its key, with every wrapping. */
 export async function deleteKey(
-  db: Kysely<DB>,
+  _db: Kysely<DB>,
   kind: KeyedKind,
   tenantId: string,
   resourceId: string
 ): Promise<void> {
-  await deleteResourceKey(db, ref(kind, tenantId, resourceId));
+  await delegateClient().deleteResourceKey(ref(kind, tenantId, resourceId));
 }

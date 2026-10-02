@@ -1,8 +1,9 @@
 /**
  * A system note dropped into a chat's own transcript — the same
  * envelope apps/web/lib/chat/content-crypto.ts's sealBlocks writes: the
- * chat's own key (`renc2`, migration 133), opened on its owner's behalf
- * through @renkei/user-keys, so the chat page reads it exactly like a
+ * chat's own key (`renc2`, migration 133), handed out on its owner's
+ * behalf by the delegate (the one process that holds keys), so the chat
+ * page reads it exactly like a
  * person's own note from the code pane (lib/code/chat-commits.ts's own
  * doc comment on that pattern). A chat whose owner's key is locked (their
  * own key, not unlocked) cannot take the note: the error says so and the
@@ -21,7 +22,7 @@
 import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
 import { encryptWithResourceKey } from '@renkei/crypto';
-import { ensureResourceKey } from '@renkei/user-keys';
+import { delegateClient } from '@renkei/delegate-client';
 
 /** The note's blocks sealed the way the chat's own rows are: under the chat's key, as its owner. */
 async function sealNote(
@@ -37,8 +38,7 @@ async function sealNote(
     .where('id', '=', chatId)
     .executeTakeFirst();
   if (!chat) throw new Error('the chat is gone');
-  const key = await ensureResourceKey(
-    db,
+  const key = await delegateClient().ensureResourceKey(
     { tenantId, kind: 'chat', resourceId: chatId },
     chat.owner_subject
   );

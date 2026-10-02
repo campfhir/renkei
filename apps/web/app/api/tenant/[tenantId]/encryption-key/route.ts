@@ -12,21 +12,15 @@
  *   lock    forget it now;
  *   revert  back to the managed key, with the passphrase as proof.
  *
- * The passphrase travels in the body of this one request and is used to
- * derive the key; it is never stored and never logged.
+ * The passphrase travels in the body of this one request to the delegate,
+ * which derives the key from it; it is never stored and never logged, and
+ * this process never holds the key it derives.
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import {
-  adoptOwnKey,
-  getUserKeyStatus,
-  lockOwnKey,
-  revertToManagedKey,
-  unlockOwnKey,
-  OWN_KEY_UNLOCK_DEFAULT_MS,
-  OWN_KEY_UNLOCK_MAX_MS,
-} from '@renkei/user-keys';
+import { OWN_KEY_UNLOCK_DEFAULT_MS, OWN_KEY_UNLOCK_MAX_MS } from '@renkei/user-keys';
+import { delegateClient } from '@renkei/delegate-client';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { toEncryptionKeyView } from '@/lib/encryption-key-view';
@@ -38,10 +32,10 @@ export async function GET(
   const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  return NextResponse.json(
-    toEncryptionKeyView(await getUserKeyStatus(db, tenantId, session.subject))
-  );
+  const { session } = ready.context;
+  const status = await delegateClient().getUserKeyStatus(tenantId, session.subject);
+  if (!status.ok) return jsonError(503, 'delegate', 'The key service could not be reached.');
+  return NextResponse.json(toEncryptionKeyView(status.val));
 }
 
 function unlockMsOf(hours: unknown): number {
@@ -58,21 +52,23 @@ export async function POST(
   const { tenantId } = await params;
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
+  const keys = delegateClient();
   const body = await readJsonBody(request);
   const action = body.action;
   const passphrase = typeof body.passphrase === 'string' ? body.passphrase : '';
   const unlockMs = unlockMsOf(body.hours);
 
   if (action === 'lock') {
-    const status = await lockOwnKey(db, tenantId, session.subject);
+    const status = await keys.lockOwnKey(tenantId, session.subject);
+    if (!status.ok) return jsonError(503, 'delegate', 'The key service could not be reached.');
     recordAuditEvent({ tenantId, actorSubject: session.subject, action: 'encryption-key.locked' });
-    return NextResponse.json(toEncryptionKeyView(status));
+    return NextResponse.json(toEncryptionKeyView(status.val));
   }
   if (!passphrase) return jsonError(400, 'passphrase', 'Enter your passphrase.');
 
   if (action === 'adopt') {
-    const adopted = await adoptOwnKey(db, tenantId, session.subject, passphrase, { unlockMs });
+    const adopted = await keys.adoptOwnKey(tenantId, session.subject, passphrase, { unlockMs });
     if (!adopted.ok) {
       switch (adopted.err.type) {
         case 'PASSPHRASE_TOO_SHORT':
@@ -89,7 +85,7 @@ export async function POST(
     return NextResponse.json(toEncryptionKeyView(adopted.val));
   }
   if (action === 'unlock') {
-    const unlocked = await unlockOwnKey(db, tenantId, session.subject, passphrase, { unlockMs });
+    const unlocked = await keys.unlockOwnKey(tenantId, session.subject, passphrase, { unlockMs });
     if (!unlocked.ok) {
       switch (unlocked.err.type) {
         case 'WRONG_PASSPHRASE':
@@ -113,7 +109,7 @@ export async function POST(
     return NextResponse.json(toEncryptionKeyView(unlocked.val));
   }
   if (action === 'revert') {
-    const reverted = await revertToManagedKey(db, tenantId, session.subject, passphrase);
+    const reverted = await keys.revertToManagedKey(tenantId, session.subject, passphrase);
     if (!reverted.ok) {
       switch (reverted.err.type) {
         case 'WRONG_PASSPHRASE':

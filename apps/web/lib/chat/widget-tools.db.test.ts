@@ -20,10 +20,16 @@ import {
 import { insertMessage } from './messages';
 import { chatCipherById } from './chat-keys';
 
+// The delegate is the one process that holds keys; the web app reaches it
+// over HTTP, so these tests run it in-process on a loopback port, one per
+// describe block (each block opens and closes its own database pool).
+import { useTestDelegate } from '@/lib/test-support/delegate';
+
 const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
 
 maybe('recordWidgetModelContext', () => {
+  useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   /** A tenant with no model configured at all. */
@@ -183,6 +189,7 @@ maybe('recordWidgetModelContext', () => {
  * (chat-view.ts's batch read for one chat's whole message list).
  */
 maybe('chat widget decisions', () => {
+  useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;
@@ -283,6 +290,7 @@ maybe('chat widget decisions', () => {
  * have a recorded decision — opens exactly one turn, informed by both.
  */
 maybe('recordWidgetModelContext: batches decisions from one reply', () => {
+  useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;

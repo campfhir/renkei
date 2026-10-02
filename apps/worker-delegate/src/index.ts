@@ -43,5 +43,5 @@ void runWorker({
   logger,
   attachPersistentLogging,
   createServer: ({ db, encryptionKey, apiKeys }) =>
-    createDelegateServer({ db, encryptionKey, apiKeys }),
+    createDelegateServer({ db, encryptionKey, apiKeys, logger }),
 });

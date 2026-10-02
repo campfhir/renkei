@@ -54,9 +54,8 @@ import {
   type UserKeyStatus,
 } from '@renkei/user-keys';
 import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
-import { logger } from './logger';
 import { sendError } from './errors';
-import { Grants } from './grants';
+import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
 
 export interface DelegateServerDeps {
   db: Kysely<DB>;
@@ -66,6 +65,8 @@ export interface DelegateServerDeps {
   apiKeys: string[];
   /** Injected in tests; production dials the provider. */
   fetchImpl?: typeof fetch;
+  /** The worker's logger; silent when omitted (tests, in-process use). */
+  logger?: DelegateLogger;
 }
 
 /** A batch of values to seal or open; a chat's whole memory list fits many times over. */
@@ -116,7 +117,8 @@ function unlockMsOf(value: unknown): number | undefined {
 
 export function createDelegateServer(deps: DelegateServerDeps): Server {
   const { db } = deps;
-  const grants = new Grants(db, deps.encryptionKey, deps.fetchImpl);
+  const logger = deps.logger ?? silentDelegateLogger;
+  const grants = new Grants(db, deps.encryptionKey, logger, deps.fetchImpl);
 
   type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
 

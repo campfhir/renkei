@@ -26,8 +26,28 @@ export interface GrantRef {
   pending?: string;
 }
 
-/** `fetch` with the credential supplied by whoever built it. */
-export type AuthedFetch = (url: string, init?: RequestInit) => Promise<Response>;
+/**
+ * `fetch` with the credential supplied by whoever built it, plus a stable
+ * name for the grant behind it (`provider:tenant:account-or-subject`),
+ * for the per-grant gates and caches that used to key on the token.
+ */
+export interface AuthedFetch {
+  (url: string, init?: RequestInit): Promise<Response>;
+  readonly grantKey: string;
+}
+
+/** The stable name of a grant: what the fetch layers gate and cache by. */
+export function grantKeyOf(grant: GrantRef): string {
+  return `${grant.provider}:${grant.tenantId}:${grant.accountId ?? grant.subject ?? grant.pending ?? ''}`;
+}
+
+/** An `AuthedFetch` from any fetch-shaped function and a grant name. */
+export function authedFetch(
+  send: (url: string, init?: RequestInit) => Promise<Response>,
+  grantKey: string
+): AuthedFetch {
+  return Object.assign(send, { grantKey });
+}
 
 export interface DelegateFetchOptions {
   /** Follow redirects at the delegate (default) or hand the 3xx back untouched. */
@@ -182,7 +202,7 @@ export class DelegateGrants {
 
   /** An `AuthedFetch` bound to one grant, for the clients that take a fetcher. */
   fetcher(grant: GrantRef, options: DelegateFetchOptions = {}): AuthedFetch {
-    return (url, init) => this.fetch(grant, url, init, options);
+    return authedFetch((url, init) => this.fetch(grant, url, init, options), grantKeyOf(grant));
   }
 
   async exchange(input: {

@@ -15,6 +15,11 @@ import { chatCipherById } from './chat-keys';
 import { unavailableCipher } from './content-crypto';
 import { recallTools } from './recall-tools';
 
+// The delegate is the one process that holds keys; the web app reaches it
+// over HTTP, so these tests run it in-process on a loopback port, one per
+// describe block (each block opens and closes its own database pool).
+import { useTestDelegate } from '@/lib/test-support/delegate';
+
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 function textOf(result: McpToolResult): string {
@@ -22,6 +27,7 @@ function textOf(result: McpToolResult): string {
 }
 
 maybe('chat_recall_chats', () => {
+  useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;

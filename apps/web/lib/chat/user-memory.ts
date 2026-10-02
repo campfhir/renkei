@@ -12,8 +12,9 @@
 
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { openText, sealText } from './content-crypto';
-import { userCipherFor } from './chat-keys';
+import { delegateClient } from '@renkei/delegate-client';
+import { unavailableMarker } from './content-crypto';
+import { unavailableReasonOf } from './chat-keys';
 
 export const USER_MEMORY_ENTRY_MAX_CHARS = 500;
 export const USER_MEMORY_SUMMARY_MAX_CHARS = 3_000;
@@ -44,9 +45,9 @@ export async function readUserMemory(
   ownerSubject: string,
   options: { maxEntries?: number } = {}
 ): Promise<UserMemory> {
-  // A person's memory is theirs alone: sealed under their own key
-  // (chat-keys.ts), never under a chat's or a project's.
-  const cipher = await userCipherFor(db, tenantId, ownerSubject);
+  // A person's memory is theirs alone: sealed under their own key, never
+  // under a chat's or a project's — opened by the delegate, the one
+  // process that holds that key, in one batch for the page.
   const rows = await db
     .selectFrom('chat_user_memories')
     .select(['id', 'kind', 'content', 'chat_id', 'created_at'])
@@ -55,15 +56,25 @@ export async function readUserMemory(
     .orderBy('created_at', 'desc')
     .limit((options.maxEntries ?? USER_MEMORY_INJECT_MAX_ENTRIES) + 1)
     .execute();
-  const summary = rows.find((row) => row.kind === 'summary');
+  const opened = await delegateClient().openForSubject(
+    tenantId,
+    ownerSubject,
+    rows.map((row) => row.content)
+  );
+  const textAt = (index: number): string => {
+    if (!opened.ok) return unavailableMarker(unavailableReasonOf(opened.err.type));
+    return opened.val[index] ?? unavailableMarker('failed');
+  };
+  const summaryIndex = rows.findIndex((row) => row.kind === 'summary');
   return {
-    summary: summary ? openText(summary.content, cipher) : null,
+    summary: summaryIndex >= 0 ? textAt(summaryIndex) : null,
     entries: rows
-      .filter((row) => row.kind === 'entry')
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => row.kind === 'entry')
       .slice(0, options.maxEntries ?? USER_MEMORY_INJECT_MAX_ENTRIES)
-      .map((row) => ({
+      .map(({ row, index }) => ({
         id: row.id,
-        content: openText(row.content, cipher),
+        content: textAt(index),
         chatId: row.chat_id,
         createdAt: row.created_at,
       })),
@@ -100,7 +111,9 @@ export async function appendUserMemory(
 ): Promise<string | null> {
   const content = clip(input.content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!content) return null;
-  const sealed = sealText(content, await userCipherFor(db, input.tenantId, input.ownerSubject));
+  const sealed = await delegateClient().sealForSubject(input.tenantId, input.ownerSubject, [
+    content,
+  ]);
   if (!sealed.ok) return null;
   const inserted = await db
     .insertInto('chat_user_memories')
@@ -108,7 +121,7 @@ export async function appendUserMemory(
       tenant_id: input.tenantId,
       owner_subject: input.ownerSubject,
       kind: 'entry',
-      content: sealed.val,
+      content: sealed.val[0],
       chat_id: input.chatId,
     })
     .returning('id')
@@ -136,11 +149,11 @@ export async function editUserMemory(
 ): Promise<boolean> {
   const clipped = clip(content.trim(), USER_MEMORY_ENTRY_MAX_CHARS);
   if (!clipped) return false;
-  const sealed = sealText(clipped, await userCipherFor(db, tenantId, ownerSubject));
+  const sealed = await delegateClient().sealForSubject(tenantId, ownerSubject, [clipped]);
   if (!sealed.ok) return false;
   const result = await db
     .updateTable('chat_user_memories')
-    .set({ content: sealed.val, updated_at: sql<Date>`NOW()` })
+    .set({ content: sealed.val[0], updated_at: sql<Date>`NOW()` })
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('id', '=', id)

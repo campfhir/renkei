@@ -370,9 +370,11 @@ export function setDelegateClient(client: DelegateClient | null): void {
 
 export {
   DelegateGrants,
+  authedFetch,
   delegateGrants,
   delegateRefusal,
   grantFetch,
+  grantKeyOf,
   setDelegateGrants,
   type AuthedFetch,
   type DelegateFetchOptions,

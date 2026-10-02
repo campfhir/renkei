@@ -25,6 +25,8 @@ export default {
     '^\\.\\./logger$': '<rootDir>/src/test-support/logger-mock.ts',
     '^\\./logger$': '<rootDir>/src/test-support/logger-mock.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
+    '^@renkei/user-keys$': '<rootDir>/../../packages/user-keys/src/index.ts',
+    '^@renkei/delegate-client$': '<rootDir>/../../packages/delegate-client/src/index.ts',
     '^@renkei/worker-loop$': '<rootDir>/../../packages/worker-loop/src/index.ts',
     '^@renkei/agents$': '<rootDir>/../../packages/agents/src/index.ts',
     '^@renkei/batch-jobs-store$': '<rootDir>/../../packages/batch-jobs-store/src/index.ts',
@@ -38,7 +40,8 @@ export default {
     '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',
     '^@renkei/fileshares-client$': '<rootDir>/../../packages/fileshares-client/src/index.ts',
     '^@renkei/sandbox-client$': '<rootDir>/../../packages/sandbox-client/src/index.ts',
-    '^@renkei/connector-mistral-ocr$': '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
+    '^@renkei/connector-mistral-ocr$':
+      '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
     '^@renkei/connector-atlassian$': '<rootDir>/../../packages/connector-atlassian/src/index.ts',
     '^@renkei/connector-webex$': '<rootDir>/../../packages/connector-webex/src/index.ts',

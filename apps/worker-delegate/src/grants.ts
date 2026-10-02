@@ -30,10 +30,11 @@ import {
   ONBASE,
   ONBASE_ADMIN,
   ZOOM,
+  silentLogger,
+  type GrantLogger,
   type ProviderGrant,
 } from '@renkei/provider-grants';
 import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
-import { logger } from './logger';
 import { onbaseWorkerCall, refreshedOf, withTenant } from './onbase-worker';
 import {
   clientIdOf,
@@ -70,6 +71,11 @@ const HOP_BY_HOP = new Set([
   'content-length',
   'set-cookie',
 ]);
+
+/** What this module reports through; the worker's logger in production, silence in tests. */
+export type DelegateLogger = GrantLogger;
+
+export const silentDelegateLogger: DelegateLogger = silentLogger;
 
 export type GrantError =
   | 'bad_request'
@@ -144,6 +150,7 @@ export class Grants {
   constructor(
     private readonly db: Kysely<DB>,
     private readonly encryptionKey: Buffer,
+    private readonly logger: DelegateLogger,
     /** Injected in tests; production dials the provider. */
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init)
   ) {}
@@ -174,7 +181,7 @@ export class Grants {
       const adapter = spec.adapter(config, grant);
       if (!adapter) return { ok: false, error: 'NOT_CONFIGURED' };
       const refreshed = await withTenant(tenantId, () =>
-        refreshGrantTokens(adapter, tenantId, grant.accountId, logger)
+        refreshGrantTokens(adapter, tenantId, grant.accountId, this.logger)
       );
       if (!refreshed.ok) {
         return {
@@ -260,7 +267,10 @@ export class Grants {
       return this.fetchImpl(url, {
         method,
         headers,
-        body: method === 'GET' || method === 'HEAD' || body.byteLength === 0 ? undefined : body,
+        body:
+          method === 'GET' || method === 'HEAD' || body.byteLength === 0
+            ? undefined
+            : new Uint8Array(body),
         redirect,
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -497,7 +507,7 @@ export class Grants {
           revokedAtProvider = answer.ok && answer.val.revoked === true;
         }
       } catch (error) {
-        logger.warn('provider revocation failed; deleting the grant regardless', {
+        this.logger.warn('provider revocation failed; deleting the grant regardless', {
           component: 'worker-delegate/grants',
           tenantId,
           provider,

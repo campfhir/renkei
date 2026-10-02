@@ -38,6 +38,7 @@
     "@renkei/connector-zoom": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/delegate-client": "workspace:*",
     "@renkei/document-render": "workspace:*",
     "@renkei/document-text": "workspace:*",
     "@renkei/email-sanitizer": "workspace:*",
