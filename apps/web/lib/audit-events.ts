@@ -66,6 +66,7 @@ export type AuditAction =
   | 'encryption-key.rotated'
   | 'encryption-key.automation-revoked'
   | 'encryption-key.device-approved'
+  | 'encryption-key.shredded'
   | 'sandbox.secret.created'
   | 'sandbox.secret.unlocked'
   | 'sandbox.secret.locked'

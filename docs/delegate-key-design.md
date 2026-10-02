@@ -193,7 +193,7 @@ A share seals the resource key to the grantee's public key — nobody has to be 
 
 ### Status
 
-Typecheck, ESLint and jest pass across `@renkei/crypto` (the browser half proven against node's over node's own WebCrypto), `@renkei/user-keys`, the delegate, the delegate client, provider-grants, the connector packages, the queue worker, the agents worker and the web app; Playwright covers enrollment, the write-down banner, a lost delegation, the typed key, rotation and a second device's approval (`keys.spec.ts`) alongside the chat and code suites.
+Phases 2 through 5 are built. Typecheck, ESLint and jest pass across `@renkei/crypto` (the browser half proven against node's over node's own WebCrypto), `@renkei/user-keys`, the delegate, the delegate client, provider-grants, the connector packages, the queue worker, the agents worker (a run parked for its owner's key, and run again once delegated) and the web app (the sign-in re-queue against a real database); Playwright covers enrollment, the write-down banner, a lost delegation, the typed key, rotation, a second device's approval and the operator's removal of a departed person's key from the Access page (`keys.spec.ts`), the parked run's label on the runs list (`screenshots.spec.ts`), alongside the chat and code suites. The specs' seeding helper (`e2e/keys.ts`) derives a seeded person's keys from who they are rather than at random, because Playwright's workers and its global setup are separate processes against one database: a second process that met a person would otherwise re-key them and strand every row the first had sealed.
 
 ## Decisions taken
 

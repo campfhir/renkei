@@ -30,7 +30,10 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 /** Title-case label for a run or attempt status; unknown values capitalize. */
-export function statusLabel(status: string): string {
+export function statusLabel(status: string, errorKind?: string | null): string {
+  // A run parked for its owner's sign-in waits on nothing the owner can
+  // click: say what it waits for instead of "Waiting for you".
+  if (status === 'waiting' && errorKind === 'needs-sign-in') return 'Paused: sign in';
   return (
     STATUS_LABELS[status] ?? (status ? status.charAt(0).toUpperCase() + status.slice(1) : status)
   );
@@ -73,6 +76,10 @@ export function errorSummary(errorKind: string, failedStepName?: string | null):
       return 'AI model was busy';
     case 'guard':
       return 'Stopped by a safety guard';
+    // Parked: the owner's encryption key is not available to their agents
+    // (docs/delegate-key-design.md); their next sign-in re-queues the run.
+    case 'needs-sign-in':
+      return 'Paused until you sign in';
     default:
       return errorKind;
   }

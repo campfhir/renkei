@@ -6,7 +6,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { listAccessibleLibraries } from '@/lib/chat/prompts';
 import LibrariesIndex from '../_components/libraries-index';
 
-/** Prompt libraries: mine, shared with me, published to the organization. */
+/** Prompt libraries: mine, and the ones shared with me. */
 export default async function PromptLibrariesPage({
   params,
 }: {
@@ -28,7 +28,6 @@ export default async function PromptLibrariesPage({
         id: library.id,
         name: library.name,
         description: library.description,
-        publishedToOrg: library.publishedToOrg,
         role,
       }))}
     />

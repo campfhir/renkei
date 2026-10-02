@@ -22,7 +22,6 @@ export interface ProjectView {
     description: string | null;
     instructions: string | null;
     toolConfig: ChatToolConfigView | null;
-    publishedToOrg: boolean;
     ownerSubject: string;
     ownerName: string | null;
     /** A code project's one chat that may continue; null otherwise (lib/code/active-chat.ts). */
@@ -83,7 +82,6 @@ export async function loadProjectView(
       description: project.description,
       instructions: openProjectInstructions(project, access.cipher),
       toolConfig: project.toolConfig,
-      publishedToOrg: project.publishedToOrg,
       ownerSubject: project.ownerSubject,
       ownerName: names.get(project.ownerSubject) ?? null,
       activeChatId: project.activeChatId,

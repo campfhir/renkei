@@ -7,8 +7,10 @@
  *   - A named grantee resolves with the grant's role while the grant has
  *     not expired. Chat grants are viewer-only: sharing a chat means
  *     letting someone read and watch it, never continue it.
- *   - A project or library published to the org resolves as viewer for
- *     anyone in the tenant.
+ *   - "Published to the organization" is gone (docs/delegate-key-design.md,
+ *     decision 1): there is no tenant-wide key, so a project or library is
+ *     readable by its owner and the people invited, and a row still
+ *     flagged `published_to_org` from before grants nobody anything.
  *   - A chat inside a project the viewer can access resolves as viewer
  *     (members chat with the same context and can read each other's
  *     chats), unless the viewer owns it.
@@ -34,7 +36,7 @@ export interface ResourceAccess {
   role: ResourceRole;
   ownerSubject: string;
   /** How a non-owner got in. */
-  via: 'owner' | 'grant' | 'published' | 'project';
+  via: 'owner' | 'grant' | 'project';
 }
 
 export interface ChatAccess extends ResourceAccess {
@@ -81,30 +83,22 @@ export function isGrantRole(value: unknown): value is GrantRole {
 
 const iso = (value: Date | null): string | null => (value ? value.toISOString() : null);
 
-async function ownerAndPublished(
+async function ownerOf(
   db: Kysely<DB>,
   tenantId: string,
   kind: ResourceKind,
   resourceId: string
-): Promise<{ ownerSubject: string; published: boolean } | null> {
+): Promise<{ ownerSubject: string } | null> {
   if (!isUuid(resourceId)) return null;
-  if (kind === 'chat') {
-    const row = await db
-      .selectFrom('chats')
-      .select('owner_subject')
-      .where('tenant_id', '=', tenantId)
-      .where('id', '=', resourceId)
-      .executeTakeFirst();
-    return row ? { ownerSubject: row.owner_subject, published: false } : null;
-  }
-  const table = kind === 'chat_project' ? 'chat_projects' : 'prompt_libraries';
+  const table =
+    kind === 'chat' ? 'chats' : kind === 'chat_project' ? 'chat_projects' : 'prompt_libraries';
   const row = await db
     .selectFrom(table)
-    .select(['owner_subject', 'published_to_org'])
+    .select('owner_subject')
     .where('tenant_id', '=', tenantId)
     .where('id', '=', resourceId)
     .executeTakeFirst();
-  return row ? { ownerSubject: row.owner_subject, published: row.published_to_org } : null;
+  return row ? { ownerSubject: row.owner_subject } : null;
 }
 
 async function activeGrant(
@@ -127,7 +121,7 @@ async function activeGrant(
   return isGrantRole(row.role) ? row.role : 'viewer';
 }
 
-/** Projects and libraries: owner, grantee, or anyone when published. */
+/** Projects and libraries: owner or grantee; nobody else. */
 export async function resolveResourceAccess(
   db: Kysely<DB>,
   tenantId: string,
@@ -135,15 +129,13 @@ export async function resolveResourceAccess(
   kind: 'chat_project' | 'prompt_library',
   resourceId: string
 ): Promise<ResourceAccess | null> {
-  const found = await ownerAndPublished(db, tenantId, kind, resourceId);
+  const found = await ownerOf(db, tenantId, kind, resourceId);
   if (!found) return null;
   if (found.ownerSubject === viewerSubject) {
     return { role: 'owner', ownerSubject: found.ownerSubject, via: 'owner' };
   }
   const granted = await activeGrant(db, tenantId, kind, resourceId, viewerSubject);
   if (granted) return { role: granted, ownerSubject: found.ownerSubject, via: 'grant' };
-  if (found.published)
-    return { role: 'viewer', ownerSubject: found.ownerSubject, via: 'published' };
   return null;
 }
 
@@ -215,7 +207,7 @@ export async function listAccessibleProjectIds(
   tenantId: string,
   viewerSubject: string
 ): Promise<string[]> {
-  const [owned, granted, published] = await Promise.all([
+  const [owned, granted] = await Promise.all([
     db
       .selectFrom('chat_projects')
       .select('id')
@@ -223,20 +215,8 @@ export async function listAccessibleProjectIds(
       .where('owner_subject', '=', viewerSubject)
       .execute(),
     listGrantedResources(db, tenantId, viewerSubject, 'chat_project'),
-    db
-      .selectFrom('chat_projects')
-      .select('id')
-      .where('tenant_id', '=', tenantId)
-      .where('published_to_org', '=', true)
-      .execute(),
   ]);
-  return [
-    ...new Set([
-      ...owned.map((row) => row.id),
-      ...granted.map((row) => row.resourceId),
-      ...published.map((row) => row.id),
-    ]),
-  ];
+  return [...new Set([...owned.map((row) => row.id), ...granted.map((row) => row.resourceId)])];
 }
 
 /**
@@ -253,7 +233,7 @@ export async function grantResourceAccess(
 ): Promise<'OK' | 'NOT_FOUND' | 'SELF' | 'INVALID_ROLE'> {
   if (input.granteeSubject === ownerSubject) return 'SELF';
   if (kind === 'chat' && input.role !== 'viewer') return 'INVALID_ROLE';
-  const found = await ownerAndPublished(db, tenantId, kind, resourceId);
+  const found = await ownerOf(db, tenantId, kind, resourceId);
   if (!found || found.ownerSubject !== ownerSubject) return 'NOT_FOUND';
   await db
     .insertInto('resource_access_grants')

@@ -36,6 +36,7 @@ export const RUN_STEP_FAILED_ID = '66666666-6666-4666-8666-666666666662';
 export const RUN_TIMEOUT_ID = '66666666-6666-4666-8666-666666666663';
 export const RUN_RUNNING_ID = '66666666-6666-4666-8666-666666666664';
 export const RUN_ITERATIONS_ID = '66666666-6666-4666-8666-666666666665';
+export const RUN_PARKED_ID = '66666666-6666-4666-8666-666666666666';
 
 const STEP_COLLECT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const STEP_RANK = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
@@ -540,6 +541,18 @@ export async function seed(client: Client): Promise<void> {
       hoursAgo(49),
     ],
     [RUN_RUNNING_ID, 'running', null, null, STEP_COLLECT, hoursAgo(0.05), null],
+    // Parked by the engine: the owner's key was not delegated when the
+    // schedule fired (docs/delegate-key-design.md, phase 3). Their next
+    // sign-in re-queues it; until then the list says so.
+    [
+      RUN_PARKED_ID,
+      'waiting',
+      'needs-sign-in',
+      'Paused: your encryption key is not available to your agents. Sign in to resume.',
+      null,
+      null,
+      null,
+    ],
   ];
   for (const [id, status, errorKind, error, currentStep, startedAt, finishedAt] of runRows) {
     await client.query(

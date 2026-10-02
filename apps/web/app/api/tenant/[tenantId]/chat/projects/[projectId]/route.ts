@@ -14,7 +14,6 @@ import {
 import { resolveProjectAccess } from '@/lib/chat/access';
 import {
   deleteProject,
-  getProjectRow,
   updateProject,
   PROJECT_INSTRUCTIONS_MAX_CHARS,
   PROJECT_NAME_MAX_CHARS,
@@ -67,16 +66,9 @@ export async function PATCH(
     if (!parsed) return jsonError(400, 'invalid', 'Invalid tool configuration');
     patch.toolConfig = parsed;
   }
-  if (typeof body.publishedToOrg === 'boolean') {
-    if (access.role !== 'owner') {
-      return jsonError(403, 'owner-only', 'Only the owner can publish a project.');
-    }
-    patch.publishedToOrg = body.publishedToOrg;
-  }
   const updated = await updateProject(db, tenantId, projectId, patch, access.cipher);
   if (!updated) return jsonError(404, 'not-found', 'No such project');
-  const row = await getProjectRow(db, tenantId, projectId);
-  return NextResponse.json({ ok: true, publishedToOrg: row?.publishedToOrg ?? false });
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(

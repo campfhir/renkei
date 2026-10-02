@@ -43,7 +43,7 @@ export default function RecentRuns({
                 >
                   {failed && run.errorKind
                     ? errorSummary(run.errorKind, run.failedStepName)
-                    : statusLabel(run.status)}
+                    : statusLabel(run.status, run.errorKind)}
                 </span>
               </li>
             );

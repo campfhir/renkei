@@ -38,7 +38,6 @@ export async function GET(
       id: library.id,
       name: library.name,
       description: library.description,
-      publishedToOrg: library.publishedToOrg,
       role: access.role,
     },
     prompts: prompts.map((prompt) => ({
@@ -70,7 +69,7 @@ export async function PATCH(
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can change this library.');
   const body = await readJsonBody(request);
-  const patch: { name?: string; description?: string | null; publishedToOrg?: boolean } = {};
+  const patch: { name?: string; description?: string | null } = {};
   const name = optionalString(body.name, LIBRARY_NAME_MAX_CHARS);
   if (name !== undefined) {
     if (!name) return jsonError(400, 'invalid', 'The name cannot be empty');
@@ -78,10 +77,6 @@ export async function PATCH(
   }
   const description = optionalString(body.description, 2_000);
   if (description !== undefined) patch.description = description || null;
-  if (typeof body.publishedToOrg === 'boolean') {
-    if (access.role !== 'owner') return jsonError(403, 'owner-only', 'Only the owner can publish.');
-    patch.publishedToOrg = body.publishedToOrg;
-  }
   const updated = await updateLibrary(db, tenantId, libraryId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such library');
   return NextResponse.json({ ok: true });

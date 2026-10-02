@@ -13,7 +13,6 @@ export interface LibraryListItem {
   id: string;
   name: string;
   description: string | null;
-  publishedToOrg: boolean;
   role: 'owner' | 'editor' | 'viewer';
 }
 
@@ -70,13 +69,13 @@ export default function LibrariesIndex({
       <div className="mx-auto max-w-3xl space-y-6 p-4">
         <p className="text-sm text-gray-600 dark:text-gray-400">
           A library holds prompts you reuse. Insert one from the composer with the sparkle button or
-          by typing <kbd className="rounded border px-1">/</kbd>. Share a library with colleagues,
-          or publish it to the whole organization.
+          by typing <kbd className="rounded border px-1">/</kbd>. Share a library with the
+          colleagues you choose.
         </p>
         <Group slug={slug} title="Mine" libraries={mine} empty="You have no libraries yet." />
         <Group
           slug={slug}
-          title="Shared and published"
+          title="Shared with me"
           libraries={others}
           empty="Nothing has been shared with you."
         />
@@ -152,9 +151,6 @@ function Group({
                     </span>
                   ) : null}
                 </span>
-                {library.publishedToOrg ? (
-                  <span className="text-[10px] text-gray-400 uppercase">org</span>
-                ) : null}
                 <Icon path={ICONS.chevron} className="h-4 w-4 text-gray-400" />
               </Link>
             </li>

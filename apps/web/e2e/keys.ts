@@ -26,6 +26,7 @@
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   createPrivateKey,
   createPublicKey,
   diffieHellman,
@@ -63,7 +64,17 @@ function openSecretbox(payload: string, key: Buffer): string {
 const SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
 const PKCS8_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex');
 
-function x25519Pair(): { publicKey: Buffer; privateKey: Buffer } {
+function x25519Pair(privateKey?: Buffer): { publicKey: Buffer; privateKey: Buffer } {
+  if (privateKey) {
+    const spki = createPublicKey(
+      createPrivateKey({
+        key: Buffer.concat([PKCS8_PREFIX, privateKey]),
+        format: 'der',
+        type: 'pkcs8',
+      })
+    ).export({ type: 'spki', format: 'der' });
+    return { publicKey: Buffer.from(spki.subarray(spki.byteLength - 32)), privateKey };
+  }
   const pair = generateKeyPairSync('x25519');
   const spki = pair.publicKey.export({ type: 'spki', format: 'der' });
   const pkcs8 = pair.privateKey.export({ type: 'pkcs8', format: 'der' });
@@ -142,6 +153,24 @@ export interface E2EKeys {
 
 const enrolled = new Map<string, E2EKeys>();
 
+/**
+ * A person's keys are DERIVED from who they are, not drawn at random:
+ * Playwright runs its workers as separate processes against one database,
+ * and global-setup is a third, so a per-process cache alone would have the
+ * second process to meet a person re-key them and strand every row the
+ * first had sealed. The same (tenant, subject) yields the same keys in
+ * every process; test keys, never a product secret.
+ */
+function keysOf(tenantId: string, subject: string): E2EKeys {
+  const derive = (purpose: string): Buffer =>
+    createHash('sha256').update(`renkei-e2e/${purpose}/${tenantId}/${subject}`).digest();
+  return {
+    userKey: derive('user-key'),
+    automationKey: derive('automation-key'),
+    ...x25519Pair(derive('private-key')),
+  };
+}
+
 /** The delegate instances alive right now (the one the Playwright config started). */
 async function liveInstances(client: Client): Promise<{ id: string; publicKey: Buffer }[]> {
   const rows = await client.query<{ id: string; public_key: string }>(
@@ -165,8 +194,20 @@ export async function enrollForE2E(
   const cacheKey = `${tenantId}\0${subject}`;
   let keys = enrolled.get(cacheKey);
   if (!keys) {
-    const pair = x25519Pair();
-    keys = { userKey: randomBytes(32), automationKey: randomBytes(32), ...pair };
+    keys = keysOf(tenantId, subject);
+    // Enrolled by another process already (global-setup, or the other
+    // worker) under these same keys: nothing to write, and above all
+    // nothing to delete — their wrappings and delegations stand.
+    const current = await client.query<{ public_key: string | null; mode: string }>(
+      `SELECT public_key, mode FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2`,
+      [tenantId, subject]
+    );
+    const row = current.rows[0];
+    if (row && row.mode === 'held' && row.public_key === keys.publicKey.toString('base64')) {
+      enrolled.set(cacheKey, keys);
+    }
+  }
+  if (!enrolled.has(cacheKey)) {
     await client.query(
       `INSERT INTO user_encryption_keys
          (tenant_id, subject, salt, mode, version, public_key, wrapped_private_key,
@@ -186,8 +227,9 @@ export async function enrollForE2E(
         secretbox(keys.automationKey.toString('base64'), keys.userKey),
       ]
     );
-    // Anything the person held under an earlier seeding run is unopenable
-    // under fresh keys; a spec that seeds reseeds.
+    // Anything the person held under an earlier key (a rotation in
+    // keys.spec.ts, a pre-derivation run) is unopenable under these; a
+    // spec that seeds reseeds.
     await client.query(`DELETE FROM resource_key_grants WHERE tenant_id = $1 AND holder = $2`, [
       tenantId,
       subject,

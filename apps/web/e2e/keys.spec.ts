@@ -437,3 +437,70 @@ test('the banner and the section at phone width', async ({ page }, testInfo) => 
   expect(sectionBox!.x + sectionBox!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'keys-mobile-03-preferences');
 });
+
+test('an operator removes a departed person’s key from the Access page, never their own', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(`shred-${testInfo.project.name}`);
+  const leaver = `e2e-keys-leaver-${testInfo.project.name}@example.com`;
+  await seed(fixture, { chat: true });
+  await withDb(async (client) => {
+    await client.query(
+      `INSERT INTO identities (tenant_id, subject, email, display_name)
+       VALUES ($1, $2, $3, 'E2E Leaver')`,
+      [fixture.tenantId, leaver, leaver]
+    );
+    await enrollForE2E(client, fixture.tenantId, leaver);
+  });
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/admin/access`);
+  await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
+  // The operator's own key is theirs to remove from Preferences only.
+  await expect(page.getByTestId(`shred-key-${fixture.subject}`)).toHaveCount(0);
+  const button = page.getByTestId(`shred-key-${leaver}`);
+  await expect(button).toBeVisible();
+  await shot(page, testInfo, 'keys-admin-01-access');
+
+  // Asked twice: in words, then by typing the name. A wrong name is a no.
+  const answers: string[] = [];
+  page.on('dialog', (dialog) => {
+    answers.push(dialog.type());
+    if (dialog.type() === 'prompt')
+      void dialog.accept(answers.length === 2 ? 'Someone Else' : 'E2E Leaver');
+    else void dialog.accept();
+  });
+  await button.click();
+  await expect.poll(() => answers.length).toBe(2);
+  await expect(button).toBeVisible();
+  expect(
+    await withDb(async (client) => {
+      const row = await client.query(
+        'SELECT 1 FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2',
+        [fixture.tenantId, leaver]
+      );
+      return row.rowCount;
+    })
+  ).toBe(1);
+
+  await button.click();
+  await expect.poll(() => answers.length).toBe(4);
+  await expect(button).toHaveCount(0, { timeout: 15_000 });
+  const after = await withDb(async (client) => {
+    const keys = await client.query(
+      'SELECT 1 FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2',
+      [fixture.tenantId, leaver]
+    );
+    const grants = await client.query(
+      'SELECT 1 FROM resource_key_grants WHERE tenant_id = $1 AND holder = $2',
+      [fixture.tenantId, leaver]
+    );
+    const own = await client.query(
+      'SELECT 1 FROM user_encryption_keys WHERE tenant_id = $1 AND subject = $2',
+      [fixture.tenantId, fixture.subject]
+    );
+    return { keys: keys.rowCount, grants: grants.rowCount, own: own.rowCount };
+  });
+  expect(after).toEqual({ keys: 0, grants: 0, own: 1 });
+  await shot(page, testInfo, 'keys-admin-02-removed');
+});

@@ -12,7 +12,9 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { delegateClient } from '@renkei/delegate-client';
+import { agentJobsQueue } from '@renkei/queue';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
+import { resumeRunsNeedingSignIn } from '@/lib/agents/needs-sign-in';
 import { recordAuditEvent } from '@/lib/audit-events';
 import {
   AUTOMATION_WINDOW_DEFAULT_DAYS,
@@ -84,6 +86,7 @@ export async function POST(
     }
   }
   await setAutomationDays(db, tenantId, session.subject, days);
+  await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, tenantId, session.subject);
   recordAuditEvent({ tenantId, actorSubject: session.subject, action: 'encryption-key.enrolled' });
   return NextResponse.json({ version: enrolled.val.version, migrated: enrolled.val.migrated });
 }

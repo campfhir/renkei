@@ -72,7 +72,6 @@ function project(workspaceId: string | null): ProjectRow {
     description: null,
     sealedInstructions: null,
     toolConfig: null,
-    publishedToOrg: false,
     kind: 'code',
     repo: { provider: 'atlassian-bitbucket', fullName: 'acme/billing', branch: 'main' },
     workspaceId,

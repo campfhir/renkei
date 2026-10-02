@@ -143,6 +143,35 @@ async function ensureKey(
   return created.val;
 }
 
+/**
+ * A chat's key under its project's (docs/delegate-key-design.md, phase 4):
+ * whoever opens the project opens the chat, with no wrapping per member.
+ * Done when a chat is created in or moved into a project, as its owner;
+ * best effort — a member's first read heals a missing one (cipherFor).
+ */
+export async function wrapKeyUnderProject(
+  db: Kysely<DB>,
+  chat: KeyedResource,
+  projectId: string
+): Promise<boolean> {
+  const key = await ensureKey(db, 'chat', chat);
+  if (typeof key === 'string') return false;
+  const wrapped = await delegateClient().wrapResourceKeyUnder(
+    ref('chat', chat.tenantId, chat.id),
+    chat.ownerSubject,
+    ref('chat_project', chat.tenantId, projectId)
+  );
+  if (!wrapped.ok) {
+    warn('chat key could not be wrapped under its project: {reason}', {
+      tenantId: chat.tenantId,
+      resourceId: chat.id,
+      projectId,
+      reason: wrapped.err.type,
+    });
+  }
+  return wrapped.ok;
+}
+
 /** A new resource's key, wrapped for its owner; null, with a warning, on a key-store failure. */
 export async function createKey(
   db: Kysely<DB>,
@@ -177,7 +206,7 @@ export async function cipherFor(
   kind: KeyedKind,
   resource: KeyedResource,
   viewerSubject: string,
-  via: 'owner' | 'grant' | 'project' | 'published',
+  via: 'owner' | 'grant' | 'project',
   projectId: string | null = null
 ): Promise<ContentCipher> {
   const target = ref(kind, resource.tenantId, resource.id);

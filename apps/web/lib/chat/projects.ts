@@ -41,7 +41,6 @@ export interface ProjectRow {
    */
   sealedInstructions: string | null;
   toolConfig: ChatToolConfig | null;
-  publishedToOrg: boolean;
   /** A code project's repository; null on a chat project. */
   repo: ProjectRepo | null;
   /** A code project's checkout on the sandbox worker, once cloned. */
@@ -65,7 +64,6 @@ const PROJECT_COLUMNS = [
   'description',
   'instructions',
   'tool_config',
-  'published_to_org',
   'repo_provider',
   'repo_full_name',
   'repo_branch',
@@ -87,7 +85,6 @@ function rowOf(raw: {
   description: string | null;
   instructions: string | null;
   tool_config: unknown;
-  published_to_org: boolean;
   repo_provider: string | null;
   repo_full_name: string | null;
   repo_branch: string | null;
@@ -105,7 +102,6 @@ function rowOf(raw: {
     description: raw.description,
     sealedInstructions: raw.instructions,
     toolConfig: parseToolConfig(raw.tool_config),
-    publishedToOrg: raw.published_to_org,
     repo:
       raw.kind === 'code' && raw.repo_provider && raw.repo_full_name
         ? {
@@ -154,20 +150,6 @@ export async function listOwnedProjects(
     .select(PROJECT_COLUMNS)
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
-    .orderBy('updated_at', 'desc')
-    .execute();
-  return rows.map(rowOf);
-}
-
-export async function listPublishedProjects(
-  db: Kysely<DB>,
-  tenantId: string
-): Promise<ProjectRow[]> {
-  const rows = await db
-    .selectFrom('chat_projects')
-    .select(PROJECT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
-    .where('published_to_org', '=', true)
     .orderBy('updated_at', 'desc')
     .execute();
   return rows.map(rowOf);
@@ -250,7 +232,6 @@ export interface ProjectPatch {
   description?: string | null;
   instructions?: string | null;
   toolConfig?: ChatToolConfig | null;
-  publishedToOrg?: boolean;
   /** A code project's repository, when it is re-pointed. */
   repo?: ProjectRepo;
   /** The checkout on the worker: set when a clone starts, cleared when it is dropped. */
@@ -292,7 +273,6 @@ export async function updateProject(
       ...(patch.toolConfig !== undefined
         ? { tool_config: patch.toolConfig ? toolConfigJson(patch.toolConfig) : null }
         : {}),
-      ...(patch.publishedToOrg !== undefined ? { published_to_org: patch.publishedToOrg } : {}),
       ...(patch.repo !== undefined
         ? {
             repo_provider: patch.repo.provider,

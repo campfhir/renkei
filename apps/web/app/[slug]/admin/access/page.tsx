@@ -9,6 +9,7 @@ import { grantProviderLabel } from '@/lib/provider-labels';
 import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
 import RevokeGrantButton from './revoke-grant-button';
+import ShredKeyButton from './shred-key-button';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
@@ -61,7 +62,8 @@ export default async function AccessPage({
   const { slug } = await params;
   const tenant = await tenantForSlug(slug);
   if (!tenant) notFound();
-  if (!(await checkAccess(tenant.id, [ROLE_OPERATOR]))) {
+  const session = await checkAccess(tenant.id, [ROLE_OPERATOR]);
+  if (!session) {
     redirect(`/${slug}/admin`);
   }
 
@@ -78,7 +80,7 @@ export default async function AccessPage({
   }
   const db = dbResult.val;
 
-  const [identities, grants, activity] = await Promise.all([
+  const [identities, grants, activity, keyRows] = await Promise.all([
     db
       .selectFrom('identities')
       .select(['subject', 'display_name', 'email'])
@@ -96,7 +98,15 @@ export default async function AccessPage({
       .where('tenant_id', '=', tenant.id)
       .groupBy('subject')
       .execute(),
+    // Who holds an encryption key (docs/delegate-key-design.md): the one
+    // thing an operator may remove for a person who is gone for good.
+    db
+      .selectFrom('user_encryption_keys')
+      .select(['subject', 'mode'])
+      .where('tenant_id', '=', tenant.id)
+      .execute(),
   ]);
+  const keyModeBySubject = new Map(keyRows.map((row) => [row.subject, row.mode]));
 
   const people = new Map<string, Person>();
   const personFor = (subject: string): Person => {
@@ -144,7 +154,8 @@ export default async function AccessPage({
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Who is connected to what: everyone who has signed in or linked an account, and each
         connector they hold. Disconnecting cuts Renkei&apos;s access immediately — the person can
-        reconnect any time. A person&apos;s usage, groups and agents are on{' '}
+        reconnect any time. Removing a person&apos;s encryption key is final: it is for someone who
+        is gone and whose key is lost. A person&apos;s usage, groups and agents are on{' '}
         <Link
           href={`/${slug}/admin/usage`}
           className="text-blue-600 hover:underline dark:text-blue-400"
@@ -191,6 +202,16 @@ export default async function AccessPage({
                           {person.email}
                         </span>
                       )}
+                      {keyModeBySubject.has(person.subject) &&
+                      person.subject !== session.subject ? (
+                        <span className="mt-1 block">
+                          <ShredKeyButton
+                            slug={slug}
+                            subject={person.subject}
+                            displayName={person.name}
+                          />
+                        </span>
+                      ) : null}
                     </td>
                   );
                   const activeCell = (

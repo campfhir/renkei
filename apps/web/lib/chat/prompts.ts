@@ -1,7 +1,7 @@
 /**
  * Prompt libraries and their prompts. Bodies are plaintext templates
  * meant for other people to read (migration 093); access is the shared
- * resolver's (owner / editor / viewer / published).
+ * resolver's (owner / editor / viewer).
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -18,7 +18,6 @@ export interface LibraryRow {
   ownerSubject: string;
   name: string;
   description: string | null;
-  publishedToOrg: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,7 +39,6 @@ const LIBRARY_COLUMNS = [
   'owner_subject',
   'name',
   'description',
-  'published_to_org',
   'created_at',
   'updated_at',
 ] as const;
@@ -50,7 +48,6 @@ function libraryOf(raw: {
   owner_subject: string;
   name: string;
   description: string | null;
-  published_to_org: boolean;
   created_at: Date;
   updated_at: Date;
 }): LibraryRow {
@@ -59,7 +56,6 @@ function libraryOf(raw: {
     ownerSubject: raw.owner_subject,
     name: raw.name,
     description: raw.description,
-    publishedToOrg: raw.published_to_org,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
   };
@@ -104,13 +100,13 @@ export async function getLibrary(
   return raw ? libraryOf(raw) : null;
 }
 
-/** Every library this person can open: theirs, shared with them, published. */
+/** Every library this person can open: theirs, and the ones shared with them. */
 export async function listAccessibleLibraries(
   db: Kysely<DB>,
   tenantId: string,
   subject: string
 ): Promise<{ library: LibraryRow; role: 'owner' | 'editor' | 'viewer' }[]> {
-  const [owned, granted, published] = await Promise.all([
+  const [owned, granted] = await Promise.all([
     db
       .selectFrom('prompt_libraries')
       .select(LIBRARY_COLUMNS)
@@ -119,14 +115,6 @@ export async function listAccessibleLibraries(
       .orderBy('updated_at', 'desc')
       .execute(),
     listGrantedResources(db, tenantId, subject, 'prompt_library'),
-    db
-      .selectFrom('prompt_libraries')
-      .select(LIBRARY_COLUMNS)
-      .where('tenant_id', '=', tenantId)
-      .where('published_to_org', '=', true)
-      .where('owner_subject', '!=', subject)
-      .orderBy('updated_at', 'desc')
-      .execute(),
   ]);
   const grantIds = granted.map((grant) => grant.resourceId).filter(isUuid);
   const grantedRows =
@@ -149,11 +137,6 @@ export async function listAccessibleLibraries(
     if (seen.has(raw.id)) continue;
     seen.add(raw.id);
     out.push({ library: libraryOf(raw), role: roleByGrant.get(raw.id) ?? 'viewer' });
-  }
-  for (const raw of published) {
-    if (seen.has(raw.id)) continue;
-    seen.add(raw.id);
-    out.push({ library: libraryOf(raw), role: 'viewer' });
   }
   return out;
 }
@@ -179,7 +162,7 @@ export async function updateLibrary(
   db: Kysely<DB>,
   tenantId: string,
   libraryId: string,
-  patch: { name?: string; description?: string | null; publishedToOrg?: boolean }
+  patch: { name?: string; description?: string | null }
 ): Promise<boolean> {
   if (!isUuid(libraryId)) return false;
   const result = await db
@@ -187,7 +170,6 @@ export async function updateLibrary(
     .set({
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
-      ...(patch.publishedToOrg !== undefined ? { published_to_org: patch.publishedToOrg } : {}),
       updated_at: sql<Date>`NOW()`,
     })
     .where('tenant_id', '=', tenantId)
