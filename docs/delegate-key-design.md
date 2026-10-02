@@ -1,0 +1,118 @@
+# The delegate: one process that holds keys and tokens
+
+A design for the next step after [`user-encryption-keys-design.md`](./user-encryption-keys-design.md): no master key anywhere, a key each person holds themselves, and exactly one process, the **delegate**, that ever has a key in memory or a provider token in hand. Everything else, the web app included, handles ciphertext, plaintext in flight, and opaque handles. This document is the thing to argue over before code moves; the open decisions are collected at the end.
+
+## What changes, in one paragraph
+
+Today every process that holds `USER_KEY_ENCRYPTION_KEY` can derive any person's key, which is what lets a turn resume and a worker act while the person is away, and is also why a leak of that one variable plus the database is a leak of everyone's data. In the new design there is no such variable. Each person has a random key that lives in their browser and is shown to them once. When they sign in, the browser seals that key to the delegate's public key; the delegate's private key exists only in its memory. The web app forwards sealed blobs and asks the delegate to open rows, seal rows, call a provider's API, or share a key, and it never sees a key. Background work runs on a second, narrower key the person delegates for a window of their choosing, up to 30 days, renewed silently on every sign-in. If the delegate restarts, every delegation it held becomes unreadable until browsers re-seal on their next request, which they do without the person noticing.
+
+## The pieces
+
+```
+ browser                       web app                         delegate (apps/worker-delegate)
+ ───────                       ───────                         ──────────────────────────────
+ user key   (IndexedDB)  ──►  never a key; forwards        ──►  X25519 private key, memory only
+ X25519 private key,          sealed blobs and asks for         opens delegations, opens and
+   wrapped under user key      plaintext or an API call          seals rows, holds every provider
+ device key (non-extractable)                                    token, refreshes them, dials APIs
+```
+
+**The user key.** Thirty-two random bytes generated in the browser, shown once as a grouped base32 string with a checksum, written down by the person. It is the key-encryption key directly; no passphrase, no stretching. It is stored in IndexedDB wrapped under a non-extractable WebCrypto device key, so it is bound to that browser profile as far as a web app can bind anything. Sign-out leaves it on the device; "Forget this device" removes it.
+
+**The person's keypair.** An X25519 keypair generated at enrollment. The public key is stored in the clear in `user_encryption_keys`. The private key is stored wrapped under the user key. It exists for sharing: a chat or project key is wrapped to a grantee's public key, which needs no server-derivable secret and no grantee present.
+
+**The automation key.** A second random symmetric key per person, wrapped under the user key. Connector credentials, provider tokens and the chats that agents write into are wrapped under both the user key and the automation key. It is what a person delegates for background work, so a compromised delegate learns a person's credentials and agent chats for the delegated window, never their conversation history, memory, or shared chats.
+
+**Resource keys.** Unchanged: one random data key per chat and per project in `resource_keys`, wrapped per holder in `resource_key_grants`, content under `renc2`, person-only values under `uenc1`. What changes is what a wrapping is under: the owner's wrapping is under their user key (or automation key), a grantee's wrapping is to their public key.
+
+**The delegate.** A new worker on the pattern of `apps/worker-mirth`: plain `node:http`, a bearer `DELEGATE_API_KEY` as the trust boundary, the web app and the other workers as its only callers. At boot it generates an X25519 keypair, writes its public key and an instance id to `delegate_instances` with a heartbeat, and never writes the private key anywhere. It is the only process that opens a delegation, derives nothing, and the only process that ever holds a provider access or refresh token. It runs token refresh. It can run as several instances; each has its own keypair and the browser seals to all of them.
+
+## Delegations
+
+A delegation is a key sealed to one delegate instance's public key, stored in `key_delegations`:
+
+| Column               | Meaning                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
+| `tenant_id, subject` | whose key                                                                                          |
+| `instance_id`        | which delegate instance can open it                                                                |
+| `scope`              | `session` or `automation`                                                                          |
+| `session_id`         | for `session`: the session it lives and dies with                                                  |
+| `sealed_key`         | the user key (session) or the automation key (automation), sealed box to the instance's public key |
+| `expires_at`         | the session's expiry, or the automation window the person chose (30 days at most)                  |
+
+**Session delegation** is how interactive use works. On sign-in, and again whenever the web app answers `needs-delegation`, the browser seals the user key to every live instance and posts the blobs. From then on a request carries only the session cookie; the web app asks the delegate to act "for this session", the delegate finds the matching delegation, opens it, does the work, and drops the key. Sign-out and session expiry delete the rows. A delegate restart leaves rows nothing can open; the web app notices on the first failed open and tells the browser, which re-seals. The person sees nothing.
+
+**Automation delegation** is how anything runs while the person is away: scheduled agents, Zoom and WebEx webhook ingestion, Microsoft change notifications, repository webhooks, token refresh, compaction of agent chats. The browser seals the automation key with the expiry the person chose, renewed silently on every sign-in from a browser that holds the user key. The preferences page shows "Your agents can run until <date>. Signing in extends this." and offers revoke-all. When it lapses, the person's agents go to **paused, needs sign-in**, not disabled, and the runs that were due run on their next sign-in with a note saying why they were late.
+
+**Routing.** The web app and the workers pick a delegate instance that is alive and holds the delegation they need; a request to an instance without it answers `needs-delegation` and the caller tries another or asks the browser. The agents worker claims a run only when some live instance holds the owner's automation delegation.
+
+## The delegate's operations
+
+| Op                | Caller                                       | Does                                                                                                                                                                                                                            |
+| ----------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `open`            | web app, workers                             | Opens a batch of sealed rows for a subject under a named delegation; returns plaintext.                                                                                                                                         |
+| `seal`            | web app, workers                             | Seals a batch of plaintexts under a resource's key, minting and wrapping the key on first use.                                                                                                                                  |
+| `api`             | web app's MCP tools, workers                 | One HTTP request to a provider on the subject's grant: the delegate opens the token, refreshes it if due, dials, and envelopes status and body back, the way the Mirth worker's `api` op does. The caller never sees the token. |
+| `exchange`        | OAuth callback route                         | Exchanges an authorization code for tokens and seals them, so the web app never holds a token even at connect time.                                                                                                             |
+| `credential`      | Mirth, ADManager, file-share, OnBase workers | Opens a person's stored credential for a worker that must dial a private network itself.                                                                                                                                        |
+| `share`, `revoke` | grant routes                                 | Wraps a resource key to a grantee's public key under the owner's session delegation; deletes a wrapping.                                                                                                                        |
+| `rewrap`          | preferences                                  | Rotation: rewraps everything a person holds from the key in one delegation to a new key sealed in the same request.                                                                                                             |
+| `enroll`          | first sign-in                                | Migration: moves a person's rows from the retired managed derivation to their new key (see Migration).                                                                                                                          |
+| `delegate`        | browser, via the web app                     | Stores sealed delegations; `instances` lists live public keys.                                                                                                                                                                  |
+
+What the web app still sees: plaintext in flight. It renders chat content, builds prompts, and sends them to the model provider. That is unavoidable in a product whose point is a model reading the content. The guarantee this design makes is narrower and still strong: **nothing stored can be read by anyone who does not hold a person's key, including someone with the database and every environment variable of every process but the delegate's memory.**
+
+## Sharing and projects
+
+- **A chat shared with a person.** The owner's session delegation unwraps the chat key; the delegate wraps it to the grantee's public key and inserts the grant row. The grantee opens it with their private key, which their own delegation unwraps. No server-derivable key anywhere. A share requires the owner to be signed in; sharing on someone's behalf in the background is not possible by design.
+- **A project.** The project key is wrapped to every member's public key. Each member chat's key is wrapped under the project key at creation, so any member opens any chat in the project. Adding a member wraps the project key to one more public key. Removing one rotates the project key, since they already hold the old one.
+- **Revocation is honest.** Deleting a wrapping stops future reads. A grantee may have the data key already; full revocation is a new data key and re-sealed content.
+- **Published projects** cannot be encrypted to a key only one person holds. See the decisions.
+
+## Enrollment, migration, devices, loss
+
+**Enrollment.** The migration marks every person as not enrolled and moves the master key into the delegate alone, out of every other process. On a person's first sign-in: the browser generates the user key, the keypair and the automation key, wraps the private key and the automation key under the user key, and posts the public key and the wrappings together with a session delegation. The delegate's `enroll` op derives their old managed key one last time, rewraps every resource key they hold and re-seals every `uenc1` value to the new keys, and marks them enrolled. The browser then shows the key once, with a confirmation step before it goes away. A person on today's passphrase-derived key types the passphrase once at enrollment instead; the delegate derives from it as it does now. When everyone has enrolled or been deleted, the master key is removed from the delegate and the derivation code is deleted.
+
+**Another device.** The new device generates an ephemeral X25519 keypair and shows a short code derived from its public key. An enrolled device shows the pending request; the person confirms the codes match; that device seals the user key to the new device's public key and the server relays the blob. Typing the written-down key is the fallback and the recovery path.
+
+**Rotation.** The browser generates a new user key, seals it beside the old delegation in one `rewrap` request, and the delegate rewraps every resource key and re-seals every value in one transaction. The person's keypair is unchanged, only its wrapping, so shares survive. The new key is shown once.
+
+**Loss.** There is no recovery. An admin deletes the account; every wrapping and every value under the lost key is shredded. Chats the person shared survive, because each grantee holds a wrapping of their own.
+
+## What runs when
+
+| Work                                                                          | Needs                                  | When the delegation is missing                                                        |
+| ----------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------- |
+| Reading and continuing a chat, search, sharing, preferences                   | session delegation                     | browser re-seals on the next request, silently                                        |
+| A turn in progress when the browser disconnects                               | session delegation                     | continues; pauses only if the delegate restarts, resumes on the person's next request |
+| Scheduled agents, webhook ingestion, token refresh, agent-chat compaction     | automation delegation                  | paused, needs sign-in; runs on the next sign-in                                       |
+| Connector workers dialing private networks (Mirth, ADManager, shares, OnBase) | `credential` under either scope        | the tool answers "sign in to use this connector"                                      |
+| A worker's note into a chat                                                   | automation delegation on an agent chat | queued until the delegation returns                                                   |
+
+## Threat model, honestly
+
+| Attacker holds                              | Reads                                                                                                                                                                                                                                  |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The database                                | Nothing sealed. Public keys, sealed delegations nothing can open, ciphertext.                                                                                                                                                          |
+| The database and every environment variable | The same. There is no master key.                                                                                                                                                                                                      |
+| Code execution on the web app               | Plaintext in flight for people currently using it. No key, no token.                                                                                                                                                                   |
+| Code execution on the delegate              | Every key delegated to that instance at that moment: full user keys of signed-in people, automation keys of people inside their window. Bounded in people and in time, and revocable by the person. This is the one process to harden. |
+| A person's device                           | That person's data, as today.                                                                                                                                                                                                          |
+
+What this is not: end-to-end encryption. The model provider sees every prompt, and the web app sees plaintext while it works. What it is: encryption at rest with keys the server never persists, a single hardened holder for the window a person chooses, and cryptographic sharing.
+
+## Phases
+
+1. **The delegate exists and holds the master alone.** New worker; `delegate_instances`; `open`, `seal`, `api`, `exchange`, `credential` ops still backed by today's managed derivation; every `getGrant` caller in the web app (nineteen files) and `apps/worker` (five) moves behind `api` or `exchange`; the connector workers take credentials from `credential`; `USER_KEY_ENCRYPTION_KEY` and `TOKEN_ENCRYPTION_KEY` leave every process but the delegate. Pure refactor, independently valuable: after it, one process holds keys and tokens.
+2. **Browser-held keys and session delegations.** Enrollment, the key shown once, `key_delegations`, `needs-delegation` handling, the migration op; the web app's chat paths move from `cipherFor` to delegate calls; today's passphrase-derived own key folds into enrollment.
+3. **Automation delegation.** The automation key; agents, webhooks, refresh and compaction routed through it; paused state and the preferences page (window, renewal, revoke).
+4. **Keypairs and sharing.** X25519 per person; `share` to a public key; project keys to members; the owner-derivation paths deleted.
+5. **Devices, rotation, deletion, and the end of the master.** Device approval, `rewrap`, account shredding, the master removed from the delegate and the derivation code deleted.
+
+## Decisions needed
+
+1. **Published projects.** Content shared with everyone in the org cannot be under one person's key. Options: a tenant-wide "published" key the delegate holds for exactly that content, or published projects are stored in the clear, or the feature goes.
+2. **The connector workers.** Mirth, ADManager, file-share and OnBase workers exist because they dial private networks. They can keep doing so with credentials fetched from the delegate per request, which leaves them holding a plaintext credential in flight, or they can fold into the delegate so that one process is truly the only one. Folding is cleaner and a bigger move.
+3. **The knowledge index.** `knowledge_chunks` is ingested with people's tokens but stored as org knowledge with per-read access checks, not per-person encryption. This design leaves it as it is; saying so explicitly matters, because "only accessible to them" is not true of it.
+4. **The automation window's default.** The maximum is 30 days. Whether the default is 7 or 30 shapes how often people see "paused".
+5. **The web app's plaintext.** Accept that the web app sees plaintext in flight, as above, or move prompt assembly and model calls into the delegate as well, which makes it the LLM gateway too and a much larger service.
