@@ -131,6 +131,9 @@ async function opFailure(response: Response): Promise<{ ok: false; err: Fileshar
   } catch {
     // A non-JSON failure body: keep the generic tag.
   }
+  // The delegate answers `unconfigured` when it has no address for the
+  // file-share worker — the same fail-closed "not configured" as before.
+  if (type === 'unconfigured') return { ok: false, err: { kind: 'unconfigured' } };
   return { ok: false, err: { kind: 'op', type, message, status: response.status } };
 }
 

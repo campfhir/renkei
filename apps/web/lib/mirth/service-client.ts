@@ -110,6 +110,10 @@ async function opFailure(response: Response): Promise<{ ok: false; err: MirthCli
   } catch {
     // A non-JSON failure body: keep the generic tag.
   }
+  // The delegate answers `unconfigured` when it has no address for this
+  // worker: to a caller that is the same "service not configured" it used
+  // to read off its own missing env, so it keeps that shape.
+  if (type === 'unconfigured') return { ok: false, err: { kind: 'unconfigured' } };
   return { ok: false, err: { kind: 'op', type, message, status: response.status } };
 }
 
