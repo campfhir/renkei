@@ -570,12 +570,10 @@ describe('webex-attachment to self', () => {
 
   it('surfaces the solo-space failure when both routes fail', async () => {
     resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
-    const sendNoteToSelf = jest
-      .fn()
-      .mockResolvedValue({
-        ok: false,
-        err: { type: 'WEBEX_API_ERROR', message: 'WebEx API 403 for /rooms' },
-      });
+    const sendNoteToSelf = jest.fn().mockResolvedValue({
+      ok: false,
+      err: { type: 'WEBEX_API_ERROR', message: 'WebEx API 403 for /rooms' },
+    });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
     const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));

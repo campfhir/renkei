@@ -56,13 +56,10 @@ export function userKeyMaster(): Result<
   Buffer,
   'MISSING_USER_KEY_MASTER' | 'INVALID_ENCRYPTION_KEY'
 > {
-  const encoded =
-    process.env.USER_KEY_ENCRYPTION_KEY || '';
+  const encoded = process.env.USER_KEY_ENCRYPTION_KEY || '';
   if (!encoded) {
     return err('MISSING_USER_KEY_MASTER' as const, {
-      message:
-        'USER_KEY_ENCRYPTION_KEY is not set — ' +
-        'per-user keys cannot be derived.',
+      message: 'USER_KEY_ENCRYPTION_KEY is not set — ' + 'per-user keys cannot be derived.',
     });
   }
   return parseEncryptionKey(encoded);

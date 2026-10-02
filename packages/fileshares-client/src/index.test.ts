@@ -84,13 +84,11 @@ describe('JSON ops (list, stat, mkdir, remove, remove-preview, move, rename, tes
   });
 
   it('refuses a listing with a malformed entry rather than dropping it silently', async () => {
-    fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify({ share: SHARE, path: '/', entries: [{ name: 'a.txt' }] }), {
-          status: 200,
-        })
-      );
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ share: SHARE, path: '/', entries: [{ name: 'a.txt' }] }), {
+        status: 200,
+      })
+    );
 
     const result = await fsListFolder(TARGET, '/');
 
@@ -304,13 +302,11 @@ describe('fsWriteFile', () => {
   });
 
   it('maps a non-2xx response to a typed op error', async () => {
-    fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify({ error: { type: 'access_denied', message: 'no' } }), {
-          status: 403,
-        })
-      );
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: 'access_denied', message: 'no' } }), {
+        status: 403,
+      })
+    );
 
     const result = await fsWriteFile(TARGET, '/new.txt', new Uint8Array([1]));
 
