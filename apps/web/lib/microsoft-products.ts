@@ -45,7 +45,9 @@ export const MICROSOFT_PRODUCTS: MicrosoftProduct[] = [
     capabilityKey: 'microsoft',
     logo: 'outlook',
     title: 'Outlook',
-    summary: 'Mail, calendar and Microsoft To Do — read, searched, and ingested into knowledge.',
+    summary:
+      'Mail, calendar and Microsoft To Do — read and searched live as you; To Do can also be ' +
+      'indexed into knowledge. Mail and calendar never are.',
     groupIds: ['mail', 'calendar', 'tasks'],
   },
   {

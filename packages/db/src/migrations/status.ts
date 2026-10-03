@@ -162,6 +162,12 @@ export const EXPECTED_MIGRATIONS = [
   '130-chat-queued-sends',
   '131-sandbox-size-requests',
   '132-image-usage',
+  '133-user-encryption-keys',
+  '134-user-own-keys',
+  '135-drop-mail-calendar-chunks',
+  '136-delegate-git-tickets',
+  '137-drop-todo-chunks',
+  '138-held-keys-and-delegations',
 ];
 
 export interface MigrationStatus {

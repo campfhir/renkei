@@ -109,7 +109,7 @@ async function syncJira(
     const response = await atlassianFetch({
       product: 'jira',
       cloudId: access.cloudId,
-      accessToken: access.accessToken,
+      auth: access.auth,
       path: '/rest/api/3/search/jql',
       method: 'POST',
       json: {
@@ -152,7 +152,7 @@ async function syncJira(
       // 100 issues costs one lookup per combination rather than 100.
       const screen = await fieldScreenFor({
         cloudId: access.cloudId,
-        accessToken: access.accessToken,
+        auth: access.auth,
         issueKey: key,
         projectKey: str(rec(rec(issue.fields).project).key),
         issueTypeId: str(rec(rec(issue.fields).issuetype).id),
@@ -205,7 +205,7 @@ async function syncConfluence(
     const response = await atlassianFetch({
       product: 'confluence',
       cloudId: access.cloudId,
-      accessToken: access.accessToken,
+      auth: access.auth,
       path,
     });
     if (!response.ok) {

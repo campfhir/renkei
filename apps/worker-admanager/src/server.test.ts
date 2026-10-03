@@ -61,7 +61,6 @@ let base: string;
 beforeAll(async () => {
   server = createAdManagerServer({
     db: {} as Kysely<DB>,
-    encryptionKey: Buffer.alloc(32, 7),
     apiKeys: [API_KEY],
     dial: async (input) => {
       calls.push(input);

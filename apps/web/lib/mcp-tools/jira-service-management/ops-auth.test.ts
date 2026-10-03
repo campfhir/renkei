@@ -25,15 +25,19 @@ jest.mock('../common', () => ({
 
 const mockJiraFetch = jest.fn();
 
+import { authedFetch } from '@renkei/delegate-client';
 import { oauthJsmOpsAuth, opsScopes } from './ops-auth';
 import type { MCPToolContext } from '../common';
+
+/** The grant's fetcher as the delegate would hand it out; never called here — jiraFetch is mocked. */
+const jiraAuth = authedFetch(async () => new Response('{}'), 'atlassian-jsm:tenant-1:acct-1');
 
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
     tenantId: 'tenant-1',
     accountId: 'acct-1',
     cloudId: 'cloud-1',
-    accessToken: 'token-1',
+    jiraAuth,
     siteUrl: '',
     apiBaseUrl: '',
     maxJqlResults: 100,
@@ -61,6 +65,16 @@ describe('oauthJsmOpsAuth — availability', () => {
     expect(body.message).toBe('No Atlassian cloud id on this connection.');
   });
 
+  it('refuses a call with no grant on the context, without touching the network', async () => {
+    const auth = oauthJsmOpsAuth(context({ jiraAuth: null }));
+
+    const response = await auth.fetch([], '/schedules');
+
+    expect(response.ok).toBe(false);
+    expect(response.status).toBe(401);
+    expect(mockJiraFetch).not.toHaveBeenCalled();
+  });
+
   it('proceeds once a cloud id is present', async () => {
     const auth = oauthJsmOpsAuth(context());
 
@@ -84,7 +98,7 @@ describe('oauthJsmOpsAuth — base URL', () => {
 
     expect(mockJiraFetch).toHaveBeenCalledWith(
       'https://api.atlassian.com/ex/jira/cloud-42/jsm/ops/api/v1/schedules?expand=rotation',
-      'token-1',
+      jiraAuth,
       undefined
     );
   });
@@ -95,7 +109,7 @@ describe('oauthJsmOpsAuth — base URL', () => {
 
     await auth.fetch([], '/schedules/s-1/rotations/r-1', init);
 
-    expect(mockJiraFetch).toHaveBeenCalledWith(expect.any(String), 'token-1', init);
+    expect(mockJiraFetch).toHaveBeenCalledWith(expect.any(String), jiraAuth, init);
   });
 });
 

@@ -10,13 +10,9 @@
  * registered tool, driven for real through registerOutlookTools, turns a
  * denied credential into a clean errText() rather than crashing.
  *
- * outlook_semantic_search_messages is the one tool that never calls
- * auth.resolve() at all — it searches Renkei's own knowledge index by
- * userEmail, not a live Graph call (see index.ts) — so against `{}` args it
- * fails on "query is required" instead of the denial string every other
- * tool produces. Still isError:true with clean text, so it needs no special
- * case in the loop below; only the "names the actual reason" test picks a
- * tool that actually goes through auth.
+ * Every Outlook tool is a live Graph call under the caller's grant — mail
+ * is never indexed, so there is no index-backed tool here any more — which
+ * is why each one, against `{}` args, produces the denial string.
  */
 
 // ../common's own import of refreshAtlassianTokenDirect transitively pulls
@@ -31,14 +27,7 @@ jest.mock('@renkei/db', () => ({
 jest.mock('@renkei/connector-microsoft', () => ({
   ...jest.requireActual('@renkei/connector-microsoft/src/fetch'),
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
-  objectIdOfMicrosoftRefId: (refId: string) => refId,
 }));
-jest.mock('@renkei/knowledge', () => ({
-  resolveEmbeddingProvider: async () => null,
-  resolveKnowledge: async () => null,
-  searchKnowledge: async () => ({ ok: true, val: { hits: [], elided: 0 } }),
-}));
-jest.mock('../knowledge', () => ({ buildKnowledgeVerifiers: async () => new Map() }));
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
@@ -83,7 +72,6 @@ const TOOLS = [
   'outlook_bulk_list_attachments',
   'outlook_search_messages',
   'outlook_bulk_search_messages',
-  'outlook_semantic_search_messages',
   'outlook_list_events',
   'outlook_get_event',
   'outlook_list_task_lists',

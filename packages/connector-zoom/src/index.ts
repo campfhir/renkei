@@ -14,8 +14,9 @@
  * 5. verifyAccess: createZoomAccessVerifier, pure host-of-ref check.
  *
  * Unlike WebEx (bot credential), Zoom ingestion rides per-user OAuth grants
- * (provider-grants ZoomAdapter) plus the webhook's own download_token for
- * transcript fetches.
+ * plus the webhook's own download_token for transcript fetches — both
+ * handed to ZoomClient as an `AuthedFetch` (@renkei/delegate-client), so no
+ * token is ever in this process.
  */
 
 /** The connector key used in connector_configs, capability descriptors, and event rows. */

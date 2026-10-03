@@ -18,11 +18,18 @@ import {
   recordWidgetDecision,
 } from './widget-tools';
 import { insertMessage } from './messages';
+import { chatCipherById } from './chat-keys';
+
+// The delegate is the one process that holds keys; the web app reaches it
+// over HTTP, so these tests run it in-process on a loopback port, one per
+// describe block (each block opens and closes its own database pool).
+import { useTestDelegate } from '@/lib/test-support/delegate';
 
 const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
 
 maybe('recordWidgetModelContext', () => {
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   /** A tenant with no model configured at all. */
@@ -52,6 +59,8 @@ maybe('recordWidgetModelContext', () => {
         { id: modellessTenantId, slug: modellessTenantId },
       ])
       .execute();
+    await delegate.enroll(tenantId, me);
+    await delegate.enroll(modellessTenantId, me);
     await db
       .insertInto('llm_model_configs')
       .values({
@@ -182,6 +191,7 @@ maybe('recordWidgetModelContext', () => {
  * (chat-view.ts's batch read for one chat's whole message list).
  */
 maybe('chat widget decisions', () => {
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;
@@ -194,6 +204,7 @@ maybe('chat widget decisions', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await delegate.enroll(tenantId, me);
     await db
       .insertInto('chats')
       .values([
@@ -282,6 +293,7 @@ maybe('chat widget decisions', () => {
  * have a recorded decision — opens exactly one turn, informed by both.
  */
 maybe('recordWidgetModelContext: batches decisions from one reply', () => {
+  const delegate = useTestDelegate();
   let db: Kysely<DB>;
   const tenantId = randomUUID();
   const me = `me-${tenantId.slice(0, 8)}`;
@@ -305,6 +317,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
     if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
     await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
+    await delegate.enroll(tenantId, me);
     await db
       .insertInto('llm_model_configs')
       .values({
@@ -343,6 +356,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'assistant',
       kind: 'assistant',
       status: 'complete',
+      cipher: await chatCipherById(db, tenantId, chatId),
       blocks: [
         { type: 'text', text: 'Two role assignments to review.' },
         { type: 'tool_use', id: toolUseIdA, name: 'entra_assign_app_role_preview', input: {} },
@@ -356,6 +370,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
+      cipher: await chatCipherById(db, tenantId, chatId),
       blocks: [
         {
           type: 'tool_result',

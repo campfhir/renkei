@@ -6,7 +6,13 @@
  * of apps/web/lib/code/repo-host.ts's RepoHostAdapter — this worker
  * cannot import apps/web's Next.js internals, so this is its own copy
  * of just what it needs, against the same REST APIs.
+ *
+ * Every call rides the subscriber's grant fetcher: the delegate behind it
+ * attaches the credential (docs/delegate-key-design.md), so no header
+ * here carries one.
  */
+
+import type { AuthedFetch } from '@renkei/delegate-client';
 
 export type PipelineConclusion = 'success' | 'failure' | 'running' | 'pending' | 'other';
 
@@ -14,31 +20,34 @@ interface RepoTarget {
   fullName: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function rec(value: unknown): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return isRecord(value) ? value : {};
 }
 
 function arr(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function githubHeaders(accessToken: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${accessToken}`,
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-}
+const GITHUB_HEADERS: Record<string, string> = {
+  Accept: 'application/vnd.github+json',
+  'X-GitHub-Api-Version': '2022-11-28',
+};
 
 export async function getGitHubWorkflowRunConclusion(
-  accessToken: string,
+  auth: AuthedFetch,
   target: RepoTarget,
   runId: string
 ): Promise<PipelineConclusion | null> {
-  const response = await fetch(`https://api.github.com/repos/${target.fullName}/actions/runs/${runId}`, {
-    headers: githubHeaders(accessToken),
-  });
+  const response = await auth(
+    `https://api.github.com/repos/${target.fullName}/actions/runs/${runId}`,
+    {
+      headers: GITHUB_HEADERS,
+    }
+  );
   if (!response.ok) return null;
   const body: unknown = await response.json().catch(() => null);
   const record = rec(body);
@@ -54,13 +63,13 @@ export async function getGitHubWorkflowRunConclusion(
 }
 
 export async function mergeGitHubPullRequest(
-  accessToken: string,
+  auth: AuthedFetch,
   target: RepoTarget,
   prNumber: number
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-  const response = await fetch(
+  const response = await auth(
     `https://api.github.com/repos/${target.fullName}/pulls/${prNumber}/merge`,
-    { method: 'PUT', headers: githubHeaders(accessToken) }
+    { method: 'PUT', headers: GITHUB_HEADERS }
   );
   if (!response.ok) {
     const text = await response.text().catch(() => '');
@@ -69,9 +78,7 @@ export async function mergeGitHubPullRequest(
   return { ok: true, url: `https://github.com/${target.fullName}/pull/${prNumber}` };
 }
 
-function bitbucketHeaders(accessToken: string): Record<string, string> {
-  return { Authorization: `Bearer ${accessToken}` };
-}
+const BITBUCKET_HEADERS: Record<string, string> = { Accept: 'application/json' };
 
 /**
  * Bitbucket has no single "get this pipeline" call keyed by commit —
@@ -85,13 +92,13 @@ function bitbucketHeaders(accessToken: string): Record<string, string> {
  * all reads as "pending" rather than guessing.
  */
 export async function getBitbucketCommitStatusConclusion(
-  accessToken: string,
+  auth: AuthedFetch,
   target: RepoTarget,
   commitHash: string
 ): Promise<PipelineConclusion | null> {
-  const response = await fetch(
+  const response = await auth(
     `https://api.bitbucket.org/2.0/repositories/${target.fullName}/commit/${encodeURIComponent(commitHash)}/statuses?pagelen=50`,
-    { headers: bitbucketHeaders(accessToken) }
+    { headers: BITBUCKET_HEADERS }
   );
   if (!response.ok) return null;
   const body: unknown = await response.json().catch(() => null);
@@ -107,13 +114,13 @@ export async function getBitbucketCommitStatusConclusion(
 }
 
 export async function mergeBitbucketPullRequest(
-  accessToken: string,
+  auth: AuthedFetch,
   target: RepoTarget,
   prNumber: number
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-  const response = await fetch(
+  const response = await auth(
     `https://api.bitbucket.org/2.0/repositories/${target.fullName}/pullrequests/${prNumber}/merge`,
-    { method: 'POST', headers: bitbucketHeaders(accessToken) }
+    { method: 'POST', headers: BITBUCKET_HEADERS }
   );
   if (!response.ok) {
     const text = await response.text().catch(() => '');

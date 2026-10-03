@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * The wire boundary: what oauthGitHubAuth actually SENDS. The tool
- * suite stubs auth.fetch, so nothing there would catch the one failure
- * that matters most in the field — a request leaving without its
- * Authorization header. This suite mocks nothing below global.fetch:
- * grant row → decrypted token → the exact header bytes.
+ * The wire boundary: what oauthGitHubAuth actually SENDS. The tool suite
+ * stubs auth.fetch, so nothing there would catch a request leaving for the
+ * wrong URL, or one carrying a credential this process should never hold.
+ * The delegate worker holds the token (docs/delegate-key-design.md): the
+ * grant's fetcher attaches it, so what leaves THIS process is a call on
+ * that fetcher with no Authorization of its own. This suite mocks nothing
+ * below the delegate client: grant described → fetcher → the exact request.
  */
 
 jest.mock('@/lib/logger', () => ({
@@ -12,56 +14,26 @@ jest.mock('@/lib/logger', () => ({
   secure: (value: unknown) => value,
 }));
 
-const grantRow: { provider_account_id: string } | undefined = { provider_account_id: '12345' };
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: () => {
-        const chain = {
-          select: () => chain,
-          where: () => chain,
-          orderBy: () => chain,
-          executeTakeFirst: async () => grantRow,
-        };
-        return chain;
-      },
-    },
-  }),
-}));
+let describeResult: unknown;
+const fetchSpy = jest.fn();
 
-jest.mock('@renkei/crypto', () => ({
-  parseEncryptionKey: () => ({ ok: true, val: Buffer.alloc(32) }),
-}));
-
-let storedAccessToken = 'gho_live-token-123';
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({ describe: async () => describeResult }),
+    grantFetch: (ref: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch((url, init) => fetchSpy(url, init), actual.grantKeyOf(ref)),
+  };
+});
 jest.mock('@renkei/provider-grants', () => ({
   GITHUB: 'github',
-  GitHubAdapter: class {},
   readGitHubMetadata: () => ({ login: 'octocat' }),
-  getGrant: async () => ({
-    ok: true,
-    val: {
-      accountId: '12345',
-      clientId: 'client-id',
-      accessToken: storedAccessToken,
-      refreshToken: 'refresh-1',
-      // Far future: the refresh path stays out of this suite's way.
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      metadata: { login: 'octocat' },
-    },
-  }),
-  refreshGrantTokens: jest.fn(),
-}));
-
-jest.mock('@/lib/github-app', () => ({
-  getGitHubApp: async () => null,
 }));
 
 import { oauthGitHubAuth } from './github-auth';
 import type { MCPToolContext } from '../common';
-
-const fetchSpy = jest.fn();
 
 const context = {
   tenantId: 'tenant-1',
@@ -72,12 +44,11 @@ const context = {
 beforeEach(() => {
   fetchSpy.mockReset();
   fetchSpy.mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
-  global.fetch = fetchSpy as unknown as typeof fetch;
-  storedAccessToken = 'gho_live-token-123';
+  describeResult = { ok: true, val: { accountId: '12345', metadata: { login: 'octocat' } } };
 });
 
 describe('what actually leaves the process', () => {
-  it('sends the decrypted token as a capital-B Bearer header', async () => {
+  it('sends through the grant’s fetcher, to GitHub, with no Authorization of its own', async () => {
     const auth = oauthGitHubAuth(context);
     const response = await auth.fetch(['repository'], '/user/installations?per_page=100');
 
@@ -85,21 +56,36 @@ describe('what actually leaves the process', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.github.com/user/installations?per_page=100');
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      'Bearer gho_live-token-123'
-    );
+    const headers = init.headers as Record<string, string>;
+    // The delegate attaches the credential; this process never has one to send.
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers.Accept).toBe('application/vnd.github+json');
   });
 
-  it('refuses to send at all when the stored token is empty', async () => {
-    storedAccessToken = '';
+  it('refuses locally, with the reconnect pointer, when there is no GitHub grant', async () => {
+    describeResult = { ok: false, err: { type: 'NO_GRANT' } };
     const auth = oauthGitHubAuth(context);
     const response = await auth.fetch(['repository'], '/user/installations?per_page=100');
 
-    // Refused locally with the reconnect pointer — never "Bearer " on the wire.
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(response.status).toBe(401);
     const body = (await response.json()) as { message: string };
-    expect(body.message).toContain('no access token');
+    expect(body.message).toContain('GitHub is not connected');
+  });
+
+  it('renders a refusal the delegate issued itself in the resolver’s words', async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: 'GRANT_REVOKED' } }), {
+        status: 401,
+        headers: { 'x-delegate-error': 'GRANT_REVOKED' },
+      })
+    );
+    const auth = oauthGitHubAuth(context);
+    const response = await auth.fetch(['repository'], '/user');
+
+    expect(response.ok).toBe(false);
+    const body = (await response.json()) as { message: string };
+    expect(body.message).toContain('revoked');
   });
 
   it('a capability the connection lacks is refused before any network call', async () => {

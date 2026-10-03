@@ -1,15 +1,18 @@
 /**
- * Minimal Zoom API client, access-token scoped. Live queries only — this
+ * Minimal Zoom API client, grant scoped. Live queries only — this
  * connector persists nothing itself.
  *
- * The token is a parameter, not a fetch, because Zoom access arrives two
- * ways: a per-user grant's access token (provider-grants ZoomAdapter) or a
- * webhook's short-lived download_token. Both are just Bearer credentials
- * here.
+ * The credential is an `AuthedFetch` (@renkei/delegate-client): the
+ * delegate worker holds the token and attaches the Authorization header,
+ * refreshes it and retries a 401, so nothing here sees a token or sets a
+ * Bearer of its own. Zoom access arrives two ways — a per-user grant, or a
+ * webhook's short-lived download_token — and both reach this client as a
+ * fetcher built by whoever holds the credential.
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 const API_BASE = 'https://api.zoom.us/v2';
@@ -73,7 +76,7 @@ export class ZoomClient {
   private readonly lane: RequestLane;
 
   constructor(
-    private readonly accessToken: string,
+    private readonly auth: AuthedFetch,
     options?: { lane?: RequestLane }
   ) {
     this.lane = options?.lane ?? 'background';
@@ -85,12 +88,9 @@ export class ZoomClient {
     await limiter.take(this.lane);
     let response: Response;
     try {
-      response = await fetch(`${API_BASE}${path}`, {
+      response = await this.auth(`${API_BASE}${path}`, {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${this.accessToken}`,
-          Accept: 'application/json',
-        },
+        headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
@@ -153,18 +153,17 @@ export class ZoomClient {
   }
 
   /**
-   * Fetch the body behind a Zoom download URL (transcript VTT, etc.) with the
-   * Bearer credential. Zoom's download hosts want the token in the header,
-   * not a query parameter, so this stays in the client rather than being a
-   * bare fetch at the call site.
+   * Fetch the body behind a Zoom download URL (transcript VTT, etc.) through
+   * the grant's fetcher. Zoom's download hosts want the credential in the
+   * header, not a query parameter — the delegate attaches it — so this stays
+   * in the client rather than being a bare fetch at the call site.
    */
   async downloadFromUrl(url: string): Promise<Result<string, 'ZOOM_API_ERROR'>> {
     await limiter.take(this.lane);
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await this.auth(url, {
         method: 'GET',
-        headers: { Authorization: `Bearer ${this.accessToken}` },
         signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
       });
     } catch (error) {

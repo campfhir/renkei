@@ -12,11 +12,11 @@
  * three never share a service.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { sealForSubject } from './keys';
 
 test.use({
   browserName: 'chromium',
@@ -27,22 +27,6 @@ test.use({
 });
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-
-/** `@renkei/crypto`'s secretbox, as code.spec.ts reproduces it. */
-function secretbox(plaintext: string): string {
-  const encoded = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encoded) throw new Error('TOKEN_ENCRYPTION_KEY is not set');
-  const key = Buffer.from(encoded, 'base64');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
 
 function idsFor(project: string) {
   const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
@@ -77,8 +61,8 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
       [
         E2E_TENANT_ID,
         E2E_SUBJECT,
-        secretbox('e2e-access-token'),
-        secretbox('e2e-refresh-token'),
+        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-access-token'),
+        await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-refresh-token'),
         new Date(Date.now() + 365 * 86_400_000),
         ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
         JSON.stringify({ username: 'e2e-dev' }),

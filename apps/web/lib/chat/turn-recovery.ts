@@ -41,6 +41,8 @@ import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 import { CODE_DELEGATE_TOOL } from '@/lib/code/delegate';
 import { TASK_COMPLETE_TOOL } from './auto-mode';
 import { insertMessage, listTurnMessages, type StoredMessage } from './messages';
+import { cipherAsOwner } from './chat-keys';
+import { unavailableCipher } from './content-crypto';
 import { executeChatTurn } from './start-turn';
 import { getChatRow } from './store';
 import { interruptSubagentRunsOfTurn } from './subagent-runs';
@@ -189,7 +191,12 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     log('orphaned chat turn ended as {status}', { status, error });
   };
 
-  const rows = await listTurnMessages(db, turn.tenantId, turn.id);
+  // No person is signed in for a resumed turn: the chat's rows are opened
+  // and written as its owner (chat-keys.ts). A chat already gone leaves
+  // the rows unopenable and the turn ends below either way.
+  const chat = await getChatRow(db, turn.tenantId, turn.chatId);
+  const cipher = chat ? await cipherAsOwner(db, 'chat', chat) : unavailableCipher('no-key');
+  const rows = await listTurnMessages(db, turn.tenantId, turn.id, cipher);
   const seed = resumeSeedOf(rows, turn.startedAt);
   const plan = planResume(rows);
 
@@ -199,7 +206,6 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   if (turn.cancelRequestedAt) return end('canceled', null, seed);
   if (plan.kind === 'finish') return end(plan.status, turn.error, seed);
 
-  const chat = await getChatRow(db, turn.tenantId, turn.chatId);
   if (!chat) return end('interrupted', 'The chat is gone.', seed);
   const llmResult = await resolveAgentLlm(db, turn.tenantId, turn.llmModelId);
   if (!llmResult.ok) {
@@ -236,6 +242,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
       kind: 'tool_results',
       status: 'complete',
       blocks: results,
+      cipher,
     });
     if (!inserted) return end('failed', 'The content encryption key is not configured.', seed);
   }
@@ -247,6 +254,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     kind: 'nudge',
     status: 'complete',
     blocks: [{ type: 'text', text: RESUME_NOTE_TEXT }],
+    cipher,
   });
   if (!note) return end('failed', 'The content encryption key is not configured.', seed);
   const assistant = await insertMessage(db, {
@@ -260,6 +268,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     llmModelId: llm.modelConfigId,
     provider: llm.providerName,
     model: llm.model,
+    cipher,
   });
   if (!assistant) return end('failed', 'The content encryption key is not configured.', seed);
 
@@ -272,6 +281,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     tenantId: turn.tenantId,
     session: { subject: chat.ownerSubject, roles },
     chat: { ...chat, llmModelId: llm.modelConfigId },
+    cipher,
     turnId: turn.id,
     assistantMessage: assistant,
     llm,

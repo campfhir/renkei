@@ -90,7 +90,7 @@ async function bulkWorklogs(maxJqlResults = 100): Promise<ToolHandler> {
       accountId: 'acct-1',
       siteUrl: 'https://example.atlassian.net',
       apiBaseUrl,
-      accessToken: 'token-1',
+      jiraAuth: null,
       maxJqlResults,
     } as MCPToolContext,
     stubAuth()
@@ -116,13 +116,17 @@ describe('jira_bulk_get_worklogs', () => {
 
   it('turns issueKeys into a key-in JQL', async () => {
     serve([issueWith('PROJ-7', 1)]);
-    await (await bulkWorklogs())({ issueKeys: ['PROJ-7', 'PROJ-8'] });
+    await (
+      await bulkWorklogs()
+    )({ issueKeys: ['PROJ-7', 'PROJ-8'] });
     expect(calls[0].body?.jql).toBe('key in (PROJ-7, PROJ-8)');
   });
 
   it("respects the org's maxJqlResults cap", async () => {
     serve([]);
-    await (await bulkWorklogs(25))({ jql: 'project = PROJ', maxResults: 100 });
+    await (
+      await bulkWorklogs(25)
+    )({ jql: 'project = PROJ', maxResults: 100 });
     expect(calls[0].body?.maxResults).toBe(25);
   });
 

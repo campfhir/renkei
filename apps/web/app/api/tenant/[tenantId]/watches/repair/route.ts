@@ -19,7 +19,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { rec, str } from '@renkei/connector-atlassian';
 import { getSessionFromRequest } from '@/lib/session';
-import { getOrigin } from '@/lib/get-origin';
 import {
   resolveAtlassianUserAccess,
   type AtlassianUserProvider,
@@ -59,19 +58,12 @@ export async function POST(
     );
   }
 
-  const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
-  }
-
-  // The caller's grant is resolved (and refreshed) right now — a repair
-  // that rebinds a watch onto another dead grant would only move the
-  // failure, not fix it.
+  // The caller's grant is resolved right now — a repair that rebinds a
+  // watch onto another dead grant would only move the failure, not fix it.
   const access = await resolveAtlassianUserAccess(
     tenantId,
     session.subject,
-    grantProviderFor(provider),
-    originResult.val
+    grantProviderFor(provider)
   );
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 

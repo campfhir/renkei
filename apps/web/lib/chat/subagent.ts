@@ -410,12 +410,13 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
       // A tool that throws is that call's failure, not the run's: the
       // model reads the error and carries on, and the run still closes
       // with its transcript rather than being left marked running.
-      const outcome = await tools.run(use.name, use.input, use.id).catch(
-        (error: unknown): McpToolResult =>
+      const outcome = await tools
+        .run(use.name, use.input, use.id)
+        .catch((error: unknown): McpToolResult =>
           errorResult(
             `The tool ${use.name} failed: ${error instanceof Error ? error.message : String(error)}`
           )
-      );
+        );
       const outText = textOfResult(outcome);
       results.push({
         type: 'tool_result',

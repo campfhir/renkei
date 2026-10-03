@@ -84,7 +84,7 @@ export default function RunLive({
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <BackLink href={`/${slug}/agents/${agentId}/runs`} label={`Runs of “${agentName}”`} />
         <h1 className="text-xl font-bold">Run</h1>
-        <StatusPill status={run.status} />
+        <StatusPill status={run.status} errorKind={run.errorKind} />
         <span className="text-sm text-gray-500">
           via {run.triggerKind} · <LocalTime at={run.createdAt} />
         </span>

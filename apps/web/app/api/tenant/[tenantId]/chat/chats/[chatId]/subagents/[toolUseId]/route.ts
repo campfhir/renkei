@@ -21,7 +21,7 @@ export async function GET(
   const { db, session } = ready.context;
   const access = await resolveChatAccess(db, tenantId, session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  const run = await getSubagentRunByCall(db, tenantId, chatId, toolUseId);
+  const run = await getSubagentRunByCall(db, tenantId, chatId, toolUseId, access.cipher);
   if (!run) return jsonError(404, 'not-found', 'No such sub-agent run');
   return NextResponse.json({ run });
 }

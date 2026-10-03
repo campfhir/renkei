@@ -27,7 +27,7 @@ import {
   type WireWorkspace,
 } from '@renkei/sandbox-client';
 import { deleteProject, getProjectRow, updateProject, type ProjectRow } from '@/lib/chat/projects';
-import { cloneUrlFor, type WorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { cloneUrlFor, type WorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { codeProjectTarget } from './scope';
 
 export type CodeOutcome<T> = { ok: true; val: T } | { ok: false; status: number; message: string };
@@ -40,7 +40,7 @@ export type CodeOutcome<T> = { ok: true; val: T } | { ok: false; status: number;
 export async function startProjectClone(
   db: Kysely<DB>,
   project: ProjectRow,
-  credential: WorkspaceGitCredential,
+  credential: WorkspaceGitAccess,
   options: { depth?: number } = {}
 ): Promise<CodeOutcome<WireWorkspace>> {
   if (!sandboxWorkspacesEnabled()) {
@@ -65,7 +65,7 @@ export async function startProjectClone(
     ...(project.repo.branch ? { branch: project.repo.branch } : {}),
     ...(options.depth !== undefined ? { depth: options.depth } : {}),
     cloneUrl: cloneUrlFor(project.repo.provider, repo.workspace, repo.repoSlug),
-    authHeader: credential.authHeader,
+    gitProxy: credential.gitProxy,
   });
   if (!cloned.ok) {
     const failure = clientFailure(cloned.err);

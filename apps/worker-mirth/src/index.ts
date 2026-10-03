@@ -31,6 +31,5 @@ void runWorker({
   defaultPort: 8093,
   logger,
   attachPersistentLogging,
-  createServer: ({ db, encryptionKey, apiKeys }) =>
-    createMirthServer({ db, encryptionKey, apiKeys }),
+  createServer: ({ db, apiKeys }) => createMirthServer({ db, apiKeys }),
 });

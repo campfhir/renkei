@@ -81,7 +81,7 @@ function testContext(): MCPToolContext {
     accountId: 'acct-1',
     siteUrl: 'https://example.atlassian.net',
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-    accessToken: 'token',
+    jiraAuth: null,
     maxJqlResults: 50,
   };
 }

@@ -14,15 +14,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import {
   deleteConnection,
-  encryptCredentials,
   getConnection,
   getInstance,
   updateConnectionPermissions,
   upsertConnection,
 } from '@renkei/connector-admanager';
+import { delegateClient } from '@renkei/delegate-client';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { admanagerClientFailure, admanagerTestConnection } from '@/lib/admanager/service-client';
@@ -106,13 +105,24 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: failure.status });
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    return NextResponse.json({ error: 'Encryption key unavailable' }, { status: 500 });
+  // Sealed under the connecting person's own key by the delegate — the one
+  // process that holds a key; this one never derives it.
+  const sealed = await delegateClient().sealForSubject(tenantId, session.subject, [
+    JSON.stringify(parsed.credentials),
+  ]);
+  if (!sealed.ok) {
+    return sealed.err.type === 'NEEDS_DELEGATION' ||
+      sealed.err.type === 'NEEDS_SESSION' ||
+      sealed.err.type === 'NOT_ENROLLED'
+      ? NextResponse.json(
+          { error: 'Your encryption key is not connected to this session. Sign in again and retry.' },
+          { status: 423 }
+        )
+      : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
   }
 
   const stored = await upsertConnection(db, tenantId, instanceId, session.subject, {
-    encryptedCredentials: encryptCredentials(parsed.credentials, keyResult.val),
+    encryptedCredentials: sealed.val[0],
     technicianName: parsed.technicianName,
     permissions: parsed.permissions,
   });

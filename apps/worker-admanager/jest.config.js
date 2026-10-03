@@ -4,6 +4,7 @@ export default {
   roots: ['<rootDir>'],
   testMatch: ['**/*.test.ts'],
   moduleNameMapper: {
+    '^@renkei/user-keys$': '<rootDir>/../../packages/user-keys/src/index.ts',
     // The real logger imports the bored-logs Postgres adapter, which reaches
     // ESM-only kysely helpers jest cannot parse; tests get a silent logger.
     // Nothing under test imports @renkei/worker-kit/logger directly (only

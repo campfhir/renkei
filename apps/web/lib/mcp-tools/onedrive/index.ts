@@ -70,7 +70,7 @@ export async function registerOneDriveTools(
       if (typeof access === 'string') return errText(access);
 
       const max = num(args.max) ?? 25;
-      const recent = await graphGet(context, access.accessToken, `/me/drive/recent?$top=${max}`);
+      const recent = await graphGet(context, access.auth, `/me/drive/recent?$top=${max}`);
       if (!recent.ok) return errText(recent.error);
 
       const entries = values(recent.body);
@@ -100,7 +100,7 @@ export async function registerOneDriveTools(
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
-      const shared = await graphGet(context, access.accessToken, '/me/drive/sharedWithMe');
+      const shared = await graphGet(context, access.auth, '/me/drive/sharedWithMe');
       if (!shared.ok) return errText(shared.error);
 
       const max = num(args.max) ?? 25;

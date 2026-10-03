@@ -49,7 +49,6 @@ let base: string;
 beforeAll(async () => {
   server = createFileshareServer({
     db: {} as Kysely<DB>,
-    encryptionKey: Buffer.alloc(32, 7),
     apiKeys: [API_KEY],
     maxTransferBytes: async () => 1024,
   });
@@ -77,7 +76,20 @@ function post(path: string, body: unknown, key: string | null = API_KEY): Promis
   });
 }
 
-const TARGET = { tenantId: 'tenant-1', shareId: 'share-1', subject: 'auth0|alice' };
+// The credential the delegate attaches rides on the target; these tests
+// mock the service, so none is needed and the parsed field reads null.
+const TARGET = {
+  tenantId: 'tenant-1',
+  shareId: 'share-1',
+  subject: 'auth0|alice',
+  credentials: null,
+};
+/** The write route addresses its target by query string; the credential rides a header, not the query. */
+const TARGET_QUERY = {
+  tenantId: TARGET.tenantId,
+  shareId: TARGET.shareId,
+  subject: TARGET.subject,
+};
 
 describe('authentication', () => {
   it('serves /health without a key', async () => {
@@ -96,7 +108,6 @@ describe('authentication', () => {
   it('refuses everything when no keys are configured', async () => {
     const closed = createFileshareServer({
       db: {} as Kysely<DB>,
-      encryptionKey: Buffer.alloc(32, 7),
       apiKeys: [],
     });
     await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
@@ -148,7 +159,7 @@ describe('dispatch and serialization', () => {
       ],
     });
     expect(mocked.serviceListFolder).toHaveBeenCalledWith(
-      expect.objectContaining({ encryptionKey: expect.any(Buffer) }),
+      expect.objectContaining({ db: expect.anything() }),
       TARGET,
       '/docs'
     );
@@ -225,7 +236,7 @@ describe('file bytes', () => {
       ok: true,
       val: { share: { id: 'share-1', name: 'Accounting' }, path: '/up.bin' },
     });
-    const query = new URLSearchParams({ ...TARGET, path: '/up.bin' });
+    const query = new URLSearchParams({ ...TARGET_QUERY, path: '/up.bin' });
     const response = await fetch(`${base}/v1/write?${query}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
@@ -240,7 +251,7 @@ describe('file bytes', () => {
   });
 
   it('a write body over the org limit is 413 without reaching the service', async () => {
-    const query = new URLSearchParams({ ...TARGET, path: '/big.bin' });
+    const query = new URLSearchParams({ ...TARGET_QUERY, path: '/big.bin' });
     const response = await fetch(`${base}/v1/write?${query}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
@@ -251,7 +262,7 @@ describe('file bytes', () => {
   });
 
   it('an empty write body is refused', async () => {
-    const query = new URLSearchParams({ ...TARGET, path: '/empty.bin' });
+    const query = new URLSearchParams({ ...TARGET_QUERY, path: '/empty.bin' });
     const response = await fetch(`${base}/v1/write?${query}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
@@ -280,7 +291,11 @@ describe('test-connection payload validation', () => {
   });
 
   it('refuses malformed or missing credentials before touching the service', async () => {
-    for (const credentials of [undefined, { protocol: 'sftp' }, { protocol: 'ftp', username: 'x' }]) {
+    for (const credentials of [
+      undefined,
+      { protocol: 'sftp' },
+      { protocol: 'ftp', username: 'x' },
+    ]) {
       const response = await post('/v1/test-connection', {
         tenantId: 'tenant-1',
         shareId: 'share-1',

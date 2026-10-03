@@ -343,33 +343,10 @@ export const ORGANIZATION_TOURS: CoachMarkTour[] = [
       },
     ],
   },
-  {
-    id: 'admin-email-sanitizer',
-    area: 'Organization',
-    version: 1,
-    title: 'Email sanitizer',
-    description: 'Classifying mail before it is indexed, and stripping its boilerplate.',
-    startPath: '/admin/email-sanitizer',
-    autoStart: true,
-    requires: ['admin-sanitizer-rules'],
-    audience: 'operators',
-    steps: [
-      {
-        id: 'rules',
-        title: 'Classifier rules',
-        target: 'admin-sanitizer-rules',
-        placement: 'auto',
-        body: 'Which senders, addresses or subjects count as system notifications or marketing, in priority order; the first enabled match wins. Mail matching nothing is treated as human correspondence and never dropped.',
-      },
-      {
-        id: 'scripts',
-        title: 'Cleaner scripts',
-        target: 'admin-sanitizer-scripts',
-        placement: 'auto',
-        body: 'Where boilerplate removal happens: a small function over a body before it is indexed, run in a sealed sandbox. A failing script never loses anything — the text passes through unchanged and the error shows here.',
-      },
-    ],
-  },
+  // No tour for /admin/email-sanitizer: the page is unlinked from the
+  // Organization menu (mail is no longer indexed, so there is nothing for
+  // the sanitizer to clean) and a tour listed on the Tutorials page would
+  // be the one remaining door to it. Both go when the page is removed.
   {
     id: 'admin-settings',
     area: 'Organization',

@@ -13,10 +13,10 @@ jest.mock('@renkei/connector-atlassian', () => ({
   CONFLUENCE_KNOWLEDGE_PROVIDER: 'confluence',
 }));
 jest.mock('@renkei/provider-grants', () => ({
-  getGrant: async () => ({ ok: false }),
   readAtlassianMetadata: () => ({ cloudId: '', siteUrl: '' }),
   ATLASSIAN: 'atlassian',
   ATLASSIAN_CONFLUENCE: 'atlassian-confluence',
+  MICROSOFT: 'microsoft',
 }));
 jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
@@ -59,23 +59,24 @@ describe('sourceFiltersFor', () => {
 
   it('maps a product name onto the stored provider, not the product name', () => {
     // The column says 'microsoft'; nobody calling this tool would guess that.
-    expect(sourceFiltersFor(['outlook_mail'])).toEqual([{ provider: 'microsoft', kind: 'msg' }]);
+    expect(sourceFiltersFor(['sharepoint'])).toEqual([{ provider: 'sharepoint' }]);
   });
 
-  it('keeps sibling kinds apart instead of merging them into one list', () => {
-    expect(sourceFiltersFor(['outlook_mail', 'outlook_calendar'])).toEqual([
-      { provider: 'microsoft', kind: 'msg' },
-      { provider: 'microsoft', kind: 'evt' },
-    ]);
+  it('offers no mail or calendar source — neither is indexed', () => {
+    // Personal content: it never reaches the index, so a name for it would
+    // only ever filter to nothing. Unknown here, same as any other typo.
+    expect(sourceFiltersFor(['outlook_mail', 'outlook_calendar'])).toEqual([]);
+    expect(KNOWLEDGE_SOURCE_NAMES).not.toContain('outlook_mail');
+    expect(KNOWLEDGE_SOURCE_NAMES).not.toContain('outlook_calendar');
   });
 
   it('keeps a kinded source kinded when paired with an unkinded one', () => {
     // The bug this replaced: to keep Zoom (which pins no kind), the kind
-    // filter was dropped wholesale, so an "Email" selection also returned
-    // calendar events and tasks. Each source now carries its own kind and
-    // the pairs are OR-ed.
-    expect(sourceFiltersFor(['outlook_mail', 'zoom'])).toEqual([
-      { provider: 'microsoft', kind: 'msg' },
+    // filter was dropped wholesale, so a kinded selection also returned
+    // every other kind its provider stored. Each source now carries its own
+    // kind and the pairs are OR-ed.
+    expect(sourceFiltersFor(['sharepoint', 'zoom'])).toEqual([
+      { provider: 'sharepoint' },
       { provider: 'zoom' },
     ]);
   });
@@ -87,15 +88,7 @@ describe('sourceFiltersFor', () => {
 
   it('exposes every source name the tool schema offers', () => {
     expect(KNOWLEDGE_SOURCE_NAMES).toEqual(
-      expect.arrayContaining([
-        'outlook_mail',
-        'outlook_calendar',
-        'outlook_tasks',
-        'zoom',
-        'webex',
-        'confluence',
-        'jira',
-      ])
+      expect.arrayContaining(['sharepoint', 'zoom', 'webex', 'confluence', 'jira'])
     );
   });
 });

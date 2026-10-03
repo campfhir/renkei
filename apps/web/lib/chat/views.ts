@@ -171,6 +171,13 @@ export interface ChatView {
   ownerName: string | null;
   role: ChatRole;
   archived: boolean;
+  /**
+   * The content could not be opened, and why (docs/delegate-key-design.md):
+   * the person's key is not delegated to this session, or they have not
+   * enrolled. The page shows a notice instead of a thread of markers.
+   */
+  /** Why the chat's content cannot be read right now, if it cannot (content-crypto.ts). */
+  keyUnavailable: 'delegation' | 'not-enrolled' | 'no-key' | 'delegate' | null;
   createdAt: string;
   updatedAt: string;
   /** The running turn, if one is in flight when the page loads. */

@@ -43,7 +43,6 @@ interface CleanerScript {
 function typeForKinds(kinds: readonly CleanerScriptKind[]): string {
   if (kinds.length !== 1) return 'CleanerItem';
   if (kinds[0] === 'evt') return 'CleanerEvent';
-  if (kinds[0] === 'task') return 'CleanerTask';
   return 'CleanerMessage';
 }
 
@@ -251,11 +250,11 @@ export default function CleanerScripts({
       <h2 className="text-sm font-semibold">Cleaner scripts</h2>
       <p className="text-xs text-gray-500 dark:text-gray-400">
         Where all boilerplate removal happens: a function <code>(email) =&gt; string</code> that
-        transforms a body before it is indexed — email, calendar invites, or tasks, whichever you
-        point it at. Nothing is stripped that a script here does not strip; the pipeline only
-        decodes links and tidies whitespace on its own. Scripts run in a sealed sandbox — no
-        network, no files, a hard time limit — and a failing script never loses anything: the text
-        passes through unchanged and the error shows here.
+        transforms a body before it is indexed — email or calendar invites, whichever you point it
+        at. Nothing is stripped that a script here does not strip; the pipeline only decodes links
+        and tidies whitespace on its own. Scripts run in a sealed sandbox — no network, no files, a
+        hard time limit — and a failing script never loses anything: the text passes through
+        unchanged and the error shows here.
       </p>
 
       {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -340,11 +339,11 @@ export default function CleanerScripts({
         <ScriptEditor value={source} onChange={setSource} />
         <p className="text-xs text-gray-500 dark:text-gray-400">
           <code>email</code> (also <code>item</code>) carries <code>text</code>, <code>kind</code> —{' '}
-          <code>&quot;msg&quot;</code> | <code>&quot;evt&quot;</code> |{' '}
-          <code>&quot;task&quot;</code>, branch on it when a script serves more than one —{' '}
-          <code>subject</code>, <code>fromAddress</code>, <code>fromName</code>, the header fields{' '}
-          <code>senderAddress</code>, <code>replyToAddress</code>, <code>messageId</code>,{' '}
-          <code>receivedAt</code> (null when the connector reported none). Return the new text.
+          <code>&quot;msg&quot;</code> | <code>&quot;evt&quot;</code>, branch on it when a script
+          serves more than one — <code>subject</code>, <code>fromAddress</code>,{' '}
+          <code>fromName</code>, the header fields <code>senderAddress</code>,{' '}
+          <code>replyToAddress</code>, <code>messageId</code>, <code>receivedAt</code> (null when
+          the connector reported none). Return the new text.
         </p>
 
         <textarea

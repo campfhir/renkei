@@ -12,10 +12,9 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getDatabase } from '@renkei/db';
-import { encrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { getGrant, deleteGrant } from './store';
+import { getGrant, deleteGrant, sealGrantToken } from './store';
 import { scopesFromAccessToken } from './token-claims';
 import { silentLogger } from './types';
 import type { GrantLogger, ProviderAdapter, RefreshedTokens, RefreshError } from './types';
@@ -94,7 +93,6 @@ export async function refreshGrantTokens(
   adapter: ProviderAdapter,
   tenantId: string,
   accountId: string,
-  encryptionKey: Buffer,
   logger: GrantLogger = silentLogger
 ): Promise<Result<RefreshedTokens, RefreshError>> {
   const provider = adapter.provider;
@@ -117,7 +115,7 @@ export async function refreshGrantTokens(
       });
       await waitForRefreshLock(db, provider, tenantId, accountId);
       // The other process may have refreshed already — reuse its result.
-      const refetch = await getGrant(provider, tenantId, accountId, encryptionKey);
+      const refetch = await getGrant(provider, tenantId, accountId);
       if (refetch.ok && refetch.val) {
         logger.debug('[Refresh] Using refreshed token from other process', {
           provider,
@@ -137,7 +135,7 @@ export async function refreshGrantTokens(
       });
     }
 
-    const grantResult = await getGrant(provider, tenantId, accountId, encryptionKey);
+    const grantResult = await getGrant(provider, tenantId, accountId);
     if (!grantResult.ok || !grantResult.val) {
       logger.error('[Refresh] No usable grant found', { provider, tenantId, accountId });
       return err('REFRESH_FAILED' as const);
@@ -177,13 +175,22 @@ export async function refreshGrantTokens(
     // null and leave the column untouched (unknown ≠ revoked).
     const grantedScopes = scopesFromAccessToken(accessToken);
 
+    // Sealed under the owner's key (store.ts). A grant that opened has an
+    // owner, so the subject is there to seal for.
+    if (!grant.subject) return err('REFRESH_FAILED' as const);
+    const sealedAccess = await sealGrantToken(db, tenantId, grant.subject, accessToken);
+    const sealedRefresh = await sealGrantToken(db, tenantId, grant.subject, refreshToken);
+    if (!sealedAccess.ok || !sealedRefresh.ok) {
+      logger.error('[Refresh] Could not seal refreshed tokens', { provider, tenantId, accountId });
+      return err('REFRESH_FAILED' as const);
+    }
     const updateResult = await wrapAsync(
       () =>
         db
           .updateTable('provider_grants')
           .set({
-            encrypted_access_token: encrypt(accessToken, encryptionKey),
-            encrypted_refresh_token: encrypt(refreshToken, encryptionKey),
+            encrypted_access_token: sealedAccess.val,
+            encrypted_refresh_token: sealedRefresh.val,
             expires_at: expiresAt,
             updated_at: new Date(),
             ...(grantedScopes ? { granted_scopes: grantedScopes } : {}),

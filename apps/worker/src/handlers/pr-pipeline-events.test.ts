@@ -28,15 +28,20 @@ import {
   parseBitbucketRepoFullName,
 } from './pr-pipeline-events';
 import type { ClaimedEvent } from '../queue';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'github:tenant-1:alice');
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { resolveGitHubSubjectAccess: mockResolveGitHub } = jest.requireMock<{
   resolveGitHubSubjectAccess: jest.Mock;
 }>('./repo-access');
 const { getGitHubWorkflowRunConclusion: mockConclusion, mergeGitHubPullRequest: mockMerge } =
-  jest.requireMock<{ getGitHubWorkflowRunConclusion: jest.Mock; mergeGitHubPullRequest: jest.Mock }>(
-    './repo-host-lite'
-  );
+  jest.requireMock<{
+    getGitHubWorkflowRunConclusion: jest.Mock;
+    mergeGitHubPullRequest: jest.Mock;
+  }>('./repo-host-lite');
 const { insertChatNote: mockInsertChatNote } = jest.requireMock<{ insertChatNote: jest.Mock }>(
   './chat-note'
 );
@@ -82,7 +87,9 @@ describe('parseGitHubWorkflowRun', () => {
 
 describe('parseBitbucketRepoFullName', () => {
   it('reads the repository full_name', () => {
-    expect(parseBitbucketRepoFullName({ repository: { full_name: 'acme/site' } })).toBe('acme/site');
+    expect(parseBitbucketRepoFullName({ repository: { full_name: 'acme/site' } })).toBe(
+      'acme/site'
+    );
   });
 
   it('is null without one', () => {
@@ -193,13 +200,13 @@ describe('createGitHubPrPipelineHandler', () => {
       updated: [],
     };
     stubDb(fake);
-    mockResolveGitHub.mockResolvedValue({ accessToken: 'tok', login: 'alice' });
+    mockResolveGitHub.mockResolvedValue({ auth, login: 'alice' });
     mockConclusion.mockResolvedValue('success');
     mockMerge.mockResolvedValue({ ok: true, url: 'https://github.com/acme/site/pull/42' });
 
     await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
 
-    expect(mockMerge).toHaveBeenCalledWith('tok', { fullName: 'acme/site' }, 42);
+    expect(mockMerge).toHaveBeenCalledWith(auth, { fullName: 'acme/site' }, 42);
     const recorded = fake.inserted.find((row) => row.table === 'pr_pipeline_events');
     expect(recorded).toMatchObject({
       subscription_id: 'sub-1',
@@ -227,7 +234,7 @@ describe('createGitHubPrPipelineHandler', () => {
       updated: [],
     };
     stubDb(fake);
-    mockResolveGitHub.mockResolvedValue({ accessToken: 'tok', login: 'bob' });
+    mockResolveGitHub.mockResolvedValue({ auth, login: 'bob' });
     mockConclusion.mockResolvedValue('failure');
 
     await createGitHubPrPipelineHandler()(workflowRunEvent([42]));
@@ -260,7 +267,7 @@ describe('createGitHubPrPipelineHandler', () => {
       updated: [],
     };
     stubDb(fake);
-    mockResolveGitHub.mockResolvedValue({ accessToken: 'tok', login: 'carol' });
+    mockResolveGitHub.mockResolvedValue({ auth, login: 'carol' });
     mockConclusion.mockResolvedValue('running');
 
     await createGitHubPrPipelineHandler()(workflowRunEvent([42]));

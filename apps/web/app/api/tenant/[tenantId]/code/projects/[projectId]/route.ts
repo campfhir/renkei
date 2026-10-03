@@ -9,7 +9,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
-import { resolveResourceAccess } from '@/lib/chat/access';
+import { resolveProjectAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import { loadCodeProjectView } from '@/lib/code/project-view';
 import { deleteCodeProject } from '@/lib/code/projects';
@@ -23,13 +23,7 @@ export async function GET(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    tenantId,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const access = await resolveProjectAccess(db, tenantId, session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
   const view = await loadCodeProjectView(db, tenantId, session.subject, projectId, access);
   if (!view) return jsonError(404, 'not-found', 'No such project');

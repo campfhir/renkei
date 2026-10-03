@@ -10,10 +10,6 @@
  * unusable until the person reconnects, never a guess at what was meant.
  */
 
-import { decrypt, encrypt } from '@renkei/crypto';
-import { ok, err } from '@campfhir/safe-functions/helpers';
-import type { Result } from '@campfhir/safe-functions/types';
-
 export interface AdManagerCredentials {
   authToken: string;
 }
@@ -36,27 +32,4 @@ export function parseAdManagerCredentials(value: unknown): AdManagerCredentials 
   const authToken = typeof value.authToken === 'string' ? value.authToken.trim() : '';
   if (!authToken) return null;
   return { authToken };
-}
-
-export function encryptCredentials(credentials: AdManagerCredentials, key: Buffer): string {
-  return encrypt(JSON.stringify(credentials), key);
-}
-
-export function decryptCredentials(
-  payload: string,
-  key: Buffer
-): Result<AdManagerCredentials, CredentialError> {
-  const opened = decrypt(payload, key);
-  if (!opened.ok) return err('DECRYPTION_ERROR' as const);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(opened.val);
-  } catch {
-    return err('MALFORMED_CREDENTIALS' as const);
-  }
-
-  const credentials = parseAdManagerCredentials(parsed);
-  if (!credentials) return err('MALFORMED_CREDENTIALS' as const);
-  return ok(credentials);
 }

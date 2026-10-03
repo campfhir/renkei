@@ -46,16 +46,9 @@ export {
   type HttpMethod,
 } from './api';
 
-export {
-  dedupeGroupNames,
-  groupNamesFromDns,
-  groupsPresent,
-  groupsToAdd,
-} from './groups';
+export { dedupeGroupNames, groupNamesFromDns, groupsPresent, groupsToAdd } from './groups';
 
 export {
-  decryptCredentials,
-  encryptCredentials,
   parseAdManagerCredentials,
   type AdManagerCredentials,
   type CredentialError,
@@ -91,3 +84,8 @@ export {
   type ResolvedTarget,
   type SubjectTarget,
 } from './resolve';
+export {
+  sealCredentialsForSubject,
+  openCredentialsForSubject,
+  type SealCredentialsError,
+} from './user-credentials';

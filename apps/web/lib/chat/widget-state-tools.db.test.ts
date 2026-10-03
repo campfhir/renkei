@@ -13,6 +13,13 @@ import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';
+import { resourceCipher } from './content-crypto';
+
+/** A chat key for the fixtures: the ciphers under test only care that one is there. */
+const testCipher = resourceCipher({
+  id: '00000000-0000-4000-8000-00000000c1fe',
+  key: Buffer.alloc(32, 7),
+});
 import type { WidgetDecisionState } from './views';
 import { getWidgetDecision, recordWidgetDecision } from './widget-tools';
 import { widgetStateTools, WIDGET_LIST_TOOL, WIDGET_RESOLVE_TOOL } from './widget-state-tools';
@@ -48,6 +55,7 @@ maybe('chat_widget_resolve', () => {
       chatId,
       projectId: null,
       readOnly: false,
+      cipher: testCipher,
       emitWidgetDecision: (decision) => {
         emitted.push(decision);
       },
@@ -79,6 +87,7 @@ maybe('chat_widget_resolve', () => {
       role: 'assistant',
       kind: 'assistant',
       status: 'complete',
+      cipher: testCipher,
       blocks: [
         { type: 'text', text: 'Two cards: the email, and a task.' },
         { type: 'tool_use', id: 'tu_mail', name: 'outlook_send_mail_preview', input: {} },
@@ -92,6 +101,7 @@ maybe('chat_widget_resolve', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
+      cipher: testCipher,
       blocks: [
         {
           type: 'tool_result',
@@ -127,6 +137,7 @@ maybe('chat_widget_resolve', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
+      cipher: testCipher,
       blocks: [
         {
           type: 'tool_result',
@@ -271,6 +282,7 @@ maybe('chat_widget_resolve', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
+      cipher: testCipher,
       blocks: [
         {
           type: 'tool_result',

@@ -32,6 +32,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
   parseShareCredentials,
+  type ShareCredentials,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -48,8 +49,6 @@ import { logger } from './logger';
 
 export interface FileshareServerDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY. */
-  encryptionKey: Buffer;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /**
@@ -104,12 +103,30 @@ function sendServiceError(
   });
 }
 
+/**
+ * The target plus the person's credential, which the delegate (the one
+ * process that holds a key) opened and attached to the request. Absent,
+ * the service answers `not_connected`: this process never reads a stored
+ * credential itself.
+ */
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
   const tenantId = str(body.tenantId);
   const shareId = str(body.shareId);
   const subject = str(body.subject);
   if (!tenantId || !shareId || !subject) return null;
-  return { tenantId, shareId, subject };
+  return { tenantId, shareId, subject, credentials: parseShareCredentials(body.credentials) };
+}
+
+/** For the raw `write` op, whose body is the file: the credential rides in a header. */
+function credentialsFromHeader(value: string | string[] | undefined): ShareCredentials | null {
+  const text = Array.isArray(value) ? value[0] : value;
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parseShareCredentials(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function iso(date: Date | null): string | null {
@@ -122,7 +139,9 @@ type JsonHandler = (
   response: ServerResponse
 ) => Promise<void>;
 
-function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>): Record<string, JsonHandler> {
+function makeJsonHandlers(
+  transferLimit: (tenantId: string) => Promise<number>
+): Record<string, JsonHandler> {
   return {
     async list(deps, body, response) {
       const target = targetOf(body);
@@ -163,7 +182,8 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const limit = await transferLimit(target.tenantId);
-      const requested = typeof body.maxBytes === 'number' && body.maxBytes > 0 ? body.maxBytes : limit;
+      const requested =
+        typeof body.maxBytes === 'number' && body.maxBytes > 0 ? body.maxBytes : limit;
       const content = await serviceReadFile(
         deps,
         target,
@@ -252,7 +272,7 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
 }
 
 export function createFileshareServer(deps: FileshareServerDeps): Server {
-  const serviceDeps: ServiceDeps = { db: deps.db, encryptionKey: deps.encryptionKey };
+  const serviceDeps: ServiceDeps = { db: deps.db };
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const jsonHandlers = makeJsonHandlers(transferLimit);
 
@@ -272,10 +292,11 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
     // Write is the one endpoint whose body IS the file: metadata rides the
     // query string so the payload needs no envelope (and no base64 tax).
     if (url.pathname === '/v1/write') {
-      const target = {
+      const target: SubjectTarget = {
         tenantId: url.searchParams.get('tenantId') ?? '',
         shareId: url.searchParams.get('shareId') ?? '',
         subject: url.searchParams.get('subject') ?? '',
+        credentials: credentialsFromHeader(request.headers['x-fileshare-credentials']),
       };
       const path = url.searchParams.get('path') ?? '';
       if (!target.tenantId || !target.shareId || !target.subject || !path) {

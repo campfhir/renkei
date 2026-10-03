@@ -26,6 +26,7 @@ jest.mock('../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
+import { authedFetch } from '@renkei/delegate-client';
 import { createAgentRunFailedHandler } from './agent-run-failed';
 import type { ClaimedEvent } from '../queue';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
@@ -95,9 +96,16 @@ beforeEach(() => {
     provider_grants: { provider_account_id: 'ms-account-1' },
   });
   mockResolveMicrosoftAccess.mockResolvedValue({ accessToken: 'ms-token' });
-  mockResolveWebexAccess.mockResolvedValue({ accessToken: 'webex-token', personEmail: null });
+  mockResolveWebexAccess.mockResolvedValue({
+    auth: webexAuth,
+    personEmail: null,
+    subject: 'alice',
+  });
   mockGraphRequest.mockResolvedValue({ ok: true });
 });
+
+// The person's WebEx grant as the delegate hands it out: a fetcher, never a token.
+const webexAuth = authedFetch(async () => new Response(), 'webex:tenant-1:alice');
 
 describe('agent-run-failed handler', () => {
   it('sends neither channel when neither preference is on — no grant lookups either', async () => {
@@ -133,7 +141,7 @@ describe('agent-run-failed handler', () => {
 
     expect(mockGraphRequest).not.toHaveBeenCalled();
     expect(mockResolveMicrosoftAccess).not.toHaveBeenCalled();
-    expect(MockWebexClient).toHaveBeenCalledWith('webex-token');
+    expect(MockWebexClient).toHaveBeenCalledWith(webexAuth);
     expect(sendNoteToSelf).toHaveBeenCalledTimes(1);
     expect(String(sendNoteToSelf.mock.calls[0][0])).toContain('Sweep the queue');
   });

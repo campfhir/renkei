@@ -12,12 +12,16 @@ jest.mock('@/lib/logger', () => ({
 // webex_capture_message reaches around the auth abstraction for personEmail
 // (see index.ts's comment on why) — the only reason this file needs to know
 // resolveWebexAccess exists at all.
-jest.mock('./webex-auth', () => ({
-  resolveWebexAccess: jest.fn(async () => ({
-    accessToken: 'unused',
-    personEmail: 'alice@example.com',
-  })),
-}));
+jest.mock('./webex-auth', () => {
+  const { authedFetch } =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    resolveWebexAccess: jest.fn(async () => ({
+      auth: authedFetch(async () => new Response('{}', { status: 200 }), 'webex:tenant-1:acct-1'),
+      personEmail: 'alice@example.com',
+    })),
+  };
+});
 // No org bot unless a test says so — the solo-space path is the default.
 jest.mock('@/lib/webex-bot', () => ({
   webexBotClient: jest.fn(async () => mockBot),
@@ -49,7 +53,9 @@ jest.mock('@/lib/sandbox/service-client', () => ({
 // webex_request_attachment_upload only mints a slot — the DB write itself is
 // upload-slots.ts's own job, tested there; this suite just checks the tool
 // hands it the right destination.
-jest.mock('../upload-slots', () => ({ createUploadSlot: (...args: unknown[]) => mockCreateSlot(...args) }));
+jest.mock('../upload-slots', () => ({
+  createUploadSlot: (...args: unknown[]) => mockCreateSlot(...args),
+}));
 
 const insertedRows: unknown[] = [];
 const mockCall = jest.fn();

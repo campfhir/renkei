@@ -14,7 +14,8 @@
  * isolated worker over the same authenticated HTTP seam, and a single
  * client here is what keeps the two from drifting apart.
  *
- * Configuration: FILESHARES_WORKER_URL + FILESHARES_WORKER_API_KEY. Both
+ * Configuration: DELEGATE_WORKER_URL + DELEGATE_WORKER_API_KEY (the delegate
+ * forwards to the worker; see `config()`). Both
  * absent-or-set-together; a missing pair means every operation answers
  * 'unconfigured' — file shares are down, never open.
  *
@@ -71,7 +72,7 @@ export interface WireRelocation {
 }
 
 export type FileshareClientError =
-  /** FILESHARES_WORKER_URL / _API_KEY are not set. */
+  /** DELEGATE_WORKER_URL / _API_KEY are not set. */
   | { kind: 'unconfigured' }
   /** The worker could not be reached or answered garbage. */
   | { kind: 'unreachable'; message: string }
@@ -100,11 +101,18 @@ function optStr(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The worker is reached THROUGH the delegate (docs/delegate-key-design.md,
+ * decision 2): `forward/fileshares/<op>` on DELEGATE_WORKER_URL. The
+ * delegate opens the person's share credential — this process holds no
+ * key — and forwards the op with it attached; FILESHARES_WORKER_URL is
+ * the delegate's setting now.
+ */
 function config(): { url: string; key: string } | null {
-  const url = process.env.FILESHARES_WORKER_URL?.trim().replace(/\/$/, '');
-  const key = process.env.FILESHARES_WORKER_API_KEY?.trim();
+  const url = process.env.DELEGATE_WORKER_URL?.trim().replace(/\/$/, '');
+  const key = process.env.DELEGATE_WORKER_API_KEY?.trim();
   if (!url || !key) return null;
-  return { url, key };
+  return { url: `${url}/v1/forward/fileshares`, key };
 }
 
 function unreachable(message: string): { ok: false; err: FileshareClientError } {
@@ -123,6 +131,9 @@ async function opFailure(response: Response): Promise<{ ok: false; err: Fileshar
   } catch {
     // A non-JSON failure body: keep the generic tag.
   }
+  // The delegate answers `unconfigured` when it has no address for the
+  // file-share worker — the same fail-closed "not configured" as before.
+  if (type === 'unconfigured') return { ok: false, err: { kind: 'unconfigured' } };
   return { ok: false, err: { kind: 'op', type, message, status: response.status } };
 }
 
@@ -131,7 +142,7 @@ async function callOp(op: string, body: unknown): Promise<ClientResult<Response>
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
-    response = await fetch(`${cfg.url}/v1/${op}`, {
+    response = await fetch(`${cfg.url}/${op}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -263,7 +274,7 @@ export async function fsWriteFile(
   new Uint8Array(payload).set(bytes);
   let response: Response;
   try {
-    response = await fetch(`${cfg.url}/v1/write?${query.toString()}`, {
+    response = await fetch(`${cfg.url}/write?${query.toString()}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/octet-stream' },
       body: payload,

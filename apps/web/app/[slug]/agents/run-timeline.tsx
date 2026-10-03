@@ -57,10 +57,10 @@ function statusTone(status: string): string {
   }
 }
 
-export function StatusPill({ status }: { status: string }) {
+export function StatusPill({ status, errorKind }: { status: string; errorKind?: string | null }) {
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusTone(status)}`}>
-      {statusLabel(status)}
+      {statusLabel(status, errorKind)}
     </span>
   );
 }

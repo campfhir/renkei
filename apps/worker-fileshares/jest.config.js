@@ -4,6 +4,7 @@ export default {
   roots: ['<rootDir>'],
   testMatch: ['**/*.test.ts'],
   moduleNameMapper: {
+    '^@renkei/user-keys$': '<rootDir>/../../packages/user-keys/src/index.ts',
     // The real logger imports the bored-logs Postgres adapter, which reaches
     // ESM-only kysely helpers jest cannot parse; tests get a silent logger.
     '^\\.\\./logger$': '<rootDir>/src/test-support/logger-mock.ts',
@@ -12,8 +13,7 @@ export default {
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
     '^@renkei/rate-limit$': '<rootDir>/../../packages/rate-limit/src/index.ts',
-    '^@renkei/connector-fileshares$':
-      '<rootDir>/../../packages/connector-fileshares/src/index.ts',
+    '^@renkei/connector-fileshares$': '<rootDir>/../../packages/connector-fileshares/src/index.ts',
     '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
   },
   // kysely's published build is ESM-only; ts-jest (allowJs) transforms it to

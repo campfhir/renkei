@@ -2,32 +2,24 @@
  * A pull-request subscriber's own live GitHub or Bitbucket access, for
  * the worker to re-fetch authoritative pipeline state and — when opted
  * in — merge the PR, exactly as they would from the browser. Mirrors
- * zoom-access.ts/atlassian-access.ts's shape: read the grant, refresh
- * proactively when near expiry (a sweep has no user to retry a 401 for),
- * throw on a configuration problem (surfaces on the dead-lettered
+ * zoom-access.ts/atlassian-access.ts's shape: describe the grant at the
+ * delegate, throw on a delegate problem (surfaces on the dead-lettered
  * event's last_error), return null on no grant (skip, not a failure —
- * a retry cannot conjure one).
+ * a retry cannot conjure one). The fetcher's credential lives at the
+ * delegate, which refreshes it; the worker never sees a token.
  */
 
-import { parseEncryptionKey } from '@renkei/crypto';
-import { readConnectorConfigCached } from '@renkei/connector-config';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import {
-  getGrant,
-  refreshGrantTokens,
   readGitHubMetadata,
   readBitbucketMetadata,
-  GitHubAdapter,
-  BitbucketAdapter,
   GITHUB,
   ATLASSIAN_BITBUCKET,
 } from '@renkei/provider-grants';
-import { getDatabase } from '@renkei/db';
-import { logger } from '../logger';
-
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
 export interface RepoSubjectAccess {
-  accessToken: string;
+  /** The subscriber's grant fetcher; the delegate behind it supplies the credential. */
+  auth: AuthedFetch;
   login: string;
 }
 
@@ -36,60 +28,21 @@ async function resolveSubjectAccess(
   subject: string,
   provider: typeof GITHUB | typeof ATLASSIAN_BITBUCKET
 ): Promise<RepoSubjectAccess | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) throw new Error('TOKEN_ENCRYPTION_KEY is missing or malformed');
-
-  const configResult = await readConnectorConfigCached(tenantId, provider, keyResult.val);
-  if (!configResult.ok) {
-    throw new Error(`could not read ${provider} connector config for tenant ${tenantId}`);
+  const described = await delegateGrants().describe({ tenantId, provider, subject });
+  if (!described.ok) {
+    if (described.err.type === 'NO_GRANT') return null;
+    throw new Error(
+      `could not read ${provider} grant for subject ${subject}: ${described.err.type}`
+    );
   }
-  const config = configResult.val;
-  const clientSecret = config?.secrets.clientSecret;
-  if (!config || !config.enabled || typeof clientSecret !== 'string' || !clientSecret) {
-    throw new Error(`${provider} connector is not configured or disabled for tenant ${tenantId}`);
-  }
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', tenantId)
-    .where('provider', '=', provider)
-    .where('subject', '=', subject)
-    .orderBy('updated_at', 'desc')
-    .executeTakeFirst();
-  if (!row) return null;
-
-  const grantResult = await getGrant(provider, tenantId, row.provider_account_id, keyResult.val);
-  if (!grantResult.ok || !grantResult.val) return null;
-  let grant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const adapter = provider === GITHUB ? new GitHubAdapter(clientSecret) : new BitbucketAdapter(clientSecret);
-    const refreshed = await refreshGrantTokens(adapter, tenantId, grant.accountId, keyResult.val, logger);
-    if (!refreshed.ok) {
-      if (refreshed.err.type === 'GRANT_REVOKED') {
-        logger.warn('{provider} grant revoked during refresh; skipping', {
-          component: 'repo/pr-pipeline-events',
-          tenantId,
-          provider,
-        });
-        return null;
-      }
-      throw new Error(`could not refresh ${provider} token for subject ${subject}`);
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-  if (!grant.accessToken) return null;
+  const grant = described.val;
 
   const login =
     provider === GITHUB
       ? readGitHubMetadata(grant.metadata).login
       : readBitbucketMetadata(grant.metadata).username;
 
-  return { accessToken: grant.accessToken, login };
+  return { auth: grantFetch({ tenantId, provider, accountId: grant.accountId }), login };
 }
 
 export function resolveGitHubSubjectAccess(

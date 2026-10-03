@@ -14,6 +14,7 @@ import {
   customerScopes,
 } from './jsm-auth';
 import type { MCPToolContext } from '../common';
+import { authedFetch } from '@renkei/delegate-client';
 
 jest.mock('../common', () => ({
   jiraFetch: jest.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
@@ -21,10 +22,13 @@ jest.mock('../common', () => ({
 
 const { jiraFetch } = jest.requireMock('../common') as { jiraFetch: jest.Mock };
 
+/** The grant's fetcher as the delegate would hand it out; never called here — jiraFetch is mocked. */
+const jiraAuth = authedFetch(async () => new Response('{}'), 'atlassian-jsm:tenant-1:acct-1');
+
 const context = (overrides: Partial<MCPToolContext> = {}): MCPToolContext =>
   ({
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-    accessToken: 'token-1',
+    jiraAuth,
     grantedScopes: undefined,
     ...overrides,
   }) as unknown as MCPToolContext;
@@ -66,9 +70,21 @@ describe('oauthJsmAuth', () => {
     expect(response.ok).toBe(true);
     expect(jiraFetch).toHaveBeenCalledWith(
       'https://api.atlassian.com/ex/jira/cloud-1/rest/foo',
-      'token-1',
+      jiraAuth,
       undefined
     );
+  });
+
+  it('denies locally, without calling jiraFetch, when the context carries no grant', async () => {
+    const auth = oauthJsmAuth(context({ jiraAuth: null }));
+
+    const response = await auth.fetch(['read:request:jira-service-management'], '/rest/foo');
+
+    expect(response.ok).toBe(false);
+    expect(response.status).toBe(401);
+    expect(jiraFetch).not.toHaveBeenCalled();
+    const body = (await response.json()) as { message: string };
+    expect(body.message).toContain('not connected');
   });
 
   it('denies locally, without calling jiraFetch, when the grant lacks a required scope', async () => {

@@ -69,7 +69,7 @@ function setup(
     accountId: 'account-1',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 100,
     subject: 'auth0|alice',
   };
@@ -92,7 +92,7 @@ test('registers web_search as a read tool', () => {
     accountId: '',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 1,
   });
   expect(registered.map((entry) => entry.name)).toEqual(['web_search']);

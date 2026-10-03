@@ -333,7 +333,7 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
     if (!embedder) return; // knowledge layer off for this org
 
     const access = await resolveMicrosoftAccess(tenantId, accountId);
-    const downloaded = await graphDownload(access.accessToken, driveId, itemId);
+    const downloaded = await graphDownload(access.auth, driveId, itemId);
     if (!downloaded.ok) {
       const status = downloaded.err.cause;
       if (status === 404) {
@@ -501,7 +501,7 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
           'webex',
           createWebexUserAccessVerifier(async (userEmail) => {
             const access = await resolveLinkedWebexUserAccess(event.tenant_id, userEmail);
-            return access ? new WebexClient(access.accessToken) : null;
+            return access ? new WebexClient(access.auth) : null;
           }),
         ],
       ]),

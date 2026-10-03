@@ -18,7 +18,14 @@ jest.mock('./tools', () => ({
   codeTools: jest.fn(() => [{ def: { name: 'code_ls' }, execute: jest.fn() }]),
 }));
 jest.mock('@/lib/sandbox/workspace-git', () => ({
-  resolveWorkspaceGitCredential: jest.fn(async () => ({ authHeader: 'Basic x' })),
+  resolveWorkspaceGitAccess: jest.fn(async () => ({
+    gitProxy: {
+      base: 'http://delegate:8096/git/t/bitbucket.org/',
+      insteadOf: 'https://bitbucket.org/',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+    },
+    username: 'alice',
+  })),
 }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: () => 'https://r.example' }));
 jest.mock('@/lib/chat/models', () => ({
@@ -63,9 +70,8 @@ function project(workspaceId: string | null): ProjectRow {
     ownerSubject: 'alice',
     name: 'Billing',
     description: null,
-    instructions: null,
+    sealedInstructions: null,
     toolConfig: null,
-    publishedToOrg: false,
     kind: 'code',
     repo: { provider: 'atlassian-bitbucket', fullName: 'acme/billing', branch: 'main' },
     workspaceId,

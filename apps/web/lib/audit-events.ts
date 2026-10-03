@@ -57,6 +57,16 @@ export type AuditAction =
   | 'admanager.instance.deleted'
   | 'admanager.connected'
   | 'admanager.disconnected'
+  /**
+   * A person's encryption key (docs/delegate-key-design.md): enrolled on
+   * their first sign-in, replaced by rotation, their agents' delegation
+   * revoked, another device approved to hold it.
+   */
+  | 'encryption-key.enrolled'
+  | 'encryption-key.rotated'
+  | 'encryption-key.automation-revoked'
+  | 'encryption-key.device-approved'
+  | 'encryption-key.shredded'
   | 'sandbox.secret.created'
   | 'sandbox.secret.unlocked'
   | 'sandbox.secret.locked'

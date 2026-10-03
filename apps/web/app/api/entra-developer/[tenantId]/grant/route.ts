@@ -11,7 +11,8 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
-import { deleteGrant, ENTRA_DEVELOPER } from '@renkei/provider-grants';
+import { ENTRA_DEVELOPER } from '@renkei/provider-grants';
+import { delegateGrants } from '@renkei/delegate-client';
 
 export async function DELETE(
   request: NextRequest,
@@ -39,7 +40,11 @@ export async function DELETE(
     return NextResponse.json({ message: 'Nothing to disconnect' });
   }
 
-  const deleted = await deleteGrant(ENTRA_DEVELOPER, tenantId, grantRow.provider_account_id);
+  const deleted = await delegateGrants().delete({
+    tenantId,
+    provider: ENTRA_DEVELOPER,
+    accountId: grantRow.provider_account_id,
+  });
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }

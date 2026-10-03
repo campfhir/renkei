@@ -21,7 +21,7 @@ import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { getOrigin } from '@/lib/get-origin';
 import { getIdentityDisplay } from '@/lib/identity';
-import { commitAuthorFor, resolveWorkspaceGitCredential } from '@/lib/sandbox/workspace-git';
+import { commitAuthorFor, resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 const MAX_PATHS = 200;
@@ -66,7 +66,7 @@ export async function POST(
 
   const origin = await getOrigin(request);
   const [credential, person] = await Promise.all([
-    resolveWorkspaceGitCredential(
+    resolveWorkspaceGitAccess(
       {
         tenantId,
         subject: session.subject,

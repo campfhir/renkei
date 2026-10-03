@@ -1,3 +1,10 @@
+/**
+ * ZoomClient's contract: every request leaves through the grant's fetcher
+ * (never global fetch, never with an Authorization header of ours), meeting
+ * ids are encoded the way Zoom's router needs, and 404 is a distinct outcome
+ * where Zoom uses it to mean "not yet" rather than "broken".
+ */
+
 import { ZoomClient, encodeZoomMeetingId } from './client';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -7,7 +14,23 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+/** A grant's fetcher as a test double: the mock IS the delegate. */
+function fakeAuth() {
+  const send = jest.fn<Promise<Response>, [string, RequestInit?]>();
+  return Object.assign(send, { grantKey: 'grant-1' });
+}
+
+let auth: ReturnType<typeof fakeAuth>;
+let globalFetch: jest.SpyInstance;
+
+beforeEach(() => {
+  auth = fakeAuth();
+  globalFetch = jest.spyOn(globalThis, 'fetch');
+});
+
 afterEach(() => {
+  // Nothing in this client may bypass the grant.
+  expect(globalFetch).not.toHaveBeenCalled();
   jest.restoreAllMocks();
 });
 
@@ -30,45 +53,45 @@ describe('encodeZoomMeetingId', () => {
 });
 
 describe('ZoomClient.getMeetingTranscript', () => {
-  it('returns the download url and hits the double-encoded path', async () => {
-    const fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse(200, { download_url: 'https://zoom.us/rec/download/x' }));
+  it('returns the download url and hits the double-encoded path through the grant fetcher', async () => {
+    auth.mockResolvedValue(jsonResponse(200, { download_url: 'https://zoom.us/rec/download/x' }));
 
-    const result = await new ZoomClient('token').getMeetingTranscript('/abc==');
+    const result = await new ZoomClient(auth).getMeetingTranscript('/abc==');
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.val.downloadUrl).toBe('https://zoom.us/rec/download/x');
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://api.zoom.us/v2/meetings/%252Fabc%253D%253D/transcript',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer token' }),
-      })
-    );
+    expect(auth).toHaveBeenCalledTimes(1);
+    const [url, init] = auth.mock.calls[0]!;
+    expect(url).toBe('https://api.zoom.us/v2/meetings/%252Fabc%253D%253D/transcript');
+    const headers = new Headers(init?.headers);
+    // The delegate behind the grant attaches the credential; we never do.
+    expect(headers.get('Authorization')).toBeNull();
+    expect(headers.get('Accept')).toBe('application/json');
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('reports 404 as NOT_FOUND — transcripts lag or never exist', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(404, { code: 3001 }));
+    auth.mockResolvedValue(jsonResponse(404, { code: 3001 }));
 
-    const result = await new ZoomClient('token').getMeetingTranscript('86049284440');
+    const result = await new ZoomClient(auth).getMeetingTranscript('86049284440');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('NOT_FOUND');
   });
 
   it('reports other failures as ZOOM_API_ERROR', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(500, {}));
+    auth.mockResolvedValue(jsonResponse(500, {}));
 
-    const result = await new ZoomClient('token').getMeetingTranscript('86049284440');
+    const result = await new ZoomClient(auth).getMeetingTranscript('86049284440');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('ZOOM_API_ERROR');
   });
 
   it('reports a response without a download url as ZOOM_API_ERROR', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, {}));
+    auth.mockResolvedValue(jsonResponse(200, {}));
 
-    const result = await new ZoomClient('token').getMeetingTranscript('86049284440');
+    const result = await new ZoomClient(auth).getMeetingTranscript('86049284440');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('ZOOM_API_ERROR');
@@ -76,31 +99,27 @@ describe('ZoomClient.getMeetingTranscript', () => {
 });
 
 describe('ZoomClient.downloadFromUrl', () => {
-  it('returns the body text, authorized with the Bearer token', async () => {
-    const fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response('WEBVTT\n', { status: 200 }));
+  it('returns the body text, fetched through the grant fetcher with no Authorization of ours', async () => {
+    auth.mockResolvedValue(new Response('WEBVTT\n', { status: 200 }));
 
-    const result = await new ZoomClient('token').downloadFromUrl('https://zoom.us/rec/dl/x');
+    const result = await new ZoomClient(auth).downloadFromUrl('https://zoom.us/rec/dl/x');
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.val).toBe('WEBVTT\n');
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://zoom.us/rec/dl/x',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer token' }),
-      })
-    );
+    expect(auth).toHaveBeenCalledTimes(1);
+    const [url, init] = auth.mock.calls[0]!;
+    expect(url).toBe('https://zoom.us/rec/dl/x');
+    expect(new Headers(init?.headers).get('Authorization')).toBeNull();
   });
 
   it('reports non-2xx and network failures as ZOOM_API_ERROR', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 401 }));
-    const denied = await new ZoomClient('token').downloadFromUrl('https://zoom.us/rec/dl/x');
+    auth.mockResolvedValue(new Response('', { status: 401 }));
+    const denied = await new ZoomClient(auth).downloadFromUrl('https://zoom.us/rec/dl/x');
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.err.type).toBe('ZOOM_API_ERROR');
 
-    jest.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
-    const down = await new ZoomClient('token').downloadFromUrl('https://zoom.us/rec/dl/x');
+    auth.mockRejectedValue(new TypeError('fetch failed'));
+    const down = await new ZoomClient(auth).downloadFromUrl('https://zoom.us/rec/dl/x');
     expect(down.ok).toBe(false);
     if (!down.ok) expect(down.err.type).toBe('ZOOM_API_ERROR');
   });
@@ -108,20 +127,18 @@ describe('ZoomClient.downloadFromUrl', () => {
 
 describe('ZoomClient.getMeetingSummary', () => {
   it('returns the summary payload as-is', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse(200, { summary_overview: 'We met.' }));
+    auth.mockResolvedValue(jsonResponse(200, { summary_overview: 'We met.' }));
 
-    const result = await new ZoomClient('token').getMeetingSummary('86049284440');
+    const result = await new ZoomClient(auth).getMeetingSummary('86049284440');
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.val).toEqual({ summary_overview: 'We met.' });
   });
 
   it('reports 404 as NOT_FOUND — summaries are optional and lag too', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(404, {}));
+    auth.mockResolvedValue(jsonResponse(404, {}));
 
-    const result = await new ZoomClient('token').getMeetingSummary('86049284440');
+    const result = await new ZoomClient(auth).getMeetingSummary('86049284440');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('NOT_FOUND');
@@ -130,7 +147,7 @@ describe('ZoomClient.getMeetingSummary', () => {
 
 describe('ZoomClient.getMe', () => {
   it('reads the identity fields, composing a display name when needed', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+    auth.mockResolvedValue(
       jsonResponse(200, {
         id: 'u1',
         email: 'host@example.com',
@@ -140,7 +157,7 @@ describe('ZoomClient.getMe', () => {
       })
     );
 
-    const result = await new ZoomClient('token').getMe();
+    const result = await new ZoomClient(auth).getMe();
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -154,9 +171,9 @@ describe('ZoomClient.getMe', () => {
   });
 
   it('fails when the response is missing id or email', async () => {
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { id: 'u1' }));
+    auth.mockResolvedValue(jsonResponse(200, { id: 'u1' }));
 
-    const result = await new ZoomClient('token').getMe();
+    const result = await new ZoomClient(auth).getMe();
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.type).toBe('ZOOM_API_ERROR');

@@ -2,44 +2,31 @@
 /**
  * loadApprovalFieldSchema's one real job outside plumbing: never throw, and
  * never make an approval card's render fail because Jira is unreachable
- * or not connected. The happy path (grant found → schema fetched and
+ * or not connected. The happy path (grant described → schema fetched and
  * enriched) is a thin wrapper over already-tested primitives
  * (field-schema.test.ts, jira-auth), so what is worth pinning here is the
  * wiring and the failure modes.
  */
 
-let grantRow: { provider_account_id: string } | undefined;
-const executeTakeFirst = jest.fn(async () => grantRow);
+let describeResult: unknown;
+const describeMock = jest.fn(async () => describeResult);
 
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: () => ({
-        select: () => ({
-          where: () => ({
-            where: () => ({
-              where: () => ({
-                executeTakeFirst,
-              }),
-            }),
-          }),
-        }),
-      }),
-    },
-  }),
-}));
-
-let jiraGrant: unknown;
-let jiraGrantOk = true;
-jest.mock('@/lib/tenant-operations', () => ({
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({ describe: describeMock }),
+    grantFetch: (ref: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch(async () => new Response('{}'), actual.grantKeyOf(ref)),
+  };
+});
+jest.mock('@renkei/provider-grants', () => ({
   ATLASSIAN: 'atlassian',
-  getJiraGrant: async () => (jiraGrantOk ? { ok: true, val: jiraGrant } : { ok: false }),
-}));
-
-const cacheTokenMetadata = jest.fn();
-jest.mock('../common', () => ({
-  cacheTokenMetadata: (...args: unknown[]) => cacheTokenMetadata(...args),
+  readAtlassianMetadata: (metadata: Record<string, unknown>) => ({
+    cloudId: typeof metadata?.cloudId === 'string' ? metadata.cloudId : '',
+    siteUrl: typeof metadata?.siteUrl === 'string' ? metadata.siteUrl : '',
+  }),
 }));
 
 jest.mock('./jira-auth', () => ({
@@ -64,43 +51,57 @@ import { loadApprovalFieldSchema } from './approval-field-schema';
 
 beforeEach(() => {
   jest.clearAllMocks();
-  grantRow = { provider_account_id: 'acct-1' };
-  jiraGrantOk = true;
-  jiraGrant = {
-    accountId: 'acct-1',
-    subject: 'alice',
-    cloudId: 'cloud-1',
-    siteUrl: 'https://acme.atlassian.net',
-    accessToken: 'tok',
+  describeResult = {
+    ok: true,
+    val: {
+      accountId: 'acct-1',
+      subject: 'alice',
+      metadata: { cloudId: 'cloud-1', siteUrl: 'https://acme.atlassian.net' },
+    },
   };
 });
 
 describe('loadApprovalFieldSchema', () => {
   it('returns null when the tenant has no Jira grant for this subject', async () => {
-    grantRow = undefined;
+    describeResult = { ok: false, err: { type: 'NO_GRANT' } };
     const result = await loadApprovalFieldSchema('t1', 'alice', { projectKey: 'CIO' });
     expect(result).toBeNull();
     expect(loadFieldSchema).not.toHaveBeenCalled();
+    // The approver's own grant, by subject — never someone else's.
+    expect(describeMock).toHaveBeenCalledWith({
+      tenantId: 't1',
+      provider: 'atlassian',
+      subject: 'alice',
+    });
   });
 
-  it('returns null when the grant fails to load', async () => {
-    jiraGrantOk = false;
+  it('returns null when the grant cannot be described', async () => {
+    describeResult = { ok: false, err: { type: 'DELEGATE_UNREACHABLE' } };
     const result = await loadApprovalFieldSchema('t1', 'alice', { projectKey: 'CIO' });
     expect(result).toBeNull();
   });
 
-  it('caches the token, then loads and enriches the schema for the given source', async () => {
+  it('builds the context on the grant’s fetcher, then loads and enriches the schema', async () => {
     const result = await loadApprovalFieldSchema('t1', 'alice', {
       projectKey: 'CIO',
       issueType: 'Project',
     });
-    expect(cacheTokenMetadata).toHaveBeenCalledWith('tok', 't1', 'acct-1', 'alice');
     expect(enrichFieldsWithAllowedValues).toHaveBeenCalledWith(
-      expect.objectContaining({ apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1' }),
+      expect.objectContaining({
+        apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
+        siteUrl: 'https://acme.atlassian.net',
+        accountId: 'acct-1',
+        jiraAuth: expect.any(Function),
+      }),
       expect.anything(),
       expect.anything(),
       { projectKey: 'CIO', issueType: 'Project' }
     );
+    // The grant's fetcher is the delegate's, for the approver's own grant.
+    const context = enrichFieldsWithAllowedValues.mock.calls[0][0] as {
+      jiraAuth: { grantKey: string };
+    };
+    expect(context.jiraAuth.grantKey).toBe('atlassian:t1:alice');
     expect(result).toEqual([
       {
         id: 'priority',

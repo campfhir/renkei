@@ -60,9 +60,10 @@ function issueLine(issue: JiraIssue): string {
 
 /** The site's sprint custom field id, or null when it cannot be resolved. */
 async function sprintFieldId(context: MCPToolContext): Promise<string | null> {
+  if (!context.jiraAuth) return null;
   const response = await jiraFetch(
     `${context.apiBaseUrl}/rest/api/3/field`,
-    context.accessToken
+    context.jiraAuth
   ).catch(() => null);
   if (!response || !response.ok) return null;
 
@@ -102,9 +103,10 @@ async function searchJql(
   fields: string[],
   max: number
 ): Promise<JiraIssue[] | null> {
+  if (!context.jiraAuth) return null;
   const response = await jiraFetch(
     `${context.apiBaseUrl}/rest/api/3/search/jql`,
-    context.accessToken,
+    context.jiraAuth,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

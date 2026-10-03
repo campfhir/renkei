@@ -21,7 +21,11 @@ afterEach(() => {
 describe('AtlassianAdapter.refreshTokens', () => {
   it('returns refreshed tokens on success', async () => {
     jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse(200, { access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 60 })
+      jsonResponse(200, {
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+        expires_in: 60,
+      })
     );
 
     const result = await new AtlassianAdapter('secret').refreshTokens('client-1', 'refresh-1');
@@ -46,9 +50,7 @@ describe('AtlassianAdapter.refreshTokens', () => {
   });
 
   it('reports transient failures as REFRESH_FAILED, never revoked', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse(500, { error: 'server_error' }));
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(500, { error: 'server_error' }));
 
     const result = await new AtlassianAdapter('secret').refreshTokens('client-1', 'refresh-1');
 

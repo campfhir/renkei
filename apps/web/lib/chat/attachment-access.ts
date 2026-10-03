@@ -6,20 +6,35 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { resolveChatAccess, resolveResourceAccess } from './access';
-import type { AttachmentRow } from './attachments';
+import { resolveChatAccess, resolveProjectAccess } from './access';
+import type { ContentCipher } from './content-crypto';
 
 export async function mayReadAttachment(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  row: AttachmentRow
+  row: { chatId: string | null; projectId: string | null }
 ): Promise<boolean> {
-  if (row.chatId) return (await resolveChatAccess(db, tenantId, subject, row.chatId)) !== null;
-  if (row.projectId) {
-    return (
-      (await resolveResourceAccess(db, tenantId, subject, 'chat_project', row.projectId)) !== null
-    );
+  return (await attachmentCipherFor(db, tenantId, subject, row)) !== null;
+}
+
+/**
+ * The cipher this reader opens the file's text with — the chat's or the
+ * project's, by where the file lives — or null when they may not read it.
+ */
+export async function attachmentCipherFor(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string,
+  row: { chatId: string | null; projectId: string | null }
+): Promise<ContentCipher | null> {
+  if (row.chatId) {
+    const access = await resolveChatAccess(db, tenantId, subject, row.chatId);
+    return access?.cipher ?? null;
   }
-  return false;
+  if (row.projectId) {
+    const access = await resolveProjectAccess(db, tenantId, subject, row.projectId);
+    return access?.cipher ?? null;
+  }
+  return null;
 }

@@ -8,19 +8,30 @@
  * have it — a silent under-gating with no error anywhere.
  */
 
-jest.mock('@renkei/provider-grants', () => ({
-  getGrant: jest.fn(async () => ({
-    ok: true,
-    val: {
-      accessToken: 'token-1',
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      metadata: { upn: 'alice@example.com', tid: 'tid-1' },
-    },
-  })),
-  refreshGrantTokens: jest.fn(),
-  MICROSOFT: 'microsoft',
-  MicrosoftAdapter: class {},
-}));
+jest.mock('@renkei/provider-grants', () => ({ MICROSOFT: 'microsoft' }));
+// The delegate, standing in: `describe` answers the one grant these suites
+// need, and the fetcher it hands out sends through global fetch (the Graph
+// stub each test installs) — with no Authorization of its own, since the
+// real delegate attaches that on its side of the wire.
+jest.mock('@renkei/delegate-client', () => {
+  const actual =
+    jest.requireActual<typeof import('@renkei/delegate-client')>('@renkei/delegate-client');
+  return {
+    ...actual,
+    delegateGrants: () => ({
+      describe: jest.fn(async () => ({
+        ok: true,
+        val: { accountId: 'acct-1', metadata: { upn: 'alice@example.com' } },
+      })),
+    }),
+    grantFetch: jest.fn((ref: Parameters<typeof actual.grantKeyOf>[0]) =>
+      actual.authedFetch(
+        jest.fn((url: string, init?: RequestInit) => fetch(url, init)),
+        actual.grantKeyOf(ref)
+      )
+    ),
+  };
+});
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
 jest.mock('@renkei/db', () => ({
   getDatabase: () => ({
@@ -43,7 +54,6 @@ jest.mock('@renkei/db', () => ({
     },
   }),
 }));
-jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: jest.fn(async () => null) }));
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
@@ -63,6 +73,10 @@ import { onedriveScopeFor } from '../onedrive/scopes';
 import { oauthGraphAuth, type GraphAuth } from '../graph/graph-auth';
 import type { MCPToolContext } from '../common';
 
+const { grantFetch: mockGrantFetch } = jest.requireMock<{ grantFetch: jest.Mock }>(
+  '@renkei/delegate-client'
+);
+
 type Handler = (args: Record<string, unknown>) => Promise<{ content: { text: string }[] }>;
 
 interface Route {
@@ -72,7 +86,12 @@ interface Route {
 }
 
 let routes: Route[] = [];
-let requests: { url: string; method: string; body: string | null }[] = [];
+let requests: {
+  url: string;
+  method: string;
+  body: string | null;
+  authorization: string | null;
+}[] = [];
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -84,6 +103,7 @@ beforeEach(() => {
       url,
       method: init?.method ?? 'GET',
       body: typeof init?.body === 'string' ? init.body : null,
+      authorization: new Headers(init?.headers).get('authorization'),
     });
     const route = routes.find((candidate) => url.includes(candidate.match));
     if (!route) {
@@ -104,7 +124,6 @@ const context = (): MCPToolContext =>
     origin: 'https://renkei.example',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
     maxJqlResults: 100,
   }) as unknown as MCPToolContext;
 
@@ -118,10 +137,10 @@ async function toolsOf(
     },
   } as unknown as McpServer;
   const ctx = context();
-  // oauthGraphAuth, not a stub: this file already mocks provider-grants/
-  // crypto/db/microsoft-app to make resolveGraphAccess resolve deterministically
-  // (see the top of this file), so the real auth wrapper is exactly what those
-  // mocks were already built to exercise.
+  // oauthGraphAuth, not a stub: this file already mocks the delegate client
+  // to make resolveGraphAccess resolve deterministically (see the top of this
+  // file), so the real auth wrapper is exactly what that mock was built to
+  // exercise.
   await register(server, ctx, oauthGraphAuth(ctx));
   return registered;
 }
@@ -129,6 +148,28 @@ async function toolsOf(
 const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? '';
 
 describe('sharepoint tools', () => {
+  it('sends every Graph call through the delegate fetcher, never with its own bearer', async () => {
+    routes = [
+      { match: '/sites/contoso.sharepoint.com:', body: { id: 'site-1', displayName: 'Eng' } },
+      { match: '/drives', body: { value: [] } },
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    await tools.get('sharepoint_list_libraries')!({
+      site: 'https://contoso.sharepoint.com/sites/eng',
+    });
+
+    // The grant is named by the caller's subject; the fetcher it yields is
+    // what carried the requests, and this process attached no credential.
+    expect(mockGrantFetch).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-1', provider: 'microsoft', subject: 'subject-1' })
+    );
+    const fetcher: jest.Mock = mockGrantFetch.mock.results[0]?.value;
+    expect(fetcher).toHaveBeenCalledTimes(requests.length);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => request.authorization === null)).toBe(true);
+  });
+
   it('resolves a site URL to its Graph address before listing libraries', async () => {
     routes = [
       { match: '/sites/contoso.sharepoint.com:', body: { id: 'site-1', displayName: 'Eng' } },

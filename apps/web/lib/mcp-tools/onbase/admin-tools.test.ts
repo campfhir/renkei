@@ -113,7 +113,6 @@ function scriptedAuth(
         });
       },
       content: () => Promise.resolve('no content in this suite'),
-      access: () => Promise.resolve({ accessToken: 'at', accountId: 'acct' }),
     },
   };
 }
@@ -125,7 +124,6 @@ function deniedAdminAuth(): OnBaseAuth {
     kind: 'oauth',
     api: () => Promise.resolve(refusal),
     content: () => Promise.resolve(refusal),
-    access: () => Promise.resolve({ accessToken: 'at', accountId: 'acct' }),
   };
 }
 

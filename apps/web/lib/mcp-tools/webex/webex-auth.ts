@@ -18,90 +18,51 @@
  * registered tools and prove every one of them turns a denied credential
  * into a clean errText() rather than a crash — the one thing that IS
  * testable with no sandbox at all.
+ *
+ * No token is read here (docs/delegate-key-design.md): the caller's grant
+ * is an `AuthedFetch` from the delegate, which attaches the credential,
+ * refreshes it when due and retries once on a 401. What this module adds
+ * is the per-call scope gate and the request/response log line.
  */
 
-import {
-  getGrant,
-  refreshGrantTokens,
-  WEBEX_USER,
-  WebexUserAdapter,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { getDatabase } from '@renkei/db';
-import { getWebexUserApp } from '@/lib/webex-app';
+import { WEBEX_USER } from '@renkei/provider-grants';
+import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
+import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
 import { authFailure } from '../auth-support';
 
 const API = 'https://webexapis.com/v1';
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
+const LABEL = 'WebEx';
 
 export interface WebexAccess {
-  accessToken: string;
+  /** `fetch` on the caller's own WebEx grant; the delegate supplies the credential. */
+  auth: AuthedFetch;
   personEmail: string | null;
 }
 
 /**
- * The caller's live WebEx token, refreshed through the adapter when stale.
- *
- * Resolved FRESH on every call rather than once when the auth object is
- * constructed (registration time) — tokens rotate on refresh, and WebEx's
- * tool volume is low enough that this codebase deliberately skips a
- * module-level token cache the way Jira's jiraFetch keeps one (see that
- * function's own comment). Exported so the summary collectors can reuse the
- * same refresh-aware resolution without going through the MCP tool
- * interface at all.
+ * The caller's WebEx grant as a fetcher, plus the address the grant
+ * recorded for them. Resolved FRESH on every call: the delegate is asked
+ * whether the grant exists (its `describe`, which also yields the
+ * personEmail the tools and the bot need), and the fetcher it hands back
+ * refreshes on its own. Exported so the summary collectors and the upload
+ * executor reuse the same resolution without going through the MCP tool
+ * interface at all — they carry only a tenant and a subject, which is
+ * all this reads.
  */
-export async function resolveWebexAccess(context: MCPToolContext): Promise<WebexAccess | string> {
+export async function resolveWebexAccess(
+  context: Pick<MCPToolContext, 'tenantId' | 'subject'>
+): Promise<WebexAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', WEBEX_USER)
-    .where('subject', '=', context.subject)
-    .executeTakeFirst();
-  if (!row) {
-    return 'WebEx is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(
-    WEBEX_USER,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the WebEx grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getWebexUserApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'WebEx user integration is no longer configured.';
-    const refreshed = await refreshGrantTokens(
-      new WebexUserAdapter(app.clientSecret),
-      context.tenantId,
-      grant.accountId,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your WebEx authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the WebEx token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
+  const grant = { tenantId: context.tenantId, provider: WEBEX_USER, subject: context.subject };
+  const described = await delegateGrants().describe(grant);
+  if (!described.ok) return grantRefusalText(described.err.type, LABEL);
   const personEmail =
-    typeof grant.metadata.personEmail === 'string' ? grant.metadata.personEmail : null;
-  return { accessToken: grant.accessToken, personEmail };
+    typeof described.val.metadata.personEmail === 'string'
+      ? described.val.metadata.personEmail
+      : null;
+  return { auth: grantFetch(grant), personEmail };
 }
 
 export interface WebexAuth {
@@ -158,11 +119,10 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
       const method = init?.method ?? 'GET';
       let response: Response;
       try {
-        response = await fetch(`${API}${path}`, {
+        response = await access.auth(`${API}${path}`, {
           ...init,
           method,
           headers: {
-            Authorization: `Bearer ${access.accessToken}`,
             // A FormData body (a multipart send carrying a file) must NOT
             // get this header — fetch/undici sets its own with the
             // boundary, and overriding it here would send a Content-Type
@@ -183,6 +143,11 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
         });
         return authFailure('Could not reach webexapis.com');
       }
+
+      // The delegate refusing (grant gone, token unrefreshable, delegate
+      // down) is not a WebEx answer; it comes back in the resolvers' words.
+      const refused = refusalTextOf(response, LABEL);
+      if (refused) return authFailure(refused, 400);
 
       // The full exchange, scoped to tenant and OIDC user — a status alone
       // is not enough to troubleshoot, and success logs too, because a 2xx

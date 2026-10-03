@@ -22,6 +22,7 @@
  * looking after ten rooms" are very different statements.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { resolveWebexAccess } from '../webex/webex-auth';
 import type { MCPToolContext } from '../common';
 import {
@@ -46,9 +47,11 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-async function webexGet(token: string, path: string): Promise<Record<string, unknown> | null> {
-  const response = await fetch(`${WEBEX_API}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+async function webexGet(auth: AuthedFetch, path: string): Promise<Record<string, unknown> | null> {
+  // The grant's fetcher attaches the credential; a delegate refusal is a
+  // non-OK Response like any other, and reads as "nothing to report".
+  const response = await auth(`${WEBEX_API}${path}`, {
+    headers: { Accept: 'application/json' },
   }).catch(() => null);
   if (!response || !response.ok) return null;
   const body: unknown = await response.json().catch(() => null);
@@ -67,20 +70,20 @@ export async function collectWebex(
 ): Promise<SummarySection | null> {
   const access = await resolveWebexAccess(context);
   if (typeof access === 'string') return null;
-  const token = access.accessToken;
+  const { auth } = access;
 
-  const rooms = itemsOf(
-    await webexGet(token, `/rooms?sortBy=lastactivity&max=${MAX_ROOMS}`)
-  ).filter((room) => {
-    const activity = str(room.lastActivity);
-    return !activity || activity >= period.start;
-  });
+  const rooms = itemsOf(await webexGet(auth, `/rooms?sortBy=lastactivity&max=${MAX_ROOMS}`)).filter(
+    (room) => {
+      const activity = str(room.lastActivity);
+      return !activity || activity >= period.start;
+    }
+  );
   if (rooms.length === 0) return null;
 
   // Every membership in one request. Filtering per room would be N calls for
   // the same data, and lastSeenId is per-membership either way.
   const lastSeenByRoom = new Map<string, string>();
-  for (const membership of itemsOf(await webexGet(token, '/memberships?max=200'))) {
+  for (const membership of itemsOf(await webexGet(auth, '/memberships?max=200'))) {
     const roomId = str(membership.roomId);
     const lastSeenId = str(membership.lastSeenId);
     if (roomId && lastSeenId) lastSeenByRoom.set(roomId, lastSeenId);
@@ -102,7 +105,7 @@ export async function collectWebex(
 
     const messages = itemsOf(
       await webexGet(
-        token,
+        auth,
         `/messages?roomId=${encodeURIComponent(roomId)}&max=${MAX_ITEMS_PER_SECTION}`
       )
     );

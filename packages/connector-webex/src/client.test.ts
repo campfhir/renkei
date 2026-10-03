@@ -5,6 +5,7 @@
  * room, and a failure at any step surfaces rather than posting nowhere.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { WebexClient, sendNoteToPerson, webexNextPagePath } from './client';
 
 function jsonResponse(body: unknown, status = 200, next?: string): Response {
@@ -211,8 +212,7 @@ describe('WebexClient.sendNoteToSelf', () => {
 
     expect(result).toEqual({ ok: true, val: { id: 'msg-3', roomId: 'room-1' } });
     const send = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/messages')) as
-      | [unknown, RequestInit]
-      | undefined;
+      [unknown, RequestInit] | undefined;
     expect(send?.[1].body).toBeInstanceOf(FormData);
     const form = send?.[1].body as FormData;
     expect(form.get('roomId')).toBe('room-1');
@@ -299,6 +299,113 @@ describe('sendNoteToPerson', () => {
   });
 });
 
+describe('WebexClient credential shapes', () => {
+  function fakeAuth() {
+    const send = jest.fn<Promise<Response>, [string, RequestInit?]>();
+    return Object.assign(send, { grantKey: 'grant-alice' });
+  }
+
+  let globalFetch: jest.SpyInstance;
+
+  beforeEach(() => {
+    globalFetch = jest.spyOn(global, 'fetch');
+  });
+
+  afterEach(() => {
+    globalFetch.mockRestore();
+  });
+
+  it('sends a bot token as a Bearer header on global fetch', async () => {
+    globalFetch.mockResolvedValue(jsonResponse({ id: 'me', emails: ['bot@webex.bot'] }));
+
+    const result = await new WebexClient('bot-token').getMe();
+
+    expect(result.ok).toBe(true);
+    const [, init] = globalFetch.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer bot-token');
+  });
+
+  it('sends every JSON request for a person through their grant fetcher, with no Authorization', async () => {
+    const auth = fakeAuth()
+      .mockResolvedValueOnce(jsonResponse({ id: 'me', emails: ['alice@example.com'] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', roomId: 'room-1' }));
+
+    const client = new WebexClient(auth, { lane: 'interactive' });
+    const me = await client.getMe();
+    const sent = await client.postMessage({ roomId: 'room-1', markdown: 'Hi' });
+
+    expect(me.ok && me.val.emails).toEqual(['alice@example.com']);
+    expect(sent).toEqual({ ok: true, val: { id: 'msg-1', roomId: 'room-1' } });
+    expect(globalFetch).not.toHaveBeenCalled();
+    expect(auth).toHaveBeenCalledTimes(2);
+    for (const [url, init] of auth.mock.calls) {
+      expect(url.startsWith('https://webexapis.com/v1/')).toBe(true);
+      const headers = new Headers(init?.headers);
+      // The delegate behind the grant attaches the credential; we never do.
+      expect(headers.get('Authorization')).toBeNull();
+      expect(headers.get('Accept')).toBe('application/json');
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
+    const [, postInit] = auth.mock.calls[1]!;
+    expect(postInit?.method).toBe('POST');
+    expect(JSON.parse(String(postInit?.body))).toEqual({ roomId: 'room-1', markdown: 'Hi' });
+  });
+
+  it('sends a multipart message for a person through their grant fetcher too', async () => {
+    const auth = fakeAuth().mockResolvedValue(jsonResponse({ id: 'msg-2', roomId: 'room-1' }));
+
+    const result = await new WebexClient(auth).postMessage({
+      roomId: 'room-1',
+      markdown: 'see attached',
+      file: {
+        filename: 'notes.txt',
+        contentType: 'text/plain',
+        bytes: new TextEncoder().encode('hi'),
+      },
+    });
+
+    expect(result).toEqual({ ok: true, val: { id: 'msg-2', roomId: 'room-1' } });
+    expect(globalFetch).not.toHaveBeenCalled();
+    const [, init] = auth.mock.calls[0]!;
+    expect(init?.body).toBeInstanceOf(FormData);
+    const headers = new Headers(init?.headers);
+    expect(headers.get('Authorization')).toBeNull();
+    // The multipart boundary is fetch's to set, never ours.
+    expect(headers.get('Content-Type')).toBeNull();
+  });
+
+  it('follows Link rel="next" paging through the grant fetcher', async () => {
+    const auth = fakeAuth()
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 'room-1', title: 'x' }] }, 200, '/rooms?cursor=p2')
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'room-2', title: 'y' }] }));
+
+    const result = await new WebexClient(auth).listRooms(5);
+
+    expect(result.ok && result.val.map((room) => room.id)).toEqual(['room-1', 'room-2']);
+    expect(auth.mock.calls[1]![0]).toBe('https://webexapis.com/v1/rooms?cursor=p2');
+    expect(globalFetch).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a grant fetcher refusal as WEBEX_API_ERROR', async () => {
+    // The delegate answers its own refusals as a Response (503 + x-delegate-error);
+    // a Response that is not ok is a failed call like any other.
+    const auth = fakeAuth().mockResolvedValue(
+      new Response('{}', { status: 503, headers: { 'x-delegate-error': 'GRANT_REVOKED' } })
+    );
+    const result = await new WebexClient(auth).getMe();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.err.message).toContain('503');
+  });
+
+  it('accepts an AuthedFetch wherever a WebexClient is typed', () => {
+    const auth: AuthedFetch = fakeAuth();
+    const client: WebexClient = new WebexClient(auth);
+    expect(client).toBeInstanceOf(WebexClient);
+  });
+});
+
 describe('WebexClient.postMessage', () => {
   it('answers with the room a 1:1 send landed in', async () => {
     const fetchMock = jest
@@ -327,7 +434,11 @@ describe('WebexClient.postMessage', () => {
       const result = await new WebexClient('bot-token').postMessage({
         roomId: 'room-1',
         markdown: 'see attached',
-        file: { filename: 'notes.txt', contentType: 'text/plain', bytes: new TextEncoder().encode('hi') },
+        file: {
+          filename: 'notes.txt',
+          contentType: 'text/plain',
+          bytes: new TextEncoder().encode('hi'),
+        },
       });
 
       expect(result).toEqual({ ok: true, val: { id: 'msg-2', roomId: 'room-1' } });

@@ -1,13 +1,28 @@
 /**
  * The upload-session runner: chunks are 320KiB-multiples PUT sequentially
- * with correct Content-Range headers and no Authorization header, the final
+ * with correct Content-Range headers, no Authorization header and never
+ * through the grant's fetcher, the final
  * chunk's response body is the created item, and a failed chunk cancels the
  * session (best-effort DELETE) instead of leaving it dangling.
  */
 
 jest.mock('./client', () => ({ graphRequest: jest.fn() }));
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphUploadViaSession, UPLOAD_SESSION_CHUNK_BYTES } from './upload-session';
+
+/**
+ * The grant's fetcher. graphRequest is mocked, so the session create never
+ * reaches it — and the chunk PUTs must not either: the fetch installed below
+ * is what they go through, and a call here would mean a chunk carried the
+ * grant's credential to a pre-authorized URL.
+ */
+const auth: AuthedFetch = Object.assign(
+  async (url: string) => {
+    throw new Error(`grant fetcher used for ${url}`);
+  },
+  { grantKey: 'grant-1' }
+);
 
 const { graphRequest: graphRequestMock } = jest.requireMock<{ graphRequest: jest.Mock }>(
   './client'
@@ -35,7 +50,10 @@ beforeEach(() => {
   deletes = 0;
   statusFor = (_i, isFinal) => (isFinal ? 201 : 202);
   graphRequestMock.mockReset();
-  graphRequestMock.mockResolvedValue({ ok: true, val: { uploadUrl: 'https://up.example/session' } });
+  graphRequestMock.mockResolvedValue({
+    ok: true,
+    val: { uploadUrl: 'https://up.example/session' },
+  });
 
   installFetch(async (_url: string, init?: RequestInit) => {
     if (init?.method === 'DELETE') {
@@ -52,8 +70,10 @@ beforeEach(() => {
       auth: headers.Authorization,
       size: body.byteLength,
     });
-    const isFinal = Boolean(headers['Content-Range']?.endsWith(`/${TOTAL}`) &&
-      headers['Content-Range']?.includes(`-${TOTAL - 1}/`));
+    const isFinal = Boolean(
+      headers['Content-Range']?.endsWith(`/${TOTAL}`) &&
+      headers['Content-Range']?.includes(`-${TOTAL - 1}/`)
+    );
     const status = statusFor(puts.length - 1, isFinal);
     return {
       ok: status >= 200 && status < 300,
@@ -69,7 +89,7 @@ describe('graphUploadViaSession', () => {
   it('PUTs sequential 320KiB-multiple chunks with ranges and no auth header', async () => {
     const bytes = new Uint8Array(TOTAL).fill(7);
     const result = await graphUploadViaSession(
-      'token',
+      auth,
       '/drives/d1/items/p1:/big.bin:/createUploadSession',
       { item: {} },
       bytes
@@ -93,14 +113,14 @@ describe('graphUploadViaSession', () => {
 
   it('cancels the session when a chunk fails', async () => {
     statusFor = () => 500;
-    const result = await graphUploadViaSession('token', '/path', {}, new Uint8Array(10));
+    const result = await graphUploadViaSession(auth, '/path', {}, new Uint8Array(10));
     expect(result.ok).toBe(false);
     expect(deletes).toBe(1);
   });
 
   it('propagates a session-creation failure', async () => {
     graphRequestMock.mockResolvedValue({ ok: false, err: { message: 'nope' } });
-    const result = await graphUploadViaSession('token', '/path', {}, new Uint8Array(10));
+    const result = await graphUploadViaSession(auth, '/path', {}, new Uint8Array(10));
     expect(result.ok).toBe(false);
     expect(puts).toHaveLength(0);
   });

@@ -52,10 +52,6 @@ const KIND_BRIEF: Record<CleanerScriptKind, string[]> = {
     'CRITICAL: never drop a line carrying a join link, a meeting id, a passcode or a phone',
     'number. Losing those makes the invite useless; leaving a stray line of chrome does not.',
   ],
-  task: [
-    'This script cleans TASKS (email.kind === "task") from Microsoft To Do and Planner. Bodies',
-    'are short; be especially conservative, since there is little text to spare.',
-  ],
 };
 
 function promptOf(sample: string, instructions: string, kind: CleanerScriptKind): string {
@@ -65,7 +61,6 @@ function promptOf(sample: string, instructions: string, kind: CleanerScriptKind)
     'Write it as a NAMED function declaration so it is valid TypeScript on its own:',
     '  function clean(item: CleanerMessage): string { ... }   // email only',
     '  function clean(item: CleanerEvent): string { ... }     // calendar only',
-    '  function clean(item: CleanerTask): string { ... }      // tasks only',
     '  function clean(item: CleanerItem): string { ... }      // several kinds; narrow on item.kind',
     'Annotations are stripped before execution, so they cost nothing at run time. Do NOT use',
     'enum or namespace — they emit runtime code and are rejected.',
@@ -75,7 +70,7 @@ function promptOf(sample: string, instructions: string, kind: CleanerScriptKind)
     '',
     'The function receives `email` (also available as `item`) with:',
     '- text: the body as cleaned so far (transform and return this)',
-    '- kind: "msg" | "evt" | "task" — branch on this if the script serves more than one',
+    '- kind: "msg" | "evt" — branch on this if the script serves more than one',
     '- subject, fromAddress, fromName',
     '- senderAddress, replyToAddress, messageId, receivedAt (string or null — header fields;',
     '  useful to branch on, e.g. only strip when replyToAddress is a no-reply relay)',

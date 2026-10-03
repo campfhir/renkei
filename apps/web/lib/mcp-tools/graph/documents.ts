@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import type { GraphAuth } from './graph-auth';
 import { withPresentationHint } from '../common';
 import {
@@ -141,10 +142,10 @@ function permissionLine(entry: Record<string, unknown>): string {
 async function defaultDriveFor(
   options: NamespaceOptions,
   context: MCPToolContext,
-  token: string
+  auth: AuthedFetch
 ): Promise<string | undefined> {
   if (!options.usesMyDrive) return undefined;
-  const mine = await resolveMyDriveId(context, token);
+  const mine = await resolveMyDriveId(context, auth);
   return mine.ok ? mine.driveId : undefined;
 }
 
@@ -174,20 +175,15 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const max = num(args.max) ?? 50;
       const listing = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}/children` +
           `?$top=${max}&$orderby=lastModifiedDateTime desc` +
           '&$select=id,name,size,folder,file,webUrl,lastModifiedDateTime,lastModifiedBy'
@@ -219,19 +215,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const item = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}` +
           '?$select=id,name,size,file,folder,webUrl,createdBy,lastModifiedBy,lastModifiedDateTime,createdDateTime'
       );
@@ -276,18 +267,13 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const downloaded = await graphDownload(
-        access.accessToken,
+        access.auth,
         resolved.item.driveId,
         resolved.item.itemId,
         // Someone asked for this file and is waiting; it must not queue
@@ -377,19 +363,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const item = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}` +
           '?$select=id,name,size,file,folder,webUrl,@microsoft.graph.downloadUrl'
       );
@@ -409,7 +390,7 @@ export function registerDocumentTools(
       if (!downloadUrl) {
         const viaContent = await graphContentDownloadUrl(
           context,
-          access.accessToken,
+          access.auth,
           resolved.item.driveId,
           resolved.item.itemId
         );
@@ -462,13 +443,13 @@ export function registerDocumentTools(
 
       let driveId = str(args.driveId);
       if (!driveId) {
-        const fallback = await defaultDriveFor(options, context, access.accessToken);
+        const fallback = await defaultDriveFor(options, context, access.auth);
         driveId = fallback ?? '';
       }
       if (!driveId && str(args.site)) {
         const resolved = await resolveDriveItem(
           context,
-          access.accessToken,
+          access.auth,
           { site: str(args.site), library: str(args.library) || undefined },
           undefined
         );
@@ -483,7 +464,7 @@ export function registerDocumentTools(
       const query = encodeURIComponent(String(args.query).replace(/'/g, "''"));
       const found = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${driveId}/root/search(q='${query}')?$top=${max}` +
           '&$select=id,name,size,folder,file,webUrl,lastModifiedDateTime,parentReference'
       );
@@ -520,19 +501,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const parent = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const parent = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!parent.ok) return errText(parent.error);
 
       const created = await graphPost(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${parent.item.driveId}/items/${parent.item.itemId}/children`,
         {
           name: String(args.name),
@@ -562,19 +538,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const renamed = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}`,
         { name: String(args.newName) }
       );
@@ -602,19 +573,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const destination = await resolveDriveItem(
         context,
-        access.accessToken,
+        access.auth,
         {
           driveId: resolved.item.driveId,
           itemId: str(args.destinationFolderId) || undefined,
@@ -632,7 +598,7 @@ export function registerDocumentTools(
 
       const moved = await graphPatch(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}`,
         {
           parentReference: { id: destination.item.itemId },
@@ -668,20 +634,15 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const destinationDriveId = str(args.destinationDriveId) || resolved.item.driveId;
       const destination = await resolveDriveItem(
         context,
-        access.accessToken,
+        access.auth,
         { driveId: destinationDriveId, itemId: str(args.destinationFolderId) || undefined },
         destinationDriveId
       );
@@ -689,7 +650,7 @@ export function registerDocumentTools(
 
       const copied = await graphPost(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}/copy`,
         {
           parentReference: { driveId: destination.item.driveId, id: destination.item.itemId },
@@ -718,19 +679,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const deleted = await graphDelete(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}`
       );
       if (!deleted.ok) return errText(deleted.error);
@@ -765,16 +721,11 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
       // Resolve the parent NOW so a bad folder fails at request time, not
       // after the user has already pushed the bytes.
-      const parent = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const parent = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!parent.ok) return errText(parent.error);
 
       const slot = await createUploadSlot(
@@ -810,19 +761,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const permissions = await graphGet(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}/permissions`
       );
       if (!permissions.ok) return errText(permissions.error);
@@ -861,19 +807,14 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const created = await graphPost(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}/createLink`,
         {
           type: String(args.linkType),
@@ -906,20 +847,15 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const emails = Array.isArray(args.emails) ? args.emails.map(String) : [];
       const invited = await graphPost(
         context,
-        access.accessToken,
+        access.auth,
         `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}/invite`,
         {
           recipients: emails.map((email) => ({ email })),
@@ -953,14 +889,9 @@ export function registerDocumentTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const fallback = await defaultDriveFor(options, context, access.accessToken);
+      const fallback = await defaultDriveFor(options, context, access.auth);
 
-      const resolved = await resolveDriveItem(
-        context,
-        access.accessToken,
-        selectorOf(args),
-        fallback
-      );
+      const resolved = await resolveDriveItem(context, access.auth, selectorOf(args), fallback);
       if (!resolved.ok) return errText(resolved.error);
 
       const base = `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}`;
@@ -969,7 +900,7 @@ export function registerDocumentTools(
       if (!permissionId) {
         const email = str(args.email).toLowerCase();
         if (!email) return errText('Give either an email or a permissionId.');
-        const permissions = await graphGet(context, access.accessToken, `${base}/permissions`);
+        const permissions = await graphGet(context, access.auth, `${base}/permissions`);
         if (!permissions.ok) return errText(permissions.error);
         for (const entry of values(permissions.body)) {
           const granted = rec(rec(entry.grantedToV2).user);
@@ -989,7 +920,7 @@ export function registerDocumentTools(
 
       const removed = await graphDelete(
         context,
-        access.accessToken,
+        access.auth,
         `${base}/permissions/${encodeURIComponent(permissionId)}`
       );
       if (!removed.ok) return errText(removed.error);

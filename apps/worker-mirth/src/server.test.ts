@@ -63,7 +63,6 @@ let base: string;
 beforeAll(async () => {
   server = createMirthServer({
     db: {} as Kysely<DB>,
-    encryptionKey: Buffer.alloc(32, 7),
     apiKeys: [API_KEY],
     dial: async (input) => {
       calls.push(input);
@@ -127,7 +126,6 @@ describe('authentication', () => {
   it('refuses everything when no keys are configured', async () => {
     const closed = createMirthServer({
       db: {} as Kysely<DB>,
-      encryptionKey: Buffer.alloc(32, 7),
       apiKeys: [],
     });
     await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));

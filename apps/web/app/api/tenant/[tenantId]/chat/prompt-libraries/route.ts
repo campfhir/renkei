@@ -22,7 +22,6 @@ export async function GET(
       id: library.id,
       name: library.name,
       description: library.description,
-      publishedToOrg: library.publishedToOrg,
       role,
       updatedAt: library.updatedAt.toISOString(),
     })),

@@ -56,7 +56,7 @@ export async function GET(
     return NextResponse.json({ error: access }, { status: 400 });
   }
 
-  const found = await searchDirectoryUsers(context, access.accessToken, query, RESULT_MAX);
+  const found = await searchDirectoryUsers(context, access.auth, query, RESULT_MAX);
   if (typeof found === 'string') return NextResponse.json({ error: found }, { status: 400 });
 
   const options: PersonOption[] = found

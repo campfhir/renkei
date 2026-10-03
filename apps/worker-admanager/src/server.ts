@@ -65,8 +65,6 @@ import {
 
 export interface AdManagerServerDeps {
   db: Kysely<DB>;
-  /** The parsed TOKEN_ENCRYPTION_KEY; opens stored credentials. */
-  encryptionKey: Buffer;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /**
@@ -80,7 +78,10 @@ export interface AdManagerServerDeps {
   /** Injected in tests; production dials the real server. */
   dial?: UpstreamDialer;
   /** Injected in tests; production reads the store. */
-  resolveTarget?: (target: SubjectTarget) => Promise<Result<ResolvedTarget, ResolveError>>;
+  resolveTarget?: (
+    target: SubjectTarget,
+    provided: AdManagerCredentials | null
+  ) => Promise<Result<ResolvedTarget, ResolveError>>;
   resolveInstance?: (
     tenantId: string,
     instanceId: string
@@ -207,8 +208,12 @@ function isLegacyRestPath(path: string): boolean {
 
 export function createAdManagerServer(deps: AdManagerServerDeps): Server {
   const dial = deps.dial ?? dialUpstream;
+  // The credential arrives WITH the request, opened by the delegate; this
+  // process holds no key and never reads a stored one.
   const resolve =
-    deps.resolveTarget ?? ((target) => resolveTarget(deps.db, deps.encryptionKey, target));
+    deps.resolveTarget ??
+    ((target: SubjectTarget, provided: AdManagerCredentials | null) =>
+      resolveTarget(deps.db, target, provided));
   const resolveOne =
     deps.resolveInstance ??
     ((tenantId: string, instanceId: string) => resolveInstance(deps.db, tenantId, instanceId));
@@ -298,7 +303,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         return sendError(response, 'bad_request', 'path is not a usable API path');
       }
 
-      const resolved = await resolve(target);
+      const resolved = await resolve(target, parseAdManagerCredentials(body.credentials));
       if (!resolved.ok) return sendError(response, resolved.err.type);
       const { instance, credentials } = resolved.val;
 
@@ -322,9 +327,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       // the web app seals and saves it.
       const tenantId = str(body.tenantId);
       const instanceId = str(body.instanceId);
-      const credentials: AdManagerCredentials | null = parseAdManagerCredentials(
-        body.credentials
-      );
+      const credentials: AdManagerCredentials | null = parseAdManagerCredentials(body.credentials);
       if (!tenantId || !instanceId || !credentials) {
         return sendError(
           response,

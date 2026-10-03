@@ -7,14 +7,18 @@
  * percentage — no provider tells you up front how many items a delta or a
  * space will yield, so a denominator would be fiction.
  *
- * Strictly the caller's own rows: Microsoft subscriptions belong to their
- * grant, watches to their subject. An admin who wants a fleet view has the
- * admin surfaces; this is the "is my stuff working" answer.
+ * Strictly the caller's own rows: watches belong to their subject. An admin
+ * who wants a fleet view has the admin surfaces; this is the "is my stuff
+ * working" answer.
+ *
+ * Nothing Microsoft is listed: the only Outlook subscription left is the
+ * inbox trigger feed, which indexes nothing — mail, calendar and To Do are
+ * personal and never enter the index — so "N indexed" beside it would be
+ * false. SharePoint libraries report through the watch manager.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { MICROSOFT } from '@renkei/provider-grants';
 import { getSessionFromRequest } from '@/lib/session';
 
 export interface SyncProgressItem {
@@ -25,14 +29,6 @@ export interface SyncProgressItem {
   lastRunItems: number;
   totalItems: number;
   error: string | null;
-}
-
-/** A Graph resource path as something a person recognizes. */
-function microsoftLabel(resource: string): string {
-  if (resource.includes('/messages')) return 'Mail (inbox)';
-  if (resource.includes('/events')) return 'Calendar';
-  if (resource.includes('/tasks')) return 'To Do';
-  return resource;
 }
 
 function iso(value: Date | string | null): string | null {
@@ -54,64 +50,23 @@ export async function GET(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const db = dbResult.val;
 
-  // The Microsoft grant identifies which subscription rows are this user's;
-  // webhook_subscriptions is keyed by provider account, not by subject.
-  const microsoftGrant = await db
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
+  const watches = await db
+    .selectFrom('content_watches')
+    .select([
+      'provider',
+      'scope_key',
+      'scope_label',
+      'enabled',
+      'last_synced_at',
+      'last_run_items',
+      'total_items',
+      'sync_status',
+      'last_error',
+    ])
     .where('tenant_id', '=', tenantId)
-    .where('provider', '=', MICROSOFT)
     .where('subject', '=', session.subject)
-    .executeTakeFirst();
-
-  const [subscriptions, watches] = await Promise.all([
-    microsoftGrant
-      ? db
-          .selectFrom('webhook_subscriptions')
-          .select([
-            'resource',
-            'last_synced_at',
-            'last_run_items',
-            'total_items',
-            'sync_status',
-            'delta_link',
-          ])
-          .where('tenant_id', '=', tenantId)
-          .where('provider', '=', MICROSOFT)
-          .where('account_id', '=', microsoftGrant.provider_account_id)
-          .orderBy('resource', 'asc')
-          .execute()
-      : Promise.resolve([]),
-    db
-      .selectFrom('content_watches')
-      .select([
-        'provider',
-        'scope_key',
-        'scope_label',
-        'enabled',
-        'last_synced_at',
-        'last_run_items',
-        'total_items',
-        'sync_status',
-        'last_error',
-      ])
-      .where('tenant_id', '=', tenantId)
-      .where('subject', '=', session.subject)
-      .orderBy('scope_key', 'asc')
-      .execute(),
-  ]);
-
-  const microsoft: SyncProgressItem[] = subscriptions.map((row) => ({
-    label: microsoftLabel(row.resource),
-    // A row with no delta cursor yet has never completed a round, which
-    // reads as "still working" rather than idle — otherwise a mailbox that
-    // has been churning for ten minutes claims to be done.
-    status: row.last_synced_at || row.delta_link ? row.sync_status : 'syncing',
-    lastSyncedAt: iso(row.last_synced_at),
-    lastRunItems: row.last_run_items,
-    totalItems: row.total_items,
-    error: null,
-  }));
+    .orderBy('scope_key', 'asc')
+    .execute();
 
   const byProvider = (provider: string): SyncProgressItem[] =>
     watches
@@ -126,7 +81,6 @@ export async function GET(
       }));
 
   return NextResponse.json({
-    microsoft,
     jira: byProvider('jira'),
     confluence: byProvider('confluence'),
   });

@@ -56,7 +56,7 @@ export async function GET(
     );
   }
 
-  const rooms = await new WebexClient(access.accessToken).listRooms(LIST_MAX);
+  const rooms = await new WebexClient(access.auth).listRooms(LIST_MAX);
   if (!rooms.ok) {
     return NextResponse.json(
       { error: 'WebEx could not list your spaces. Try again, or paste a space id.' },

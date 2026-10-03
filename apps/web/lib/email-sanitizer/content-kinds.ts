@@ -13,11 +13,10 @@ import type { CleanerScriptKind } from '@renkei/email-sanitizer';
 export const CONTENT_KINDS: readonly { id: CleanerScriptKind; label: string; hint: string }[] = [
   { id: 'msg', label: 'Email', hint: 'Messages, after classification and the built-in cleaners.' },
   { id: 'evt', label: 'Calendar', hint: 'Meeting invites — where conferencing boilerplate lives.' },
-  { id: 'task', label: 'Tasks', hint: 'To-do items from Microsoft To Do and Planner.' },
 ];
 
 export function isContentKind(value: unknown): value is CleanerScriptKind {
-  return value === 'msg' || value === 'evt' || value === 'task';
+  return value === 'msg' || value === 'evt';
 }
 
 /**

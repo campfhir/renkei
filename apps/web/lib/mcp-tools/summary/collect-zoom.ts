@@ -18,6 +18,7 @@
  * signal the transcript does not contain.
  */
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { resolveZoomAccess } from '../zoom/zoom-auth';
 import type { MCPToolContext } from '../common';
 import {
@@ -39,9 +40,11 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-async function zoomGet(token: string, path: string): Promise<Record<string, unknown> | null> {
-  const response = await fetch(`${ZOOM_API}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+async function zoomGet(auth: AuthedFetch, path: string): Promise<Record<string, unknown> | null> {
+  // The grant's fetcher attaches the credential; a delegate refusal is a
+  // non-OK Response like any other, and reads as "nothing to report".
+  const response = await auth(`${ZOOM_API}${path}`, {
+    headers: { Accept: 'application/json' },
   }).catch(() => null);
   if (!response || !response.ok) return null;
   const body: unknown = await response.json().catch(() => null);
@@ -62,17 +65,19 @@ function vttToText(vtt: string): string {
     .join('\n');
 }
 
-async function fetchTranscript(token: string, recording: Record<string, unknown>): Promise<string> {
+async function fetchTranscript(
+  auth: AuthedFetch,
+  recording: Record<string, unknown>
+): Promise<string> {
   const files = Array.isArray(recording.recording_files) ? recording.recording_files : [];
   for (const raw of files) {
     const file = isRecord(raw) ? raw : {};
     if (str(file.file_type).toUpperCase() !== 'TRANSCRIPT') continue;
     const url = str(file.download_url);
     if (!url) continue;
-    // The download URL needs the same bearer; Zoom rejects it unauthenticated.
-    const response = await fetch(`${url}?access_token=${encodeURIComponent(token)}`).catch(
-      () => null
-    );
+    // The download URL (a zoom.us host) needs the same bearer; Zoom rejects
+    // it unauthenticated, and the grant's fetcher attaches it as a header.
+    const response = await auth(url).catch(() => null);
     if (!response || !response.ok) continue;
     const vtt = await response.text().catch(() => '');
     if (vtt) return vttToText(vtt);
@@ -90,7 +95,7 @@ export async function collectZoom(
   const from = period.start.slice(0, 10);
   const to = period.end.slice(0, 10);
   const recordings = await zoomGet(
-    access.accessToken,
+    access.auth,
     `/users/me/recordings?from=${from}&to=${to}&page_size=${MAX_ITEMS_PER_SECTION}`
   );
 
@@ -112,7 +117,7 @@ export async function collectZoom(
     lines.push(`${startedAt.slice(11, 16)} ${topic}${minutes ? ` (${minutes}m)` : ''}`);
 
     if (budget <= 0) continue;
-    const transcript = await fetchTranscript(access.accessToken, meeting);
+    const transcript = await fetchTranscript(access.auth, meeting);
     if (!transcript) {
       withoutTranscript += 1;
       continue;
@@ -124,7 +129,7 @@ export async function collectZoom(
   }
 
   // Notes are a separate surface in Zoom, not part of a recording.
-  const notes = await zoomGet(access.accessToken, `/notes?from=${from}&to=${to}`);
+  const notes = await zoomGet(access.auth, `/notes?from=${from}&to=${to}`);
   const noteList = Array.isArray(notes?.notes) ? notes.notes : [];
   for (const raw of noteList) {
     const note = isRecord(raw) ? raw : {};

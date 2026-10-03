@@ -31,7 +31,7 @@ function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
     accountId: 'account-1',
     siteUrl: '',
     apiBaseUrl: '',
-    accessToken: '',
+    jiraAuth: null,
     maxJqlResults: 100,
     subject: 'auth0|alice',
     ...context,

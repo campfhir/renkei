@@ -82,7 +82,7 @@ export function notifyAgentShared(input: {
           });
         } else {
           const context = { tenantId: input.tenantId, subject: input.granteeSubject };
-          const sent = await graphPost(context, access.accessToken, '/me/sendMail', {
+          const sent = await graphPost(context, access.auth, '/me/sendMail', {
             message: {
               subject: headline,
               body: { contentType: 'Text', content: headline },

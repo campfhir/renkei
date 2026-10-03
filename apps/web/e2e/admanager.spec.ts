@@ -33,10 +33,11 @@
  * the `mobile` project's device descriptor, per AGENTS.md.
  */
 
-import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { sealForSubject } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -48,30 +49,6 @@ test.use({
     args: ['--no-sandbox'],
   },
 });
-
-/**
- * `@renkei/crypto`'s secretbox, reproduced: `v1.<iv>.<tag>.<ciphertext>`
- * (aes-256-gcm, base64 parts) under TOKEN_ENCRYPTION_KEY — what
- * `encryptCredentials` (packages/connector-admanager/src/credentials.ts)
- * would have sealed for a real connect, so a seeded connection row is
- * indistinguishable from one made through the UI. See code.spec.ts's own
- * copy of this helper for the same reasoning (a Playwright spec imports
- * `pg` and node builtins, not the app's server-only packages).
- */
-function secretbox(plaintext: string): string {
-  const encoded = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encoded) throw new Error('TOKEN_ENCRYPTION_KEY is not set');
-  const key = Buffer.from(encoded, 'base64');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
 
 /** A deterministic (stable across reruns), valid-looking v4 UUID from a seed string. */
 function uuidFrom(seed: string): string {
@@ -174,7 +151,12 @@ async function seedUserTenant(fixture: Fixture): Promise<{ instanceId: string }>
         fixture.tenantId,
         instanceId,
         fixture.subject,
-        secretbox(JSON.stringify({ authToken: 'e2e-seeded-authtoken' })),
+        await sealForSubject(
+          client,
+          fixture.tenantId,
+          fixture.subject,
+          JSON.stringify({ authToken: 'e2e-seeded-authtoken' })
+        ),
         'Jamie Lee',
         ['accounts.read'],
       ]

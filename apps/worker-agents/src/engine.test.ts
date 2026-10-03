@@ -28,6 +28,39 @@ import { createApprovalSweep } from './approval-sweep';
 import type { McpClient, McpToolResult } from './mcp-client';
 import { recordedLogs, renderLog, resetRecordedLogs } from './test-support/logger-mock';
 
+/**
+ * The engine asks the delegate whether the run's owner has a live key
+ * delegation before it opens anything of theirs. Tokens here come from the
+ * scripted MCP pair, so the only delegate call is that status read: stub
+ * it, delegated by default, and switch it off to see a run parked.
+ */
+let ownerDelegated = true;
+let keyServiceUp = true;
+jest.mock('@renkei/delegate-client', () => ({
+  delegateClient: () => ({
+    keyStatus: async () =>
+      keyServiceUp
+        ? {
+            ok: true,
+            val: {
+              enrolled: true,
+              legacy: false,
+              legacyNeedsPassphrase: false,
+              publicKey: 'stub',
+              wrappedPrivateKey: 'stub',
+              wrappedAutomationKey: 'stub',
+              version: 1,
+              enrolledAt: new Date(),
+              sessionInstances: [],
+              thisSessionInstances: [],
+              automationInstances: ownerDelegated ? ['instance-1'] : [],
+              automationUntil: ownerDelegated ? new Date(Date.now() + 86_400_000) : null,
+            },
+          }
+        : { ok: false, err: { type: 'internal', message: 'down' } },
+  }),
+}));
+
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 /** Mirrors CONDITION_TURNS in engine.ts — the decision turn cap. */
@@ -264,6 +297,59 @@ maybe('agent run engine', () => {
       .where('run_id', '=', runId)
       .execute();
     expect(attempts).toEqual([{ status: 'succeeded', attempt: 1 }]);
+  });
+
+  it('parks a run whose owner has no key delegation, and runs it once they are delegated again', async () => {
+    const { runId } = await seedRun(singleStep());
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' })
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+
+    // The key service itself being down is transient: the message is retried.
+    keyServiceUp = false;
+    await expect(handler({ payload: { runId } })).rejects.toThrow('key service unavailable');
+    keyServiceUp = true;
+
+    // No delegation: parked as waiting with the sign-in note, nothing run.
+    ownerDelegated = false;
+    try {
+      await handler({ payload: { runId } });
+    } finally {
+      ownerDelegated = true;
+    }
+    const parked = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error', 'waiting_until'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(parked.status).toBe('waiting');
+    expect(parked.error_kind).toBe('needs-sign-in');
+    expect(parked.error).toContain('Sign in to resume');
+    expect(parked.waiting_until).toBeNull();
+    expect(
+      await db.selectFrom('agent_run_steps').select('id').where('run_id', '=', runId).execute()
+    ).toEqual([]);
+
+    // The owner's sign-in re-queues the row (the web app's keys/delegate
+    // route does this) and the same message runs it to the end, note cleared.
+    await db
+      .updateTable('agent_runs')
+      .set({ status: 'queued', error: null, error_kind: null })
+      .where('id', '=', runId)
+      .execute();
+    await handler({ payload: { runId } });
+    const finished = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(finished).toEqual({ status: 'succeeded', error_kind: null, error: null });
   });
 
   it('runs a single step to success and records the attempt', async () => {

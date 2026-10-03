@@ -6,7 +6,7 @@
  * and that is a real design decision, not an inconsistency:
  *
  *   1. graphGet/graphPost/graphPatch/graphPut/graphDelete/graphPutContent
- *      (client.ts) already take an access TOKEN as an explicit parameter,
+ *      (client.ts) already take the grant's AuthedFetch as an explicit parameter,
  *      separate from resolving one — unlike jiraFetch or the webex/zoom
  *      fetch helpers, which read the credential and made the network call in
  *      one function. Graph's client was already split the right way; the

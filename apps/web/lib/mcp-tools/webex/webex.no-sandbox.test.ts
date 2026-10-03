@@ -80,8 +80,7 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'webex_request_attachment_upload', args: { roomId: 'room-1', filename: 'notes.txt' } },
   // The preview never has to reach auth (its room-title lookup is
   // best-effort and a lookup failure still previews), so a denied credential
-  // cannot make it fail — empty args exercise its validation path instead,
-  // the same way outlook_semantic_search_messages is handled over there.
+  // cannot make it fail — empty args exercise its validation path instead.
   { tool: 'webex_send_message_preview', args: {} },
   { tool: 'webex_send_message_confirm', args: { roomId: 'room-1', markdown: 'hi' } },
   { tool: 'webex_list_meetings', args: {} },

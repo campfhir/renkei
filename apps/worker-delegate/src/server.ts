@@ -1,0 +1,429 @@
+/**
+ * The delegate's HTTP surface (docs/delegate-key-design.md): the bearer
+ * key is the trust boundary, every op names a tenant and a subject the
+ * caller has already authenticated, and what comes back is the least the
+ * caller's request needs.
+ *
+ * Key ops (the token proxy and the connector forwarders join them in
+ * their own modules):
+ *
+ *   keys/instances    — the live delegate instances and their public keys:
+ *                       what a browser seals a person's key to.
+ *   keys/status       — a person's enrollment and what is delegated for
+ *                       them, for the browser and the agents worker.
+ *   keys/enroll       — first sign-in: the browser's keys recorded, the
+ *                       person's earlier rows moved, delegations stored.
+ *   keys/delegate     — a later sign-in or a re-seal: fresh delegations.
+ *   keys/revoke-automation, keys/rotate, keys/shred, keys/census.
+ *   resource-key/ensure, open, open-many, create, share, wrap-under,
+ *   grant-automation, revoke, delete, has, holders
+ *                     — a chat's or project's data key, wrapped per holder.
+ *                       `ensure`/`open`/`open-many` answer the key itself
+ *                       (base64), for the caller's ContentCipher.
+ *   user-sealed/seal, open
+ *                     — values that belong to one person only, opened and
+ *                       sealed here under the key their scope names.
+ *   maintenance/prune-orphan-keys
+ *                     — the sweep's orphan prune.
+ *
+ * Token ops (grants.ts): api (raw, streaming), oauth/exchange,
+ * grant/commit, grant/describe, grant/revoke, grant/delete.
+ * Connector workers (forward.ts): forward/<connector>/<op>.
+ * Git for code workspaces (git.ts): grant/git-ticket, and /git/<ticket>/….
+ */
+
+import type { Server, ServerResponse } from 'node:http';
+import type { Kysely } from 'kysely';
+import type { DB } from '@renkei/db';
+import {
+  createResourceKey,
+  delegationStatus,
+  deleteResourceKey,
+  enroll,
+  enrollmentCensus,
+  ensureResourceKey,
+  grantAutomationAccess,
+  hasResourceKey,
+  listResourceKeyHolders,
+  liveInstances,
+  openForSubject,
+  openResourceKey,
+  openResourceKeys,
+  pruneOrphanResourceKeys,
+  revokeAutomation,
+  revokeResourceKey,
+  rotateUserKey,
+  sealForSubject,
+  shareResourceKey,
+  shredUserKey,
+  storeDelegations,
+  wrapResourceKeyUnder,
+  type DelegationInput,
+  type ResourceKey,
+  type ResourceKeyKind,
+  type ResourceRef,
+  type SealedDelegation,
+  type SealScope,
+} from '@renkei/user-keys';
+import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
+import { sendError } from './errors';
+import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
+import { Forwarder } from './forward';
+import { GitTickets, type GitDialer } from './git';
+
+export interface DelegateServerDeps {
+  db: Kysely<DB>;
+  /** TOKEN_ENCRYPTION_KEY: opens the org-wide connector configs a refresh needs. */
+  encryptionKey: Buffer;
+  /** Accepted bearer keys; empty means every request is refused. */
+  apiKeys: string[];
+  /** Injected in tests; production dials the provider. */
+  fetchImpl?: typeof fetch;
+  /** The worker's logger; silent when omitted (tests, in-process use). */
+  logger?: DelegateLogger;
+  /** Injected in tests; production dials the git host with node's own client. */
+  gitDialer?: GitDialer;
+}
+
+/** A batch of values to seal or open; a chat's whole memory list fits many times over. */
+const MAX_JSON_BYTES = 8 * 1_048_576;
+
+const KINDS: readonly ResourceKeyKind[] = ['chat', 'chat_project', 'prompt_library'];
+
+function kindOf(value: unknown): ResourceKeyKind | null {
+  return KINDS.find((kind) => kind === value) ?? null;
+}
+
+function refOf(body: Record<string, unknown>): ResourceRef | null {
+  const tenantId = str(body.tenantId);
+  const kind = kindOf(body.kind);
+  const resourceId = str(body.resourceId);
+  if (!tenantId || !kind || !resourceId) return null;
+  return { tenantId, kind, resourceId };
+}
+
+function strings(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') return null;
+    out.push(item);
+  }
+  return out;
+}
+
+function keyView(key: ResourceKey): { id: string; key: string } {
+  return { id: key.id, key: key.key.toString('base64') };
+}
+
+function iso(value: Date | null): string | null {
+  return value ? value.toISOString() : null;
+}
+
+function sealedDelegationsOf(value: unknown): SealedDelegation[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: SealedDelegation[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) return null;
+    const record: Record<string, unknown> = Object.fromEntries(Object.entries(item));
+    const instanceId = str(record.instanceId);
+    const sealedKey = str(record.sealedKey);
+    if (!instanceId || !sealedKey) return null;
+    out.push({ instanceId, sealedKey });
+  }
+  return out;
+}
+
+function dateOf(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** The delegation half of an enroll/delegate/rotate body, or null when malformed. */
+function delegationInputOf(body: Record<string, unknown>): DelegationInput | null {
+  const tenantId = str(body.tenantId);
+  const subject = str(body.subject);
+  const sessionId = str(body.sessionId);
+  const session = sealedDelegationsOf(body.session ?? []);
+  const automation = sealedDelegationsOf(body.automation ?? []);
+  if (!tenantId || !subject || !sessionId || !session || !automation) return null;
+  return {
+    tenantId,
+    subject,
+    sessionId,
+    session,
+    automation,
+    automationUntil: dateOf(body.automationUntil),
+  };
+}
+
+export function createDelegateServer(deps: DelegateServerDeps): Server {
+  const { db } = deps;
+  const logger = deps.logger ?? silentDelegateLogger;
+  const grants = new Grants(db, deps.encryptionKey, logger, deps.fetchImpl);
+  const forwarder = new Forwarder(db, grants, deps.fetchImpl);
+  const git = new GitTickets(db, grants, deps.gitDialer);
+
+  type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
+
+  const handlers: Record<string, Handler> = {
+    // ── the person's keys ──────────────────────────────────────────────────
+    'keys/instances': async (_body, response) => {
+      sendJson(response, 200, { instances: await liveInstances(db) });
+    },
+    'keys/status': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      const status = await delegationStatus(
+        db,
+        tenantId,
+        subject,
+        str(body.sessionId) || undefined
+      );
+      sendJson(response, 200, {
+        ...status,
+        enrolledAt: iso(status.enrolledAt),
+        automationUntil: iso(status.automationUntil),
+      });
+    },
+    'keys/enroll': async (body, response) => {
+      const delegation = delegationInputOf(body);
+      const publicKey = str(body.publicKey);
+      const wrappedPrivateKey = str(body.wrappedPrivateKey);
+      const wrappedAutomationKey = str(body.wrappedAutomationKey);
+      if (!delegation || !publicKey || !wrappedPrivateKey || !wrappedAutomationKey) {
+        return sendError(response, 'bad_request');
+      }
+      const enrolled = await enroll(db, {
+        ...delegation,
+        publicKey,
+        wrappedPrivateKey,
+        wrappedAutomationKey,
+        passphrase: str(body.passphrase) || undefined,
+      });
+      if (!enrolled.ok) return sendError(response, enrolled.err.type);
+      sendJson(response, 200, {
+        version: enrolled.val.version,
+        enrolledAt: iso(enrolled.val.enrolledAt),
+        migrated: enrolled.val.migrated,
+      });
+    },
+    'keys/delegate': async (body, response) => {
+      const delegation = delegationInputOf(body);
+      if (!delegation) return sendError(response, 'bad_request');
+      const stored = await storeDelegations(db, delegation);
+      if (!stored.ok) return sendError(response, stored.err.type);
+      sendJson(response, 200, { ok: true });
+    },
+    'keys/revoke-automation': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      sendJson(response, 200, { revoked: await revokeAutomation(db, tenantId, subject) });
+    },
+    'keys/rotate': async (body, response) => {
+      const delegation = delegationInputOf(body);
+      const wrappedPrivateKey = str(body.wrappedPrivateKey);
+      const wrappedAutomationKey = str(body.wrappedAutomationKey);
+      if (!delegation || !wrappedPrivateKey || !wrappedAutomationKey) {
+        return sendError(response, 'bad_request');
+      }
+      const rotated = await rotateUserKey(db, {
+        ...delegation,
+        wrappedPrivateKey,
+        wrappedAutomationKey,
+      });
+      if (!rotated.ok) return sendError(response, rotated.err.type);
+      sendJson(response, 200, rotated.val);
+    },
+    'keys/shred': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      sendJson(response, 200, { shredded: await shredUserKey(db, tenantId, subject) });
+    },
+    'keys/census': async (body, response) => {
+      sendJson(response, 200, await enrollmentCensus(db, str(body.tenantId) || undefined));
+    },
+
+    // ── resource keys ──────────────────────────────────────────────────────
+    'resource-key/ensure': async (body, response) => {
+      const ref = refOf(body);
+      const ownerSubject = str(body.ownerSubject);
+      if (!ref || !ownerSubject) return sendError(response, 'bad_request');
+      const key = await ensureResourceKey(db, ref, ownerSubject, {
+        automation: body.automation === true,
+      });
+      if (!key.ok) return sendError(response, key.err.type);
+      sendJson(response, 200, keyView(key.val));
+    },
+    'resource-key/create': async (body, response) => {
+      const ref = refOf(body);
+      const ownerSubject = str(body.ownerSubject);
+      if (!ref || !ownerSubject) return sendError(response, 'bad_request');
+      const key = await createResourceKey(db, ref, ownerSubject, {
+        automation: body.automation === true,
+      });
+      if (!key.ok) return sendError(response, key.err.type);
+      sendJson(response, 200, keyView(key.val));
+    },
+    'resource-key/open': async (body, response) => {
+      const ref = refOf(body);
+      const subject = str(body.subject);
+      if (!ref || !subject) return sendError(response, 'bad_request');
+      const key = await openResourceKey(db, ref, subject);
+      if (!key.ok) return sendError(response, key.err.type);
+      sendJson(response, 200, keyView(key.val));
+    },
+    'resource-key/open-many': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const kind = kindOf(body.kind);
+      if (!tenantId || !kind || !Array.isArray(body.entries)) {
+        return sendError(response, 'bad_request');
+      }
+      const entries: { resourceId: string; subject: string }[] = [];
+      for (const entry of body.entries) {
+        if (typeof entry !== 'object' || entry === null) return sendError(response, 'bad_request');
+        const record: Record<string, unknown> = Object.fromEntries(Object.entries(entry));
+        const resourceId = str(record.resourceId);
+        const subject = str(record.subject);
+        if (!resourceId || !subject) return sendError(response, 'bad_request');
+        entries.push({ resourceId, subject });
+      }
+      const opened = await openResourceKeys(db, tenantId, kind, entries);
+      const keys: Record<string, { id: string; key: string }> = {};
+      for (const [resourceId, key] of opened) keys[resourceId] = keyView(key);
+      sendJson(response, 200, { keys });
+    },
+    'resource-key/share': async (body, response) => {
+      const ref = refOf(body);
+      const fromSubject = str(body.fromSubject);
+      const toSubject = str(body.toSubject);
+      if (!ref || !fromSubject || !toSubject) return sendError(response, 'bad_request');
+      const shared = await shareResourceKey(db, ref, fromSubject, toSubject);
+      if (!shared.ok) return sendError(response, shared.err.type);
+      sendJson(response, 200, { ok: true });
+    },
+    'resource-key/wrap-under': async (body, response) => {
+      const ref = refOf(body);
+      const bySubject = str(body.bySubject);
+      const parentKind = kindOf(body.parentKind);
+      const parentId = str(body.parentResourceId);
+      if (!ref || !bySubject || !parentKind || !parentId) return sendError(response, 'bad_request');
+      const wrapped = await wrapResourceKeyUnder(db, ref, bySubject, {
+        tenantId: ref.tenantId,
+        kind: parentKind,
+        resourceId: parentId,
+      });
+      if (!wrapped.ok) return sendError(response, wrapped.err.type);
+      sendJson(response, 200, { ok: true });
+    },
+    'resource-key/grant-automation': async (body, response) => {
+      const ref = refOf(body);
+      const subject = str(body.subject);
+      if (!ref || !subject) return sendError(response, 'bad_request');
+      const granted = await grantAutomationAccess(db, ref, subject);
+      if (!granted.ok) return sendError(response, granted.err.type);
+      sendJson(response, 200, { ok: true });
+    },
+    'resource-key/revoke': async (body, response) => {
+      const ref = refOf(body);
+      const subject = str(body.subject);
+      if (!ref || !subject) return sendError(response, 'bad_request');
+      sendJson(response, 200, { revoked: await revokeResourceKey(db, ref, subject) });
+    },
+    'resource-key/delete': async (body, response) => {
+      const ref = refOf(body);
+      if (!ref) return sendError(response, 'bad_request');
+      await deleteResourceKey(db, ref);
+      sendJson(response, 200, { ok: true });
+    },
+    'resource-key/has': async (body, response) => {
+      const ref = refOf(body);
+      if (!ref) return sendError(response, 'bad_request');
+      sendJson(response, 200, { exists: await hasResourceKey(db, ref) });
+    },
+    'resource-key/holders': async (body, response) => {
+      const ref = refOf(body);
+      if (!ref) return sendError(response, 'bad_request');
+      sendJson(response, 200, { holders: await listResourceKeyHolders(db, ref) });
+    },
+
+    // ── person-only values ─────────────────────────────────────────────────
+    'user-sealed/seal': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      const values = strings(body.values);
+      const scope: SealScope = body.scope === 'session' ? 'session' : 'automation';
+      if (!tenantId || !subject || !values) return sendError(response, 'bad_request');
+      const sealed: string[] = [];
+      for (const value of values) {
+        const result = await sealForSubject(db, tenantId, subject, value, scope);
+        if (!result.ok) return sendError(response, result.err.type);
+        sealed.push(result.val);
+      }
+      sendJson(response, 200, { sealed });
+    },
+    'user-sealed/open': async (body, response) => {
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      const stored = strings(body.stored);
+      if (!tenantId || !subject || !stored) return sendError(response, 'bad_request');
+      // A value that will not open is null in its slot; a key that is
+      // missing or not delegated fails the whole batch, since nothing would open.
+      const opened: (string | null)[] = [];
+      for (const value of stored) {
+        const result = await openForSubject(db, tenantId, subject, value);
+        if (result.ok) {
+          opened.push(result.val);
+        } else if (result.err.type === 'DECRYPTION_ERROR') {
+          opened.push(null);
+        } else {
+          return sendError(response, result.err.type);
+        }
+      }
+      sendJson(response, 200, { opened });
+    },
+
+    // ── maintenance ────────────────────────────────────────────────────────
+    'maintenance/prune-orphan-keys': async (_body, response) => {
+      sendJson(response, 200, { pruned: await pruneOrphanResourceKeys(db) });
+    },
+
+    // ── provider grants (tokens never leave this process; see grants.ts) ───
+    'oauth/exchange': (body, response) => grants.exchange(body, response),
+    'grant/commit': (body, response) => grants.commit(body, response),
+    'grant/describe': (body, response) => grants.describeOp(body, response),
+    'grant/revoke': (body, response) => grants.revoke(body, response),
+    'grant/delete': (body, response) => grants.deleteOp(body, response),
+    'grant/git-ticket': (body, response) => git.issue(body, response),
+  };
+
+  return createJsonRpcServer({
+    apiKeys: deps.apiKeys,
+    maxBodyBytes: MAX_JSON_BYTES,
+    handlers,
+    // The proxy streams a raw body in and the provider's answer out.
+    rawHandlers: { api: (request, response) => grants.api(request, response) },
+    // Git over HTTPS for code workspaces: the ticket in the path is the
+    // credential, so these routes sit outside the bearer check (git.ts).
+    openPrefixes: [
+      { prefix: '/git/', handler: (request, response) => git.proxy(request, response) },
+    ],
+    // forward/<connector>/<op>: the connector workers, with the person's
+    // credential attached here (forward.ts).
+    fallback: async (op, request, response) => {
+      if (!(await forwarder.handle(op, request, response)))
+        sendError(response, 'unknown_operation');
+    },
+    sendError,
+    onUnhandledError: (error) => {
+      logger.error('delegate op failed: {error}', {
+        component: 'worker-delegate/server',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  });
+}

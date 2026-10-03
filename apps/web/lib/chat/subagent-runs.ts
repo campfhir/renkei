@@ -16,7 +16,7 @@ import type { DB } from '@renkei/db';
 import type { LlmContentBlock, LlmMessage, LlmUsage } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { isUuid } from '@/lib/uuid';
-import { openText, parseBlock, sealText } from './content-crypto';
+import { openText, parseBlock, sealText, type ContentCipher } from './content-crypto';
 import { toChatBlocks, type ChatBlock } from './views';
 
 export type SubagentRunStatus = 'running' | 'completed' | 'failed' | 'interrupted';
@@ -96,8 +96,8 @@ function statusOf(value: string): SubagentRunStatus {
 }
 
 /** A transcript as stored: role and blocks per message, sealed as one JSON text. */
-function sealTranscript(messages: LlmMessage[]): string | null {
-  const sealed = sealText(JSON.stringify(messages));
+function sealTranscript(messages: LlmMessage[], cipher: ContentCipher): string | null {
+  const sealed = sealText(JSON.stringify(messages), cipher);
   return sealed.ok ? sealed.val : null;
 }
 
@@ -140,11 +140,13 @@ export async function createSubagentRun(
     readOnly: boolean;
     maxSteps: number;
     model: LlmCallModel | null;
+    /** The chat's cipher: a run's rows are sealed like the chat's own. */
+    cipher: ContentCipher;
   }
 ): Promise<string | null> {
-  const task = sealText(input.task);
+  const task = sealText(input.task, input.cipher);
   if (!task.ok) return null;
-  const instructions = input.instructions ? sealText(input.instructions) : null;
+  const instructions = input.instructions ? sealText(input.instructions, input.cipher) : null;
   if (instructions && !instructions.ok) return null;
   const inserted = await db
     .insertInto('chat_subagent_runs')
@@ -221,16 +223,17 @@ export async function finishSubagentRun(
     error: string | null;
     steps: number;
     toolCalls: number;
-  }
+  },
+  cipher: ContentCipher
 ): Promise<void> {
-  const report = outcome.report ? sealText(outcome.report) : null;
+  const report = outcome.report ? sealText(outcome.report, cipher) : null;
   await db
     .updateTable('chat_subagent_runs')
     .set({
       status: outcome.status,
       steps: outcome.steps,
       tool_calls: outcome.toolCalls,
-      transcript: sealTranscript(outcome.transcript),
+      transcript: sealTranscript(outcome.transcript, cipher),
       report: report && report.ok ? report.val : null,
       error: outcome.error,
       updated_at: sql<Date>`NOW()`,
@@ -260,7 +263,8 @@ export async function getSubagentRunByCall(
   db: Kysely<DB>,
   tenantId: string,
   chatId: string,
-  toolUseId: string
+  toolUseId: string,
+  cipher: ContentCipher
 ): Promise<SubagentRunView | null> {
   if (!isUuid(chatId) || !toolUseId) return null;
   const row = await db
@@ -280,8 +284,8 @@ export async function getSubagentRunByCall(
     toolUseId: row.tool_use_id,
     turnId: row.turn_id,
     status: statusOf(row.status),
-    task: openText(row.task),
-    instructions: row.instructions ? openText(row.instructions) : null,
+    task: openText(row.task, cipher),
+    instructions: row.instructions ? openText(row.instructions, cipher) : null,
     readOnly: row.read_only,
     model:
       row.provider && row.model
@@ -291,8 +295,8 @@ export async function getSubagentRunByCall(
     maxSteps: row.max_steps,
     toolCalls: row.tool_calls,
     lastTool: row.last_tool,
-    transcript: row.transcript ? parseTranscript(openText(row.transcript)) : [],
-    report: row.report ? openText(row.report) : null,
+    transcript: row.transcript ? parseTranscript(openText(row.transcript, cipher)) : [],
+    report: row.report ? openText(row.report, cipher) : null,
     error: row.error,
     usage: { inputTokens: row.input_tokens, outputTokens: row.output_tokens },
     startedAt: row.started_at.toISOString(),
@@ -304,7 +308,7 @@ export async function getSubagentRunByCall(
 /** The recorder over the real table and the turn's stream (start-turn.ts wires it). */
 export function createSubagentRecorder(
   db: Kysely<DB>,
-  scope: { tenantId: string; chatId: string; turnId: string },
+  scope: { tenantId: string; chatId: string; turnId: string; cipher: ContentCipher },
   emit: (event: {
     toolUseId: string;
     status: SubagentRunStatus;
@@ -365,7 +369,7 @@ export function createSubagentRecorder(
       }
     },
     async finish(runId, outcome) {
-      await quietly('finish', () => finishSubagentRun(db, runId, outcome));
+      await quietly('finish', () => finishSubagentRun(db, runId, outcome, scope.cipher));
       const run = known.get(runId);
       if (run) {
         emit({

@@ -32,6 +32,7 @@ jest.mock('@/lib/jira-admin/change-requests', () => {
   };
 });
 
+import { authedFetch } from '@renkei/delegate-client';
 import { NextRequest } from 'next/server';
 import { POST } from './route';
 import { getSessionFromRequest } from '@/lib/session';
@@ -90,7 +91,8 @@ const ACCESS = {
   cloudId: 'cloud-1',
   siteUrl: 'https://acme.atlassian.net',
   accountId: 'acct-1',
-  authHeader: 'Bearer t',
+  // The delegate's fetcher stands in for the grant; the suite's global.fetch answers it.
+  auth: authedFetch((url, init) => fetch(url, init), 'atlassian-admin:tenant-1:acct-1'),
 };
 
 beforeEach(() => {

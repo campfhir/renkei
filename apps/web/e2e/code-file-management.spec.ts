@@ -92,7 +92,10 @@ async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
       repoFullName: 'acme/billing-service',
       branch: 'main',
       cloneUrl: 'https://bitbucket.org/acme/billing-service.git',
-      authHeader: 'Basic e2e',
+      gitProxy: {
+        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+      },
     }),
   });
   const { workspace }: { workspace: { id: string } } = await cloned.json();
@@ -129,7 +132,14 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(import.meta.dirname, '..', 'test-results', 'screens', testInfo.project.name, name),
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      name
+    ),
     fullPage: false,
   });
 }

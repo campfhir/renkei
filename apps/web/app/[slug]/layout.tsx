@@ -17,6 +17,7 @@ import CoachMarkProvider from '@/components/coach-marks/provider';
 import { NotificationCenter } from '@/components/notification-center';
 import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
+import KeyGuard from '@/components/key-guard';
 import ThemeScript from '@/components/theme-script';
 import ThemeSync from '@/components/theme-sync';
 import { CodeLineNumbersProvider } from '@/components/code-display-context';
@@ -129,6 +130,9 @@ export default async function TenantLayout({
       <ThemeSync tenantId={tenant.id} mode={theme.mode} />
       <NotificationCenter tenantId={tenant.id}>
         <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
+          {/* The person's encryption key, kept connected from this browser
+              (docs/delegate-key-design.md); its banners sit above the nav. */}
+          <KeyGuard tenantId={tenant.id} slug={tenant.slug} />
           {/* The nav frames the page: it owns the <main> so the menu column can
               stand beside it on a wide screen. */}
           {/* The coach marks wrap the nav AND the page: a tour spotlights

@@ -8,7 +8,6 @@ import { NextResponse } from 'next/server';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { startChatTurn, USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
-import { attachmentPromptBlocks } from '@/lib/chat/attachments';
 
 export async function POST(
   request: NextRequest,
@@ -34,17 +33,11 @@ export async function POST(
   const llmModelId =
     typeof body.llmModelId === 'string' && isUuid(body.llmModelId) ? body.llmModelId : null;
 
-  const extraBlocks =
-    attachmentIds.length > 0
-      ? await attachmentPromptBlocks(db, tenantId, session.subject, chatId, attachmentIds)
-      : [];
-
   const started = await startChatTurn(db, {
     tenantId,
     session: { subject: session.subject, roles: session.roles },
     chatId,
     text,
-    extraBlocks,
     attachmentIds,
     llmModelId,
     voice: body.voice === true,

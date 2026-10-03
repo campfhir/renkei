@@ -102,7 +102,7 @@ export default async function AgentRunsPage({
                 className="flex items-center justify-between rounded-md border border-gray-200 p-3 text-sm hover:border-blue-400 dark:border-gray-800"
               >
                 <span className="flex items-center gap-2">
-                  <StatusPill status={run.status} />
+                  <StatusPill status={run.status} errorKind={run.errorKind} />
                   <span className="text-gray-600 dark:text-gray-400">via {run.triggerKind}</span>
                   {run.errorKind ? (
                     <span className="text-xs text-red-600 dark:text-red-400">

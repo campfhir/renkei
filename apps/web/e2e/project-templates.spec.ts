@@ -8,11 +8,11 @@
  * Screenshots land under test-results/screens/<project>/project-templates-*.png.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { sealForSubject } from './keys';
 
 test.use({
   browserName: 'chromium',
@@ -21,22 +21,6 @@ test.use({
     args: ['--no-sandbox'],
   },
 });
-
-/** Same envelope as code.spec.ts's grant fixture — see there for why. */
-function secretbox(plaintext: string): string {
-  const encoded = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encoded) throw new Error('TOKEN_ENCRYPTION_KEY is not set');
-  const key = Buffer.from(encoded, 'base64');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
 
 async function db(): Promise<Client> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
@@ -104,8 +88,8 @@ test.describe('code project templates', () => {
         [
           E2E_TENANT_ID,
           E2E_SUBJECT,
-          secretbox('e2e-access-token'),
-          secretbox('e2e-refresh-token'),
+          await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-access-token'),
+          await sealForSubject(client, E2E_TENANT_ID, E2E_SUBJECT, 'e2e-refresh-token'),
           new Date(Date.now() + 365 * 86_400_000),
           ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
           JSON.stringify({ username: 'e2e-dev' }),

@@ -26,6 +26,10 @@ import { ok } from '@campfhir/safe-functions/helpers';
 import { TRIGGER_EVENT_CATALOG } from '@renkei/agents';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './zoom-events';
 import type { ClaimedEvent } from '../queue';
+import { authedFetch } from '@renkei/delegate-client';
+
+/** A grant fetcher stand-in: the code under test only passes it through. */
+const auth = authedFetch(async () => new Response(), 'zoom:tenant-1:host-1');
 
 const { resolveZoomHostAccess: mockResolveAccess } = jest.requireMock<{
   resolveZoomHostAccess: jest.Mock;
@@ -74,7 +78,7 @@ function catalogKeys(eventId: string): string[] {
 beforeEach(() => {
   jest.resetAllMocks();
   mockResolveAccess.mockResolvedValue({
-    accessToken: 'token',
+    auth,
     accountId: 'host-1',
     hostEmail: 'host@example.com',
     subject: 'subject-1',
@@ -99,9 +103,7 @@ beforeEach(() => {
 describe('createZoomTranscriptHandler', () => {
   it('publishes a domain event whose data keys match the catalog provides', async () => {
     const publish = jest.fn().mockResolvedValue(undefined);
-    await createZoomTranscriptHandler({ publish })(
-      claimedEvent('recording.transcript_completed')
-    );
+    await createZoomTranscriptHandler({ publish })(claimedEvent('recording.transcript_completed'));
 
     expect(publish).toHaveBeenCalledTimes(1);
     const published = publish.mock.calls[0][0];
@@ -118,9 +120,7 @@ describe('createZoomTranscriptHandler', () => {
   it('still publishes when the knowledge layer is off', async () => {
     mockResolveEmbeddingProvider.mockResolvedValue(null);
     const publish = jest.fn().mockResolvedValue(undefined);
-    await createZoomTranscriptHandler({ publish })(
-      claimedEvent('recording.transcript_completed')
-    );
+    await createZoomTranscriptHandler({ publish })(claimedEvent('recording.transcript_completed'));
 
     expect(mockEnqueueKnowledgeEvent).not.toHaveBeenCalled();
     expect(publish).toHaveBeenCalledTimes(1);
@@ -129,9 +129,7 @@ describe('createZoomTranscriptHandler', () => {
   it('skips entirely when the host has no grant', async () => {
     mockResolveAccess.mockResolvedValue(null);
     const publish = jest.fn();
-    await createZoomTranscriptHandler({ publish })(
-      claimedEvent('recording.transcript_completed')
-    );
+    await createZoomTranscriptHandler({ publish })(claimedEvent('recording.transcript_completed'));
 
     expect(publish).not.toHaveBeenCalled();
     expect(mockEnqueueKnowledgeEvent).not.toHaveBeenCalled();

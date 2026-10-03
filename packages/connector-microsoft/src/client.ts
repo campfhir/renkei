@@ -1,7 +1,8 @@
 /**
- * Minimal Microsoft Graph request helper, delegated-token scoped. Every call
- * carries a per-user access token from the grant lifecycle — this connector
- * has no org credential, so nothing here can see more than the user can.
+ * Minimal Microsoft Graph request helper, delegated-grant scoped. Every call
+ * rides a per-user `AuthedFetch` from the grant lifecycle (the delegate
+ * worker holds the token and attaches it) — this connector has no org
+ * credential, so nothing here can see more than the user can.
  *
  * The helper accepts absolute https URLs untouched because delta and paging
  * continuations (`@odata.nextLink` / `@odata.deltaLink`) come back from Graph
@@ -10,6 +11,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import type { RequestLane } from '@renkei/rate-limit';
 import { GRAPH_BASE_URL, REQUEST_TIMEOUT_MS, GateTimeoutError, graphFetch } from './fetch';
 
@@ -34,7 +36,7 @@ export interface GraphRequestOptions {
 }
 
 export async function graphRequest(
-  accessToken: string,
+  auth: AuthedFetch,
   pathOrUrl: string,
   init?: RequestInit & GraphRequestOptions
 ): Promise<Result<unknown, 'GRAPH_API_ERROR'>> {
@@ -42,7 +44,7 @@ export async function graphRequest(
 
   let response: Response;
   try {
-    response = await graphFetch(accessToken, url, {
+    response = await graphFetch(auth, url, {
       ...init,
       headers: {
         Accept: 'application/json',

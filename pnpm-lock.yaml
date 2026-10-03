@@ -115,6 +115,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../../packages/delegate-client
       '@renkei/document-render':
         specifier: workspace:*
         version: link:../../packages/document-render
@@ -157,6 +160,9 @@ importers:
       '@renkei/tool-outcomes':
         specifier: workspace:*
         version: link:../../packages/tool-outcomes
+      '@renkei/user-keys':
+        specifier: workspace:*
+        version: link:../../packages/user-keys
       '@renkei/user-prefs':
         specifier: workspace:*
         version: link:../../packages/user-prefs
@@ -326,6 +332,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../../packages/delegate-client
       '@renkei/document-text':
         specifier: workspace:*
         version: link:../../packages/document-text
@@ -457,6 +466,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../../packages/delegate-client
       '@renkei/mcp-client':
         specifier: workspace:*
         version: link:../../packages/mcp-client
@@ -478,6 +490,67 @@ importers:
       '@renkei/worker-loop':
         specifier: workspace:*
         version: link:../../packages/worker-loop
+      kysely:
+        specifier: ^0.29.4
+        version: 0.29.4
+      tsx:
+        specifier: ^4.23.5
+        version: 4.23.5
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  apps/worker-delegate:
+    dependencies:
+      '@campfhir/bored-logs':
+        specifier: ^0.7.1
+        version: 0.7.1(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)
+      '@campfhir/safe-functions':
+        specifier: ^0.1.3
+        version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/connector-admanager':
+        specifier: workspace:*
+        version: link:../../packages/connector-admanager
+      '@renkei/connector-config':
+        specifier: workspace:*
+        version: link:../../packages/connector-config
+      '@renkei/connector-fileshares':
+        specifier: workspace:*
+        version: link:../../packages/connector-fileshares
+      '@renkei/connector-mirth':
+        specifier: workspace:*
+        version: link:../../packages/connector-mirth
+      '@renkei/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@renkei/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@renkei/provider-grants':
+        specifier: workspace:*
+        version: link:../../packages/provider-grants
+      '@renkei/settings':
+        specifier: workspace:*
+        version: link:../../packages/settings
+      '@renkei/user-keys':
+        specifier: workspace:*
+        version: link:../../packages/user-keys
+      '@renkei/worker-kit':
+        specifier: workspace:*
+        version: link:../../packages/worker-kit
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
@@ -850,6 +923,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../db
+      '@renkei/user-keys':
+        specifier: workspace:*
+        version: link:../user-keys
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
@@ -875,6 +951,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
@@ -940,6 +1019,9 @@ importers:
       '@renkei/rate-limit':
         specifier: workspace:*
         version: link:../rate-limit
+      '@renkei/user-keys':
+        specifier: workspace:*
+        version: link:../user-keys
       '@tryjsky/v9u-smb2':
         specifier: ^1.1.0
         version: 1.1.0(patch_hash=e424a978846b2cff34f5055f6ef3251a06f7d5ff272ca74f668e357544496682)
@@ -980,6 +1062,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
@@ -1014,6 +1099,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../db
+      '@renkei/user-keys':
+        specifier: workspace:*
+        version: link:../user-keys
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
@@ -1111,6 +1199,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
@@ -1139,6 +1230,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
@@ -1223,6 +1317,31 @@ importers:
       tsx:
         specifier: ^4.23.5
         version: 4.23.5
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/delegate-client:
+    dependencies:
+      '@campfhir/safe-functions':
+        specifier: ^0.1.3
+        version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/user-keys':
+        specifier: workspace:*
+        version: link:../user-keys
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
       typescript:
         specifier: ^5
         version: 5.9.3
@@ -1510,6 +1629,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../db
+      '@renkei/user-keys':
+        specifier: workspace:*
+        version: link:../user-keys
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
@@ -1655,6 +1777,40 @@ importers:
       ts-jest:
         specifier: ^29.4.12
         version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/user-keys:
+    dependencies:
+      '@campfhir/safe-functions':
+        specifier: ^0.1.3
+        version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@renkei/db':
+        specifier: workspace:*
+        version: link:../db
+      kysely:
+        specifier: ^0.29.4
+        version: 0.29.4
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      tsx:
+        specifier: ^4.23.5
+        version: 4.23.5
       typescript:
         specifier: ^5
         version: 5.9.3

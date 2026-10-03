@@ -12,6 +12,7 @@ jest.mock('./client', () => ({
   atlassianFetch: jest.fn(),
 }));
 
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { atlassianFetch } from './client';
 import {
   fieldScreenFor,
@@ -22,6 +23,14 @@ import {
 
 const mockFetch = jest.mocked(atlassianFetch);
 
+/** Never called — atlassianFetch is mocked; this only has to type as a grant's fetcher. */
+const auth: AuthedFetch = Object.assign(
+  async () => {
+    throw new Error('atlassianFetch is mocked');
+  },
+  { grantKey: 'grant-1' }
+);
+
 const editmeta = (fields: Record<string, unknown>) => ({
   ok: true as const,
   status: 200,
@@ -30,7 +39,7 @@ const editmeta = (fields: Record<string, unknown>) => ({
 
 const params = {
   cloudId: 'cloud-1',
-  accessToken: 'token',
+  auth,
   issueKey: 'SYS-1',
   projectKey: 'SYS',
   issueTypeId: '10018',
@@ -136,7 +145,7 @@ describe('fieldByReference', () => {
 describe('createScreenFor', () => {
   const createParams = {
     cloudId: 'cloud-1',
-    accessToken: 'token',
+    auth,
     projectKey: 'SYS',
     issueTypeId: '10018',
   };

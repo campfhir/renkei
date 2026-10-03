@@ -29,6 +29,7 @@ import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { keyFor } from './keys';
 import { encodeGif } from '@renkei/document-render';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -93,12 +94,6 @@ function secretbox(plaintext: string, encoded: string): string {
     ciphertext.toString('base64'),
   ].join('.');
 }
-const seal = (plaintext: string) =>
-  'renc1:' +
-  secretbox(
-    plaintext,
-    process.env.CONTENT_ENCRYPTION_KEY || process.env.TOKEN_ENCRYPTION_KEY || ''
-  );
 const sealSecret = (plaintext: string) =>
   secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
 
@@ -260,6 +255,12 @@ async function seedRows(
   rows: Row[]
 ): Promise<Map<number, string>> {
   const ids = new Map<number, string>();
+  const chatKey = await keyFor(client, {
+    tenantId: f.tenantId,
+    kind: 'chat',
+    resourceId: chatId,
+    ownerSubject: f.subject,
+  });
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     const inserted = await client.query(
@@ -272,7 +273,7 @@ async function seedRows(
         row.seq,
         row.role,
         row.kind,
-        seal(JSON.stringify(row.blocks)),
+        chatKey.seal(JSON.stringify(row.blocks)),
         assistant ? f.chatModelId : null,
         assistant ? 'anthropic' : null,
         assistant ? 'e2e-model' : null,

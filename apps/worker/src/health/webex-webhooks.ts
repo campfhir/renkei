@@ -34,6 +34,7 @@ import {
   ensureWebexWebhooks,
 } from '@renkei/connector-webex';
 import type { WebexWebhooksClient } from '@renkei/connector-webex';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { resolveWebexUserAccessByAccount } from '../handlers/webex-linked-user';
 
 /** How often the worker wakes to look for a due grant; per-grant due-time does the real pacing. */
@@ -43,8 +44,8 @@ export const WEBHOOK_HEALTH_INTERVAL_MS = 15 * 60_000;
 const MIN_CHECK_DUE_MS = 15 * 60_000;
 
 export interface WebhookSweepDeps {
-  /** Test hook: build the WebEx client for a user's access token. */
-  makeClient?: (accessToken: string) => WebexWebhooksClient;
+  /** Test hook: build the WebEx client for a user's grant fetcher. */
+  makeClient?: (auth: AuthedFetch) => WebexWebhooksClient;
   resolveAccess?: typeof resolveWebexUserAccessByAccount;
   now?: () => Date;
 }
@@ -55,7 +56,7 @@ export interface WebhookSweepDeps {
  * the sweep for everyone else.
  */
 export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<void> {
-  const makeClient = deps.makeClient ?? ((token: string) => new WebexClient(token));
+  const makeClient = deps.makeClient ?? ((auth: AuthedFetch) => new WebexClient(auth));
   const resolveAccess = deps.resolveAccess ?? resolveWebexUserAccessByAccount;
   const now = (deps.now ?? (() => new Date()))();
 
@@ -135,7 +136,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       continue;
     }
 
-    const reconciled = await ensureWebexWebhooks(makeClient(access.accessToken), {
+    const reconciled = await ensureWebexWebhooks(makeClient(access.auth), {
       targetUrl: webexUserWebhookTargetUrl(baseUrl, row.tenant_id, row.provider_account_id),
       secret,
     });

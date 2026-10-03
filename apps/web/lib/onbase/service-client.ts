@@ -4,10 +4,15 @@
  * Hyland IdP. Both usually live in private address space the web app's
  * SSRF guard refuses by design, so the web app never dials them: the
  * worker does, against URLs it resolves from the tenant's stored
- * configuration. This client only ever names a tenant, an access token,
- * and an API path.
+ * configuration. This client only ever names a tenant, a person (their
+ * OIDC subject), and an API path — never a token. The delegate opens the
+ * person's OnBase grant and attaches the access token on the way to the
+ * worker (docs/delegate-key-design.md), refreshing it when due; the code
+ * exchange, refresh and revocation that used to live here are the
+ * delegate's own `oauth/exchange`, `api` and `grant/revoke` now.
  *
- * Configuration: ONBASE_WORKER_URL + ONBASE_WORKER_API_KEY. Both
+ * Configuration: DELEGATE_WORKER_URL + DELEGATE_WORKER_API_KEY (the delegate
+ * forwards to the worker; see `config()`). Both
  * absent-or-set-together; a missing pair means every operation answers
  * 'unconfigured' — OnBase is down, never open.
  *
@@ -26,7 +31,7 @@
 import type { OnBaseIdpEndpoints } from '@renkei/connector-onbase';
 
 export type OnBaseClientError =
-  /** ONBASE_WORKER_URL / _API_KEY are not set. */
+  /** DELEGATE_WORKER_URL / _API_KEY are not set. */
   | { kind: 'unconfigured' }
   /** The worker could not be reached or answered garbage. */
   | { kind: 'unreachable'; message: string }
@@ -34,15 +39,6 @@ export type OnBaseClientError =
   | { kind: 'op'; type: string; message: string | undefined; status: number };
 
 export type OnBaseClientResult<T> = { ok: true; val: T } | { ok: false; err: OnBaseClientError };
-
-/** The IdP token response, narrowed to the fields Renkei reads. */
-export interface WireTokenResponse {
-  access_token: string;
-  refresh_token?: string;
-  id_token?: string;
-  expires_in?: number;
-  scope?: string;
-}
 
 /** One Document API response, enveloped so the upstream status survives. */
 export interface WireApiResponse {
@@ -77,11 +73,18 @@ function optStr(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The worker is reached THROUGH the delegate (docs/delegate-key-design.md,
+ * decision 2): `forward/onbase/<op>` on DELEGATE_WORKER_URL. The delegate
+ * opens the person's credential — this process holds no key — and
+ * forwards the op to the worker with it attached; the answer comes back
+ * as the worker gave it. ONBASE_WORKER_URL is the delegate's setting now.
+ */
 function config(): { url: string; key: string } | null {
-  const url = process.env.ONBASE_WORKER_URL?.trim().replace(/\/$/, '');
-  const key = process.env.ONBASE_WORKER_API_KEY?.trim();
+  const url = process.env.DELEGATE_WORKER_URL?.trim().replace(/\/$/, '');
+  const key = process.env.DELEGATE_WORKER_API_KEY?.trim();
   if (!url || !key) return null;
-  return { url, key };
+  return { url: `${url}/v1/forward/onbase`, key };
 }
 
 /** Whether the web app can reach an OnBase worker at all. */
@@ -109,6 +112,10 @@ async function opFailure(response: Response): Promise<{ ok: false; err: OnBaseCl
   } catch {
     // A non-JSON failure body: keep the generic tag.
   }
+  // The delegate answers `unconfigured` when it has no address for this
+  // worker: to a caller that is the same "service not configured" it used
+  // to read off its own missing env, so it keeps that shape.
+  if (type === 'unconfigured') return { ok: false, err: { kind: 'unconfigured' } };
   return { ok: false, err: { kind: 'op', type, message, status: response.status } };
 }
 
@@ -121,7 +128,7 @@ async function callOp(
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
   try {
-    response = await fetch(`${cfg.url}/v1/${op}${init?.query ?? ''}`, {
+    response = await fetch(`${cfg.url}/${op}${init?.query ?? ''}`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${cfg.key}`,
@@ -176,79 +183,17 @@ export async function obDiscover(input: {
   };
 }
 
-function tokenResponseOf(value: unknown): OnBaseClientResult<WireTokenResponse> {
-  if (!isRecord(value) || typeof value.access_token !== 'string') return malformed();
-  return {
-    ok: true,
-    val: {
-      access_token: value.access_token,
-      ...(typeof value.refresh_token === 'string' ? { refresh_token: value.refresh_token } : {}),
-      ...(typeof value.id_token === 'string' ? { id_token: value.id_token } : {}),
-      ...(typeof value.expires_in === 'number' ? { expires_in: value.expires_in } : {}),
-      ...(typeof value.scope === 'string' ? { scope: value.scope } : {}),
-    },
-  };
-}
-
-export async function obExchangeCode(input: {
-  tenantId: string;
-  connector?: string;
-  code: string;
-  redirectUri: string;
-  codeVerifier: string;
-}): Promise<OnBaseClientResult<WireTokenResponse>> {
-  const result = await callJson('token', {
-    tenantId: input.tenantId,
-    ...(input.connector ? { connector: input.connector } : {}),
-    grant: {
-      type: 'authorization_code',
-      code: input.code,
-      redirectUri: input.redirectUri,
-      codeVerifier: input.codeVerifier,
-    },
-  });
-  if (!result.ok) return result;
-  return tokenResponseOf(result.val);
-}
-
-export async function obRefreshToken(input: {
-  tenantId: string;
-  connector?: string;
-  refreshToken: string;
-}): Promise<OnBaseClientResult<WireTokenResponse>> {
-  const result = await callJson('token', {
-    tenantId: input.tenantId,
-    ...(input.connector ? { connector: input.connector } : {}),
-    grant: { type: 'refresh_token', refreshToken: input.refreshToken },
-  });
-  if (!result.ok) return result;
-  return tokenResponseOf(result.val);
-}
-
-export async function obRevoke(input: {
-  tenantId: string;
-  connector?: string;
-  token: string;
-  tokenTypeHint?: string;
-}): Promise<OnBaseClientResult<{ revoked: boolean }>> {
-  const result = await callJson('revoke', input);
-  if (!result.ok) return result;
-  if (!isRecord(result.val) || typeof result.val.revoked !== 'boolean') return malformed();
-  return { ok: true, val: { revoked: result.val.revoked } };
-}
-
 export async function obApi(input: {
   tenantId: string;
   /** 'onbase' (default) or 'onbase-admin' — which connector's config/session. */
   connector?: string;
   /**
-   * Who the call is for. The worker keys the OnBase session cookie on this
-   * for the `onbase` connector, so a missing subject means a new session
-   * (and a new license) per call — never a session shared with the wrong
-   * person. Meaningless for `onbase-admin`, which has no session concept.
+   * Who the call is for: the delegate opens THIS person's grant on the
+   * named connector and attaches the access token. The worker also keys
+   * the OnBase session cookie on it for the `onbase` connector, so one
+   * person's session is never shared with another's.
    */
-  subject?: string;
-  accessToken: string;
+  subject: string;
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   query?: Record<string, string | string[]>;
@@ -274,9 +219,8 @@ export async function obApi(input: {
 export async function obContent(input: {
   tenantId: string;
   connector?: string;
-  /** See obApi: keys the worker's session cookie. */
-  subject?: string;
-  accessToken: string;
+  /** See obApi: whose grant, and the worker's session key. */
+  subject: string;
   path: string;
   accept?: string;
 }): Promise<OnBaseClientResult<WireContentResponse>> {
@@ -295,11 +239,12 @@ export async function obContent(input: {
 
 export async function obPutBytes(input: {
   tenantId: string;
-  /** See obApi: keys the worker's session cookie. */
-  subject?: string;
+  /** 'onbase' (default) or 'onbase-admin' — whose grant the delegate opens. */
+  connector?: string;
+  /** See obApi: whose grant, and the worker's session key. */
+  subject: string;
   uploadId: string;
   filePart: number;
-  accessToken: string;
   bytes: Uint8Array;
 }): Promise<OnBaseClientResult<{ status: number }>> {
   const query = `?tenantId=${encodeURIComponent(input.tenantId)}&uploadId=${encodeURIComponent(
@@ -310,10 +255,12 @@ export async function obPutBytes(input: {
     // A fresh ArrayBuffer-backed copy: fetch's BodyInit refuses the wider
     // Uint8Array<ArrayBufferLike> a caller may hold (e.g. a Buffer).
     rawBody: Uint8Array.from(input.bytes),
+    // Headers, not query string: query strings end up in access logs. The
+    // delegate reads these two to pick the grant, then forwards the bytes
+    // with the token attached.
     headers: {
-      'x-onbase-token': input.accessToken,
-      // Header, not query string: query strings end up in access logs.
-      ...(input.subject ? { 'x-onbase-subject': input.subject } : {}),
+      'x-onbase-subject': input.subject,
+      ...(input.connector ? { 'x-onbase-connector': input.connector } : {}),
     },
   });
   if (!called.ok) return called;
@@ -362,7 +309,8 @@ export function onbaseClientFailure(error: OnBaseClientError): { status: number;
     case 'unconfigured':
       return {
         status: 503,
-        message: 'The OnBase worker is not configured (ONBASE_WORKER_URL / ONBASE_WORKER_API_KEY).',
+        message:
+          'The OnBase worker is not configured (DELEGATE_WORKER_URL / DELEGATE_WORKER_API_KEY).',
       };
     case 'unreachable':
       return { status: 502, message: `The OnBase worker could not be reached: ${error.message}` };

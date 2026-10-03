@@ -1,14 +1,24 @@
 /**
- * Minimal WebEx API client. Built for the bot token, but the bearer is
- * just a constructor argument — `listRooms`/`sendNoteToSelf` and friends
- * work identically against a user's own OAuth token, which is how a
- * caller with no MCP session of its own (the interactive worker) can
- * still act as a specific person. Live queries only — this connector
- * persists nothing itself (see the data contract in index.ts).
+ * Minimal WebEx API client. The credential is a constructor argument of
+ * one of two shapes, and every method works identically against either:
+ *
+ *   - a string: the org's BOT token (connector_configs 'webex-bot'), an
+ *     org-wide secret that legitimately lives in this process. Requests go
+ *     out through global `fetch` with the Bearer header set here.
+ *   - an `AuthedFetch`: a PERSON's grant, from @renkei/delegate-client.
+ *     The delegate worker holds the token and attaches it, so every
+ *     request goes out through that fetcher with no Authorization of ours
+ *     — which is how a caller with no MCP session of its own (the
+ *     interactive worker) can still act as a specific person without ever
+ *     seeing their token.
+ *
+ * Live queries only — this connector persists nothing itself (see the data
+ * contract in index.ts).
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 const API_BASE = 'https://webexapis.com/v1';
@@ -223,11 +233,34 @@ export class WebexClient {
    */
   private readonly lane: RequestLane;
 
+  /**
+   * @param credential the org's bot token (a string), or a person's grant
+   *   fetcher (an `AuthedFetch`) — see the file header.
+   */
   constructor(
-    private readonly botToken: string,
+    private readonly credential: string | AuthedFetch,
     options?: { lane?: RequestLane }
   ) {
     this.lane = options?.lane ?? 'background';
+  }
+
+  /**
+   * The one place a request leaves this client. A bot token is a Bearer
+   * header on global `fetch`; a person's grant goes through their fetcher,
+   * which attaches the credential itself (anything we set in Authorization
+   * would be dropped by the delegate anyway, so none is).
+   */
+  private send(
+    url: string,
+    init: Omit<RequestInit, 'headers'> & { headers: Record<string, string> }
+  ): Promise<Response> {
+    if (typeof this.credential === 'string') {
+      return fetch(url, {
+        ...init,
+        headers: { Authorization: `Bearer ${this.credential}`, ...init.headers },
+      });
+    }
+    return this.credential(url, init);
   }
 
   private async request(
@@ -252,10 +285,9 @@ export class WebexClient {
     await limiter.take(this.lane);
     let response: Response;
     try {
-      response = await fetch(`${API_BASE}${path}`, {
+      response = await this.send(`${API_BASE}${path}`, {
         method,
         headers: {
-          Authorization: `Bearer ${this.botToken}`,
           Accept: 'application/json',
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
@@ -309,14 +341,16 @@ export class WebexClient {
     }
     form.append(
       'files',
-      new Blob([new Uint8Array(file.bytes)], { type: file.contentType || 'application/octet-stream' }),
+      new Blob([new Uint8Array(file.bytes)], {
+        type: file.contentType || 'application/octet-stream',
+      }),
       file.filename
     );
     let response: Response;
     try {
-      response = await fetch(`${API_BASE}${path}`, {
+      response = await this.send(`${API_BASE}${path}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${this.botToken}`, Accept: 'application/json' },
+        headers: { Accept: 'application/json' },
         body: form,
         signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
       });

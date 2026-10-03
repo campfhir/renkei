@@ -37,6 +37,7 @@ import {
 } from '@renkei/mcp-client';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { insertMessage, listMessages } from './messages';
+import { chatCipherById } from './chat-keys';
 import { startChatTurn, type StartedTurn } from './start-turn';
 import { getActiveTurn } from './turns';
 import { internalMcpEndpoint } from './internal-origin';
@@ -172,7 +173,10 @@ export async function recordWidgetModelContext(
   const text = input.text.trim().slice(0, MODEL_CONTEXT_MAX_CHARS);
   if (!text) return { ok: false, reason: 'failed' };
 
-  if (input.stateKey && (await waitingOnSiblings(db, input.tenantId, input.chatId, input.stateKey))) {
+  if (
+    input.stateKey &&
+    (await waitingOnSiblings(db, input.tenantId, input.chatId, input.stateKey))
+  ) {
     const appended = await appendWidgetModelContext(db, {
       tenantId: input.tenantId,
       chatId: input.chatId,
@@ -260,7 +264,7 @@ async function turnWidgetStateKeys(
   chatId: string,
   stateKey: string
 ): Promise<string[] | null> {
-  const rows = await listMessages(db, tenantId, chatId);
+  const rows = await listMessages(db, tenantId, chatId, await chatCipherById(db, tenantId, chatId));
   let turnId: string | null | undefined;
   for (const row of rows) {
     if (row.kind !== 'tool_results') continue;
@@ -315,6 +319,7 @@ export async function appendWidgetModelContext(
       kind: 'note',
       status: 'complete',
       blocks: [{ type: 'text', text }],
+      cipher: await chatCipherById(trx, input.tenantId, input.chatId),
     });
     if (!inserted) return { ok: false, reason: 'failed' };
     return {

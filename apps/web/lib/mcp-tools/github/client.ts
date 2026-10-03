@@ -1,8 +1,10 @@
 /**
  * GitHub REST client, over the caller's own delegated grant on Renkei's
  * GitHub App. Follows the Bitbucket/Confluence pattern — each call
- * resolves its own access fresh from the grant, refreshing when near
- * expiry — with two shape differences GitHub itself imposes:
+ * resolves its own access fresh from the grant; the token itself lives in
+ * the delegate worker (docs/delegate-key-design.md), whose fetcher
+ * attaches it, refreshes it when due and retries a 401 — with two shape
+ * differences GitHub itself imposes:
  *
  *  - List endpoints answer a bare JSON array (or, for search, {items,
  *    total_count}), never Bitbucket's {values, next} envelope, and
@@ -15,98 +17,57 @@
  *    ghRawText's `accept` parameter.
  */
 
+import { GITHUB, readGitHubMetadata } from '@renkei/provider-grants';
 import {
-  getGrant,
-  refreshGrantTokens,
-  GITHUB,
-  GitHubAdapter,
-  readGitHubMetadata,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { getDatabase } from '@renkei/db';
-import { getGitHubApp } from '@/lib/github-app';
+  delegateGrants,
+  delegateRefusal,
+  grantFetch,
+  type AuthedFetch,
+} from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import { grantRefusalText } from '@/lib/grant-refusals';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
-
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
 /**
  * GitHub's REST API. A deployment may point it elsewhere
  * (GITHUB_API_BASE_URL) — the browser suite runs the app against a
- * stand-in that answers the few endpoints the Code pages read.
+ * stand-in that answers the few endpoints the Code pages read. The
+ * delegate only forwards to GitHub's own hosts, so a stand-in needs a
+ * delegate that allows it too.
  */
 export const GITHUB_API_BASE =
   process.env.GITHUB_API_BASE_URL?.replace(/\/+$/, '') || 'https://api.github.com';
 
 export interface GitHubAccess {
-  accessToken: string;
+  /** The fetcher every call goes out through — the delegate's, for the caller's grant. */
+  auth: AuthedFetch;
   /** The connected account's numeric id — GitHub's durable identity key. */
   accountId: string;
   /** The connected account's login, for display and for API paths. */
   login: string;
-  authHeader: string;
 }
 
-/** The caller's live GitHub token, refreshed when stale. */
+/** The caller's GitHub grant as a fetcher, plus who it is. */
 export async function resolveGitHubAccess(
   context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
 ): Promise<GitHubAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
 
-  // Newest grant wins, deterministically — same reasoning as Bitbucket's
-  // resolver: rows are keyed by account id, so one subject can own several
-  // (a reconnect as a different GitHub account), and an unordered
-  // take-first would pick arbitrarily between a live grant and a stale one.
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', GITHUB)
-    .where('subject', '=', context.subject)
-    .orderBy('updated_at', 'desc')
-    .executeTakeFirst();
-  if (!row) {
-    return 'GitHub is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(GITHUB, context.tenantId, row.provider_account_id, keyResult.val);
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the GitHub grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getGitHubApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'GitHub integration is no longer configured.';
-    const refreshed = await refreshGrantTokens(
-      new GitHubAdapter(app.clientSecret),
-      context.tenantId,
-      grant.accountId,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your GitHub authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the GitHub token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  if (!grant.accessToken) {
-    return 'The stored GitHub grant holds no access token. Reconnect it on the Connectors page.';
+  // By subject: the delegate picks the person's grant on this provider, the
+  // way the row lookup here used to (newest wins on a reconnect).
+  const ref = { tenantId: context.tenantId, provider: GITHUB, subject: context.subject };
+  const described = await delegateGrants().describe(ref);
+  if (!described.ok) {
+    return described.err.type === 'GRANT_UNREADABLE' || described.err.type === 'DELEGATE_ERROR'
+      ? 'Could not read the GitHub grant.'
+      : grantRefusalText(described.err.type, 'GitHub');
   }
 
   return {
-    accessToken: grant.accessToken,
-    accountId: grant.accountId,
-    login: readGitHubMetadata(grant.metadata).login,
-    authHeader: `Bearer ${grant.accessToken}`,
+    auth: grantFetch(ref),
+    accountId: described.val.accountId,
+    login: readGitHubMetadata(described.val.metadata).login,
   };
 }
 
@@ -138,10 +99,10 @@ export async function githubRequest(
   const jsonBody = init?.json !== undefined ? JSON.stringify(init.json) : undefined;
   let response: Response;
   try {
-    response = await fetch(`${GITHUB_API_BASE}${pathAndQuery}`, {
+    // No Authorization here: the fetcher's owner (the delegate) attaches it.
+    response = await access.auth(`${GITHUB_API_BASE}${pathAndQuery}`, {
       method: init?.method ?? 'GET',
       headers: {
-        Authorization: access.authHeader,
         Accept: init?.accept ?? 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         ...(jsonBody !== undefined ? { 'Content-Type': 'application/json' } : {}),
@@ -166,6 +127,19 @@ export async function githubRequest(
         : 'Could not reach api.github.com',
     };
   }
+  const refusal = delegateRefusal(response);
+  if (refusal) {
+    // The delegate's own refusal never reached GitHub — the resolver's
+    // words, not a GitHub status.
+    logger.warn('Delegate refused the GitHub call', {
+      component: 'github/fetch',
+      tenantId: scope.tenantId,
+      subject: scope.subject,
+      path: pathAndQuery,
+      refusal,
+    });
+    return { ok: false, error: grantRefusalText(refusal, 'GitHub') };
+  }
   if (!response.ok) {
     const responseBody = await response
       .clone()
@@ -178,7 +152,8 @@ export async function githubRequest(
       path: pathAndQuery,
       method: init?.method ?? 'GET',
       status: response.status,
-      authTokenChars: access.accessToken.length,
+      // Which grant the call rode on, never its bytes.
+      grantKey: access.auth.grantKey,
       requestBody: jsonBody === undefined ? undefined : secure(truncateForLog(jsonBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
@@ -220,7 +195,8 @@ export async function describeGitHubFailure(response: Response): Promise<string>
     );
   }
   if (message) return `GitHub API ${response.status}: ${message}`;
-  if (response.status === 422) return 'GitHub could not process this request (422) — check the arguments.';
+  if (response.status === 422)
+    return 'GitHub could not process this request (422) — check the arguments.';
   return `GitHub API answered ${response.status}`;
 }
 
@@ -272,7 +248,9 @@ export async function ghRawText(
 /** A list response as an array of records, defensively. */
 export function arr(body: unknown): Record<string, unknown>[] {
   return Array.isArray(body)
-    ? body.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+    ? body.filter(
+        (item): item is Record<string, unknown> => typeof item === 'object' && item !== null
+      )
     : [];
 }
 
