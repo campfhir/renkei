@@ -84,6 +84,12 @@ const TARGET = {
   subject: 'auth0|alice',
   credentials: null,
 };
+/** The write route addresses its target by query string; the credential rides a header, not the query. */
+const TARGET_QUERY = {
+  tenantId: TARGET.tenantId,
+  shareId: TARGET.shareId,
+  subject: TARGET.subject,
+};
 
 describe('authentication', () => {
   it('serves /health without a key', async () => {
@@ -230,7 +236,7 @@ describe('file bytes', () => {
       ok: true,
       val: { share: { id: 'share-1', name: 'Accounting' }, path: '/up.bin' },
     });
-    const query = new URLSearchParams({ ...TARGET, path: '/up.bin' });
+    const query = new URLSearchParams({ ...TARGET_QUERY, path: '/up.bin' });
     const response = await fetch(`${base}/v1/write?${query}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
@@ -245,7 +251,7 @@ describe('file bytes', () => {
   });
 
   it('a write body over the org limit is 413 without reaching the service', async () => {
-    const query = new URLSearchParams({ ...TARGET, path: '/big.bin' });
+    const query = new URLSearchParams({ ...TARGET_QUERY, path: '/big.bin' });
     const response = await fetch(`${base}/v1/write?${query}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
@@ -256,7 +262,7 @@ describe('file bytes', () => {
   });
 
   it('an empty write body is refused', async () => {
-    const query = new URLSearchParams({ ...TARGET, path: '/empty.bin' });
+    const query = new URLSearchParams({ ...TARGET_QUERY, path: '/empty.bin' });
     const response = await fetch(`${base}/v1/write?${query}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
