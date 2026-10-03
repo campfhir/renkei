@@ -129,10 +129,10 @@ ls -la .next/
 ## Published Images
 
 Every push to `main` that passes CI (lint, typecheck, tests) also builds
-and publishes the six images `docker-compose.yaml` pulls — `renkei`,
+and publishes the nine images `docker-compose.yaml` pulls — `renkei`,
 `renkei-migrate`, `renkei-worker`, `renkei-fileshares`, `renkei-onbase`,
-`renkei-sandbox` — to Docker Hub from the `docker` job in
-`.github/workflows/ci.yml`. Each image is pushed under two tags: `latest`
+`renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox` —
+to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each image is pushed under two tags: `latest`
 and the version in `apps/web/package.json` (the version every app in the
 workspace shares, and the same one `scripts/docker-build.sh` stamps). Bump
 that version when a release should keep its own tag; until then a new push

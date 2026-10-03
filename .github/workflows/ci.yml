@@ -86,6 +86,8 @@ jobs:
             image: renkei-mirth
           - target: admanager
             image: renkei-admanager
+          - target: delegate
+            image: renkei-delegate
           - target: sandbox
             image: renkei-sandbox
     steps:
