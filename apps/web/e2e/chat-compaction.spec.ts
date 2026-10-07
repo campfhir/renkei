@@ -385,6 +385,7 @@ test.describe('chat compaction', () => {
       await expect(page.getByRole('heading', { level: 1, name: ids.queueTitle })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Queue this message' })).toBeHidden();
+      await shot(page, testInfo, 'chat-queue-empty-shows-stop', false);
 
       // Queue a plain message. One item stays inline, plain and simple —
       // no dialog to open for a queue of one.
