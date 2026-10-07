@@ -27,6 +27,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
 import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { shot } from './voice-fixtures';
 
 test.use({
   // The mobile project's device descriptor asks for WebKit, which is not
@@ -383,13 +384,36 @@ test.describe('chat compaction', () => {
       await page.goto(`/${E2E_SLUG}/chat/${ids.queueChatId}`);
       await expect(page.getByRole('heading', { level: 1, name: ids.queueTitle })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Queue this message' })).toBeHidden();
+      await shot(page, testInfo, 'chat-queue-empty-shows-stop', false);
 
       // Queue a plain message. One item stays inline, plain and simple —
       // no dialog to open for a queue of one.
       const box = page.getByRole('textbox', { name: 'Message' });
       await box.fill('Left this for when it is free.');
-      await page.getByRole('button', { name: 'Queue this message' }).click();
+      // Typing swaps Stop out of the send slot for the blue queue button:
+      // the one place a thumb goes to send must never stop the reply
+      // instead. Stop returns once the box is empty again.
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
+      const queueButton = page.getByRole('button', { name: 'Queue this message' });
+      await expect(queueButton).toBeVisible();
+      await expect(queueButton).toHaveClass(/bg-blue-600/);
+      await shot(page, testInfo, 'chat-queue-draft-swaps-stop', false);
+      // Phone width — where the mis-tap actually happened: the same swap,
+      // and the composer row still fits without a sideways scroll.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
+      await expect(queueButton).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+        )
+      ).toBe(0);
+      await shot(page, testInfo, 'chat-queue-draft-swaps-stop-mobile', false);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await queueButton.click();
       await expect(box).toHaveValue('');
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
       await expect(page.getByText('Left this for when it is free.')).toBeVisible();
       await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
 
