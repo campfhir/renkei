@@ -166,6 +166,23 @@ describe('opsScopes — the single source of truth index.ts and ops.ts share', (
     ]);
   });
 
+  it('routes maintenance tools to config, even though they are about alerts', () => {
+    // The spec puts /maintenances under ops-config. A substring match on
+    // "alert" would have sent jsm_ops_*_maintenance to the alert family, and
+    // every call would then fail a scope check it was never going to need.
+    expect(opsScopes('jsm_ops_list_maintenances', true)).toEqual([
+      'read:ops-config:jira-service-management',
+    ]);
+    expect(opsScopes('jsm_ops_create_maintenance', false)).toEqual([
+      'read:ops-config:jira-service-management',
+      'write:ops-config:jira-service-management',
+    ]);
+    expect(opsScopes('jsm_ops_cancel_maintenance', false)).toEqual([
+      'read:ops-config:jira-service-management',
+      'write:ops-config:jira-service-management',
+    ]);
+  });
+
   it('gives delete_override the delete scope, not write', () => {
     // The one tool that does not follow the readOnly → WRITE pattern: it
     // deletes, so it needs the DELETE scope alongside READ, never WRITE.

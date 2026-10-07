@@ -113,6 +113,14 @@ export const OPS_CONFIG_DELETE = 'delete:ops-config:jira-service-management';
  * deletion. Resolved by tool name, which the module's naming keeps honest.
  */
 export function opsScopes(toolName: string, readOnly: boolean): string[] {
+  // Maintenance windows silence ALERTS, and their tool names say so in
+  // plain words — but the spec puts every /maintenances endpoint under
+  // ops-config, not ops-alert. Checked before the substring match so
+  // "alert" in a maintenance tool's name does not route it to the wrong
+  // family and have every call fail a scope it was never going to need.
+  if (toolName.includes('maintenance')) {
+    return readOnly ? [OPS_CONFIG_READ] : [OPS_CONFIG_READ, OPS_CONFIG_WRITE];
+  }
   if (toolName.includes('alert')) {
     return readOnly ? [OPS_ALERT_READ] : [OPS_ALERT_READ, OPS_ALERT_WRITE];
   }
