@@ -40,6 +40,7 @@
  * case stays one call with one snapshot back.
  */
 
+import { randomUUID } from 'node:crypto';
 import {
   chromium,
   type Browser,
@@ -139,6 +140,8 @@ export interface BrowserSessionsDeps {
   sweepIntervalMs?: number;
   /** The secrets subsystem, when this deployment has one. */
   secrets?: ResolveSecret;
+  /** What this process signs its saved sessions with; default a random id per process. */
+  replica?: string;
 }
 
 interface Session {
@@ -178,12 +181,13 @@ const SPARSE_WALK_NODES = 8;
 const SPARSE_WALK_RETRY_MS = 1_500;
 
 /** Why a caller's session went away — what the next `no_session` refusal explains. */
-type SessionLoss = 'idle' | 'evicted' | 'closed' | 'browser_exited';
+type SessionLoss = 'idle' | 'evicted' | 'closed' | 'moved' | 'browser_exited';
 
 const LOSS_EXPLANATION: Record<SessionLoss, string> = {
   idle: 'Your browser session closed after being idle.',
   evicted: 'Your browser session was closed to make room for other sessions.',
   closed: 'Your browser session was closed.',
+  moved: 'Your browser session moved to another worker and could not be reopened here.',
   browser_exited:
     'The browser process exited unexpectedly (it may have run out of memory on the last page) ' +
     'and your session was lost.',
@@ -258,6 +262,7 @@ export class BrowserSessions {
   private readonly maxSessions: number;
   private readonly secrets: ResolveSecret | null;
   private readonly stateStore: BrowserStateStore | null;
+  private readonly replica: string;
   private readonly sessions = new Map<string, Session>();
   /** A session being opened for a caller, so two calls arriving together share one. */
   private readonly opening = new Map<string, Promise<Session>>();
@@ -277,6 +282,7 @@ export class BrowserSessions {
     this.maxSessions = deps.maxSessions ?? BROWSER_MAX_SESSIONS;
     this.secrets = deps.secrets ?? null;
     this.stateStore = deps.state ?? null;
+    this.replica = deps.replica ?? randomUUID();
     this.sweep = setInterval(() => void this.sweepIdle(), deps.sweepIntervalMs ?? 60_000);
     this.sweep.unref();
   }
@@ -358,6 +364,7 @@ export class BrowserSessions {
         storageState: await session.context.storageState(),
         refSignatures: Array.from(session.refSignatures.entries()),
         savedAt: this.now(),
+        heldBy: this.replica,
       });
     } catch (error) {
       logger.warn('could not save a browser session: {error}', {
@@ -472,15 +479,35 @@ export class BrowserSessions {
     work: (session: Session, page: Page) => Promise<T>
   ): Promise<T> {
     let session = this.sessions.get(sessionKey(target));
+    // The saved copy is the truth about where the caller's flow IS. A
+    // session held here in memory is only current while this process was
+    // the last to touch it: with several replicas behind one name, the
+    // caller's calls land on any of them, and a replica that keeps serving
+    // the page it has — one still on the site the caller started from —
+    // answers with that page's refs and that page's snapshot. (The symptom:
+    // a fill by a ref the last snapshot showed as a text box lands on a
+    // link of the page before.) So every verb reads the saved copy first,
+    // and a session another replica has written since is dropped here and
+    // reopened from it, exactly as a replica with no session would.
+    let saved: SavedBrowserState | null = null;
+    if (this.stateStore) {
+      saved = await this.savedState(target);
+      if (session && saved && saved.heldBy !== this.replica) {
+        await session.queue;
+        if (this.sessions.get(session.key) === session) {
+          await this.closeSession(session, 'moved');
+        }
+        session = undefined;
+      }
+    }
     // A session this process does not hold may still be on the shared
     // disk — left by another replica, or by this one before a restart or
     // an idle close. Its cookies come back with the context either way;
     // a verb that needs an open page also gets the saved page reopened.
     let resumeUrl: string | null = null;
     if (!session) {
-      const saved = await this.savedState(target);
-      const resumable = saved !== null && /^https?:/i.test(saved.url);
-      if (!create && !resumable) {
+      const resumeTo = saved !== null && /^https?:/i.test(saved.url) ? saved.url : null;
+      if (!create && resumeTo === null) {
         const loss = this.lastLoss.get(sessionKey(target));
         throw new BrowserOpError(
           'no_session',
@@ -490,7 +517,8 @@ export class BrowserSessions {
         );
       }
       session = await this.openSession(target, saved);
-      if (!create && resumable && session.page.url() === 'about:blank') resumeUrl = saved.url;
+      if (!create && resumeTo !== null && session.page.url() === 'about:blank')
+        resumeUrl = resumeTo;
     }
     const current = session;
     const run = current.queue.then(async () => {
