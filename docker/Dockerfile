@@ -464,6 +464,35 @@ RUN apt-get update && \
     npm install -g pnpm@${PNPM_VERSION} && \
     setpriv --version >/dev/null
 
+# The interpreter behind sandbox_run_python (apps/worker-sandbox/src/
+# scripts.ts): a virtual environment of its own under /opt, apart from
+# the system Python the language servers and a workspace's own commands
+# use, holding the data libraries a script over a spreadsheet reaches
+# for — pandas (with numpy), openpyxl to read and write .xlsx, XlsxWriter
+# for a richer write. Pinned, readable and executable by every caller's
+# uid (a run is dropped to one), and never written to at run time: a
+# script cannot pip install into it — it has no network to install from
+# in any case — so what runs is the script and exactly these libraries.
+# SANDBOX_PYTHON overrides the path; the worker checks the interpreter
+# and lists what it found at boot. pandas 2.3 and numpy 2.3 are the last
+# lines with wheels for bookworm's Python 3.11 (pandas 3 and numpy 2.5
+# need 3.12); a move to a newer base image lifts both together.
+ARG PANDAS_VERSION=2.3.2
+ARG NUMPY_VERSION=2.3.5
+ARG OPENPYXL_VERSION=3.1.5
+ARG XLSXWRITER_VERSION=3.2.9
+ARG PYTHON_DATEUTIL_VERSION=2.9.0.post0
+RUN python3 -m venv /opt/sandbox-python && \
+    /opt/sandbox-python/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/sandbox-python/bin/pip install --no-cache-dir \
+      "pandas==${PANDAS_VERSION}" \
+      "numpy==${NUMPY_VERSION}" \
+      "openpyxl==${OPENPYXL_VERSION}" \
+      "XlsxWriter==${XLSXWRITER_VERSION}" \
+      "python-dateutil==${PYTHON_DATEUTIL_VERSION}" && \
+    chmod -R a+rX /opt/sandbox-python && \
+    /opt/sandbox-python/bin/python3 -I -c "import pandas, numpy, openpyxl, xlsxwriter; print(pandas.__version__)"
+
 # Language servers for the code pane's editor (apps/worker-sandbox/src/
 # lsp-sessions.ts; the registry of what each language runs is
 # packages/connector-sandbox/src/lsp.ts). Each lands somewhere every
@@ -584,7 +613,10 @@ COPY --chown=worker:nodejs apps/worker-sandbox/tsconfig.json ./apps/worker-sandb
 # staged bytes survive a container restart but stay off every other image.
 # The workspace volume is a second one, apart from it: checkouts belong to
 # per-caller uids and must never share a directory with the staged files.
-RUN mkdir -p /data /workspaces && chown worker:nodejs /data && chmod 711 /workspaces
+# /runs is a third place, with no volume: a script run's throwaway
+# directory (src/scripts.ts) lives there for the run and is removed with
+# it, and whatever a crash leaves is removed at the next boot.
+RUN mkdir -p /data /workspaces /runs && chown worker:nodejs /data && chmod 711 /workspaces /runs
 
 # No `USER worker` here, unlike every other stage: the entrypoint decides.
 # Without SANDBOX_WORKSPACES_ENABLED it drops to `worker` before the
@@ -598,6 +630,8 @@ ENV NODE_ENV=production \
     GIT_COMMIT=${GIT_COMMIT} \
     SANDBOX_DATA_DIR=/data \
     SANDBOX_WORKSPACES_DIR=/workspaces \
+    SANDBOX_RUNS_DIR=/runs \
+    SANDBOX_PYTHON=/opt/sandbox-python/bin/python3 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 EXPOSE 8092

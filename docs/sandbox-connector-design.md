@@ -429,7 +429,14 @@ it back: the new context starts with the cookies, a verb that needs a
 page reopens the saved URL (a navigate just goes where it is told, with
 the cookies), and a click by a ref from the last snapshot still finds its
 element by signature. A live DOM is not portable and is not pretended to
-be: the page is opened as it loads now. The file lives a day, is dropped
+be: the page is opened as it loads now. The saved copy is also what
+decides whether a session a replica still holds in memory is current:
+each write carries the writer's id, and a replica whose caller has since
+been answered elsewhere finds another id in the file, drops its own
+context and reopens from the file — otherwise two replicas behind one
+name each keep serving the page they have, and the caller's calls land
+on either (a fill by a ref the last snapshot showed as a text box hits a
+link of the page before). The file lives a day, is dropped
 by `sandbox_browser_close`, and is never written without the key (then
 sessions are one process's memory, and the worker says so at boot).
 Deliberately not saved: the secret values a session typed — a resumed
@@ -529,6 +536,68 @@ model can open — the tool descriptions tell the model never to type a
 credential as text, to use a stored secret, and to ask the person when
 none exists or it is locked.
 
+## `sandbox_run_python` — a script over the caller's own files
+
+The one thing on this surface that runs code the model wrote, added
+after "curated verbs, not a shell" for a reason that case made plain: a
+staged workbook of five thousand patients had to be matched against one
+of seventy thousand by MRN to carry each person's real consent flags
+across, and the only tools were text extraction with a character cap.
+A model doing that by reading dumps and retyping values puts the wrong
+phone number or the wrong consent flag on the wrong patient at that
+scale, and nothing in the output looks wrong. The data-level step has to
+be a program, and the program has to run where the bytes are.
+
+So, as code workspaces did (`sandbox-workspaces-design.md`, "Why a
+shell"), the line moves from _what_ runs to _who runs it and where_ —
+and here it can be drawn tighter than a workspace's, because a script
+over a person's data needs nothing a repository's test suite needs:
+
+- **Where.** A directory made for the run under `SANDBOX_RUNS_DIR`
+  (default `/runs`, no volume) and removed when it ends however it
+  ends — `main.py` read-only, `in/` holding **copies** of the staged
+  files the call named (or all of them), read-only, by filename with a
+  repeat numbered; `out/` empty; `home/` as `HOME` and `TMPDIR`, so
+  nothing lands in a shared `/tmp`. The staged-file disk itself is
+  root's: a run cannot read it, and rewriting `in/report.xlsx` changes
+  the copy.
+- **Who.** The caller's own unprivileged uid (`execUidFor`), dropped
+  with `setpriv` — no groups, no capabilities, `no-new-privs` — exactly
+  as a workspace command is. Without root (a developer's checkout) the
+  run is the worker's own user, logged at boot and named in every
+  result.
+- **No network.** The interpreter starts in a network namespace of its
+  own (`unshare --net`, as root, _before_ the uid drop) holding a down
+  loopback and nothing else — the gap a workspace command has to leave
+  open, closed. `unshare` needs `CAP_SYS_ADMIN`, which Docker's default
+  profile withholds; the worker proves at boot whether it has it, says
+  so when not, and every result carries `networkIsolated` so the model
+  can say so too. A deployment adds the capability in compose when it
+  wants scripts fully offline (`DEPLOYMENT.md`).
+- **How much.** A process ceiling (64, per uid), an address-space
+  ceiling (`SANDBOX_SCRIPT_MEMORY`, default 2 GB — a `MemoryError`, not
+  a dead container), a file-size ceiling, no core dumps, a wall clock
+  (60 s by default, 10 min at most) that kills the whole process group,
+  output bounded in memory and clipped head-and-tail for the model, one
+  run per caller at a time and four per worker. A caller that goes away
+  mid-run takes the run with it.
+- **What runs.** `python3 -I -B main.py`: isolated mode — no `PYTHON*`
+  variables, no user site, no script directory on the path — with an
+  environment built from nothing plus Python's own switches, in a
+  pinned virtual environment the image carries read-only under
+  `/opt/sandbox-python` (pandas, numpy, openpyxl, XlsxWriter). No pip,
+  no network to pip from.
+- **What comes back.** Exit, both streams, the inputs' paths, and every
+  regular file left directly in `out/` — not a directory, not a symlink,
+  not a hidden file, not an empty one — staged through `stageBytes`
+  (`apps/worker-sandbox/src/staging.ts`), the same quota, cap and TTL
+  as a fetched URL or a rendered document. What could not be staged is
+  named with why. A script cannot stage more than a person could.
+
+Per-command network namespaces were named in the workspaces design as
+"the next step if placement is not enough"; this is that step, taken
+first where it costs nothing to take.
+
 ## Tool inventory
 
 | Tool                           | Kind | What it does                                                                                                                                                                                                   |
@@ -538,6 +607,7 @@ none exists or it is locked.
 | `sandbox_fetch_from_fileshare` | Act  | Pull a file from a connected SMB/SFTP share straight in, server-to-server.                                                                                                                                     |
 | `sandbox_render_document`      | Act  | Render Markdown/CSV/JSON text (never bytes) into a `.docx`/`.pptx`/`.pdf`/`.xlsx` — or stage a text format as written — with `@renkei/document-render` (also what `chat_write_file` uses).                     |
 | `sandbox_render_chart`         | Act  | Draw Mermaid text (a bar/line chart, pie, Gantt, flowchart, sequence diagram, …) as a PNG, SVG or one-page PDF in the worker's own Chromium, staged here (the chat's `chat_write_chart` renders the same way). |
+| `sandbox_run_python`           | Act  | Run Python the model wrote over copies of the caller's staged files — as their own uid, with no network, a memory and time ceiling — and stage back what it writes under `out/`.                               |
 | `webex_download_attachments`   | Act  | Pull a WebEx message's attachments straight in with the caller's own grant (registered by the WebEx connector, only where a worker is configured).                                                             |
 | `sandbox_list_files`           | Read | What's currently staged, with size and expiry.                                                                                                                                                                 |
 | `sandbox_stat_file`            | Read | Filename/content type of one staged file.                                                                                                                                                                      |
@@ -559,7 +629,8 @@ none exists or it is locked.
 
 `sandbox_render_chart` exists only when `SANDBOX_CHARTS_ENABLED=true` on
 both the web app and the worker. The browser tools exist only when `SANDBOX_BROWSER_ENABLED=true` on both
-the web app and the worker.
+the web app and the worker. `sandbox_run_python` exists only when
+`SANDBOX_SCRIPTS_ENABLED=true` on both.
 
 ## Deployment
 

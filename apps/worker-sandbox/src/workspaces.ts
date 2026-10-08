@@ -33,10 +33,10 @@
  *
  * A command's environment is built from nothing — never inherited from
  * this process — plus the caller's own variables (env-secrets.ts), a
- * HOME, a PATH and a few conveniences. The git token for a clone or a
- * push rides in the child's environment as an `http.extraheader` config
- * (`GIT_CONFIG_*`), so it is never in argv, never in `.git/config`, and
- * gone when that process exits.
+ * HOME, a PATH and a few conveniences. No git token reaches the child: a
+ * clone or a push goes through the delegate's git proxy, named in the
+ * child's environment as a `url.<base>.insteadOf` config (`GIT_CONFIG_*`),
+ * so nothing secret is in argv, in `.git/config`, or in the process at all.
  *
  * Network is the one thing not narrowed here: a project's own commands
  * (`pnpm install`, a test hitting a sandbox API) need the internet, and
@@ -333,6 +333,15 @@ export interface RunInput {
    * killed and the result marked `interrupted`, as on a worker stop.
    */
   signal?: AbortSignal;
+  /**
+   * Start the process in a network namespace of its own — a loopback
+   * that is down and nothing else, so it can reach no host at all
+   * (`unshare --net`, which needs this worker to be root). A script over
+   * a caller's files (scripts.ts) runs this way; a workspace command,
+   * whose installs and tests need the internet, does not. Ignored
+   * without an identity: an unprivileged worker cannot unshare.
+   */
+  isolateNetwork?: boolean;
 }
 
 /** The environment a caller's process starts with, built from nothing. */
@@ -373,27 +382,76 @@ export function childEnvironment(input: RunInput): Record<string, string> {
   return env;
 }
 
-/** How a process is started: dropped to the caller's uid when this worker can, plainly otherwise. */
+/**
+ * How a process is started: dropped to the caller's uid when this worker
+ * can, plainly otherwise; and, when asked, inside its own empty network
+ * namespace first — unshare runs as root, THEN setpriv drops the uid, so
+ * the dropped process can neither reach a host nor undo the namespace.
+ */
 export function wrapCommand(
   identity: ExecIdentity | null,
   file: string,
-  args: string[]
+  args: string[],
+  isolateNetwork = false
 ): { file: string; args: string[] } {
   if (!identity) return { file, args };
-  return {
-    file: 'setpriv',
-    args: [
-      `--reuid=${identity.uid}`,
-      `--regid=${identity.gid}`,
-      '--clear-groups',
-      '--no-new-privs',
-      '--bounding-set=-all',
-      '--inh-caps=-all',
-      '--',
-      file,
-      ...args,
-    ],
-  };
+  const dropped = [
+    'setpriv',
+    `--reuid=${identity.uid}`,
+    `--regid=${identity.gid}`,
+    '--clear-groups',
+    '--no-new-privs',
+    '--bounding-set=-all',
+    '--inh-caps=-all',
+    '--',
+    file,
+    ...args,
+  ];
+  if (isolateNetwork) return { file: 'unshare', args: ['--net', '--', ...dropped] };
+  return { file: dropped[0]!, args: dropped.slice(1) };
+}
+
+/**
+ * Prove, once at boot, that a command can be started with no network
+ * here: `unshare --net` needs CAP_SYS_ADMIN, which Docker's default
+ * profile withholds, so on a stock deployment this says so and scripts
+ * run on the container's network with the honest note in the result.
+ * Null when it works (the namespace holds a loopback and nothing else);
+ * otherwise what went wrong, for the operator and the log.
+ */
+export async function verifyNetworkIsolation(): Promise<string | null> {
+  if (!canIsolateByUid()) return 'this process is not root';
+  // /proc/self/net is the probe's OWN namespace; /sys/class/net would
+  // still show the container's interfaces, since sysfs was mounted
+  // from the namespace the container started in.
+  const result = await runProcess(
+    {
+      cwd: '/',
+      home: '/',
+      identity: { uid: PROBE_UID, gid: PROBE_UID },
+      env: {},
+      timeoutMs: 15_000,
+      isolateNetwork: true,
+    },
+    'cat',
+    ['/proc/self/net/dev']
+  );
+  const interfaces = result.stdout
+    .split('\n')
+    .map((line) => line.split(':')[0]?.trim() ?? '')
+    .filter(
+      (name) => name && !/\s/.test(name) && !name.startsWith('Inter') && !name.startsWith('face')
+    );
+  if (result.exitCode === 0 && interfaces.length > 0 && interfaces.every((name) => name === 'lo')) {
+    return null;
+  }
+  const said = `${result.stderr}\n${result.stdout}`
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-2)
+    .join(' ');
+  return said || `exit ${result.exitCode ?? 'none'}${result.signal ? ` (${result.signal})` : ''}`;
 }
 
 /**
@@ -425,9 +483,10 @@ async function spawnFailure(
   } catch {
     return `${error.message}: the working directory no longer exists on disk.`;
   }
-  return file === 'setpriv'
-    ? `${error.message}: setpriv (util-linux) is not installed on this worker, so a command cannot be dropped to the caller's uid.`
-    : `${error.message}: no such command on this worker.`;
+  if (file === 'setpriv' || file === 'unshare') {
+    return `${error.message}: ${file} (util-linux) is not installed on this worker, so a command cannot be ${file === 'setpriv' ? "dropped to the caller's uid" : 'started without a network'}.`;
+  }
+  return `${error.message}: no such command on this worker.`;
 }
 
 function collect(
@@ -453,7 +512,7 @@ function collect(
 
 /** Spawn one process, kill its whole group on timeout, and answer both streams. */
 export function runProcess(input: RunInput, file: string, args: string[]): Promise<RunResult> {
-  const wrapped = wrapCommand(input.identity, file, args);
+  const wrapped = wrapCommand(input.identity, file, args, input.isolateNetwork === true);
   const started = Date.now();
   return new Promise((resolvePromise) => {
     let truncated = false;

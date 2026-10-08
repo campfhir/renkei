@@ -9,7 +9,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile as readFileBytes, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdir, open, readFile as readFileBytes, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 let dataRoot = process.env.SANDBOX_DATA_DIR || '/data';
@@ -80,6 +80,23 @@ export async function readFile(storageKey: string): Promise<Buffer | undefined> 
     return undefined;
   }
   return readFileBytes(path);
+}
+
+/**
+ * Copy a staged file's bytes to a path outside the data root — into a
+ * script run's input directory (scripts.ts), where a caller's uid can
+ * read them, since the data root itself is this process's alone. A
+ * kernel copy, never buffered here. False when the bytes are not on this
+ * instance's disk.
+ */
+export async function copyFileTo(storageKey: string, destination: string): Promise<boolean> {
+  try {
+    await copyFile(resolvePath(storageKey), destination);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 /** Whether the bytes for a storage key are on this instance's disk. */

@@ -252,6 +252,20 @@ describe('workbook parsing', () => {
     ]);
   });
 
+  it('keeps a blank line inside CSV data as an empty row, dropping only the ends', () => {
+    // A spacer row, or one a formula refers to by number: dropping it would
+    // move every row below it up by one. Stray blank lines at either end go.
+    expect(parseCsv('\n\nMRN,Home,Mobile\n1001,,415-0202\n\n1003,,\n,,\n1005,x,y\n\n')).toEqual([
+      ['MRN', 'Home', 'Mobile'],
+      ['1001', '', '415-0202'],
+      [''],
+      ['1003', '', ''],
+      ['', '', ''],
+      ['1005', 'x', 'y'],
+    ]);
+    expect(parseCsv('\n\n')).toEqual([]);
+  });
+
   it('types cells Excel should hold as values', () => {
     expect(typedCell('12')).toBe(12);
     expect(typedCell('-1,234.5')).toBe(-1234.5);

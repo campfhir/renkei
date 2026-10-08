@@ -14,12 +14,16 @@
  *  - headings, images with alt text, and landmarks are reported as
  *    structure;
  *  - everything else contributes text — a subtree with nothing
- *    interactive inside is flattened to one line via innerText, so a
- *    paragraph with inline formatting reads as a paragraph.
+ *    interactive inside is read via innerText, one snapshot line per
+ *    visual line (a paragraph, a list item, a <br>), so a paragraph with
+ *    inline formatting reads as a paragraph and a long job description
+ *    reads as its paragraphs and bullets. Text is never cut short: a line
+ *    longer than TEXT_MAX continues on the next line.
  *
  * Bounded by `maxNodes`: past it the walk stops and says so, which the
- * renderer surfaces to the model. Password values are masked; every string
- * is collapsed and capped so a hostile page cannot flood the snapshot.
+ * renderer surfaces to the model. Password values are masked; every name
+ * is collapsed and capped, and every text line is at most TEXT_MAX, so a
+ * hostile page cannot flood the snapshot past maxNodes × TEXT_MAX.
  */
 
 import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
@@ -286,6 +290,31 @@ export function collectSnapshotInPage(
     return true;
   };
 
+  // One visual line of text, whitespace collapsed. Past TEXT_MAX it is
+  // cut into pieces at a word boundary and every piece is its own node —
+  // the model reads all of it — rather than ended with an ellipsis, which
+  // is how a 3,000-character job description used to lose its last two
+  // thirds. False once the node ceiling is hit.
+  const pushLine = (raw: string): boolean => {
+    let rest = raw.replace(/\s+/g, ' ').trim();
+    while (rest.length > TEXT_MAX) {
+      let cut = rest.lastIndexOf(' ', TEXT_MAX);
+      if (cut < TEXT_MAX / 2) cut = TEXT_MAX;
+      if (!push({ role: 'text', name: rest.slice(0, cut).trim() })) return false;
+      rest = rest.slice(cut).trim();
+    }
+    return rest ? push({ role: 'text', name: rest }) : true;
+  };
+
+  // Rendered text as the page shows it: innerText keeps the line breaks a
+  // block boundary or <br> produces, and each becomes its own line.
+  const pushText = (raw: string | null | undefined): boolean => {
+    for (const line of (raw ?? '').split(/\r?\n/)) {
+      if (!pushLine(line)) return false;
+    }
+    return true;
+  };
+
   const walk = (el: Element): void => {
     if (truncated) return;
     if (nodes.length >= maxNodes) {
@@ -330,9 +359,8 @@ export function collectSnapshotInPage(
     }
 
     if (!el.querySelector(STRUCTURE_SELECTOR)) {
-      // Nothing to report on its own inside: one line of text for the subtree.
-      const text = collapse(el instanceof HTMLElement ? el.innerText : el.textContent, TEXT_MAX);
-      if (text) push({ role: 'text', name: text });
+      // Nothing to report on its own inside: the subtree's text, a line per visual line.
+      pushText(el instanceof HTMLElement ? el.innerText : el.textContent);
       return;
     }
 
@@ -340,8 +368,8 @@ export function collectSnapshotInPage(
     for (const child of Array.from(el.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) direct += child.textContent ?? '';
     }
-    const directText = collapse(direct, TEXT_MAX);
-    if (directText && !push({ role: 'text', name: directText })) return;
+    // Source line breaks in a text node are not visual ones: one line, split only by length.
+    if (!pushLine(direct)) return;
 
     for (const child of Array.from(el.children)) {
       if (truncated) return;

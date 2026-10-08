@@ -33,6 +33,16 @@
  * a headless browser the worker owns: named verbs by element ref, never a
  * selector or a script, with screenshots landing in this same scratch space.
  *
+ * sandbox_run_python (./scripts.ts) is the one script here, and it is
+ * not a shell: Python the model wrote, run by the worker over COPIES of
+ * the caller's own staged files in a directory made for the run — as
+ * the caller's own uid, with no network, a memory and time ceiling —
+ * with what it writes staged back under the same quota as everything
+ * else. It exists because matching one spreadsheet against another by a
+ * key is work a model must not do by retyping text dumps; the
+ * containment is the one code workspaces built, narrowed
+ * (docs/sandbox-connector-design.md, "sandbox_run_python").
+ *
  * The worker's code workspaces are deliberately NOT here: a repository is
  * worked in from a code project's chats through the code_* local tools
  * (apps/web/lib/code/tools.ts), never through the MCP surface.
@@ -60,6 +70,7 @@ import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { registerSandboxBrowserTools } from './browser';
 import { registerSandboxChartTools } from './charts';
+import { registerSandboxScriptTools } from './scripts';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
 import { completeUploadSlot, finalizeUploadSlot } from '@/lib/upload-executors';
 import { getDatabase } from '@renkei/db';
@@ -78,6 +89,7 @@ import {
   sandboxConfig,
   sandboxBrowserEnabled,
   sandboxChartsEnabled,
+  sandboxScriptsEnabled,
 } from '@/lib/sandbox/service-client';
 
 /** The connector key the sandbox capabilities register under. */
@@ -107,6 +119,8 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
   if (sandboxBrowserEnabled()) registerSandboxBrowserTools(server, context);
   // Likewise the chart renderer (SANDBOX_CHARTS_ENABLED on both sides) — see ./charts.ts.
   if (sandboxChartsEnabled()) registerSandboxChartTools(server, context);
+  // And scripts over staged files (SANDBOX_SCRIPTS_ENABLED on both sides) — see ./scripts.ts.
+  if (sandboxScriptsEnabled()) registerSandboxScriptTools(server, context);
 
   server.registerTool(
     'sandbox_download_url',
@@ -421,7 +435,9 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
       title: 'Sandbox · Read — Read a staged file as text',
       description:
         'Extract the text of a staged file — plain files decoded directly, documents (pdf, ' +
-        'docx, xlsx, pptx, html) through text extraction.',
+        'docx, xlsx, pptx, html) through text extraction. A workbook comes back as labelled ' +
+        'rows; to match, filter or total a large one rather than read it, use ' +
+        'sandbox_run_python where it is available.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         fileId: z.string().uuid().describe('From sandbox_list_files or a stage tool.'),

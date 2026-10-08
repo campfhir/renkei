@@ -277,6 +277,35 @@ describe('sessions across replicas', () => {
     expect(page.goto).toHaveBeenCalledWith('https://example.com/settings', expect.anything());
   });
 
+  it('a replica still holding a session that another replica has since answered reopens from the saved copy', async () => {
+    const store = memoryStore();
+    const here = build({ state: store, replica: 'worker-a' });
+    await here.sessions.navigate(ALICE, 'https://www.nems.org/', 5000);
+    const there = build({ state: store, replica: 'worker-b' });
+    await there.sessions.navigate(ALICE, 'https://careers.example.com/jobs', 5000);
+    expect(store.files.get('tenant-1\nauth0|alice')!.heldBy).toBe('worker-b');
+
+    // Back here, the context still on nems.org is no longer the caller's
+    // flow: it is dropped and the saved page reopened, so a ref from the
+    // last snapshot (the careers page) is looked up on the careers page.
+    const stale = here.browsers[0]!.contexts[0]!;
+    const page = await here.sessions.snapshot(ALICE, 5000);
+    expect(stale.closed).toBe(true);
+    expect(page.url).toBe('https://careers.example.com/jobs');
+    expect(here.sessions.sessionCount()).toBe(1);
+    const fresh = here.browsers[0]!.contexts[1]!;
+    expect(fresh.options.storageState).toEqual(
+      store.files.get('tenant-1\nauth0|alice')!.storageState
+    );
+    expect(fresh.openPages[0]!.goto).toHaveBeenCalledWith('https://careers.example.com/jobs');
+    expect(store.files.get('tenant-1\nauth0|alice')!.heldBy).toBe('worker-a');
+
+    // The same replica answering again keeps the page it has.
+    await here.sessions.snapshot(ALICE, 5000);
+    expect(here.browsers[0]!.contexts).toHaveLength(2);
+    expect(fresh.openPages[0]!.goto).toHaveBeenCalledTimes(1);
+  });
+
   it('resumes after an idle close on the same replica, and after the browser exits', async () => {
     const store = memoryStore();
     const { sessions, clock, browsers } = build({ state: store, idleMs: 1000 });

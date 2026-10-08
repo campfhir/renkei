@@ -113,7 +113,14 @@ export function typedCell(text: string): Cell {
   return text;
 }
 
-/** RFC 4180 CSV → rows of text; a bare tab-separated file is taken as such. */
+/**
+ * RFC 4180 CSV → rows of text; a bare tab-separated file is taken as such.
+ *
+ * A blank line INSIDE the data is kept as an empty row: a spacer between
+ * sections, or a row a formula or a template refers to by number, and
+ * dropping it would move every row below it up by one. Blank lines at the
+ * start and end are stray (a trailing newline, a pasted-in gap) and go.
+ */
 export function parseCsv(text: string): string[][] {
   const source = text.replace(/\r\n?/g, '\n');
   const firstLine = source.slice(0, source.indexOf('\n') === -1 ? undefined : source.indexOf('\n'));
@@ -153,7 +160,12 @@ export function parseCsv(text: string): string[][] {
     row.push(field);
     rows.push(row);
   }
-  return rows.filter((cells) => cells.some((cell) => cell.trim() !== ''));
+  const isBlank = (cells: string[]): boolean => cells.every((cell) => cell.trim() === '');
+  let first = 0;
+  let last = rows.length;
+  while (first < last && isBlank(rows[first]!)) first += 1;
+  while (last > first && isBlank(rows[last - 1]!)) last -= 1;
+  return rows.slice(first, last);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -104,10 +104,35 @@ function readRelationships(xml: string | undefined): Map<string, string> {
   return map;
 }
 
-/** Rows of non-empty cell values, in column order. */
+/** `D` → 3, `AA` → 26: the column part of a cell address such as `D5`. */
+function columnIndex(reference: string | null): number | null {
+  if (!reference) return null;
+  const match = /^([A-Z]+)\d*$/i.exec(reference.trim());
+  if (!match) return null;
+  let index = 0;
+  for (const letter of match[1]!.toUpperCase()) {
+    index = index * 26 + (letter.charCodeAt(0) - 64);
+  }
+  return index - 1;
+}
+
+/**
+ * Rows of cell values, in column order, with a blank cell held as `''`.
+ *
+ * Excel does not write blank cells at all — a row whose C is empty goes
+ * `<c r="B2">…</c><c r="D2">…</c>` — and a styled-but-empty cell is written
+ * with no `<v>`. Counting `<c>` elements therefore slides every value after a
+ * gap one column left, and in the tabular output that puts the mobile number
+ * under "Home Phone" without anything looking wrong. The position of a cell
+ * is its `r` address; the element order is only a fallback for writers that
+ * omit `r`, where consecutive layout is the only information there is.
+ */
 function readRows(xml: string, shared: string[]): string[][] {
   const rows: string[][] = [];
-  let row: string[] = [];
+  // Sparse during the row: holes are columns no cell was written for.
+  let row: (string | undefined)[] = [];
+  let cursor = 0;
+  let column = 0;
   let cellType = '';
   let inValue = false;
   let inInline = false;
@@ -115,24 +140,40 @@ function readRows(xml: string, shared: string[]): string[][] {
   let value = '';
   let formula = '';
 
-  const flushCell = () => {
+  const resolve = (): string => {
     // A formula with no cached result (a workbook written by a program and
     // never opened in Excel) is still better read as itself than as nothing.
-    if (!value && formula) row.push(`=${formula}`);
-    formula = '';
-    if (!value) return;
+    if (!value) return formula ? `=${formula}` : '';
     if (cellType === 's') {
       const index = Number.parseInt(value, 10);
-      const resolved = Number.isFinite(index) ? shared[index] : undefined;
-      if (resolved) row.push(resolved);
-    } else if (cellType === 'e') {
-      // #REF!, #N/A — an error is not information.
-    } else if (cellType === 'b') {
-      row.push(value === '1' ? 'TRUE' : 'FALSE');
-    } else {
-      row.push(value);
+      return (Number.isFinite(index) ? shared[index] : undefined) ?? '';
     }
+    // #REF!, #N/A — an error is not information, but its cell still has a column.
+    if (cellType === 'e') return '';
+    if (cellType === 'b') return value === '1' ? 'TRUE' : 'FALSE';
+    return value;
+  };
+
+  const flushCell = () => {
+    const text = resolve();
+    if (text) row[column] = text;
+    // Whether or not the cell held anything, it occupied this column.
+    cursor = column + 1;
     value = '';
+    formula = '';
+  };
+
+  const flushRow = () => {
+    const dense: string[] = [];
+    let last = -1;
+    for (let index = 0; index < row.length; index += 1) {
+      const cell = row[index] ?? '';
+      dense.push(cell);
+      if (cell) last = index;
+    }
+    if (last >= 0) rows.push(dense.slice(0, last + 1));
+    row = [];
+    cursor = 0;
   };
 
   scanXml(xml, {
@@ -140,8 +181,10 @@ function readRows(xml: string, shared: string[]): string[][] {
       switch (tag.name) {
         case 'row':
           row = [];
+          cursor = 0;
           break;
         case 'c':
+          column = columnIndex(attribute(tag.attributes, 'r')) ?? cursor;
           cellType = attribute(tag.attributes, 't') ?? '';
           value = '';
           formula = '';
@@ -180,7 +223,7 @@ function readRows(xml: string, shared: string[]): string[][] {
           flushCell();
           break;
         case 'row':
-          if (row.length > 0) rows.push(row);
+          flushRow();
           break;
         default:
           break;
@@ -197,12 +240,17 @@ function readRows(xml: string, shared: string[]): string[][] {
   return rows;
 }
 
-/** A header row plus at least two data rows means the key-value form pays off. */
+/**
+ * A header row plus at least two data rows means the key-value form pays off.
+ * A blank header cell is allowed (its column gets a stand-in label); a
+ * numeric one means the first row is data, not a header.
+ */
 function looksTabular(rows: string[][]): boolean {
   if (rows.length < 3) return false;
   const header = rows[0]!;
-  if (header.length < 2) return false;
-  return header.every((cell) => cell.trim() !== '' && !/^-?\d+(\.\d+)?$/.test(cell.trim()));
+  const labels = header.filter((cell) => cell.trim() !== '');
+  if (labels.length < 2) return false;
+  return labels.every((cell) => !/^-?\d+(\.\d+)?$/.test(cell.trim()));
 }
 
 export function extractXlsx(parts: Map<string, Uint8Array>, budget: TextBudget): number {
@@ -236,14 +284,16 @@ export function extractXlsx(parts: Map<string, Uint8Array>, budget: TextBudget):
       for (const dataRow of rows.slice(1)) {
         if (budget.spent) break;
         const pairs = dataRow
-          .map((cell, index) => (cell ? `${header[index] ?? `Column ${index + 1}`}: ${cell}` : ''))
+          .map((cell, index) =>
+            cell ? `${header[index]?.trim() || `Column ${index + 1}`}: ${cell}` : ''
+          )
           .filter(Boolean);
         if (pairs.length > 0) budget.push(`${pairs.join(' · ')}\n`);
       }
     } else {
       for (const dataRow of rows) {
         if (budget.spent) break;
-        budget.push(`${dataRow.join(' · ')}\n`);
+        budget.push(`${dataRow.filter(Boolean).join(' · ')}\n`);
       }
     }
   }

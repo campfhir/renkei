@@ -536,6 +536,18 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Changed an on-call rotation',
     short: 'Changed an on-call rotation',
   },
+  jsm_ops_create_maintenance: {
+    category: 'scheduled',
+    entity: 'maintenance window',
+    label: 'Scheduled an alert maintenance window',
+    short: 'Scheduled an alert maintenance window',
+  },
+  jsm_ops_cancel_maintenance: {
+    category: 'updated',
+    entity: 'maintenance window',
+    label: 'Cancelled an alert maintenance window',
+    short: 'Cancelled an alert maintenance window',
+  },
 
   // ---- Outlook / Microsoft 365 -----------------------------------------
   outlook_send_mail: {

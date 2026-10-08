@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * JSM Operations tools — alerts, schedules, rotations, on-call.
+ * JSM Operations tools — alerts, maintenance windows, schedules, rotations,
+ * on-call.
  *
  * How each call authenticates is an injected `JsmOpsAuth` (see ops-auth.ts),
  * not something this file decides. Production always passes
@@ -82,6 +83,50 @@ async function describeOpsFailure(response: Response): Promise<string> {
       'JSM UI).';
   }
   return text;
+}
+
+/**
+ * A maintenance's rules, folded into one readable clause: which
+ * integrations and policies it switches off (or on) for the window. Rule
+ * entities carry an id and a type ('integration' | 'policy' | 'sync') and
+ * nothing else — the name was never in this response — so this prints the
+ * ids, which is what every downstream tool takes anyway.
+ */
+function maintenanceRules(maintenance: Record<string, unknown>): string {
+  const rules = Array.isArray(maintenance.rules) ? maintenance.rules.filter(isRecord) : [];
+  const byType = new Map<string, string[]>();
+  for (const rule of rules) {
+    const entity = isRecord(rule.entity) ? rule.entity : {};
+    const type = str(entity.type) || 'entity';
+    const state = str(rule.state) === 'enabled' ? ' (enabled)' : '';
+    const bucket = byType.get(type) ?? [];
+    bucket.push(`${str(entity.id)}${state}`);
+    byType.set(type, bucket);
+  }
+  if (byType.size === 0) return 'no rules';
+  return [...byType.entries()].map(([type, ids]) => `${type}s: ${ids.join(', ')}`).join('; ');
+}
+
+function maintenanceLine(maintenance: Record<string, unknown>): string {
+  return (
+    `${str(maintenance.description) || '(no description)'} — ${str(maintenance.status) || '?'}` +
+    ` — ${str(maintenance.startDate)} → ${str(maintenance.endDate)}` +
+    ` — ${maintenanceRules(maintenance)}` +
+    (str(maintenance.teamId) ? ` — team: ${str(maintenance.teamId)}` : ' — global') +
+    ` — id: ${str(maintenance.id)}`
+  );
+}
+
+/**
+ * Maintenances come in two flavours with identical bodies: global ones
+ * under /maintenances (site-wide, admin territory) and a team's own under
+ * /teams/{teamId}/maintenances. Every maintenance tool takes an optional
+ * teamId and lets this pick the base, so the two never drift apart.
+ */
+function maintenancePath(teamId: string, suffix = ''): string {
+  return teamId
+    ? `/teams/${encodeURIComponent(teamId)}/maintenances${suffix}`
+    : `/maintenances${suffix}`;
 }
 
 function alertLine(alert: Record<string, unknown>): string {
@@ -755,6 +800,314 @@ export async function registerJsmOpsTools(
           'a table (Escalation, Team) usually scans faster than this flat list.'
         )
       );
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_list_maintenances',
+    {
+      title: 'JSM Ops · Read — List alert maintenance windows',
+      description:
+        'List maintenance windows — the periods during which chosen integrations (and alert ' +
+        'policies) are switched off so they raise no alerts. Shows the planned and active ' +
+        'windows by default; pass type=all to include past and cancelled ones. Omit teamId ' +
+        'for the site-wide (global) windows, pass it for one team’s own. Maintenance ids feed ' +
+        'jsm_ops_cancel_maintenance.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        teamId: z
+          .string()
+          .describe('Team id from jsm_ops_list_teams — omit for global maintenances')
+          .optional(),
+        type: z
+          .enum(['non-expired', 'all', 'past'])
+          .describe('Which to list (default non-expired: planned + active)')
+          .optional(),
+        size: z.number().int().min(1).max(100).describe('How many (default 20)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const type = str(args.type) || 'non-expired';
+      const size = typeof args.size === 'number' ? args.size : 20;
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_list_maintenances', true),
+        maintenancePath(str(args.teamId), `?type=${type}&size=${size}`)
+      );
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      const body: unknown = await response.json().catch(() => null);
+      const lines = items(body).map(maintenanceLine);
+      if (lines.length === 0) {
+        return textResult(
+          type === 'non-expired' ? 'No planned or active maintenance windows.' : 'No maintenances.'
+        );
+      }
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Window, Status, Start, End, Silenced) usually scans faster than this flat list.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_list_integrations',
+    {
+      title: 'JSM Ops · Read — List alert integrations',
+      description:
+        'List the integrations alerts arrive through (monitoring tools, email, API keys…), ' +
+        'with their type, team and whether they are enabled. Integration ids are what a ' +
+        'maintenance window silences — jsm_ops_create_maintenance takes them. Filter by ' +
+        'teamId or by (exact) name.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        teamId: z.string().describe('Only this team’s integrations').optional(),
+        name: z.string().describe('Only the integration with exactly this name').optional(),
+        size: z.number().int().min(1).max(100).describe('How many (default 50)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const parts = [`size=${typeof args.size === 'number' ? args.size : 50}`];
+      if (str(args.teamId)) parts.push(`teamId=${encodeURIComponent(str(args.teamId))}`);
+      if (str(args.name)) parts.push(`name=${encodeURIComponent(str(args.name))}`);
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_list_integrations', true),
+        `/integrations?${parts.join('&')}`
+      );
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      const body: unknown = await response.json().catch(() => null);
+      const lines = items(body).map(
+        (integration) =>
+          `${str(integration.name) || '(unnamed)'} — ${str(integration.type) || '?'} — ` +
+          `${integration.enabled === false ? 'disabled' : 'enabled'}` +
+          (str(integration.teamId) ? ` — team: ${str(integration.teamId)}` : '') +
+          ` — id: ${str(integration.id)}`
+      );
+      if (lines.length === 0) return textResult('No integrations.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Integration, Type, Team, Enabled) usually scans faster than this flat list.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_create_maintenance',
+    {
+      title: 'JSM Ops · Act — Put alert sources into maintenance (wizard)',
+      description:
+        'Schedule a maintenance window: for the period given, the listed integrations (and ' +
+        'alert policies) are switched off, so nothing they would raise becomes an alert, and ' +
+        'they come back on by themselves when the window ends — "silence the Datadog ' +
+        'integration during tonight’s deploy". This is a WIZARD: gather each missing piece ' +
+        'from the user (it will tell you what is missing — resolve integration ids with ' +
+        'jsm_ops_list_integrations), then call WITHOUT confirm to get a preview, show the ' +
+        'user that preview, and only after their explicit yes call again with confirm=true. ' +
+        'Never invent times or integrations. It silences alert SOURCES for a window; it does ' +
+        'not touch alerts that already exist — use jsm_ops_acknowledge_alert or ' +
+        'jsm_ops_close_alert for those. Omit teamId for a global window, pass it to scope the ' +
+        'window to one team. Requires the write:ops-config scope.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        description: z
+          .string()
+          .max(200)
+          .describe('What the window is for, e.g. "Database upgrade"')
+          .optional(),
+        startDate: z
+          .string()
+          .describe('ISO start of the window (use now to start at once)')
+          .optional(),
+        endDate: z.string().describe('ISO end of the window').optional(),
+        integrationIds: z
+          .array(z.string())
+          .describe('Integrations to silence for the window — ids from jsm_ops_list_integrations')
+          .optional(),
+        policyIds: z
+          .array(z.string())
+          .describe('Alert policies to disable for the window (optional, by id)')
+          .optional(),
+        teamId: z
+          .string()
+          .describe('Team id from jsm_ops_list_teams — omit for a global window')
+          .optional(),
+        confirm: z
+          .boolean()
+          .describe('true ONLY after the user approved the preview this tool returned')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const scopes = opsScopes('jsm_ops_create_maintenance', false);
+      const teamId = str(args.teamId);
+      const integrationIds: string[] = Array.isArray(args.integrationIds)
+        ? args.integrationIds.filter((id: unknown): id is string => typeof id === 'string' && !!id)
+        : [];
+      const policyIds: string[] = Array.isArray(args.policyIds)
+        ? args.policyIds.filter((id: unknown): id is string => typeof id === 'string' && !!id)
+        : [];
+
+      const missing: string[] = [];
+      if (!str(args.description)) {
+        missing.push('WHAT it is for: a short description, e.g. "Database upgrade"');
+      }
+      if (!str(args.startDate)) missing.push('WHEN it starts: ISO timestamp (or now)');
+      if (!str(args.endDate)) missing.push('WHEN it ends: ISO timestamp');
+      if (integrationIds.length === 0 && policyIds.length === 0) {
+        missing.push(
+          'WHICH integrations to silence: ask the user, then resolve the ids with jsm_ops_list_integrations'
+        );
+      }
+      if (missing.length > 0) {
+        return textResult(
+          `Maintenance window${teamId ? ` for team ${teamId}` : ''} — still needed before a preview:\n` +
+            missing.map((m) => `- ${m}`).join('\n') +
+            '\nAsk the user, then call this tool again with the answers.'
+        );
+      }
+
+      const start = new Date(str(args.startDate));
+      const end = new Date(str(args.endDate));
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+        return errText(
+          'startDate/endDate must be valid ISO timestamps with end after start. Re-ask the user.'
+        );
+      }
+      if (end.getTime() <= Date.now()) {
+        return errText(
+          'endDate is already in the past — a window that has ended silences nothing. Re-ask the user.'
+        );
+      }
+
+      // Names for the preview: a user approving "silence 51e9e162-…" has not
+      // really approved anything. Each id is looked up; one that does not
+      // resolve is reported as such rather than silently previewed as-is,
+      // because a mistyped id would otherwise sail through to a 400 (or
+      // worse, silence the wrong integration).
+      const integrationNames = await Promise.all(
+        integrationIds.map(async (id) => {
+          const lookup = await auth.fetch(scopes, `/integrations/${encodeURIComponent(id)}`);
+          if (!lookup.ok) return `${id} (NOT FOUND — check the id with jsm_ops_list_integrations)`;
+          const integration: unknown = await lookup.json().catch(() => null);
+          const name = isRecord(integration) ? str(integration.name) : '';
+          return name ? `${name} (${id})` : id;
+        })
+      );
+      const unresolved = integrationNames.filter((name) => name.includes('NOT FOUND'));
+      if (unresolved.length > 0) {
+        return errText(
+          `These integration ids do not resolve:\n${unresolved.map((u) => `- ${u}`).join('\n')}`
+        );
+      }
+
+      const rules = [
+        ...integrationIds.map((id) => ({ entity: { id, type: 'integration' }, state: 'disabled' })),
+        ...policyIds.map((id) => ({ entity: { id, type: 'policy' }, state: 'disabled' })),
+      ];
+
+      if (args.confirm !== true) {
+        return textResult(
+          `PREVIEW — nothing written yet.\n` +
+            `Maintenance: ${str(args.description)}${teamId ? ` (team ${teamId})` : ' (global)'}\n` +
+            `Window: ${start.toISOString()} → ${end.toISOString()}\n` +
+            `Silenced integrations: ${integrationNames.join(', ') || 'none'}\n` +
+            `Disabled policies: ${policyIds.join(', ') || 'none'}\n` +
+            'Alerts from these sources will not be raised during the window; they resume ' +
+            'automatically when it ends. Show this to the user. If they approve, call again ' +
+            'with confirm: true.'
+        );
+      }
+
+      const response = await auth.fetch(scopes, maintenancePath(teamId), {
+        method: 'POST',
+        body: JSON.stringify({
+          description: str(args.description),
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+          rules,
+        }),
+      });
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      const created: unknown = await response.json().catch(() => null);
+      const maintenance = isRecord(created) ? created : {};
+      logger.info('jsm_ops_create_maintenance', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        maintenanceId: str(maintenance.id),
+        teamId: teamId || undefined,
+        integrations: integrationIds.length,
+        policies: policyIds.length,
+      });
+      return textResult(
+        `Maintenance window created — ${str(maintenance.status) || 'planned'}` +
+          `${str(maintenance.id) ? ` — id: ${str(maintenance.id)}` : ''}. ` +
+          'Cancel it early with jsm_ops_cancel_maintenance.'
+      );
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_cancel_maintenance',
+    {
+      title: 'JSM Ops · Act — Cancel an alert maintenance window (confirm-gated)',
+      description:
+        'End a planned or active maintenance window early — its integrations and policies ' +
+        'come back on at once and start raising alerts again. Call WITHOUT confirm first to see ' +
+        'exactly which window would be cancelled, show the user, and only after their explicit ' +
+        'yes call again with confirm=true. Pass the same teamId the window was created with ' +
+        '(none for a global one). Requires the write:ops-config scope.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        maintenanceId: z.string().min(1).describe('Maintenance id from jsm_ops_list_maintenances'),
+        teamId: z.string().describe('Team id if it is a team window; omit for global').optional(),
+        confirm: z
+          .boolean()
+          .describe('true ONLY after the user approved the preview this tool returned')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const scopes = opsScopes('jsm_ops_cancel_maintenance', false);
+      const teamId = str(args.teamId);
+      const idPath = `/${encodeURIComponent(str(args.maintenanceId))}`;
+
+      // Fetch it first — the preview must describe the real window, and a
+      // cancel of a mistyped id should fail loudly here, not there.
+      const currentResponse = await auth.fetch(scopes, maintenancePath(teamId, idPath));
+      if (!currentResponse.ok) return errText(await describeOpsFailure(currentResponse));
+      const currentBody: unknown = await currentResponse.json().catch(() => null);
+      const current = isRecord(currentBody) ? currentBody : {};
+      const status = str(current.status);
+      const summary = maintenanceLine(current);
+
+      if (status === 'cancelled' || status === 'past') {
+        return textResult(`Nothing to cancel — this window is already ${status}: ${summary}`);
+      }
+
+      if (args.confirm !== true) {
+        return textResult(
+          `PREVIEW — nothing cancelled yet.\nWould cancel: ${summary}\n` +
+            `${status === 'active' ? 'It is active now: its sources resume raising alerts immediately.' : 'It has not started: it simply never silences anything.'} ` +
+            'Show this to the user; if they approve, call again with confirm: true.'
+        );
+      }
+
+      const response = await auth.fetch(scopes, maintenancePath(teamId, `${idPath}/cancel`), {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      logger.info('jsm_ops_cancel_maintenance', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        maintenanceId: str(args.maintenanceId),
+        teamId: teamId || undefined,
+      });
+      return textResult(`Maintenance window cancelled (${summary}).`);
     }
   );
 }

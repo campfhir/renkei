@@ -327,6 +327,9 @@ export default function Composer({
     [tenantId]
   );
 
+  /** Something to send — typed text or an attachment. */
+  const hasDraft = text.trim().length > 0 || attachments.length > 0;
+
   const send = useCallback(async () => {
     const trimmed = text.trim();
     // Sending while running is not blocked here — the caller (onSubmit)
@@ -664,19 +667,13 @@ export default function Composer({
             {modelControl}
             {modeControl}
           </div>
-          {running ? (
-            <button
-              type="button"
-              onClick={() => void send()}
-              aria-label="Queue this message"
-              title="Sends once the current reply finishes"
-              disabled={disabled || uploading > 0 || (!text.trim() && attachments.length === 0)}
-              className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
-            >
-              <Icon path={ICONS.send} className="h-5 w-5" />
-            </button>
-          ) : null}
-          {running ? (
+          {running && !hasDraft ? (
+            // Stop lives in the send button's slot ONLY while there is
+            // nothing to send. The moment something is typed, that slot
+            // becomes the blue send button again, and pressing it queues.
+            // An earlier layout kept Stop in the slot and put a grey queue
+            // button beside it: thumbs trained on "the button on the right
+            // sends" stopped the reply they meant to queue behind.
             <button
               type="button"
               onClick={() => void onStop()}
@@ -685,12 +682,23 @@ export default function Composer({
             >
               <Icon path={ICONS.stop} className="h-5 w-5" />
             </button>
+          ) : running ? (
+            <button
+              type="button"
+              onClick={() => void send()}
+              aria-label="Queue this message"
+              title="Sends once the current reply finishes"
+              disabled={disabled || uploading > 0}
+              className="rounded-md bg-blue-600 p-1.5 text-white hover:bg-blue-700 disabled:opacity-40"
+            >
+              <Icon path={ICONS.send} className="h-5 w-5" />
+            </button>
           ) : (
             <button
               type="button"
               onClick={() => void send()}
               aria-label="Send"
-              disabled={disabled || uploading > 0 || (!text.trim() && attachments.length === 0)}
+              disabled={disabled || uploading > 0 || !hasDraft}
               className="rounded-md bg-blue-600 p-1.5 text-white hover:bg-blue-700 disabled:opacity-40"
               {...sendAnchor}
             >

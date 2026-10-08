@@ -34,6 +34,7 @@ import {
   runShell,
   setWorkspacesRootForTests,
   shellPrelude,
+  verifyNetworkIsolation,
   verifyUidIsolation,
   workspaceDir,
   wrapCommand,
@@ -98,6 +99,17 @@ describe('wrapCommand', () => {
       ],
     });
     expect(wrapCommand(null, 'bash', ['-c', 'id'])).toEqual({ file: 'bash', args: ['-c', 'id'] });
+  });
+
+  it('enters an empty network namespace before the drop when asked, and never without an identity', () => {
+    const wrapped = wrapCommand({ uid: 100_007, gid: 100_007 }, 'python3', ['main.py'], true);
+    expect(wrapped.file).toBe('unshare');
+    expect(wrapped.args.slice(0, 3)).toEqual(['--net', '--', 'setpriv']);
+    expect(wrapped.args.slice(-2)).toEqual(['python3', 'main.py']);
+    expect(wrapCommand(null, 'python3', ['main.py'], true)).toEqual({
+      file: 'python3',
+      args: ['main.py'],
+    });
   });
 
   it('builds the environment from nothing and points git at the proxy as config, not argv', () => {
@@ -182,6 +194,17 @@ describe('a command that never starts', () => {
       // Not root: setpriv (or its absence) explains itself.
       expect(problem).toEqual(expect.any(String));
       expect(problem).not.toBe('');
+    }
+  });
+
+  it('proves at boot whether a command can start with no network, and says why when it cannot', async () => {
+    const problem = await verifyNetworkIsolation();
+    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+      // Root: either the namespace held only a loopback, or the kernel
+      // (a container without CAP_SYS_ADMIN) said no in so many words.
+      expect(problem === null || (typeof problem === 'string' && problem !== '')).toBe(true);
+    } else {
+      expect(problem).toBe('this process is not root');
     }
   });
 });

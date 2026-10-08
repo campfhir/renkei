@@ -402,6 +402,33 @@ pulled as (a service principal, a pull token): the secret is sealed by
 this worker under `SANDBOX_ENV_SECRETS_KEY` (else `TOKEN_ENCRYPTION_KEY`),
 the same key as the environment secrets, and never shown again.
 
+**Scripts over staged files** (`docs/sandbox-connector-design.md`,
+"`sandbox_run_python`"): set `SANDBOX_SCRIPTS_ENABLED=true` in `.env` —
+read by BOTH the web app (which then registers `sandbox_run_python` in
+every chat with a scratch space) and this worker — to let a chat run
+Python it wrote over copies of the person's own staged files: match two
+spreadsheets by a key column, filter or total thousands of rows, convert
+formats, with what the script writes staged back under the same quota as
+any other file. Independent of workspaces (no checkout is involved), but
+with the same arrangement for who runs it: with the flag set the
+entrypoint keeps the worker root so each run is dropped to its caller's
+own uid, and — where the kernel lets this container make a network
+namespace — started with no network at all. Docker's default profile
+withholds that (`unshare` needs `CAP_SYS_ADMIN`); the worker says so at
+boot and in every result, and a deployment that wants scripts fully
+offline adds `cap_add: [SYS_ADMIN]` to `worker-sandbox` in compose,
+weighing that capability against the rest of what the container holds.
+The image carries the interpreter at `/opt/sandbox-python` (pandas,
+numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
+`SANDBOX_PYTHON` points at another. A run's directory is made under
+`SANDBOX_RUNS_DIR` (default `/runs`, no volume: nothing outlives its
+run) and its address space is capped at `SANDBOX_SCRIPT_MEMORY` (default
+`2g`) — raise `SANDBOX_WORKER_MEMORY` with it if several people run
+large joins at once, since runs share the container's limit with the
+browser and the language servers. Bounds that are not settings: one run
+per person at a time and four per worker, ten minutes at most, 64
+processes, 50 input and 50 output files per run.
+
 **More than one sandbox replica:** fine on one host, because Compose
 replicas of a service share its named volumes — and the sandbox worker
 keeps nothing about checkouts or staged files in memory; every verb loads
