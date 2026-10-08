@@ -103,7 +103,7 @@ export interface CodeToolBinding {
   auto?: boolean;
   /**
    * Whether the deployment lets a project start services — containers
-   * beside the checkout (SANDBOX_SERVICES_ENABLED on both sides). Off,
+   * beside the checkout (the org's Code project services switch, and a worker with a Docker engine). Off,
    * the code_service_* tools do not exist in the turn.
    */
   servicesEnabled?: boolean;
@@ -172,10 +172,12 @@ function withCheckoutRecovery(
         state.attempts += 1;
         state.inFlight = state
           .recover(state.current())
-          .catch((error: unknown): CheckoutRecovery => ({
-            ok: false,
-            message: error instanceof Error ? error.message : String(error),
-          }))
+          .catch(
+            (error: unknown): CheckoutRecovery => ({
+              ok: false,
+              message: error instanceof Error ? error.message : String(error),
+            })
+          )
           .finally(() => {
             state.inFlight = null;
           });

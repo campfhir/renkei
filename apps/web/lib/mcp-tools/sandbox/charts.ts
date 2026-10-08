@@ -10,7 +10,7 @@
  * the result to the chat directly instead.
  *
  * Registered only where the deployment renders charts
- * (SANDBOX_CHARTS_ENABLED on the worker and here) — closed, never open.
+ * (the org's Charts switch, and a worker with a Mermaid bundle) — closed, never open.
  */
 
 import { z } from 'zod';

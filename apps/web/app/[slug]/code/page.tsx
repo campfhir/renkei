@@ -35,16 +35,16 @@ export default async function CodePage({ params }: { params: Promise<{ slug: str
   // connected but missing a capability beats "connect it at all").
   const accessNotice = canCreate
     ? null
-    : (bitbucketAccess.connected
+    : ((bitbucketAccess.connected
         ? codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)
         : null) ??
       (githubAccess.connected ? codeProjectAccessMessage(githubAccess, GITHUB) : null) ??
-      `${codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)} Or connect GitHub instead.`;
+      `${codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)} Or connect GitHub instead.`);
   return (
     <CodeIndex
       slug={slug}
       projects={sidebar.code.projects}
-      enabled={sandboxWorkspacesEnabled()}
+      enabled={await sandboxWorkspacesEnabled(tenant.id)}
       canCreate={canCreate}
       accessNotice={accessNotice}
     />

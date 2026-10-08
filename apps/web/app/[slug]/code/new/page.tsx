@@ -26,7 +26,7 @@ export default async function NewCodeProjectPage({
   if (!tenant) notFound();
   const session = await getSessionFromCookies(tenant.id);
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/code/new`));
-  if (!sandboxWorkspacesEnabled()) redirect(`/${slug}/code`);
+  if (!(await sandboxWorkspacesEnabled(tenant.id))) redirect(`/${slug}/code`);
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
   const access = await codeProjectProviderAccess(dbResult.val, tenant.id, session.subject);

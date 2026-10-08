@@ -34,7 +34,7 @@ export async function codeProjectContext(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready;
   const { db, session } = ready.context;
-  if (options.write && !sandboxWorkspacesEnabled()) {
+  if (options.write && !(await sandboxWorkspacesEnabled(tenantId))) {
     return {
       ok: false,
       response: jsonError(

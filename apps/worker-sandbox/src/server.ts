@@ -118,17 +118,17 @@ export interface SandboxServerDeps {
   apiKeys: string[];
   /** The per-tenant per-file ceiling (the org's attachment limit). */
   maxFileBytes?: (tenantId: string) => Promise<number>;
-  /** The browser, when SANDBOX_BROWSER_ENABLED; null/absent answers every browser verb 503. */
+  /** The browser; null/absent answers every browser verb 503. */
   browser?: BrowserVerbs | null;
   /** The secret vault; the server makes its own (in-memory) when not given (tests share one with the browser). */
   vault?: SecretVault;
-  /** The chart renderer (SANDBOX_CHARTS_ENABLED); null/absent answers every chart verb 503. */
+  /** The chart renderer, when a Mermaid bundle was found; null/absent answers every chart verb 503. */
   charts?: ChartVerbs | null;
-  /** Code workspaces (SANDBOX_WORKSPACES_ENABLED); off answers every workspace and env verb 503. */
+  /** Code workspaces; off answers every workspace and env verb 503. */
   workspaces?: boolean;
   /**
-   * Code project services (SANDBOX_SERVICES_ENABLED): the manager over the
-   * Docker engine, or null, which answers every service verb 503. A
+   * Code project services: the manager over the Docker engine when one
+   * answered at boot, or null, which answers every service verb 503. A
    * running service's variables join the environment of every command a
    * project runs (workspace-endpoints.ts).
    */
@@ -136,7 +136,7 @@ export interface SandboxServerDeps {
   /** The language server sessions behind `workspaces/lsp/*`; made here when not given (tests script one). */
   lsp?: LspSessions;
   /**
-   * Scripts over staged files (SANDBOX_SCRIPTS_ENABLED): the runner that
+   * Scripts over staged files, when a Python was found: the runner that
    * copies a caller's files into a throwaway directory and runs their
    * Python there as their own uid with no network (scripts.ts), or null,
    * which answers the script verb 503.
@@ -698,7 +698,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
         response,
         503,
         'charts_unavailable',
-        'Charts are not enabled on this deployment (SANDBOX_CHARTS_ENABLED).'
+        'Charts are not available on this sandbox worker (no Mermaid bundle — see its boot log).'
       );
     }
     const target = targetOf(body);

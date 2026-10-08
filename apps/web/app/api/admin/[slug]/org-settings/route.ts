@@ -104,11 +104,25 @@ const NUMERIC_KEYS = [
   'sandboxWorkspaceMaxBytes',
 ] as const;
 
+/**
+ * The sandbox worker's optional capabilities, per org. The tool catalog
+ * registers tools by them (the browser verbs, the chart tool, the script
+ * tool), so a change invalidates the catalog cache like readOnly does.
+ */
+const SANDBOX_FEATURE_KEYS = [
+  'sandboxBrowserEnabled',
+  'sandboxChartsEnabled',
+  'sandboxWorkspacesEnabled',
+  'sandboxServicesEnabled',
+  'sandboxScriptsEnabled',
+] as const;
+
 const BOOLEAN_KEYS = [
   'readOnly',
   'enableDcr',
   'knowledgeKeywordEnrichment',
   'coachMarksEnabled',
+  ...SANDBOX_FEATURE_KEYS,
 ] as const;
 
 type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number] | 'logLevel';
@@ -143,6 +157,11 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     coachMarksEnabled: settings.coachMarksEnabled,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
+    sandboxBrowserEnabled: settings.sandboxBrowserEnabled,
+    sandboxChartsEnabled: settings.sandboxChartsEnabled,
+    sandboxWorkspacesEnabled: settings.sandboxWorkspacesEnabled,
+    sandboxServicesEnabled: settings.sandboxServicesEnabled,
+    sandboxScriptsEnabled: settings.sandboxScriptsEnabled,
   };
 }
 
@@ -247,10 +266,13 @@ export async function PUT(
       // "who set read-only, and when" is precisely an audit question.
       details: { changed },
     });
-    // readOnly is the one editable setting here the tool catalog reads (the
-    // scope gate strips mutating tools org-wide); every other key is inert
-    // to it, so only invalidate when it actually moved.
-    if ('readOnly' in changed) invalidateToolCatalogCache(tenantRef.id);
+    // readOnly (the scope gate strips mutating tools org-wide) and the
+    // sandbox switches (which tools the sandbox registers) are the editable
+    // settings here the tool catalog reads; every other key is inert to it,
+    // so only invalidate when one of them actually moved.
+    if (['readOnly', ...SANDBOX_FEATURE_KEYS].some((key) => key in changed)) {
+      invalidateToolCatalogCache(tenantRef.id);
+    }
   }
 
   const after = await getOrgSettings(tenantRef.id);

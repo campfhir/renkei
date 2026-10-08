@@ -58,6 +58,25 @@ const WIRE_FILE = {
 
 const ORIGINAL_ENV = process.env;
 
+// The feature switches are org settings, not environment flags: each test
+// says what the org has on, and the worker config stays an env pair.
+const orgSettings = jest.fn(async (_tenantId: string) => ({ ok: true, val: FEATURES_OFF }));
+jest.mock('@renkei/settings', () => ({
+  getOrgSettings: (tenantId: string) => orgSettings(tenantId),
+}));
+
+const FEATURES_OFF = {
+  sandboxBrowserEnabled: false,
+  sandboxChartsEnabled: false,
+  sandboxWorkspacesEnabled: false,
+  sandboxServicesEnabled: false,
+  sandboxScriptsEnabled: false,
+};
+
+function orgHas(features: Partial<typeof FEATURES_OFF>) {
+  orgSettings.mockResolvedValue({ ok: true, val: { ...FEATURES_OFF, ...features } });
+}
+
 beforeEach(() => {
   process.env = {
     ...ORIGINAL_ENV,
@@ -68,6 +87,8 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env = ORIGINAL_ENV;
+  orgSettings.mockReset();
+  orgSettings.mockResolvedValue({ ok: true, val: FEATURES_OFF });
 });
 
 describe('sandboxConfig', () => {
@@ -299,12 +320,13 @@ describe('sbRunScript', () => {
     fetchSpy?.mockRestore();
   });
 
-  it('is offered only where the worker is configured and the flag is set', () => {
-    expect(sandboxScriptsEnabled()).toBe(false);
-    process.env.SANDBOX_SCRIPTS_ENABLED = 'true';
-    expect(sandboxScriptsEnabled()).toBe(true);
+  it('is offered only where the worker is configured and the org has scripts on', async () => {
+    await expect(sandboxScriptsEnabled(TARGET.tenantId)).resolves.toBe(false);
+    orgHas({ sandboxScriptsEnabled: true });
+    await expect(sandboxScriptsEnabled(TARGET.tenantId)).resolves.toBe(true);
+    expect(orgSettings).toHaveBeenCalledWith(TARGET.tenantId);
     delete process.env.SANDBOX_WORKER_API_KEY;
-    expect(sandboxScriptsEnabled()).toBe(false);
+    await expect(sandboxScriptsEnabled(TARGET.tenantId)).resolves.toBe(false);
   });
 
   it('POSTs to /v1/scripts/run with the target merged in and reads the outcome back', async () => {
@@ -847,16 +869,24 @@ describe('secrets', () => {
 });
 
 describe('sandboxBrowserEnabled', () => {
-  it('needs both the worker config and the flag', async () => {
-    const { sandboxBrowserEnabled } = await import('./index');
-    expect(sandboxBrowserEnabled()).toBe(false);
-    process.env.SANDBOX_BROWSER_ENABLED = 'true';
-    expect(sandboxBrowserEnabled()).toBe(true);
-    process.env.SANDBOX_BROWSER_ENABLED = 'no';
-    expect(sandboxBrowserEnabled()).toBe(false);
-    process.env.SANDBOX_BROWSER_ENABLED = '1';
+  it("needs both the worker config and the org's switch", async () => {
+    const { sandboxBrowserEnabled, sandboxServicesEnabled } = await import('./index');
+    await expect(sandboxBrowserEnabled(TARGET.tenantId)).resolves.toBe(false);
+    orgHas({ sandboxBrowserEnabled: true });
+    await expect(sandboxBrowserEnabled(TARGET.tenantId)).resolves.toBe(true);
+    // A settings read that failed opens nothing.
+    orgSettings.mockResolvedValue({ ok: false, err: 'DB_ERROR' } as never);
+    await expect(sandboxBrowserEnabled(TARGET.tenantId)).resolves.toBe(false);
+    orgHas({ sandboxBrowserEnabled: true });
     delete process.env.SANDBOX_WORKER_URL;
-    expect(sandboxBrowserEnabled()).toBe(false);
+    await expect(sandboxBrowserEnabled(TARGET.tenantId)).resolves.toBe(false);
+    expect(orgSettings).toHaveBeenCalledTimes(2);
+    // Services ride on workspaces: on alone, they are off.
+    process.env.SANDBOX_WORKER_URL = 'http://sandbox.internal:8092';
+    orgHas({ sandboxServicesEnabled: true });
+    await expect(sandboxServicesEnabled(TARGET.tenantId)).resolves.toBe(false);
+    orgHas({ sandboxServicesEnabled: true, sandboxWorkspacesEnabled: true });
+    await expect(sandboxServicesEnabled(TARGET.tenantId)).resolves.toBe(true);
   });
 });
 
@@ -1039,13 +1069,12 @@ describe('language server calls', () => {
 });
 
 describe('sandboxChartsEnabled', () => {
-  it('needs the worker configured AND the flag set', () => {
-    delete process.env.SANDBOX_CHARTS_ENABLED;
-    expect(sandboxChartsEnabled()).toBe(false);
-    process.env.SANDBOX_CHARTS_ENABLED = 'true';
-    expect(sandboxChartsEnabled()).toBe(true);
+  it("needs the worker configured AND the org's switch on", async () => {
+    await expect(sandboxChartsEnabled(TARGET.tenantId)).resolves.toBe(false);
+    orgHas({ sandboxChartsEnabled: true });
+    await expect(sandboxChartsEnabled(TARGET.tenantId)).resolves.toBe(true);
     delete process.env.SANDBOX_WORKER_URL;
-    expect(sandboxChartsEnabled()).toBe(false);
+    await expect(sandboxChartsEnabled(TARGET.tenantId)).resolves.toBe(false);
   });
 });
 

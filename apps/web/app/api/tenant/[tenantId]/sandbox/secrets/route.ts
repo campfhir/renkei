@@ -37,7 +37,8 @@ export async function GET(
   const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!sandboxBrowserEnabled()) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled(tenantId)))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const listed = await sbSecretsList({ tenantId, subject: session.subject });
   if (!listed.ok) {
@@ -54,7 +55,8 @@ export async function POST(
   const { tenantId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!sandboxBrowserEnabled()) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled(tenantId)))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body)) {

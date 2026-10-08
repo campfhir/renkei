@@ -308,6 +308,8 @@ export async function resolveConnectorAvailability(
   // The sandbox has no external account to grant — it's Renkei's own
   // scratch space — so "available" just means this deployment runs the
   // worker at all (a deployment-level env check, not a per-caller lookup).
+  // Which of the worker's optional capabilities register on top is the
+  // org's choice, read per registration (registerSandboxTools).
   const sandboxAvailable = sandboxWorkerConfigured();
 
   // Web search is provisioned org-wide, the embeddings/knowledge shape: an
@@ -758,7 +760,10 @@ export async function registerRenkeiTools(
     // No scope gate and no per-caller grant to check: every signed-in
     // caller on a deployment that runs worker-sandbox gets the same
     // scratch space, scoped to their own (tenantId, subject).
-    registerSandboxTools(withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR), context);
+    await registerSandboxTools(
+      withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR),
+      context
+    );
   }
   if (webSearchAvailable) {
     // No scope gate and no per-caller grant: one org-wide deployment and

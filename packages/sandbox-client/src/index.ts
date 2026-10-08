@@ -11,15 +11,18 @@
  *
  * Configuration: SANDBOX_WORKER_URL + SANDBOX_WORKER_API_KEY. Both
  * absent-or-set-together; a missing pair means every operation answers
- * 'unconfigured' — the sandbox is down, never open. The browser verbs
- * (`sbBrowser*`) additionally need SANDBOX_BROWSER_ENABLED on the web side
- * so the sandbox_browser_* tools register only where the worker actually
- * runs a browser — `sandboxBrowserEnabled()` is that check.
+ * 'unconfigured' — the sandbox is down, never open. The worker's optional
+ * capabilities (the browser verbs, charts, workspaces, services, scripts)
+ * are additionally each an ORG switch in tenant_settings, so their tools
+ * register only for an org that turned them on — `sandboxBrowserEnabled`
+ * and its siblings below are that check, per tenant.
  *
  * Errors keep the worker's tag + message so each surface phrases its own
  * refusals; `clientFailure` gives callers one shared status+string mapping
  * so a person and a model hear the same answer.
  */
+
+import { getOrgSettings } from '@renkei/settings';
 
 export interface WireSandboxFile {
   id: string;
@@ -69,55 +72,59 @@ export function sandboxConfig(): { url: string; key: string } | null {
 }
 
 /**
- * Whether this deployment offers the sandbox browser: the worker must be
- * configured AND SANDBOX_BROWSER_ENABLED set (the same flag the worker
- * reads to launch one). Off unless said otherwise — closed, never open.
+ * The worker's optional capabilities, as THIS org may use them: the
+ * worker must be configured (SANDBOX_WORKER_URL and its key — process
+ * wiring, which stays in the environment) AND the org's own switch must
+ * be on (Organization → Settings, stored in tenant_settings). Off unless
+ * said otherwise — closed, never open. The worker builds whatever it has
+ * the means for regardless and answers 503 for what it lacks, so an org's
+ * switch is only ever as open as the deployment.
+ *
+ * Async and per-tenant where these used to be synchronous reads of
+ * SANDBOX_*_ENABLED: a feature is policy, and policy is data (RENKEI.md
+ * Decision #19), not a process flag that takes a redeploy to flip.
  */
-export function sandboxBrowserEnabled(): boolean {
+type SandboxFeature =
+  | 'sandboxBrowserEnabled'
+  | 'sandboxChartsEnabled'
+  | 'sandboxWorkspacesEnabled'
+  | 'sandboxServicesEnabled'
+  | 'sandboxScriptsEnabled';
+
+async function featureOn(tenantId: string, feature: SandboxFeature): Promise<boolean> {
   if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_BROWSER_ENABLED ?? '').trim());
+  const settings = await getOrgSettings(tenantId);
+  // A settings read that failed opens nothing.
+  return settings.ok ? settings.val[feature] : false;
+}
+
+/** The headless browser behind the sandbox_browser_* tools. */
+export function sandboxBrowserEnabled(tenantId: string): Promise<boolean> {
+  return featureOn(tenantId, 'sandboxBrowserEnabled');
+}
+
+/** Charts from Mermaid text — sandbox_render_chart and the chat's chat_write_chart. */
+export function sandboxChartsEnabled(tenantId: string): Promise<boolean> {
+  return featureOn(tenantId, 'sandboxChartsEnabled');
+}
+
+/** Code workspaces: a repository cloned onto the worker, with the code_* tools. */
+export function sandboxWorkspacesEnabled(tenantId: string): Promise<boolean> {
+  return featureOn(tenantId, 'sandboxWorkspacesEnabled');
 }
 
 /**
- * Whether this deployment renders charts: the worker must be configured
- * AND SANDBOX_CHARTS_ENABLED set (the same flag the worker reads to
- * launch its renderer). Off unless said otherwise — closed, never open.
+ * Code project services — containers started beside a checkout. Needs
+ * workspaces: there is no checkout to serve otherwise.
  */
-export function sandboxChartsEnabled(): boolean {
-  if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_CHARTS_ENABLED ?? '').trim());
+export async function sandboxServicesEnabled(tenantId: string): Promise<boolean> {
+  if (!(await sandboxWorkspacesEnabled(tenantId))) return false;
+  return featureOn(tenantId, 'sandboxServicesEnabled');
 }
 
-/**
- * Whether this deployment offers code workspaces: the worker must be
- * configured AND SANDBOX_WORKSPACES_ENABLED set (the same flag the worker
- * reads to serve them). Off unless said otherwise — closed, never open.
- */
-export function sandboxWorkspacesEnabled(): boolean {
-  if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_WORKSPACES_ENABLED ?? '').trim());
-}
-
-/**
- * Whether this deployment offers code project services — containers
- * started beside a checkout: workspaces must be on AND
- * SANDBOX_SERVICES_ENABLED set (the same flag the worker reads to talk
- * to its Docker engine). Off unless said otherwise — closed, never open.
- */
-export function sandboxServicesEnabled(): boolean {
-  if (!sandboxWorkspacesEnabled()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SERVICES_ENABLED ?? '').trim());
-}
-
-/**
- * Whether this deployment runs a caller's Python over their staged files
- * (sandbox_run_python): the worker must be configured AND
- * SANDBOX_SCRIPTS_ENABLED set (the same flag the worker reads to serve
- * it). Off unless said otherwise — closed, never open.
- */
-export function sandboxScriptsEnabled(): boolean {
-  if (!sandboxConfig()) return false;
-  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SCRIPTS_ENABLED ?? '').trim());
+/** A caller's Python over their own staged files (sandbox_run_python). */
+export function sandboxScriptsEnabled(tenantId: string): Promise<boolean> {
+  return featureOn(tenantId, 'sandboxScriptsEnabled');
 }
 
 function unreachable(message: string): { ok: false; err: SandboxClientError } {
@@ -479,7 +486,7 @@ export function sbBrowserBack(
 /**
  * One step of a sandbox_browser_run, as the wire carries it — the same
  * shape @renkei/connector-sandbox's `BrowserStep` validates on the worker,
- * spelled out here so this dependency-free package needs no import for it.
+ * spelled out here so this package needs no import for it.
  */
 export type WireBrowserStep =
   | { kind: 'navigate'; url: string }

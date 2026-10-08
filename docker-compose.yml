@@ -43,11 +43,9 @@ services:
       ADMANAGER_WORKER_API_KEY: ${ADMANAGER_WORKER_API_KEY:-renkei-dev-admanager-key}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
-      # On in dev so the sandbox_browser_* tools are there to try; must
-      # match worker-sandbox's setting below. Same for the code workspaces.
-      SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
-      SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
-      SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-false}
+      # The browser, charts, code projects, services and scripts the
+      # worker offers are switched on per organization under Organization
+      # → Settings → Sandbox once the stack is up — off until then.
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.
       RENKEI_WEB_INTERNAL_URL: http://127.0.0.1:3000
@@ -292,8 +290,8 @@ services:
   # SANDBOX_WORKER_URL with the shared bearer key; the dev default below
   # keeps the stack turnkey — export SANDBOX_WORKER_API_KEY to override
   # both sides at once. The image also carries the headless Chromium behind
-  # the sandbox_browser_* tools; SANDBOX_BROWSER_ENABLED turns it on here
-  # and registers the tools in the app (same variable on both).
+  # the sandbox_browser_* tools, always launched on first use; an
+  # organization switches the tools on under Settings → Sandbox.
   worker-sandbox:
     build:
       context: .
@@ -308,18 +306,15 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
-      SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
-      # Code workspaces (docs/sandbox-workspaces-design.md): on by default
-      # in the dev stack, same variable on both sides. The env-secret key
-      # defaults to the dev TOKEN_ENCRYPTION_KEY fallback inside the worker.
-      SANDBOX_WORKSPACES_ENABLED: ${SANDBOX_WORKSPACES_ENABLED:-true}
+      # Code workspaces (docs/sandbox-workspaces-design.md) are always
+      # served; the env-secret key defaults to the dev TOKEN_ENCRYPTION_KEY
+      # fallback inside the worker.
       SANDBOX_ENV_SECRETS_KEY: ${SANDBOX_ENV_SECRETS_KEY:-}
       # Code project services — containers beside a checkout from the
-      # org's allowed images — need the engine socket below; off unless
-      # SANDBOX_SERVICES_ENABLED=true is exported (same variable on the
-      # app service). SANDBOX_CONTAINER_ID is this container's own name,
-      # so the worker can join the services network it creates.
-      SANDBOX_SERVICES_ENABLED: ${SANDBOX_SERVICES_ENABLED:-false}
+      # org's allowed images — need the engine socket below, and are
+      # unavailable until it is mounted. SANDBOX_CONTAINER_ID is this
+      # container's own name, so the worker can join the services network
+      # it creates.
       SANDBOX_CONTAINER_ID: renkei-worker-sandbox
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=1024

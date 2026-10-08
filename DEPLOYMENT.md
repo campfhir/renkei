@@ -211,11 +211,19 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   8092). Without them the `sandbox_*` tools simply don't register — closed,
   never open, same as the other two. Staged files expire on a fixed TTL and
   a per-caller quota regardless of whether anything ever deletes them
-  explicitly. The image also bakes in a headless Chromium for the
-  `sandbox_browser_*` tools (agents opening and interacting with web
-  pages): set `SANDBOX_BROWSER_ENABLED=true` in `.env` — read by BOTH the
-  web app (to register the tools) and this worker (to launch the browser,
-  lazily on first use) — to turn it on; unset, the tools don't exist.
+  explicitly. **The worker's optional capabilities — the browser, charts,
+  code projects, code project services and scripts — are switched on per
+  organization** by an operator under Organization → Settings → Sandbox,
+  all off by default. They used to be `SANDBOX_*_ENABLED` flags in `.env`
+  read by both the web app and the worker; the `migrate` service (which
+  loads the same `.env`) carries a deployment's flags into every existing
+  org's settings once, on the upgrade that introduces the switches
+  (migration 133), after which the flags are inert and can be removed. The
+  worker itself builds every capability it has the means for and answers
+  "unavailable" for the rest, saying why in its boot log — so an org's
+  switch is only ever as open as the deployment. The image bakes in a
+  headless Chromium for the `sandbox_browser_*` tools (agents opening and
+  interacting with web pages), launched lazily on first use.
   Chromium never gets direct network access: every connection goes through
   the worker's own egress proxy, which refuses private and internal
   addresses, so the browser cannot reach the other compose services.
@@ -223,11 +231,10 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   binary. The same Chromium draws **charts** — Mermaid text from the model
   (a bar or line chart, a pie, a Gantt plan, a flowchart) rendered to a
   PNG, an SVG or a PDF behind `sandbox_render_chart` and the chat's
-  `chat_write_chart`: set `SANDBOX_CHARTS_ENABLED=true` in `.env`, again
-  read by BOTH sides, independent of the browser flag (a chart page has
-  no network at all). The worker refuses to start with the flag set and
-  no Mermaid bundle installed; `SANDBOX_MERMAID_BUNDLE` points at one
-  elsewhere. Memory: a busy browser session runs 300–500MB (at most eight at
+  `chat_write_chart` — the Charts switch, independent of the browser's
+  (a chart page has no network at all). Charts are unavailable on a
+  worker with no Mermaid bundle installed; `SANDBOX_MERMAID_BUNDLE` points
+  at one elsewhere. Memory: a busy browser session runs 300–500MB (at most eight at
   once), so both compose files give this service a 1GB reservation, a
   `SANDBOX_WORKER_MEMORY` limit (default `4g` — raise it in `.env` for a
   deployment that drives many sessions), a 1GB `/dev/shm` (Docker's 64MB
@@ -245,12 +252,13 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   owner, so every replica can type it and a restart does not lock it;
   without either key it lives in this worker's memory and a restart locks
   every secret until its owner unlocks it again. **Code projects** (`docs/sandbox-workspaces-design.md`):
-  set `SANDBOX_WORKSPACES_ENABLED=true` in `.env` — again read by BOTH the
-  web app (the Code section and the `code_*` tools its chats get) and
-  this worker — to let people make a code project from one of their
-  Bitbucket or GitHub repositories, paste its `.env`, and have the
-  project's chats work in it: read, edit, run the project's own
-  commands, commit, push.
+  the Code projects switch lets an org's people make a code project from
+  one of their Bitbucket or GitHub repositories, paste its `.env`, and
+  have the project's chats work in it: read, edit, run the project's own
+  commands, commit, push — the Code section and the `code_*` tools appear
+  for that org when it is on. The worker always serves workspaces, and
+  always runs as root for it, so every caller's commands can be dropped
+  to that caller's own uid (`docker/sandbox-entrypoint.sh`).
   **Language servers for the code pane** (`docs/code-editor-design.md`
   § Language servers): the sandbox image also carries a language server
   per common language — TypeScript/JavaScript (typescript-language-server),
@@ -317,12 +325,12 @@ DESC` says which server to add next.
   Entrypoint: `pnpm --filter @renkei/worker-sandbox start`.
 
 **Code project services** (`docs/sandbox-workspaces-design.md`,
-"Services"): with workspaces on, `SANDBOX_SERVICES_ENABLED=true` in
-`.env` — read by BOTH the web app (the `code_service_*` tools a project's
-chats get, and the Organization → Code services page) and this worker —
-lets a project's chat start a container beside its checkout (Postgres,
-Redis, a broker) for the project's tests, from the images the
-organization allows. The worker needs a Docker engine for that:
+"Services"): with code projects on, the Code project services switch
+(the `code_service_*` tools a project's chats get, and the Organization →
+Code services page) lets a project's chat start a container beside its
+checkout (Postgres, Redis, a broker) for the project's tests, from the
+images the organization allows. The worker needs a Docker engine for
+that, and leaves services unavailable until one answers at boot:
 uncomment the `/var/run/docker.sock` mount on `worker-sandbox` in
 `docker-compose.yaml`, or run a socket proxy (docker-socket-proxy with
 `CONTAINERS`, `IMAGES`, `NETWORKS` and `POST` allowed and nothing else)
@@ -354,17 +362,17 @@ this worker under `SANDBOX_ENV_SECRETS_KEY` (else `TOKEN_ENCRYPTION_KEY`),
 the same key as the environment secrets, and never shown again.
 
 **Scripts over staged files** (`docs/sandbox-connector-design.md`,
-"`sandbox_run_python`"): set `SANDBOX_SCRIPTS_ENABLED=true` in `.env` —
-read by BOTH the web app (which then registers `sandbox_run_python` in
-every chat with a scratch space) and this worker — to let a chat run
-Python it wrote over copies of the person's own staged files: match two
-spreadsheets by a key column, filter or total thousands of rows, convert
-formats, with what the script writes staged back under the same quota as
-any other file. Independent of workspaces (no checkout is involved), but
-with the same arrangement for who runs it: with the flag set the
-entrypoint keeps the worker root so each run is dropped to its caller's
-own uid, and — where the kernel lets this container make a network
-namespace — started with no network at all. Docker's default profile
+"`sandbox_run_python`"): the Scripts over staged files switch registers
+`sandbox_run_python` in every chat with a scratch space, letting a chat
+run Python it wrote over copies of the person's own staged files: match
+two spreadsheets by a key column, filter or total thousands of rows,
+convert formats, with what the script writes staged back under the same
+quota as any other file. Independent of workspaces (no checkout is
+involved), unavailable on a worker with no Python (`SANDBOX_PYTHON`),
+and with the same arrangement for who runs it: the worker is root so
+each run is dropped to its caller's own uid, and — where the kernel lets
+this container make a network namespace — started with no network at
+all. Docker's default profile
 withholds that (`unshare` needs `CAP_SYS_ADMIN`); the worker says so at
 boot and in every result, and a deployment that wants scripts fully
 offline adds `cap_add: [SYS_ADMIN]` to `worker-sandbox` in compose,

@@ -48,7 +48,7 @@ import type { ServiceTarget } from './service-store';
 
 export interface ServiceHandlerDeps {
   db: Kysely<DB>;
-  /** The manager, when SANDBOX_SERVICES_ENABLED and the engine answered at boot; null answers every verb 503. */
+  /** The manager, when the Docker engine answered at boot; null answers every verb 503. */
   manager: ServiceManager | null;
 }
 

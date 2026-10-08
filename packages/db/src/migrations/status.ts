@@ -162,6 +162,7 @@ export const EXPECTED_MIGRATIONS = [
   '130-chat-queued-sends',
   '131-sandbox-size-requests',
   '132-image-usage',
+  '133-sandbox-feature-settings',
 ];
 
 export interface MigrationStatus {

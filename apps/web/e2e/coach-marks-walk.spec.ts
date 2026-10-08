@@ -95,8 +95,8 @@ const WALKS: Record<string, Walk> = {
   'chat-permission': { path: `/${E2E_SLUG}/chat/new`, spotlight: false, settle: THREAD },
   project: { path: `/${E2E_SLUG}/chat/projects/${WALK_PROJECT_ID}`, spotlight: true },
   'prompt-library': { path: `/${E2E_SLUG}/chat/prompts/${WALK_LIBRARY_ID}`, spotlight: true },
-  // Code workspaces are off in this environment (SANDBOX_WORKSPACES_ENABLED
-  // is unset for the e2e server): the index shows its notice and has no
+  // Code projects are off for the e2e org (the sandbox switches in
+  // Organization → Settings default off): the index shows its notice and has no
   // New code project link, and /code/new sends the visitor back to /code.
   code: { path: `/${E2E_SLUG}/code`, spotlight: false },
   'code-new': { path: `/${E2E_SLUG}/code`, spotlight: false },

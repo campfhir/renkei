@@ -113,14 +113,17 @@ function filenameOfUrl(url: string): string {
 
 const TEXT_TYPES = /^(text\/|application\/(json|xml|x-yaml|yaml|javascript|ld\+json))/i;
 
-export function registerSandboxTools(server: McpServer, context: MCPToolContext): void {
-  // The browser verbs register only where the worker actually runs one
-  // (SANDBOX_BROWSER_ENABLED on both sides) — see ./browser.ts.
-  if (sandboxBrowserEnabled()) registerSandboxBrowserTools(server, context);
-  // Likewise the chart renderer (SANDBOX_CHARTS_ENABLED on both sides) — see ./charts.ts.
-  if (sandboxChartsEnabled()) registerSandboxChartTools(server, context);
-  // And scripts over staged files (SANDBOX_SCRIPTS_ENABLED on both sides) — see ./scripts.ts.
-  if (sandboxScriptsEnabled()) registerSandboxScriptTools(server, context);
+export async function registerSandboxTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // The browser verbs register only where the org has the browser on
+  // (Organization → Settings) and the worker is configured — see ./browser.ts.
+  if (await sandboxBrowserEnabled(context.tenantId)) registerSandboxBrowserTools(server, context);
+  // Likewise the chart renderer — see ./charts.ts.
+  if (await sandboxChartsEnabled(context.tenantId)) registerSandboxChartTools(server, context);
+  // And scripts over staged files — see ./scripts.ts.
+  if (await sandboxScriptsEnabled(context.tenantId)) registerSandboxScriptTools(server, context);
 
   server.registerTool(
     'sandbox_download_url',

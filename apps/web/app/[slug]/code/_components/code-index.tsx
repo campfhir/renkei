@@ -41,15 +41,15 @@ export default function CodeIndex({
       </header>
       <div className="mx-auto max-w-3xl space-y-6 p-4">
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          A code project is a repository from Bitbucket or GitHub, cloned into the sandbox, with
-          the environment its commands need. Chats inside it can read and change the code, run the
+          A code project is a repository from Bitbucket or GitHub, cloned into the sandbox, with the
+          environment its commands need. Chats inside it can read and change the code, run the
           project’s own tests and builds, commit, and push a branch for a pull request — with Jira
           and your other connectors beside them.
         </p>
         {!enabled ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-            Code workspaces are not enabled on this deployment. An operator turns them on with
-            SANDBOX_WORKSPACES_ENABLED on the web app and the sandbox worker.
+            Code projects are not switched on for this organization. An operator turns them on under
+            Organization → Settings → Sandbox.
           </p>
         ) : !canCreate && accessNotice ? (
           <p

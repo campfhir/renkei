@@ -39,14 +39,14 @@ interface Registered {
   handler: Handler;
 }
 
-function collect(context: MCPToolContext): Map<string, Registered> {
+async function collect(context: MCPToolContext): Promise<Map<string, Registered>> {
   const tools = new Map<string, Registered>();
   const server = {
     registerTool: (name: string, config: Registered['config'], handler: Handler) => {
       tools.set(name, { config, handler });
     },
   } as unknown as McpServer;
-  registerSandboxTools(server, context);
+  await registerSandboxTools(server, context);
   return tools;
 }
 
@@ -68,13 +68,13 @@ const STAGED = {
   expiresAt: '2026-09-05T00:00:00Z',
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
 });
 
 describe('sandbox_render_document', () => {
-  it('is an act tool', () => {
-    const tools = collect(context());
+  it('is an act tool', async () => {
+    const tools = await collect(context());
     expect(tools.get('sandbox_render_document')?.config.annotations?.readOnlyHint).toBe(false);
   });
 
@@ -83,7 +83,7 @@ describe('sandbox_render_document', () => {
       ok: true,
       val: { ...STAGED, filename: 'notes.md', contentType: 'text/markdown' },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'notes.md', content: '# Sprint notes\n\nDone.' });
@@ -104,7 +104,7 @@ describe('sandbox_render_document', () => {
 
   it('renders a document format from Markdown before staging it', async () => {
     client.sbWriteFile.mockResolvedValue({ ok: true, val: STAGED });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools.get('sandbox_render_document')!.handler({
       filename: 'brief.docx',
       content: '# Sprint review\n\n- Item one\n- Item two\n',
@@ -127,7 +127,7 @@ describe('sandbox_render_document', () => {
       ok: true,
       val: { ...STAGED, filename: 'memo.pdf', contentType: 'application/pdf' },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'memo.pdf', content: '# 連携\n\nLinkage.' });
@@ -137,7 +137,7 @@ describe('sandbox_render_document', () => {
   });
 
   it('refuses a format nothing here can produce, without staging anything', async () => {
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'report.xls', content: 'a,b' });
@@ -150,7 +150,7 @@ describe('sandbox_render_document', () => {
   });
 
   it('refuses a path or an empty name before rendering or staging anything', async () => {
-    const tools = collect(context());
+    const tools = await collect(context());
     for (const filename of ['../etc/passwd', 'a/b.csv', 'a\\b.csv', '', '..']) {
       const result = await tools
         .get('sandbox_render_document')!
@@ -165,7 +165,7 @@ describe('sandbox_render_document', () => {
       ok: false,
       err: { kind: 'op', type: 'quota_exceeded', message: 'scratch space is full' },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'notes.txt', content: 'hi' });
@@ -175,7 +175,7 @@ describe('sandbox_render_document', () => {
   });
 
   it('refuses without a signed-in identity before touching the worker', async () => {
-    const tools = collect(context(''));
+    const tools = await collect(context(''));
     const result = await tools
       .get('sandbox_render_document')!
       .handler({ filename: 'notes.txt', content: 'hi' });

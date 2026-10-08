@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@renkei/settings": "workspace:*"
+  },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^24",

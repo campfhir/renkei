@@ -15,37 +15,41 @@
  *   SANDBOX_WORKER_PORT    — listen port, default 8092.
  *   SANDBOX_DATA_DIR       — where staged files live on disk, default /data.
  *   DATABASE_URL           — the shared Postgres, for file metadata.
- *   SANDBOX_BROWSER_ENABLED — `true` to run the headless browser behind the
- *     sandbox_browser_* tools (see browser.ts); anything else, or unset,
- *     answers every browser verb "not enabled" — closed, never open.
+ *
+ * Which OPTIONAL capabilities this worker offers is not an environment
+ * flag (there used to be a SANDBOX_*_ENABLED per capability, read by this
+ * process and the web app alike). Two things decide it now, each its own
+ * kind of fact:
+ *   - what this container has the MEANS for — a Chromium for the browser
+ *     and charts (always, baked into the image), a Mermaid bundle for
+ *     charts, a Python for scripts, a Docker engine for services — is
+ *     found out at boot, below, and a capability with the means is built;
+ *     one without answers its verbs 503, with the reason in the boot log;
+ *   - whether an ORG may use one is that org's switch (Organization →
+ *     Settings → Sandbox, in tenant_settings), read by the web app, which
+ *     registers the tools and the Code section only where it is on and
+ *     never calls here for a capability the org has not switched on.
+ * So this process always runs as root (docker/sandbox-entrypoint.sh):
+ * workspaces and scripts are always served, and each caller's commands
+ * are dropped to that caller's own uid — without root it still works,
+ * unisolated, and says so below.
+ *
  *   SANDBOX_BROWSER_EXECUTABLE — optional Chromium binary; by default
  *     playwright-core resolves its own installed headless shell.
- *   SANDBOX_CHARTS_ENABLED — `true` to render charts (Mermaid text to an
- *     SVG, PNG or PDF — see charts.ts) in that same Chromium, behind
- *     sandbox_render_chart and the chat's chat_write_chart; unset answers
- *     every chart verb "not enabled". Independent of the browser flag: a
- *     chart page has no network at all.
  *   SANDBOX_MERMAID_BUNDLE — optional path to Mermaid's browser bundle;
- *     by default the one this package depends on.
- *   SANDBOX_WORKSPACES_ENABLED — `true` to serve code workspaces (a
- *     repository cloned here, commands run in it — see workspaces.ts);
- *     unset answers every workspace verb "not enabled". When enabled the
- *     process should run as root so each caller's commands can be dropped
- *     to their own uid (docker/sandbox-entrypoint.sh does exactly that);
- *     without root it still works, unisolated, and says so below.
+ *     by default the one this package depends on. Without one, charts
+ *     are unavailable.
  *   SANDBOX_WORKSPACES_DIR — where checkouts live, default /workspaces
  *     (its own volume, apart from the staged-file disk).
  *   SANDBOX_ENV_SECRETS_KEY — seals workspace environment secrets; falls
  *     back to TOKEN_ENCRYPTION_KEY, and without either the env verbs are
  *     closed.
- *   SANDBOX_SERVICES_ENABLED — `true` to let a code project start
- *     containers (Postgres, Redis, ...) beside its checkout from the
- *     images the organization allows (services.ts); needs workspaces on
- *     and a Docker engine to talk to. Unset answers every service verb
- *     "not enabled".
- *   SANDBOX_DOCKER_HOST — where that engine is: `unix:///var/run/docker.sock`
+ *   SANDBOX_DOCKER_HOST — where the Docker engine for code project
+ *     services (containers beside a checkout from the images the
+ *     organization allows, services.ts) is: `unix:///var/run/docker.sock`
  *     (the default; compose mounts it) or `tcp://host:port` for a socket
- *     proxy in front of it.
+ *     proxy in front of it. An engine that does not answer at boot
+ *     leaves services unavailable.
  *   SANDBOX_SERVICES_NETWORK — the internal Docker network services are
  *     created on and this worker joins, default `renkei-sandbox-services`.
  *   SANDBOX_CONTAINER_ID — this worker's own container, for joining that
@@ -54,18 +58,14 @@
  *     services are reached at their bridge address directly.
  *   SANDBOX_SERVICE_MEMORY — each service container's memory ceiling,
  *     default 1g; SANDBOX_SERVICE_PIDS its process ceiling, default 512.
- *   SANDBOX_SCRIPTS_ENABLED — `true` to run a caller's Python over their
- *     own staged files (scripts.ts) behind sandbox_run_python; unset
- *     answers the script verb "not enabled". As with workspaces, the
- *     process should run as root so each run can be dropped to its
- *     caller's own uid — and, where the kernel allows this container to
- *     unshare, started with no network at all; without root it still
- *     works, unisolated, and says so below.
- *   SANDBOX_RUNS_DIR — where a run's throwaway directory is made,
- *     default /runs (no volume: nothing here outlives its run).
+ *   SANDBOX_RUNS_DIR — where a script run's throwaway directory is made
+ *     (a caller's Python over their own staged files, scripts.ts, behind
+ *     sandbox_run_python — run as their own uid and, where the kernel
+ *     allows this container to unshare, with no network at all), default
+ *     /runs (no volume: nothing here outlives its run).
  *   SANDBOX_PYTHON — the interpreter; by default the image's own
  *     environment with the data libraries (/opt/sandbox-python), else
- *     the `python3` on the PATH.
+ *     the `python3` on the PATH. Without one, scripts are unavailable.
  *   SANDBOX_SCRIPT_MEMORY — a run's address-space ceiling, default 2g.
  */
 
@@ -98,10 +98,6 @@ import { watchLogLevel } from '@renkei/settings';
  * own wait and the browser's close.
  */
 const SHUTDOWN_DEADLINE_MS = 25_000;
-
-function envFlag(name: string): boolean {
-  return /^(1|true|yes|on)$/i.test((process.env[name] ?? '').trim());
-}
 
 function fatal(message: string): never {
   console.error(`FATAL [worker-sandbox]: ${message}`);
@@ -171,77 +167,63 @@ async function main(): Promise<void> {
 
   await ensureDataRoot();
 
-  const workspacesEnabled = envFlag('SANDBOX_WORKSPACES_ENABLED');
-  const scriptsEnabled = envFlag('SANDBOX_SCRIPTS_ENABLED');
-  if (workspacesEnabled || scriptsEnabled) {
-    // Nothing this process creates from here on is readable by the uids
-    // a caller's commands run as: a staged file, a log, a lock.
-    process.umask(0o077);
-    const what =
-      workspacesEnabled && scriptsEnabled
-        ? 'workspaces and scripts are'
-        : workspacesEnabled
-          ? 'workspaces are'
-          : 'scripts are';
-    if (!canIsolateByUid()) {
-      logger.warn(
-        `${what} enabled but this process is not root: commands run as the worker user with NO per-caller isolation — fine for one developer, wrong for a shared deployment`,
-        { component: 'worker-sandbox/workspaces' }
-      );
-    } else {
-      // Root only so that each caller's commands can be dropped to their
-      // own uid; if that drop cannot happen, the alternative is running
-      // every caller's commands as root, which is not an option — so this
-      // is fatal here, with the cause, rather than a failed spawn on
-      // every command later.
-      const problem = await verifyUidIsolation();
-      if (problem) {
-        fatal(
-          `${what} enabled and this process is root, but a command cannot be dropped to a caller's uid: ${problem}. ` +
-            'The sandbox image (docker/Dockerfile, target sandbox) supplies setpriv from util-linux, and the container needs CAP_SETUID, CAP_SETGID and CAP_SETPCAP (Docker grants them by default).'
-        );
-      }
-    }
-  }
-  if (workspacesEnabled) {
-    await ensureWorkspacesRoot();
-    if (!envSecretsEnabled()) {
-      logger.warn(
-        'workspaces are enabled without SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY: environment secrets are closed',
-        { component: 'worker-sandbox/workspaces' }
+  // Workspaces and scripts are always served (whether an org may use
+  // them is its own switch, read by the web app — see the header), and
+  // both drop a caller's commands to that caller's own uid. So nothing
+  // this process creates from here on is readable by those uids: a
+  // staged file, a log, a lock.
+  process.umask(0o077);
+  if (!canIsolateByUid()) {
+    logger.warn(
+      'this process is not root: workspace commands and scripts run as the worker user with NO per-caller isolation — fine for one developer, wrong for a shared deployment',
+      { component: 'worker-sandbox/workspaces' }
+    );
+  } else {
+    // Root only so that each caller's commands can be dropped to their
+    // own uid; if that drop cannot happen, the alternative is running
+    // every caller's commands as root, which is not an option — so this
+    // is fatal here, with the cause, rather than a failed spawn on
+    // every command later.
+    const problem = await verifyUidIsolation();
+    if (problem) {
+      fatal(
+        `this process is root, but a command cannot be dropped to a caller's uid: ${problem}. ` +
+          'The sandbox image (docker/Dockerfile, target sandbox) supplies setpriv from util-linux, and the container needs CAP_SETUID, CAP_SETGID and CAP_SETPCAP (Docker grants them by default).'
       );
     }
-    // Which language servers the code pane can have here: the image
-    // installs them (docker/Dockerfile, target sandbox); a developer's
-    // machine has whichever are on the PATH. Said once, so an operator
-    // can see what a "no server for this language" in the pane means.
-    const servers = await probeLanguageServers();
-    logger.info('language servers for the code pane: {servers}', {
-      component: 'worker-sandbox/lsp',
-      servers: servers.length ? servers.join(', ') : 'none',
-    });
   }
+  await ensureWorkspacesRoot();
+  if (!envSecretsEnabled()) {
+    logger.warn(
+      'no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY: workspace environment secrets are closed',
+      { component: 'worker-sandbox/workspaces' }
+    );
+  }
+  // Which language servers the code pane can have here: the image
+  // installs them (docker/Dockerfile, target sandbox); a developer's
+  // machine has whichever are on the PATH. Said once, so an operator
+  // can see what a "no server for this language" in the pane means.
+  const servers = await probeLanguageServers();
+  logger.info('language servers for the code pane: {servers}', {
+    component: 'worker-sandbox/lsp',
+    servers: servers.length ? servers.join(', ') : 'none',
+  });
 
   // Code project services: containers beside a checkout, from the
-  // organization's allowed images. Only with workspaces (there is no
-  // checkout to serve otherwise), and only when the engine answers now
-  // — a socket that is not mounted would otherwise show up as a failed
-  // start on the first service anyone asks for.
+  // organization's allowed images — offered when the Docker engine
+  // answers now, and otherwise left unavailable with the reason logged
+  // once here rather than as a failed start on the first service anyone
+  // asks for. A deployment that has no engine to mount simply has no
+  // services; an org that switches them on anyway gets the 503.
   let services: ServiceManager | null = null;
-  if (envFlag('SANDBOX_SERVICES_ENABLED')) {
-    if (!workspacesEnabled) {
-      fatal(
-        'SANDBOX_SERVICES_ENABLED needs SANDBOX_WORKSPACES_ENABLED: services run beside a code project’s checkout.'
-      );
-    }
-    let engine: DockerClient;
-    let memoryBytes: number;
-    try {
-      engine = new DockerClient(parseDockerHost(process.env.SANDBOX_DOCKER_HOST));
-      memoryBytes = parseMemoryBytes(process.env.SANDBOX_SERVICE_MEMORY, 1_073_741_824);
-    } catch (error) {
-      fatal(error instanceof Error ? error.message : String(error));
-    }
+  const servicesUnavailable = (reason: string) =>
+    logger.info(
+      'code project services unavailable: {reason}. Mount the engine socket into this container (docker-compose.yaml, worker-sandbox) or point SANDBOX_DOCKER_HOST at a socket proxy to offer them.',
+      { component: 'worker-sandbox/services', reason }
+    );
+  try {
+    const engine = new DockerClient(parseDockerHost(process.env.SANDBOX_DOCKER_HOST));
+    const memoryBytes = parseMemoryBytes(process.env.SANDBOX_SERVICE_MEMORY, 1_073_741_824);
     const pidsLimit = Number(process.env.SANDBOX_SERVICE_PIDS ?? '512');
     if (!Number.isInteger(pidsLimit) || pidsLimit <= 0) {
       fatal(`SANDBOX_SERVICE_PIDS is not a usable count: ${process.env.SANDBOX_SERVICE_PIDS}`);
@@ -255,47 +237,42 @@ async function main(): Promise<void> {
       memoryBytes,
       pidsLimit,
     });
-    try {
-      const version = await manager.prepare();
-      logger.info(
-        'services enabled: Docker engine {version} (API {apiVersion}), this worker {placement}',
-        {
-          component: 'worker-sandbox/services',
-          version: version.version,
-          apiVersion: version.apiVersion,
-          placement: selfContainer
-            ? `is container ${selfContainer}`
-            : 'is not a container (services reached by bridge address)',
-        }
-      );
-    } catch (error) {
-      fatal(
-        `services are enabled but the Docker engine could not be prepared: ${error instanceof Error ? error.message : String(error)}. ` +
-          'Mount the engine socket into this container (docker-compose.yaml, worker-sandbox) or point SANDBOX_DOCKER_HOST at a socket proxy.'
-      );
-    }
+    const version = await manager.prepare();
+    logger.info(
+      'services available: Docker engine {version} (API {apiVersion}), this worker {placement}',
+      {
+        component: 'worker-sandbox/services',
+        version: version.version,
+        apiVersion: version.apiVersion,
+        placement: selfContainer
+          ? `is container ${selfContainer}`
+          : 'is not a container (services reached by bridge address)',
+      }
+    );
     services = manager;
+  } catch (error) {
+    servicesUnavailable(error instanceof Error ? error.message : String(error));
   }
 
   // Scripts over staged files: a caller's Python, run as their uid in a
   // throwaway directory with — where this container may unshare — no
   // network. The interpreter and its libraries are checked now, so a
-  // missing one is a boot failure with a cause rather than a traceback
-  // on the first script anyone runs.
+  // missing one reads as "unavailable" in the boot log rather than a
+  // traceback on the first script anyone runs.
   let scripts: ScriptRunner | null = null;
-  if (scriptsEnabled) {
-    const python = await resolvePython(process.env.SANDBOX_PYTHON);
-    if (!python) {
-      fatal(
-        'SANDBOX_SCRIPTS_ENABLED is set but no Python interpreter was found: the sandbox image (docker/Dockerfile, target sandbox) installs one at /opt/sandbox-python, or point SANDBOX_PYTHON at one.'
-      );
-    }
-    const probed = await probePython(python);
-    if (!probed) {
-      fatal(
-        `SANDBOX_SCRIPTS_ENABLED is set but ${python} does not run; point SANDBOX_PYTHON at a working interpreter.`
-      );
-    }
+  const python = await resolvePython(process.env.SANDBOX_PYTHON);
+  const probed = python ? await probePython(python) : null;
+  if (!python) {
+    logger.info(
+      'scripts unavailable: no Python interpreter was found. The sandbox image (docker/Dockerfile, target sandbox) installs one at /opt/sandbox-python; point SANDBOX_PYTHON at one to offer them.',
+      { component: 'worker-sandbox/scripts' }
+    );
+  } else if (!probed) {
+    logger.warn(
+      'scripts unavailable: {python} does not run; point SANDBOX_PYTHON at a working interpreter.',
+      { component: 'worker-sandbox/scripts', python }
+    );
+  } else {
     let memoryBytes: number;
     try {
       memoryBytes = scriptMemoryBytes(process.env.SANDBOX_SCRIPT_MEMORY);
@@ -319,7 +296,7 @@ async function main(): Promise<void> {
     });
     const removed = await runner.prepare();
     logger.info(
-      'scripts enabled: {python} {version} with {libraries}; network {network}; memory {memory} bytes per run{removed}',
+      'scripts available: {python} {version} with {libraries}; network {network}; memory {memory} bytes per run{removed}',
       {
         component: 'worker-sandbox/scripts',
         python,
@@ -354,30 +331,31 @@ async function main(): Promise<void> {
     );
   }
   const vault = new SecretVault({ store: secretKeys });
-  let browser: BrowserSessions | null = null;
-  if (envFlag('SANDBOX_BROWSER_ENABLED')) {
-    // Sessions are kept on the data disk between calls so a replica that
-    // did not open one can carry it on; sealed, so only with a key.
-    const state = createBrowserStateStore(getDataRoot());
-    if (!state) {
-      logger.warn(
-        'browser sessions live in this process only (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal them on disk): a call that lands on another replica, or after a restart, starts over',
-        { component: 'worker-sandbox/browser' }
-      );
-    }
-    browser = new BrowserSessions({ secrets: createSecretResolver(dbResult.val, vault), state });
+  // Sessions are kept on the data disk between calls so a replica that
+  // did not open one can carry it on; sealed, so only with a key.
+  const state = createBrowserStateStore(getDataRoot());
+  if (!state) {
+    logger.warn(
+      'browser sessions live in this process only (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal them on disk): a call that lands on another replica, or after a restart, starts over',
+      { component: 'worker-sandbox/browser' }
+    );
   }
+  const browser = new BrowserSessions({
+    secrets: createSecretResolver(dbResult.val, vault),
+    state,
+  });
 
   // Charts render in a Chromium of their own, launched on the first chart
   // and closed when idle — with no network at all, unlike the browser.
-  let charts: ChartRenderer | null = null;
-  if (envFlag('SANDBOX_CHARTS_ENABLED')) {
-    charts = new ChartRenderer();
-    if (!charts.mermaidBundle) {
-      fatal(
-        'SANDBOX_CHARTS_ENABLED is set but the Mermaid bundle was not found: install this package’s dependencies (mermaid) or point SANDBOX_MERMAID_BUNDLE at mermaid.min.js.'
-      );
-    }
+  // Offered when the Mermaid bundle is at hand; without it the chart
+  // verbs answer 503 and the boot log says why.
+  let charts: ChartRenderer | null = new ChartRenderer();
+  if (!charts.mermaidBundle) {
+    logger.warn(
+      'charts unavailable: the Mermaid bundle was not found. Install this package’s dependencies (mermaid) or point SANDBOX_MERMAID_BUNDLE at mermaid.min.js to offer them.',
+      { component: 'worker-sandbox/charts' }
+    );
+    charts = null;
   }
 
   const server = createSandboxServer({
@@ -386,29 +364,24 @@ async function main(): Promise<void> {
     browser,
     vault,
     charts,
-    workspaces: workspacesEnabled,
+    workspaces: true,
     services,
     scripts,
   });
   server.listen(port, '0.0.0.0', () => {
     logger.info(
-      'started {application} {version} on port {port} (browser {browser}, charts {charts}, workspaces {workspaces}, services {services}, scripts {scripts})',
+      'started {application} {version} on port {port} (browser available, charts {charts}, workspaces {workspaces}, services {services}, scripts {scripts}) — which an org may use is its own Settings → Sandbox',
       {
         component: 'worker-sandbox/server',
         port,
-        browser: browser ? 'enabled' : 'disabled',
-        charts: charts ? 'enabled' : 'disabled',
-        workspaces: workspacesEnabled
-          ? canIsolateByUid()
-            ? 'enabled, per-caller uids'
-            : 'enabled, UNISOLATED'
-          : 'disabled',
-        services: services ? 'enabled' : 'disabled',
+        charts: charts ? 'available' : 'unavailable',
+        workspaces: canIsolateByUid() ? 'available, per-caller uids' : 'available, UNISOLATED',
+        services: services ? 'available' : 'unavailable',
         scripts: scripts
           ? canIsolateByUid()
-            ? 'enabled, per-caller uids'
-            : 'enabled, UNISOLATED'
-          : 'disabled',
+            ? 'available, per-caller uids'
+            : 'available, UNISOLATED'
+          : 'unavailable',
       }
     );
   });

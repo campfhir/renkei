@@ -104,7 +104,7 @@ import { logger } from './logger';
 
 export interface WorkspaceHandlerDeps {
   db: Kysely<DB>;
-  /** Whether workspaces are enabled on this worker at all (SANDBOX_WORKSPACES_ENABLED). */
+  /** Whether workspaces are served on this worker at all (always, since the org switch moved to settings; tests turn it off). */
   enabled: boolean;
   /**
    * The variables the caller's running services add to a command

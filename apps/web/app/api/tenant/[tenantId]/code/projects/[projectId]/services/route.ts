@@ -43,7 +43,7 @@ export async function GET(
   if (!ready.ok) return ready.response;
   const summary = request.nextUrl.searchParams.get('view') === 'summary';
   const empty: ServicesView = { enabled: false, services: [], allowed: [] };
-  if (!sandboxServicesEnabled()) {
+  if (!(await sandboxServicesEnabled(tenantId))) {
     return NextResponse.json(summary ? summarizeServices(empty) : empty);
   }
   const target = codeProjectTarget(tenantId, projectId);
@@ -67,7 +67,7 @@ export async function POST(
   const { tenantId, projectId } = await params;
   const ready = await codeProjectContext(request, tenantId, projectId, { write: true });
   if (!ready.ok) return ready.response;
-  if (!sandboxServicesEnabled()) {
+  if (!(await sandboxServicesEnabled(tenantId))) {
     return jsonError(
       503,
       'unavailable',

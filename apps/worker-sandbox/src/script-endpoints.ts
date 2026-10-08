@@ -26,7 +26,7 @@ import { ScriptRunError, type ScriptRunner } from './scripts';
 
 export interface ScriptHandlerDeps {
   db: Kysely<DB>;
-  /** The runner, or null when SANDBOX_SCRIPTS_ENABLED is off. */
+  /** The runner, or null when the worker found no Python to run with. */
   runner: ScriptRunner | null;
 }
 

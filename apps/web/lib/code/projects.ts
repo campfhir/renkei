@@ -43,7 +43,7 @@ export async function startProjectClone(
   credential: WorkspaceGitCredential,
   options: { depth?: number } = {}
 ): Promise<CodeOutcome<WireWorkspace>> {
-  if (!sandboxWorkspacesEnabled()) {
+  if (!(await sandboxWorkspacesEnabled(project.tenantId))) {
     return {
       ok: false,
       status: 503,
@@ -77,7 +77,7 @@ export async function startProjectClone(
 
 /** The checkout as the worker sees it now, or null when there is none to see. */
 export async function projectWorkspace(project: ProjectRow): Promise<WireWorkspace | null> {
-  if (!project.workspaceId || !sandboxWorkspacesEnabled()) return null;
+  if (!project.workspaceId || !(await sandboxWorkspacesEnabled(project.tenantId))) return null;
   const got = await sbWorkspaceGet(
     codeProjectTarget(project.tenantId, project.id),
     project.workspaceId
@@ -86,7 +86,7 @@ export async function projectWorkspace(project: ProjectRow): Promise<WireWorkspa
 }
 
 export async function projectEnv(project: ProjectRow): Promise<WireEnvVariable[]> {
-  if (!sandboxWorkspacesEnabled()) return [];
+  if (!(await sandboxWorkspacesEnabled(project.tenantId))) return [];
   const listed = await sbEnvList(codeProjectTarget(project.tenantId, project.id));
   return listed.ok ? listed.val : [];
 }
@@ -101,7 +101,7 @@ export async function replaceProjectEnv(
   project: ProjectRow,
   dotenvText: string
 ): Promise<CodeOutcome<{ variables: WireEnvVariable[]; problems: string[] }>> {
-  if (!sandboxWorkspacesEnabled()) {
+  if (!(await sandboxWorkspacesEnabled(project.tenantId))) {
     return {
       ok: false,
       status: 503,
@@ -131,7 +131,7 @@ export async function deleteCodeProject(
   if (!project || project.ownerSubject !== ownerSubject) return false;
   const deleted = await deleteProject(db, tenantId, ownerSubject, projectId);
   if (!deleted) return false;
-  if (sandboxWorkspacesEnabled()) {
+  if (await sandboxWorkspacesEnabled(tenantId)) {
     const target = codeProjectTarget(tenantId, projectId);
     // Best effort, after the row: what the worker still holds expires on
     // its own if this does not reach it.

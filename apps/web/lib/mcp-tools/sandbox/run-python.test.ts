@@ -40,14 +40,14 @@ interface Registered {
   handler: Handler;
 }
 
-function collect(context: MCPToolContext): Map<string, Registered> {
+async function collect(context: MCPToolContext): Promise<Map<string, Registered>> {
   const tools = new Map<string, Registered>();
   const server = {
     registerTool: (name: string, config: Registered['config'], handler: Handler) => {
       tools.set(name, { config, handler });
     },
   } as unknown as McpServer;
-  registerSandboxTools(server, context);
+  await registerSandboxTools(server, context);
   return tools;
 }
 
@@ -95,21 +95,21 @@ function ran(overrides: Record<string, unknown> = {}) {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
 });
 
 describe('sandbox_run_python', () => {
-  it('is an act tool, registered only where scripts are enabled', () => {
-    expect(collect(context()).get('sandbox_run_python')?.config.annotations?.readOnlyHint).toBe(
-      false
-    );
+  it('is an act tool, registered only where scripts are enabled', async () => {
+    expect(
+      (await collect(context())).get('sandbox_run_python')?.config.annotations?.readOnlyHint
+    ).toBe(false);
     client.sandboxScriptsEnabled.mockReturnValueOnce(false);
-    expect(collect(context()).has('sandbox_run_python')).toBe(false);
+    expect((await collect(context())).has('sandbox_run_python')).toBe(false);
   });
 
-  it('tells the model where its files are and that there is no network', () => {
-    const description = collect(context()).get('sandbox_run_python')!.config.description;
+  it('tells the model where its files are and that there is no network', async () => {
+    const description = (await collect(context())).get('sandbox_run_python')!.config.description;
     expect(description).toContain('in/');
     expect(description).toContain('out/');
     expect(description).toContain('NO network');
@@ -117,13 +117,19 @@ describe('sandbox_run_python', () => {
   });
 
   it('refuses an empty script without asking the worker', async () => {
-    const result = await collect(context()).get('sandbox_run_python')!.handler({ code: '   ' });
+    const result = await (
+      await collect(context())
+    )
+      .get('sandbox_run_python')!
+      .handler({ code: '   ' });
     expect(result.isError).toBe(true);
     expect(client.sbRunScript).not.toHaveBeenCalled();
   });
 
   it('refuses without a signed-in identity', async () => {
-    const result = await collect(context(''))
+    const result = await (
+      await collect(context(''))
+    )
       .get('sandbox_run_python')!
       .handler({ code: 'print(1)' });
     expect(result.isError).toBe(true);
@@ -132,13 +138,11 @@ describe('sandbox_run_python', () => {
 
   it('passes the script, the chosen files and the timeout on, and renders the run', async () => {
     client.sbRunScript.mockResolvedValueOnce(ran());
-    const result = await collect(context())
-      .get('sandbox_run_python')!
-      .handler({
-        code: 'import pandas as pd\nprint("hi")',
-        files: [INPUT_ID],
-        timeoutSeconds: 120,
-      });
+    const result = await (await collect(context())).get('sandbox_run_python')!.handler({
+      code: 'import pandas as pd\nprint("hi")',
+      files: [INPUT_ID],
+      timeoutSeconds: 120,
+    });
     expect(client.sbRunScript).toHaveBeenCalledWith(
       { tenantId: 'tenant-1', subject: 'auth0|alice' },
       { code: 'import pandas as pd\nprint("hi")', files: [INPUT_ID], timeoutMs: 120_000 }
@@ -153,7 +157,11 @@ describe('sandbox_run_python', () => {
 
   it('omits files when none are chosen, so the worker copies in every staged file', async () => {
     client.sbRunScript.mockResolvedValueOnce(ran());
-    await collect(context()).get('sandbox_run_python')!.handler({ code: 'print(1)', files: [] });
+    await (
+      await collect(context())
+    )
+      .get('sandbox_run_python')!
+      .handler({ code: 'print(1)', files: [] });
     expect(client.sbRunScript.mock.calls[0]![1]).toEqual({ code: 'print(1)' });
   });
 
@@ -167,7 +175,11 @@ describe('sandbox_run_python', () => {
         skippedOutputs: [{ filename: 'partial.csv', reason: 'empty' }],
       })
     );
-    const result = await collect(context()).get('sandbox_run_python')!.handler({ code: 'x' });
+    const result = await (
+      await collect(context())
+    )
+      .get('sandbox_run_python')!
+      .handler({ code: 'x' });
     expect(result.isError).toBe(true);
     const text = result.content[0]!.text;
     expect(text).toContain('exit 1');
@@ -179,17 +191,17 @@ describe('sandbox_run_python', () => {
     client.sbRunScript.mockResolvedValueOnce(
       ran({ timedOut: true, exitCode: null, signal: 'SIGKILL' })
     );
-    let result = await collect(context()).get('sandbox_run_python')!.handler({ code: 'x' });
+    let result = await (await collect(context())).get('sandbox_run_python')!.handler({ code: 'x' });
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('TIMED OUT after 60s');
 
     client.sbRunScript.mockResolvedValueOnce(ran({ interrupted: true, exitCode: null }));
-    result = await collect(context()).get('sandbox_run_python')!.handler({ code: 'x' });
+    result = await (await collect(context())).get('sandbox_run_python')!.handler({ code: 'x' });
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('INTERRUPTED');
 
     client.sbRunScript.mockResolvedValueOnce(ran({ networkIsolated: false, uidIsolated: false }));
-    result = await collect(context()).get('sandbox_run_python')!.handler({ code: 'x' });
+    result = await (await collect(context())).get('sandbox_run_python')!.handler({ code: 'x' });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]!.text).toContain('could not isolate the network');
     expect(result.content[0]!.text).toContain('ran as its user');
@@ -205,7 +217,11 @@ describe('sandbox_run_python', () => {
         status: 429,
       },
     });
-    const result = await collect(context()).get('sandbox_run_python')!.handler({ code: 'x' });
+    const result = await (
+      await collect(context())
+    )
+      .get('sandbox_run_python')!
+      .handler({ code: 'x' });
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('already running');
   });

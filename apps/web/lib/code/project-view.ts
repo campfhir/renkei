@@ -101,7 +101,7 @@ export async function loadCodeProjectView(
         updatedAt: variable.updatedAt,
         lastUsedAt: variable.lastUsedAt,
       })),
-      enabled: sandboxWorkspacesEnabled(),
+      enabled: await sandboxWorkspacesEnabled(tenantId),
       readme: readmeResult,
       usage,
       sizeLimitBytes: limit.ok ? limit.val : WORKSPACE_DEFAULT_MAX_BYTES,

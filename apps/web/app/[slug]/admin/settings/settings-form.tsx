@@ -40,6 +40,11 @@ export interface EditableSettings {
   knowledgeKeywordMinChars: number;
   chatReplyPresenceWindowSeconds: number;
   sandboxWorkspaceMaxBytes: number;
+  sandboxBrowserEnabled: boolean;
+  sandboxChartsEnabled: boolean;
+  sandboxWorkspacesEnabled: boolean;
+  sandboxServicesEnabled: boolean;
+  sandboxScriptsEnabled: boolean;
 }
 
 const GB = 1_073_741_824;
@@ -399,7 +404,57 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         </Row>
       </Section>
 
-      <Section title="Code sandbox">
+      <Section title="Sandbox">
+        <Row
+          label="Browser"
+          hint="A headless browser agents and chats can open web pages in (the sandbox_browser_* tools), with logins supplied as browser secrets on the connectors page. The worker must run one; where it does not, the tools answer that they are unavailable."
+        >
+          <Toggle
+            on={values.sandboxBrowserEnabled}
+            onChange={(next) => set('sandboxBrowserEnabled', next)}
+            label="Browser"
+          />
+        </Row>
+        <Row
+          label="Charts"
+          hint="Charts and diagrams drawn from Mermaid text — a bar or line chart, a pie, a Gantt plan — behind sandbox_render_chart and the chat's chat_write_chart."
+        >
+          <Toggle
+            on={values.sandboxChartsEnabled}
+            onChange={(next) => set('sandboxChartsEnabled', next)}
+            label="Charts"
+          />
+        </Row>
+        <Row
+          label="Code projects"
+          hint="A repository from Bitbucket or GitHub cloned onto the sandbox, where a project's chats read, edit, run the project's own commands, commit and push. The Code section appears for everyone when this is on."
+        >
+          <Toggle
+            on={values.sandboxWorkspacesEnabled}
+            onChange={(next) => set('sandboxWorkspacesEnabled', next)}
+            label="Code projects"
+          />
+        </Row>
+        <Row
+          label="Code project services"
+          hint="Containers a code project's chat may start beside its checkout — a database, a cache — from the images allowed under Code services. Needs code projects on, and a Docker engine on the sandbox worker (see DEPLOYMENT.md)."
+        >
+          <Toggle
+            on={values.sandboxServicesEnabled}
+            onChange={(next) => set('sandboxServicesEnabled', next)}
+            label="Code project services"
+          />
+        </Row>
+        <Row
+          label="Scripts over staged files"
+          hint="Python a chat wrote, run on the sandbox over copies of the person's own staged files (sandbox_run_python) — matching spreadsheets, filtering thousands of rows, converting formats."
+        >
+          <Toggle
+            on={values.sandboxScriptsEnabled}
+            onChange={(next) => set('sandboxScriptsEnabled', next)}
+            label="Scripts over staged files"
+          />
+        </Row>
         <Row
           label="Checkout size limit (GB)"
           hint="How large one code project's checkout on the sandbox may grow before commands and writes in it are refused. People can ask for more on a project's page; you approve or deny those requests below, and an approval raises that project only."

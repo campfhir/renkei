@@ -215,7 +215,7 @@ export default async function ConnectorsPage({
   // Browser secrets live on the sandbox worker, never in this app's tables:
   // the card exists only where the deployment runs the sandbox browser, and
   // the listing is names, fields and hosts — no values.
-  const browserSecrets = sandboxBrowserEnabled()
+  const browserSecrets = (await sandboxBrowserEnabled(tenant.id))
     ? await sbSecretsList({ tenantId: tenant.id, subject: session.subject })
     : null;
 

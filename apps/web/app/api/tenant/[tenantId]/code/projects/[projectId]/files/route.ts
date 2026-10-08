@@ -89,7 +89,9 @@ export async function GET(
     language,
   });
 
-  const workspace = sandboxWorkspacesEnabled() ? await projectWorkspace(project) : null;
+  const workspace = (await sandboxWorkspacesEnabled(tenantId))
+    ? await projectWorkspace(project)
+    : null;
   if (workspace?.status === 'ready' && project.workspaceId) {
     const read = await sbWorkspaceRead(codeProjectTarget(tenantId, projectId), {
       id: project.workspaceId,
@@ -244,7 +246,11 @@ export async function POST(
     return jsonError(
       400,
       'invalid',
-      path.ok ? (isFolder ? 'Say where the folder goes.' : 'Say where the file goes.') : path.message
+      path.ok
+        ? isFolder
+          ? 'Say where the folder goes.'
+          : 'Say where the file goes.'
+        : path.message
     );
 
   const target = codeProjectTarget(tenantId, projectId);
@@ -306,7 +312,11 @@ export async function DELETE(
     forWrite: true,
   });
   if (!path.ok || !path.path)
-    return jsonError(400, 'invalid', path.ok ? 'Say which file or folder to remove.' : path.message);
+    return jsonError(
+      400,
+      'invalid',
+      path.ok ? 'Say which file or folder to remove.' : path.message
+    );
 
   const target = codeProjectTarget(tenantId, projectId);
   const removed = await sbWorkspaceRemove(target, { id: project.workspaceId, path: path.path });
@@ -341,7 +351,11 @@ export async function PATCH(
   const body = await readJsonBody(request);
   const from = validateWorkspacePath(body.from, { forWrite: true });
   if (!from.ok || !from.path)
-    return jsonError(400, 'invalid', from.ok ? 'Say which file or folder to rename.' : from.message);
+    return jsonError(
+      400,
+      'invalid',
+      from.ok ? 'Say which file or folder to rename.' : from.message
+    );
   const to = validateWorkspacePath(body.to, { forWrite: true });
   if (!to.ok || !to.path)
     return jsonError(400, 'invalid', to.ok ? 'Say the new name or location.' : to.message);

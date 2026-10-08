@@ -262,6 +262,26 @@ export interface OrgSettings {
    * for that project only, never for the org.
    */
   sandboxWorkspaceMaxBytes: number;
+  /**
+   * The sandbox worker's optional capabilities, switched on per org. Each
+   * is a POLICY ("may this org's people use the browser") — the worker
+   * itself builds every capability it has the means for (a Chromium, a
+   * Python, a Docker engine) and answers 503 for the ones it lacks, so a
+   * switch here is only ever as open as the deployment. Off by default,
+   * closed never open, same as the environment flags they replaced
+   * (SANDBOX_*_ENABLED): an upgrade carries a deployment's flags into
+   * every org once (migration 133), after which these are the switches.
+   */
+  /** The headless browser behind the sandbox_browser_* tools. */
+  sandboxBrowserEnabled: boolean;
+  /** Charts from Mermaid text (sandbox_render_chart, the chat's chat_write_chart). */
+  sandboxChartsEnabled: boolean;
+  /** Code projects: a repository cloned onto the worker, with the code_* tools. */
+  sandboxWorkspacesEnabled: boolean;
+  /** Containers beside a code project's checkout (code_service_*); needs workspaces. */
+  sandboxServicesEnabled: boolean;
+  /** A chat's Python over the person's own staged files (sandbox_run_python). */
+  sandboxScriptsEnabled: boolean;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -303,6 +323,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   knowledgeKeywordMinChars: 500,
   chatReplyPresenceWindowSeconds: 30,
   sandboxWorkspaceMaxBytes: 8 * 1_073_741_824, // 8GB
+  sandboxBrowserEnabled: false,
+  sandboxChartsEnabled: false,
+  sandboxWorkspacesEnabled: false,
+  sandboxServicesEnabled: false,
+  sandboxScriptsEnabled: false,
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -446,6 +471,21 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     sandboxWorkspaceMaxBytes: Number(
       coerce(stored.get('sandbox_workspace_max_bytes'), d.sandboxWorkspaceMaxBytes)
     ),
+    sandboxBrowserEnabled: Boolean(
+      coerce(stored.get('sandbox_browser_enabled'), d.sandboxBrowserEnabled)
+    ),
+    sandboxChartsEnabled: Boolean(
+      coerce(stored.get('sandbox_charts_enabled'), d.sandboxChartsEnabled)
+    ),
+    sandboxWorkspacesEnabled: Boolean(
+      coerce(stored.get('sandbox_workspaces_enabled'), d.sandboxWorkspacesEnabled)
+    ),
+    sandboxServicesEnabled: Boolean(
+      coerce(stored.get('sandbox_services_enabled'), d.sandboxServicesEnabled)
+    ),
+    sandboxScriptsEnabled: Boolean(
+      coerce(stored.get('sandbox_scripts_enabled'), d.sandboxScriptsEnabled)
+    ),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -498,6 +538,11 @@ export async function setOrgSettings(
     ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
     ['chat_reply_presence_window_seconds', updates.chatReplyPresenceWindowSeconds],
     ['sandbox_workspace_max_bytes', updates.sandboxWorkspaceMaxBytes],
+    ['sandbox_browser_enabled', updates.sandboxBrowserEnabled],
+    ['sandbox_charts_enabled', updates.sandboxChartsEnabled],
+    ['sandbox_workspaces_enabled', updates.sandboxWorkspacesEnabled],
+    ['sandbox_services_enabled', updates.sandboxServicesEnabled],
+    ['sandbox_scripts_enabled', updates.sandboxScriptsEnabled],
   ];
 
   for (const [key, value] of pairs) {

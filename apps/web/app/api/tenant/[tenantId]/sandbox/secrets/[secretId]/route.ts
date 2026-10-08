@@ -30,7 +30,8 @@ export async function POST(
   const { tenantId, secretId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!sandboxBrowserEnabled()) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled(tenantId)))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body)) {
@@ -86,7 +87,8 @@ export async function DELETE(
   const { tenantId, secretId } = await params;
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!sandboxBrowserEnabled()) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled(tenantId)))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const revoked = await sbSecretRevoke({ tenantId, subject: session.subject }, secretId);
   if (!revoked.ok) {

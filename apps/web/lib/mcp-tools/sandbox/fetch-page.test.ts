@@ -40,14 +40,14 @@ interface Registered {
   handler: Handler;
 }
 
-function collect(context: MCPToolContext): Map<string, Registered> {
+async function collect(context: MCPToolContext): Promise<Map<string, Registered>> {
   const tools = new Map<string, Registered>();
   const server = {
     registerTool: (name: string, config: Registered['config'], handler: Handler) => {
       tools.set(name, { config, handler });
     },
   } as unknown as McpServer;
-  registerSandboxTools(server, context);
+  await registerSandboxTools(server, context);
   return tools;
 }
 
@@ -74,14 +74,14 @@ function bytesOf(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
   client.sbDeleteFile.mockResolvedValue({ ok: true, val: { id: STAGED.id } });
 });
 
 describe('sandbox_fetch_page', () => {
-  it('is a read tool', () => {
-    const tools = collect(context());
+  it('is a read tool', async () => {
+    const tools = await collect(context());
     expect(tools.get('sandbox_fetch_page')?.config.annotations?.readOnlyHint).toBe(true);
   });
 
@@ -97,7 +97,7 @@ describe('sandbox_fetch_page', () => {
         ),
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_fetch_page')!
       .handler({ url: 'https://example.com/status', maxChars: 500 });
@@ -122,7 +122,7 @@ describe('sandbox_fetch_page', () => {
       ok: true,
       val: { filename: 'notes.txt', contentType: 'text/plain', bytes: bytesOf('plain words\n') },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_fetch_page')!
       .handler({ url: 'https://example.com/docs/notes.txt' });
@@ -145,7 +145,7 @@ describe('sandbox_fetch_page', () => {
         bytes: bytesOf('<!doctype html><p>Hi there</p>'),
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools.get('sandbox_fetch_page')!.handler({ url: 'https://example.com/' });
     expect(result.content[0].text).toContain('---\nHi there');
   });
@@ -159,7 +159,7 @@ describe('sandbox_fetch_page', () => {
         message: 'That address is not reachable from here.',
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_fetch_page')!
       .handler({ url: 'https://169.254.169.254/latest/meta-data' });
@@ -175,7 +175,7 @@ describe('sandbox_fetch_page', () => {
       ok: false,
       err: { kind: 'unreachable', message: 'gone' },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools.get('sandbox_fetch_page')!.handler({ url: 'https://example.com/' });
     expect(result.isError).toBe(true);
     expect(client.sbDeleteFile).toHaveBeenCalledWith(TARGET, STAGED.id);
@@ -191,7 +191,7 @@ describe('sandbox_fetch_page', () => {
         bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_fetch_page')!
       .handler({ url: 'https://example.com/x.png' });
@@ -200,7 +200,7 @@ describe('sandbox_fetch_page', () => {
   });
 
   it('refuses a caller with no identity before any call', async () => {
-    const tools = collect(context(''));
+    const tools = await collect(context(''));
     const result = await tools.get('sandbox_fetch_page')!.handler({ url: 'https://example.com/' });
     expect(result.isError).toBe(true);
     expect(client.sbFetchUrl).not.toHaveBeenCalled();

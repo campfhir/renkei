@@ -51,14 +51,14 @@ interface Registered {
   handler: Handler;
 }
 
-function collect(context: MCPToolContext): Map<string, Registered> {
+async function collect(context: MCPToolContext): Promise<Map<string, Registered>> {
   const tools = new Map<string, Registered>();
   const server = {
     registerTool: (name: string, config: Registered['config'], handler: Handler) => {
       tools.set(name, { config, handler });
     },
   } as unknown as McpServer;
-  registerSandboxTools(server, context);
+  await registerSandboxTools(server, context);
   return tools;
 }
 
@@ -77,14 +77,14 @@ const PAGE = {
   truncated: false,
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
   client.sandboxBrowserEnabled.mockReturnValue(true);
 });
 
 describe('registration', () => {
-  it('registers the browser verbs beside the file tools when the browser is enabled', () => {
-    const tools = collect(context());
+  it('registers the browser verbs beside the file tools when the browser is enabled', async () => {
+    const tools = await collect(context());
     const names = [...tools.keys()].filter((name) => name.startsWith('sandbox_browser_'));
     expect(names.sort()).toEqual([
       'sandbox_browser_back',
@@ -105,9 +105,9 @@ describe('registration', () => {
     expect(tools.get('sandbox_browser_navigate')?.config.annotations?.readOnlyHint).toBe(false);
   });
 
-  it('registers none of them when the deployment has no browser', () => {
+  it('registers none of them when the deployment has no browser', async () => {
     client.sandboxBrowserEnabled.mockReturnValue(false);
-    const tools = collect(context());
+    const tools = await collect(context());
     expect([...tools.keys()].some((name) => name.startsWith('sandbox_browser_'))).toBe(false);
     expect(tools.has('sandbox_download_url')).toBe(true);
   });
@@ -116,7 +116,7 @@ describe('registration', () => {
 describe('verbs', () => {
   it('navigate hands the worker the caller target and answers the snapshot', async () => {
     client.sbBrowserNavigate.mockResolvedValue({ ok: true, val: PAGE });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_browser_navigate')!
       .handler({ url: 'https://example.com/', maxChars: 500 });
@@ -139,7 +139,7 @@ describe('verbs', () => {
     ]) {
       client[name].mockResolvedValue({ ok: true, val: PAGE });
     }
-    const tools = collect(context());
+    const tools = await collect(context());
     await tools.get('sandbox_browser_snapshot')!.handler({});
     expect(client.sbBrowserSnapshot).toHaveBeenCalledWith(TARGET, { maxChars: undefined });
     await tools.get('sandbox_browser_click')!.handler({ ref: 'e3' });
@@ -165,7 +165,7 @@ describe('verbs', () => {
 
   it('type forwards a secret reference instead of text', async () => {
     client.sbBrowserType.mockResolvedValue({ ok: true, val: PAGE });
-    const tools = collect(context());
+    const tools = await collect(context());
     await tools.get('sandbox_browser_type')!.handler({
       ref: 'e2',
       secret: { name: 'vendor-portal', field: 'password' },
@@ -181,7 +181,7 @@ describe('verbs', () => {
 
   it('lists secrets by name, fields, hosts and lock state — never values', async () => {
     client.sbSecretsList.mockResolvedValueOnce({ ok: true, val: [] });
-    const tools = collect(context());
+    const tools = await collect(context());
     const empty = await tools.get('sandbox_browser_list_secrets')!.handler({});
     expect(empty.content[0].text).toContain('No browser secrets are stored');
 
@@ -209,7 +209,7 @@ describe('verbs', () => {
 
   it('scroll passes only the fields given', async () => {
     client.sbBrowserScroll.mockResolvedValue({ ok: true, val: PAGE });
-    const tools = collect(context());
+    const tools = await collect(context());
     await tools.get('sandbox_browser_scroll')!.handler({});
     expect(client.sbBrowserScroll).toHaveBeenLastCalledWith(TARGET, { maxChars: undefined });
     await tools.get('sandbox_browser_scroll')!.handler({ ref: 'e2', direction: 'up', amount: 100 });
@@ -226,7 +226,7 @@ describe('verbs', () => {
       ok: true,
       val: { completed: 3, page: PAGE, failed: null },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const steps = [
       { kind: 'type', ref: 'e1', text: 'a' },
       { kind: 'select', ref: 'e2', values: ['b'] },
@@ -247,7 +247,7 @@ describe('verbs', () => {
         failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'No element carries ref e9.' },
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools.get('sandbox_browser_run')!.handler({ steps: [{ kind: 'back' }] });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe(
@@ -273,7 +273,7 @@ describe('verbs', () => {
         title: 'Example',
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools
       .get('sandbox_browser_screenshot')!
       .handler({ fullPage: true, filename: 'home.png' });
@@ -287,7 +287,7 @@ describe('verbs', () => {
 
   it('close reports whether a session existed', async () => {
     client.sbBrowserClose.mockResolvedValueOnce({ ok: true, val: { closed: false } });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools.get('sandbox_browser_close')!.handler({});
     expect(result.content[0].text).toBe('No browser session was open.');
   });
@@ -302,14 +302,14 @@ describe('verbs', () => {
         status: 400,
       },
     });
-    const tools = collect(context());
+    const tools = await collect(context());
     const result = await tools.get('sandbox_browser_click')!.handler({ ref: 'e9' });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('take a new snapshot');
   });
 
   it('refuses a caller with no identity before calling the worker', async () => {
-    const tools = collect(context(''));
+    const tools = await collect(context(''));
     const result = await tools
       .get('sandbox_browser_navigate')!
       .handler({ url: 'https://example.com/' });

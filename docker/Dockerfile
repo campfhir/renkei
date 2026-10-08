@@ -577,10 +577,10 @@ COPY --chown=worker:nodejs apps/worker-sandbox/tsconfig.json ./apps/worker-sandb
 # it, and whatever a crash leaves is removed at the next boot.
 RUN mkdir -p /data /workspaces /runs && chown worker:nodejs /data && chmod 711 /workspaces /runs
 
-# No `USER worker` here, unlike every other stage: the entrypoint decides.
-# Without SANDBOX_WORKSPACES_ENABLED it drops to `worker` before the
-# process starts, exactly as before; with it the worker stays root so each
-# caller's commands can be dropped to their own uid (see the script).
+# No `USER worker` here, unlike every other stage: the worker stays root
+# so each caller's workspace commands and scripts can be dropped to their
+# own uid (see the entrypoint script). Which organizations may use those
+# is a switch in the web app's settings, not a flag on this container.
 COPY docker/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint
 RUN chmod 755 /usr/local/bin/sandbox-entrypoint
 

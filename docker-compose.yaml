@@ -212,37 +212,37 @@ services:
   # `openssl rand -base64 32`. No published ports on purpose: nothing
   # outside the compose network may speak to it.
   #
-  # It also carries the headless browser behind the sandbox_browser_* tools
-  # (a headless Chromium baked into the image), which only runs when
-  # SANDBOX_BROWSER_ENABLED=true is set in .env — the same flag the web app
-  # reads to register those tools. The browser's every connection goes
-  # through an in-process egress proxy that refuses private and internal
-  # addresses, so it cannot reach the other compose services either.
-  # SANDBOX_CHARTS_ENABLED=true in .env (again read by both) draws charts
-  # from Mermaid text in that same Chromium, behind sandbox_render_chart
-  # and the chat's chat_write_chart — independent of the browser flag; a
-  # chart page has no network at all.
+  # It also carries the worker's optional capabilities, each switched on
+  # PER ORGANIZATION by an operator under Organization → Settings →
+  # Sandbox in the web app (they used to be SANDBOX_*_ENABLED flags here;
+  # the migrate service carries a deployment's flags into every org's
+  # settings once, then they are inert): the headless browser behind the
+  # sandbox_browser_* tools (a headless Chromium baked into the image,
+  # launched on first use, its every connection through an in-process
+  # egress proxy that refuses private and internal addresses, so it
+  # cannot reach the other compose services either); charts from Mermaid
+  # text in that same Chromium, behind sandbox_render_chart and the
+  # chat's chat_write_chart (a chart page has no network at all); code
+  # projects — a repository cloned onto the second volume below, where
+  # the project's chats can read, edit, run the project's own commands,
+  # commit and push (docs/sandbox-workspaces-design.md); and
+  # sandbox_run_python — Python the model wrote, run over COPIES of the
+  # person's own staged files in a throwaway directory under /runs (no
+  # volume).
   #
-  # SANDBOX_WORKSPACES_ENABLED=true in .env (again read by both) adds code
-  # projects: a Bitbucket repository cloned onto the second volume below,
-  # where the project's chats can read, edit, run the project's own
-  # commands, commit and push (docs/sandbox-workspaces-design.md). The
-  # container then runs its supervisor as root so every caller's commands
-  # can be dropped to that caller's own uid (docker/sandbox-entrypoint.sh).
-  # Those commands DO have this container's network — a project's own
-  # install and tests need the internet — so on a deployment with
-  # workspaces enabled give this service its own network with a route out
-  # and no route to postgres or the other workers; the bearer keys and
-  # database password those hold are never in a command's environment, but
-  # the network should not be either. SANDBOX_ENV_SECRETS_KEY in .env
-  # (`openssl rand -base64 32`) seals the environment variables people hand
-  # their commands; it falls back to TOKEN_ENCRYPTION_KEY.
-  #
-  # SANDBOX_SCRIPTS_ENABLED=true in .env (again read by both) adds
-  # sandbox_run_python to every chat with a scratch space: Python the
-  # model wrote, run over COPIES of the person's own staged files in a
-  # throwaway directory under /runs (no volume), as that person's own uid
-  # — the container runs its supervisor as root for the same reason as
+  # The container runs its supervisor as root so every caller's workspace
+  # commands and scripts can be dropped to that caller's own uid
+  # (docker/sandbox-entrypoint.sh). Workspace commands DO have this
+  # container's network — a project's own install and tests need the
+  # internet — so on a deployment that switches code projects on, give
+  # this service its own network with a route out and no route to
+  # postgres or the other workers; the bearer keys and database password
+  # those hold are never in a command's environment, but the network
+  # should not be either. SANDBOX_ENV_SECRETS_KEY in .env (`openssl rand
+  # -base64 32`) seals the environment variables people hand their
+  # commands; it falls back to TOKEN_ENCRYPTION_KEY. A script, unlike a
+  # workspace command, is started with no network at all where the
+  # kernel lets this container make a network namespace
   # workspaces, with or without them — and, unlike a workspace command,
   # with NO network when the kernel lets this container unshare one.
   # Docker's default profile does not (unshare needs CAP_SYS_ADMIN): the
@@ -284,8 +284,8 @@ services:
     volumes:
       - renkei-sandbox-data:/data
       - renkei-sandbox-workspaces:/workspaces
-      # Code project services (SANDBOX_SERVICES_ENABLED=true in .env, read
-      # by this service AND renkei): the worker starts containers —
+      # Code project services (switched on per organization under
+      # Settings → Sandbox): the worker starts containers —
       # Postgres, Redis — beside a project's checkout, from the images the
       # organization allows, through the host's Docker engine. Uncomment
       # the socket to turn that on. It is root's inside the container
@@ -342,17 +342,13 @@ services:
       # Where the web app reaches the sandbox worker; the bearer key
       # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
       # run without an agent scratch space — the sandbox_* tools simply
-      # don't register. SANDBOX_BROWSER_ENABLED=true in .env (read by this
-      # service AND worker-sandbox) additionally registers the
-      # sandbox_browser_* tools; unset, they don't exist. Likewise
-      # SANDBOX_CHARTS_ENABLED=true for sandbox_render_chart and the chat's
-      # chat_write_chart (Mermaid text drawn to PNG/SVG/PDF), and
-      # SANDBOX_WORKSPACES_ENABLED=true for the Code section — code
-      # projects, each a repository a chat works in with the code_* tools
-      # — and SANDBOX_SERVICES_ENABLED=true on top for the code_service_*
-      # tools (containers beside a checkout; see worker-sandbox's socket).
-      # SANDBOX_SCRIPTS_ENABLED=true registers sandbox_run_python (a
-      # script over the person's own staged files, run on the worker).
+      # don't register. The worker's optional capabilities — the
+      # sandbox_browser_* tools, sandbox_render_chart and the chat's
+      # chat_write_chart, the Code section with its code_* tools, the
+      # code_service_* tools (containers beside a checkout; see
+      # worker-sandbox's socket) and sandbox_run_python — are switched on
+      # per organization under Organization → Settings → Sandbox, not
+      # here.
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.

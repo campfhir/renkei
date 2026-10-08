@@ -15,7 +15,7 @@
  * model only ever sees what it prints and what it names.
  *
  * Registered only where the deployment runs scripts
- * (SANDBOX_SCRIPTS_ENABLED on the worker and here) — closed, never open.
+ * (the org's Scripts switch, and a worker with a Python) — closed, never open.
  */
 
 import { z } from 'zod';

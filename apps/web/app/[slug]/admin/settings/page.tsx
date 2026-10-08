@@ -91,6 +91,11 @@ export default async function SettingsPage({
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
+    sandboxBrowserEnabled: settings.sandboxBrowserEnabled,
+    sandboxChartsEnabled: settings.sandboxChartsEnabled,
+    sandboxWorkspacesEnabled: settings.sandboxWorkspacesEnabled,
+    sandboxServicesEnabled: settings.sandboxServicesEnabled,
+    sandboxScriptsEnabled: settings.sandboxScriptsEnabled,
   };
 
   return (
