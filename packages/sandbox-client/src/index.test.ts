@@ -22,6 +22,8 @@ import {
   clientFailure,
   sbWorkspaceGet,
   sbWorkspaceExec,
+  sbRunScript,
+  sandboxScriptsEnabled,
   setRetryDelayForTests,
 } from './index';
 
@@ -287,6 +289,98 @@ describe('sbFetchUrl / sbListFiles / sbStatFile / sbDeleteFile (JSON ops)', () =
     const result = await sbDeleteFile(TARGET, 'file-1');
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('sbRunScript', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+  });
+
+  it('is offered only where the worker is configured and the flag is set', () => {
+    expect(sandboxScriptsEnabled()).toBe(false);
+    process.env.SANDBOX_SCRIPTS_ENABLED = 'true';
+    expect(sandboxScriptsEnabled()).toBe(true);
+    delete process.env.SANDBOX_WORKER_API_KEY;
+    expect(sandboxScriptsEnabled()).toBe(false);
+  });
+
+  it('POSTs to /v1/scripts/run with the target merged in and reads the outcome back', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          exitCode: 0,
+          signal: null,
+          stdout: 'matched 2\n',
+          stderr: '',
+          timedOut: false,
+          interrupted: false,
+          truncated: false,
+          durationMs: 900,
+          timeoutMs: 60000,
+          inputs: [{ id: 'file-1', filename: 'report.pdf', path: 'in/report.pdf', sizeBytes: 5 }],
+          outputs: [{ ...WIRE_FILE, id: 'file-2', filename: 'matched.csv', source: 'script' }],
+          skippedOutputs: [{ filename: '.cache', reason: 'not a name a staged file may carry' }],
+          networkIsolated: true,
+          uidIsolated: true,
+        }),
+        { status: 200 }
+      )
+    );
+    const ran = await sbRunScript(TARGET, { code: 'print(1)', files: ['file-1'], timeoutMs: 5000 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0]!;
+    expect(url).toBe('http://sandbox.internal:8092/v1/scripts/run');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      ...TARGET,
+      code: 'print(1)',
+      files: ['file-1'],
+      timeoutMs: 5000,
+    });
+    if (!ran.ok) throw new Error('expected a result');
+    expect(ran.val.outputs).toEqual([
+      { ...WIRE_FILE, id: 'file-2', filename: 'matched.csv', source: 'script' },
+    ]);
+    expect(ran.val.inputs).toEqual([
+      { id: 'file-1', filename: 'report.pdf', path: 'in/report.pdf', sizeBytes: 5 },
+    ]);
+    expect(ran.val.skippedOutputs).toHaveLength(1);
+    expect(ran.val.networkIsolated).toBe(true);
+  });
+
+  it('refuses a malformed output in the answer rather than dropping it silently', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ exitCode: 0, stdout: '', stderr: '', outputs: [{ id: 'x' }] }),
+          { status: 200 }
+        )
+      );
+    const ran = await sbRunScript(TARGET, { code: 'print(1)' });
+    expect(ran.ok).toBe(false);
+  });
+
+  it('maps a worker refusal to a typed op error the surfaces can phrase', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { type: 'busy', message: 'wait' } }), { status: 429 })
+      );
+    const ran = await sbRunScript(TARGET, { code: 'print(1)' });
+    expect(ran).toEqual({
+      ok: false,
+      err: { kind: 'op', type: 'busy', message: 'wait', status: 429 },
+    });
+    expect(
+      clientFailure({ kind: 'op', type: 'busy', message: undefined, status: 429 }).status
+    ).toBe(429);
+    expect(
+      clientFailure({ kind: 'op', type: 'scripts_unavailable', message: undefined, status: 503 })
+        .message
+    ).toContain('not enabled');
   });
 });
 

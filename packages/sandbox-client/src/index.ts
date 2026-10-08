@@ -109,6 +109,17 @@ export function sandboxServicesEnabled(): boolean {
   return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SERVICES_ENABLED ?? '').trim());
 }
 
+/**
+ * Whether this deployment runs a caller's Python over their staged files
+ * (sandbox_run_python): the worker must be configured AND
+ * SANDBOX_SCRIPTS_ENABLED set (the same flag the worker reads to serve
+ * it). Off unless said otherwise — closed, never open.
+ */
+export function sandboxScriptsEnabled(): boolean {
+  if (!sandboxConfig()) return false;
+  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_SCRIPTS_ENABLED ?? '').trim());
+}
+
 function unreachable(message: string): { ok: false; err: SandboxClientError } {
   return { ok: false, err: { kind: 'unreachable', message } };
 }
@@ -1674,6 +1685,138 @@ export async function sbImageRulesRestore(
  * every sandbox_* tool and every batch-pipeline caller phrases the same
  * failure the same way.
  */
+// ─── Scripts over staged files ──────────────────────────────────────────────
+
+export interface WireScriptInput {
+  id: string;
+  filename: string;
+  /** The path the script saw the file at, relative to its working directory (`in/<name>`). */
+  path: string;
+  sizeBytes: number;
+}
+
+export interface WireScriptResult {
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  /** The worker was stopped (a restart, a deploy) while the script ran and killed it: not finished, run it again. */
+  interrupted: boolean;
+  truncated: boolean;
+  durationMs: number;
+  timeoutMs: number;
+  inputs: WireScriptInput[];
+  /** What the script left in `out/`, now staged. */
+  outputs: WireSandboxFile[];
+  /** What it left there that could not be staged, and why. */
+  skippedOutputs: { filename: string; reason: string }[];
+  /** False on a worker that cannot make a network namespace: the script had the container's network. */
+  networkIsolated: boolean;
+  /** False on an unprivileged worker: the script ran as the worker's own user. */
+  uidIsolated: boolean;
+}
+
+/**
+ * Run a Python script on the worker over the caller's staged files; a
+ * long run needs its own timeout, up to the worker's ceiling. Never
+ * retried: the script may have started before a connection dropped.
+ */
+export async function sbRunScript(
+  target: SandboxTarget,
+  input: { code: string; files?: string[]; timeoutMs?: number },
+  options: {
+    /**
+     * Ends the call early — a chat turn stopped while the script ran.
+     * Dropping the connection is what tells the worker to kill it
+     * (script-endpoints.ts watches for it), so the process does not run
+     * on after the person said stop.
+     */
+    signal?: AbortSignal;
+  } = {}
+): Promise<ClientResult<WireScriptResult>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  // The client waits a little beyond the script's own limit: the worker
+  // kills the process at timeoutMs, stages what it wrote, and answers.
+  const wait = Math.min(15 * 60_000, (input.timeoutMs ?? 60_000) + 60_000);
+  const timeout = AbortSignal.timeout(wait);
+  let response: Response;
+  try {
+    response = await fetch(`${cfg.url}/v1/scripts/run`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...target, ...input }),
+      signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
+    });
+  } catch (error) {
+    if (options.signal?.aborted) return unreachable('The script was stopped.');
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) return opFailure(response);
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    return unreachable('The sandbox service answered an unreadable response.');
+  }
+  if (!isRecord(value) || typeof value.stdout !== 'string' || typeof value.stderr !== 'string') {
+    return malformed();
+  }
+  const num = (raw: unknown) => (typeof raw === 'number' ? raw : 0);
+  const outputs: WireSandboxFile[] = [];
+  if (Array.isArray(value.outputs)) {
+    for (const entry of value.outputs) {
+      const file = fileOf(entry);
+      if (!file) return malformed();
+      outputs.push(file);
+    }
+  }
+  const inputs: WireScriptInput[] = Array.isArray(value.inputs)
+    ? value.inputs.flatMap((entry): WireScriptInput[] =>
+        isRecord(entry) &&
+        typeof entry.id === 'string' &&
+        typeof entry.filename === 'string' &&
+        typeof entry.path === 'string'
+          ? [
+              {
+                id: entry.id,
+                filename: entry.filename,
+                path: entry.path,
+                sizeBytes: num(entry.sizeBytes),
+              },
+            ]
+          : []
+      )
+    : [];
+  const skippedOutputs = Array.isArray(value.skippedOutputs)
+    ? value.skippedOutputs.flatMap((entry): { filename: string; reason: string }[] =>
+        isRecord(entry) && typeof entry.filename === 'string' && typeof entry.reason === 'string'
+          ? [{ filename: entry.filename, reason: entry.reason }]
+          : []
+      )
+    : [];
+  return {
+    ok: true,
+    val: {
+      exitCode: typeof value.exitCode === 'number' ? value.exitCode : null,
+      signal: optStr(value.signal) ?? null,
+      stdout: value.stdout,
+      stderr: value.stderr,
+      timedOut: value.timedOut === true,
+      interrupted: value.interrupted === true,
+      truncated: value.truncated === true,
+      durationMs: num(value.durationMs),
+      timeoutMs: num(value.timeoutMs),
+      inputs,
+      outputs,
+      skippedOutputs,
+      networkIsolated: value.networkIsolated === true,
+      uidIsolated: value.uidIsolated === true,
+    },
+  };
+}
+
 export function clientFailure(error: SandboxClientError): { status: number; message: string } {
   if (error.kind === 'unconfigured') {
     return {
@@ -1712,6 +1855,16 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
       return {
         status: 503,
         message: error.message ?? 'Code project services are not enabled on this deployment.',
+      };
+    case 'scripts_unavailable':
+      return {
+        status: 503,
+        message: error.message ?? 'Scripts are not enabled on this deployment.',
+      };
+    case 'busy':
+      return {
+        status: 429,
+        message: error.message ?? 'A script is already running; wait for it to finish.',
       };
     case 'secrets_unavailable':
       return {

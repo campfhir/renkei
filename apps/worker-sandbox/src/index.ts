@@ -54,16 +54,35 @@
  *     services are reached at their bridge address directly.
  *   SANDBOX_SERVICE_MEMORY — each service container's memory ceiling,
  *     default 1g; SANDBOX_SERVICE_PIDS its process ceiling, default 512.
+ *   SANDBOX_SCRIPTS_ENABLED — `true` to run a caller's Python over their
+ *     own staged files (scripts.ts) behind sandbox_run_python; unset
+ *     answers the script verb "not enabled". As with workspaces, the
+ *     process should run as root so each run can be dropped to its
+ *     caller's own uid — and, where the kernel allows this container to
+ *     unshare, started with no network at all; without root it still
+ *     works, unisolated, and says so below.
+ *   SANDBOX_RUNS_DIR — where a run's throwaway directory is made,
+ *     default /runs (no volume: nothing here outlives its run).
+ *   SANDBOX_PYTHON — the interpreter; by default the image's own
+ *     environment with the data libraries (/opt/sandbox-python), else
+ *     the `python3` on the PATH.
+ *   SANDBOX_SCRIPT_MEMORY — a run's address-space ceiling, default 2g.
  */
 
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { ensureDataRoot, getDataRoot } from './disk';
 import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
-import { canIsolateByUid, ensureWorkspacesRoot, verifyUidIsolation } from './workspaces';
+import {
+  canIsolateByUid,
+  ensureWorkspacesRoot,
+  verifyNetworkIsolation,
+  verifyUidIsolation,
+} from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
+import { ScriptRunner, probePython, resolvePython, scriptMemoryBytes } from './scripts';
 import { probeLanguageServers } from './lsp-sessions';
-import { createSandboxServer } from './server';
+import { createSandboxServer, orgMaxFileBytes } from './server';
 import { DockerClient, parseDockerHost, parseMemoryBytes } from './docker';
 import { ServiceManager } from './services';
 import { BrowserSessions } from './browser';
@@ -153,14 +172,20 @@ async function main(): Promise<void> {
   await ensureDataRoot();
 
   const workspacesEnabled = envFlag('SANDBOX_WORKSPACES_ENABLED');
-  if (workspacesEnabled) {
+  const scriptsEnabled = envFlag('SANDBOX_SCRIPTS_ENABLED');
+  if (workspacesEnabled || scriptsEnabled) {
     // Nothing this process creates from here on is readable by the uids
     // a caller's commands run as: a staged file, a log, a lock.
     process.umask(0o077);
-    await ensureWorkspacesRoot();
+    const what =
+      workspacesEnabled && scriptsEnabled
+        ? 'workspaces and scripts are'
+        : workspacesEnabled
+          ? 'workspaces are'
+          : 'scripts are';
     if (!canIsolateByUid()) {
       logger.warn(
-        'workspaces are enabled but this process is not root: commands run as the worker user with NO per-caller isolation — fine for one developer, wrong for a shared deployment',
+        `${what} enabled but this process is not root: commands run as the worker user with NO per-caller isolation — fine for one developer, wrong for a shared deployment`,
         { component: 'worker-sandbox/workspaces' }
       );
     } else {
@@ -172,11 +197,14 @@ async function main(): Promise<void> {
       const problem = await verifyUidIsolation();
       if (problem) {
         fatal(
-          `workspaces are enabled and this process is root, but a command cannot be dropped to a caller's uid: ${problem}. ` +
+          `${what} enabled and this process is root, but a command cannot be dropped to a caller's uid: ${problem}. ` +
             'The sandbox image (docker/Dockerfile, target sandbox) supplies setpriv from util-linux, and the container needs CAP_SETUID, CAP_SETGID and CAP_SETPCAP (Docker grants them by default).'
         );
       }
     }
+  }
+  if (workspacesEnabled) {
+    await ensureWorkspacesRoot();
     if (!envSecretsEnabled()) {
       logger.warn(
         'workspaces are enabled without SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY: environment secrets are closed',
@@ -249,6 +277,64 @@ async function main(): Promise<void> {
     services = manager;
   }
 
+  // Scripts over staged files: a caller's Python, run as their uid in a
+  // throwaway directory with — where this container may unshare — no
+  // network. The interpreter and its libraries are checked now, so a
+  // missing one is a boot failure with a cause rather than a traceback
+  // on the first script anyone runs.
+  let scripts: ScriptRunner | null = null;
+  if (scriptsEnabled) {
+    const python = await resolvePython(process.env.SANDBOX_PYTHON);
+    if (!python) {
+      fatal(
+        'SANDBOX_SCRIPTS_ENABLED is set but no Python interpreter was found: the sandbox image (docker/Dockerfile, target sandbox) installs one at /opt/sandbox-python, or point SANDBOX_PYTHON at one.'
+      );
+    }
+    const probed = await probePython(python);
+    if (!probed) {
+      fatal(
+        `SANDBOX_SCRIPTS_ENABLED is set but ${python} does not run; point SANDBOX_PYTHON at a working interpreter.`
+      );
+    }
+    let memoryBytes: number;
+    try {
+      memoryBytes = scriptMemoryBytes(process.env.SANDBOX_SCRIPT_MEMORY);
+    } catch (error) {
+      fatal(error instanceof Error ? error.message : String(error));
+    }
+    const networkProblem = await verifyNetworkIsolation();
+    if (networkProblem) {
+      logger.warn(
+        'scripts are enabled but a run cannot be started without a network ({problem}): scripts run on this container’s network, and every result says so — give the container CAP_SYS_ADMIN (docker-compose.yaml, worker-sandbox) to close that',
+        { component: 'worker-sandbox/scripts', problem: networkProblem }
+      );
+    }
+    const runner = new ScriptRunner({
+      db: dbResult.val,
+      runsRoot: (process.env.SANDBOX_RUNS_DIR ?? '').trim() || '/runs',
+      python,
+      isolateNetwork: networkProblem === null,
+      memoryBytes,
+      maxFileBytes: orgMaxFileBytes,
+    });
+    const removed = await runner.prepare();
+    logger.info(
+      'scripts enabled: {python} {version} with {libraries}; network {network}; memory {memory} bytes per run{removed}',
+      {
+        component: 'worker-sandbox/scripts',
+        python,
+        version: probed.version,
+        libraries: probed.libraries.length ? probed.libraries.join(', ') : 'no data libraries',
+        network: networkProblem === null ? 'none per run' : 'the container’s (UNISOLATED)',
+        memory: memoryBytes,
+        removed: removed
+          ? `; ${removed} stale run director${removed === 1 ? 'y' : 'ies'} removed`
+          : '',
+      }
+    );
+    scripts = runner;
+  }
+
   const port = Number(process.env.SANDBOX_WORKER_PORT ?? '8092');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     fatal(`SANDBOX_WORKER_PORT is not a usable port: ${process.env.SANDBOX_WORKER_PORT}`);
@@ -302,10 +388,11 @@ async function main(): Promise<void> {
     charts,
     workspaces: workspacesEnabled,
     services,
+    scripts,
   });
   server.listen(port, '0.0.0.0', () => {
     logger.info(
-      'started {application} {version} on port {port} (browser {browser}, charts {charts}, workspaces {workspaces}, services {services})',
+      'started {application} {version} on port {port} (browser {browser}, charts {charts}, workspaces {workspaces}, services {services}, scripts {scripts})',
       {
         component: 'worker-sandbox/server',
         port,
@@ -317,6 +404,11 @@ async function main(): Promise<void> {
             : 'enabled, UNISOLATED'
           : 'disabled',
         services: services ? 'enabled' : 'disabled',
+        scripts: scripts
+          ? canIsolateByUid()
+            ? 'enabled, per-caller uids'
+            : 'enabled, UNISOLATED'
+          : 'disabled',
       }
     );
   });

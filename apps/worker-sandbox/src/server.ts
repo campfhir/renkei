@@ -35,14 +35,8 @@ import { getOrgSettings } from '@renkei/settings';
 import {
   assertPublicHttpsUrl,
   BlockedUrlError,
-  DEFAULT_FILE_TTL_MS,
   DEFAULT_MAX_FILE_BYTES,
-  DEFAULT_SUBJECT_QUOTA_BYTES,
-  MAX_FILES_PER_SUBJECT,
-  DEFAULT_BATCH_FILE_TTL_MS,
   DEFAULT_BATCH_MAX_FILE_BYTES,
-  DEFAULT_BATCH_QUOTA_BYTES,
-  MAX_FILES_PER_BATCH,
   LSP_MESSAGE_MAX_BYTES,
   UPLOAD_MAX_BYTES,
   validateFilename,
@@ -76,7 +70,10 @@ import { secretSummary } from './secrets';
 import { interruptRunningProcesses, orphanedByNow } from './workspaces';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import { createServiceHandlers } from './service-endpoints';
+import { createScriptHandlers } from './script-endpoints';
+import { expiryFromNow, quotaHeadroom } from './staging';
 import type { ServiceManager } from './services';
+import type { ScriptRunner } from './scripts';
 import type { LspSessions } from './lsp-sessions';
 import { logger } from './logger';
 
@@ -138,6 +135,13 @@ export interface SandboxServerDeps {
   services?: ServiceManager | null;
   /** The language server sessions behind `workspaces/lsp/*`; made here when not given (tests script one). */
   lsp?: LspSessions;
+  /**
+   * Scripts over staged files (SANDBOX_SCRIPTS_ENABLED): the runner that
+   * copies a caller's files into a throwaway directory and runs their
+   * Python there as their own uid with no network (scripts.ts), or null,
+   * which answers the script verb 503.
+   */
+  scripts?: ScriptRunner | null;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -271,37 +275,6 @@ function pageWire(state: BrowserPageState) {
 }
 
 /**
- * How much more this caller may stage right now, after their file-count
- * ceiling — 0 (or less) means "refuse outright," which the caller checks
- * before doing any I/O. A batchId switches to the SEPARATE, much larger
- * batch pool (packages/connector-sandbox/src/limits.ts) keyed by
- * (tenantId, batchId) instead of the interactive per-subject one, so a
- * document-ocr-pipeline batch never competes with the same person's
- * ordinary scratch space.
- */
-async function quotaHeadroom(
-  db: Kysely<DB>,
-  target: store.SandboxTarget,
-  batchId: string | null
-): Promise<{ ok: true; remaining: number } | { ok: false; reason: 'too_many_files' }> {
-  if (batchId) {
-    const count = await store.countFilesForBatch(db, target.tenantId, batchId);
-    if (count >= MAX_FILES_PER_BATCH) return { ok: false, reason: 'too_many_files' };
-    const total = await store.totalStagedBytesForBatch(db, target.tenantId, batchId);
-    return { ok: true, remaining: Math.max(0, DEFAULT_BATCH_QUOTA_BYTES - total) };
-  }
-  const count = await store.countFiles(db, target);
-  if (count >= MAX_FILES_PER_SUBJECT) return { ok: false, reason: 'too_many_files' };
-  const total = await store.totalStagedBytes(db, target);
-  return { ok: true, remaining: Math.max(0, DEFAULT_SUBJECT_QUOTA_BYTES - total) };
-}
-
-function expiryFromNow(batchId: string | null): Date {
-  const ttl = batchId ? DEFAULT_BATCH_FILE_TTL_MS : DEFAULT_FILE_TTL_MS;
-  return new Date(Date.now() + ttl);
-}
-
-/**
  * The server, plus how it stops: `startDraining` turns every request away
  * with 503 `shutting_down` and kills the commands in flight so their
  * callers get an `interrupted` answer instead of a dropped socket
@@ -321,6 +294,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   let draining = false;
   const vault = deps.vault ?? new SecretVault();
   const services = createServiceHandlers({ db: deps.db, manager: deps.services ?? null });
+  const scripts = createScriptHandlers({ db: deps.db, runner: deps.scripts ?? null });
   const workspaces = createWorkspaceHandlers({
     db: deps.db,
     enabled: deps.workspaces === true,
@@ -957,13 +931,15 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     const envOp = op.startsWith('env/') ? op.slice('env/'.length) : null;
     const servicesOp = op.startsWith('services/') ? op.slice('services/'.length) : null;
     const chartsOp = op.startsWith('charts/') ? op.slice('charts/'.length) : null;
+    const scriptsOp = op.startsWith('scripts/') ? op.slice('scripts/'.length) : null;
     const prefixed =
       browserOp !== null ||
       secretsOp !== null ||
       workspacesOp !== null ||
       envOp !== null ||
       servicesOp !== null ||
-      chartsOp !== null;
+      chartsOp !== null ||
+      scriptsOp !== null;
     const jsonHandler = prefixed ? null : jsonHandlers[op];
     if (!prefixed && !jsonHandler) {
       return sendError(response, 404, 'unknown_operation');
@@ -989,6 +965,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (envOp !== null) return workspaces.handleEnv(envOp, parsedBody, response);
     if (servicesOp !== null) return services.handleServices(servicesOp, parsedBody, response);
     if (chartsOp !== null) return handleCharts(chartsOp, parsedBody, response);
+    if (scriptsOp !== null) return scripts.handleScripts(scriptsOp, parsedBody, response);
     await jsonHandler!(parsedBody, response);
   }
 
