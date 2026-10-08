@@ -29,11 +29,11 @@ function idsFor(project: string, which: 'off' | 'on') {
 }
 
 /**
- * Two tenants, because an org's settings are read through a short cache
- * (the settings page says "within a minute") that the dev server's page
- * modules hold apart from the API route's: the `off` tenant proves the
- * form writes the rows, and the `on` tenant — seeded before any page of
- * it is read — proves the rows are what the pages go by.
+ * Two tenants: the `off` tenant proves the form writes the rows and that
+ * the pages read them back at once (the settings cache is seeded on a
+ * write, shared across every route in the process), and the `on` tenant
+ * — rows seeded straight into the database, no form — proves the rows
+ * alone are what the pages go by.
  */
 function tenantsFor(project: string) {
   return { off: idsFor(project, 'off'), on: idsFor(project, 'on') };
@@ -173,6 +173,27 @@ test('the switches write the rows, and the rows open the Code section', async ({
   expect(body.settings?.sandboxBrowserEnabled).toBe(true);
   expect(body.settings?.sandboxWorkspacesEnabled).toBe(true);
   expect(body.settings?.sandboxChartsEnabled).toBe(false);
+
+  // And so do the pages, at once: the form after a reload, then the Code
+  // section, which no longer shows its notice.
+  await page.reload();
+  await expect(page.getByRole('switch', { name: 'Browser' })).toHaveAttribute(
+    'aria-checked',
+    'true'
+  );
+  await expect(page.getByRole('switch', { name: 'Code projects' })).toHaveAttribute(
+    'aria-checked',
+    'true'
+  );
+  await expect(page.getByRole('switch', { name: 'Charts' })).toHaveAttribute(
+    'aria-checked',
+    'false'
+  );
+  await page.goto(`/${off.slug}/code`);
+  await expect(
+    page.getByText('Code projects are not switched on for this organization')
+  ).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Connectors' })).toBeVisible();
 
   // An org whose rows say so has the section open (what it says next is
   // that nobody here has connected a repository host yet — the step after

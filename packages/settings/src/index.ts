@@ -337,7 +337,22 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const orgCache = new Map<string, CacheEntry<OrgSettings>>();
+declare global {
+  var __renkeiOrgSettingsCache: Map<string, CacheEntry<OrgSettings>> | undefined;
+}
+
+/**
+ * ONE cache per process, anchored on globalThis like the database client
+ * and the blob store: Next bundles this package into each route that
+ * imports it, so a module-level map would be a cache per route — and a
+ * setter in the API route clearing ITS map would leave the settings page
+ * reading its own stale copy for the rest of the TTL. On globalThis every
+ * copy of this module reads and seeds the same map, so a change shows on
+ * the next request in this process. Other replicas still see it within
+ * the TTL.
+ */
+const orgCache: Map<string, CacheEntry<OrgSettings>> = (globalThis.__renkeiOrgSettingsCache ??=
+  new Map());
 
 function coerce(current: unknown, fallback: boolean | number): boolean | number {
   if (typeof fallback === 'boolean') return typeof current === 'boolean' ? current : fallback;
@@ -569,7 +584,11 @@ export async function setOrgSettings(
     if (!result.ok) return result;
   }
 
+  // Seed rather than merely clear: the next reader — whichever route it
+  // is in — gets the fresh row set without a database round trip, and a
+  // read that raced the writes cannot re-cache what they replaced.
   orgCache.delete(tenantId);
+  await getOrgSettings(tenantId);
   return ok();
 }
 
