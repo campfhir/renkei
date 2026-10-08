@@ -46,6 +46,13 @@ export interface SavedBrowserState {
   /** ref → (signature, ordinal) from the last snapshot, so an old ref can be recovered by signature. */
   refSignatures: [string, { sig: string; ordinal: number }][];
   savedAt: number;
+  /**
+   * Which worker process wrote this — so a replica still holding the
+   * session in memory can tell that another one has answered the caller
+   * since, and that its own page is stale. Absent in files from before
+   * the field existed; read as "not mine" by every replica, once.
+   */
+  heldBy?: string;
 }
 
 export interface BrowserStateStore {
@@ -83,6 +90,7 @@ function isSavedState(value: unknown): value is SavedBrowserState {
   return (
     typeof value.url === 'string' &&
     typeof value.savedAt === 'number' &&
+    (value.heldBy === undefined || typeof value.heldBy === 'string') &&
     isRecord(storage) &&
     Array.isArray(storage.cookies) &&
     Array.isArray(storage.origins) &&

@@ -429,7 +429,14 @@ it back: the new context starts with the cookies, a verb that needs a
 page reopens the saved URL (a navigate just goes where it is told, with
 the cookies), and a click by a ref from the last snapshot still finds its
 element by signature. A live DOM is not portable and is not pretended to
-be: the page is opened as it loads now. The file lives a day, is dropped
+be: the page is opened as it loads now. The saved copy is also what
+decides whether a session a replica still holds in memory is current:
+each write carries the writer's id, and a replica whose caller has since
+been answered elsewhere finds another id in the file, drops its own
+context and reopens from the file — otherwise two replicas behind one
+name each keep serving the page they have, and the caller's calls land
+on either (a fill by a ref the last snapshot showed as a text box hits a
+link of the page before). The file lives a day, is dropped
 by `sandbox_browser_close`, and is never written without the key (then
 sessions are one process's memory, and the worker says so at boot).
 Deliberately not saved: the secret values a session typed — a resumed
