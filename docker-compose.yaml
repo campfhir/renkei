@@ -238,6 +238,23 @@ services:
   # (`openssl rand -base64 32`) seals the environment variables people hand
   # their commands; it falls back to TOKEN_ENCRYPTION_KEY.
   #
+  # SANDBOX_SCRIPTS_ENABLED=true in .env (again read by both) adds
+  # sandbox_run_python to every chat with a scratch space: Python the
+  # model wrote, run over COPIES of the person's own staged files in a
+  # throwaway directory under /runs (no volume), as that person's own uid
+  # — the container runs its supervisor as root for the same reason as
+  # workspaces, with or without them — and, unlike a workspace command,
+  # with NO network when the kernel lets this container unshare one.
+  # Docker's default profile does not (unshare needs CAP_SYS_ADMIN): the
+  # worker then runs scripts on this container's network and says so at
+  # boot and in every result. To close that, add
+  #   cap_add: [SYS_ADMIN]
+  # to this service, weighing the capability against everything else the
+  # container holds (DEPLOYMENT.md, "Scripts over staged files").
+  # SANDBOX_SCRIPT_MEMORY (default 2g) caps a run's address space; several
+  # people running large joins at once share SANDBOX_WORKER_MEMORY below
+  # with the browser, so raise both together.
+  #
   # STATEFUL, unlike the queue workers above: checkouts on /workspaces and
   # staged bytes on /data, with only the rows in the database. Replicas
   # (drop container_name, `scale: N`) work on one host BECAUSE they share
@@ -334,6 +351,8 @@ services:
       # projects, each a repository a chat works in with the code_* tools
       # — and SANDBOX_SERVICES_ENABLED=true on top for the code_service_*
       # tools (containers beside a checkout; see worker-sandbox's socket).
+      # SANDBOX_SCRIPTS_ENABLED=true registers sandbox_run_python (a
+      # script over the person's own staged files, run on the worker).
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
       # The chat calls the app's OWN MCP endpoint for tool calls, the same
       # way the agents worker does; loopback inside the container.

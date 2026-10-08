@@ -164,7 +164,11 @@ command's environment), but a deployment with workspaces enabled should
 still put the sandbox worker on its own network with a route out and no
 route to the other services — the compose file says so beside the
 service. Per-command network namespaces are the next step if that
-placement is not enough.
+placement is not enough — and they are what `sandbox_run_python`
+(`sandbox-connector-design.md`) already uses, since a script over a
+person's staged files needs no network at all: the same runner, with
+`isolateNetwork` set, starts the interpreter under `unshare --net`
+before the uid drop where the container may.
 
 **Without root** (a developer's checkout, `pnpm dev`), commands run as
 the worker's own user with no per-caller isolation; startup logs that
