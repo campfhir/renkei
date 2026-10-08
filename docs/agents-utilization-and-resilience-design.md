@@ -27,15 +27,17 @@ Two moves, in order:
 1. **Make the runtime resilient by default** (§4). Small engine changes:
    transient problems retry themselves, a step with no failure row gets one
    corrective try before it kills the run, the tool budget stops charging for
-   the model's own corrections, and the empty-search trap goes away. This
-   lowers the failure rate of every existing agent without touching the
+   the model's own corrections, and "nothing found" stops being a failure.
+   This lowers the failure rate of every existing agent without touching the
    builder.
-2. **Add a second, simpler way to author** (§3): an agent that is a trigger,
-   a brief in prose, and a tool allowance, executed by the chat's sub-agent
-   loop — created from the chat ("do this every weekday at 8") or from a
-   one-box builder, with the step document as the advanced form rather than
-   the only form. The flow chart stays for people who want the control; it
-   stops being the front door.
+2. **Make each step a sub-agent and the engine an orchestrator** (§3). A
+   step becomes a task in prose with a tool allowance and a budget, run by
+   the chat's sub-agent loop, closing with a **report** rather than a verdict
+   keyed by failure codes. The orchestrator keeps the structure people need
+   (order, branches, loops, approval, and now parallel lanes) and routes on
+   reports. The per-step failure table, the one-tool rule and the chip
+   contract go away, which is what lets the builder become a numbered
+   outline with the flow chart as an optional diagram.
 
 ## 2. Where the friction is, concretely
 
@@ -92,15 +94,16 @@ already has the alternative renderer — `renderStepsOutline` and the Markdown
 export produce a numbered document of the same steps — it is just not
 editable.
 
-### 2.4 Discovery: agents live on an island
+### 2.4 Discovery: the chat can make agents, but only in the step grammar
 
-Agents are a top-level page described as "step-by-step helpers you draft
-yourself". The chat — where people already are, and where they already run
-multi-step work through `chat_delegate` — has no path to "do this on a
-schedule" or "save what you just did as an agent". The MCP layer deliberately
-has no drafting tool ("There is NO drafting tool here", `mcp-tools/agents`),
-so a chat model cannot draft one either; it would have to hand-write the full
-step JSON.
+The chat already has the bridge: `agent_create`, `agent_update`,
+`agent_patch_steps` and `agent_patch` (`mcp-tools/agents`) let a chat turn
+create and edit agents, and `agent_run_get` reads a run back for improvement.
+What makes that path heavy is the same thing that makes the builder heavy:
+the chat model has to emit the full step grammar — one tool per step, chips
+for every value a step needs, failure rows keyed by outcome codes — and the
+save tools echo lint hints back when it gets the chips wrong. A smaller step
+contract (§3) shrinks that grammar for the chat as much as for the builder.
 
 ### 2.5 Runtime: the ways a step fails on a benign problem
 
@@ -129,100 +132,258 @@ author's failure table — whose default is empty. The chat sub-agent loop made
 the opposite choice (`subagent.ts`: `RETRYABLE_LLM_ERRORS`, 15–40 steps, a
 report rather than a verdict) and is the surface people use.
 
-## 3. The front door: an agent as a brief
+## 3. Steps as sub-agents, the engine as orchestrator
 
-### 3.1 Shape
+### 3.1 What a step becomes
 
-A second document shape beside the step tree:
+Today an attempt is a loop of at most ten model turns over one named tool,
+three billed calls, and a forced `finish_step` with an outcome code
+(`runAttempt`, `engine.ts:3700-4240`). The chat's sub-agent
+(`apps/web/lib/chat/subagent.ts`, `runSubagent`) is the same loop with the
+ties cut: a task, a tool set that can grow through `find_tools`, 15–40
+steps, a wall clock, provider-error retry, and a **report** as its result.
+A step becomes that:
 
 ```ts
-interface AgentBrief {
-  version: number;
-  kind: 'brief';
-  /** Prose with var/date chips — what to do, in the author's words. */
-  brief: InstructionSegment[];
+interface TaskStep {
+  id: string;
+  kind: 'task';
+  name: string;
+  /** What to do, in the author's words. Chips optional, never required. */
+  task: InstructionSegment[];
   /**
-   * What it may call. Absent = the owner's reading tools plus find_tools;
-   * acts must be listed (or discovered and then approved — see 3.3).
+   * What it may call. Absent = the owner's reading tools, discoverable
+   * through find_tools. Act tools must be listed here — or discovered and
+   * then approved at the card (§3.5).
    */
   tools?: string[];
-  /** Calls per run and wall clock, within org caps. */
+  /** Model calls and billed tool calls per attempt; org caps bound both. */
   budget?: { calls?: number; minutes?: number };
+  /** Binds the report's named outputs for later steps and loops. */
+  saveAs?: string;
+  /** Attempts when the step reports itself blocked. Default 2. */
+  tries?: number;
+  /** When every try ends blocked. Default 'stop'. */
+  ifStuck?: 'stop' | 'continue' | 'stop-quiet';
+  onSuccess?: 'continue' | 'stop' | 'stop-quiet';
+  needsApproval?: boolean;
+  approvalTimeoutHours?: number;
+  onNotApproved?: BranchPath;
 }
 ```
 
-Triggers, guardrails, memory, knowledge notes, `canAskQuestions`, the model
-override, sharing, and the ledgers all stay exactly as they are — they hang
-off the agent row, not the step document. The run row, token, notifier, and
-timeline are reused: a brief run is one attempt row whose `toolCalls` is the
-whole transcript, rendered the way `subagent-modal.tsx` renders a chat
-sub-agent's.
+The closure tool replaces `finish_step`:
 
-### 3.2 Execution
+```ts
+interface StepReport {
+  /**
+   * 'done'          — the task is complete (including "I looked and there
+   *                   is nothing": an empty search is a finding, reported
+   *                   as such — never a failure, never a retry trigger).
+   * 'not-applicable'— this step's action does not apply to this input
+   *                   (today's 'skipped').
+   * 'blocked'       — it could not be completed; the report says why.
+   */
+  outcome: 'done' | 'not-applicable' | 'blocked';
+  /** For the owner and the next step. Bounded (REPORT_CHARS, ~4 000). */
+  report: string;
+  /** Named results a later step or loop reads: a key, a list, a draft. */
+  outputs?: Record<string, string | string[]>;
+  stop?: boolean;
+  quiet?: boolean;
+}
+```
 
-`runSubagent` (`apps/web/lib/chat/subagent.ts`) already is the loop: a task,
-a tool set, a step cap, a wall clock, LLM retry on transient kinds, progress
-recording, and a report. The agents worker calls it (or a copy lifted into a
-shared package — it has no chat-specific dependency that matters) with:
+What disappears from authoring: the one-tool rule, the failure table and
+its outcome codes, the `when …` custom conditions, `maxAttempts` as a
+number nobody chose, and the chip contract (§3.3). What stays: order,
+branches, loops with `collect`, groups, endings, the approval gate, `remember`,
+`ask_person`, `resolve_time`, guardrails, memory, knowledge notes, the model
+override, sharing, chaining, resume, and every ledger.
 
-- the brief rendered with the trigger's variables (all of them — a brief has
-  no chip contract; "the email" means the email);
-- `find_tools` over the owner's projection, so the author never names a
-  tool unless they want to restrict;
-- `finish_step`-style closure replaced by the report: the run succeeds when
-  the model reports, fails only on a hard abort (auth, budget, timeout);
-- `remember`, `ask_person`, `resolve_time` as today.
+### 3.2 The orchestrator
 
-What is lost relative to steps: determinism of _which_ tool runs _when_, and
-per-step attribution in the usage page. What is gained: the author does not
-have to predict the plan. For most of the agents people actually want
-(digests, triage, "file this where it belongs"), the plan is the model's job.
+`engine.ts` keeps its frame stack, attempt rows, token, deadline, cancel
+and resume machinery. What changes is the inside of `executeStep`:
 
-### 3.3 Acting safely without a failure table
+- **Routing on the report, not on codes.** `done` advances (binding
+  `outputs` and the report text under `saveAs`); `not-applicable` advances
+  with nothing bound (as a skip does today); `blocked` retries up to `tries`
+  with the previous report in view (today's corrective attempt, with the
+  same laxer allowance), then takes `ifStuck`.
+- **"Nothing found" never fails a run.** It is a `done` report whose text
+  says so, bound under `saveAs` like any other result; a branch after the
+  step routes on it ("did it find anything?") if the author cares. The
+  seeded `no-results → retry` row, the drafter's `no-results` rule and the
+  outcome guide's "declare it as a failure" paragraph all go. This is the
+  "treat no-results as exhaustion" idea taken one step further: exhaustion
+  still ends in `ifStuck`, which can be `stop`; a finding of nothing should
+  not be able to stop a run at all unless a branch or ending says so.
+- **Transient problems are the loop's, not the author's.** The sub-agent
+  loop already retries `network`/`rate_limit`/`overloaded` model errors
+  within a step (`RETRYABLE_LLM_ERRORS`); a tool that could not be reached
+  is retried once by the loop before the model sees it. A step reports
+  `blocked` only when the model concludes it is.
+- **Branch and until-loop evaluators** keep their no-tools judgment frame
+  but read the reports of the steps before them (bounded), not just chipped
+  variables — a judgment with the evidence in front of it.
 
-The step model's safety story is "the author named the one tool, and
-`needsApproval` gates it". A brief needs an equivalent that does not require
-naming tools up front:
+The engine's two correctness properties (attempt row before the loop, budget
+by counting rows) hold unchanged: a sub-agent step is one attempt row whose
+`toolCalls` is the transcript's tool calls and whose `detail` carries the
+report, which is what the timeline and the debug export already render.
 
-- **Reads are free; acts are gated by the chat's permission rules.**
-  `permission-rules.ts` already classifies acts and decides what asks. A
-  brief run gates an act the same way `needsApproval` does today — park the
-  run, raise the proposed-call card — unless the owner has allowed that tool
-  for this agent ("always allow `jira_add_comment` here"), recorded on the
-  agent like `blockedTools` is now.
-- **Supervised first runs.** A new agent's first N runs (org setting, default 3) gate every act regardless. The card the owner answers is the same one
-  the gate raises today; approving with "always" fills the allow list. This
-  turns the first-run feedback loop from "read the timeline later" into
-  "approve or correct as it goes".
-- Guardrails inject as they do now; `blockedTools` still blocks.
+### 3.3 What a step sees: isolation over per-step guardrails
 
-### 3.4 Where briefs come from
+Per-step guardrails were raised as a way to stop flooding a step with
+context that makes it misbehave. The sub-agent shape gets most of that for
+free, and adding a per-step guardrails field would put authoring surface
+back where this design is removing it. What a step receives:
 
-- **Chat.** A `agent_draft` MCP tool (the drafting gap in `mcp-tools/agents`)
-  that takes prose and a trigger, creates a disabled brief agent, and returns
-  the link — so "every weekday at 8, tell me which of my tickets went stale"
-  in chat becomes an agent in one turn, reviewed on its page, enabled with
-  the existing review panel. And "save this as an agent" on a chat thread:
-  the thread's task and tool calls are the best brief anyone will write.
-- **The builder.** A new agent starts as a brief: one box, a trigger
-  chooser, and Save. "Turn into steps" runs the existing drafter over the
-  brief and opens the flow chart for people who want the control — the
-  current flow, one click deeper instead of first.
-- **Existing step agents** are untouched. Their export already renders as
-  prose; "simplify to a brief" can be offered from the Improve panel, not
-  forced.
+- **Its task**, with the trigger's values available — the trigger is the
+  reason the run exists, so every step sees it (bounded, long values by
+  reference as today's "Known information" does).
+- **The reports it needs.** Default: the report of the step immediately
+  before it in its list, plus any `saveAs` name its task mentions in words
+  or chips. The orchestrator resolves mentions by name (today's lint is
+  the matcher — promoted from a hint to the binding); nothing else is sent.
+  An author who wants more names it; one who wants less gets less by
+  default. This is the per-step context control, expressed as "what this
+  step reads" rather than as a second rulebook.
+- **Agent guardrails, in full, every step.** They are policy ("never send
+  outside the org", "no PHI in comments"), binding and short, and the
+  owner's one safety net across every step; splitting them per step would
+  invite the gap where the one step that needed the rule did not get it.
+- **Memory and the knowledge index**, as today, in the system prompt. If
+  the failure query (§5) later shows a step misbehaving because of them,
+  a per-step `context: 'minimal'` switch is a one-field addition. It should
+  wait for that evidence.
 
-### 3.5 The builder's default view for step agents
+### 3.4 Parallel lanes
 
-Independent of briefs: make the editable outline the default view and the
-flow chart a "Diagram" tab. `renderStepsOutline` already produces the
-numbered document; the step editor's fields (instruction with chips, save
-as, the "if something goes wrong" line) render inline under each number,
-branches and loops as indented blocks. The side panel stays for the dense
-parts (failure rows, approval settings, schedule). This is the cheapest change
-in this document that touches utilization, and it does not conflict with the
-drag-and-drop work in [`builder-drag-drop-design.md`](./builder-drag-drop-design.md)
-— the outline is a list too.
+With reports as the only hand-off, independent steps can run at once. This
+should be **explicit**, not inferred from dependencies: a sub-agent step
+discovers its tools at run time, so nothing static says what it touches,
+and an orchestrator that silently parallelises is one that silently
+reorders acts. A container:
+
+```ts
+interface ParallelStep {
+  id: string;
+  kind: 'parallel';
+  name: string;
+  /** Each lane runs serially; lanes run at the same time. 2..MAX_LANES. */
+  lanes: BranchPath[];
+  /** When a lane ends stuck: let the others finish, then apply the lane's
+   *  ifStuck; or cancel the others at once. Default 'finish-others'. */
+  onLaneStuck?: 'finish-others' | 'cancel-others';
+}
+```
+
+Semantics worth fixing now:
+
+- The group finishes when every lane has; the steps after it see every
+  lane's last report. `saveAs` names must be unique across lanes (the
+  validator already enforces doc-wide uniqueness).
+- An approval gate or `ask_person` in one lane parks that lane; the others
+  continue; the run is `waiting` only when no lane can proceed. The card
+  identifies the lane.
+- Loops may contain a parallel group; a parallel group may contain a loop.
+  Lanes may not contain another parallel group.
+- The drafter is told to parallelise only lanes that read, or that act on
+  different things; two lanes updating the same ticket is the author's
+  problem the way two serial steps are, but the outline should warn when
+  two lanes list the same act tool.
+
+Engine cost: the frame stack is a single program counter and the run row
+has one `current_step_id` (`engine.ts:1228-1278`). Lanes need a cursor each
+(a JSON column, or a `agent_run_lanes` table), the resume fast-forward
+walks per lane, and the janitor's "stuck run" check reads all cursors.
+Attempt rows need no change: they are keyed by `step_id`, and lanes never
+share a step. This is the one piece of §3 with real engineering risk, and
+it is severable — everything above it works with `lanes` absent.
+
+### 3.5 Acting safely without a failure table
+
+The step model's safety story was "the author named the one tool, and
+`needsApproval` gates it". With discovery, the equivalent:
+
+- **Reads are free; acts are gated** by the chat's permission rules
+  (`permission-rules.ts` already classifies acts). A step that reaches for
+  an act not in its `tools` list parks and raises the proposed-call card the
+  gate raises today; approving with "always for this agent" records the
+  tool on the agent, beside `blockedTools`.
+- **Supervised first runs.** An org setting (default 3): a new agent's
+  first N runs gate every act regardless. The owner approves or corrects as
+  it goes, which is a better first feedback loop than reading a timeline
+  later — and it answers §2.2 for event-triggered agents, which still
+  cannot be run by hand.
+- `blockedTools` stays enforced at the gateway, and the run token (minted
+  by `mintRunToken` for the tools the steps name) widens to the owner's
+  projection minus blocks when a step has no `tools` list.
+
+### 3.6 The builder
+
+With no per-step tool, codes or chips to collect, a step is a name and a
+paragraph. The builder's primary surface becomes the numbered **outline**
+`renderStepsOutline` already produces, made editable in place:
+
+```
+1. Find the ticket          may use: jira_search_issues
+   Look up the Jira ticket the email is about — the key is usually in the
+   subject; otherwise search by the sender and the last week.
+   tries 2 · if stuck: stop
+
+2. If a ticket was found
+   a. Add the email as a comment       needs approval
+      …
+   b. Reply in the thread with what changed
+      …
+   Otherwise
+   a. Create a ticket in SUPPORT …
+
+3. At the same time
+   lane 1: …        lane 2: …
+```
+
+Branches read "If … / Otherwise", loops "For each … in …", lanes "At the
+same time". The side panel keeps the dense parts (schedule, approval
+settings, the tool allowance picker). The flow chart becomes a "Diagram"
+tab over the same document — unchanged code, one tab deeper. The drafting
+grammar (`draft-from-prose.ts`) loses its tool, chip and failure rules and
+gains "lanes"; the chat's `agent_create` grammar shrinks the same way.
+
+### 3.7 Engineering notes
+
+- `runSubagent` and `find_tools` live in `apps/web/lib/chat` with
+  dependencies on `local-tools`, `turn-runner` and the chat's tool surface;
+  `apps/worker-agents` cannot import `apps/web`. Lift the loop and
+  discovery into a package (the move `tool-outcomes` made for the same
+  reason), with the chat and the engine both calling it.
+- Discovery in a run goes through the MCP gateway's `tools/list` under the
+  run token rather than the chat's in-process catalog; the gateway already
+  projects per caller, so `find_tools` for a run is a filter over that list.
+- `REPORT_CHARS` bounds what a step hands on; `outputs` entries take
+  `SAVE_VALUE_CHARS`/`SAVE_ITEM_CHARS` as today. A step's prompt cost is
+  its task plus one or two reports, which is comparable to today's
+  "Known information" block.
+- Org caps: `agentMaxStepAttempts` stays; add `agentMaxStepCalls`
+  (default 15, as `CHAT_DELEGATE_DEFAULT_STEPS`) and keep
+  `agentRunTimeoutMinutes` for the whole run.
+- The run timeline renders a task step the way `subagent-modal.tsx`
+  renders a sub-agent's transcript: the report on top, each model turn and
+  its calls beneath.
+
+### 3.8 Migration
+
+A version 10 document may hold `task` steps beside `action` steps; the
+engine runs each by its kind, so no existing agent changes behaviour on
+deploy. "Convert to tasks" in the builder (and a flag on `agent_update`)
+turns an action step into a task step mechanically: the instruction becomes
+the task, the tool becomes the one-entry `tools` list, `saveAs` carries
+over, `retry` rows become `tries`, and `exhausted`/`stop-quiet` rows become
+`ifStuck`. New agents draft as task steps. Once the ledgers show action
+steps idle, the `action` kind and its failure table can be retired.
 
 ## 4. The runtime: resilient by default
 
@@ -252,12 +413,13 @@ expected effect on the failure rate.
    that code: `_meta` → declared-and-handled → heuristic → declared →
    `other`. The author planned for the model's reading, not for the error
    text's vocabulary (#5).
-5. **Fix the empty-search trap** (#7, #8). Seeded and drafted `no-results`
-   rows get `exhausted: 'continue'` and a cap of 2 tries; `newStep` and the
+5. **"Nothing found" is a result, not a failure** (#7, #8). Remove the
+   seeded `no-results → retry` row from `seededHandlingFor`, drop the
+   drafter's `no-results` rule, and drop the outcome guide's paragraph that
+   tells the model to declare an empty search as a failure; the system
+   prompt already treats it as success. Where an author's own `no-results`
+   row exists, its exhaustion takes `continue` when unset. `newStep` and the
    draft grammar default `maxAttempts` to 1 (the design already written).
-   Better still, drop the seeded retry and let the instruction's own words
-   say whether nothing is an answer — the system prompt already treats an
-   empty result as success unless the author handled `no-results`.
 6. **Build per-item loop failure handling** as designed (#9). It is the
    difference between an agent that can be trusted with a list and one that
    cannot.
@@ -293,17 +455,23 @@ The ledgers already hold what is needed; the queries do not exist yet.
 
 ## 6. Order
 
-1. §4.1–4.5 and 4.7 — the engine defaults and the empty-search fix. Days,
+1. §4.1–4.5 and 4.7 — the engine defaults and the nothing-found fix. Days,
    not weeks; every existing agent benefits; no UI beyond copy.
 2. §5's failure query and the funnel events — so the rest can be judged.
-3. §3.5 — the outline as the builder's default view.
-4. §3.1–3.4 — brief agents, chat drafting, supervised first runs. The big
-   bet; it reuses the sub-agent loop and the approval card, so most of the
-   work is the document shape, the worker branch, and the run page.
-5. §4.6 and 4.8 — loop item failures and evaluator context.
+3. §3.1–3.3, 3.5, 3.7 — task steps: lift the sub-agent loop into a package,
+   add the `task` kind and `report_step`, route on reports, widen the run
+   token, supervised first runs. Existing agents untouched.
+4. §3.6 and 3.8 — the outline as the builder's default view, with the
+   diagram as a tab; the drafter and `agent_create` on the smaller grammar;
+   "convert to tasks".
+5. §3.4 — parallel lanes, once task steps have run for a while and the
+   lane cursor design has been tried against resume and the janitor.
+6. §4.6 and 4.8 — loop item failures and evaluator context, where not
+   already subsumed by task steps.
 
-What this document does not propose: removing the step model, the flow
-chart, or the failure table. They are the right tools for the automations
-that need exactness — a filing pipeline with a branch per document type, a
-loop with a bulk tool. The argument is that they were the only tools, and the
-people who did not need exactness went back to the chat.
+What this document does not propose: removing branches, loops, endings, the
+approval gate, or the diagram. They are the structure a person wants to see
+and control. The argument is that the structure was carrying a per-step
+contract — one tool, named chips, coded failures — that belongs to the model
+at run time, and the people who did not want that contract went back to the
+chat.
