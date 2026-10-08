@@ -219,6 +219,37 @@ function targetKey(target: store.SandboxTarget): string {
   return `${target.tenantId}\n${target.subject}`;
 }
 
+/**
+ * Remove a run directory however the run left it. `in/` is made
+ * read-only for the script (0500), and a script may leave read-only
+ * directories of its own under `out/` or `home/`; root removes those
+ * regardless, but an unprivileged worker (a developer's checkout, CI)
+ * cannot unlink from a directory it may not write to. So every
+ * directory is reopened on the way down first — they are this
+ * process's own, or the caller's uid's which root may chmod — and only
+ * then removed.
+ */
+export async function removeRunDir(dir: string): Promise<void> {
+  await reopenDirectories(dir);
+  await rm(dir, { recursive: true, force: true });
+}
+
+async function reopenDirectories(dir: string): Promise<void> {
+  let entries;
+  try {
+    await chmod(dir, 0o700);
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    // Already gone, or not ours to open: rm says so if it matters.
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      await reopenDirectories(join(dir, entry.name));
+    }
+  }
+}
+
 async function chownIf(path: string, identity: ExecIdentity | null): Promise<void> {
   if (identity) await chown(path, identity.uid, identity.gid);
 }
@@ -246,7 +277,7 @@ export class ScriptRunner {
     await chmod(this.deps.runsRoot, 0o711);
     let removed = 0;
     for (const entry of await readdir(this.deps.runsRoot)) {
-      await rm(join(this.deps.runsRoot, entry), { recursive: true, force: true });
+      await removeRunDir(join(this.deps.runsRoot, entry));
       removed += 1;
     }
     return removed;
@@ -274,7 +305,7 @@ export class ScriptRunner {
     } finally {
       this.busy.delete(key);
       this.inFlight -= 1;
-      await rm(runDir, { recursive: true, force: true }).catch((error: unknown) => {
+      await removeRunDir(runDir).catch((error: unknown) => {
         logger.warn('could not remove run directory {dir}: {error}', {
           component: 'worker-sandbox/scripts',
           dir: runDir,
