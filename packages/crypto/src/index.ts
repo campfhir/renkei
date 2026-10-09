@@ -61,4 +61,24 @@ export {
   SEALED_BOX_PREFIX,
   type X25519KeyPair,
 } from './sealed-box';
-export { formatUserKey, parseUserKey, deviceCodeOf, USER_KEY_BYTES } from './browser/key-display';
+export {
+  formatUserKey,
+  parseUserKey,
+  deviceCodeFromDigest,
+  normalizeDeviceCode,
+  DEVICE_CODE_CHARS,
+  USER_KEY_BYTES,
+} from './browser/key-display';
+export { deviceCodeOf } from './device-code';
+export {
+  generateEd25519KeyPair,
+  ed25519PublicKeyOf,
+  signEd25519,
+  verifyEd25519,
+  type Ed25519KeyPair,
+} from './signing';
+export {
+  instanceListMessage,
+  INSTANCE_LIST_TAG,
+  type SignedInstance,
+} from './browser/instance-list';

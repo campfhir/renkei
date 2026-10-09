@@ -72,6 +72,36 @@ const HOP_BY_HOP = new Set([
   'set-cookie',
 ]);
 
+/**
+ * Request headers a caller may not put on a proxied request: the credential
+ * is this process's to supply (`authorization`, `cookie`), the target is the
+ * URL's (`host`), the framing is this process's (`content-length` and the
+ * hop-by-hop set). A caller that sets one has it dropped, not refused — the
+ * clients stage a Request and forward whatever the platform put on it.
+ */
+const FORBIDDEN_REQUEST_HEADERS = new Set([
+  'authorization',
+  'cookie',
+  'host',
+  'content-length',
+  'connection',
+  'keep-alive',
+  'transfer-encoding',
+  'te',
+  'trailer',
+  'upgrade',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'proxy-connection',
+]);
+
+/** How many redirects the proxy follows on a caller's behalf, each one re-checked against the host list. */
+export const MAX_REDIRECT_HOPS = 5;
+
+function isRedirect(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
 /** What this module reports through; the worker's logger in production, silence in tests. */
 export type DelegateLogger = GrantLogger;
 
@@ -242,7 +272,10 @@ export class Grants {
     const target = str(request.headers['x-delegate-url']);
     const method = str(request.headers['x-delegate-method']).toUpperCase() || 'GET';
     const forwardHeaders = parseJsonHeader(request.headers['x-delegate-headers']) ?? {};
-    const redirect = request.headers['x-delegate-redirect'] === 'manual' ? 'manual' : 'follow';
+    // Redirects are never left to fetch: every hop is dialed here with the
+    // host list re-checked, so the token travels only to the provider's own
+    // hosts. A hop elsewhere is handed back to the caller as the 3xx it is.
+    const follow = request.headers['x-delegate-redirect'] !== 'manual';
     const timeoutMs = Math.min(
       MAX_TIMEOUT_MS,
       Number(request.headers['x-delegate-timeout-ms']) || DEFAULT_TIMEOUT_MS
@@ -288,32 +321,66 @@ export class Grants {
       retryWithRefresh = Boolean(access.grant.refreshToken);
     }
 
-    const send = async (bearer: string): Promise<Response> => {
+    const send = async (
+      bearer: string,
+      target: URL,
+      hopMethod: string,
+      hopBody: Buffer
+    ): Promise<Response> => {
       const headers = new Headers();
       for (const [name, value] of Object.entries(forwardHeaders)) {
-        if (typeof value === 'string' && name.toLowerCase() !== 'authorization')
+        if (typeof value === 'string' && !FORBIDDEN_REQUEST_HEADERS.has(name.toLowerCase()))
           headers.set(name, value);
       }
       headers.set('authorization', `Bearer ${bearer}`);
-      return this.fetchImpl(url, {
-        method,
+      return this.fetchImpl(target, {
+        method: hopMethod,
         headers,
         body:
-          method === 'GET' || method === 'HEAD' || body.byteLength === 0
+          hopMethod === 'GET' || hopMethod === 'HEAD' || hopBody.byteLength === 0
             ? undefined
-            : new Uint8Array(body),
-        redirect,
+            : new Uint8Array(hopBody),
+        redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
       });
     };
 
     let upstream: Response;
     try {
-      upstream = await send(token);
-      if (upstream.status === 401 && retryWithRefresh) {
-        const again = await this.access(tenantId, provider, { subject, accountId }, true);
-        if (!again.ok) return fail(again.error);
-        upstream = await send(again.grant.accessToken);
+      let current = url;
+      let hopMethod = method;
+      let hopBody = body;
+      for (let hop = 0; ; hop += 1) {
+        upstream = await send(token, current, hopMethod, hopBody);
+        if (hop === 0 && upstream.status === 401 && retryWithRefresh) {
+          const again = await this.access(tenantId, provider, { subject, accountId }, true);
+          if (!again.ok) return fail(again.error);
+          token = again.grant.accessToken;
+          upstream = await send(token, current, hopMethod, hopBody);
+        }
+        if (!follow || !isRedirect(upstream.status) || hop >= MAX_REDIRECT_HOPS) break;
+        const location = upstream.headers.get('location');
+        if (!location) break;
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          break;
+        }
+        // Not the provider's host: the caller gets the redirect and decides;
+        // the token goes nowhere near it.
+        if (!hostAllowed(spec, next, provider)) break;
+        if (
+          upstream.status === 303 ||
+          ((upstream.status === 301 || upstream.status === 302) &&
+            hopMethod !== 'GET' &&
+            hopMethod !== 'HEAD')
+        ) {
+          hopMethod = 'GET';
+          hopBody = Buffer.alloc(0);
+        }
+        await upstream.body?.cancel().catch(() => undefined);
+        current = next;
       }
     } catch (error) {
       return fail(

@@ -43,14 +43,18 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 # Every process but the delegate reaches it at DELEGATE_WORKER_URL
 # (docker-compose.yaml wires the service name on each one), for keys,
 # provider tokens and the connector workers — each caller with ITS OWN
-# bearer key, so a key that leaks from one container names which one and
-# is rotated alone. All four are required by the compose file; generate
-# each with `openssl rand -base64 32`. The delegate takes the four as
+# bearer key, so the delegate authorizes by which key matched
+# (docs/delegate-key-design.md, "Callers"), a key that leaks from one
+# container names which one, and it is rotated alone. All four are
+# required by the compose file; generate each with
+# `openssl rand -base64 32`. The delegate takes them as
 # DELEGATE_WORKER_API_KEYS=web=…,worker=…,agents=…,sandbox=… (compose
-# builds that map from these), and the same four as a plain
-# comma-separated DELEGATE_WORKER_API_KEY for a delegate image from before
-# the map. Outside compose, set DELEGATE_WORKER_URL and the caller's key
-# as DELEGATE_WORKER_API_KEY on each process yourself.
+# builds that map from these) and each process presents its own as
+# DELEGATE_WORKER_API_KEY. Never hand the delegate a plain comma-separated
+# list of all four: a key named by the legacy single variable counts as
+# the web caller. The compose file's development default is refused by
+# every process in production. Outside compose, set DELEGATE_WORKER_URL
+# and the caller's key as DELEGATE_WORKER_API_KEY on each process yourself.
 DELEGATE_KEY_WEB=<32-byte-base64-key>
 DELEGATE_KEY_WORKER=<32-byte-base64-key>
 DELEGATE_KEY_AGENTS=<32-byte-base64-key>

@@ -1361,14 +1361,20 @@ export interface DelegateInstances {
 }
 
 export interface DeviceKeyRequests {
+  approved_by_session_id: string | null;
+  asking_session_id: string | null;
+  attempts: Generated<number>;
   code: string;
+  consumed_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  denied_at: Timestamp | null;
   expires_at: Timestamp;
   id: Generated<string>;
   public_key: string;
   sealed_key: string | null;
   subject: string;
   tenant_id: string;
+  user_agent: string | null;
 }
 
 export interface KeyDelegations {
@@ -1381,6 +1387,26 @@ export interface KeyDelegations {
   session_id: string | null;
   subject: string;
   tenant_id: string;
+}
+
+export interface DelegateAccessEvents {
+  caller: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  op: string;
+  outcome: string;
+  status: number;
+  subject_hash: string | null;
+  target: string | null;
+  tenant_id: string | null;
+}
+
+export interface DelegateSigningKeys {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  public_key: string;
+  sealed_private_key: string;
+  singleton: Generated<boolean>;
 }
 
 export interface DelegateGitTickets {
@@ -1620,8 +1646,10 @@ export interface DB {
   chat_user_memories: ChatUserMemories;
   chat_widget_decisions: ChatWidgetDecisions;
   chats: Chats;
+  delegate_access_events: DelegateAccessEvents;
   delegate_git_tickets: DelegateGitTickets;
   delegate_instances: DelegateInstances;
+  delegate_signing_keys: DelegateSigningKeys;
   device_key_requests: DeviceKeyRequests;
   key_delegations: KeyDelegations;
   coach_mark_progress: CoachMarkProgress;

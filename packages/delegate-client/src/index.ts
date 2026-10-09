@@ -40,7 +40,10 @@ import {
 
 export {
   DelegateTransport,
+  delegateApiKeyFromEnv,
   delegateConfigFromEnv,
+  developmentDelegateKeyRefusal,
+  DEVELOPMENT_DELEGATE_KEY,
   type DelegateCallError,
   type DelegateConfig,
   type DelegateTransportError,
@@ -83,6 +86,7 @@ const KEYS_OP_ERRORS: readonly KeysOpError[] = [
   'KEY_LOCKED',
   'WRONG_PASSPHRASE',
   'DECRYPTION_ERROR',
+  'SESSION_MISMATCH',
 ];
 
 function keyOpError(error: DelegateCallError): KeyOpError {
@@ -114,6 +118,15 @@ function stringsOf(value: unknown): string[] {
 
 function refBody(ref: ResourceRef): Record<string, unknown> {
   return { tenantId: ref.tenantId, kind: ref.kind, resourceId: ref.resourceId };
+}
+
+/** The live instances as signed by the deployment's delegate signing key. */
+export interface SignedInstanceList {
+  instances: LiveInstance[];
+  /** Raw Ed25519 public key, base64; null when the delegate has none. */
+  signingKey: string | null;
+  /** Base64 signature over `instanceListMessage(instances)`; null when unsigned. */
+  signature: string | null;
 }
 
 /** A person's enrollment and delegations as the delegate reports them; dates parsed. */
@@ -149,6 +162,7 @@ function delegationBody(input: DelegationInput): Record<string, unknown> {
     session: input.session,
     automation: input.automation,
     automationUntil: input.automationUntil ? input.automationUntil.toISOString() : null,
+    revokeSession: input.revokeSession === true,
   };
 }
 
@@ -162,6 +176,20 @@ export class DelegateClient {
 
   get configured(): boolean {
     return this.transport.configured;
+  }
+
+  /**
+   * This client's ops bound to a browser session: the delegate checks the
+   * session is the subject's and live, and opens that session's delegation
+   * alone (docs/delegate-key-design.md, "Callers").
+   */
+  forSession(sessionId: string): DelegateClient {
+    return new DelegateClient(this.transport.withBound({ sessionId }));
+  }
+
+  /** The agents worker's ops bound to the run they serve: the delegate checks the run is the subject's. */
+  forRun(runId: string): DelegateClient {
+    return new DelegateClient(this.transport.withBound({ runId }));
   }
 
   private async key(
@@ -186,6 +214,17 @@ export class DelegateClient {
 
   /** The live delegate instances: what a browser seals a person's key to. */
   async keyInstances(): Promise<Result<LiveInstance[], KeysOpError>> {
+    const signed = await this.keyInstancesSigned();
+    return signed.ok ? ok(signed.val.instances) : signed;
+  }
+
+  /**
+   * The live instances with the deployment's signature over them (and the
+   * signing key), for a browser deciding whether to seal to an instance it
+   * has not seen (docs/delegate-key-design.md, "Which delegate am I sealing
+   * to?"). Both null when the delegate has no signing key.
+   */
+  async keyInstancesSigned(): Promise<Result<SignedInstanceList, KeysOpError>> {
     const answer = await this.keys('keys/instances', {});
     if (!answer.ok) return answer;
     const instances: LiveInstance[] = [];
@@ -196,7 +235,11 @@ export class DelegateClient {
         instances.push({ id: item.id, publicKey: item.publicKey });
       }
     }
-    return ok(instances);
+    return ok({
+      instances,
+      signingKey: typeof answer.val.signingKey === 'string' ? answer.val.signingKey : null,
+      signature: typeof answer.val.signature === 'string' ? answer.val.signature : null,
+    });
   }
 
   /** A person's enrollment and what is delegated for them, as of this session when given. */

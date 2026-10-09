@@ -18,6 +18,9 @@ export {
   formatUserKey,
   parseUserKey,
   deviceCodeOf,
+  deviceCodeFromDigest,
+  normalizeDeviceCode,
+  DEVICE_CODE_CHARS,
   USER_KEY_BYTES,
   type UserKeyParseError,
 } from './key-display';
@@ -30,6 +33,8 @@ export {
   generateKeyPair,
   sealToPublicKey,
   openSealedBox,
+  verifyEd25519,
   SEALED_BOX_PREFIX,
   type RawKeyPair,
 } from './webcrypto';
+export { instanceListMessage, INSTANCE_LIST_TAG, type SignedInstance } from './instance-list';

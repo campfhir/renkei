@@ -67,7 +67,10 @@ export type AuditAction =
   | 'encryption-key.enrolled'
   | 'encryption-key.rotated'
   | 'encryption-key.automation-revoked'
+  /** The automation delegations were replaced (a sign-in, a renewal, a window change). */
+  | 'encryption-key.automation-renewed'
   | 'encryption-key.device-approved'
+  | 'encryption-key.device-denied'
   | 'encryption-key.shredded'
   | 'sandbox.secret.created'
   | 'sandbox.secret.unlocked'

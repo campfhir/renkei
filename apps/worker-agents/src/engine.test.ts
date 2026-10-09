@@ -52,36 +52,44 @@ const fakeOpen = (stored: string): string | null =>
     : null;
 jest.mock('@renkei/delegate-client', () => ({
   delegateClient: () => ({
-    sealForSubject: async (_tenantId: string, _subject: string, values: string[]) =>
-      ownerDelegated
-        ? { ok: true, val: values.map(fakeSeal) }
-        : { ok: false, err: { type: 'NEEDS_DELEGATION' } },
-    openForSubject: async (_tenantId: string, _subject: string, stored: string[]) =>
-      ownerDelegated
-        ? { ok: true, val: stored.map(fakeOpen) }
-        : { ok: false, err: { type: 'NEEDS_DELEGATION' } },
-    keyStatus: async () =>
-      keyServiceUp
-        ? {
-            ok: true,
-            val: {
-              enrolled: true,
-              legacy: false,
-              legacyNeedsPassphrase: false,
-              publicKey: 'stub',
-              wrappedPrivateKey: 'stub',
-              wrappedAutomationKey: 'stub',
-              version: 1,
-              enrolledAt: new Date(),
-              sessionInstances: [],
-              thisSessionInstances: [],
-              automationInstances: ownerDelegated ? ['instance-1'] : [],
-              automationUntil: ownerDelegated ? new Date(Date.now() + 86_400_000) : null,
-            },
-          }
-        : { ok: false, err: { type: 'internal', message: 'down' } },
+    sealForSubject: stubSealForSubject,
+    openForSubject: stubOpenForSubject,
+    keyStatus: stubKeyStatus,
+    forRun: () => ({
+      keyStatus: stubKeyStatus,
+      sealForSubject: stubSealForSubject,
+      openForSubject: stubOpenForSubject,
+    }),
   }),
 }));
+const stubKeyStatus = async () =>
+  keyServiceUp
+    ? {
+        ok: true,
+        val: {
+          enrolled: true,
+          legacy: false,
+          legacyNeedsPassphrase: false,
+          publicKey: 'stub',
+          wrappedPrivateKey: 'stub',
+          wrappedAutomationKey: 'stub',
+          version: 1,
+          enrolledAt: new Date(),
+          sessionInstances: [],
+          thisSessionInstances: [],
+          automationInstances: ownerDelegated ? ['instance-1'] : [],
+          automationUntil: ownerDelegated ? new Date(Date.now() + 86_400_000) : null,
+        },
+      }
+    : { ok: false, err: { type: 'internal', message: 'down' } };
+const stubSealForSubject = async (_tenantId: string, _subject: string, values: string[]) =>
+  ownerDelegated
+    ? { ok: true, val: values.map(fakeSeal) }
+    : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
+const stubOpenForSubject = async (_tenantId: string, _subject: string, stored: string[]) =>
+  ownerDelegated
+    ? { ok: true, val: stored.map(fakeOpen) }
+    : { ok: false, err: { type: 'NEEDS_DELEGATION' } };
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 

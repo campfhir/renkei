@@ -150,14 +150,27 @@ export function providerSpec(provider: string): ProviderSpec | null {
  * so a request to that origin may carry the provider's token too. Unset
  * in production, where only the provider's own hosts are allowed.
  */
-const STAND_IN_ENV: Readonly<Record<string, string>> = {
+export const STAND_IN_ENV: Readonly<Record<string, string>> = {
   [GITHUB]: 'GITHUB_API_BASE_URL',
   [ATLASSIAN_BITBUCKET]: 'BITBUCKET_API_BASE_URL',
   [ATLASSIAN_ADMIN]: 'JIRA_ADMIN_API_BASE_URL',
   [ENTRA_DEVELOPER]: 'ENTRA_DEVELOPER_API_BASE_URL',
 };
 
+/**
+ * The stand-in variables that are set although NODE_ENV is production. A
+ * stand-in lets a provider's token travel to an arbitrary origin over plain
+ * HTTP, which is a development convenience and a production hole: the
+ * delegate refuses to boot with any of them (index.ts), and `hostAllowed`
+ * ignores them regardless.
+ */
+export function standInViolations(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (env.NODE_ENV !== 'production') return [];
+  return Object.values(STAND_IN_ENV).filter((name) => Boolean(env[name]?.trim()));
+}
+
 function standInOrigin(provider: string): string | null {
+  if (process.env.NODE_ENV === 'production') return null;
   const name = Object.prototype.hasOwnProperty.call(STAND_IN_ENV, provider)
     ? STAND_IN_ENV[provider]
     : null;

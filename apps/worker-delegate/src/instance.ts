@@ -15,7 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { generateX25519KeyPair } from '@renkei/crypto';
+import { deviceCodeOf, generateX25519KeyPair } from '@renkei/crypto';
 import { createKeyVault, setKeyVault, INSTANCE_LIVE_MS, type KeyVault } from '@renkei/user-keys';
 import type { DelegateLogger } from './grants';
 
@@ -42,9 +42,12 @@ export async function registerInstance(
     .execute();
   const vault = createKeyVault(id, pair);
   setKeyVault(vault);
-  logger.info('delegate instance {instanceId} registered', {
+  // The fingerprint is what a browser shows when it meets this instance's
+  // key for the first time and asks the person; an operator compares it here.
+  logger.info('delegate instance {instanceId} registered, key fingerprint {fingerprint}', {
     component: 'worker-delegate/instance',
     instanceId: id,
+    fingerprint: deviceCodeOf(new Uint8Array(pair.publicKey)),
   });
 
   const beat = async (): Promise<void> => {

@@ -15,6 +15,7 @@
  */
 
 import { closeDatabase, getDatabase } from '@renkei/db';
+import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { eventsQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createEventLoop, schedulePeriodicSweep } from './loop';
@@ -69,7 +70,11 @@ function registerConnectorHandlers(): void {
   // pr_subscriptions, recorded, and acted on per that subscription's own
   // auto_merge/auto_fix (handlers/pr-pipeline-events.ts).
   registerHandler('github', 'workflow_run', createGitHubPrPipelineHandler());
-  registerHandler('atlassian-bitbucket', 'repo:commit_status_updated', createBitbucketPrPipelineHandler());
+  registerHandler(
+    'atlassian-bitbucket',
+    'repo:commit_status_updated',
+    createBitbucketPrPipelineHandler()
+  );
   // Async Outlook bulk mail actions — submitted by the MCP tool as a bare
   // {jobId} pointer; the mail_bulk_jobs row is the source of truth.
   registerHandler('mailjobs', 'bulk-action', createMailBulkJobHandler());
@@ -104,6 +109,14 @@ const loop = createEventLoop({
 });
 
 async function main(): Promise<void> {
+  // The delegate key is this process's identity to the key service; the
+  // compose file's development default is refused in production
+  // (docs/delegate-key-design.md, "Callers").
+  const delegateKeyRefusal = developmentDelegateKeyRefusal();
+  if (delegateKeyRefusal) {
+    console.error(`FATAL [worker]: ${delegateKeyRefusal}`);
+    process.exit(1);
+  }
   await attachPersistentLogging();
   // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
   // before the database is reachable; once it is, the org `logLevel` dial

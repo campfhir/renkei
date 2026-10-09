@@ -44,9 +44,10 @@ x-database-urls: &database-urls
 # that leaks from one container names which one, and is rotated alone:
 #   DELEGATE_KEY_WEB, DELEGATE_KEY_WORKER, DELEGATE_KEY_AGENTS,
 #   DELEGATE_KEY_SANDBOX   — each `openssl rand -base64 32`, all in .env
-# The delegate accepts all four (DELEGATE_WORKER_API_KEYS maps caller to
-# key; DELEGATE_WORKER_API_KEY carries the same keys as a plain list for a
-# delegate image from before the map). No shared DELEGATE_WORKER_API_KEY
+# The delegate takes all four as DELEGATE_WORKER_API_KEYS, which maps each
+# caller name to its key and is what the delegate authorizes by; never hand
+# it the same keys as a plain list, since a key named by the legacy single
+# variable counts as the web caller. No shared DELEGATE_WORKER_API_KEY
 # in .env is needed or read.
 x-delegate-url: &delegate-url
   DELEGATE_WORKER_URL: http://renkei-worker-delegate:8096
@@ -366,7 +367,6 @@ services:
       # delegate reads; the plain list is the same four keys for a delegate
       # image from before the map existed, so either reads them.
       DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:?set DELEGATE_KEY_WEB in .env (openssl rand -base64 32)},worker=${DELEGATE_KEY_WORKER:?set DELEGATE_KEY_WORKER in .env (openssl rand -base64 32)},agents=${DELEGATE_KEY_AGENTS:?set DELEGATE_KEY_AGENTS in .env (openssl rand -base64 32)},sandbox=${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB},${DELEGATE_KEY_WORKER},${DELEGATE_KEY_AGENTS},${DELEGATE_KEY_SANDBOX}
       USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
       # The connector workers the delegate forwards to, with the person's
       # credential attached (forward/<connector>/<op>); the bearer keys

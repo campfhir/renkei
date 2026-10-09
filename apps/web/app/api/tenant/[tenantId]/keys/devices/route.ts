@@ -1,25 +1,33 @@
 /**
  * Another device (docs/delegate-key-design.md, "Another device"): a
  * browser signed in as the person but without their user key asks for it.
- * It POSTs an ephemeral X25519 public key and gets a short code; an
- * enrolled device of the same person lists the asks (GET), shows the
- * code, and on the person's say-so seals the user key to that public key
- * (devices/[requestId]). The asking device polls the same row for the
- * sealed box. The server relays and never holds the key in the clear.
+ * It POSTs an ephemeral X25519 public key and gets a ten-character code —
+ * the first fifty bits of the key's SHA-256, base32 — which that page
+ * shows. An enrolled device of the same person lists the asks (GET: when,
+ * from what browser; never the code), the person TYPES the code off the
+ * asking screen, and on a match that device seals the user key to the
+ * ask's public key (devices/[requestId]). The asking device polls the same
+ * row for the sealed box. The server relays and never holds the key.
  *
- * Both sides are the same signed-in subject, so the request is bound to
- * the person by the session; the code is what the person compares across
- * the two screens so that a request they did not make is not approved.
+ * Both sides are the same signed-in subject, so a request is bound to the
+ * person by the session — and to the asking browser by its session id, so
+ * only that browser reads the answer. The typed code is what keeps a
+ * request the person did not make from being approved: an approver who
+ * cannot see the asking screen cannot type it, and a stolen session cookie
+ * cannot list it. Asks are rate-limited to three per person per ten
+ * minutes, and an ask's row stays for those ten minutes once answered or
+ * denied so the limit holds.
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { deviceCodeOf } from '@renkei/crypto';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
+import { pendingDevicesOf } from '@/lib/keys/status';
 
 const REQUEST_TTL_MS = 10 * 60_000;
-/** The most a person may have open at once; older ones are superseded. */
-const MAX_OPEN = 3;
+/** The most asks a person may make in one TTL window, answered or not. */
+const MAX_ASKS_PER_WINDOW = 3;
 
 export async function GET(
   request: NextRequest,
@@ -29,22 +37,7 @@ export async function GET(
   const ready = await chatRequestContext(request, tenantId);
   if (!ready.ok) return ready.response;
   const { db, session } = ready.context;
-  const rows = await db
-    .selectFrom('device_key_requests')
-    .select(['id', 'code', 'created_at'])
-    .where('tenant_id', '=', tenantId)
-    .where('subject', '=', session.subject)
-    .where('sealed_key', 'is', null)
-    .where('expires_at', '>', new Date())
-    .orderBy('created_at', 'asc')
-    .execute();
-  return NextResponse.json({
-    requests: rows.map((row) => ({
-      id: row.id,
-      code: row.code,
-      createdAt: row.created_at.toISOString(),
-    })),
-  });
+  return NextResponse.json({ requests: await pendingDevicesOf(db, tenantId, session.subject) });
 }
 
 export async function POST(
@@ -60,27 +53,29 @@ export async function POST(
   const raw = Buffer.from(publicKey, 'base64');
   if (raw.byteLength !== 32)
     return jsonError(400, 'bad_request', 'A device public key is 32 bytes.');
+  // Rows older than the window have nothing left to say; the ones inside it
+  // are what the limit counts, whatever became of them.
+  const windowStart = new Date(Date.now() - REQUEST_TTL_MS);
   await db
     .deleteFrom('device_key_requests')
     .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
-    .where((eb) =>
-      eb.or([
-        eb('expires_at', '<=', new Date()),
-        eb(
-          'id',
-          'in',
-          eb
-            .selectFrom('device_key_requests')
-            .select('id')
-            .where('tenant_id', '=', tenantId)
-            .where('subject', '=', session.subject)
-            .orderBy('created_at', 'desc')
-            .offset(MAX_OPEN - 1)
-        ),
-      ])
-    )
+    .where('created_at', '<', windowStart)
     .execute();
+  const recent = await db
+    .selectFrom('device_key_requests')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('tenant_id', '=', tenantId)
+    .where('subject', '=', session.subject)
+    .where('created_at', '>=', windowStart)
+    .executeTakeFirst();
+  if (Number(recent?.count ?? 0) >= MAX_ASKS_PER_WINDOW) {
+    return jsonError(
+      429,
+      'rate_limited',
+      'Too many requests for your key in the last ten minutes; wait before asking again.'
+    );
+  }
   const inserted = await db
     .insertInto('device_key_requests')
     .values({
@@ -88,6 +83,8 @@ export async function POST(
       subject: session.subject,
       public_key: publicKey,
       code: deviceCodeOf(new Uint8Array(raw)),
+      asking_session_id: session.id,
+      user_agent: (request.headers.get('user-agent') ?? '').slice(0, 200) || null,
       expires_at: new Date(Date.now() + REQUEST_TTL_MS),
     })
     .returning(['id', 'code', 'expires_at'])

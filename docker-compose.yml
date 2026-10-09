@@ -284,8 +284,10 @@ services:
   # sealed values, on behalf of the app and the other workers, which reach
   # it via DELEGATE_WORKER_URL, each with its own bearer key (the
   # DELEGATE_KEY_* variables; DELEGATE_WORKER_API_KEYS below maps caller to
-  # key, DELEGATE_WORKER_API_KEY lists the same keys for a build from before
-  # the map), and hold no key themselves. USER_KEY_ENCRYPTION_KEY is migration-only: set
+  # key and is what the delegate authorizes by; never also pass the keys as
+  # a plain DELEGATE_WORKER_API_KEY list, since those would all count as the
+  # web caller; the dev defaults are refused by every process in
+  # production), and hold no key themselves. USER_KEY_ENCRYPTION_KEY is migration-only: set
   # it while people from before held keys have not enrolled, drop it after. It also holds every provider token and relays a
   # code workspace's git for the sandbox worker (/git/<ticket>/…), which
   # reaches it by the same service name on this network.
@@ -301,7 +303,6 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web},worker=${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker},agents=${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents},sandbox=${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
-      DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web},${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker},${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents},${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
       USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
       # The connector workers the delegate forwards to, with the person's
       # credential attached (forward/<connector>/<op>).
