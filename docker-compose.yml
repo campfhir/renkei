@@ -3,7 +3,7 @@ services:
     # Matches docker-compose.yaml (the deploy stack). Postgres majors are not
     # binary compatible, so a dev/prod split here means testing migrations on a
     # different engine than they run on.
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
     container_name: renkei-postgres
     environment:
       POSTGRES_USER: renkei
@@ -83,7 +83,7 @@ services:
   # Production points AZURE_BLOB_* at a real storage account instead; the
   # container is created on first use, so no init step is needed here.
   azurite:
-    image: mcr.microsoft.com/azure-storage/azurite:latest
+    image: mcr.microsoft.com/azure-storage/azurite:3.9.0@sha256:a5479e27ec4224a9d03a228397f03f86dcc7282f84ac63007d6dd7c115208892
     container_name: renkei-azurite
     command:
       ['azurite-blob', '--blobHost', '0.0.0.0', '--skipApiVersionCheck', '--location', '/data']
@@ -421,7 +421,7 @@ services:
   # SANDBOX_SERVICES_ENABLED=true; without the profile the worker refuses
   # to start with that flag set and says the engine does not answer.
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     container_name: renkei-docker-proxy
     environment:
       CONTAINERS: 1

@@ -158,13 +158,31 @@ Every push to `main` that passes CI (lint, typecheck, tests) also builds
 and publishes the nine images `docker-compose.yaml` pulls — `renkei`,
 `renkei-migrate`, `renkei-worker`, `renkei-fileshares`, `renkei-onbase`,
 `renkei-mirth`, `renkei-admanager`, `renkei-delegate`, `renkei-sandbox` —
-to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each image is pushed under two tags: `latest`
-and the version in `apps/web/package.json` (the version every app in the
-workspace shares, and the same one `scripts/docker-build.sh` stamps). Bump
-that version when a release should keep its own tag; until then a new push
-to `main` overwrites both tags. Images are built for `linux/amd64`, with
-the short commit baked in as `GIT_COMMIT` so log rows name the exact build.
-Pull requests never publish.
+to Docker Hub from the `docker` job in `.github/workflows/ci.yml`. Each
+image is pushed under three tags: `latest`, the version in
+`apps/web/package.json` (the version every app in the workspace shares,
+and the same one `scripts/docker-build.sh` stamps), and the full commit
+SHA, so a deployment can pin exactly the build it tested
+(`image: scotteremiaroden/renkei:<sha>`) rather than whatever `latest`
+has become. Bump the version when a release should keep its own tag;
+until then a new push to `main` overwrites `latest` and the version tag.
+Images are built for `linux/amd64`, with the short commit baked in as
+`GIT_COMMIT` so log rows name the exact build. Pull requests never
+publish.
+
+Before the push, every image is scanned by Trivy: a fixable `HIGH` or
+`CRITICAL` in the OS packages or in `node_modules` fails that image's job
+and nothing of it is pushed (the dated baseline is `.trivyignore`; the
+same list by GHSA id gates `pnpm audit` in `pnpm-workspace.yaml`). Each
+pushed image carries a SLSA provenance attestation (`mode=max`: the
+workflow, commit and build arguments that produced it) and an SBOM,
+attached to its manifest; read them with
+`docker buildx imagetools inspect scotteremiaroden/renkei:<tag> --format '{{ json .Provenance }}'`
+(or `.SBOM`). The base images in `docker/Dockerfile` and the third-party
+images both compose files pull are pinned by digest as well as tag, and
+the sandbox image's toolchain downloads (Go, rustup, the Temurin JDK,
+jdtls) are exact versions checked against their vendors' published
+checksums; Dependabot proposes the next digest or version.
 
 The job needs two repository secrets (Settings → Secrets and variables →
 Actions): `DOCKERHUB_USERNAME`, the Docker Hub account to log in as, and

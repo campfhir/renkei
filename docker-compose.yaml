@@ -83,8 +83,14 @@ x-delegate-sandbox: &delegate-sandbox
   DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
 
 services:
+  # Third-party images are pinned to a digest as well as a tag — the tag
+  # says what it is, the digest says exactly which build, so a tag that is
+  # re-pointed upstream changes nothing here until someone chooses it.
+  # Dependabot proposes the new digest when the tag moves (docker-compose
+  # ecosystem in .github/dependabot.yml). The scan of this image is the
+  # operator's: CI scans only the images it builds.
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
     container_name: renkei-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-renkei}

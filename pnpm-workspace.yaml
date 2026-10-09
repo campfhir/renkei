@@ -15,6 +15,12 @@ catalog:
   # from drifting apart: one exact pin, so `pnpm audit` has a single version to
   # talk about and no app can silently resolve a different one.
   pdfjs-dist: 6.2.108
+# A release has to be a day old before pnpm will resolve to it: the window
+# in which a hijacked package's malicious version is usually noticed and
+# pulled. Exact pins already in the lockfile are unaffected; this governs
+# what an update may move to. The exclusion below is the repository's own
+# library, published and consumed in the same sitting.
+minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@campfhir/safe-functions@0.1.3'
 # The CI gate is `pnpm audit --prod --audit-level=high` (the `security` job
