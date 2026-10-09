@@ -32,7 +32,6 @@ maybe('code project active chat', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
     await db
       .insertInto('chat_projects')
       .values([
@@ -51,8 +50,6 @@ maybe('code project active chat', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('makes each new chat the active one and the previous one history', async () => {

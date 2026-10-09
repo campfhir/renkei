@@ -101,7 +101,6 @@ describe('createUploadSlot', () => {
     expect(inserted.id).toBe(slot.uploadId);
     expect(inserted.kind).toBe('jira-attachment');
     expect(inserted.destination).toBe(JSON.stringify({ issueKey: 'PROJ-1' }));
-    expect().toBe('tenant-1');
     expect(inserted.subject).toBe('subject-1');
 
     expect(slot.instructions).toContain(

@@ -26,11 +26,11 @@ afterEach(async () => {
 
 describe('createSecretKeyStore', () => {
   it('is null without a sealing key', () => {
-    expect(createSecretKeyStore(root, null)).toBeNull();
+    expect(createSecretKeyStore(root, 'renkei', null)).toBeNull();
   });
 
   it('holds a key sealed on disk for its window, for its owner only', async () => {
-    const store = createSecretKeyStore(root, ROOT_KEY)!;
+    const store = createSecretKeyStore(root, 'renkei', ROOT_KEY)!;
     await store.save(ALICE, 's1', { key: KEY, until: 10_000 });
     expect(await store.load(ALICE, 's1', 5_000)).toEqual({ key: KEY, until: 10_000 });
     const [file] = await readdir(join(root, 'secret-keys'));
@@ -41,12 +41,12 @@ describe('createSecretKeyStore', () => {
     expect(await store.load(BOB, 's1', 5_000)).toBeNull();
     expect(await readdir(join(root, 'secret-keys'))).toEqual([]);
     expect(
-      secretKeySealingKey(ROOT_KEY, ALICE, 's1').equals(secretKeySealingKey(ROOT_KEY, ALICE, 's2'))
+      secretKeySealingKey(ROOT_KEY, 'renkei', ALICE, 's1').equals(secretKeySealingKey(ROOT_KEY, 'renkei', ALICE, 's2'))
     ).toBe(false);
   });
 
   it('reads as locked past the window and after remove', async () => {
-    const store = createSecretKeyStore(root, ROOT_KEY)!;
+    const store = createSecretKeyStore(root, 'renkei', ROOT_KEY)!;
     await store.save(ALICE, 's1', { key: KEY, until: 10_000 });
     expect(await store.load(ALICE, 's1', 10_000)).toBeNull();
     await store.save(ALICE, 's1', { key: KEY, until: 10_000 });
@@ -56,7 +56,7 @@ describe('createSecretKeyStore', () => {
   });
 
   it('sweeps files older than any window could be', async () => {
-    const store = createSecretKeyStore(root, ROOT_KEY)!;
+    const store = createSecretKeyStore(root, 'renkei', ROOT_KEY)!;
     await store.save(ALICE, 's1', { key: KEY, until: 10_000 });
     await store.save(ALICE, 's2', { key: KEY, until: 10_000 });
     const [first] = await readdir(join(root, 'secret-keys'));

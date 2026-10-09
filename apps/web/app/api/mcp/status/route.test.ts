@@ -64,9 +64,6 @@ function request(): NextRequest {
   return new NextRequest('http://localhost/api/mcp/status');
 }
 
-function params() {
-  return { params: Promise.resolve({ }) };
-}
 
 function session(subject: string) {
   return {
@@ -87,7 +84,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
     mockGetSession.mockResolvedValue(null);
     const recorded = stubDb(undefined);
 
-    const response = await GET(request(), params());
+    const response = await GET(request());
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
@@ -99,7 +96,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
     mockGetSession.mockResolvedValue(null);
     stubDb(undefined);
 
-    await GET(request(), params());
+    await GET(request());
 
     expect(mockGetDatabase).not.toHaveBeenCalled();
   });
@@ -112,7 +109,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
       metadata: { siteUrl: 'https://example.atlassian.net' },
     });
 
-    await GET(request(), params());
+    await GET(request());
 
     expect(recorded.table).toBe('provider_grants');
     expect(recorded.filters).toEqual([
@@ -130,7 +127,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
       metadata: { siteUrl: 'https://example.atlassian.net' },
     });
 
-    const response = await GET(request(), params());
+    const response = await GET(request());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -147,7 +144,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
     mockGetSession.mockResolvedValue(session('user-b@example.com'));
     stubDb(undefined);
 
-    const response = await GET(request(), params());
+    const response = await GET(request());
 
     expect(response.status).toBe(200);
     const body = await response.json();
@@ -164,7 +161,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
       metadata: { siteUrl: 'https://example.atlassian.net', cloudId: 'cloud-1' },
     });
 
-    const body = await (await GET(request(), params())).json();
+    const body = await (await GET(request())).json();
 
     expect(recorded.columns).not.toContain('encrypted_access_token');
     expect(recorded.columns).not.toContain('encrypted_refresh_token');
@@ -175,7 +172,7 @@ describe('GET /api/mcp/{tenantId}/status', () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com'));
     stubDb({ provider_account_id: 'acc-a', display_name: 'User A', metadata: {} });
 
-    const body = await (await GET(request(), params())).json();
+    const body = await (await GET(request())).json();
 
     expect(body).toEqual({
       connected: true,

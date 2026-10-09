@@ -47,9 +47,6 @@ function request(query = ''): NextRequest {
   return new NextRequest(`http://localhost/api/audit${query}`);
 }
 
-function params() {
-  return { params: Promise.resolve({ }) };
-}
 
 function session(subject: string, roles: string[]) {
   return {
@@ -70,7 +67,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(null);
     stubDb(undefined);
 
-    const response = await GET(request('?accountId=acc-a'), params());
+    const response = await GET(request('?accountId=acc-a'));
 
     expect(response.status).toBe(401);
     expect(mockGetDatabase).not.toHaveBeenCalled();
@@ -83,7 +80,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     const headed = new NextRequest(`http://localhost/api/audit`, {
       headers: { 'x-operator-key': 'anything' },
     });
-    const response = await GET(headed, params());
+    const response = await GET(headed);
 
     expect(response.status).toBe(401);
   });
@@ -92,7 +89,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(session('op@example.com', ['renkei-operator']));
     stubDb(undefined);
 
-    const body = await (await GET(request(), params())).json();
+    const body = await (await GET(request())).json();
 
     expect(body.role).toBe('renkei-operator');
     expect(body.logContext).toBe(`mcp:${TENANT}`);
@@ -102,7 +99,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
     const recorded = stubDb({ provider_account_id: 'acc-a' });
 
-    const body = await (await GET(request(), params())).json();
+    const body = await (await GET(request())).json();
 
     expect(recorded.filters).toEqual([
       ['=', TENANT],
@@ -117,7 +114,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
     stubDb({ provider_account_id: 'acc-a' });
 
-    const response = await GET(request('?accountId=acc-b'), params());
+    const response = await GET(request('?accountId=acc-b'));
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
@@ -129,7 +126,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
     stubDb({ provider_account_id: 'acc-a' });
 
-    const response = await GET(request('?accountId=acc-a'), params());
+    const response = await GET(request('?accountId=acc-a'));
 
     expect(response.status).toBe(200);
   });
@@ -138,7 +135,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(session('user-c@example.com', ['renkei-user']));
     stubDb(undefined);
 
-    const response = await GET(request(), params());
+    const response = await GET(request());
 
     expect(response.status).toBe(403);
   });
@@ -147,7 +144,7 @@ describe('GET /api/tenant/{tenantId}/audit', () => {
     mockGetSession.mockResolvedValue(session('nobody@example.com', []));
     stubDb({ provider_account_id: 'acc-a' });
 
-    const response = await GET(request(), params());
+    const response = await GET(request());
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: 'Invalid user role' });

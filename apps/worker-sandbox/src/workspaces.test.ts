@@ -258,7 +258,7 @@ describe('directory permissions under a restrictive umask', () => {
   });
 
   it("leaves a tenant's directory traversable by everyone", async () => {
-    const storageKey = newWorkspaceStorageKey('umask-tenant', 'someone');
+    const storageKey = newWorkspaceStorageKey('someone');
     const previous = process.umask(0o077);
     try {
       await ensureCallerDirs(storageKey, null);

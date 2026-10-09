@@ -37,10 +37,6 @@ maybe('loadCodeProjectUsage', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `code-usage-${tenantId.slice(0, 8)}` })
-      .execute();
     for (const id of [projectId, otherProjectId]) {
       await db
         .insertInto('chat_projects')

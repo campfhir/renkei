@@ -129,7 +129,6 @@ function reqOf(body: unknown, method = 'PUT'): NextRequest {
     new Request('http://x/api/admin/acme/llm-models/row-1', { method, body: JSON.stringify(body) })
   );
 }
-const paramsOf = (modelId = 'row-1') => Promise.resolve({ slug: 'acme', modelId });
 
 const baseRow: ModelConfigRow = {
   id: 'row-1',
@@ -145,7 +144,6 @@ const baseRow: ModelConfigRow = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockTenantForSlug.mockResolvedValue(TENANT);
   mockCheckAccess.mockResolvedValue({ subject: 'auth0|alice' });
   process.env.TOKEN_ENCRYPTION_KEY = ENCRYPTION_KEY;
 });
@@ -156,9 +154,7 @@ describe('PUT .../llm-models/[modelId]', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(
-      reqOf({ label: 'Prod Claude (renamed)', provider: 'anthropic', model: 'claude-sonnet-5' }),
-      { params: paramsOf() }
-    );
+      reqOf({ label: 'Prod Claude (renamed)', provider: 'anthropic', model: 'claude-sonnet-5' }));
 
     expect(response.status).toBe(200);
     const stored = db.rows[0]!.encrypted_secrets!;
@@ -177,9 +173,7 @@ describe('PUT .../llm-models/[modelId]', () => {
         provider: 'anthropic',
         model: 'claude-sonnet-5',
         apiKey: 'rotated-secret',
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(200);
     const decrypted = decrypt(db.rows[0]!.encrypted_secrets!, KEY_BUFFER);
@@ -203,9 +197,7 @@ describe('PUT .../llm-models/[modelId]', () => {
         provider: 'anthropic',
         model: 'claude-sonnet-5',
         apiKeyFromId: 'row-2',
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(200);
     expect(db.rows[0]!.encrypted_secrets).toBe(sibling.encrypted_secrets);
@@ -216,9 +208,7 @@ describe('PUT .../llm-models/[modelId]', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(
-      reqOf({ label: 'Prod Claude', provider: 'anthropic', model: 'claude-sonnet-5' }),
-      { params: paramsOf() }
-    );
+      reqOf({ label: 'Prod Claude', provider: 'anthropic', model: 'claude-sonnet-5' }));
     expect(response.status).toBe(400);
   });
 
@@ -227,9 +217,7 @@ describe('PUT .../llm-models/[modelId]', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(
-      reqOf({ label: 'x', provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'k' }),
-      { params: paramsOf() }
-    );
+      reqOf({ label: 'x', provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'k' }));
     expect(response.status).toBe(404);
   });
 });
@@ -239,7 +227,7 @@ describe('DELETE .../llm-models/[modelId]', () => {
     const db = fakeDb([{ ...baseRow }]);
     mockGetDatabase.mockReturnValue(db);
 
-    const response = await DELETE(reqOf(undefined, 'DELETE'), { params: paramsOf() });
+    const response = await DELETE(reqOf(undefined, 'DELETE'));
     expect(response.status).toBe(200);
     expect(db.rows).toHaveLength(0);
   });

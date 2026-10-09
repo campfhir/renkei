@@ -300,7 +300,7 @@ describe('discardPending — the other half of a rebuild', () => {
     await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
     await queue.producer.enqueue(ingest('ENG-2', 'ENG', 'old'));
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+    const discarded = await queue.purger.discardPending('ingest.object', [
       { path: ['provider'], value: 'jira' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
@@ -314,7 +314,7 @@ describe('discardPending — the other half of a rebuild', () => {
     await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
     await queue.producer.enqueue(ingest('OPS-1', 'OPS', 'old'));
 
-    await queue.purger.discardPending('t1', 'ingest.object', [
+    await queue.purger.discardPending('ingest.object', [
       { path: ['provider'], value: 'jira' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
@@ -327,7 +327,7 @@ describe('discardPending — the other half of a rebuild', () => {
     const queue = new InMemoryQueue();
     await queue.producer.enqueue({ ...ingest('ENG-1', 'ENG', 'old') });
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+    const discarded = await queue.purger.discardPending('ingest.object', [
       { path: ['provider'], value: 'jira' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
@@ -342,7 +342,7 @@ describe('discardPending — the other half of a rebuild', () => {
     const claimed = await queue.consumer.claim();
     expect(claimed).not.toBeNull();
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+    const discarded = await queue.purger.discardPending('ingest.object', [
       { path: ['provider'], value: 'jira' },
       { path: ['metadata', 'project'], value: 'ENG' },
     ]);
@@ -353,7 +353,7 @@ describe('discardPending — the other half of a rebuild', () => {
     const queue = new InMemoryQueue();
     await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
 
-    const discarded = await queue.purger.discardPending('t1', 'ingest.object', []);
+    const discarded = await queue.purger.discardPending('ingest.object', []);
     expect(discarded.ok).toBe(false);
     // And the message it refused to match is still there.
     expect(await queue.consumer.claim()).not.toBeNull();

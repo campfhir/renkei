@@ -33,10 +33,6 @@ maybe('sweepExpiredGrants', () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('no database');
     db = dbResult.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `gs-${tenantId.slice(0, 8)}` })
-      .execute();
     const staleMs = (GRANT_STALE_DAYS + 1) * 24 * 60 * 60_000;
     await db
       .insertInto('provider_grants')
@@ -50,8 +46,6 @@ maybe('sweepExpiredGrants', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('deletes abandoned grants and spares recently-expired ones', async () => {

@@ -89,14 +89,8 @@ function sealSecret(plaintext: string): string {
 async function seedModel(client: Client, ids: Ids): Promise<void> {
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, true, false)`,
-    [
-      ids.modelId,
-      E2E_TENANT_ID,
-      `E2E compaction model ${ids.modelId.slice(-2)}`,
-      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
-    ]
+    `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, true, false)`,
+    [ids.modelId, `E2E compaction model ${ids.modelId.slice(-2)}`, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
   );
 }
 
@@ -119,20 +113,8 @@ async function insertMessage(
     ownerSubject: E2E_SUBJECT,
   });
   await client.query(
-    `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
-     VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10)`,
-    [
-      E2E_TENANT_ID,
-      input.chatId,
-      input.turnId,
-      input.seq,
-      input.role,
-      input.kind,
-      chatKey.seal(JSON.stringify(input.blocks)),
-      assistant ? (input.modelId ?? null) : null,
-      assistant ? 'anthropic' : null,
-      assistant ? 'e2e-model' : null,
-    ]
+    `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n     VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
+    [input.chatId, input.turnId, input.seq, input.role, input.kind, chatKey.seal(JSON.stringify(input.blocks)), assistant ? (input.modelId ?? null) : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
   );
 }
 
@@ -151,14 +133,12 @@ test.describe('chat compaction', () => {
     try {
       await seedModel(client, ids);
       await client.query(
-        `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [ids.iconChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.iconTitle, ids.modelId]
+        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
+        [ids.iconChatId, E2E_SUBJECT, ids.iconTitle, ids.modelId]
       );
       await client.query(
-        `INSERT INTO chat_turns (id, tenant_id, chat_id, status, kind, llm_model_id, finished_at)
-         VALUES ($1, $2, $3, 'completed', 'reply', $4, NOW())`,
-        [ids.iconTurnId, E2E_TENANT_ID, ids.iconChatId, ids.modelId]
+        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id, finished_at)\n         VALUES ($1, $2, 'completed', 'reply', $3, NOW())`,
+        [ids.iconTurnId, ids.iconChatId, ids.modelId]
       );
       await insertMessage(client, {
         chatId: ids.iconChatId,
@@ -234,18 +214,16 @@ test.describe('chat compaction', () => {
     try {
       await seedModel(client, ids);
       await client.query(
-        `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [ids.snapshotChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.snapshotTitle, ids.modelId]
+        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
+        [ids.snapshotChatId, E2E_SUBJECT, ids.snapshotTitle, ids.modelId]
       );
       // A compaction pass "already in flight" — seeded directly, as if
       // another process/replica started it, so the browser reaches it
       // only through the stream route's snapshot-polling fallback (no
       // in-process channel exists for a turn this test never started).
       await client.query(
-        `INSERT INTO chat_turns (id, tenant_id, chat_id, status, kind, llm_model_id)
-         VALUES ($1, $2, $3, 'running', 'compaction', $4)`,
-        [ids.snapshotTurnId, E2E_TENANT_ID, ids.snapshotChatId, ids.modelId]
+        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id)\n         VALUES ($1, $2, 'running', 'compaction', $3)`,
+        [ids.snapshotTurnId, ids.snapshotChatId, ids.modelId]
       );
 
       await page.goto(`/chat/${ids.snapshotChatId}`);
@@ -279,15 +257,13 @@ test.describe('chat compaction', () => {
     try {
       await seedModel(client, ids);
       await client.query(
-        `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [ids.liveChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.liveTitle, ids.modelId]
+        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
+        [ids.liveChatId, E2E_SUBJECT, ids.liveTitle, ids.modelId]
       );
       const turnId = ids.liveTurnId;
       await client.query(
-        `INSERT INTO chat_turns (id, tenant_id, chat_id, status, kind, llm_model_id, finished_at)
-         VALUES ($1, $2, $3, 'completed', 'reply', $4, NOW())`,
-        [turnId, E2E_TENANT_ID, ids.liveChatId, ids.modelId]
+        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id, finished_at)\n         VALUES ($1, $2, 'completed', 'reply', $3, NOW())`,
+        [turnId, ids.liveChatId, ids.modelId]
       );
       // Well under CHAT_COMPACT_KEEP_RECENT (20) + CHAT_COMPACT_MIN_FOLD (6):
       // compactChat returns null before ever reaching the model.
@@ -369,17 +345,15 @@ test.describe('chat compaction', () => {
     try {
       await seedModel(client, ids);
       await client.query(
-        `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())`,
-        [ids.queueChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.queueTitle, ids.modelId]
+        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
+        [ids.queueChatId, E2E_SUBJECT, ids.queueTitle, ids.modelId]
       );
       // A reply "already in flight" from another process — the same
       // running-turn-with-no-channel shape the snapshot test uses, this
       // time to make Composer's `running` true from the first paint.
       await client.query(
-        `INSERT INTO chat_turns (id, tenant_id, chat_id, status, kind, llm_model_id)
-         VALUES ($1, $2, $3, 'running', 'reply', $4)`,
-        [ids.queueTurnId, E2E_TENANT_ID, ids.queueChatId, ids.modelId]
+        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id)\n         VALUES ($1, $2, 'running', 'reply', $3)`,
+        [ids.queueTurnId, ids.queueChatId, ids.modelId]
       );
 
       await page.goto(`/chat/${ids.queueChatId}`);

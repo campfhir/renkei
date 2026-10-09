@@ -93,19 +93,16 @@ let subject: string;
 
 async function progressOf(tourId: string): Promise<ProgressRow | null> {
   const result = await client.query<ProgressRow>(
-    `SELECT status, step_reached, steps_total, view_count, completed_count, dismissed_count
-       FROM coach_mark_progress
-      WHERE subject = $2 AND tour_id = $3`,
-    [E2E_TENANT_ID, subject, tourId]
+    `SELECT status, step_reached, steps_total, view_count, completed_count, dismissed_count\n       FROM coach_mark_progress\n      WHERE subject = $1 AND tour_id = $2`,
+    [subject, tourId]
   );
   return result.rows[0] ?? null;
 }
 
 async function autoStartPref(): Promise<boolean | null> {
   const result = await client.query<{ value: { autoStart?: boolean } }>(
-    `SELECT value FROM user_preferences
-      WHERE subject = $2 AND key = 'coach_marks'`,
-    [E2E_TENANT_ID, subject]
+    `SELECT value FROM user_preferences\n      WHERE subject = $1 AND key = 'coach_marks'`,
+    [subject]
   );
   return result.rows[0]?.value.autoStart ?? null;
 }
@@ -117,30 +114,15 @@ test.beforeAll(async ({}, testInfo) => {
   await client.connect();
 
   // A clean slate for this person: no rows, no preference, a fresh session.
-  await client.query('DELETE FROM coach_mark_progress WHERE subject = $2', [
-    E2E_TENANT_ID,
-    subject,
-  ]);
-  await client.query('DELETE FROM user_preferences WHERE subject = $2', [
-    E2E_TENANT_ID,
-    subject,
-  ]);
-  await client.query('DELETE FROM sessions WHERE subject = $2', [
-    E2E_TENANT_ID,
-    subject,
-  ]);
+  await client.query('DELETE FROM coach_mark_progress WHERE subject = $1', [subject]);
+  await client.query('DELETE FROM user_preferences WHERE subject = $1', [subject]);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [subject]);
   // No identities row on purpose: the usage screenshots count the tenant's
   // identities and expect the seed's one. The report names this person by
   // subject instead, which is what it does for anyone the spine lacks.
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')`,
-    [
-      sessionIdFor(testInfo.project.name),
-      E2E_TENANT_ID,
-      subject,
-      ['renkei-user', 'renkei-operator'],
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
+    [sessionIdFor(testInfo.project.name), subject, ['renkei-user', 'renkei-operator']]
   );
 });
 
@@ -359,8 +341,8 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
 
   // Off: a tour never taken (the agents' was skipped; reset it) stays away.
   await client.query(
-    'DELETE FROM coach_mark_progress WHERE subject = $2 AND tour_id = $3',
-    [E2E_TENANT_ID, subject, 'agents']
+    'DELETE FROM coach_mark_progress WHERE subject = $1 AND tour_id = $2',
+    [subject, 'agents']
   );
   await page.goto(`/agents`);
   await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();

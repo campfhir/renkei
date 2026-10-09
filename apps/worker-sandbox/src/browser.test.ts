@@ -239,8 +239,7 @@ async function expectBrowserError(
 /** A store two "replicas" (two managers) share, as the data volume would be. */
 function memoryStore(): BrowserStateStore & { files: Map<string, SavedBrowserState> } {
   const files = new Map<string, SavedBrowserState>();
-  const key = (target: { subject: string }) =>
-    `${target.tenantId}\n${target.subject}`;
+  const key = (target: { subject: string }) => target.subject;
   return {
     files,
     load: async (target) => files.get(key(target)) ?? null,

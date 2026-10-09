@@ -16,7 +16,7 @@ import type { DisclosurePolicy } from '@renkei/gates';
 const key = deriveRedactionKey(Buffer.from('a'.repeat(32)));
 const opts = (tenant = 'tenant-1', policy: DisclosurePolicy = DEFAULT_MCP_POLICY) => ({
   policy,
-  pseudonymizer: createPseudonymizer(key, tenant),
+  pseudonymizer: createPseudonymizer(key),
 });
 
 describe('redactText', () => {
@@ -136,7 +136,7 @@ describe('deriveRedactionKey', () => {
     // Failing open would leak exactly what the module exists to hide, so an
     // unconfigured deployment gets a per-process key: tokens stop being
     // stable across restarts, and redaction still happens.
-    const first = createPseudonymizer(deriveRedactionKey(null), 't');
+    const first = createPseudonymizer(deriveRedactionKey(null));
     expect(first.anonymize(LABEL_MRN, '4417732')).toMatch(/\[MRN-[0-9a-f]{8}\]/);
   });
 });

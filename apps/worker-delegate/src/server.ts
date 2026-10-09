@@ -247,7 +247,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
               body.automation.length > 0),
         });
       };
-      if (context.caller === 'agents' && tenantId && subject) {
+      if (context.caller === 'agents' && subject) {
         const runId = str(body.runId);
         if (!runId || !(await runBelongsTo(runId, subject))) {
           sendError(response, 'RUN_MISMATCH', "the run named is not this person's");

@@ -62,35 +62,21 @@ function fixtureFor(name: string): {
 }
 
 async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  await client.query('DELETE FROM actionable_items', [fixture.tenantId]);
-  await client.query('DELETE FROM sessions', [fixture.tenantId]);
-  await client.query('DELETE FROM identities', [fixture.tenantId]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-    fixture.tenantId,
-    fixture.slug,
-  ]);
+  await client.query('DELETE FROM actionable_items WHERE owner_subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      fixture.sessionId,
-      fixture.tenantId,
-      fixture.subject,
-      ['renkei-user', 'renkei-operator'],
-      new Date(Date.now() + 24 * 3_600_000),
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, $4)`,
+    [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
   );
   await client.query(
-    `INSERT INTO identities (tenant_id, subject, email, display_name)
-     VALUES ($1, $2, $3, $4)`,
-    [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+    `INSERT INTO identities (subject, email, display_name)\n     VALUES ($1, $2, $3)`,
+    [fixture.subject, fixture.subject, 'E2E Tester']
   );
   // No welcome-tour overlay stealing focus mid-screenshot (coach-marks.spec.ts).
   await client.query(
-    `INSERT INTO user_preferences (tenant_id, subject, key, value)
-     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-    [fixture.tenantId, fixture.subject]
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+    [fixture.subject]
   );
 }
 
@@ -115,10 +101,8 @@ async function seedCard(
   suggestedAction: unknown
 ): Promise<void> {
   await client.query(
-    `INSERT INTO actionable_items
-       (id, tenant_id, source, kind, status, title, summary, evidence, suggested_action)
-     VALUES ($1, $2, 'jira', 'approval', 'suggested', $3, 'Wants to call a tool.', '{}'::jsonb, $4::jsonb)`,
-    [itemId, tenantId, title, JSON.stringify(suggestedAction)]
+    `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, suggested_action)\n     VALUES ($1, 'jira', 'approval', 'suggested', $2, 'Wants to call a tool.', '{}'::jsonb, $3::jsonb)`,
+    [itemId, title, JSON.stringify(suggestedAction)]
   );
 }
 
@@ -130,10 +114,8 @@ async function seedExecutedCard(
   result: unknown
 ): Promise<void> {
   await client.query(
-    `INSERT INTO actionable_items
-       (id, tenant_id, source, kind, status, title, summary, evidence, result)
-     VALUES ($1, $2, 'jira', 'info', 'executed', $3, 'Created a tool.', '{}'::jsonb, $4::jsonb)`,
-    [itemId, tenantId, title, JSON.stringify(result)]
+    `INSERT INTO actionable_items\n       (id, source, kind, status, title, summary, evidence, result)\n     VALUES ($1, 'jira', 'info', 'executed', $2, 'Created a tool.', '{}'::jsonb, $3::jsonb)`,
+    [itemId, title, JSON.stringify(result)]
   );
 }
 

@@ -90,11 +90,11 @@ describe('checkWebhookLimit', () => {
       headers: { 'x-forwarded-for': '203.0.113.9' },
     });
     for (let i = 0; i < WEBHOOK_LIMITS.perClient.limit; i += 1) {
-      expect(checkWebhookLimit('github', TENANT, request).allowed).toBe(true);
+      expect(checkWebhookLimit('github', request).allowed).toBe(true);
     }
-    expect(checkWebhookLimit('github', TENANT, request).allowed).toBe(false);
+    expect(checkWebhookLimit('github', request).allowed).toBe(false);
     // Another tenant's (or provider's) budget is untouched.
-    expect(checkWebhookLimit('github', 'other-tenant', request).allowed).toBe(true);
-    expect(checkWebhookLimit('zoom', TENANT, request).allowed).toBe(true);
+    expect(checkWebhookLimit('github', request).allowed).toBe(true);
+    expect(checkWebhookLimit('zoom', request).allowed).toBe(true);
   });
 });

@@ -45,10 +45,6 @@ maybe('schedule sweep', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `sched-test-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {

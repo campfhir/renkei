@@ -22,12 +22,9 @@ maybe('turn recovery claims', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   async function chat(): Promise<string> {

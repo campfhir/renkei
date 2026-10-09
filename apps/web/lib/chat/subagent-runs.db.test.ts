@@ -40,10 +40,6 @@ maybe('chat_subagent_runs model', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `subagent-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('chats')
       .values({ id: chatId, owner_subject: subject })
       .execute();

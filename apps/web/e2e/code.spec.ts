@@ -57,43 +57,20 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
     // expiry so nothing tries to refresh them. The stub never checks the
     // header; the app only needs to be able to build one.
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-       VALUES ($1, 'atlassian-bitbucket', 'e2e-bitbucket-account', $2, 'e2e-client', 'E2E Bitbucket',
-               $3, $4, $5, $6, $7)
-       ON CONFLICT (tenant_id, provider, provider_account_id) DO UPDATE
-         SET subject = EXCLUDED.subject,
-             encrypted_access_token = EXCLUDED.encrypted_access_token,
-             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
-             expires_at = EXCLUDED.expires_at`,
-      [
-        E2E_TENANT_ID,
-        E2E_SUBJECT,
-        await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'),
-        await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'),
-        new Date(Date.now() + 365 * 86_400_000),
-        ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
-        JSON.stringify({ username: 'e2e-dev' }),
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n       VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n               $2, $3, $4, $5, $6)\n       ON CONFLICT (provider, provider_account_id) DO UPDATE\n         SET subject = EXCLUDED.subject,\n             encrypted_access_token = EXCLUDED.encrypted_access_token,\n             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n             expires_at = EXCLUDED.expires_at`,
+      [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'], JSON.stringify({ username: 'e2e-dev' })]
     );
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE name = ANY($2)`, [
-      E2E_TENANT_ID,
-      [ids.newName, ids.createdRepoName],
-    ]);
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [[ids.newName, ids.createdRepoName]]);
     // A code project with no checkout yet — the first chat makes one.
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'Invoices, dunning and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
-      [ids.seededProjectId, E2E_TENANT_ID, E2E_SUBJECT, ids.seededName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Invoices, dunning and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
+      [ids.seededProjectId, E2E_SUBJECT, ids.seededName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.seededChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.seededProjectId, ids.seededChatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.seededChatId, E2E_SUBJECT, ids.seededProjectId, ids.seededChatTitle]
     );
     // The one chat in the project is its active chat, as starting it
     // through the app would have left it (lib/code/active-chat.ts).
@@ -111,10 +88,7 @@ async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   try {
     await client.query('DELETE FROM chats WHERE id = $1', [ids.seededChatId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.seededProjectId]);
-    await client.query(`DELETE FROM chat_projects WHERE name = ANY($2)`, [
-      E2E_TENANT_ID,
-      [ids.newName, ids.createdRepoName],
-    ]);
+    await client.query(`DELETE FROM chat_projects WHERE name = ANY($1)`, [[ids.newName, ids.createdRepoName]]);
   } finally {
     await client.end();
   }
@@ -226,24 +200,13 @@ async function seedTranscript(ids: ReturnType<typeof idsFor>): Promise<void> {
   });
   try {
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
-       VALUES ($1, $2, $3, 'completed', 2, 900, 120, NOW())`,
-      [turnId, E2E_TENANT_ID, ids.seededChatId]
+      `INSERT INTO chat_turns (id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)\n       VALUES ($1, $2, 'completed', 2, 900, 120, NOW())`,
+      [turnId, ids.seededChatId]
     );
     for (const row of rows) {
       await client.query(
-        `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, stop_reason)
-         VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8)`,
-        [
-          E2E_TENANT_ID,
-          ids.seededChatId,
-          turnId,
-          row.seq,
-          row.role,
-          row.kind,
-          chatKey.seal(JSON.stringify(row.blocks)),
-          row.stop,
-        ]
+        `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7)`,
+        [ids.seededChatId, turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), row.stop]
       );
     }
   } finally {
@@ -978,9 +941,7 @@ test.describe('code projects', () => {
           const client = await db();
           try {
             const rows = await client.query(
-              `SELECT reason, sample_path FROM code_language_gaps
-                WHERE extension = 'json' AND language = 'json'`,
-              [E2E_TENANT_ID]
+              `SELECT reason, sample_path FROM code_language_gaps\n                WHERE extension = 'json' AND language = 'json'`
             );
             return rows.rows[0] ?? null;
           } finally {

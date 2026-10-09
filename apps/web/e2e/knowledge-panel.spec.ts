@@ -19,22 +19,14 @@ test('knowledge panel: selection, purge, and no overflow', async ({ page }, test
       `Identifiers the model needs but nobody reads: ${LONG}`,
     ].entries()) {
       await client.query(
-        `INSERT INTO knowledge_chunks (id, tenant_id, provider, ref_id, metadata, content, embedding, source_at)
-         VALUES (gen_random_uuid(), $1, 'note', $2, $3::jsonb, $4, $5::vector, NOW())
-         ON CONFLICT (tenant_id, provider, ref_id) DO NOTHING`,
-        [
-          E2E_TENANT_ID,
-          `e2e@example.com/note-${i}`,
-          JSON.stringify({
-            kind: 'note',
-            title: i === 0 ? 'Short note' : `Long identifiers ${LONG}`,
-            authoredBy: i === 0 ? 'user' : 'agent',
-            agentId: AGENT_RICH_ID,
-            scope: 'agent',
-          }),
-          body,
-          zero,
-        ]
+        `INSERT INTO knowledge_chunks (id, provider, ref_id, metadata, content, embedding, source_at)\n         VALUES (gen_random_uuid(), 'note', $1, $2::jsonb, $3, $4::vector, NOW())\n         ON CONFLICT (provider, ref_id) DO NOTHING`,
+        [`e2e@example.com/note-${i}`, JSON.stringify({
+                      kind: 'note',
+                      title: i === 0 ? 'Short note' : `Long identifiers ${LONG}`,
+                      authoredBy: i === 0 ? 'user' : 'agent',
+                      agentId: AGENT_RICH_ID,
+                      scope: 'agent',
+                    }), body, zero]
       );
     }
 
@@ -68,9 +60,7 @@ test('knowledge panel: selection, purge, and no overflow', async ({ page }, test
       fullPage: true,
     });
   } finally {
-    await client.query(`DELETE FROM knowledge_chunks WHERE provider = 'note'`, [
-      E2E_TENANT_ID,
-    ]);
+    await client.query(`DELETE FROM knowledge_chunks WHERE provider = 'note'`);
     await client.end();
   }
 });

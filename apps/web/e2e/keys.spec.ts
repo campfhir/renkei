@@ -89,49 +89,33 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 /** A tenant and a signed-in person; with `chat`, one chat of theirs with two sealed messages. */
 async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffer | null> {
   return withDb(async (client) => {
-    await client.query('DELETE FROM chats', [fixture.tenantId]);
-    await client.query('DELETE FROM resource_keys', [fixture.tenantId]);
-    await client.query('DELETE FROM user_encryption_keys', [fixture.tenantId]);
-    await client.query('DELETE FROM llm_model_configs', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions', [fixture.tenantId]);
-    await client.query('DELETE FROM identities', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM chats WHERE owner_subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM resource_keys');
+    await client.query('DELETE FROM user_encryption_keys WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM llm_model_configs');
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      [fixture.subject]
     );
     await client.query(
-      `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-       VALUES ($1, $2, 'E2E model', 'anthropic', 'e2e-model', $3, true, true)`,
-      [fixture.modelId, fixture.tenantId, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
+      `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n       VALUES ($1, 'E2E model', 'anthropic', 'e2e-model', $2, true, true)`,
+      [fixture.modelId, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
     );
     if (!options.chat) return null;
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-       VALUES ($1, $2, $3, 'Sprint slippage', $4, NOW())`,
-      [fixture.chatId, fixture.tenantId, fixture.subject, fixture.modelId]
+      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, 'Sprint slippage', $3, NOW())`,
+      [fixture.chatId, fixture.subject, fixture.modelId]
     );
     const keys = await enrollForE2E(client, fixture.subject);
     const chatKey = await keyFor(client, {
@@ -140,9 +124,8 @@ async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffe
       ownerSubject: fixture.subject,
     });
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)
-       VALUES ($1, $2, $3, 'completed', $4, 1, 120, 34, NOW())`,
-      [fixture.turnId, fixture.tenantId, fixture.chatId, fixture.modelId]
+      `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)\n       VALUES ($1, $2, 'completed', $3, 1, 120, 34, NOW())`,
+      [fixture.turnId, fixture.chatId, fixture.modelId]
     );
     const rows = [
       { seq: 0, role: 'user', kind: 'prompt', text: PROMPT_TEXT },
@@ -151,21 +134,8 @@ async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffe
     for (const row of rows) {
       const assistant = row.role === 'assistant';
       await client.query(
-        `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)
-         VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10, $11)`,
-        [
-          fixture.tenantId,
-          fixture.chatId,
-          fixture.turnId,
-          row.seq,
-          row.role,
-          row.kind,
-          chatKey.seal(JSON.stringify([{ type: 'text', text: row.text }])),
-          assistant ? fixture.modelId : null,
-          assistant ? 'anthropic' : null,
-          assistant ? 'e2e-model' : null,
-          assistant ? 'end_turn' : null,
-        ]
+        `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10)`,
+        [fixture.chatId, fixture.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify([{ type: 'text', text: row.text }])), assistant ? fixture.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? 'end_turn' : null]
       );
     }
     return keys.userKey;
@@ -196,10 +166,8 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 async function delegationCount(fixture: Fixture, scope?: string): Promise<number> {
   return withDb(async (client) => {
     const result = await client.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM key_delegations
-        WHERE subject = $2 AND expires_at > NOW()
-          AND ($3::text IS NULL OR scope = $3)`,
-      [fixture.tenantId, fixture.subject, scope ?? null]
+      `SELECT COUNT(*)::text AS count FROM key_delegations\n        WHERE subject = $1 AND expires_at > NOW()\n          AND ($2::text IS NULL OR scope = $2)`,
+      [fixture.subject, scope ?? null]
     );
     return Number(result.rows[0]?.count ?? 0);
   });
@@ -208,10 +176,7 @@ async function delegationCount(fixture: Fixture, scope?: string): Promise<number
 /** What a delegate restart leaves behind: rows nothing can open. Here, simply none. */
 async function dropDelegations(fixture: Fixture): Promise<void> {
   await withDb((client) =>
-    client.query('DELETE FROM key_delegations WHERE subject = $2', [
-      fixture.tenantId,
-      fixture.subject,
-    ])
+    client.query('DELETE FROM key_delegations WHERE subject = $1', [fixture.subject])
   );
 }
 
@@ -246,8 +211,8 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
   await shot(page, testInfo, 'keys-01-enrolled-dialog');
   const enrolled = await withDb(async (client) => {
     const row = await client.query<{ mode: string; public_key: string | null }>(
-      `SELECT mode, public_key FROM user_encryption_keys WHERE subject = $2`,
-      [fixture.tenantId, fixture.subject]
+      `SELECT mode, public_key FROM user_encryption_keys WHERE subject = $1`,
+      [fixture.subject]
     );
     return row.rows[0];
   });
@@ -380,14 +345,8 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   const secondSession = randomUUID();
   await withDb((client) =>
     client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        secondSession,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user'],
-        new Date(Date.now() + 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [secondSession, fixture.subject, ['renkei-user'], new Date(Date.now() + 3_600_000)]
     )
   );
   const second = await (browser satisfies Browser).newContext();
@@ -520,9 +479,8 @@ test('an operator removes a departed person’s key from the Access page, never 
   await seed(fixture, { chat: true });
   await withDb(async (client) => {
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, 'E2E Leaver')`,
-      [fixture.tenantId, leaver, leaver]
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, 'E2E Leaver')`,
+      [leaver, leaver]
     );
     await enrollForE2E(client, leaver);
   });
@@ -550,8 +508,8 @@ test('an operator removes a departed person’s key from the Access page, never 
   expect(
     await withDb(async (client) => {
       const row = await client.query(
-        'SELECT 1 FROM user_encryption_keys WHERE subject = $2',
-        [fixture.tenantId, leaver]
+        'SELECT 1 FROM user_encryption_keys WHERE subject = $1',
+        [leaver]
       );
       return row.rowCount;
     })
@@ -562,16 +520,16 @@ test('an operator removes a departed person’s key from the Access page, never 
   await expect(button).toHaveCount(0, { timeout: 15_000 });
   const after = await withDb(async (client) => {
     const keys = await client.query(
-      'SELECT 1 FROM user_encryption_keys WHERE subject = $2',
-      [fixture.tenantId, leaver]
+      'SELECT 1 FROM user_encryption_keys WHERE subject = $1',
+      [leaver]
     );
     const grants = await client.query(
-      'SELECT 1 FROM resource_key_grants WHERE holder = $2',
-      [fixture.tenantId, leaver]
+      'SELECT 1 FROM resource_key_grants WHERE holder = $1',
+      [leaver]
     );
     const own = await client.query(
-      'SELECT 1 FROM user_encryption_keys WHERE subject = $2',
-      [fixture.tenantId, fixture.subject]
+      'SELECT 1 FROM user_encryption_keys WHERE subject = $1',
+      [fixture.subject]
     );
     return { keys: keys.rowCount, grants: grants.rowCount, own: own.rowCount };
   });

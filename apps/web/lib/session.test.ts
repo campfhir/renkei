@@ -77,7 +77,7 @@ describe('getSessionById idle timeout', () => {
 
   it('resolves a session used within the idle window and touches last_used_at', async () => {
     const { deleted, touched } = stubDb(sessionRow(2 * HOUR));
-    const session = await getSessionById('sess-1', TENANT);
+    const session = await getSessionById('sess-1');
     expect(session?.subject).toBe('alice@example.com');
     expect(deleted).toEqual([]);
     expect(touched).toHaveLength(1);
@@ -86,7 +86,7 @@ describe('getSessionById idle timeout', () => {
 
   it('ends a session idle past the org timeout even though its absolute lifetime remains', async () => {
     const { deleted, touched } = stubDb(sessionRow(13 * HOUR));
-    const session = await getSessionById('sess-1', TENANT);
+    const session = await getSessionById('sess-1');
     expect(session).toBeNull();
     expect(deleted).toEqual(['sess-1']);
     expect(touched).toEqual([]);
@@ -95,22 +95,22 @@ describe('getSessionById idle timeout', () => {
   it('honours a shorter org timeout', async () => {
     mockGetOrgSettings.mockResolvedValue({ ok: true, val: { sessionIdleTimeoutMinutes: 30 } });
     const { deleted } = stubDb(sessionRow(HOUR));
-    expect(await getSessionById('sess-1', TENANT)).toBeNull();
+    expect(await getSessionById('sess-1')).toBeNull();
     expect(deleted).toEqual(['sess-1']);
   });
 
   it('falls back to the default timeout when settings cannot be read', async () => {
     mockGetOrgSettings.mockResolvedValue({ ok: false, err: 'DB_ERROR' });
     stubDb(sessionRow(2 * HOUR));
-    expect(await getSessionById('sess-1', TENANT)).not.toBeNull();
+    expect(await getSessionById('sess-1')).not.toBeNull();
     const { deleted } = stubDb(sessionRow(13 * HOUR));
-    expect(await getSessionById('sess-1', TENANT)).toBeNull();
+    expect(await getSessionById('sess-1')).toBeNull();
     expect(deleted).toEqual(['sess-1']);
   });
 
   it('still ends a session past its absolute expiry regardless of use', async () => {
     const { deleted } = stubDb({ ...sessionRow(0), expires_at: new Date(Date.now() - 1000) });
-    expect(await getSessionById('sess-1', TENANT)).toBeNull();
+    expect(await getSessionById('sess-1')).toBeNull();
     expect(deleted).toEqual(['sess-1']);
   });
 });

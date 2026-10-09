@@ -56,7 +56,7 @@ maybe('refresh-token rotation', () => {
         client_secret: clientSecret,
       }).toString(),
     });
-    const response = await POST(request, { params: Promise.resolve({ }) });
+    const response = await POST(request);
     return { status: response.status, body: await response.json() };
   }
 
@@ -78,10 +78,6 @@ maybe('refresh-token rotation', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `rot-${tenantId.slice(0, 8)}`, domain_verified_at: new Date() })
-      .execute();
-    await db
       .insertInto('oauth_clients')
       .values({
         client_id: clientId,
@@ -98,8 +94,6 @@ maybe('refresh-token rotation', () => {
     await db.deleteFrom('oauth_refresh_tokens').execute();
     await db.deleteFrom('oauth_clients').execute();
     await db.deleteFrom('settings').execute();
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   beforeEach(async () => {

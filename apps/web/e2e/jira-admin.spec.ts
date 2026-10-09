@@ -77,65 +77,37 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    await client.query('DELETE FROM provider_grants', [fixture.tenantId]);
-    await client.query('DELETE FROM connector_configs', [fixture.tenantId]);
-    await client.query('DELETE FROM pending_oidc_signin', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions', [fixture.tenantId]);
-    await client.query('DELETE FROM identities', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM connector_configs');
+    await client.query('DELETE FROM pending_oidc_signin WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      [fixture.subject]
     );
     // Everyday Jira is set up and connected — the usual state for someone
     // who then adds Jira Administration, which is not configured yet.
     await client.query(
-      `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
-       VALUES ($1, 'atlassian', true, 'not-a-real-secret', '{}'::jsonb)`,
-      [fixture.tenantId]
+      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('atlassian', true, 'not-a-real-secret', '{}'::jsonb)`
     );
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,
-          metadata)
-       VALUES ($1, 'atlassian', 'e2e-jira-account', $2, 'e2e-jira-client', 'E2E Jira User',
-               'not-a-real-token', 'not-a-real-token', $3, $4, $5)`,
-      [
-        fixture.tenantId,
-        fixture.subject,
-        new Date(Date.now() + 365 * 24 * 3_600_000),
-        ['read:issue:jira', 'offline_access'],
-        { cloudId: 'e2e-cloud', siteUrl: 'https://e2e.atlassian.net' },
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian', 'e2e-jira-account', $1, 'e2e-jira-client', 'E2E Jira User',\n               'not-a-real-token', 'not-a-real-token', $2, $3, $4)`,
+      [fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), ['read:issue:jira', 'offline_access'], { cloudId: 'e2e-cloud', siteUrl: 'https://e2e.atlassian.net' }]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'connectors', '{"added": ["jira", "jira-admin"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"jira\", \"jira-admin\"]}'::jsonb)`,
+      [fixture.subject]
     );
   });
 }
@@ -144,19 +116,8 @@ async function seedTenant(fixture: Fixture): Promise<void> {
 async function connectJiraAdmin(fixture: Fixture): Promise<void> {
   await withDb((client) =>
     client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,
-          metadata)
-       VALUES ($1, 'atlassian-admin', 'e2e-jira-admin-account', $2, 'e2e-admin-client',
-               'E2E Jira Admin', 'not-a-real-token', 'not-a-real-token', $3, $4, $5)`,
-      [
-        fixture.tenantId,
-        fixture.subject,
-        new Date(Date.now() + 365 * 24 * 3_600_000),
-        ['read:jira-user', 'read:jira-work', 'manage:jira-configuration', 'offline_access'],
-        { cloudId: 'e2e-cloud', siteUrl: 'https://e2e.atlassian.net' },
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', 'not-a-real-token', 'not-a-real-token', $2, $3, $4)`,
+      [fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), ['read:jira-user', 'read:jira-work', 'manage:jira-configuration', 'offline_access'], { cloudId: 'e2e-cloud', siteUrl: 'https://e2e.atlassian.net' }]
     )
   );
 }
@@ -218,8 +179,8 @@ test('jira administration: register the app, connect with narrowed classic scope
   );
   const stored = await withDb((client) =>
     client.query<{ enabled: boolean; settings: { scopes?: string } }>(
-      `SELECT enabled, settings FROM connector_configs WHERE connector = $2`,
-      [fixture.tenantId, 'atlassian-admin']
+      `SELECT enabled, settings FROM connector_configs WHERE connector = $1`,
+      ['atlassian-admin']
     )
   );
   expect(stored.rows[0]?.enabled).toBe(true);
@@ -284,8 +245,7 @@ test('jira administration: register the app, connect with narrowed classic scope
   await expect(panel.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
   const remaining = await withDb((client) =>
     client.query(
-      `SELECT 1 FROM provider_grants WHERE provider = 'atlassian-admin'`,
-      [fixture.tenantId]
+      `SELECT 1 FROM provider_grants WHERE provider = 'atlassian-admin'`
     )
   );
   expect(remaining.rowCount).toBe(0);

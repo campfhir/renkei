@@ -26,12 +26,12 @@ function stubDb(execute: () => Promise<{ rows: { version: string | null }[] }>):
 describe('toolSurfaceVersion', () => {
   it('returns the newest timestamp it found', async () => {
     const db = stubDb(async () => ({ rows: [{ version: '20260828234306.647000' }] }));
-    await expect(toolSurfaceVersion(db, 't1', 's1')).resolves.toBe('20260828234306.647000');
+    await expect(toolSurfaceVersion(db, 's1')).resolves.toBe('20260828234306.647000');
   });
 
   it('is a constant when nothing has a timestamp yet', async () => {
     const db = stubDb(async () => ({ rows: [{ version: null }] }));
-    await expect(toolSurfaceVersion(db, 't1', 's1')).resolves.toBe('empty');
+    await expect(toolSurfaceVersion(db, 's1')).resolves.toBe('empty');
   });
 
   it('returns a CONSTANT on failure, so an outage cannot thrash the cache', async () => {
@@ -40,7 +40,7 @@ describe('toolSurfaceVersion', () => {
     });
     // A timestamp here would mint a new key per request and fill the cache
     // with single-use handlers; a constant means "reuse what is cached".
-    await expect(toolSurfaceVersion(db, 't1', 's1')).resolves.toBe('unknown');
-    await expect(toolSurfaceVersion(db, 't1', 's1')).resolves.toBe('unknown');
+    await expect(toolSurfaceVersion(db, 's1')).resolves.toBe('unknown');
+    await expect(toolSurfaceVersion(db, 's1')).resolves.toBe('unknown');
   });
 });

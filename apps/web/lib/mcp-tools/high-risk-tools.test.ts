@@ -234,7 +234,7 @@ beforeEach(() => {
 
 describe('the agents’ fixed high-risk tool list', () => {
   it('names only tools the registration actually produces', async () => {
-    const granted = await listAvailableTools('tenant-1', 'subject-1');
+    const granted = await listAvailableTools('subject-1');
     const registered = new Set([
       ...granted.map((tool) => tool.name),
       ...mirthToolNames(),
@@ -246,7 +246,7 @@ describe('the agents’ fixed high-risk tool list', () => {
   });
 
   it('names only tools that act — a read on the list would pause for nothing', async () => {
-    const granted = await listAvailableTools('tenant-1', 'subject-1');
+    const granted = await listAvailableTools('subject-1');
     const kinds = new Map(granted.map((tool) => [tool.name, tool.kind]));
     const reads = ALWAYS_APPROVAL_TOOLS.filter((tool) => kinds.get(tool) === 'read');
     expect(reads).toEqual([]);

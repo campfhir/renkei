@@ -235,7 +235,7 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
 
     const fetched = await graphRequest(access.auth, `/me/messages/${objectId}`);
     if (!fetched.ok || !isRecord(fetched.val)) {
-      throw new Error(`could not re-fetch message ${objectId} for override (tenant ${tenantId})`);
+      throw new Error(`could not re-fetch message ${objectId} for override`);
     }
 
     // The sanitize-and-ingest runs in the embedding queue (Decision #20);

@@ -58,22 +58,14 @@ function connectionInput(username = 'alice') {
 
 describeLive('file-share store (live database)', () => {
   let db: Kysely<DB>;
-  let tenantId: string;
 
   beforeAll(async () => {
     db = new Kysely<DB>({
       dialect: new PostgresDialect({ pool: new Pool({ connectionString: url }) }),
     });
-    const tenant = await db
-      .insertInto('tenants')
-      .values({ id: randomUUID(), slug: `fs-itest-${Date.now()}` })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    tenantId = tenant.id;
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=').execute();
     await db.destroy();
   });
 

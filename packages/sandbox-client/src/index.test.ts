@@ -370,18 +370,18 @@ describe('sbRunScript', () => {
     resetSandboxCapabilitiesForTests();
     orgWith({ sandboxScriptsEnabled: true, sandboxScriptsAllowNetwork: false });
     fetchSpy = workerCan({ scripts: 'network_only' });
-    expect(await sandboxScriptsServed('tenant-1')).toBe(false);
+    expect(await sandboxScriptsServed()).toBe(false);
     // The worker's answer is remembered: one probe for many calls.
-    expect(await sandboxScriptsServed('tenant-1')).toBe(false);
+    expect(await sandboxScriptsServed()).toBe(false);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     orgWith({ sandboxScriptsEnabled: true, sandboxScriptsAllowNetwork: true });
-    const features = await sandboxFeatures('tenant-1');
+    const features = await sandboxFeatures();
     expect(features.scripts).toBe(true);
     expect(features.scriptsNetworkShared).toBe(true);
 
     orgWith({ sandboxScriptsEnabled: false, sandboxScriptsAllowNetwork: true });
-    expect(await sandboxScriptsServed('tenant-1')).toBe(false);
+    expect(await sandboxScriptsServed()).toBe(false);
     resetSandboxCapabilitiesForTests();
   });
 
@@ -391,7 +391,7 @@ describe('sbRunScript', () => {
       resetSandboxCapabilitiesForTests();
       fetchSpy?.mockRestore();
       fetchSpy = workerCan(capabilities);
-      const features = await sandboxFeatures('tenant-1');
+      const features = await sandboxFeatures();
       expect(features.scripts).toBe(true);
       expect(features.scriptsNetworkShared).toBe(false);
     }
@@ -512,73 +512,6 @@ describe('sbReadFile', () => {
     expect(result.val.filename).toBe('a report.pdf');
   });
 });
-
-describe('sbWriteFile', () => {
-  let fetchSpy: jest.SpiedFunction<typeof fetch>;
-
-  afterEach(() => {
-    fetchSpy.mockRestore();
-  });
-
-  it('answers unconfigured without any network call when the worker is not set up', async () => {
-    delete process.env.SANDBOX_WORKER_API_KEY;
-    fetchSpy = jest.spyOn(globalThis, 'fetch');
-
-    const result = await sbWriteFile(TARGET, { filename: 'x.md' }, new Uint8Array([1]));
-
-    expect(result).toEqual({ ok: false, err: { kind: 'unconfigured' } });
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it('puts target + metadata on the query string and the raw bytes as the body', async () => {
-    fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify(WIRE_FILE), { status: 200 }));
-
-    const bytes = new Uint8Array([104, 105]); // "hi"
-    const result = await sbWriteFile(
-      TARGET,
-      {
-        filename: 'report.pdf',
-        contentType: 'application/pdf',
-        source: 'document-ocr-pipeline',
-        batchId: 'batch-1',
-      },
-      bytes
-    );
-
-    expect(result).toEqual({ ok: true, val: WIRE_FILE });
-    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/v1/write?');
-    const query = new URL(url).searchParams;
-    expect(query.get('tenantId')).toBe();
-    expect(query.get('subject')).toBe(TARGET.subject);
-    expect(query.get('filename')).toBe('report.pdf');
-    expect(query.get('contentType')).toBe('application/pdf');
-    expect(query.get('source')).toBe('document-ocr-pipeline');
-    expect(query.get('batchId')).toBe('batch-1');
-    expect((init.headers as Record<string, string>)['content-type']).toBe(
-      'application/octet-stream'
-    );
-    expect(new Uint8Array(init.body as ArrayBuffer)).toEqual(bytes);
-  });
-
-  it('maps a non-2xx response to a typed op error', async () => {
-    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ error: { type: 'quota_exceeded', message: 'full' } }), {
-        status: 429,
-      })
-    );
-
-    const result = await sbWriteFile(TARGET, { filename: 'x.md' }, new Uint8Array([1]));
-
-    expect(result).toEqual({
-      ok: false,
-      err: { kind: 'op', type: 'quota_exceeded', message: 'full', status: 429 },
-    });
-  });
-});
-
 describe('clientFailure', () => {
   it('maps unconfigured and unreachable without an op type', () => {
     expect(clientFailure({ kind: 'unconfigured' }).status).toBe(503);
@@ -943,22 +876,22 @@ describe('sandboxBrowserEnabled', () => {
   it('needs the worker configured, the org switch on, and a worker that has a browser', async () => {
     orgWith({ sandboxBrowserEnabled: true });
     const spy = workerCan({ browser: true });
-    expect(await sandboxBrowserEnabled('tenant-1')).toBe(true);
+    expect(await sandboxBrowserEnabled()).toBe(true);
     orgWith({ sandboxBrowserEnabled: false });
-    expect(await sandboxBrowserEnabled('tenant-1')).toBe(false);
+    expect(await sandboxBrowserEnabled()).toBe(false);
     spy.mockRestore();
     resetSandboxCapabilitiesForTests();
     orgWith({ sandboxBrowserEnabled: true });
     const without = workerCan({ browser: false });
-    expect(await sandboxBrowserEnabled('tenant-1')).toBe(false);
+    expect(await sandboxBrowserEnabled()).toBe(false);
     without.mockRestore();
     delete process.env.SANDBOX_WORKER_URL;
-    expect(await sandboxBrowserEnabled('tenant-1')).toBe(false);
+    expect(await sandboxBrowserEnabled()).toBe(false);
   });
 
   it('opens nothing when the org settings cannot be read', async () => {
     getOrgSettings.mockResolvedValue({ ok: false, err: 'DB_ERROR' });
-    expect(await sandboxFeatures('tenant-1')).toEqual({
+    expect(await sandboxFeatures()).toEqual({
       browser: false,
       charts: false,
       workspaces: false,
@@ -1157,13 +1090,13 @@ describe('sandboxChartsEnabled', () => {
       sandboxServicesEnabled: true,
     });
     const spy = workerCan(null);
-    expect(await sandboxChartsEnabled('tenant-1')).toBe(true);
-    const features = await sandboxFeatures('tenant-1');
+    expect(await sandboxChartsEnabled()).toBe(true);
+    const features = await sandboxFeatures();
     expect(features.workspaces).toBe(false);
     expect(features.services).toBe(false);
     spy.mockRestore();
     delete process.env.SANDBOX_WORKER_URL;
-    expect(await sandboxChartsEnabled('tenant-1')).toBe(false);
+    expect(await sandboxChartsEnabled()).toBe(false);
   });
 });
 

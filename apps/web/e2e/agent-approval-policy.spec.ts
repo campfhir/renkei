@@ -56,30 +56,20 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    const t = fixture.tenantId;
-    await client.query('DELETE FROM settings', [t]);
-    await client.query('DELETE FROM sessions', [t]);
-    await client.query('DELETE FROM identities', [t]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [t]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [t, fixture.slug]);
+    await client.query('DELETE FROM settings');
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        t,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, 'E2E Tester')`,
-      [t, fixture.subject, fixture.subject]
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, 'E2E Tester')`,
+      [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [t, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      [fixture.subject]
     );
   });
 }
@@ -127,8 +117,7 @@ test('act-step approval policy: default, change, save, API clamp', async ({ page
   await expect(page.getByText('Saved.')).toBeVisible();
   const stored = await withDb((client) =>
     client.query<{ value: string }>(
-      `SELECT value FROM settings WHERE key = 'agent_act_steps_require_approval'`,
-      [fixture.tenantId]
+      `SELECT value FROM settings WHERE key = 'agent_act_steps_require_approval'`
     )
   );
   expect(stored.rows[0]?.value).toBe('all');

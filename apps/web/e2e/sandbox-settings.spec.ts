@@ -67,7 +67,6 @@ async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
 
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    const t = fixture.tenantId;
     for (const table of [
       'audit_events',
       'user_preferences',
@@ -75,42 +74,28 @@ async function seed(fixture: Fixture): Promise<void> {
       'sessions',
       'identities',
     ]) {
-      await client.query(`DELETE FROM ${table}`, [t]);
+      await client.query(`DELETE FROM ${table}`);
     }
-    await client.query('DELETE FROM tenants WHERE id = $1', [t]);
     await client.query(
-      'INSERT INTO tenants (id, slug, domain_verified_at) VALUES ($1, $2, NOW())',
-      [t, fixture.slug]
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        t,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, 'E2E Operator')`,
+      [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, 'E2E Operator')`,
-      [t, fixture.subject, fixture.subject]
-    );
-    await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [t, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      [fixture.subject]
     );
     if (fixture.workspacesOn) {
       await client.query(
-        `INSERT INTO settings (tenant_id, key, value)
-         VALUES ($1, 'sandbox_workspaces_enabled', 'true'::jsonb)`,
-        [t]
+        `INSERT INTO settings (key, value)\n         VALUES ('sandbox_workspaces_enabled', 'true'::jsonb)`
       );
     }
     // Enrolled already (docs/delegate-key-design.md), so the first-sign-in
     // "your encryption key is ready" dialog does not sit over the switches.
-    await enrollForE2E(client, t, fixture.subject);
+    await enrollForE2E(client, fixture.subject);
   });
 }
 
@@ -138,8 +123,8 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 async function storedSetting(fixture: Fixture, key: string): Promise<unknown> {
   const stored = await withDb((client) =>
     client.query<{ value: unknown }>(
-      `SELECT value FROM settings WHERE key = $2`,
-      [fixture.tenantId, key]
+      `SELECT value FROM settings WHERE key = $1`,
+      [key]
     )
   );
   return stored.rows[0]?.value;

@@ -66,36 +66,22 @@ async function seedTenant(fixture: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM file_shares', [fixture.tenantId]);
-    await client.query('DELETE FROM user_encryption_keys', [fixture.tenantId]);
-    await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
-    await client.query('DELETE FROM sessions', [fixture.tenantId]);
-    await client.query('DELETE FROM identities', [fixture.tenantId]);
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM file_shares');
+    await client.query('DELETE FROM user_encryption_keys WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Tester']
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      [fixture.subject]
     );
     // Enrolled already, so the first-sign-in "your encryption key is ready"
     // dialog does not sit over the form.
@@ -110,8 +96,8 @@ async function storedFingerprint(fixture: Fixture, name: string): Promise<string
   await client.connect();
   try {
     const result = await client.query<{ host_key_fingerprint: string | null }>(
-      'SELECT host_key_fingerprint FROM file_shares WHERE name = $2',
-      [fixture.tenantId, name]
+      'SELECT host_key_fingerprint FROM file_shares WHERE name = $1',
+      [name]
     );
     return result.rows[0]?.host_key_fingerprint ?? null;
   } finally {

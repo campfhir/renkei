@@ -61,10 +61,6 @@ maybe('searchChatMessages', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `search-${tenantId.slice(0, 8)}` })
-      .execute();
     // The keys are minted in this process: it registers a delegate instance
     // of its own and enrolls the person as their browser would.
     const instance = await registerTestInstance(db);

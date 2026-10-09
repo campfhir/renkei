@@ -31,7 +31,6 @@ const { parseScheduleConfig } = jest.requireMock<{ parseScheduleConfig: jest.Moc
 const { nextRunAtFor } = jest.requireMock<{ nextRunAtFor: jest.Mock }>('@/lib/batch-jobs/schedule-next-run');
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
-const paramsOf = () => Promise.resolve({ });
 const SCHEDULE_CONFIG = { recurrences: [{ every: 'hour' }], timezone: 'UTC' };
 
 function reqOf(body: unknown): NextRequest {
@@ -55,9 +54,7 @@ beforeEach(() => {
 describe('GET', () => {
   test('a signed-out request is refused', async () => {
     getSessionFromRequest.mockResolvedValue(null);
-    const response = await GET(new NextRequest('http://x/api/tenant/tenant-1/batch-job-schedules'), {
-      params: paramsOf(),
-    });
+    const response = await GET();
     expect(response.status).toBe(401);
   });
 
@@ -76,9 +73,7 @@ describe('GET', () => {
         created_at: new Date('2026-09-01T00:00:00Z'),
       },
     ]);
-    const response = await GET(new NextRequest('http://x/api/tenant/tenant-1/batch-job-schedules'), {
-      params: paramsOf(),
-    });
+    const response = await GET();
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.schedules).toHaveLength(1);
@@ -89,25 +84,21 @@ describe('GET', () => {
 describe('POST', () => {
   test('a signed-out request is refused', async () => {
     getSessionFromRequest.mockResolvedValue(null);
-    const response = await POST(reqOf({}), { params: paramsOf() });
+    const response = await POST(reqOf({}));
     expect(response.status).toBe(401);
     expect(createSchedule).not.toHaveBeenCalled();
   });
 
   test('a missing name is a 400', async () => {
     const response = await POST(
-      reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' }, scheduleConfig: SCHEDULE_CONFIG }),
-      { params: paramsOf() }
-    );
+      reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' }, scheduleConfig: SCHEDULE_CONFIG }));
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
 
   test('a missing shareId is a 400', async () => {
     const response = await POST(
-      reqOf({ name: 'Nightly OCR', grouping: { strategy: 'whole-file' }, scheduleConfig: SCHEDULE_CONFIG }),
-      { params: paramsOf() }
-    );
+      reqOf({ name: 'Nightly OCR', grouping: { strategy: 'whole-file' }, scheduleConfig: SCHEDULE_CONFIG }));
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -120,9 +111,7 @@ describe('POST', () => {
         shareId: SHARE_ID,
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }),
-      { params: paramsOf() }
-    );
+      }));
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -130,9 +119,7 @@ describe('POST', () => {
   test('a malformed scheduleConfig is a 400', async () => {
     parseScheduleConfig.mockReturnValue(null);
     const response = await POST(
-      reqOf({ name: 'Nightly OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' }, scheduleConfig: {} }),
-      { params: paramsOf() }
-    );
+      reqOf({ name: 'Nightly OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' }, scheduleConfig: {} }));
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -145,9 +132,7 @@ describe('POST', () => {
         shareId: SHARE_ID,
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }),
-      { params: paramsOf() }
-    );
+      }));
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -160,9 +145,7 @@ describe('POST', () => {
         path: '/inbox',
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }),
-      { params: paramsOf() }
-    );
+      }));
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ id: 'sched-1' });
     expect(createSchedule).toHaveBeenCalledWith(
@@ -191,9 +174,7 @@ describe('POST', () => {
         shareId: SHARE_ID,
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }),
-      { params: paramsOf() }
-    );
+      }));
     expect(response.status).toBe(409);
   });
 });

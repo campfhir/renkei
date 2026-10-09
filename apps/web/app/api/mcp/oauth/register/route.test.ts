@@ -40,16 +40,14 @@ describe('POST /api/mcp/{tenantId}/oauth/register policy', () => {
 
   it('is closed when the org has not turned registration on', async () => {
     mockGetOrgSettings.mockResolvedValue({ ok: false, err: 'DB_ERROR' });
-    const response = await POST(registration(), { params: Promise.resolve({ }) });
+    const response = await POST(registration());
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: 'unsupported_operation' });
     expect(mockGetDatabase).not.toHaveBeenCalled();
   });
 
   it('refuses plain http off the loopback before reading the database', async () => {
-    const response = await POST(registration(['http://attacker.example/cb']), {
-      params: Promise.resolve({ }),
-    });
+    const response = await POST(registration(['http://attacker.example/cb']));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
       error: 'invalid_redirect_uri',
@@ -59,9 +57,7 @@ describe('POST /api/mcp/{tenantId}/oauth/register policy', () => {
   });
 
   it('lets a local app register a loopback callback', async () => {
-    const response = await POST(registration(['http://127.0.0.1:52341/callback']), {
-      params: Promise.resolve({ }),
-    });
+    const response = await POST(registration(['http://127.0.0.1:52341/callback']));
     // The body passed; only the (deliberately failing) database stopped it.
     expect(response.status).toBe(500);
     expect(mockGetDatabase).toHaveBeenCalled();
@@ -77,15 +73,13 @@ describe('POST /api/mcp/{tenantId}/oauth/register throttle', () => {
 
   it('refuses the eleventh registration from one address before reading anything', async () => {
     for (let i = 0; i < 10; i += 1) {
-      const response = await POST(registration(), {
-        params: Promise.resolve({ }),
-      });
+      const response = await POST(registration());
       expect(response.status).not.toBe(429);
     }
     mockGetOrgSettings.mockClear();
     mockGetDatabase.mockClear();
 
-    const throttled = await POST(registration(), { params: Promise.resolve({ }) });
+    const throttled = await POST(registration());
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
     expect(mockGetOrgSettings).not.toHaveBeenCalled();

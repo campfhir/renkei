@@ -146,7 +146,6 @@ describe('registerKnowledgeTools', () => {
 
     const searchArgs = mockSearch.mock.calls[0]?.[0];
     expect(searchArgs.userEmail).toBe('sam@example.com');
-    expect().toBe('tenant-1');
     expect(searchArgs.k).toBe(3);
   });
 

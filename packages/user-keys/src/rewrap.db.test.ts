@@ -43,10 +43,6 @@ maybe('rewrap under the current key of the ring', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `rewrap-${tenantId.slice(0, 8)}` })
-      .execute();
     // v1 under the old key (a bare key writes v1, as every row from before rings is).
     await db
       .insertInto('oidc_config')
@@ -117,8 +113,6 @@ maybe('rewrap under the current key of the ring', () => {
     await db.deleteFrom('connector_configs').execute();
     await db.deleteFrom('llm_model_configs').execute();
     await db.deleteFrom('oidc_config').execute();
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   async function stored() {

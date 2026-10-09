@@ -49,10 +49,6 @@ maybe('agent event fan-out', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `fanout-test-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {

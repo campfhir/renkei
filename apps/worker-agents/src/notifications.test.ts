@@ -52,10 +52,6 @@ maybe('agent notifications', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `notif-test-${tenantId.slice(0, 8)}` })
-      .execute();
     // The agent and the run have to exist: a notification points at both by
     // foreign key, so that a deleted agent nulls the reference and a pruned
     // run takes its notifications with it.

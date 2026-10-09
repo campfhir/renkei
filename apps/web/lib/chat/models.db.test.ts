@@ -63,10 +63,6 @@ maybe('image generation models', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `images-${tenantId.slice(0, 8)}` })
-      .execute();
     await addModel({
       id: chatId,
       label: 'Chatty',
@@ -158,7 +154,7 @@ maybe('image generation models', () => {
   });
 
   it('has no image model to resolve for an org that has none', async () => {
-    const result = await resolveImageModel(db, randomUUID(), null);
+    const result = await resolveImageModel(db, null);
     expect(!result.ok && result.err.type).toBe('NO_MODEL');
   });
 });

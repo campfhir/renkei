@@ -56,15 +56,12 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'Postings, refunds and the month-end close.', 'code', 'atlassian-bitbucket', 'acme/ledger-service', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Postings, refunds and the month-end close.', 'code', 'atlassian-bitbucket', 'acme/ledger-service', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
       ids.chatId,
@@ -80,8 +77,8 @@ async function seedRunningTurn(chatId: string): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO chat_turns (tenant_id, chat_id, status) VALUES ($1, $2, 'running')`,
-      [E2E_TENANT_ID, chatId]
+      `INSERT INTO chat_turns (chat_id, status) VALUES ($1, 'running')`,
+      [chatId]
     );
   } finally {
     await client.end();

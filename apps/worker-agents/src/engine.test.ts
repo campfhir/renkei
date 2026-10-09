@@ -191,10 +191,6 @@ maybe('agent run engine', () => {
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `engine-test-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('identities')
       .values({
         subject,
@@ -4743,10 +4739,6 @@ maybe('resolve_time — the free, deterministic clock', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `rt-${tenantId.slice(0, 8)}` })
-      .execute();
     await db
       .insertInto('identities')
       .values({ subject, email: 'owner@example.com', display_name: 'Owner' })

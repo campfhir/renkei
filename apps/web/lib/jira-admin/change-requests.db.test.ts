@@ -43,10 +43,6 @@ maybe('jira_admin_change_requests', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `jira-admin-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {

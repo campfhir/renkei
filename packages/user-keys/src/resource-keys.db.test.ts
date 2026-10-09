@@ -78,10 +78,6 @@ maybe('held keys and the resource key store', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `keys-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('chats')
       .values([
         { id: chatId, owner_subject: owner },
@@ -106,8 +102,6 @@ maybe('held keys and the resource key store', () => {
   afterAll(async () => {
     setKeyVault(null);
     await db.deleteFrom('delegate_instances').where('id', '=', instance.id).execute();
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('enrolls: the row holds only wrapped keys and a public key, and the ring opens from the delegation', async () => {

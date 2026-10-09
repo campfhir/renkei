@@ -64,7 +64,7 @@ beforeEach(() => {
 describe('loadApprovalFieldSchema', () => {
   it('returns null when the tenant has no Jira grant for this subject', async () => {
     describeResult = { ok: false, err: { type: 'NO_GRANT' } };
-    const result = await loadApprovalFieldSchema('t1', 'alice', { projectKey: 'CIO' });
+    const result = await loadApprovalFieldSchema('alice', { projectKey: 'CIO' });
     expect(result).toBeNull();
     expect(loadFieldSchema).not.toHaveBeenCalled();
     // The approver's own grant, by subject — never someone else's.
@@ -76,12 +76,12 @@ describe('loadApprovalFieldSchema', () => {
 
   it('returns null when the grant cannot be described', async () => {
     describeResult = { ok: false, err: { type: 'DELEGATE_UNREACHABLE' } };
-    const result = await loadApprovalFieldSchema('t1', 'alice', { projectKey: 'CIO' });
+    const result = await loadApprovalFieldSchema('alice', { projectKey: 'CIO' });
     expect(result).toBeNull();
   });
 
   it('builds the context on the grant’s fetcher, then loads and enriches the schema', async () => {
-    const result = await loadApprovalFieldSchema('t1', 'alice', {
+    const result = await loadApprovalFieldSchema('alice', {
       projectKey: 'CIO',
       issueType: 'Project',
     });
@@ -115,7 +115,7 @@ describe('loadApprovalFieldSchema', () => {
 
   it('returns null rather than throwing when the live fetch fails', async () => {
     loadFieldSchema.mockRejectedValueOnce(new Error('Jira is down'));
-    const result = await loadApprovalFieldSchema('t1', 'alice', { projectKey: 'CIO' });
+    const result = await loadApprovalFieldSchema('alice', { projectKey: 'CIO' });
     expect(result).toBeNull();
   });
 });

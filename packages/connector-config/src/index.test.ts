@@ -75,7 +75,6 @@ describe('connector config store', () => {
     stubDb();
 
     const write = await setConnectorConfig(
-      'tenant-1',
       'webex',
       {
         enabled: true,
@@ -86,7 +85,7 @@ describe('connector config store', () => {
     );
     expect(write.ok).toBe(true);
 
-    const read = await getConnectorConfig('tenant-1', 'webex', KEY);
+    const read = await getConnectorConfig('webex', KEY);
     expect(read.ok).toBe(true);
     if (read.ok) {
       expect(read.val).not.toBeNull();
@@ -103,7 +102,6 @@ describe('connector config store', () => {
     const store = stubDb();
 
     await setConnectorConfig(
-      'tenant-1',
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 'super-secret-token' } },
       KEY
@@ -116,7 +114,7 @@ describe('connector config store', () => {
 
   it('returns null for an unconfigured connector', async () => {
     stubDb();
-    const read = await getConnectorConfig('tenant-1', 'webex', KEY);
+    const read = await getConnectorConfig('webex', KEY);
     expect(read.ok).toBe(true);
     if (read.ok) expect(read.val).toBeNull();
   });
@@ -124,28 +122,26 @@ describe('connector config store', () => {
   it('reports DECRYPTION_ERROR under the wrong key instead of leaking', async () => {
     stubDb();
     await setConnectorConfig(
-      'tenant-1',
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 't' } },
       KEY
     );
 
-    const read = await getConnectorConfig('tenant-1', 'webex', randomBytes(32));
+    const read = await getConnectorConfig('webex', randomBytes(32));
     expect(read.ok).toBe(false);
   });
 
   it('serves cached reads within the TTL without re-querying', async () => {
     const store = stubDb();
     await setConnectorConfig(
-      'tenant-1',
       'webex',
       { enabled: true, settings: {}, secrets: { botToken: 't' } },
       KEY
     );
 
-    await readConnectorConfigCached('tenant-1', 'webex', KEY);
+    await readConnectorConfigCached('webex', KEY);
     const selectsAfterFirst = store.selects;
-    await readConnectorConfigCached('tenant-1', 'webex', KEY);
+    await readConnectorConfigCached('webex', KEY);
 
     expect(store.selects).toBe(selectsAfterFirst);
   });

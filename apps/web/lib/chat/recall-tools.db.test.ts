@@ -62,7 +62,6 @@ maybe('chat_recall_chats', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
     await delegate.enroll(me);
     await delegate.enroll(colleague);
     await db
@@ -112,8 +111,6 @@ maybe('chat_recall_chats', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('in a project, lists only the project’s other started chats', async () => {

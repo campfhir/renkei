@@ -150,7 +150,7 @@ describe('sweepWebexWebhooks', () => {
 
     await sweepWebexWebhooks({
       makeClient: () => client,
-      resolveAccess: async (_tenantId, accountId) =>
+      resolveAccess: async (accountId) =>
         accountId === 'acct-dead' ? null : { auth, subject: 'subj-1', personEmail: null },
     });
 

@@ -33,10 +33,6 @@ maybe('provider grant store under per-user keys', () => {
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
-    await result.val
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `grants-${tenantId.slice(0, 8)}` })
-      .execute();
     // The owner holds a key, as their browser would have enrolled them, with
     // a session delegation to this test's own delegate instance.
     const instance = await registerTestInstance(result.val);
@@ -52,7 +48,6 @@ maybe('provider grant store under per-user keys', () => {
     const result = getDatabase();
     if (result.ok) {
       await result.val.deleteFrom('delegate_instances').where('id', '=', instanceId).execute();
-      await result.val.deleteFrom('tenants').where('id', '=').execute();
     }
     await closeDatabase();
   });

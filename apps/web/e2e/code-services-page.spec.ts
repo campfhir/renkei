@@ -48,32 +48,13 @@ async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-       VALUES ($1, 'atlassian-bitbucket', 'e2e-bitbucket-account', $2, 'e2e-client', 'E2E Bitbucket',
-               $3, $4, $5, $6, $7)
-       ON CONFLICT (tenant_id, provider, provider_account_id) DO UPDATE
-         SET subject = EXCLUDED.subject,
-             encrypted_access_token = EXCLUDED.encrypted_access_token,
-             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
-             expires_at = EXCLUDED.expires_at`,
-      [
-        E2E_TENANT_ID,
-        E2E_SUBJECT,
-        await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'),
-        await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'),
-        new Date(Date.now() + 365 * 86_400_000),
-        ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'],
-        JSON.stringify({ username: 'e2e-dev' }),
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n       VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n               $2, $3, $4, $5, $6)\n       ON CONFLICT (provider, provider_account_id) DO UPDATE\n         SET subject = EXCLUDED.subject,\n             encrypted_access_token = EXCLUDED.encrypted_access_token,\n             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n             expires_at = EXCLUDED.expires_at`,
+      [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'], JSON.stringify({ username: 'e2e-dev' })]
     );
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'Where a database runs beside the checkout.', 'code', 'atlassian-bitbucket', $5, 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.name, ids.repo]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Where a database runs beside the checkout.', 'code', 'atlassian-bitbucket', $4, 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.name, ids.repo]
     );
   } finally {
     await client.end();

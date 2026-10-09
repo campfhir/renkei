@@ -133,27 +133,16 @@ test.beforeAll(async ({}, testInfo) => {
   client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   await client.query(
-    `INSERT INTO chat_projects (id, tenant_id, owner_subject, name, description, instructions)
-     VALUES ($1, $2, $3, 'Tour project', 'A project the tour walk made.', 'Answer briefly.')
-     ON CONFLICT (id) DO NOTHING`,
-    [WALK_PROJECT_ID, E2E_TENANT_ID, E2E_SUBJECT]
+    `INSERT INTO chat_projects (id, owner_subject, name, description, instructions)\n     VALUES ($1, $2, 'Tour project', 'A project the tour walk made.', 'Answer briefly.')\n     ON CONFLICT (id) DO NOTHING`,
+    [WALK_PROJECT_ID, E2E_SUBJECT]
   );
   await client.query(
-    `INSERT INTO prompt_libraries (id, tenant_id, owner_subject, name, description)
-     VALUES ($1, $2, $3, 'Tour library', 'A library the tour walk made.')
-     ON CONFLICT (id) DO NOTHING`,
-    [WALK_LIBRARY_ID, E2E_TENANT_ID, E2E_SUBJECT]
+    `INSERT INTO prompt_libraries (id, owner_subject, name, description)\n     VALUES ($1, $2, 'Tour library', 'A library the tour walk made.')\n     ON CONFLICT (id) DO NOTHING`,
+    [WALK_LIBRARY_ID, E2E_SUBJECT]
   );
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')
-     ON CONFLICT (id) DO NOTHING`,
-    [
-      sessionIdFor(testInfo.project.name),
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      ['renkei-user', 'renkei-operator'],
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')\n     ON CONFLICT (id) DO NOTHING`,
+    [sessionIdFor(testInfo.project.name), E2E_SUBJECT, ['renkei-user', 'renkei-operator']]
   );
 });
 

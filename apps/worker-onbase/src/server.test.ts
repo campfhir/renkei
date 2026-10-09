@@ -15,9 +15,15 @@ import { createOnBaseServer } from './server';
 import type { OnBaseTenantConfig } from './config';
 
 const API_KEY = 'test-worker-key';
-const TENANT = '11111111-1111-1111-1111-111111111111';
+/**
+ * Which connectors the one organization has configured. The Administration
+ * connector is a separately connected Hyland OAuth client, and a deployment
+ * that set up the Document API alone is the common real-world case — so a
+ * test may turn either off and the resolver answers as the store would.
+ */
+let documentConfigured = true;
+let adminConfigured = true;
 /** Has the Document connector configured, but never connected onbase-admin. */
-const TENANT_NO_ADMIN = '33333333-3333-3333-3333-333333333333';
 
 function listen(server: Server): Promise<string> {
   return new Promise((resolve) => {
@@ -201,18 +207,12 @@ describe('worker-onbase server', () => {
         idpScopeName: 'onbase-admin-api',
         allowInsecureHttp: true,
       };
-      if (tenantId === TENANT) {
-        return Promise.resolve(ok(connector === 'onbase-admin' ? adminConfig : documentConfig));
+      if (connector === 'onbase-admin') {
+        return Promise.resolve(adminConfigured ? ok(adminConfig) : err('not_configured' as const));
       }
-      // TENANT_NO_ADMIN has the Document connector configured, but never
-      // set up the Administration one — the common real-world case, since
-      // they are separately connected Hyland OAuth clients.
-      if (tenantId === TENANT_NO_ADMIN) {
-        return Promise.resolve(
-          connector === 'onbase-admin' ? err('not_configured' as const) : ok(documentConfig)
-        );
-      }
-      return Promise.resolve(err('not_configured' as const));
+      return Promise.resolve(
+        documentConfigured ? ok(documentConfig) : err('not_configured' as const)
+      );
     },
   });
 
@@ -228,6 +228,11 @@ describe('worker-onbase server', () => {
 
   afterAll(async () => {
     await Promise.all([close(idp), close(onbase), close(worker)]);
+  });
+
+  afterEach(() => {
+    documentConfigured = true;
+    adminConfigured = true;
   });
 
   function post(op: string, body: unknown, key: string | null = API_KEY): Promise<Response> {
@@ -259,7 +264,8 @@ describe('worker-onbase server', () => {
     expect(endpoints.tokenEndpoint).toBe(`${idpUrl}/identity/connect/token`);
   });
 
-  it('refuses discovery for an unconfigured tenant', async () => {
+  it('refuses discovery while the connector is unconfigured', async () => {
+    documentConfigured = false;
     const response = await post('discover', { });
     expect(response.status).toBe(503);
     const body = (await response.json()) as { error: { type: string } };
@@ -375,7 +381,7 @@ describe('worker-onbase server', () => {
 
   it('puts upload bytes through to the staging slot', async () => {
     const response = await fetch(
-      `${workerUrl}/v1/put-bytes?tenantId=${TENANT}&uploadId=u-9&filePart=1`,
+      `${workerUrl}/v1/put-bytes?uploadId=u-9&filePart=1`,
       {
         method: 'POST',
         headers: {
@@ -392,7 +398,7 @@ describe('worker-onbase server', () => {
 
   it('rejects an oversized upload part with too_large', async () => {
     const response = await fetch(
-      `${workerUrl}/v1/put-bytes?tenantId=${TENANT}&uploadId=u-9&filePart=1`,
+      `${workerUrl}/v1/put-bytes?uploadId=u-9&filePart=1`,
       {
         method: 'POST',
         headers: {
@@ -545,7 +551,8 @@ describe('worker-onbase server', () => {
     expect(lastContentType).toBe('application/json-patch+json');
   });
 
-  it('refuses onbase-admin calls for a tenant that never connected it', async () => {
+  it('refuses onbase-admin calls when only the Document connector is connected', async () => {
+    adminConfigured = false;
     const response = await post('api', {
       connector: 'onbase-admin',
       accessToken: 'good-token',

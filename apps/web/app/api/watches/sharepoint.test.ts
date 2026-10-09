@@ -147,11 +147,6 @@ describe('POST /watches — sharepoint', () => {
     routes = [SITE, DRIVES];
 
     const response = await postWatch(
-      postRequest('https://renkei.example.com/api/tenant/tenant-1/watches', {
-        provider: 'sharepoint',
-        site: 'site-1',
-        scopeKey: 'drive-2',
-      }),
       { params }
     );
 
@@ -178,11 +173,6 @@ describe('POST /watches — sharepoint', () => {
     routes = [SITE, DRIVES];
 
     const response = await postWatch(
-      postRequest('https://renkei.example.com/api/tenant/tenant-1/watches', {
-        provider: 'sharepoint',
-        site: 'site-1',
-        scopeKey: 'drive-from-another-site',
-      }),
       { params }
     );
 
@@ -192,10 +182,6 @@ describe('POST /watches — sharepoint', () => {
 
   it('refuses a library named without its site', async () => {
     const response = await postWatch(
-      postRequest('https://renkei.example.com/api/tenant/tenant-1/watches', {
-        provider: 'sharepoint',
-        scopeKey: 'drive-2',
-      }),
       { params }
     );
 
@@ -214,9 +200,6 @@ describe('GET /watches/options — sharepoint', () => {
     ];
 
     const response = await getOptions(
-      new NextRequest(
-        'https://renkei.example.com/api/tenant/tenant-1/watches/options?provider=sharepoint'
-      ),
       { params }
     );
 
@@ -229,9 +212,6 @@ describe('GET /watches/options — sharepoint', () => {
     routes = [{ match: '/sites?search=', body: { value: [] } }];
 
     await getOptions(
-      new NextRequest(
-        'https://renkei.example.com/api/tenant/tenant-1/watches/options?provider=sharepoint&q=policies'
-      ),
       { params }
     );
 
@@ -242,9 +222,6 @@ describe('GET /watches/options — sharepoint', () => {
     routes = [SITE, DRIVES];
 
     const response = await getOptions(
-      new NextRequest(
-        'https://renkei.example.com/api/tenant/tenant-1/watches/options?provider=sharepoint&site=site-1'
-      ),
       { params }
     );
 
@@ -262,10 +239,6 @@ describe('GET /watches/options — sharepoint', () => {
 describe('POST /watches/reindex — sharepoint', () => {
   it('discards the ingest.document work that would rebuild what it purged', async () => {
     const response = await postReindex(
-      postRequest('https://renkei.example.com/api/tenant/tenant-1/watches/reindex', {
-        provider: 'sharepoint',
-        scopeKey: 'drive-2',
-      }),
       { params }
     );
 

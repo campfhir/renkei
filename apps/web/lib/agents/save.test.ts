@@ -92,7 +92,7 @@ beforeEach(() => {
 
 describe('saveAgent description regeneration', () => {
   it('a toggle-shaped save never re-describes — version renormalization included', async () => {
-    const result = await saveAgent(db, 't1', 'auth0|alice', parsedWith(), {
+    const result = await saveAgent(db, 'auth0|alice', parsedWith(), {
       agentId: 'agent-1',
     });
     expect(result.outcome).toBe('saved');
@@ -110,14 +110,14 @@ describe('saveAgent description regeneration', () => {
   });
 
   it('an explicit refresh re-describes', async () => {
-    await saveAgent(db, 't1', 'auth0|alice', parsedWith({}, true), { agentId: 'agent-1' });
+    await saveAgent(db, 'auth0|alice', parsedWith({}, true), { agentId: 'agent-1' });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
   });
 
   it('a real content change re-describes', async () => {
     const changed = JSON.parse(JSON.stringify(storedSteps));
     changed.steps[0].instruction = [{ t: 'text', v: 'Think harder.' }];
-    await saveAgent(db, 't1', 'auth0|alice', parsedWith({ steps: changed }), {
+    await saveAgent(db, 'auth0|alice', parsedWith({ steps: changed }), {
       agentId: 'agent-1',
     });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
@@ -149,7 +149,7 @@ describe('the org step ceiling', () => {
 
   it('refuses past the built-in default when the org has no setting', async () => {
     settingsMock.getOrgSettings.mockImplementation(async () => ({ ok: false }));
-    const result = await saveAgent(db, 't1', 'owner', parsedOf(25), { dryRun: true });
+    const result = await saveAgent(db, 'owner', parsedOf(25), { dryRun: true });
 
     expect(result.outcome).toBe('invalid');
     expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(
@@ -165,7 +165,7 @@ describe('the org step ceiling', () => {
       ok: true,
       val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
     }));
-    const result = await saveAgent(db, 't1', 'owner', parsedOf(25), { dryRun: true });
+    const result = await saveAgent(db, 'owner', parsedOf(25), { dryRun: true });
 
     expect(result.outcome).toBe('valid-dry-run');
   });
@@ -175,7 +175,7 @@ describe('the org step ceiling', () => {
       ok: true,
       val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
     }));
-    const result = await saveAgent(db, 't1', 'owner', parsedOf(31), { dryRun: true });
+    const result = await saveAgent(db, 'owner', parsedOf(31), { dryRun: true });
 
     expect(result.outcome).toBe('invalid');
     expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(

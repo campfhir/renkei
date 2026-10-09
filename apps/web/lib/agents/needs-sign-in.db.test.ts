@@ -52,10 +52,6 @@ maybe('resumeRunsNeedingSignIn', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `signin-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('agents')
       .values({
         id: agentId,

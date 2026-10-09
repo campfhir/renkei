@@ -67,20 +67,16 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, title, last_message_at)
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, title, last_message_at)\n       VALUES ($1, $2, $3, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.chatTitle]
     );
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'The demo service.', 'code', 'github', 'acme/demo', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'The demo service.', 'code', 'github', 'acme/demo', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.codeChatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.codeChatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.codeChatId, E2E_SUBJECT, ids.projectId, ids.codeChatTitle]
     );
     // The project's active chat — a history chat takes no turn (lib/code/active-chat.ts).
     await client.query('UPDATE chat_projects SET active_chat_id = $1 WHERE id = $2', [
@@ -92,9 +88,8 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       [ids.codeChatId, ids.codeTurnId],
     ]) {
       await client.query(
-        `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
-         VALUES ($1, $2, $3, 'completed', 3, 2100, 320, NOW())`,
-        [turnId, E2E_TENANT_ID, chatId]
+        `INSERT INTO chat_turns (id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)\n         VALUES ($1, $2, 'completed', 3, 2100, 320, NOW())`,
+        [turnId, chatId]
       );
       await seedTurn(client, chatId, turnId);
     }
@@ -202,18 +197,8 @@ async function seedTurn(client: Client, chatId: string, turnId: string): Promise
     ];
     for (const row of rows) {
       await client.query(
-        `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, stop_reason)
-         VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8)`,
-        [
-          E2E_TENANT_ID,
-          chatId,
-          turnId,
-          row.seq,
-          row.role,
-          row.kind,
-          chatKey.seal(JSON.stringify(row.blocks)),
-          row.stop,
-        ]
+        `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7)`,
+        [chatId, turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), row.stop]
       );
     }
   }

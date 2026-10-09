@@ -63,10 +63,6 @@ maybe('chat and project keys through the chat', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `chatkeys-${tenantId.slice(0, 8)}` })
-      .execute();
     // The owner and the friend hold keys, as their browsers would have
     // enrolled them; the stranger never enrolled and holds nothing.
     await delegate.enroll(owner);
@@ -74,8 +70,6 @@ maybe('chat and project keys through the chat', () => {
   });
 
   afterAll(async () => {
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('a new chat has a key, and its owner writes under it', async () => {

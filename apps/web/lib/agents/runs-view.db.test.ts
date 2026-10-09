@@ -107,10 +107,6 @@ maybe('run detail with sealed attempt content', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `rv-${tenantId.slice(0, 8)}` })
-      .execute();
     await delegate.enroll(owner);
   });
 
@@ -118,8 +114,6 @@ maybe('run detail with sealed attempt content', () => {
     await db.deleteFrom('agent_runs').execute();
     await db.deleteFrom('agents').execute();
     await db.deleteFrom('user_encryption_keys').execute();
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('round-trips: the owner reads the attempt as the engine wrote it, and the row holds no content', async () => {

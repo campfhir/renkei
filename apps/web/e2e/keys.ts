@@ -181,7 +181,7 @@ const enrolled = new Map<string, E2EKeys>();
  */
 function keysOf(subject: string): E2EKeys {
   const derive = (purpose: string): Buffer =>
-    createHash('sha256').update(`renkei-e2e/${purpose}/${tenantId}/${subject}`).digest();
+    createHash('sha256').update(`renkei-e2e/${purpose}/${subject}`).digest();
   return {
     userKey: derive('user-key'),
     automationKey: derive('automation-key'),
@@ -208,7 +208,7 @@ export async function enrollForE2E(
   subject: string,
   options: { automation?: boolean } = {}
 ): Promise<E2EKeys> {
-  const cacheKey = `${tenantId}\0${subject}`;
+  const cacheKey = subject;
   let keys = enrolled.get(cacheKey);
   if (!keys) {
     keys = keysOf(subject);
@@ -216,8 +216,8 @@ export async function enrollForE2E(
     // worker) under these same keys: nothing to write, and above all
     // nothing to delete — their wrappings and delegations stand.
     const current = await client.query<{ public_key: string | null; mode: string }>(
-      `SELECT public_key, mode FROM user_encryption_keys WHERE subject = $2`,
-      [tenantId, subject]
+      `SELECT public_key, mode FROM user_encryption_keys WHERE subject = $1`,
+      [subject]
     );
     const row = current.rows[0];
     if (row && row.mode === 'held' && row.public_key === keys.publicKey.toString('base64')) {
@@ -226,15 +226,7 @@ export async function enrollForE2E(
   }
   if (!enrolled.has(cacheKey)) {
     await client.query(
-      `INSERT INTO user_encryption_keys
-         (tenant_id, subject, salt, mode, version, public_key, wrapped_private_key,
-          wrapped_automation_key, enrolled_at)
-       VALUES ($1, $2, $3, 'held', 1, $4, $5, $6, NOW())
-       ON CONFLICT (tenant_id, subject) DO UPDATE SET
-         mode = 'held', version = user_encryption_keys.version + 1, public_key = EXCLUDED.public_key,
-         wrapped_private_key = EXCLUDED.wrapped_private_key,
-         wrapped_automation_key = EXCLUDED.wrapped_automation_key, enrolled_at = NOW(),
-         verifier = NULL, sealed_kek = NULL, unlocked_until = NULL`,
+      `INSERT INTO user_encryption_keys\n         (subject, salt, mode, version, public_key, wrapped_private_key,\n          wrapped_automation_key, enrolled_at)\n       VALUES ($1, $2, $3, 'held', 1, $4, $5, $6, NOW())\n       ON CONFLICT (subject) DO UPDATE SET\n         mode = 'held', version = user_encryption_keys.version + 1, public_key = EXCLUDED.public_key,\n         wrapped_private_key = EXCLUDED.wrapped_private_key,\n         wrapped_automation_key = EXCLUDED.wrapped_automation_key, enrolled_at = NOW(),\n         verifier = NULL, sealed_kek = NULL, unlocked_until = NULL`,
       [
         subject,
         Buffer.alloc(32).toString('base64'),
@@ -261,18 +253,13 @@ export async function enrollForE2E(
     );
   }
   const sessions = await client.query<{ id: string; expires_at: Date }>(
-    `SELECT id, expires_at FROM sessions WHERE subject = $2`,
-    [tenantId, subject]
+    `SELECT id, expires_at FROM sessions WHERE subject = $1`,
+    [subject]
   );
   for (const instance of instances) {
     for (const session of sessions.rows) {
       await client.query(
-        `INSERT INTO key_delegations
-           (tenant_id, subject, instance_id, scope, session_id, sealed_key, expires_at)
-         SELECT $1::uuid, $2::text, $3::uuid, 'session', $4::uuid, $5::text, $6::timestamptz
-          WHERE NOT EXISTS (
-            SELECT 1 FROM key_delegations
-             WHERE instance_id = $3::uuid AND session_id = $4::uuid AND scope = 'session')`,
+        `INSERT INTO key_delegations\n           (subject, instance_id, scope, session_id, sealed_key, expires_at)\n         SELECT $1::uuid, $2::text, $3::uuid, 'session', $4::uuid, $5::text, $6::timestamptz\n          WHERE NOT EXISTS (\n            SELECT 1 FROM key_delegations\n             WHERE instance_id = $3::uuid AND session_id = $4::uuid AND scope = 'session')`,
         [
           subject,
           instance.id,
@@ -284,14 +271,8 @@ export async function enrollForE2E(
     }
     if (options.automation !== false) {
       await client.query(
-        `INSERT INTO key_delegations
-           (tenant_id, subject, instance_id, scope, session_id, sealed_key, expires_at)
-         SELECT $1::uuid, $2::text, $3::uuid, 'automation', NULL, $4::text, NOW() + interval '30 days'
-          WHERE NOT EXISTS (
-            SELECT 1 FROM key_delegations
-             WHERE instance_id = $3::uuid::uuid AND subject = $2::text
-               AND scope = 'automation')`,
-        [tenantId, subject, instance.id, sealToPublicKey(instance.publicKey, keys.automationKey)]
+        `INSERT INTO key_delegations\n           (subject, instance_id, scope, session_id, sealed_key, expires_at)\n         SELECT $1::uuid, $2::text, $3::uuid, 'automation', NULL, $4::text, NOW() + interval '30 days'\n          WHERE NOT EXISTS (\n            SELECT 1 FROM key_delegations\n             WHERE instance_id = $3::uuid::uuid AND subject = $2::text\n               AND scope = 'automation')`,
+        [subject, instance.id, sealToPublicKey(instance.publicKey, keys.automationKey)]
       );
     }
   }
@@ -340,20 +321,12 @@ export async function keyFor(
     id = randomUUID();
     key = randomBytes(32);
     await client.query(
-      `INSERT INTO resource_keys (id, tenant_id, resource_kind, resource_id) VALUES ($1, $2, $3, $4)`,
-      [id, input.tenantId, input.kind, input.resourceId]
+      `INSERT INTO resource_keys (id, resource_kind, resource_id) VALUES ($1, $2, $3)`,
+      [id, input.kind, input.resourceId]
     );
     await client.query(
-      `INSERT INTO resource_key_grants
-         (resource_key_id, tenant_id, holder_kind, holder, wrapped_key, kek_version)
-       VALUES ($1, $2, 'user', $3, $4, 1), ($1, $2, 'automation', $3, $5, 1)`,
-      [
-        id,
-        input.tenantId,
-        input.ownerSubject,
-        secretbox(key.toString('base64'), keys.userKey),
-        secretbox(key.toString('base64'), keys.automationKey),
-      ]
+      `INSERT INTO resource_key_grants\n         (resource_key_id, holder_kind, holder, wrapped_key, kek_version)\n       VALUES ($1, 'user', $2, $3, 1), ($1, 'automation', $2, $4, 1)`,
+      [id, input.ownerSubject, secretbox(key.toString('base64'), keys.userKey), secretbox(key.toString('base64'), keys.automationKey)]
     );
   }
   return { id, key, seal: (plaintext) => `renc2:${id}:${secretbox(plaintext, key)}` };

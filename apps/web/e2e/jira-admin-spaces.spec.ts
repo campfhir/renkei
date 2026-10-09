@@ -110,90 +110,49 @@ const ALL_SCOPES = [
 
 async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string> {
   return withDb(async (client) => {
-    const tenant = [fixture.tenantId];
-    await client.query('DELETE FROM jira_admin_change_requests', tenant);
-    await client.query('DELETE FROM jira_admin_space_templates', tenant);
-    await client.query('DELETE FROM audit_events', tenant);
-    await client.query('DELETE FROM provider_grants', tenant);
-    await client.query('DELETE FROM connector_configs', tenant);
-    await client.query('DELETE FROM user_preferences', tenant);
-    await client.query('DELETE FROM sessions', tenant);
-    await client.query('DELETE FROM identities', tenant);
-    await client.query('DELETE FROM tenants WHERE id = $1', tenant);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM jira_admin_space_templates WHERE created_by = $1', [fixture.subject]);
+    await client.query('DELETE FROM audit_events WHERE actor_subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM connector_configs');
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Jira Admin']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Jira Admin']
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      [fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'connectors', '{"added": ["jira-admin"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"jira-admin\"]}'::jsonb)`,
+      [fixture.subject]
     );
     await client.query(
-      `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
-       VALUES ($1, 'atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`,
-      [fixture.tenantId]
+      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`
     );
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,
-          metadata)
-       VALUES ($1, 'atlassian-admin', 'e2e-jira-admin-account', $2, 'e2e-admin-client',
-               'E2E Jira Admin', $3, $4, $5, $6, $7)`,
-      [
-        fixture.tenantId,
-        fixture.subject,
-        await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'),
-        await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'),
-        new Date(Date.now() + 365 * 24 * 3_600_000),
-        scopes,
-        { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
+      [fixture.subject, await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'), await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'), new Date(Date.now() + 365 * 24 * 3_600_000), scopes, { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' }]
     );
     // The row jira_admin_save_space_template writes.
     const template = await client.query<{ id: string }>(
-      `INSERT INTO jira_admin_space_templates
-         (tenant_id, cloud_id, site_url, name, name_key, description, source_space_key,
-          document, created_by, updated_by)
-       VALUES ($1, $2, 'https://e2e.atlassian.net', 'Ops standard', 'ops standard',
-               'How operations spaces are set up', 'OPS', $3, $4, $4)
-       RETURNING id`,
-      [
-        fixture.tenantId,
-        fixture.cloudId,
-        JSON.stringify({
-          version: 1,
-          projectTypeKey: 'software',
-          assigneeType: 'UNASSIGNED',
-          category: null,
-          schemes: SCHEMES,
-          roles: ROLES,
-          components: COMPONENTS,
-        }),
-        fixture.subject,
-      ]
+      `INSERT INTO jira_admin_space_templates\n         (cloud_id, site_url, name, name_key, description, source_space_key,\n          document, created_by, updated_by)\n       VALUES ($1, 'https://e2e.atlassian.net', 'Ops standard', 'ops standard',\n               'How operations spaces are set up', 'OPS', $2, $3, $3)\n       RETURNING id`,
+      [fixture.cloudId, JSON.stringify({
+                  version: 1,
+                  projectTypeKey: 'software',
+                  assigneeType: 'UNASSIGNED',
+                  category: null,
+                  schemes: SCHEMES,
+                  roles: ROLES,
+                  components: COMPONENTS,
+                }), fixture.subject]
     );
     const id = template.rows[0]?.id;
     if (!id) throw new Error('no template inserted');
@@ -234,18 +193,8 @@ async function proposeSpace(
   };
   const result = await withDb((client) =>
     client.query<{ id: string }>(
-      `INSERT INTO jira_admin_change_requests
-         (tenant_id, subject, cloud_id, site_url, kind, title, payload, expires_at)
-       VALUES ($1, $2, $3, 'https://e2e.atlassian.net', 'create_space', $4, $5, $6)
-       RETURNING id`,
-      [
-        fixture.tenantId,
-        fixture.subject,
-        fixture.cloudId,
-        `New space ${key} “${name}”, from template “Ops standard”`,
-        JSON.stringify(payload),
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO jira_admin_change_requests\n         (subject, cloud_id, site_url, kind, title, payload, expires_at)\n       VALUES ($1, $2, 'https://e2e.atlassian.net', 'create_space', $3, $4, $5)\n       RETURNING id`,
+      [fixture.subject, fixture.cloudId, `New space ${key} “${name}”, from template “Ops standard”`, JSON.stringify(payload), new Date(Date.now() + 24 * 3_600_000)]
     )
   );
   const id = result.rows[0]?.id;
@@ -422,8 +371,7 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
     .poll(async () =>
       withDb(async (client) => {
         const rows = await client.query(
-          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`,
-          [fixture.tenantId]
+          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`
         );
         return rows.rowCount;
       })

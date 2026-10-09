@@ -75,9 +75,8 @@ let ids: ReturnType<typeof idsFor>;
 
 async function removeTenant(): Promise<void> {
   // settings does not cascade from tenants; sessions does not either.
-  await client.query('DELETE FROM settings', [ids.tenantId]);
-  await client.query('DELETE FROM sessions', [ids.tenantId]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [ids.tenantId]);
+  await client.query('DELETE FROM settings');
+  await client.query('DELETE FROM sessions WHERE subject = $1', [ids.subject]);
 }
 
 // eslint-disable-next-line no-empty-pattern
@@ -86,15 +85,12 @@ test.beforeAll(async ({}, testInfo) => {
   client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   await removeTenant();
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [ids.tenantId, ids.slug]);
   await client.query(
-    `INSERT INTO settings (tenant_id, key, value) VALUES ($1, 'coach_marks_enabled', 'false'::jsonb)`,
-    [ids.tenantId]
+    `INSERT INTO settings (key, value) VALUES ('coach_marks_enabled', 'false'::jsonb)`
   );
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day')`,
-    [ids.sessionId, ids.tenantId, ids.subject, ['renkei-user', 'renkei-operator']]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
+    [ids.sessionId, ids.subject, ['renkei-user', 'renkei-operator']]
   );
 });
 

@@ -52,13 +52,6 @@ maybe('recordWidgetModelContext', () => {
     db = result.val;
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
     if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-    await db
-      .insertInto('tenants')
-      .values([
-        { id: tenantId, slug: tenantId },
-        { id: modellessTenantId, slug: modellessTenantId },
-      ])
-      .execute();
     await delegate.enroll(me);
     await delegate.enroll(me);
     await db
@@ -198,7 +191,6 @@ maybe('chat widget decisions', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
     await delegate.enroll(me);
     await db
       .insertInto('chats')
@@ -309,7 +301,6 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     db = result.val;
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
     if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
     await delegate.enroll(me);
     await db
       .insertInto('llm_model_configs')

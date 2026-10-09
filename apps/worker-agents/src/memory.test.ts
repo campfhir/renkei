@@ -66,10 +66,6 @@ maybe('agent memory', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `mem-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   beforeEach(async () => {
@@ -90,8 +86,6 @@ maybe('agent memory', () => {
   afterAll(async () => {
     await db.deleteFrom('agent_memories').execute();
     await db.deleteFrom('agents').execute();
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('writes an identical entry once — a fact remembered every run is one line', async () => {

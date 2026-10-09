@@ -63,9 +63,6 @@ function request(query = ''): NextRequest {
   return new NextRequest(`http://localhost/api/logs${query}`, { method: 'POST' });
 }
 
-function params() {
-  return { params: Promise.resolve({ }) };
-}
 
 function session(subject: string, roles: string[]) {
   return {
@@ -87,7 +84,7 @@ describe('POST /api/tenant/{tenantId}/logs', () => {
     mockGetSession.mockResolvedValue(null);
     stubDb(undefined);
 
-    const response = await POST(request('?accountId=acc-a'), params());
+    const response = await POST(request('?accountId=acc-a'));
 
     expect(response.status).toBe(401);
   });
@@ -96,7 +93,7 @@ describe('POST /api/tenant/{tenantId}/logs', () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
     const { grantFilters } = stubDb({ id: TENANT, provider_account_id: 'acc-a' });
 
-    const response = await POST(request('?accountId=acc-b'), params());
+    const response = await POST(request('?accountId=acc-b'));
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: 'Cannot view other users logs' });
@@ -109,7 +106,7 @@ describe('POST /api/tenant/{tenantId}/logs', () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
     stubDb({ id: TENANT, provider_account_id: 'acc-a' });
 
-    const response = await POST(request('?accountId=acc-a'), params());
+    const response = await POST(request('?accountId=acc-a'));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -121,7 +118,7 @@ describe('POST /api/tenant/{tenantId}/logs', () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
     stubDb({ id: TENANT, provider_account_id: 'acc-a' });
 
-    const response = await POST(request(), params());
+    const response = await POST(request());
 
     expect(response.status).toBe(200);
     expect(mockBuildQuery).toHaveBeenCalledWith(null, TENANT, 'acc-a');
@@ -131,7 +128,7 @@ describe('POST /api/tenant/{tenantId}/logs', () => {
     mockGetSession.mockResolvedValue(session('user-c@example.com', ['renkei-user']));
     stubDb(undefined);
 
-    const response = await POST(request(), params());
+    const response = await POST(request());
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: 'No Jira grant for this user' });

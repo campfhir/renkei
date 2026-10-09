@@ -71,18 +71,16 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
   await client.query('DELETE FROM agent_notifications WHERE id = $1', [ids.notificationId]);
   await client.query(
-    `DELETE FROM user_preferences WHERE subject = $2 AND key = 'chatToolPermissions'`,
-    [E2E_TENANT_ID, E2E_SUBJECT]
+    `DELETE FROM user_preferences WHERE subject = $1 AND key = 'chatToolPermissions'`,
+    [E2E_SUBJECT]
   );
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, true, false)`,
-    [ids.modelId, E2E_TENANT_ID, ids.modelLabel, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
+    `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, true, false)`,
+    [ids.modelId, ids.modelLabel, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
+    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
+    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
     kind: 'chat',
@@ -98,9 +96,8 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
     decidedAt: null,
   };
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)
-     VALUES ($1, $2, $3, 'running', $4, 2, 'permission:jira_create_issue', NOW(), $5::jsonb)`,
-    [ids.turnId, E2E_TENANT_ID, ids.chatId, ids.modelId, JSON.stringify(ask)]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)\n     VALUES ($1, $2, 'running', $3, 2, 'permission:jira_create_issue', NOW(), $4::jsonb)`,
+    [ids.turnId, ids.chatId, ids.modelId, JSON.stringify(ask)]
   );
   const rows: { seq: number; role: string; kind: string; status: string; blocks: unknown[] }[] = [
     {
@@ -124,22 +121,8 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     const inserted = await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        row.status,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? ids.modelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-        assistant ? 'tool_use' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, row.status, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? 'tool_use' : null]
     );
     if (assistant) {
       // The ask names the row the tool_use block sits in.
@@ -151,16 +134,8 @@ async function seedParkedChat(client: Client, ids: Ids): Promise<void> {
   }
   // The notification the ask raised (lib/chat/permission-notification.ts).
   await client.query(
-    `INSERT INTO agent_notifications (id, tenant_id, subject, kind, tool, headline, ref_id, ref_url)
-     VALUES ($1, $2, $3, 'chat_permission', 'jira_create_issue', $4, $5, $6)`,
-    [
-      ids.notificationId,
-      E2E_TENANT_ID,
-      E2E_SUBJECT,
-      `“${ids.title}” is waiting for your permission to create issue`,
-      ids.toolUseId,
-      `/chat/${ids.chatId}`,
-    ]
+    `INSERT INTO agent_notifications (id, subject, kind, tool, headline, ref_id, ref_url)\n     VALUES ($1, $2, 'chat_permission', 'jira_create_issue', $3, $4, $5)`,
+    [ids.notificationId, E2E_SUBJECT, `“${ids.title}” is waiting for your permission to create issue`, ids.toolUseId, `/chat/${ids.chatId}`]
   );
 }
 
@@ -221,8 +196,8 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
       .poll(
         async () => {
           const { rows } = await client.query(
-            `SELECT value FROM user_preferences WHERE subject = $2 AND key = 'chatToolPermissions'`,
-            [E2E_TENANT_ID, E2E_SUBJECT]
+            `SELECT value FROM user_preferences WHERE subject = $1 AND key = 'chatToolPermissions'`,
+            [E2E_SUBJECT]
           );
           return rows[0]?.value ?? null;
         },
@@ -280,8 +255,8 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
     await expect
       .poll(async () => {
         const { rows } = await client.query(
-          `SELECT value FROM user_preferences WHERE subject = $2 AND key = 'chatToolPermissions'`,
-          [E2E_TENANT_ID, E2E_SUBJECT]
+          `SELECT value FROM user_preferences WHERE subject = $1 AND key = 'chatToolPermissions'`,
+          [E2E_SUBJECT]
         );
         return rows[0]?.value ?? null;
       })

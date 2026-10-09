@@ -77,7 +77,7 @@ describe('parseBatchNotificationMeta', () => {
 
 describe('rendering helpers', () => {
   it('links to the batch page in-app', () => {
-    expect(batchNotificationHref('acme', parseBatchNotificationMeta(meta)!)).toBe(
+    expect(batchNotificationHref(parseBatchNotificationMeta(meta)!)).toBe(
       '/acme/batch-jobs/batch-1'
     );
   });

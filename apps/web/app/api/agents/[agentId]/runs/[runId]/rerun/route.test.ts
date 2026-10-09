@@ -76,9 +76,6 @@ function request(body: unknown): NextRequest {
   });
 }
 
-function params() {
-  return { params: Promise.resolve({ agentId: AGENT_ID, runId: RUN_ID }) };
-}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -93,7 +90,7 @@ describe('POST rerun — concurrency guard', () => {
     stubDb(runRow('schedule'));
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
-    const response = await POST(request({}), params());
+    const response = await POST(request({}));
 
     expect(response.status).toBe(409);
     const body = await response.json();
@@ -105,7 +102,7 @@ describe('POST rerun — concurrency guard', () => {
     stubDb(runRow('event'));
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
-    const response = await POST(request({}), params());
+    const response = await POST(request({}));
 
     expect(response.status).toBe(200);
     expect(mockFindInProgressRun).not.toHaveBeenCalled();
@@ -116,7 +113,7 @@ describe('POST rerun — concurrency guard', () => {
     stubDb(runRow('schedule'));
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
-    const response = await POST(request({ confirm: true }), params());
+    const response = await POST(request({ confirm: true }));
 
     expect(response.status).toBe(200);
     expect(mockFindInProgressRun).not.toHaveBeenCalled();
@@ -126,7 +123,7 @@ describe('POST rerun — concurrency guard', () => {
   it('proceeds for a manual run when nothing else is in progress', async () => {
     stubDb(runRow('manual'));
 
-    const response = await POST(request({}), params());
+    const response = await POST(request({}));
 
     expect(response.status).toBe(200);
     expect(mockCreateAgentRun).toHaveBeenCalledTimes(1);

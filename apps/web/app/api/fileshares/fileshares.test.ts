@@ -65,7 +65,6 @@ const client = jest.requireMock<{
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 const SHARE = { id: SHARE_ID, name: 'Accounting' };
 const TARGET = { shareId: SHARE_ID, subject: 'auth0|alice' };
-const paramsOf = () => Promise.resolve({ });
 const shareParamsOf = (shareId: string) => Promise.resolve({ shareId });
 
 function reqOf(url: string, init?: RequestInit): NextRequest {
@@ -83,7 +82,7 @@ beforeEach(() => {
 
 test('every route answers a signed-out request with 401', async () => {
   getSessionFromRequest.mockResolvedValue(null);
-  const listing = await listShares(reqOf('http://x/api'), { params: paramsOf() });
+  const listing = await listShares(reqOf('http://x/api'));
   expect(listing.status).toBe(401);
   const folder = await listFolder(reqOf('http://x/api?path=/'), {
     params: shareParamsOf(SHARE_ID),
@@ -123,7 +122,7 @@ test('the share list marks connections, verbatim (store-side, no worker)', async
       },
     ],
   });
-  const response = await listShares(reqOf('http://x/api'), { params: paramsOf() });
+  const response = await listShares(reqOf('http://x/api'));
   expect(response.status).toBe(200);
   const body = await response.json();
   expect(body.shares).toHaveLength(2);

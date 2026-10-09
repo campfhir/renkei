@@ -138,22 +138,19 @@ async function seedChat(
   await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [MODEL_ID]);
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $4, 'anthropic', 'e2e-model', $3, true, false)`,
+    `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $3, 'anthropic', 'e2e-model', $2, true, false)`,
     // Labels and the default flag are unique per tenant, and the projects
     // seed side by side; the chat pins its model, so none need be default.
-    [MODEL_ID, E2E_TENANT_ID, sealSecret(JSON.stringify({ apiKey: 'e2e' })), modelLabel]
+    [MODEL_ID, sealSecret(JSON.stringify({ apiKey: 'e2e' })), modelLabel]
   );
   await client.query('DELETE FROM chat_projects WHERE id = $1', [projectId]);
   await client.query(
-    `INSERT INTO chat_projects (id, tenant_id, owner_subject, name)
-     VALUES ($1, $2, $3, 'Sprint hygiene')`,
-    [projectId, E2E_TENANT_ID, E2E_SUBJECT]
+    `INSERT INTO chat_projects (id, owner_subject, name)\n     VALUES ($1, $2, 'Sprint hygiene')`,
+    [projectId, E2E_SUBJECT]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, llm_model_id, thinking_enabled, last_message_at)
-     VALUES ($1, $2, $3, $6, $4, $5, true, NOW())`,
-    [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, title, MODEL_ID, projectId]
+    `INSERT INTO chats (id, owner_subject, project_id, title, llm_model_id, thinking_enabled, last_message_at)\n     VALUES ($1, $2, $5, $3, $4, true, NOW())`,
+    [CHAT_ID, E2E_SUBJECT, title, MODEL_ID, projectId]
   );
   const chatKey = await keyFor(client, {
     kind: 'chat',
@@ -161,9 +158,8 @@ async function seedChat(
     ownerSubject: E2E_SUBJECT,
   });
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)
-     VALUES ($1, $2, $3, 'completed', $4, 2, 1200, 340, NOW())`,
-    [TURN_ID, E2E_TENANT_ID, CHAT_ID, MODEL_ID]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, 1200, 340, NOW())`,
+    [TURN_ID, CHAT_ID, MODEL_ID]
   );
   const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
     {
@@ -229,39 +225,21 @@ async function seedChat(
   // An archived chat of the same person: hidden until "Show archived".
   await client.query('DELETE FROM chats WHERE id = $1', [archivedId]);
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, archived_at, last_message_at)
-     VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-    [archivedId, E2E_TENANT_ID, E2E_SUBJECT, `${title} (archived)`]
+    `INSERT INTO chats (id, owner_subject, title, archived_at, last_message_at)\n     VALUES ($1, $2, $3, NOW(), NOW())`,
+    [archivedId, E2E_SUBJECT, `${title} (archived)`]
   );
   // A file a tool produced, as the runner keeps it: metadata under origin
   // 'model' (the bytes would sit in the blob store, which the list never
   // reads).
   await client.query(
-    `INSERT INTO chat_attachments (tenant_id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin)
-     VALUES ($1, $2, $3, $4, 'sprint-report.pdf', 'application/pdf', 48213, 'done', 'model')`,
-    [E2E_TENANT_ID, E2E_SUBJECT, CHAT_ID, `chat/${E2E_TENANT_ID}/${TURN_ID}`]
+    `INSERT INTO chat_attachments (owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin)\n     VALUES ($1, $2, $3, 'sprint-report.pdf', 'application/pdf', 48213, 'done', 'model')`,
+    [E2E_SUBJECT, CHAT_ID, `chat/${E2E_TENANT_ID}/${TURN_ID}`]
   );
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason, timing)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10, $11, $12)`,
-      [
-        E2E_TENANT_ID,
-        CHAT_ID,
-        TURN_ID,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? MODEL_ID : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-        assistant ? (row.seq === 2 ? 'tool_use' : 'end_turn') : null,
-        // The model call behind the row that thought and called the tool:
-        // 2.1s in all, 0.9s before its first block streamed.
-        assistant && row.seq === 2 ? JSON.stringify({ durationMs: 2100, firstTokenMs: 900 }) : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason, timing)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10, $11)`,
+      [CHAT_ID, TURN_ID, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? MODEL_ID : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null, assistant ? (row.seq === 2 ? 'tool_use' : 'end_turn') : null, assistant && row.seq === 2 ? JSON.stringify({ durationMs: 2100, firstTokenMs: 900 }) : null]
     );
   }
 }
@@ -490,10 +468,8 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     // CSS counter rather than a character the markup carries, so Copy
     // above and here both still return bare code, numbers or not.
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'theme', '{"mode":"auto","codeLineNumbers":true}'::jsonb)
-       ON CONFLICT (tenant_id, subject, key) DO UPDATE SET value = EXCLUDED.value`,
-      [E2E_TENANT_ID, E2E_SUBJECT]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'theme', '{\"mode\":\"auto\",\"codeLineNumbers\":true}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      [E2E_SUBJECT]
     );
     try {
       await page.reload();
@@ -518,9 +494,8 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
         );
     } finally {
       await client.query(
-        `UPDATE user_preferences SET value = '{"mode":"auto","codeLineNumbers":false}'::jsonb
-         WHERE subject = $2 AND key = 'theme'`,
-        [E2E_TENANT_ID, E2E_SUBJECT]
+        `UPDATE user_preferences SET value = '{\"mode\":\"auto\",\"codeLineNumbers\":false}'::jsonb\n         WHERE subject = $1 AND key = 'theme'`,
+        [E2E_SUBJECT]
       );
       await page.reload();
     }
@@ -656,8 +631,8 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
     // The empty chat "+ New" made above.
     await client.query(
-      'DELETE FROM chats WHERE owner_subject = $2 AND last_message_at IS NULL',
-      [E2E_TENANT_ID, E2E_SUBJECT]
+      'DELETE FROM chats WHERE owner_subject = $1 AND last_message_at IS NULL',
+      [E2E_SUBJECT]
     );
     await client.query('DELETE FROM chats WHERE id = $1', [ids.archivedId]);
     await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);

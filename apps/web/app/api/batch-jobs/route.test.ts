@@ -26,7 +26,6 @@ const { startDocumentOcrPipeline } = jest.requireMock<{ startDocumentOcrPipeline
 );
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
-const paramsOf = () => Promise.resolve({ });
 
 function reqOf(body: unknown): NextRequest {
   return new NextRequest(
@@ -46,26 +45,20 @@ beforeEach(() => {
 
 test('a signed-out request is refused', async () => {
   getSessionFromRequest.mockResolvedValue(null);
-  const response = await POST(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), {
-    params: paramsOf(),
-  });
+  const response = await POST(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }));
   expect(response.status).toBe(401);
   expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
 });
 
 test('a missing name is a 400 before any share lookup', async () => {
   const response = await POST(
-    reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }),
-    { params: paramsOf() }
-  );
+    reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }));
   expect(response.status).toBe(400);
   expect(listConnectedShares).not.toHaveBeenCalled();
 });
 
 test('a missing shareId is a 400 before any share lookup', async () => {
-  const response = await POST(reqOf({ name: 'Inbox OCR', grouping: { strategy: 'whole-file' } }), {
-    params: paramsOf(),
-  });
+  const response = await POST(reqOf({ name: 'Inbox OCR', grouping: { strategy: 'whole-file' } }));
   expect(response.status).toBe(400);
   expect(listConnectedShares).not.toHaveBeenCalled();
 });
@@ -73,9 +66,7 @@ test('a missing shareId is a 400 before any share lookup', async () => {
 test('an unknown or unconnected share is refused', async () => {
   listConnectedShares.mockResolvedValue({ ok: true, val: [] });
   const response = await POST(
-    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }),
-    { params: paramsOf() }
-  );
+    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }));
   expect(response.status).toBe(400);
   expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
 });
@@ -86,9 +77,7 @@ test('a filename-pattern grouping without both named captures is refused', async
       name: 'Inbox OCR',
       shareId: SHARE_ID,
       grouping: { strategy: 'filename-pattern', pattern: '^(?<documentKey>.+)\\.tif$' },
-    }),
-    { params: paramsOf() }
-  );
+    }));
   expect(response.status).toBe(400);
   expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
 });
@@ -99,26 +88,20 @@ test('an unparseable regex pattern is refused', async () => {
       name: 'Inbox OCR',
       shareId: SHARE_ID,
       grouping: { strategy: 'filename-pattern', pattern: '(?<documentKey>[unterminated' },
-    }),
-    { params: paramsOf() }
-  );
+    }));
   expect(response.status).toBe(400);
   expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
 });
 
 test('an unrecognized grouping strategy is refused', async () => {
   const response = await POST(
-    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'by-vibes' } }),
-    { params: paramsOf() }
-  );
+    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'by-vibes' } }));
   expect(response.status).toBe(400);
 });
 
 test('starts the pipeline and returns the new batch id', async () => {
   const response = await POST(
-    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, path: '/inbox', grouping: { strategy: 'whole-file' } }),
-    { params: paramsOf() }
-  );
+    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, path: '/inbox', grouping: { strategy: 'whole-file' } }));
   expect(response.status).toBe(201);
   expect(await response.json()).toEqual({ batchId: 'batch-1' });
   expect(startDocumentOcrPipeline).toHaveBeenCalledWith(
@@ -152,9 +135,7 @@ test('deleting source files is refused unless the connection allows delete tools
       shareId: SHARE_ID,
       grouping: { strategy: 'whole-file' },
       afterProcessing: { action: 'delete' },
-    }),
-    { params: paramsOf() }
-  );
+    }));
   expect(response.status).toBe(400);
   expect((await response.json()).error).toContain('delete tools');
   expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
@@ -167,17 +148,13 @@ test('a malformed afterProcessing is a 400 before any share lookup', async () =>
       shareId: SHARE_ID,
       grouping: { strategy: 'whole-file' },
       afterProcessing: { action: 'archive' },
-    }),
-    { params: paramsOf() }
-  );
+    }));
   expect(response.status).toBe(400);
   expect(listConnectedShares).not.toHaveBeenCalled();
 });
 
 test('an empty path defaults to the share root', async () => {
-  await POST(reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), {
-    params: paramsOf(),
-  });
+  await POST(reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }));
   expect(startDocumentOcrPipeline).toHaveBeenCalledWith(
     {},
     expect.objectContaining({ path: '/' })

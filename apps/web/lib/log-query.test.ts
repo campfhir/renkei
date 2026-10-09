@@ -72,12 +72,12 @@ describe('buildEnforcedLogQuery', () => {
   const accountId = 'user-456';
 
   describe('basic queries', () => {
-    it('should add tenant filter for empty query', () => {
+    it('should add the account filter for an empty query', () => {
       const result = buildEnforcedLogQuery(null, accountId);
       expect(result).toBeTruthy();
-      // Should have tenant and account in the tree
       const tree = result as any;
       expect(tree.type).toBe('and');
+      expect(JSON.stringify(tree)).toContain(accountId);
     });
 
     it('should preserve user query and add enforced filters', () => {
@@ -88,28 +88,16 @@ describe('buildEnforcedLogQuery', () => {
       expect(tree.type).toBe('and');
     });
 
-    it('should add only tenant filter when accountId not provided', () => {
+    it('should add no scope when accountId is not provided', () => {
       const result = buildEnforcedLogQuery('level:error');
       expect(result).toBeTruthy();
       const tree = result as any;
       expect(tree.type).toBe('and');
+      expect(tree.nodes).toHaveLength(1);
     });
   });
 
   describe('restricted field removal', () => {
-    it('should remove user-provided tenantId', () => {
-      const result = buildEnforcedLogQuery(
-        'level:error && tenantId:wrong-tenant',
-        accountId
-      );
-      expect(result).toBeTruthy();
-      const tree = JSON.stringify(result);
-      // Should not contain "wrong-tenant"
-      expect(tree).not.toContain('wrong-tenant');
-      // Should contain enforced tenantId
-      expect(tree).toContain();
-    });
-
     it('should remove user-provided accountId', () => {
       const result = buildEnforcedLogQuery(
         'level:error && accountId:wrong-user',
@@ -135,17 +123,15 @@ describe('buildEnforcedLogQuery', () => {
 
     it('should handle multiple restricted fields in query', () => {
       const result = buildEnforcedLogQuery(
-        'level:error && tenantId:wrong-tenant && accountId:wrong-user && userId:attacker',
+        'level:error && accountId:wrong-user && userId:attacker',
         accountId
       );
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should remove all user-provided restricted fields
-      expect(tree).not.toContain('wrong-tenant');
       expect(tree).not.toContain('wrong-user');
       expect(tree).not.toContain('attacker');
       // Should contain enforced values
-      expect(tree).toContain();
       expect(tree).toContain(accountId);
     });
   });
@@ -163,34 +149,31 @@ describe('buildEnforcedLogQuery', () => {
       expect(tree).toContain('warn');
       expect(tree).toContain('list_issues');
       // Should add enforced filters
-      expect(tree).toContain();
       expect(tree).toContain(accountId);
     });
 
     it('should collapse empty queries after field removal', () => {
       // If user only queries restricted fields, should become just enforced filters
       const result = buildEnforcedLogQuery(
-        'tenantId:wrong && accountId:wrong',
+        'userId:wrong && accountId:wrong',
         accountId
       );
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should only have enforced values
-      expect(tree).toContain();
       expect(tree).toContain(accountId);
       expect(tree).not.toContain('wrong');
     });
 
     it('should handle parenthesized restricted fields', () => {
       const result = buildEnforcedLogQuery(
-        '(tenantId:wrong || level:error) && accountId:wrong',
+        '(userId:wrong || level:error) && accountId:wrong',
         accountId
       );
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should remove restricted fields but keep level:error
       expect(tree).toContain('error');
-      expect(tree).toContain();
       expect(tree).not.toContain('wrong');
     });
   });
@@ -206,23 +189,6 @@ describe('buildEnforcedLogQuery', () => {
       expect(options.limit).toBe(1000);
     });
 
-    it('should apply enforced filters through buildEnforcedLogQuery', () => {
-      const options = buildLogQueryOptions(
-        'level:error && tenantId:wrong-tenant',
-        accountId
-      );
-      const filterStr = JSON.stringify(options.attributeFilter);
-      // Should not contain wrong tenant
-      expect(filterStr).not.toContain('wrong-tenant');
-      // Should contain enforced tenant
-      expect(filterStr).toContain();
-    });
-
-    it('should keep the tenant scope even with no query at all', () => {
-      const options = buildLogQueryOptions(null);
-      expect(JSON.stringify(options.attributeFilter)).toContain();
-    });
-
     it('should drop level names the adapter would reject', () => {
       const options = buildLogQueryOptions(null, undefined, {
         levels: ['error', 'not-a-level'],
@@ -232,15 +198,14 @@ describe('buildEnforcedLogQuery', () => {
   });
 
   describe('security boundary enforcement', () => {
-    it('should prevent privilege escalation via tenantId injection', () => {
-      const maliciousQuery = 'level:error && tenantId:admin-tenant && accountId:admin-user';
-      const result = buildEnforcedLogQuery(maliciousQuery, 'user-tenant', 'user-123');
+    it('should prevent privilege escalation via accountId injection', () => {
+      const maliciousQuery = 'level:error && userId:admin && accountId:admin-user';
+      const result = buildEnforcedLogQuery(maliciousQuery, 'user-123');
       const tree = JSON.stringify(result);
-      // Should only have user's tenant and account
-      expect(tree).toContain('user-tenant');
+      // Should only have the caller's own account
       expect(tree).toContain('user-123');
-      expect(tree).not.toContain('admin-tenant');
       expect(tree).not.toContain('admin-user');
+      expect(tree).not.toContain('"admin"');
     });
 
     it('should prevent cross-user access via accountId injection', () => {
@@ -259,8 +224,6 @@ describe('buildEnforcedLogQuery', () => {
       );
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
-      // Should have tenant filter
-      expect(tree).toContain();
       // Should not have accountId since operator didn't provide it
       expect(tree).not.toContain('anyone');
     });

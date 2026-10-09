@@ -63,9 +63,9 @@ async function reapOrphanedGraphSubscriptions(
 
   for (const subscription of listed.val) {
     if (known.has(subscription.id)) continue;
-    // Ours only: same origin AND this tenant/account's path segment.
+    // Ours only: same origin AND this account's path segment.
     const url = subscription.notificationUrl ?? '';
-    if (!url.startsWith(baseUrl) || !url.includes(`/${tenantId}/${accountId}`)) continue;
+    if (!url.startsWith(baseUrl) || !url.includes(`/${accountId}`)) continue;
 
     const deleted = await deleteGraphSubscription(auth, subscription.id);
     logger.warn('deleted orphaned Graph subscription {subscriptionId} (no row here)', {

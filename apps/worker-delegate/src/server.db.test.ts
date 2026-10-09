@@ -69,10 +69,6 @@ describeDb('worker-delegate', () => {
   beforeAll(async () => {
     const db = getDatabase();
     if (!db.ok) throw new Error('database unavailable');
-    await db.val
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `delegate-${tenantId.slice(0, 8)}` })
-      .execute();
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
     if (!key.ok) throw new Error('bad key');
     instance = await registerTestInstance(db.val);
@@ -166,7 +162,6 @@ describeDb('worker-delegate', () => {
       await db.val.deleteFrom('delegate_signing_keys').execute();
       await db.val.deleteFrom('resource_keys').execute();
       await db.val.deleteFrom('user_encryption_keys').execute();
-      await db.val.deleteFrom('tenants').where('id', '=').execute();
     }
     await closeDatabase();
   });

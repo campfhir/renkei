@@ -74,7 +74,7 @@ describe('SecretVault', () => {
 
     it('another replica opens what this one unlocked, and a lock anywhere locks all', async () => {
       const clock = { now: 1_000 };
-      const store = createSecretKeyStore(root, Buffer.alloc(32, 3))!;
+      const store = createSecretKeyStore(root, 'renkei', Buffer.alloc(32, 3))!;
       const here = new SecretVault({ now: () => clock.now, sweepIntervalMs: 60 * 60_000, store });
       const there = new SecretVault({ now: () => clock.now, sweepIntervalMs: 60 * 60_000, store });
       const sealed = sealSecretFields(FIELDS, PASSPHRASE);

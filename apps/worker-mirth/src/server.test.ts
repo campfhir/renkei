@@ -74,7 +74,7 @@ beforeAll(async () => {
       target.instanceId === INSTANCE_ID && target.subject === 'auth0|alice'
         ? { ok: true, val: resolved }
         : { ok: false, err: { type: 'not_connected' } as never },
-    resolveInstance: async (_tenantId, instanceId) =>
+    resolveInstance: async (instanceId) =>
       instanceId === INSTANCE_ID
         ? { ok: true, val: instance }
         : { ok: false, err: { type: 'no_instance' } as never },

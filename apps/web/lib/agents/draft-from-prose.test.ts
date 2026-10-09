@@ -146,7 +146,7 @@ describe('the org step ceiling reaches the drafting contract', () => {
     }));
     replies = [JSON.stringify({ name: 'Big agent', steps })];
 
-    const result = await draftAgentFromProse(db, 't1', 'do many things', TOOLS);
+    const result = await draftAgentFromProse(db, 'do many things', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(result.steps).toHaveLength(25);
     expect(JSON.stringify(requests[0].messages)).toContain('array of 1 to 40 objects');
@@ -154,7 +154,7 @@ describe('the org step ceiling reaches the drafting contract', () => {
 
   it('falls back to the platform default when settings are unavailable', async () => {
     replies = [GOOD_REPLY];
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(JSON.stringify(requests[0].messages)).toContain('array of 1 to 20 objects');
   });
@@ -167,7 +167,7 @@ describe('draftAgentFromProse retry loop', () => {
       GOOD_REPLY,
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(result.steps).toHaveLength(1);
     expect(actionOf(result.steps[0]).tool).toBe('jira_search_issues');
@@ -190,7 +190,7 @@ describe('draftAgentFromProse retry loop', () => {
       GOOD_REPLY,
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(actionOf(result.steps[0]).tool).toBe('jira_search_issues');
     expect(JSON.stringify(requests[1].messages)).toContain('jira_make_ticket');
@@ -205,7 +205,7 @@ describe('draftAgentFromProse retry loop', () => {
     });
     replies = [softDraft, 'complete garbage, no json'];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     // The invented chip degraded to text; the step survived as tool-less.
     expect(result.steps).toHaveLength(1);
@@ -227,7 +227,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const step = actionOf(result.steps[0]);
     expect(step.instruction).toEqual(
@@ -260,7 +260,7 @@ describe('draftAgentFromProse retry loop', () => {
       GOOD_REPLY,
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     // The bad chip degraded to text on the first, usable-but-imperfect draft.
     expect(requests).toHaveLength(2);
@@ -293,7 +293,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const step = actionOf(result.steps[0]);
     expect(step.maxAttempts).toBe(4);
@@ -335,7 +335,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const step = actionOf(result.steps[0]);
     // The invented code is re-slugged the way the builder would write it.
@@ -367,7 +367,7 @@ describe('draftAgentFromProse retry loop', () => {
         ],
       }),
     ];
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const step = actionOf(result.steps[0]);
     expect(step.failureHandling[0]).toEqual({ outcome: 'not-found', action: 'continue' });
@@ -389,7 +389,7 @@ describe('draftAgentFromProse retry loop', () => {
       GOOD_REPLY,
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const feedback = JSON.stringify(requests[1].messages);
     expect(feedback).toContain('no-such-code');
@@ -439,7 +439,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(actionOf(result.steps[1]).onSuccess).toBe('stop-quiet');
     expect(actionOf(result.steps[0]).saveAs).toBe('the result');
@@ -472,7 +472,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'comment or create a ticket', TOOLS);
+    const result = await draftAgentFromProse(db, 'comment or create a ticket', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const branch = branchOf(result.steps[1]);
     expect(branch.paths).toHaveLength(2);
@@ -513,7 +513,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'route requests by kind', TOOLS);
+    const result = await draftAgentFromProse(db, 'route requests by kind', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const branch = branchOf(result.steps[1]);
     expect(branch.paths.map((path) => path.name)).toEqual([
@@ -562,7 +562,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'summarize each ticket found', TOOLS);
+    const result = await draftAgentFromProse(db, 'summarize each ticket found', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const loop = loopOf(result.steps[1]);
     expect(loop.mode).toBe('foreach');
@@ -607,7 +607,7 @@ describe('draftAgentFromProse retry loop', () => {
     });
     replies = [withBadCollect, withBadCollect];
 
-    const result = await draftAgentFromProse(db, 't1', 'page until done', TOOLS);
+    const result = await draftAgentFromProse(db, 'page until done', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const loop = loopOf(result.steps[0]);
     expect(loop.mode).toBe('until');
@@ -644,7 +644,7 @@ describe('draftAgentFromProse retry loop', () => {
     });
     replies = [nested, nested];
 
-    const result = await draftAgentFromProse(db, 't1', 'loop the loops', TOOLS);
+    const result = await draftAgentFromProse(db, 'loop the loops', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const loop = loopOf(result.steps[1]);
     // The inner loop was refused; the rest of the body survived.
@@ -672,7 +672,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'the triage phase searches', TOOLS);
+    const result = await draftAgentFromProse(db, 'the triage phase searches', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const group = result.steps[0];
     if (group?.kind !== 'group') throw new Error('expected a group');
@@ -700,7 +700,6 @@ describe('draftAgentFromProse retry loop', () => {
 
     const result = await draftAgentFromProse(
       db,
-      't1',
       'every weekday morning at 9, and when someone messages me, triage tickets',
       TOOLS,
       { suggestTriggers: true }
@@ -742,7 +741,6 @@ describe('draftAgentFromProse retry loop', () => {
 
     const result = await draftAgentFromProse(
       db,
-      't1',
       'when an email from Billing@ACME.example about an invoice arrives, search jira',
       TOOLS,
       { suggestTriggers: true }
@@ -785,7 +783,7 @@ describe('draftAgentFromProse retry loop', () => {
     // The same mistake every round, so the corrective loop runs out.
     replies = [badFilter, badFilter, badFilter];
 
-    const result = await draftAgentFromProse(db, 't1', 'watch billing mail', TOOLS, {
+    const result = await draftAgentFromProse(db, 'watch billing mail', TOOLS, {
       suggestTriggers: true,
     });
     if ('error' in result) throw new Error(result.error);
@@ -817,7 +815,6 @@ describe('draftAgentFromProse retry loop', () => {
 
     const result = await draftAgentFromProse(
       db,
-      't1',
       'when a slack message arrives, triage',
       TOOLS,
       {
@@ -846,7 +843,6 @@ describe('draftAgentFromProse retry loop', () => {
 
     const result = await draftAgentFromProse(
       db,
-      't1',
       'after my daily digest finishes, summarize',
       TOOLS,
       {
@@ -869,7 +865,7 @@ describe('draftAgentFromProse retry loop', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'do a thing please', TOOLS);
+    const result = await draftAgentFromProse(db, 'do a thing please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect('triggers' in result).toBe(false);
     // Without the offer, the prompt never mentions the trigger wire shape.
@@ -878,7 +874,7 @@ describe('draftAgentFromProse retry loop', () => {
 
   it('returns an empty triggers array when the prose never says when it runs', async () => {
     replies = [GOOD_REPLY];
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS, {
       suggestTriggers: true,
     });
     if ('error' in result) throw new Error(result.error);
@@ -887,7 +883,7 @@ describe('draftAgentFromProse retry loop', () => {
 
   it('returns the concrete reason when both attempts are unusable', async () => {
     replies = ['no json here', 'still no json'];
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     expect('error' in result && result.error).toContain('no JSON object');
   });
 
@@ -905,7 +901,7 @@ describe('draftAgentFromProse retry loop', () => {
     });
     replies = [badName, badName];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     // Stripped to pattern shape: leading non-letters and "!" gone.
     expect(actionOf(result.steps[0]).saveAs).toBe('nd result');
@@ -925,7 +921,7 @@ describe('draftAgentFromProse retry loop', () => {
     });
     replies = [inventedTrigger, inventedTrigger];
 
-    const result = await draftAgentFromProse(db, 't1', 'reply to webex messages', TOOLS, {
+    const result = await draftAgentFromProse(db, 'reply to webex messages', TOOLS, {
       triggerVars: [{ name: 'trigger.subject', description: 'The subject line.' }],
     });
     if ('error' in result) throw new Error(result.error);
@@ -940,7 +936,7 @@ describe('draftAgentFromProse retry loop', () => {
 
   it('renders trigger variable descriptions into the prompt', async () => {
     replies = [GOOD_REPLY];
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS, {
       triggerVars: [
         { name: 'trigger.roomId', description: 'Pass it to webex_send_message to reply.' },
       ],
@@ -955,7 +951,7 @@ describe('draftAgentFromProse retry loop', () => {
     // prompt only names the enabled connectors, and find_tools (searched
     // below) is where a tool's actual description shows up.
     replies = [GOOD_REPLY];
-    const result = await draftAgentFromProse(db, 't1', 'file tickets from messages', TOOLS);
+    const result = await draftAgentFromProse(db, 'file tickets from messages', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const prompt = JSON.stringify(requests[0].messages);
     // The old rendering listed every tool's own failure codes inline; that
@@ -988,7 +984,7 @@ describe('draftAgentFromProse retry loop', () => {
       outcomes: { success: { label: 'ok' }, failures: [] },
     };
     replies = [{ tool: 'find_tools', input: { query: 'jsm create request' } }, GOOD_REPLY];
-    const result = await draftAgentFromProse(db, 't1', 'file tickets from messages', [
+    const result = await draftAgentFromProse(db, 'file tickets from messages', [
       ...TOOLS,
       longTool,
     ]);
@@ -1000,7 +996,7 @@ describe('draftAgentFromProse retry loop', () => {
 
   it('a find_tools call that matches nothing says so, and the model still finishes', async () => {
     replies = [{ tool: 'find_tools', input: { query: 'nonexistent widget' } }, GOOD_REPLY];
-    const result = await draftAgentFromProse(db, 't1', 'file tickets from messages', TOOLS);
+    const result = await draftAgentFromProse(db, 'file tickets from messages', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(requests).toHaveLength(2);
     expect(JSON.stringify(requests[1].messages)).toContain('No tools matched');
@@ -1036,7 +1032,7 @@ describe('gap-closing review loop (refineWithReview)', () => {
   it('feeds reviewer concerns back and returns the refined, clean draft', async () => {
     replies = [GOOD_REPLY, REVIEW_CONCERN, REFINED_REPLY, REVIEW_CLEAN];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS, {
       refineWithReview: true,
     });
     if ('error' in result) throw new Error(result.error);
@@ -1057,7 +1053,7 @@ describe('gap-closing review loop (refineWithReview)', () => {
   it('keeps the pre-refine draft, concerns attached, when the redraft regresses', async () => {
     replies = [GOOD_REPLY, REVIEW_CONCERN, 'not json at all'];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS, {
       refineWithReview: true,
     });
     if ('error' in result) throw new Error(result.error);
@@ -1070,7 +1066,7 @@ describe('gap-closing review loop (refineWithReview)', () => {
   it('returns the draft untouched when the review itself is unusable', async () => {
     replies = [GOOD_REPLY, 'total garbage'];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS, {
       refineWithReview: true,
     });
     if ('error' in result) throw new Error(result.error);
@@ -1089,7 +1085,7 @@ describe('gap-closing review loop (refineWithReview)', () => {
       REVIEW_CONCERN,
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS, {
       refineWithReview: true,
     });
     if ('error' in result) throw new Error(result.error);
@@ -1116,7 +1112,7 @@ describe('questions and edge-case reasoning', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     // Non-strings and blanks drop; the real question survives.
     expect(result.questions).toEqual(['Which Jira project should be searched?']);
@@ -1124,7 +1120,7 @@ describe('questions and edge-case reasoning', () => {
 
   it('asks the model to think through edge cases and to ask instead of guessing', async () => {
     replies = [GOOD_REPLY];
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const prompt = JSON.stringify(requests[0].messages);
     expect(prompt).toContain('EDGE CASES');
@@ -1138,7 +1134,7 @@ describe('the interactive draft path costs one model call', () => {
   it('returns as soon as a clean reply parses, without a review round trip', async () => {
     replies = [GOOD_REPLY];
     // No refineWithReview: this is what the builder's Draft button sends.
-    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    const result = await draftAgentFromProse(db, 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(result.steps).toHaveLength(1);
     // The whole point of the change: one call, not draft + review + refine.
@@ -1149,7 +1145,7 @@ describe('the interactive draft path costs one model call', () => {
 describe('drafting a needsApproval gate', () => {
   it('offers the gate vocabulary on an action step', async () => {
     replies = [GOOD_REPLY];
-    await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    await draftAgentFromProse(db, 'find my tickets please', TOOLS);
 
     const prompt = JSON.stringify(requests[0].messages);
     expect(prompt).toContain('needsApproval');
@@ -1172,7 +1168,7 @@ describe('drafting a needsApproval gate', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'ask before refunding', TOOLS);
+    const result = await draftAgentFromProse(db, 'ask before refunding', TOOLS);
     if ('error' in result) throw new Error(result.error);
     const step = actionOf(result.steps[0]);
     expect(step.needsApproval).toBe(true);
@@ -1193,7 +1189,7 @@ describe('drafting a needsApproval gate', () => {
       }),
     ];
 
-    const result = await draftAgentFromProse(db, 't1', 'ask before deciding', TOOLS);
+    const result = await draftAgentFromProse(db, 'ask before deciding', TOOLS);
     if ('error' in result) throw new Error(result.error);
     // Usable draft, gate dropped, and the model is told what was changed
     // under it on the corrective round trip that every soft problem earns.

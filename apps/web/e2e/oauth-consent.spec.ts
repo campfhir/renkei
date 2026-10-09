@@ -71,32 +71,20 @@ async function seed(fixture: Fixture): Promise<void> {
       'identities',
       'settings',
     ]) {
-      await client.query(`DELETE FROM ${table}`, [fixture.tenantId]);
+      await client.query(`DELETE FROM ${table}`);
     }
-    await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
     await client.query(
-      'INSERT INTO tenants (id, slug, domain_verified_at) VALUES ($1, $2, NOW())',
-      [fixture.tenantId, fixture.slug]
+      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 3_600_000)]
     );
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user'],
-        new Date(Date.now() + 3_600_000),
-      ]
-    );
-    await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name) VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Person']
+      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Person']
     );
     // Registered "just now", so the page shows its freshly-registered note.
     await client.query(
-      `INSERT INTO oauth_clients (client_id, tenant_id, client_name, client_secret_hash, redirect_uris)
-       VALUES ($1, $2, 'Claude Code (e2e)', 'unused', ARRAY['http://127.0.0.1/callback'])`,
-      [fixture.clientId, fixture.tenantId]
+      `INSERT INTO oauth_clients (client_id, client_name, client_secret_hash, redirect_uris)\n       VALUES ($1, 'Claude Code (e2e)', 'unused', ARRAY['http://127.0.0.1/callback'])`,
+      [fixture.clientId]
     );
   });
 }
@@ -187,8 +175,7 @@ test('an MCP client must be allowed on the consent page before it gets a code', 
 
   const minted = await withDb((client) =>
     client.query(
-      'SELECT subject, code_challenge_method FROM oauth_authorization_codes',
-      [fixture.tenantId]
+      'SELECT subject, code_challenge_method FROM oauth_authorization_codes'
     )
   );
   expect(minted.rows).toEqual([{ subject: fixture.subject, code_challenge_method: 'S256' }]);
@@ -196,8 +183,8 @@ test('an MCP client must be allowed on the consent page before it gets a code', 
   // A consent page that was left open and then answered twice is spent.
   const audit = await withDb((client) =>
     client.query(
-      'SELECT action FROM audit_events WHERE action LIKE $2 ORDER BY action',
-      [fixture.tenantId, 'oauth.consent_%']
+      'SELECT action FROM audit_events WHERE action LIKE $1 ORDER BY action',
+      ['oauth.consent_%']
     )
   );
   expect(audit.rows.map((row) => row.action)).toEqual([
@@ -239,9 +226,7 @@ test('a request without PKCE never reaches the consent page', async ({ page }, t
   expect(landed.searchParams.get('code')).toBeNull();
 
   const pending = await withDb((client) =>
-    client.query('SELECT count(*) FROM oauth_consent_requests', [
-      fixture.tenantId,
-    ])
+    client.query('SELECT count(*) FROM oauth_consent_requests')
   );
   expect(Number(pending.rows[0].count)).toBe(0);
 });

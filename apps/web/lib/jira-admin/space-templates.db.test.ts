@@ -58,10 +58,6 @@ maybe('jira_admin_space_templates', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `space-templates-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {
@@ -115,7 +111,7 @@ maybe('jira_admin_space_templates', () => {
   it('deletes by id, within the tenant only', async () => {
     const saved = await save({ name: 'To remove' });
     if (!saved.ok) throw new Error(saved.reason);
-    expect(await deleteSpaceTemplate(db, randomUUID(), saved.template.id)).toBe(false);
+    expect(await deleteSpaceTemplate(db, saved.template.id)).toBe(false);
     expect(await deleteSpaceTemplate(db, saved.template.id)).toBe(true);
     expect(await findSpaceTemplate(db, 'cloud-1', 'To remove')).toBeNull();
   });

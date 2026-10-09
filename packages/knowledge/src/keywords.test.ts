@@ -158,14 +158,14 @@ describe('resolveKeywordExtractor', () => {
   });
 
   it('resolves the org default model when the org setting is on', async () => {
-    expect(await resolveKeywordExtractor('tenant-1')).not.toBeNull();
+    expect(await resolveKeywordExtractor()).not.toBeNull();
     expect(mockResolveLlm).toHaveBeenCalledWith({}, 'tenant-1', null);
   });
 
   it('carries the org minimum size into the extractor', async () => {
     const complete = jest.fn();
     mockResolveLlm.mockResolvedValue(ok({ provider: { complete } }));
-    const extractor = await resolveKeywordExtractor('tenant-1');
+    const extractor = await resolveKeywordExtractor();
     expect(await extractor?.extract({ title: '', content: 'x'.repeat(499) })).toEqual(ok([]));
     expect(complete).not.toHaveBeenCalled();
   });
@@ -174,17 +174,17 @@ describe('resolveKeywordExtractor', () => {
     mockOrgSettings.mockResolvedValue(
       ok({ knowledgeKeywordEnrichment: false, knowledgeKeywordMinChars: 500 })
     );
-    expect(await resolveKeywordExtractor('tenant-1')).toBeNull();
+    expect(await resolveKeywordExtractor()).toBeNull();
     expect(mockResolveLlm).not.toHaveBeenCalled();
   });
 
   it('is null when settings cannot be read', async () => {
     mockOrgSettings.mockResolvedValue(err('DB_ERROR' as const));
-    expect(await resolveKeywordExtractor('tenant-1')).toBeNull();
+    expect(await resolveKeywordExtractor()).toBeNull();
   });
 
   it('is null when the org has no default model — never an error', async () => {
     mockResolveLlm.mockResolvedValue(err('NO_MODEL' as const));
-    expect(await resolveKeywordExtractor('tenant-1')).toBeNull();
+    expect(await resolveKeywordExtractor()).toBeNull();
   });
 });

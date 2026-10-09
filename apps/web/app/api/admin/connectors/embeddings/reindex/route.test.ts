@@ -10,7 +10,6 @@ jest.mock('@/lib/access', () => ({
   checkAccess: jest.fn(),
   ROLE_OPERATOR: 'renkei-operator',
 }));
-jest.mock('@/lib/tenant-slug', () => ({ tenantForSlug: jest.fn() }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/queue', () => ({ embeddingJobsQueue: jest.fn() }));
@@ -27,9 +26,6 @@ import { POST } from './route';
 
 const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mock }>(
   '@/lib/access'
-);
-const { tenantForSlug: mockTenantForSlug } = jest.requireMock<{ tenantForSlug: jest.Mock }>(
-  '@/lib/tenant-slug'
 );
 const { embeddingJobsQueue: mockQueue } = jest.requireMock<{ embeddingJobsQueue: jest.Mock }>(
   '@renkei/queue'
@@ -149,13 +145,11 @@ function reqOf(body: unknown): NextRequest {
     })
   );
 }
-const paramsOf = () => Promise.resolve({ slug: 'acme' });
 
 let mockEnqueue: jest.Mock;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockTenantForSlug.mockResolvedValue(TENANT);
   mockCheckAccess.mockResolvedValue({ subject: 'auth0|alice' });
   mockEnqueue = jest.fn(async () => ({ ok: true }));
   mockQueue.mockReturnValue({ producer: { enqueue: mockEnqueue } });
@@ -166,7 +160,7 @@ describe('POST .../reindex', () => {
     const db = fakeDb([]);
     mockGetDatabase.mockReturnValue(db);
 
-    const response = await POST(reqOf({ kind: 'lexical' }), { params: paramsOf() });
+    const response = await POST(reqOf({ kind: 'lexical' }));
 
     expect(response.status).toBe(200);
     expect(db.inserted).toHaveLength(1);
@@ -193,7 +187,7 @@ describe('POST .../reindex', () => {
     ]);
     mockGetDatabase.mockReturnValue(db);
 
-    const response = await POST(reqOf({ kind: 'lexical' }), { params: paramsOf() });
+    const response = await POST(reqOf({ kind: 'lexical' }));
 
     expect(response.status).toBe(409);
     expect(db.inserted).toHaveLength(0);
@@ -215,9 +209,7 @@ describe('POST .../reindex', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ kind: 'embed', action: 'pause', runId: 'run-1' }),
-      { params: paramsOf() }
-    );
+      reqOf({ kind: 'embed', action: 'pause', runId: 'run-1' }));
 
     expect(response.status).toBe(200);
     expect(db.rows[0]).toMatchObject({ status: 'paused', cursor: 'row-50' });
@@ -239,9 +231,7 @@ describe('POST .../reindex', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ kind: 'embed', action: 'pause', runId: 'run-1' }),
-      { params: paramsOf() }
-    );
+      reqOf({ kind: 'embed', action: 'pause', runId: 'run-1' }));
 
     expect(response.status).toBe(409);
     expect(db.rows[0]!.status).toBe('done');
@@ -263,9 +253,7 @@ describe('POST .../reindex', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }),
-      { params: paramsOf() }
-    );
+      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }));
 
     expect(response.status).toBe(200);
     expect(db.rows[0]).toMatchObject({ status: 'queued', last_error: null, finished_at: null });
@@ -294,9 +282,7 @@ describe('POST .../reindex', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }),
-      { params: paramsOf() }
-    );
+      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }));
 
     expect(response.status).toBe(200);
     expect(db.rows[0]!.status).toBe('queued');
@@ -318,9 +304,7 @@ describe('POST .../reindex', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }),
-      { params: paramsOf() }
-    );
+      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }));
 
     expect(response.status).toBe(409);
     expect(db.rows[0]!.status).toBe('done');
@@ -328,9 +312,9 @@ describe('POST .../reindex', () => {
 
   it('requires runId for pause and resume', async () => {
     mockGetDatabase.mockReturnValue(fakeDb([]));
-    const pause = await POST(reqOf({ kind: 'embed', action: 'pause' }), { params: paramsOf() });
+    const pause = await POST(reqOf({ kind: 'embed', action: 'pause' }));
     expect(pause.status).toBe(400);
-    const resume = await POST(reqOf({ kind: 'embed', action: 'resume' }), { params: paramsOf() });
+    const resume = await POST(reqOf({ kind: 'embed', action: 'resume' }));
     expect(resume.status).toBe(400);
   });
 });

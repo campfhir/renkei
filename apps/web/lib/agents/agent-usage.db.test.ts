@@ -46,10 +46,6 @@ maybe('token usage by model and by step', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `usage-${tenantId.slice(0, 8)}` })
-      .execute();
-    await db
       .insertInto('agents')
       .values({
         id: agentId,

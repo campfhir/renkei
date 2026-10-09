@@ -78,40 +78,24 @@ function fixtureFor(projectName: string): {
 type Fixture = ReturnType<typeof fixtureFor>;
 
 async function baseSeed(client: Client, fixture: Fixture): Promise<void> {
-  await client.query('DELETE FROM admanager_instance_connections', [
-    fixture.tenantId,
-  ]);
-  await client.query('DELETE FROM admanager_instances', [fixture.tenantId]);
-  await client.query('DELETE FROM user_preferences', [fixture.tenantId]);
-  await client.query('DELETE FROM user_encryption_keys', [fixture.tenantId]);
-  await client.query('DELETE FROM sessions', [fixture.tenantId]);
-  await client.query('DELETE FROM identities', [fixture.tenantId]);
-  await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
-  await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-    fixture.tenantId,
-    fixture.slug,
-  ]);
+  await client.query('DELETE FROM admanager_instance_connections WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM admanager_instances');
+  await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM user_encryption_keys WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+  await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
   await client.query(
-    `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      fixture.sessionId,
-      fixture.tenantId,
-      fixture.subject,
-      ['renkei-user', 'renkei-operator'],
-      new Date(Date.now() + 24 * 3_600_000),
-    ]
+    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, $4)`,
+    [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
   );
   await client.query(
-    `INSERT INTO identities (tenant_id, subject, email, display_name)
-     VALUES ($1, $2, $3, $4)`,
-    [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Tester']
+    `INSERT INTO identities (subject, email, display_name)\n     VALUES ($1, $2, $3)`,
+    [fixture.subject, fixture.subject, 'E2E Tester']
   );
   // No coach marks tour stealing focus mid-screenshot.
   await client.query(
-    `INSERT INTO user_preferences (tenant_id, subject, key, value)
-     VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-    [fixture.tenantId, fixture.subject]
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+    [fixture.subject]
   );
   // Enrolled already (docs/delegate-key-design.md), so the first-sign-in
   // "your encryption key is ready" dialog does not sit over the forms.
@@ -141,31 +125,20 @@ async function seedUserTenant(fixture: Fixture): Promise<{ instanceId: string }>
     await baseSeed(client, fixture);
     const instanceId = randomUUID();
     await client.query(
-      `INSERT INTO admanager_instances (id, tenant_id, name, environment, base_url, enabled)
-       VALUES ($1, $2, $3, $4, $5, true)`,
-      [instanceId, fixture.tenantId, 'ADManager Plus prod', 'prod', 'https://admp.example.com:8080']
+      `INSERT INTO admanager_instances (id, name, environment, base_url, enabled)\n       VALUES ($1, $2, $3, $4, true)`,
+      [instanceId, 'ADManager Plus prod', 'prod', 'https://admp.example.com:8080']
     );
     await client.query(
-      `INSERT INTO admanager_instance_connections
-         (tenant_id, instance_id, subject, encrypted_credentials, technician_name, permissions)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        fixture.tenantId,
-        instanceId,
-        fixture.subject,
-        await sealForSubject(
-          client,
-          fixture.subject,
-          JSON.stringify({ authToken: 'e2e-seeded-authtoken' })
-        ),
-        'Jamie Lee',
-        ['accounts.read'],
-      ]
+      `INSERT INTO admanager_instance_connections\n         (instance_id, subject, encrypted_credentials, technician_name, permissions)\n       VALUES ($1, $2, $3, $4, $5)`,
+      [instanceId, fixture.subject, await sealForSubject(
+                  client,
+                  fixture.subject,
+                  JSON.stringify({ authToken: 'e2e-seeded-authtoken' })
+                ), 'Jamie Lee', ['accounts.read']]
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'connectors', '{"added": ["admanager"]}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"admanager\"]}'::jsonb)`,
+      [fixture.subject]
     );
     return { instanceId };
   } finally {

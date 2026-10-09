@@ -109,7 +109,7 @@ describe('GET /api/oauth/callback browser binding', () => {
     mockGetSession.mockResolvedValue(session(SUBJECT));
 
     const response = await GET(
-      callback({ [connectStateCookieName(TENANT)]: 'the-attackers-own-state' })
+      callback({ [connectStateCookieName()]: 'the-attackers-own-state' })
     );
 
     expect(response.status).toBe(400);
@@ -120,7 +120,7 @@ describe('GET /api/oauth/callback browser binding', () => {
     const { deleted } = stubDb(pendingRow());
     mockGetSession.mockResolvedValue(session('mallory@example.com'));
 
-    const response = await GET(callback({ [connectStateCookieName(TENANT)]: STATE }));
+    const response = await GET(callback({ [connectStateCookieName()]: STATE }));
 
     expect(response.status).toBe(403);
     expect(mockGetSession).toHaveBeenCalledWith(expect.anything(), TENANT);
@@ -131,7 +131,7 @@ describe('GET /api/oauth/callback browser binding', () => {
     const { deleted } = stubDb(pendingRow());
     mockGetSession.mockResolvedValue(null);
 
-    const response = await GET(callback({ [connectStateCookieName(TENANT)]: STATE }));
+    const response = await GET(callback({ [connectStateCookieName()]: STATE }));
 
     expect(response.status).toBe(403);
     expect(deleted).toEqual([`pending_oidc_signin:${STATE}`]);
@@ -141,9 +141,9 @@ describe('GET /api/oauth/callback browser binding', () => {
     stubDb(pendingRow());
     mockGetSession.mockResolvedValue(null);
 
-    const response = await GET(callback({ [connectStateCookieName(TENANT)]: STATE }));
+    const response = await GET(callback({ [connectStateCookieName()]: STATE }));
 
-    const cookie = response.cookies.get(connectStateCookieName(TENANT));
+    const cookie = response.cookies.get(connectStateCookieName());
     expect(cookie?.value ?? '').toBe('');
     expect(cookie?.maxAge ?? 0).toBe(0);
   });

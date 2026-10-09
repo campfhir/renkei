@@ -24,10 +24,6 @@ maybe('watch repair and cursor inheritance', () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('no database');
     db = dbResult.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `wr-${tenantId.slice(0, 8)}` })
-      .execute();
     // The broken watch: owned by a departed subject, mid-history cursor,
     // failing every poll.
     await db
@@ -50,8 +46,6 @@ maybe('watch repair and cursor inheritance', () => {
 
   afterAll(async () => {
     await db.deleteFrom('content_watches').execute();
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it('rebinds the watch to the caller, keeping the cursor', async () => {

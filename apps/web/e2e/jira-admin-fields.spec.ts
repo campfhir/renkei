@@ -70,67 +70,37 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 
 async function seedTenant(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    const tenant = [fixture.tenantId];
-    await client.query('DELETE FROM jira_admin_change_requests', tenant);
-    await client.query('DELETE FROM audit_events', tenant);
-    await client.query('DELETE FROM provider_grants', tenant);
-    await client.query('DELETE FROM connector_configs', tenant);
-    await client.query('DELETE FROM user_preferences', tenant);
-    await client.query('DELETE FROM sessions', tenant);
-    await client.query('DELETE FROM identities', tenant);
-    await client.query('DELETE FROM tenants WHERE id = $1', tenant);
-    await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [
-      fixture.tenantId,
-      fixture.slug,
-    ]);
+    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM audit_events WHERE actor_subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM connector_configs');
+    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
+    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
     await client.query(
-      `INSERT INTO sessions (id, tenant_id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        fixture.sessionId,
-        fixture.tenantId,
-        fixture.subject,
-        ['renkei-user'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
+      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
     );
     await client.query(
-      `INSERT INTO identities (tenant_id, subject, email, display_name)
-       VALUES ($1, $2, $3, $4)`,
-      [fixture.tenantId, fixture.subject, fixture.subject, 'E2E Jira Admin']
+      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
+      [fixture.subject, fixture.subject, 'E2E Jira Admin']
     );
     await client.query(
-      `INSERT INTO user_preferences (tenant_id, subject, key, value)
-       VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.tenantId, fixture.subject]
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      [fixture.subject]
     );
     await client.query(
-      `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
-       VALUES ($1, 'atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`,
-      [fixture.tenantId]
+      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`
     );
     await client.query(
-      `INSERT INTO provider_grants
-         (tenant_id, provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,
-          metadata)
-       VALUES ($1, 'atlassian-admin', 'e2e-jira-admin-account', $2, 'e2e-admin-client',
-               'E2E Jira Admin', $3, $4, $5, $6, $7)`,
-      [
-        fixture.tenantId,
-        fixture.subject,
-        await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'),
-        await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'),
-        new Date(Date.now() + 365 * 24 * 3_600_000),
-        [
-          'read:jira-user',
-          'read:jira-work',
-          'manage:jira-configuration',
-          'manage:jira-project',
-          'offline_access',
-        ],
-        { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
-      ]
+      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
+      [fixture.subject, await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'), await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'), new Date(Date.now() + 365 * 24 * 3_600_000), [
+                  'read:jira-user',
+                  'read:jira-work',
+                  'manage:jira-configuration',
+                  'manage:jira-project',
+                  'offline_access',
+                ], { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' }]
     );
   });
 }
@@ -169,18 +139,8 @@ async function proposeVendor(fixture: Fixture): Promise<string> {
   };
   const result = await withDb((client) =>
     client.query<{ id: string }>(
-      `INSERT INTO jira_admin_change_requests
-         (tenant_id, subject, cloud_id, site_url, kind, title, reason, payload, expires_at)
-       VALUES ($1, $2, $3, 'https://e2e.atlassian.net', 'space_field',
-               'New field “Vendor” for OPS', 'Procurement asked', $4, $5)
-       RETURNING id`,
-      [
-        fixture.tenantId,
-        fixture.subject,
-        fixture.cloudId,
-        JSON.stringify(payload),
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
+      `INSERT INTO jira_admin_change_requests\n         (subject, cloud_id, site_url, kind, title, reason, payload, expires_at)\n       VALUES ($1, $2, 'https://e2e.atlassian.net', 'space_field',\n               'New field “Vendor” for OPS', 'Procurement asked', $3, $4)\n       RETURNING id`,
+      [fixture.subject, fixture.cloudId, JSON.stringify(payload), new Date(Date.now() + 24 * 3_600_000)]
     )
   );
   const id = result.rows[0]?.id;
@@ -307,8 +267,7 @@ test('a new field is reviewed with the screen another space shows, then created,
     .poll(async () =>
       withDb(async (client) => {
         const rows = await client.query(
-          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`,
-          [fixture.tenantId]
+          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied'`
         );
         return rows.rowCount;
       })

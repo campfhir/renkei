@@ -25,10 +25,6 @@ maybe('batch_job_schedules store', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `sched-store-test-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {
@@ -94,10 +90,6 @@ maybe('batch_job_schedules store', () => {
 
   it('scopes get/update/delete to the owning tenant', async () => {
     const otherTenantId = randomUUID();
-    await db
-      .insertInto('tenants')
-      .values({ id: otherTenantId, slug: `sched-store-other-${otherTenantId.slice(0, 8)}` })
-      .execute();
     try {
       const created = await createSchedule(db, {
         subject,

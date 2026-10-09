@@ -153,7 +153,7 @@ export function createZoomTranscriptHandler(
         transcriptPreview: text.slice(0, BODY_PREVIEW_CHARS),
       },
       occurredAt: facts.startTime || undefined,
-      orderingKey: `zoom/${tenantId}/${facts.meetingUuid}`,
+      orderingKey: `zoom/${facts.meetingUuid}`,
     });
   };
 }
@@ -266,7 +266,7 @@ export function createZoomSummaryHandler(
         summaryPreview: text.slice(0, BODY_PREVIEW_CHARS),
       },
       occurredAt: facts.startTime || undefined,
-      orderingKey: `zoom/${tenantId}/${facts.meetingUuid}`,
+      orderingKey: `zoom/${facts.meetingUuid}`,
     });
   };
 }

@@ -88,15 +88,12 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
   const client = await db();
   try {
     await client.query(
-      `INSERT INTO chat_projects
-         (id, tenant_id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)
-       VALUES ($1, $2, $3, $4, 'Invoices and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
-      [ids.projectId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectName]
+      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Invoices and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
+      [ids.projectId, E2E_SUBJECT, ids.projectName]
     );
     await client.query(
-      `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, last_message_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.projectId, ids.chatTitle]
+      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
+      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
     );
     const chatKey = await keyFor(client, {
       kind: 'chat',
@@ -109,14 +106,12 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       ids.projectId,
     ]);
     await client.query(
-      `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-       VALUES ($1, $2, $3, 'anthropic', 'claude-haiku-4-5', $4, TRUE, FALSE)`,
-      [ids.fastModelId, E2E_TENANT_ID, ids.fastModelLabel, secretbox('{"apiKey":"e2e"}')]
+      `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n       VALUES ($1, $2, 'anthropic', 'claude-haiku-4-5', $3, TRUE, FALSE)`,
+      [ids.fastModelId, ids.fastModelLabel, secretbox('{"apiKey":"e2e"}')]
     );
     await client.query(
-      `INSERT INTO chat_turns (id, tenant_id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)
-       VALUES ($1, $2, $3, 'completed', 2, 1540, 210, NOW())`,
-      [ids.turnId, E2E_TENANT_ID, ids.chatId]
+      `INSERT INTO chat_turns (id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)\n       VALUES ($1, $2, 'completed', 2, 1540, 210, NOW())`,
+      [ids.turnId, ids.chatId]
     );
     const rows: {
       seq: number;
@@ -174,18 +169,8 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
     ];
     for (const row of rows) {
       await client.query(
-        `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, stop_reason)
-         VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8)`,
-        [
-          E2E_TENANT_ID,
-          ids.chatId,
-          ids.turnId,
-          row.seq,
-          row.role,
-          row.kind,
-          chatKey.seal(JSON.stringify(row.blocks)),
-          row.stop,
-        ]
+        `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7)`,
+        [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), row.stop]
       );
     }
     const transcript = [
@@ -218,20 +203,8 @@ async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
       { role: 'assistant', content: [{ type: 'text', text: REPORT }] },
     ];
     await client.query(
-      `INSERT INTO chat_subagent_runs
-         (tenant_id, chat_id, turn_id, tool_use_id, status, task, read_only, max_steps, steps, tool_calls,
-          transcript, report, input_tokens, output_tokens, llm_model_id, provider, model, started_at, finished_at)
-       VALUES ($1, $2, $3, 'toolu_e2e_delegate', 'completed', $4, TRUE, 40, 2, 1, $5, $6, 640, 90,
-               $7, 'anthropic', 'claude-haiku-4-5', NOW() - INTERVAL '3 minutes 5 seconds', NOW())`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        chatKey.seal(TASK),
-        chatKey.seal(JSON.stringify(transcript)),
-        chatKey.seal(REPORT),
-        ids.fastModelId,
-      ]
+      `INSERT INTO chat_subagent_runs\n         (chat_id, turn_id, tool_use_id, status, task, read_only, max_steps, steps, tool_calls,\n          transcript, report, input_tokens, output_tokens, llm_model_id, provider, model, started_at, finished_at)\n       VALUES ($1, $2, 'toolu_e2e_delegate', 'completed', $3, TRUE, 40, 2, 1, $4, $5, 640, 90,\n               $6, 'anthropic', 'claude-haiku-4-5', NOW() - INTERVAL '3 minutes 5 seconds', NOW())`,
+      [ids.chatId, ids.turnId, chatKey.seal(TASK), chatKey.seal(JSON.stringify(transcript)), chatKey.seal(REPORT), ids.fastModelId]
     );
   } finally {
     await client.end();

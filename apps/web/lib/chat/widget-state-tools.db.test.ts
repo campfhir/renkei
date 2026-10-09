@@ -59,7 +59,6 @@ maybe('chat_widget_resolve', () => {
         emitted.push(decision);
       },
     };
-    await db.insertInto('tenants').values({ id: tenantId, slug: tenantId }).execute();
     await db
       .insertInto('chats')
       .values([

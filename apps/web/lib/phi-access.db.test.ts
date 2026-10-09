@@ -24,10 +24,6 @@ maybe('phi_access_events', () => {
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
     db = dbResult.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `phi-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {
@@ -40,8 +36,6 @@ maybe('phi_access_events', () => {
     await sql`ALTER TABLE phi_access_events ENABLE TRIGGER phi_access_events_no_update_delete`.execute(
       db
     );
-    await db.deleteFrom('tenants').where('id', '=').execute();
-    await closeDatabase();
   });
 
   it("records a person's read with ids only, and an agent's with the run it belongs to", async () => {

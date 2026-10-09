@@ -37,7 +37,7 @@ describe('scratch disk modes', () => {
   });
 
   it('stages a file 0600 under 0700 directories', async () => {
-    const key = disk.newStorageKey('11111111-1111-4111-8111-111111111111', 'auth0|alice');
+    const key = disk.newStorageKey('auth0|alice');
     const written = await disk.writeStream(key, Readable.from([Buffer.from('bytes')]), 1024);
     expect(written).toEqual({ ok: true, sizeBytes: 5 });
     const path = join(disk.getDataRoot(), key);
@@ -47,7 +47,7 @@ describe('scratch disk modes', () => {
   });
 
   it('copies a staged file out 0600 for the run directory to narrow further', async () => {
-    const key = disk.newStorageKey('11111111-1111-4111-8111-111111111111', 'auth0|alice');
+    const key = disk.newStorageKey('auth0|alice');
     await disk.writeStream(key, Readable.from([Buffer.from('bytes')]), 1024);
     const destination = join(root, 'copy.bin');
     expect(await disk.copyFileTo(key, destination)).toBe(true);

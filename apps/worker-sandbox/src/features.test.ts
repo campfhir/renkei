@@ -66,7 +66,7 @@ describe('an organization’s sandbox switches', () => {
         sandboxScriptsAllowNetwork: false,
       },
     });
-    expect(await orgSandboxFeatures('tenant-1')).toEqual({
+    expect(await orgSandboxFeatures()).toEqual({
       browser: true,
       charts: false,
       workspaces: false,
@@ -79,6 +79,6 @@ describe('an organization’s sandbox switches', () => {
 
   it('are all off when the settings cannot be read', async () => {
     getOrgSettings.mockResolvedValue({ ok: false, err: 'DB_ERROR' });
-    expect(await orgSandboxFeatures('tenant-1')).toEqual(NO_ORG_FEATURES);
+    expect(await orgSandboxFeatures()).toEqual(NO_ORG_FEATURES);
   });
 });

@@ -24,18 +24,18 @@ describe('OAuth token flow (E2E with mock DB)', () => {
     private store: Map<string, GrantRow> = new Map();
 
     async insert(table: string, data: GrantRow) {
-      const key = `${table}:${data.tenant_id}:${data.provider_account_id}`;
+      const key = `${table}:${data.provider_account_id}`;
       this.store.set(key, data);
       return { id: key };
     }
 
     async selectOne(table: string, accountId: string) {
-      const key = `${table}:${tenantId}:${accountId}`;
+      const key = `${table}:${accountId}`;
       return this.store.get(key) || null;
     }
 
     async update(table: string, data: Partial<GrantRow>, accountId: string) {
-      const key = `${table}:${tenantId}:${accountId}`;
+      const key = `${table}:${accountId}`;
       const existing = this.store.get(key);
       if (existing) {
         this.store.set(key, { ...existing, ...data });
@@ -315,12 +315,12 @@ describe('OAuth token flow (E2E with mock DB)', () => {
       expiresAt: new Date().toISOString(),
     };
 
-    await simulateSetJiraGrant(db, tenantId1, accountId1, encryptionKey, grant1);
-    await simulateSetJiraGrant(db, tenantId2, accountId2, encryptionKey, grant2);
+    await simulateSetJiraGrant(db, accountId1, encryptionKey, grant1);
+    await simulateSetJiraGrant(db, accountId2, encryptionKey, grant2);
 
     // Verify isolation
-    const retrieved1 = await simulateGetJiraGrant(db, tenantId1, accountId1, encryptionKey);
-    const retrieved2 = await simulateGetJiraGrant(db, tenantId2, accountId2, encryptionKey);
+    const retrieved1 = await simulateGetJiraGrant(db, accountId1, encryptionKey);
+    const retrieved2 = await simulateGetJiraGrant(db, accountId2, encryptionKey);
 
     expect(retrieved1?.accessToken).toBe('token1');
     expect(retrieved2?.accessToken).toBe('token2');

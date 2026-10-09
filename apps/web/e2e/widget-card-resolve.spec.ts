@@ -117,20 +117,12 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
   await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
   await client.query(
-    `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, $3, 'anthropic', 'e2e-model', $4, $5, true, false)`,
-    [
-      ids.modelId,
-      E2E_TENANT_ID,
-      ids.modelLabel,
-      STUB_MODEL_BASE_URL,
-      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
-    ]
+    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
+    [ids.modelId, ids.modelLabel, STUB_MODEL_BASE_URL, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [ids.chatId, E2E_TENANT_ID, E2E_SUBJECT, ids.title, ids.modelId]
+    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
+    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
   );
   const chatKey = await keyFor(client, {
     kind: 'chat',
@@ -138,9 +130,8 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
     ownerSubject: E2E_SUBJECT,
   });
   await client.query(
-    `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, finished_at)
-     VALUES ($1, $2, $3, 'completed', $4, 2, NOW())`,
-    [ids.turnId, E2E_TENANT_ID, ids.chatId, ids.modelId]
+    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
+    [ids.turnId, ids.chatId, ids.modelId]
   );
   const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
     {
@@ -183,20 +174,8 @@ async function seedChat(client: Client, ids: Ids, previewId: string): Promise<vo
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
-      `INSERT INTO chat_messages (tenant_id, chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
-       VALUES ($1, $2, $3, $4, $5, $6, 'complete', $7, $8, $9, $10)`,
-      [
-        E2E_TENANT_ID,
-        ids.chatId,
-        ids.turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? ids.modelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-      ]
+      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
+      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
     );
   }
 }
@@ -226,10 +205,7 @@ async function decisionRow(
   const { rows } = await client.query<{
     decision: string;
     state: { icon: string; headline: string; detail?: string };
-  }>('SELECT decision, state FROM chat_widget_decisions WHERE state_key = $2', [
-    E2E_TENANT_ID,
-    `renkei-preview:${previewId}`,
-  ]);
+  }>('SELECT decision, state FROM chat_widget_decisions WHERE state_key = $1', [`renkei-preview:${previewId}`]);
   return rows[0] ?? null;
 }
 

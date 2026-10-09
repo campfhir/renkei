@@ -63,7 +63,7 @@ function stubClient(hooks: WebexWebhook[]): { client: WebexWebhooksClient; calls
 
 describe('webexUserWebhookTargetUrl', () => {
   it('joins base, tenant and account, tolerating a trailing slash', () => {
-    expect(webexUserWebhookTargetUrl('https://r.example.com/', 'tenant-1', 'acct 1')).toBe(
+    expect(webexUserWebhookTargetUrl('https://r.example.com/', 'acct 1')).toBe(
       'https://r.example.com/api/webhooks/webex/tenant-1/user/acct%201'
     );
   });

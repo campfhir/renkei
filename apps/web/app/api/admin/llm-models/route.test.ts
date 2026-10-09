@@ -11,7 +11,6 @@ jest.mock('@/lib/access', () => ({
   checkAccess: jest.fn(),
   ROLE_OPERATOR: 'renkei-operator',
 }));
-jest.mock('@/lib/tenant-slug', () => ({ tenantForSlug: jest.fn() }));
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/agent-llm', () => ({
   ...jest.requireActual('@renkei/agent-llm'),
@@ -25,9 +24,6 @@ import { GET, POST } from './route';
 
 const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mock }>(
   '@/lib/access'
-);
-const { tenantForSlug: mockTenantForSlug } = jest.requireMock<{ tenantForSlug: jest.Mock }>(
-  '@/lib/tenant-slug'
 );
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 
@@ -104,7 +100,7 @@ function fakeDb(seed: ModelConfigRow[]) {
         values: (values: Record<string, unknown>) => ({
           execute: async () => {
             if (
-              rows.some((row) => row.tenant_id === values.tenant_id && row.label === values.label)
+              rows.some((row) => row.label === values.label)
             ) {
               throw new Error(
                 'duplicate key value violates unique constraint "llm_model_configs_tenant_label"'
@@ -142,11 +138,9 @@ function reqOf(body: unknown): NextRequest {
     })
   );
 }
-const paramsOf = () => Promise.resolve({ slug: 'acme' });
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockTenantForSlug.mockResolvedValue(TENANT);
   mockCheckAccess.mockResolvedValue({ subject: 'auth0|alice' });
   process.env.TOKEN_ENCRYPTION_KEY = ENCRYPTION_KEY;
 });
@@ -162,9 +156,7 @@ describe('POST .../llm-models', () => {
         provider: 'anthropic',
         model: 'claude-sonnet-5',
         apiKey: 'sk-ant-secret',
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(201);
     expect(db.inserted).toHaveLength(1);
@@ -191,9 +183,7 @@ describe('POST .../llm-models', () => {
         apiKey: 'sk-x',
         apiSurface: 'images',
         isDefault: true,
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(201);
     expect(JSON.parse(String(db.inserted[0]!.settings))).toEqual({ apiSurface: 'images' });
@@ -213,9 +203,7 @@ describe('POST .../llm-models', () => {
         apiSurface: 'flux',
         apiVersion: 'preview',
         isDefault: true,
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(201);
     expect(JSON.parse(String(db.inserted[0]!.settings))).toEqual({
@@ -237,9 +225,7 @@ describe('POST .../llm-models', () => {
         apiKey: 'sk-x',
         apiSurface: 'responses',
         isDefault: true,
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(201);
     expect(db.inserted[0]!.is_default).toBe(true);
@@ -256,9 +242,7 @@ describe('POST .../llm-models', () => {
         model: 'claude-x',
         apiKey: 'sk-x',
         apiSurface: 'flux',
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(400);
     expect(db.inserted).toHaveLength(0);
@@ -267,9 +251,7 @@ describe('POST .../llm-models', () => {
   it('rejects a save with neither an apiKey nor a key to reuse', async () => {
     mockGetDatabase.mockReturnValue(fakeDb([]));
     const response = await POST(
-      reqOf({ label: 'No key', provider: 'anthropic', model: 'claude-sonnet-5' }),
-      { params: paramsOf() }
-    );
+      reqOf({ label: 'No key', provider: 'anthropic', model: 'claude-sonnet-5' }));
     expect(response.status).toBe(400);
   });
 
@@ -295,9 +277,7 @@ describe('POST .../llm-models', () => {
         provider: 'anthropic',
         model: 'claude-haiku-4-5',
         apiKeyFromId: 'existing-1',
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(201);
     expect(db.inserted[0]!.encrypted_secrets).toBe('v1.iv.tag.cipher');
@@ -315,9 +295,7 @@ describe('POST .../llm-models', () => {
         baseUrl: 'https://resource.services.ai.azure.com/anthropic',
         apiVersion: '2024-05-01-preview',
         apiKey: 'azure-secret',
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(response.status).toBe(201);
     expect(db.inserted[0]).toMatchObject({
@@ -350,9 +328,7 @@ describe('POST .../llm-models', () => {
         model: 'claude-sonnet-5',
         apiKey: 'sk-new',
         isDefault: true,
-      }),
-      { params: paramsOf() }
-    );
+      }));
 
     expect(db.rows.find((row) => row.id === 'old-default')!.is_default).toBe(false);
     expect(db.rows.find((row) => row.label === 'New default')!.is_default).toBe(true);
@@ -375,9 +351,7 @@ describe('POST .../llm-models', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await POST(
-      reqOf({ label: 'Taken', provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'sk-new' }),
-      { params: paramsOf() }
-    );
+      reqOf({ label: 'Taken', provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'sk-new' }));
     expect(response.status).toBe(409);
   });
 });
@@ -410,9 +384,7 @@ describe('GET .../llm-models', () => {
     ]);
     mockGetDatabase.mockReturnValue(db);
 
-    const response = await GET(new NextRequest('http://x/api/admin/acme/llm-models'), {
-      params: paramsOf(),
-    });
+    const response = await GET(new NextRequest('http://x/api/admin/acme/llm-models'));
     const body: { models: { label: string; hasApiKey: boolean }[] } = await response.json();
 
     expect(JSON.stringify(body)).not.toContain('v1.iv.tag.cipher');

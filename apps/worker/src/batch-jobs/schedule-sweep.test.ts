@@ -29,10 +29,6 @@ maybe('batch-job schedule sweep', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('database unavailable');
     db = result.val;
-    await db
-      .insertInto('tenants')
-      .values({ id: tenantId, slug: `batch-sched-test-${tenantId.slice(0, 8)}` })
-      .execute();
   });
 
   afterAll(async () => {

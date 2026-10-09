@@ -15,11 +15,11 @@ jest.mock('@renkei/connector-config', () => ({ readConnectorConfigCached: jest.f
 import { NextRequest } from 'next/server';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { WEBHOOK_LIMITS, WEBHOOK_MAX_BODY_BYTES } from '@/lib/webhook-intake';
-import { POST as githubPost } from './github/[tenantId]/route';
-import { POST as bitbucketPost } from './bitbucket/[tenantId]/route';
-import { POST as zoomPost } from './zoom/[tenantId]/route';
-import { POST as webexPost } from './webex/[tenantId]/user/[accountId]/route';
-import { POST as microsoftPost } from './microsoft/[tenantId]/[accountId]/route';
+import { POST as githubPost } from './github/route';
+import { POST as bitbucketPost } from './bitbucket/route';
+import { POST as zoomPost } from './zoom/route';
+import { POST as webexPost } from './webex/user/[accountId]/route';
+import { POST as microsoftPost } from './microsoft/[accountId]/route';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{

@@ -94,29 +94,11 @@ async function seedNotifications(): Promise<void> {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM agent_notifications', [E2E_TENANT_ID]);
+    await client.query('DELETE FROM agent_notifications');
     for (const [index, row] of ROWS.entries()) {
       await client.query(
-        `INSERT INTO agent_notifications
-           (id, tenant_id, subject, kind, category, connector, tool, entity, headline,
-            ref_url, run_id, agent_id, agent_name, created_at)
-         VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-                 now() - ($13 || ' minutes')::interval)`,
-        [
-          E2E_TENANT_ID,
-          E2E_SUBJECT,
-          row.kind,
-          row.category,
-          row.connector,
-          row.tool,
-          row.entity,
-          row.headline,
-          row.ref_url,
-          'run_id' in row ? row.run_id : null,
-          AGENT_DEEP_ID,
-          'Triage yesterday into tickets',
-          String(index * 7),
-        ]
+        `INSERT INTO agent_notifications\n           (id, subject, kind, category, connector, tool, entity, headline,\n            ref_url, run_id, agent_id, agent_name, created_at)\n         VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,\n                 now() - ($12 || ' minutes')::interval)`,
+        [E2E_SUBJECT, row.kind, row.category, row.connector, row.tool, row.entity, row.headline, row.ref_url, 'run_id' in row ? row.run_id : null, AGENT_DEEP_ID, 'Triage yesterday into tickets', String(index * 7)]
       );
     }
   } finally {
@@ -134,21 +116,11 @@ async function seedManyNotifications(count: number): Promise<void> {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM agent_notifications', [E2E_TENANT_ID]);
+    await client.query('DELETE FROM agent_notifications');
     for (let index = 0; index < count; index += 1) {
       await client.query(
-        `INSERT INTO agent_notifications
-           (id, tenant_id, subject, kind, category, connector, tool, entity, headline,
-            ref_url, agent_id, agent_name, created_at)
-         VALUES (gen_random_uuid(),$1,$2,'act','created','jira','jira_create_issue','issue',
-                 $3,null,$4,'Triage yesterday into tickets', now() - ($5 || ' minutes')::interval)`,
-        [
-          E2E_TENANT_ID,
-          E2E_SUBJECT,
-          `Notification ${String(index).padStart(3, '0')}`,
-          AGENT_DEEP_ID,
-          String(index),
-        ]
+        `INSERT INTO agent_notifications\n           (id, subject, kind, category, connector, tool, entity, headline,\n            ref_url, agent_id, agent_name, created_at)\n         VALUES (gen_random_uuid(),$1,'act','created','jira','jira_create_issue','issue',\n                 $2,null,$3,'Triage yesterday into tickets', now() - ($4 || ' minutes')::interval)`,
+        [E2E_SUBJECT, `Notification ${String(index).padStart(3, '0')}`, AGENT_DEEP_ID, String(index)]
       );
     }
   } finally {
@@ -331,7 +303,7 @@ test('toast — the card opens its link, the dismiss still dismisses', async ({ 
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM agent_notifications', [E2E_TENANT_ID]);
+    await client.query('DELETE FROM agent_notifications');
     await page.goto(`/agents`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     // The centre seeds its cursor from the FIRST poll, so a row written
@@ -339,18 +311,8 @@ test('toast — the card opens its link, the dismiss still dismisses', async ({ 
     await page.waitForTimeout(2_000);
 
     await client.query(
-      `INSERT INTO agent_notifications
-         (id, tenant_id, subject, kind, category, connector, tool, entity, headline,
-          ref_url, agent_id, agent_name, created_at)
-       VALUES (gen_random_uuid(),$1,$2,'act','created','jira','jira_create_issue','issue',
-               $3,$4,$5,'Triage yesterday into tickets', now())`,
-      [
-        E2E_TENANT_ID,
-        E2E_SUBJECT,
-        'Created a Jira issue PROJ-2001',
-        'https://example.atlassian.net/browse/PROJ-2001',
-        AGENT_DEEP_ID,
-      ]
+      `INSERT INTO agent_notifications\n         (id, subject, kind, category, connector, tool, entity, headline,\n          ref_url, agent_id, agent_name, created_at)\n       VALUES (gen_random_uuid(),$1,'act','created','jira','jira_create_issue','issue',\n               $2,$3,$4,'Triage yesterday into tickets', now())`,
+      [E2E_SUBJECT, 'Created a Jira issue PROJ-2001', 'https://example.atlassian.net/browse/PROJ-2001', AGENT_DEEP_ID]
     );
 
     const toast = page.getByRole('link', { name: 'Created a Jira issue PROJ-2001' });

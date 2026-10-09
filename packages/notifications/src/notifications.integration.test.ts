@@ -25,7 +25,6 @@ const describeLive = url ? describe : describe.skip;
 
 describeLive('@renkei/notifications (live database)', () => {
   let db: Kysely<DB>;
-  let tenantId: string;
   const encryptionKey = randomBytes(32);
   const SUBJECT = 'itest-subject@example.com';
 
@@ -39,18 +38,11 @@ describeLive('@renkei/notifications (live database)', () => {
     // decrypt. Clearing it first makes the suite self-contained regardless
     // of what else has touched this database.
     await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
-    const tenant = await db
-      .insertInto('tenants')
-      .values({ id: randomUUID(), slug: `notif-itest-${Date.now()}` })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    tenantId = tenant.id;
     invalidateVapidKeyCache();
   });
 
   afterAll(async () => {
     await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
-    await db.deleteFrom('tenants').where('id', '=').execute();
     await db.destroy();
   });
 

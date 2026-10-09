@@ -53,7 +53,7 @@ describe('suggestCleanerScript', () => {
       rationale: 'Drops the fixed social-links row.',
     });
 
-    const result = await suggestCleanerScript(db, 'tenant-1', SAMPLE, '');
+    const result = await suggestCleanerScript(db, SAMPLE, '');
     if ('error' in result) throw new Error(result.error);
     expect(result.name).toBe('Strip social row');
     // The server already ran it — the admin sees the before/after instantly.
@@ -62,7 +62,7 @@ describe('suggestCleanerScript', () => {
 
   it('rejects a draft that does not compile as a function', async () => {
     modelReply = JSON.stringify({ name: 'x', script: "'not a function'", rationale: 'r' });
-    const result = await suggestCleanerScript(db, 'tenant-1', SAMPLE, '');
+    const result = await suggestCleanerScript(db, SAMPLE, '');
     expect('error' in result && result.error).toContain('does not compile');
   });
 
@@ -72,7 +72,7 @@ describe('suggestCleanerScript', () => {
       script: "(email) => { throw new Error('boom'); }",
       rationale: 'r',
     });
-    const result = await suggestCleanerScript(db, 'tenant-1', SAMPLE, '');
+    const result = await suggestCleanerScript(db, SAMPLE, '');
     expect('error' in result && result.error).toContain('failed on your own sample');
   });
 });

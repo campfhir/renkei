@@ -82,7 +82,7 @@ beforeEach(() => {
 describe('org settings', () => {
   it('returns defaults for a tenant with nothing stored', async () => {
     stubDb();
-    const result = await getOrgSettings('tenant-1');
+    const result = await getOrgSettings();
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.val).toEqual(DEFAULT_ORG_SETTINGS);
   });
@@ -98,9 +98,9 @@ describe('org settings', () => {
 
   it('overrides only what was stored, per key', async () => {
     stubDb();
-    await setOrgSettings('tenant-1', { readOnly: true, maxAttachmentBytes: 1024 });
+    await setOrgSettings({ readOnly: true, maxAttachmentBytes: 1024 });
 
-    const result = await getOrgSettings('tenant-1');
+    const result = await getOrgSettings();
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.val.readOnly).toBe(true);
@@ -113,7 +113,7 @@ describe('org settings', () => {
     const store = stubDb();
     store.tenantRows.set('tenant-1:max_jql_results', 'not-a-number');
 
-    const result = await getOrgSettings('tenant-1');
+    const result = await getOrgSettings();
     if (result.ok) expect(result.val.maxJqlResults).toBe(DEFAULT_ORG_SETTINGS.maxJqlResults);
   });
 
@@ -121,14 +121,14 @@ describe('org settings', () => {
     const store = stubDb();
     store.tenantRows.set('tenant-1:log_level', 'trace');
 
-    const result = await getOrgSettings('tenant-1');
+    const result = await getOrgSettings();
     if (result.ok) expect(result.val.logLevel).toBe(DEFAULT_ORG_SETTINGS.logLevel);
   });
 
   it('defaults act-step approval to externally triggered runs, and refuses an unknown policy', async () => {
     const store = stubDb();
     const policyOf = async () => {
-      const result = await getOrgSettings('tenant-1');
+      const result = await getOrgSettings();
       return result.ok ? result.val.agentActStepsRequireApproval : null;
     };
     expect(await policyOf()).toBe('externally_triggered');
@@ -137,28 +137,28 @@ describe('org settings', () => {
     invalidateSettingsCache();
     expect(await policyOf()).toBe('externally_triggered');
 
-    await setOrgSettings('tenant-1', { agentActStepsRequireApproval: 'off' });
+    await setOrgSettings({ agentActStepsRequireApproval: 'off' });
     expect(await policyOf()).toBe('off');
   });
 
   it('round-trips a valid log level', async () => {
     stubDb();
-    await setOrgSettings('tenant-1', { logLevel: 'debug' });
+    await setOrgSettings({ logLevel: 'debug' });
 
-    const result = await getOrgSettings('tenant-1');
+    const result = await getOrgSettings();
     if (result.ok) expect(result.val.logLevel).toBe('debug');
   });
 
   it('serves cached reads within the TTL and invalidates on write', async () => {
     const store = stubDb();
 
-    await getOrgSettings('tenant-1');
+    await getOrgSettings();
     const afterFirst = store.selects;
-    await getOrgSettings('tenant-1');
+    await getOrgSettings();
     expect(store.selects).toBe(afterFirst);
 
-    await setOrgSettings('tenant-1', { readOnly: true });
-    const result = await getOrgSettings('tenant-1');
+    await setOrgSettings({ readOnly: true });
+    const result = await getOrgSettings();
     if (result.ok) expect(result.val.readOnly).toBe(true);
   });
 });
@@ -186,10 +186,10 @@ describe('public base URL', () => {
 describe('connector audiences', () => {
   it('round-trips a map of group lists and drops anything malformed', async () => {
     stubDb();
-    await setOrgSettings('t1', {
+    await setOrgSettings({
       connectorAudiences: { zoom: ['svc-desk', 'ops'], 'atlassian-bitbucket': [] },
     });
-    const settings = await getOrgSettings('t1');
+    const settings = await getOrgSettings();
     expect(settings.ok && settings.val.connectorAudiences).toEqual({
       zoom: ['svc-desk', 'ops'],
       'atlassian-bitbucket': [],

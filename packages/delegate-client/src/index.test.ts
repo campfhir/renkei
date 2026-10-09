@@ -113,7 +113,7 @@ describe('DelegateClient', () => {
   it('posts one op under /v1 with the bearer key and a JSON body', async () => {
     const { fetchImpl, calls } = scripted(() => json(200, { held: 2, managed: 1, own: 0 }));
     const client = new DelegateClient(new DelegateTransport(config, fetchImpl));
-    const census = await client.enrollmentCensus('tenant-1');
+    const census = await client.enrollmentCensus();
     expect(census).toEqual({ ok: true, val: { held: 2, managed: 1, own: 0 } });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe('http://delegate.test:8096/v1/keys/census');
@@ -140,7 +140,7 @@ describe('DelegateClient', () => {
       })
     );
     const client = new DelegateClient(new DelegateTransport(config, fetchImpl));
-    const status = await client.keyStatus('tenant-1', 'alice', 'session-1');
+    const status = await client.keyStatus('alice', 'session-1');
     expect(status.ok).toBe(true);
     if (!status.ok) return;
     expect(status.val).toEqual({

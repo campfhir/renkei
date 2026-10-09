@@ -25,7 +25,7 @@ const context = (overrides: Partial<RedactionContext> = {}): RedactionContext =>
   detectors: ['ssn', 'card', 'mrn', 'dob'],
   mrnFormats: [],
   policy: DEFAULT_MCP_POLICY,
-  pseudonymizer: createPseudonymizer(deriveRedactionKey(Buffer.from('k'.repeat(32))), 'tenant-1'),
+  pseudonymizer: createPseudonymizer(deriveRedactionKey(Buffer.from('k'.repeat(32)))),
   ...overrides,
 });
 

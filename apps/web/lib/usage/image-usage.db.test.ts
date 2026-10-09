@@ -28,10 +28,6 @@ maybe('image usage ledger', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     for (const id of [tenantId, otherTenantId]) {
-      await db
-        .insertInto('tenants')
-        .values({ id, slug: `image-usage-${id.slice(0, 8)}` })
-        .execute();
     }
     await db
       .insertInto('identities')
