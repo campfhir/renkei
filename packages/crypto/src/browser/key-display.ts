@@ -29,7 +29,8 @@ function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function toBase32(bytes: Uint8Array): string {
+/** RFC 4648 base32 over the key alphabet (lowercase), unpadded. */
+export function toBase32(bytes: Uint8Array): string {
   let out = '';
   let buffer = 0;
   let bits = 0;
@@ -103,12 +104,36 @@ export function parseUserKey(
   return { ok: true, bytes };
 }
 
+/** How many base32 characters a device code carries: fifty bits of the key's digest. */
+export const DEVICE_CODE_CHARS = 10;
+
 /**
- * A short code for a device's ephemeral public key, read aloud or
- * compared across two screens during device approval: the first six
- * base32 characters of the key, grouped in threes.
+ * A device code from the SHA-256 digest of a device's ephemeral public key
+ * (`deviceCodeOf`, here over WebCrypto and in `../device-code.ts` over
+ * node's hash — the same bytes, which the tests prove): the first ten
+ * base32 characters of the digest, upper-cased and grouped in fives, read
+ * off the asking device and TYPED on the approving one. Taking the digest
+ * rather than the key's own first bits means every bit of the key weighs
+ * on the code, and fifty bits is not a space a stolen session can walk.
  */
-export function deviceCodeOf(publicKey: Uint8Array): string {
-  const chars = toBase32(publicKey).slice(0, 6).toUpperCase();
-  return `${chars.slice(0, 3)}-${chars.slice(3)}`;
+export function deviceCodeFromDigest(digest: Uint8Array): string {
+  if (digest.length < 32) throw new Error('a device code wants a SHA-256 digest');
+  const chars = toBase32(digest).slice(0, DEVICE_CODE_CHARS).toUpperCase();
+  return `${chars.slice(0, 5)}-${chars.slice(5)}`;
+}
+
+/** The typed form of a code, forgiving case, spaces and dashes; null when it is not a code at all. */
+export function normalizeDeviceCode(text: string): string | null {
+  const clean = text.toUpperCase().replace(/[\s-]+/g, '');
+  if (clean.length !== DEVICE_CODE_CHARS) return null;
+  if (!/^[A-Z2-7]+$/.test(clean)) return null;
+  return `${clean.slice(0, 5)}-${clean.slice(5)}`;
+}
+
+/** The device code of a public key, over WebCrypto; see `deviceCodeFromDigest`. */
+export async function deviceCodeOf(publicKey: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(publicKey.byteLength);
+  copy.set(publicKey);
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', copy));
+  return deviceCodeFromDigest(digest);
 }

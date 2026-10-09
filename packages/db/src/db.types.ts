@@ -1340,14 +1340,20 @@ export interface DelegateInstances {
 }
 
 export interface DeviceKeyRequests {
+  approved_by_session_id: string | null;
+  asking_session_id: string | null;
+  attempts: Generated<number>;
   code: string;
+  consumed_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  denied_at: Timestamp | null;
   expires_at: Timestamp;
   id: Generated<string>;
   public_key: string;
   sealed_key: string | null;
   subject: string;
   tenant_id: string;
+  user_agent: string | null;
 }
 
 export interface KeyDelegations {

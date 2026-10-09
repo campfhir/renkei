@@ -15,7 +15,13 @@ import {
 import { encrypt, decrypt } from './secretbox';
 import { wrapKey, unwrapKey } from './keys';
 import * as browser from './browser/webcrypto';
-import { formatUserKey, parseUserKey, deviceCodeOf } from './browser/key-display';
+import {
+  formatUserKey,
+  parseUserKey,
+  normalizeDeviceCode,
+  deviceCodeOf as browserDeviceCodeOf,
+} from './browser/key-display';
+import { deviceCodeOf } from './device-code';
 import { bytesToBase64, base64ToBytes } from './browser/encoding';
 
 const bytes = (buffer: Buffer): Uint8Array => new Uint8Array(buffer);
@@ -118,8 +124,19 @@ describe('the written-down key', () => {
     expect(parseUserKey(`1${shown.slice(1)}`)).toEqual({ ok: false, error: 'BAD_CHARACTER' });
   });
 
-  it('gives a device a short code from its public key', () => {
-    const code = deviceCodeOf(bytes(randomBytes(32)));
-    expect(code).toMatch(/^[A-Z2-7]{3}-[A-Z2-7]{3}$/);
+  it('gives a device a ten-character code from the digest of its public key, the same in node and the browser', async () => {
+    for (let i = 0; i < 8; i += 1) {
+      const key = bytes(randomBytes(32));
+      const code = deviceCodeOf(key);
+      expect(code).toMatch(/^[A-Z2-7]{5}-[A-Z2-7]{5}$/);
+      expect(await browserDeviceCodeOf(key)).toBe(code);
+      // Every bit of the key weighs on the code, not only its first bytes.
+      const flipped = Uint8Array.from(key);
+      flipped[31] ^= 1;
+      expect(deviceCodeOf(flipped)).not.toBe(code);
+      expect(normalizeDeviceCode(code.toLowerCase().replace('-', ' '))).toBe(code);
+    }
+    expect(normalizeDeviceCode('ABC-DEF')).toBeNull();
+    expect(normalizeDeviceCode('ABCDE-FGH1J')).toBeNull();
   });
 });

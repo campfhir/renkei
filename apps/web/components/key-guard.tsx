@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { KeyStatusView } from '@/lib/keys/shared';
+import { askedAtText, describeUserAgent, type KeyStatusView } from '@/lib/keys/shared';
 import {
   acknowledgeKey,
   keyAcknowledged,
@@ -77,6 +77,8 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
 
   /**
    * The key just became available to the delegate. A page that rendered
+  /** What the person typed off each asking device's screen, by request id. */
+  const [typedCodes, setTypedCodes] = useState<Record<string, string>>({});
    * its content as unavailable keeps that in client state (the chat
    * thread holds its messages), so a server refresh is not enough there:
    * reload it. Anywhere else, refreshing the server data is.
@@ -258,8 +260,21 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
     if (approve) {
       const deviceKey = await loadUserKey(tenantId);
       if (deviceKey) {
-        const approved = await approveDeviceAsk(tenantId, requestId, deviceKey);
-        if (!approved.ok) setFailure(approved.failure.error);
+        const approved = await approveDeviceAsk(
+          tenantId,
+          requestId,
+          typedCodes[requestId] ?? '',
+          deviceKey
+        );
+        if (!approved.ok) {
+          setFailure(approved.failure.error);
+          setBusy(false);
+          // A closed request (too many wrong codes) leaves the list on the next check.
+          if (approved.failure.code === 'wrong_code' && !/closed/.test(approved.failure.error))
+            return;
+          await check();
+          return;
+        }
       }
     } else {
       await denyDeviceAsk(tenantId, requestId);
@@ -449,29 +464,49 @@ export default function KeyGuard({ tenantId, slug }: { tenantId: string; slug: s
       {banner.kind === 'approve' && open ? (
         <Modal title="Another device is asking for your encryption key" onClose={dismiss}>
           <div className="space-y-3 text-sm" data-testid="key-modal-approve">
-            <p>Approve only if the code matches what that device shows.</p>
-            <ul className="space-y-2">
+            <p>
+              Type the code that device is showing. If no device of yours is showing a code, deny
+              the request: somebody else may be signed in as you.
+            </p>
+            <ul className="space-y-3">
               {banner.requests.map((request) => (
-                <li key={request.id} className="flex flex-wrap items-center gap-3">
-                  <code className="rounded bg-gray-100 px-2 py-1 font-mono text-lg tracking-widest dark:bg-gray-800">
-                    {request.code}
-                  </code>
-                  <button
-                    type="button"
-                    className={buttonClass}
-                    disabled={busy}
-                    onClick={() => void decideAsk(request.id, true)}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    className={quietButtonClass}
-                    disabled={busy}
-                    onClick={() => void decideAsk(request.id, false)}
-                  >
-                    Deny
-                  </button>
+                <li key={request.id} className="space-y-2" data-testid="key-approve-request">
+                  <p className="text-gray-600 dark:text-gray-400">
+                    Asked {askedAtText(request.createdAt)} from{' '}
+                    {describeUserAgent(request.userAgent)}.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="w-40 rounded-md border border-gray-300 px-2 py-1 font-mono text-base tracking-widest uppercase dark:border-gray-700 dark:bg-gray-900"
+                      value={typedCodes[request.id] ?? ''}
+                      onChange={(event) =>
+                        setTypedCodes((current) => ({
+                          ...current,
+                          [request.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="ABCDE-FGHIJ"
+                      aria-label="The code the other device shows"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className={buttonClass}
+                      disabled={busy || (typedCodes[request.id] ?? '').trim().length === 0}
+                      onClick={() => void decideAsk(request.id, true)}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      className={quietButtonClass}
+                      disabled={busy}
+                      onClick={() => void decideAsk(request.id, false)}
+                    >
+                      Deny
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>

@@ -12,6 +12,17 @@ import { Kysely, sql } from 'kysely';
  * id, never content), and how it ended. The table is append-only: a
  * trigger refuses UPDATE and DELETE, so a process that can write the log
  * cannot rewrite it.
+ *
+ * Device asks (`device_key_requests`) are hardened in the same step: the
+ * code grows from six base32 characters of the raw key to ten of its
+ * SHA-256 digest (fifty bits), and is TYPED on the approving device rather
+ * than picked from a list; each ask is bound to the browser session that
+ * made it (`asking_session_id`, cascading with the session) and carries
+ * that browser's user agent and time for the approver to judge; wrong
+ * codes are counted (`attempts`) and a request is denied after five; an
+ * answered or denied ask stays for ten minutes (`consumed_at`,
+ * `denied_at`) so asks can be rate-limited per person instead of deleted
+ * on pickup; `approved_by_session_id` says which session approved.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await sql`
@@ -43,9 +54,32 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       BEFORE UPDATE OR DELETE ON delegate_access_events
       FOR EACH ROW EXECUTE FUNCTION delegate_access_events_append_only()
   `.execute(db);
+
+  await sql`DELETE FROM device_key_requests`.execute(db);
+  await sql`ALTER TABLE device_key_requests ALTER COLUMN code TYPE VARCHAR(16)`.execute(db);
+  await sql`
+    ALTER TABLE device_key_requests
+      ADD COLUMN asking_session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+      ADD COLUMN user_agent VARCHAR(200),
+      ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN approved_by_session_id UUID,
+      ADD COLUMN consumed_at TIMESTAMPTZ,
+      ADD COLUMN denied_at TIMESTAMPTZ
+  `.execute(db);
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
+  await sql`DELETE FROM device_key_requests`.execute(db);
+  await sql`
+    ALTER TABLE device_key_requests
+      DROP COLUMN denied_at,
+      DROP COLUMN consumed_at,
+      DROP COLUMN approved_by_session_id,
+      DROP COLUMN attempts,
+      DROP COLUMN user_agent,
+      DROP COLUMN asking_session_id
+  `.execute(db);
+  await sql`ALTER TABLE device_key_requests ALTER COLUMN code TYPE VARCHAR(8)`.execute(db);
   await sql`DROP TABLE IF EXISTS delegate_access_events`.execute(db);
   await sql`DROP FUNCTION IF EXISTS delegate_access_events_append_only()`.execute(db);
 }

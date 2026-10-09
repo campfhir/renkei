@@ -33,8 +33,51 @@ export interface KeyStatusView {
   automationUntil: string | null;
   /** The window the person chose for their agents, in days. */
   automationDays: number;
-  /** Devices asking for the key, for an enrolled device to approve. */
-  pendingDevices: { id: string; code: string; createdAt: string }[];
+  /**
+   * Devices asking for the key, for an enrolled device to approve by typing
+   * the code the asking device shows; the code itself is never listed.
+   */
+  pendingDevices: { id: string; createdAt: string; userAgent: string | null }[];
   /** The delegate could not be reached; the browser retries. */
   unavailable: boolean;
+}
+
+/**
+ * A user agent as a person would say it — "Chrome on Windows", "Safari on
+ * iPhone" — for the approver judging whose request this is. Honest about
+ * what it cannot tell: an unknown string reads as "an unknown browser".
+ */
+export function describeUserAgent(userAgent: string | null): string {
+  if (!userAgent) return 'an unknown browser';
+  const browser = /Edg\//.test(userAgent)
+    ? 'Edge'
+    : /OPR\//.test(userAgent)
+      ? 'Opera'
+      : /Firefox\//.test(userAgent)
+        ? 'Firefox'
+        : /Chrome\//.test(userAgent)
+          ? 'Chrome'
+          : /Safari\//.test(userAgent)
+            ? 'Safari'
+            : 'an unknown browser';
+  const platform = /iPhone|iPad/.test(userAgent)
+    ? 'iPhone or iPad'
+    : /Android/.test(userAgent)
+      ? 'Android'
+      : /Windows/.test(userAgent)
+        ? 'Windows'
+        : /Mac OS X|Macintosh/.test(userAgent)
+          ? 'a Mac'
+          : /Linux/.test(userAgent)
+            ? 'Linux'
+            : null;
+  return platform ? `${browser} on ${platform}` : browser;
+}
+
+/** When an ask was made, for the approver: a local time. */
+export function askedAtText(iso: string): string {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime())
+    ? ''
+    : at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }

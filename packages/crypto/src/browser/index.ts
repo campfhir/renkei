@@ -18,6 +18,9 @@ export {
   formatUserKey,
   parseUserKey,
   deviceCodeOf,
+  deviceCodeFromDigest,
+  normalizeDeviceCode,
+  DEVICE_CODE_CHARS,
   USER_KEY_BYTES,
   type UserKeyParseError,
 } from './key-display';

@@ -72,24 +72,31 @@ export async function setAutomationDays(
     .execute();
 }
 
-async function pendingDevicesOf(
+/**
+ * The asks still open for a person's key: when each was made and from what
+ * browser, never the code — the approver types that off the asking screen
+ * (app/api/tenant/[tenantId]/keys/devices).
+ */
+export async function pendingDevicesOf(
   db: Kysely<DB>,
   tenantId: string,
   subject: string
-): Promise<{ id: string; code: string; createdAt: string }[]> {
+): Promise<{ id: string; createdAt: string; userAgent: string | null }[]> {
   const rows = await db
     .selectFrom('device_key_requests')
-    .select(['id', 'code', 'created_at'])
+    .select(['id', 'created_at', 'user_agent'])
     .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .where('sealed_key', 'is', null)
+    .where('consumed_at', 'is', null)
+    .where('denied_at', 'is', null)
     .where('expires_at', '>', new Date())
     .orderBy('created_at', 'asc')
     .execute();
   return rows.map((row) => ({
     id: row.id,
-    code: row.code,
     createdAt: row.created_at.toISOString(),
+    userAgent: row.user_agent,
   }));
 }
 

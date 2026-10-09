@@ -17,7 +17,7 @@
  * the `mobile` project's device descriptor, per AGENTS.md.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Browser, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
@@ -401,15 +401,27 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   await expect(otherNeeds).toBeVisible({ timeout: 30_000 });
   await other.getByRole('button', { name: 'Ask my other devices' }).click();
   const codeText = await other.getByTestId('key-unlock-code').innerText();
-  const code = /([A-Z2-7]{3}-[A-Z2-7]{3})/.exec(codeText)?.[1] ?? '';
-  expect(code).toMatch(/^[A-Z2-7]{3}-[A-Z2-7]{3}$/);
+  const code = /([A-Z2-7]{5}-[A-Z2-7]{5})/.exec(codeText)?.[1] ?? '';
+  expect(code).toMatch(/^[A-Z2-7]{5}-[A-Z2-7]{5}$/);
   await shot(other, testInfo, 'keys-07-second-device-asks');
 
+  // The first device sees when and from what browser, never the code: the
+  // person types it off the asking screen. A wrong code is refused and the
+  // request stays; the right one, typed any old way, approves it.
   await recheck(page);
   const approve = page.getByTestId('key-modal-approve');
   await expect(approve).toBeVisible({ timeout: 30_000 });
-  await expect(approve).toContainText(code);
+  await expect(approve).not.toContainText(code);
+  await expect(approve.getByTestId('key-approve-request')).toHaveCount(1);
+  await expect(approve).toContainText('Chrome');
+  const codeInput = approve.getByLabel('The code the other device shows');
+  await expect(approve.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  await codeInput.fill(code.endsWith('A') ? 'BBBBB-BBBBB' : 'AAAAA-AAAAA');
+  await approve.getByRole('button', { name: 'Approve' }).click();
+  await expect(approve.getByRole('alert')).toContainText('not the code');
+  await expect(approve.getByTestId('key-approve-request')).toHaveCount(1);
   await shot(page, testInfo, 'keys-08-first-device-approves');
+  await codeInput.fill(code.toLowerCase().replace('-', ' '));
   await approve.getByRole('button', { name: 'Approve' }).click();
   await expect(approve).toHaveCount(0);
 

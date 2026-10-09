@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { KeyStatusView } from '@/lib/keys/shared';
-import { AUTOMATION_WINDOW_DAYS } from '@/lib/keys/shared';
+import { AUTOMATION_WINDOW_DAYS, askedAtText, describeUserAgent } from '@/lib/keys/shared';
 import { forgetUserKey, loadUserKey, saveUserKey } from '@/lib/keys/browser/device-store';
 import {
   approveDeviceAsk,
@@ -49,6 +49,7 @@ export default function EncryptionKeySection({
   const [failure, setFailure] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
   const [confirmRotate, setConfirmRotate] = useState(false);
+  const [typedCodes, setTypedCodes] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     const [next, key] = await Promise.all([fetchKeyStatus(tenantId), loadUserKey(tenantId)]);
@@ -71,7 +72,11 @@ export default function EncryptionKeySection({
     const delegated = await delegateInBrowser(tenantId, status, key, { automationDays: days });
     setBusy(false);
     if (!delegated.ok) {
-      setFailure(delegated.failure.error);
+      setFailure(
+        delegated.failure.code === 'untrusted_instances'
+          ? 'This browser has not confirmed the key service yet; reload the page and confirm its fingerprint in the dialog first.'
+          : delegated.failure.error
+      );
       return;
     }
     setNotice(
@@ -102,7 +107,11 @@ export default function EncryptionKeySection({
     setBusy(false);
     setConfirmRotate(false);
     if (!rotated.ok) {
-      setFailure(rotated.failure.error);
+      setFailure(
+        rotated.failure.code === 'untrusted_instances'
+          ? 'This browser has not confirmed the key service yet; reload the page and confirm its fingerprint in the dialog first.'
+          : rotated.failure.error
+      );
       return;
     }
     setRevealed(rotated.outcome.shown);
@@ -132,7 +141,12 @@ export default function EncryptionKeySection({
       const key = await loadUserKey(tenantId);
       if (!key) setFailure('This device does not hold your key, so it cannot share it.');
       else {
-        const approved = await approveDeviceAsk(tenantId, requestId, key);
+        const approved = await approveDeviceAsk(
+          tenantId,
+          requestId,
+          typedCodes[requestId] ?? '',
+          key
+        );
         if (!approved.ok) setFailure(approved.failure.error);
       }
     } else {
@@ -265,27 +279,51 @@ export default function EncryptionKeySection({
           {status.pendingDevices.length > 0 ? (
             <div className="mt-4 space-y-2 text-sm" data-testid="encryption-key-devices">
               <p className="font-medium">Devices asking for your key</p>
+              <p className="text-gray-600 dark:text-gray-400">
+                Type the code the asking device shows. Deny anything you did not start.
+              </p>
               {status.pendingDevices.map((request) => (
-                <div key={request.id} className="flex flex-wrap items-center gap-2">
-                  <code className="rounded bg-gray-100 px-2 py-0.5 font-mono text-base tracking-widest dark:bg-gray-800">
-                    {request.code}
-                  </code>
-                  <button
-                    type="button"
-                    className={primary}
-                    disabled={busy || deviceHasKey !== true}
-                    onClick={() => void decide(request.id, true)}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    type="button"
-                    className={button}
-                    disabled={busy}
-                    onClick={() => void decide(request.id, false)}
-                  >
-                    Deny
-                  </button>
+                <div key={request.id} className="space-y-1">
+                  <p className="text-gray-600 dark:text-gray-400">
+                    Asked {askedAtText(request.createdAt)} from{' '}
+                    {describeUserAgent(request.userAgent)}.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="w-40 rounded-md border border-gray-300 px-2 py-1 font-mono text-base tracking-widest uppercase dark:border-gray-700 dark:bg-gray-900"
+                      value={typedCodes[request.id] ?? ''}
+                      onChange={(event) =>
+                        setTypedCodes((current) => ({
+                          ...current,
+                          [request.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="ABCDE-FGHIJ"
+                      aria-label="The code the other device shows"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className={primary}
+                      disabled={
+                        busy ||
+                        deviceHasKey !== true ||
+                        (typedCodes[request.id] ?? '').trim().length === 0
+                      }
+                      onClick={() => void decide(request.id, true)}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      className={button}
+                      disabled={busy}
+                      onClick={() => void decide(request.id, false)}
+                    >
+                      Deny
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

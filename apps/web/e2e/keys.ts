@@ -144,6 +144,24 @@ export function formatUserKey(bytes: Buffer): string {
   return groups.join('-');
 }
 
+/** `@renkei/crypto`'s device code and instance fingerprint: ten base32 characters of SHA-256, grouped in fives. */
+export function deviceCodeOf(publicKey: Buffer): string {
+  const digest = createHash('sha256').update(publicKey).digest();
+  let raw = '';
+  let buffer = 0;
+  let bits = 0;
+  for (const byte of digest) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      raw += BASE32[(buffer >> bits) & 31];
+    }
+  }
+  const chars = raw.slice(0, 10).toUpperCase();
+  return `${chars.slice(0, 5)}-${chars.slice(5)}`;
+}
+
 export interface E2EKeys {
   userKey: Buffer;
   automationKey: Buffer;

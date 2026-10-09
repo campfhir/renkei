@@ -281,13 +281,30 @@ export async function pollDeviceAsk(
   }
 }
 
-/** An enrolled device answers an ask: the key sealed to the asking device's public key. */
+/**
+ * An enrolled device answers an ask: the person types the code the asking
+ * device shows, this device reads the ask's public key against it and
+ * posts the user key sealed to that public key, with the code again. A
+ * wrong code is refused by the server, which counts it.
+ */
 export async function approveDeviceAsk(
   tenantId: string,
   requestId: string,
   userKey: Uint8Array
 ): Promise<{ ok: true } | { ok: false; failure: FlowFailure }> {
-  const detail = await fetch(`/api/tenant/${tenantId}/keys/devices/${requestId}`).catch(() => null);
+  const code = normalizeDeviceCode(typedCode);
+  if (!code) {
+    return {
+      ok: false,
+      failure: {
+        code: 'bad_code',
+        error: `A code is ${DEVICE_CODE_CHARS} letters and digits, as the other device shows it.`,
+      },
+    };
+  }
+  const detail = await fetch(
+    `/api/tenant/${tenantId}/keys/devices/${requestId}?code=${encodeURIComponent(code)}`
+  ).catch(() => null);
   const json: unknown = detail ? await detail.json().catch(() => ({})) : {};
   const record: Record<string, unknown> =
     typeof json === 'object' && json !== null ? Object.fromEntries(Object.entries(json)) : {};
@@ -337,15 +354,14 @@ export function parseKeyStatus(json: unknown): KeyStatusView | null {
       }
     }
   }
-  const pendingDevices: { id: string; code: string; createdAt: string }[] = [];
+  const pendingDevices: { id: string; createdAt: string; userAgent: string | null }[] = [];
   if (Array.isArray(record.pendingDevices)) {
     for (const item of record.pendingDevices) {
       if (typeof item !== 'object' || item === null) continue;
       const entry: Record<string, unknown> = Object.fromEntries(Object.entries(item));
-      if (typeof entry.id === 'string' && typeof entry.code === 'string') {
+      if (typeof entry.id === 'string') {
         pendingDevices.push({
           id: entry.id,
-          code: entry.code,
           createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : '',
         });
       }
@@ -380,3 +396,15 @@ export async function fetchKeyStatus(tenantId: string): Promise<KeyStatusView | 
     return null;
   }
 }
+  typedCode: string,
+  if (!detail || !detail.ok) {
+    return {
+      ok: false,
+      failure: {
+        code: typeof record.code === 'string' ? record.code : 'gone',
+        error: typeof record.error === 'string' ? record.error : 'That request is gone.',
+      },
+    };
+  }
+    code,
+          userAgent: typeof entry.userAgent === 'string' ? entry.userAgent : null,

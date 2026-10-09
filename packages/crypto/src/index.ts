@@ -48,4 +48,12 @@ export {
   SEALED_BOX_PREFIX,
   type X25519KeyPair,
 } from './sealed-box';
-export { formatUserKey, parseUserKey, deviceCodeOf, USER_KEY_BYTES } from './browser/key-display';
+export {
+  formatUserKey,
+  parseUserKey,
+  deviceCodeFromDigest,
+  normalizeDeviceCode,
+  DEVICE_CODE_CHARS,
+  USER_KEY_BYTES,
+} from './browser/key-display';
+export { deviceCodeOf } from './device-code';
