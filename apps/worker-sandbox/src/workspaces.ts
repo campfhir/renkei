@@ -584,7 +584,11 @@ export function runProcess(input: RunInput, file: string, args: string[]): Promi
     let settled = false;
     let child: ChildProcess;
     try {
+      // The caller's own shell command is the feature here; what contains it
+      // is the uid drop, the capability bounding set and the limits that
+      // `wrapCommand` puts around it, not the command text.
       child = spawn(wrapped.file, wrapped.args, {
+        // codeql[js/command-line-injection, js/indirect-command-line-injection]
         cwd: input.cwd,
         env: childEnvironment(input),
         stdio: ['ignore', 'pipe', 'pipe'],
