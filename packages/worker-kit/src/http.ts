@@ -30,17 +30,80 @@ export function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-export function authorized(request: IncomingMessage, keys: string[]): boolean {
-  if (keys.length === 0) return false;
+/**
+ * A bearer key with the name of the caller it was issued to. A worker that
+ * tells its callers apart (the delegate: web, worker, agents) hands these
+ * in; one that does not keeps passing plain strings, which carry the name
+ * `default`.
+ */
+export interface NamedApiKey {
+  name: string;
+  key: string;
+}
+
+export const DEFAULT_CALLER = 'default';
+
+function namedKeyOf(entry: string | NamedApiKey): NamedApiKey {
+  return typeof entry === 'string' ? { name: DEFAULT_CALLER, key: entry } : entry;
+}
+
+/**
+ * Which configured key the request presented, by constant-time comparison
+ * against every one of them, or null. The name tells a worker who is
+ * calling; the key itself never travels further than this check.
+ */
+export function matchApiKey(
+  request: IncomingMessage,
+  keys: readonly (string | NamedApiKey)[]
+): NamedApiKey | null {
+  if (keys.length === 0) return null;
   const match = request.headers.authorization?.match(/^Bearer\s+(.+)$/i);
-  if (!match) return false;
-  const presented = match[1].trim();
-  return keys.some((key) => {
-    const bufA = Buffer.from(presented);
-    const bufB = Buffer.from(key);
+  if (!match) return null;
+  const presented = Buffer.from(match[1].trim());
+  let matched: NamedApiKey | null = null;
+  for (const entry of keys) {
+    const named = namedKeyOf(entry);
+    const configured = Buffer.from(named.key);
     // Length is not secret (it leaks via the comparison anyway); the contents are.
-    return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
-  });
+    if (presented.length === configured.length && timingSafeEqual(presented, configured)) {
+      matched ??= named;
+    }
+  }
+  return matched;
+}
+
+export function authorized(
+  request: IncomingMessage,
+  keys: readonly (string | NamedApiKey)[]
+): boolean {
+  return matchApiKey(request, keys) !== null;
+}
+
+/**
+ * The bearer keys a worker's environment names, with their callers:
+ * `${prefix}_API_KEYS` as `name=key,name=key` (one key per calling
+ * process), and `${prefix}_API_KEY` as comma-separated keys that all carry
+ * `defaultName` — the one-shared-key form every worker started with, kept
+ * so an existing deployment keeps working. A name may appear more than
+ * once (rotation overlap). Malformed entries are dropped, never widened.
+ */
+export function parseNamedApiKeys(
+  env: NodeJS.ProcessEnv,
+  prefix: string,
+  defaultName = DEFAULT_CALLER
+): NamedApiKey[] {
+  const out: NamedApiKey[] = [];
+  for (const entry of (env[`${prefix}_API_KEYS`] ?? '').split(',')) {
+    const equals = entry.indexOf('=');
+    if (equals <= 0) continue;
+    const name = entry.slice(0, equals).trim();
+    const key = entry.slice(equals + 1).trim();
+    if (/^[a-z][a-z0-9_-]{0,31}$/.test(name) && key) out.push({ name, key });
+  }
+  for (const key of (env[`${prefix}_API_KEY`] ?? '').split(',')) {
+    if (key.trim()) out.push({ name: defaultName, key: key.trim() });
+  }
+  return out;
 }
 
 /** Read a request body up to `cap` bytes; null means the cap was exceeded. */
@@ -69,20 +132,40 @@ export function readBody(request: IncomingMessage, cap: number): Promise<Buffer 
 export type GenericWorkerError =
   | 'bad_request'
   | 'unauthorized'
+  /** The key is good, but the caller it names may not run this op. */
+  | 'forbidden'
   | 'too_large'
   | 'unknown_operation'
   | 'method_not_allowed'
   | 'internal';
 
-export type RawHandler = (request: IncomingMessage, response: ServerResponse) => Promise<void>;
+/** Who is calling, as the matched bearer key says. */
+export interface CallContext {
+  caller: string;
+}
+
+export type RawHandler = (
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: CallContext
+) => Promise<void>;
 
 export type JsonRpcHandler = (
   body: Record<string, unknown>,
-  response: ServerResponse
+  response: ServerResponse,
+  context: CallContext
 ) => Promise<void>;
 
 export interface CreateJsonRpcServerOptions {
-  apiKeys: string[];
+  apiKeys: readonly (string | NamedApiKey)[];
+  /**
+   * Whether the caller the matched key names may run this op; checked after
+   * the bearer check and before anything is read or dispatched (the raw
+   * handlers and the fallback included). Absent, every key runs every op.
+   */
+  allowOp?: (caller: string, op: string) => boolean;
+  /** Told of every refusal `allowOp` made, for the worker's own access record. */
+  onForbidden?: (caller: string, op: string) => void;
   /** Per-connector: Mirth's bulk channel import needs far more room than a
    *  typical op, so this stays a parameter rather than a shared constant. */
   maxBodyBytes: number;
@@ -100,7 +183,12 @@ export interface CreateJsonRpcServerOptions {
    * The handler owns the request from here; it answers `unknown_operation`
    * itself when the op is not one of its own.
    */
-  fallback?: (op: string, request: IncomingMessage, response: ServerResponse) => Promise<void>;
+  fallback?: (
+    op: string,
+    request: IncomingMessage,
+    response: ServerResponse,
+    context: CallContext
+  ) => Promise<void>;
   /**
    * Paths served BEFORE the bearer check, any method: for a route that
    * carries its own credential in the path (the delegate's git proxy, whose
@@ -132,20 +220,26 @@ export function createJsonRpcServer(options: CreateJsonRpcServerOptions): Server
       return sendJson(response, 200, { ok: true });
     }
     const open = options.openPrefixes?.find((entry) => url.pathname.startsWith(entry.prefix));
-    if (open) return open.handler(request, response);
-    if (!authorized(request, options.apiKeys)) {
+    if (open) return open.handler(request, response, { caller: 'open' });
+    const matched = matchApiKey(request, options.apiKeys);
+    if (!matched) {
       return options.sendError(response, 'unauthorized');
     }
+    const context: CallContext = { caller: matched.name };
     if (request.method !== 'POST') {
       return options.sendError(response, 'method_not_allowed');
     }
 
     const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';
+    if (options.allowOp && !options.allowOp(context.caller, op)) {
+      options.onForbidden?.(context.caller, op);
+      return options.sendError(response, 'forbidden', `${context.caller} may not call ${op}`);
+    }
     const rawHandler = options.rawHandlers?.[op];
-    if (rawHandler) return rawHandler(request, response);
+    if (rawHandler) return rawHandler(request, response, context);
     const handler = options.handlers[op];
     if (!handler) {
-      if (options.fallback) return options.fallback(op, request, response);
+      if (options.fallback) return options.fallback(op, request, response, context);
       return options.sendError(response, 'unknown_operation');
     }
     const raw = await readBody(request, options.maxBodyBytes);
@@ -161,7 +255,7 @@ export function createJsonRpcServer(options: CreateJsonRpcServerOptions): Server
     if (!isRecord(body)) {
       return options.sendError(response, 'bad_request');
     }
-    await handler(body, response);
+    await handler(body, response, context);
   }
 
   return createServer((request, response) => {

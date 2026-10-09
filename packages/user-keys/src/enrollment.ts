@@ -40,6 +40,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getKeyRing, readKeyRow, ringFromUserKey, type HeldRow, type KeyError } from './keyring';
 import { legacyKekOf, type LegacyKekError } from './legacy';
+import { verifySession } from './request-scope';
 import { PRIVATE_ENVELOPE_PREFIX } from './user-sealed';
 import { keyVault } from './vault';
 
@@ -79,13 +80,17 @@ export type EnrollError =
   | 'BAD_DELEGATION'
   /** The wrapped private or automation key does not open under the user key, or the public key does not match. */
   | 'KEY_MISMATCH'
+  /** The session named is not this person's live session. */
+  | 'SESSION_MISMATCH'
   | 'ALREADY_ENROLLED'
   | LegacyKekError
   | 'DECRYPTION_ERROR';
 
-export type DelegateError = 'NO_VAULT' | 'NOT_ENROLLED' | 'BAD_DELEGATION' | 'NO_USER_KEY';
+export type DelegateError =
+  'NO_VAULT' | 'NOT_ENROLLED' | 'BAD_DELEGATION' | 'SESSION_MISMATCH' | 'NO_USER_KEY';
 
-export type RotateError = KeyError | 'BAD_DELEGATION' | 'KEY_MISMATCH' | 'DECRYPTION_ERROR';
+export type RotateError =
+  KeyError | 'BAD_DELEGATION' | 'KEY_MISMATCH' | 'SESSION_MISMATCH' | 'DECRYPTION_ERROR';
 
 /**
  * Everything at rest under one person's own keys, by table: the wrappings
@@ -288,16 +293,16 @@ function clampAutomationUntil(until: Date | null): Date {
   return new Date(Math.max(Date.now() + 60_000, Math.min(max, until.getTime())));
 }
 
-async function sessionExpiry(
+/**
+ * The session the delegations are for must be THIS person's and live: a
+ * session id that belongs to someone else, or to nobody, binds nothing.
+ */
+async function boundSession(
   trx: Kysely<DB> | Transaction<DB>,
-  sessionId: string
-): Promise<Date | null> {
-  const row = await trx
-    .selectFrom('sessions')
-    .select('expires_at')
-    .where('id', '=', sessionId)
-    .executeTakeFirst();
-  return row ? row.expires_at : null;
+  input: DelegationInput
+): Promise<Result<{ expiresAt: Date }, 'SESSION_MISMATCH'>> {
+  const session = await verifySession(trx, input.tenantId, input.subject, input.sessionId);
+  return session ? ok(session) : err('SESSION_MISMATCH' as const);
 }
 
 /**
@@ -308,13 +313,12 @@ async function sessionExpiry(
  */
 async function writeDelegations(
   trx: Kysely<DB> | Transaction<DB>,
-  input: DelegationInput
+  input: DelegationInput,
+  expiresAt: Date
 ): Promise<void> {
   const known = new Set(
     (await trx.selectFrom('delegate_instances').select('id').execute()).map((row) => row.id)
   );
-  const expiresAt =
-    (await sessionExpiry(trx, input.sessionId)) ?? new Date(Date.now() + 60 * 60_000);
   await trx
     .deleteFrom('key_delegations')
     .where('tenant_id', '=', input.tenantId)
@@ -386,6 +390,8 @@ export async function enroll(
       .forUpdate()
       .executeTakeFirst();
     if (existing && existing.mode === 'held') return err('ALREADY_ENROLLED' as const);
+    const session = await boundSession(trx, input);
+    if (!session.ok) return session;
     const keys = openOwnDelegation(input.session, {
       public_key: input.publicKey,
       wrapped_private_key: input.wrappedPrivateKey,
@@ -443,7 +449,7 @@ export async function enroll(
         })
       )
       .execute();
-    await writeDelegations(trx, input);
+    await writeDelegations(trx, input, session.val.expiresAt);
     return ok({ version, enrolledAt, migrated });
   });
 }
@@ -474,7 +480,9 @@ export async function storeDelegations(
     const automationKey = vault.open(ownAutomation.sealedKey);
     if (!automationKey || automationKey.byteLength !== 32) return err('BAD_DELEGATION' as const);
   }
-  await writeDelegations(db, input);
+  const session = await boundSession(db, input);
+  if (!session.ok) return session;
+  await writeDelegations(db, input, session.val.expiresAt);
   return ok();
 }
 
@@ -521,6 +529,8 @@ export async function rotateUserKey(
   });
   if (!next.ok) return next.err.type === 'NO_VAULT' ? err('NO_VAULT' as const) : next;
   if (!next.val.automationKey.equals(ring.automationKey)) return err('KEY_MISMATCH' as const);
+  const session = await boundSession(db, input);
+  if (!session.ok) return session;
   return db
     .transaction()
     .execute(async (trx): Promise<Result<{ version: number; moved: number }, RotateError>> => {
@@ -552,7 +562,7 @@ export async function rotateUserKey(
         .where('tenant_id', '=', input.tenantId)
         .where('subject', '=', input.subject)
         .execute();
-      await writeDelegations(trx, input);
+      await writeDelegations(trx, input, session.val.expiresAt);
       return ok({ version, moved: moved.val.grants + moved.val.values });
     });
 }

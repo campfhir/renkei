@@ -35,9 +35,16 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 # with this variable (and TOKEN_ENCRYPTION_KEY) in the environment.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
 # Every process but the delegate reaches it here, for keys, provider
-# tokens and the connector workers (compose wires the service name).
+# tokens and the connector workers (compose wires the service name). Each
+# process presents a key of ITS OWN; the delegate authorizes by which key
+# matched (docs/delegate-key-design.md, "Callers"). On the delegate:
+#   DELEGATE_WORKER_API_KEYS=web=<key>,worker=<key>,agents=<key>
+# and on the web app, the queue worker and the agents worker respectively,
+# that process's key as DELEGATE_WORKER_API_KEY. The single shared
+# DELEGATE_WORKER_API_KEY on the delegate still works and counts as the web
+# caller. The compose file's development default is refused in production.
 # DELEGATE_WORKER_URL=http://renkei-worker-delegate:8096
-# DELEGATE_WORKER_API_KEY=<shared bearer key>
+# DELEGATE_WORKER_API_KEY=<this process's bearer key>
 # A code workspace's git goes through the delegate's /git/<ticket>/… proxy
 # (no bearer key; the short-lived ticket is the credential). The web app
 # builds that proxy URL from DELEGATE_WORKER_URL; set this only when the

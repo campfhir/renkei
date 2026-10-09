@@ -32,7 +32,7 @@
  * Git for code workspaces (git.ts): grant/git-ticket, and /git/<ticket>/….
  */
 
-import type { Server, ServerResponse } from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
@@ -65,7 +65,18 @@ import {
   type SealedDelegation,
   type SealScope,
 } from '@renkei/user-keys';
-import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
+import {
+  createJsonRpcServer,
+  isRecord,
+  sendJson,
+  str,
+  type CallContext,
+  type JsonRpcHandler,
+  type NamedApiKey,
+} from '@renkei/worker-kit';
+import { verifySession, withKeyRequestScope, type KeyRequestScope } from '@renkei/user-keys';
+import { AccessLog, outcomeOf, PERSISTED_OPS } from './access-log';
+import { callerMayRun } from './callers';
 import { sendError } from './errors';
 import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
 import { Forwarder } from './forward';
@@ -75,8 +86,12 @@ export interface DelegateServerDeps {
   db: Kysely<DB>;
   /** TOKEN_ENCRYPTION_KEY: opens the org-wide connector configs a refresh needs. */
   encryptionKey: Buffer;
-  /** Accepted bearer keys; empty means every request is refused. */
-  apiKeys: string[];
+  /**
+   * Accepted bearer keys with the caller each names (callers.ts). A plain
+   * string is the web app's key — the one-shared-key form from before.
+   * Empty means every request is refused.
+   */
+  apiKeys: readonly (string | NamedApiKey)[];
   /** Injected in tests; production dials the provider. */
   fetchImpl?: typeof fetch;
   /** The worker's logger; silent when omitted (tests, in-process use). */
@@ -158,14 +173,99 @@ function delegationInputOf(body: Record<string, unknown>): DelegationInput | nul
   };
 }
 
+/** The subject an op is about, under whichever name its body uses. */
+function subjectOf(body: Record<string, unknown>): string {
+  return (
+    str(body.subject) || str(body.ownerSubject) || str(body.fromSubject) || str(body.bySubject)
+  );
+}
+
+/** An id the op is about, for the access record: a resource, an account, a provider. */
+function targetOf(body: Record<string, unknown>): string | undefined {
+  return str(body.resourceId) || str(body.accountId) || str(body.provider) || undefined;
+}
+
 export function createDelegateServer(deps: DelegateServerDeps): Server {
   const { db } = deps;
   const logger = deps.logger ?? silentDelegateLogger;
   const grants = new Grants(db, deps.encryptionKey, logger, deps.fetchImpl);
   const forwarder = new Forwarder(db, grants, deps.fetchImpl);
   const git = new GitTickets(db, grants, deps.gitDialer);
+  const access = new AccessLog(db, logger);
+  const apiKeys: NamedApiKey[] = deps.apiKeys.map((entry) =>
+    typeof entry === 'string' ? { name: 'web', key: entry } : entry
+  );
 
   type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
+
+  /** Whether the run named belongs to the person the op is about: the agents worker's binding. */
+  async function runBelongsTo(runId: string, tenantId: string, subject: string): Promise<boolean> {
+    if (!/^[0-9a-f-]{36}$/i.test(runId)) return false;
+    const row = await db
+      .selectFrom('agent_runs')
+      .select('id')
+      .where('id', '=', runId)
+      .where('tenant_id', '=', tenantId)
+      .where('owner_subject', '=', subject)
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
+  /**
+   * Every op runs through here (callers.ts, request-scope.ts): the caller
+   * is known from its key; a request naming a session is bound to it after
+   * the session is checked against the tenant and subject; the agents
+   * worker names the run it acts for; a worker never opens a session ring;
+   * and every op leaves an access line, the sensitive ones a row.
+   */
+  function guarded(op: string, handler: Handler): JsonRpcHandler {
+    return async (body, response, context) => {
+      const tenantId = str(body.tenantId);
+      const subject = subjectOf(body);
+      const sessionId = str(body.sessionId);
+      const scope: KeyRequestScope = {
+        caller: context.caller,
+        allowSession: context.caller === 'web',
+        sessionId: null,
+      };
+      const finish = async (): Promise<void> => {
+        const status = response.headersSent ? response.statusCode : 500;
+        await access.record({
+          caller: context.caller,
+          op,
+          tenantId,
+          subject,
+          target: targetOf(body),
+          outcome: outcomeOf(status),
+          status,
+          persist:
+            PERSISTED_OPS.has(op) ||
+            (op === 'keys/delegate' &&
+              Array.isArray(body.automation) &&
+              body.automation.length > 0),
+        });
+      };
+      if (context.caller === 'agents' && tenantId && subject) {
+        const runId = str(body.runId);
+        if (!runId || !(await runBelongsTo(runId, tenantId, subject))) {
+          sendError(response, 'RUN_MISMATCH', "the run named is not this person's");
+          return finish();
+        }
+      }
+      if (sessionId) {
+        if (!tenantId || !subject || !(await verifySession(db, tenantId, subject, sessionId))) {
+          sendError(response, 'SESSION_MISMATCH', "the session named is not this person's");
+          return finish();
+        }
+        scope.sessionId = sessionId;
+      }
+      try {
+        await withKeyRequestScope(scope, () => handler(body, response));
+      } finally {
+        await finish();
+      }
+    };
+  }
 
   const handlers: Record<string, Handler> = {
     // ── the person's keys ──────────────────────────────────────────────────
@@ -401,12 +501,72 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'grant/git-ticket': (body, response) => git.issue(body, response),
   };
 
+  const scopeFor = (context: CallContext): KeyRequestScope => ({
+    caller: context.caller,
+    allowSession: context.caller === 'web',
+    sessionId: null,
+  });
+
+  /** The proxy's grant header, for the access record: tenant, subject, provider — never the body. */
+  function grantHeaderOf(request: IncomingMessage): {
+    tenantId: string;
+    subject: string;
+    provider: string;
+  } {
+    const raw = request.headers['x-delegate-grant'];
+    try {
+      const parsed: unknown = JSON.parse(Array.isArray(raw) ? raw[0] : (raw ?? ''));
+      if (!isRecord(parsed)) return { tenantId: '', subject: '', provider: '' };
+      return {
+        tenantId: str(parsed.tenantId),
+        subject: str(parsed.subject) || str(parsed.accountId),
+        provider: str(parsed.provider),
+      };
+    } catch {
+      return { tenantId: '', subject: '', provider: '' };
+    }
+  }
+
   return createJsonRpcServer({
-    apiKeys: deps.apiKeys,
+    apiKeys,
+    allowOp: callerMayRun,
+    onForbidden: (caller, op) => {
+      void access.record({
+        caller,
+        op,
+        tenantId: '',
+        subject: '',
+        outcome: 'refused',
+        status: 403,
+        persist: PERSISTED_OPS.has(op),
+      });
+    },
     maxBodyBytes: MAX_JSON_BYTES,
-    handlers,
+    handlers: Object.fromEntries(
+      Object.entries(handlers).map(([op, handler]) => [op, guarded(op, handler)])
+    ),
     // The proxy streams a raw body in and the provider's answer out.
-    rawHandlers: { api: (request, response) => grants.api(request, response) },
+    rawHandlers: {
+      api: async (request, response, context) => {
+        const grant = grantHeaderOf(request);
+        const method = str(request.headers['x-delegate-method']).toUpperCase() || 'GET';
+        try {
+          await withKeyRequestScope(scopeFor(context), () => grants.api(request, response));
+        } finally {
+          const status = response.headersSent ? response.statusCode : 500;
+          await access.record({
+            caller: context.caller,
+            op: `api ${method}`,
+            tenantId: grant.tenantId,
+            subject: grant.subject,
+            target: grant.provider || undefined,
+            outcome: outcomeOf(status),
+            status,
+            persist: method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS',
+          });
+        }
+      },
+    },
     // Git over HTTPS for code workspaces: the ticket in the path is the
     // credential, so these routes sit outside the bearer check (git.ts).
     openPrefixes: [
@@ -414,9 +574,21 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     ],
     // forward/<connector>/<op>: the connector workers, with the person's
     // credential attached here (forward.ts).
-    fallback: async (op, request, response) => {
-      if (!(await forwarder.handle(op, request, response)))
-        sendError(response, 'unknown_operation');
+    fallback: async (op, request, response, context) => {
+      const handled = await withKeyRequestScope(scopeFor(context), () =>
+        forwarder.handle(op, request, response)
+      );
+      if (!handled) sendError(response, 'unknown_operation');
+      const status = response.headersSent ? response.statusCode : 500;
+      await access.record({
+        caller: context.caller,
+        op,
+        tenantId: '',
+        subject: '',
+        outcome: outcomeOf(status),
+        status,
+        persist: false,
+      });
     },
     sendError,
     onUnhandledError: (error) => {

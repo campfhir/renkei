@@ -13,8 +13,12 @@
  * with the token never leaving this process.
  *
  * Env contract:
- *   DELEGATE_WORKER_API_KEY  — required; comma-separated bearer keys the
- *     callers must present (rotation overlaps like LOG_SHIP_API_KEY).
+ *   DELEGATE_WORKER_API_KEYS — the bearer key of each calling process, as
+ *     `web=…,worker=…,agents=…` (callers.ts says what each may do). A name
+ *     may repeat for a rotation overlap.
+ *   DELEGATE_WORKER_API_KEY  — the one-shared-key form from before: comma-
+ *     separated keys that all count as the `web` caller. One of the two is
+ *     required; the development default is refused under NODE_ENV=production.
  *   DELEGATE_WORKER_PORT     — listen port, default 8096.
  *   TOKEN_ENCRYPTION_KEY     — the org-wide secrets key: the OAuth client
  *     secrets in connector_configs that a token refresh needs.
@@ -33,6 +37,7 @@ import { runWorker } from '@renkei/worker-kit';
 import { createDelegateServer } from './server';
 import { registerInstance } from './instance';
 import { logger, attachPersistentLogging } from './logger';
+import { CALLER_OPS, developmentKeyRefusal } from './callers';
 import { standInViolations } from './providers';
 
 // A provider stand-in (GITHUB_API_BASE_URL and friends) lets a person's
@@ -51,9 +56,25 @@ void runWorker({
   name: 'worker-delegate',
   envPrefix: 'DELEGATE_WORKER',
   defaultPort: 8096,
+  // The plain DELEGATE_WORKER_API_KEY is the web app's: the one caller
+  // that may run everything, which is what every key could do before.
+  defaultCallerName: 'web',
   logger,
   attachPersistentLogging,
-  createServer: ({ db, encryptionKey, apiKeys }) => {
+  createServer: ({ db, encryptionKey, apiKeys, namedApiKeys }) => {
+    const refusal = developmentKeyRefusal(apiKeys);
+    if (refusal) {
+      console.error(`FATAL [worker-delegate]: ${refusal}`);
+      process.exit(1);
+    }
+    for (const entry of namedApiKeys) {
+      if (!Object.prototype.hasOwnProperty.call(CALLER_OPS, entry.name)) {
+        logger.warn(
+          'DELEGATE_WORKER_API_KEYS names the caller {caller}, which callers.ts does not know: that key may run nothing',
+          { component: 'worker-delegate/server', caller: entry.name }
+        );
+      }
+    }
     void registerInstance(db, logger)
       .then(async (instance) => {
         const retire = (): void => {
@@ -81,7 +102,7 @@ void runWorker({
         );
         process.exit(1);
       });
-    return createDelegateServer({ db, encryptionKey, apiKeys, logger });
+    return createDelegateServer({ db, encryptionKey, apiKeys: namedApiKeys, logger });
   },
 });
 

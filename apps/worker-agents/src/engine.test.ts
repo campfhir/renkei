@@ -38,28 +38,30 @@ let ownerDelegated = true;
 let keyServiceUp = true;
 jest.mock('@renkei/delegate-client', () => ({
   delegateClient: () => ({
-    keyStatus: async () =>
-      keyServiceUp
-        ? {
-            ok: true,
-            val: {
-              enrolled: true,
-              legacy: false,
-              legacyNeedsPassphrase: false,
-              publicKey: 'stub',
-              wrappedPrivateKey: 'stub',
-              wrappedAutomationKey: 'stub',
-              version: 1,
-              enrolledAt: new Date(),
-              sessionInstances: [],
-              thisSessionInstances: [],
-              automationInstances: ownerDelegated ? ['instance-1'] : [],
-              automationUntil: ownerDelegated ? new Date(Date.now() + 86_400_000) : null,
-            },
-          }
-        : { ok: false, err: { type: 'internal', message: 'down' } },
+    forRun: () => ({ keyStatus: stubKeyStatus }),
+    keyStatus: stubKeyStatus,
   }),
 }));
+const stubKeyStatus = async () =>
+  keyServiceUp
+    ? {
+        ok: true,
+        val: {
+          enrolled: true,
+          legacy: false,
+          legacyNeedsPassphrase: false,
+          publicKey: 'stub',
+          wrappedPrivateKey: 'stub',
+          wrappedAutomationKey: 'stub',
+          version: 1,
+          enrolledAt: new Date(),
+          sessionInstances: [],
+          thisSessionInstances: [],
+          automationInstances: ownerDelegated ? ['instance-1'] : [],
+          automationUntil: ownerDelegated ? new Date(Date.now() + 86_400_000) : null,
+        },
+      }
+    : { ok: false, err: { type: 'internal', message: 'down' } };
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 

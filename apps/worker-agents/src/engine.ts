@@ -1095,7 +1095,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // rather than failed: the owner's next sign-in (the web app's
     // keys/delegate route) re-queues it, and it runs then with a note on
     // why it is late. A key service that cannot be reached is transient.
-    const owner = await delegateClient().keyStatus(tenantId, run.owner_subject);
+    // Asked as THIS run: the delegate checks the run is the owner's before
+    // it says anything about them (the agents worker's binding).
+    const owner = await delegateClient().forRun(runId).keyStatus(tenantId, run.owner_subject);
     if (!owner.ok) throw new TransientFailure('key service unavailable');
     const delegated =
       owner.val.enrolled &&

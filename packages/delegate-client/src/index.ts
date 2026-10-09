@@ -40,7 +40,10 @@ import {
 
 export {
   DelegateTransport,
+  delegateApiKeyFromEnv,
   delegateConfigFromEnv,
+  developmentDelegateKeyRefusal,
+  DEVELOPMENT_DELEGATE_KEY,
   type DelegateCallError,
   type DelegateConfig,
   type DelegateTransportError,
@@ -162,6 +165,20 @@ export class DelegateClient {
 
   get configured(): boolean {
     return this.transport.configured;
+  }
+
+  /**
+   * This client's ops bound to a browser session: the delegate checks the
+   * session is the subject's and live, and opens that session's delegation
+   * alone (docs/delegate-key-design.md, "Callers").
+   */
+  forSession(sessionId: string): DelegateClient {
+    return new DelegateClient(this.transport.withBound({ sessionId }));
+  }
+
+  /** The agents worker's ops bound to the run they serve: the delegate checks the run is the subject's. */
+  forRun(runId: string): DelegateClient {
+    return new DelegateClient(this.transport.withBound({ runId }));
   }
 
   private async key(

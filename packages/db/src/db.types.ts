@@ -1362,6 +1362,18 @@ export interface KeyDelegations {
   tenant_id: string;
 }
 
+export interface DelegateAccessEvents {
+  caller: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  op: string;
+  outcome: string;
+  status: number;
+  subject_hash: string | null;
+  target: string | null;
+  tenant_id: string | null;
+}
+
 export interface DelegateGitTickets {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
@@ -1592,6 +1604,7 @@ export interface DB {
   chat_user_memories: ChatUserMemories;
   chat_widget_decisions: ChatWidgetDecisions;
   chats: Chats;
+  delegate_access_events: DelegateAccessEvents;
   delegate_git_tickets: DelegateGitTickets;
   delegate_instances: DelegateInstances;
   device_key_requests: DeviceKeyRequests;

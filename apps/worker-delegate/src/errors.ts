@@ -31,7 +31,10 @@ export type DelegateErrorType =
   | 'ALREADY_ENROLLED'
   | 'MIGRATION_UNAVAILABLE'
   | 'KEY_LOCKED'
-  | 'WRONG_PASSPHRASE';
+  | 'WRONG_PASSPHRASE'
+  // the caller's binding (server.ts): the session or run named is not this person's
+  | 'SESSION_MISMATCH'
+  | 'RUN_MISMATCH';
 
 export function statusForError(type: DelegateErrorType): number {
   switch (type) {
@@ -41,8 +44,11 @@ export function statusForError(type: DelegateErrorType): number {
       return 400;
     case 'unauthorized':
       return 401;
+    case 'forbidden':
     case 'NO_ACCESS':
     case 'WRONG_PASSPHRASE':
+    case 'SESSION_MISMATCH':
+    case 'RUN_MISMATCH':
       return 403;
     case 'unknown_operation':
     case 'NO_KEY':

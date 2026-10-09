@@ -16,6 +16,7 @@
  */
 
 import { getDatabase, closeDatabase } from '@renkei/db';
+import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { agentJobsQueue, webhookEventsQueue } from '@renkei/queue';
 import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentRunHandler } from './engine';
@@ -64,6 +65,14 @@ function webBaseUrl(): string {
 }
 
 async function main(): Promise<void> {
+  // The delegate key is this process's identity to the key service; the
+  // compose file's development default is refused in production
+  // (docs/delegate-key-design.md, "Callers").
+  const delegateKeyRefusal = developmentDelegateKeyRefusal();
+  if (delegateKeyRefusal) {
+    console.error(`FATAL [worker-agents]: ${delegateKeyRefusal}`);
+    process.exit(1);
+  }
   await attachPersistentLogging();
   // CONSOLE_LOG_LEVEL/LOG_DB_LEVEL only set the level for the few seconds
   // before the database is reachable; once it is, the org `logLevel` dial
