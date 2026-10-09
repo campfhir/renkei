@@ -683,7 +683,7 @@ describeDb('worker-delegate', () => {
     expect(offsite.status).toBe(302);
     expect(offsite.headers.get('location')).toBe('https://evil.example.com/steal');
     expect(upstreamCalls.length).toBe(dialedBefore + 1);
-    expect(upstreamCalls.some((call) => call.url.startsWith('https://evil.example.com'))).toBe(
+    expect(upstreamCalls.some((call) => new URL(call.url).hostname === 'evil.example.com')).toBe(
       false
     );
 

@@ -29,7 +29,8 @@ export function hostKeyFingerprint(key: Uint8Array): string {
 export function normalizeHostKeyFingerprint(raw: string): string | null | undefined {
   const text = raw.trim();
   if (!text) return null;
-  const body = text.replace(/^sha256:/i, '').replace(/=+$/, '');
+  let body = text.replace(/^sha256:/i, '');
+  while (body.endsWith('=')) body = body.slice(0, -1);
   const candidate = `SHA256:${body}`;
   return FINGERPRINT_PATTERN.test(candidate) ? candidate : undefined;
 }

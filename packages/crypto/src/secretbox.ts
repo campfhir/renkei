@@ -24,7 +24,7 @@
 import {
   createCipheriv,
   createDecipheriv,
-  createHash,
+  hkdfSync,
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
@@ -74,9 +74,16 @@ export function parseEncryptionKey(encoded: string): Result<Buffer, 'INVALID_ENC
   return ok(key);
 }
 
-/** The key's id as a `v2` envelope names it: the first 8 hex characters of SHA-256(key). */
+/**
+ * The key's id as a `v2` envelope names it: 8 hex characters derived from
+ * the key with HKDF-SHA256 under a fixed label. A derivation rather than a
+ * bare digest, so the id reveals nothing usable about the key and no scanner
+ * mistakes it for a password hash.
+ */
 export function keyId(key: Buffer): string {
-  return createHash('sha256').update(key).digest('hex').slice(0, KID_HEX_CHARS);
+  return Buffer.from(
+    hkdfSync('sha256', key, Buffer.alloc(0), 'renkei/key-id/v1', KID_HEX_CHARS / 2)
+  ).toString('hex');
 }
 
 /** The current key first, then the previous ones; a bare key is a ring of one. */
