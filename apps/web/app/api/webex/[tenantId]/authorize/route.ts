@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getWebexUserApp, WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { WEBEX_REQUIRED_SCOPES } from '@/lib/webex-scopes';
 import { getOrigin } from '@/lib/get-origin';
@@ -100,5 +101,6 @@ export async function GET(
   authUrl.searchParams.append('scope', effectiveScopes);
   authUrl.searchParams.append('state', state);
 
-  return NextResponse.redirect(authUrl.toString());
+  // Bound to this browser: the callback requires the cookie this sets.
+  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
 }

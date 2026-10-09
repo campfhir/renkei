@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getMicrosoftApp, MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { MICROSOFT_REQUIRED_SCOPES } from '@/lib/microsoft-scopes';
 import { getOrigin } from '@/lib/get-origin';
@@ -105,5 +106,6 @@ export async function GET(
   authUrl.searchParams.append('state', state);
   authUrl.searchParams.append('prompt', 'select_account');
 
-  return NextResponse.redirect(authUrl.toString());
+  // Bound to this browser: the callback requires the cookie this sets.
+  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
 }

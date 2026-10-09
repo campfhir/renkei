@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { bindConnectFlow } from '@/lib/connect-flow-binding';
 import { getOnBaseApp, onbaseAuthorizeScopes, ONBASE_ADMIN_CONNECTOR } from '@/lib/onbase-app';
 import { obDiscover, onbaseClientFailure } from '@/lib/onbase/service-client';
 import { getOrigin } from '@/lib/get-origin';
@@ -53,7 +54,10 @@ export async function GET(
   const session = await getSessionFromRequest(request, tenantId);
   if (!session) {
     return NextResponse.json(
-      { error: 'Not signed in', error_description: 'Sign in before connecting OnBase Administration' },
+      {
+        error: 'Not signed in',
+        error_description: 'Sign in before connecting OnBase Administration',
+      },
       { status: 401 }
     );
   }
@@ -114,5 +118,6 @@ export async function GET(
   authUrl.searchParams.append('code_challenge', codeChallenge);
   authUrl.searchParams.append('code_challenge_method', 'S256');
 
-  return NextResponse.redirect(authUrl.toString());
+  // Bound to this browser: the callback requires the cookie this sets.
+  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), tenantId, state);
 }

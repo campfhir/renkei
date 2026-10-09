@@ -64,7 +64,9 @@ const NON_SESSION_AUTH: Record<string, string> = {
     'owner whose run history the analysis may read, and the row is read under that subject',
   'api/mcp/[tenantId]/oauth/token/route.ts':
     'OAuth token endpoint: client secret + PKCE code_verifier',
-  'api/oauth/callback/route.ts': 'single-use OAuth state row bound to the pending authorization',
+  'api/oauth/callback/route.ts':
+    'single-use OAuth state row bound to the pending authorization, to the starting ' +
+    'browser (connect_state_ cookie) and to its session subject (lib/connect-flow-binding.ts)',
   'api/upload/[slotId]/route.ts': 'opaque per-slot bearer, single-use claim, expiring',
   'api/webhooks/microsoft/[tenantId]/[accountId]/route.ts':
     'per-subscription clientState secret matched against webhook_subscriptions',

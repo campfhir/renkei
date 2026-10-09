@@ -827,7 +827,7 @@ find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 - [x] Security headers configured (X-Frame-Options, etc.)
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)
-- [x] CSRF protection (state verification in OAuth)
+- [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`)
 - [x] XSS protection (React escaping, no dangerouslySetInnerHTML)
 
 ## Troubleshooting
