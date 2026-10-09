@@ -36,7 +36,8 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export function base64ToBytes(text: string): Bytes | null {
-  const clean = text.replace(/[\s=]+$/g, '').replace(/\s+/g, '');
+  let clean = text.replace(/\s+/g, '');
+  while (clean.endsWith('=')) clean = clean.slice(0, -1);
   if (!/^[A-Za-z0-9+/]*$/.test(clean)) return null;
   const out: number[] = [];
   let buffer = 0;

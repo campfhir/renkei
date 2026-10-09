@@ -146,9 +146,19 @@ export class ScriptRunError extends Error {
  * finds (a developer's machine). Null when none is executable.
  */
 export async function resolvePython(configured: string | undefined): Promise<string | null> {
-  const candidates = [configured?.trim(), DEFAULT_PYTHON, 'python3'].filter(
-    (candidate): candidate is string => Boolean(candidate)
-  );
+  const candidates = [DEFAULT_PYTHON, 'python3'];
+  const explicit = configured?.trim();
+  if (explicit) {
+    // An interpreter path is spawned as the command of every run, so it is
+    // held to a plain shape: a bare command name (`python3`), or an absolute
+    // path (`/opt/sandbox-python/bin/python3`) of letters, digits and
+    // `_ . + -` — nothing a shell or `ps` would misread.
+    if (/^(?:[A-Za-z0-9_.+-]+|\/[A-Za-z0-9_.+/-]*)$/.test(explicit)) candidates.unshift(explicit);
+    else
+      throw new Error(
+        `SANDBOX_PYTHON must be a command name or an absolute path made of letters, digits, '_', '.', '+', '-' and '/': ${JSON.stringify(explicit)}`
+      );
+  }
   for (const candidate of candidates) {
     if (!candidate.includes('/')) return candidate;
     try {

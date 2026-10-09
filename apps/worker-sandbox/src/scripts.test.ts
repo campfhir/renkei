@@ -155,6 +155,23 @@ beforeEach(() => {
   }));
 });
 
+describe('the configured interpreter', () => {
+  it('accepts a command name or a plain absolute path', async () => {
+    expect(await resolvePython('python3')).toBe('python3');
+    expect(await resolvePython('  python3.12  ')).toBe('python3.12');
+    // A path is only returned when it is executable; a plain one that is
+    // not falls through to the defaults rather than being refused.
+    const fallback = await resolvePython('/opt/no-such-python/bin/python3');
+    expect(fallback === null || !fallback.startsWith('/opt/no-such')).toBe(true);
+  });
+
+  it('refuses a path a shell or ps would misread', async () => {
+    for (const odd of ['python3; id', '/opt/py thon/bin/python3', 'relative/python3', '$HOME/py']) {
+      await expect(resolvePython(odd)).rejects.toThrow(/SANDBOX_PYTHON must be/);
+    }
+  });
+});
+
 describe('the boot decision for scripts', () => {
   it('serves isolated runs whichever way the namespace is made', () => {
     for (const mode of NETWORK_ISOLATION_MODES) {

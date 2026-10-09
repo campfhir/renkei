@@ -59,6 +59,7 @@ import {
   rename,
   rm,
   stat,
+  writeFile,
 } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import {
@@ -72,8 +73,9 @@ import {
   subjectSegmentOf,
 } from '@renkei/connector-sandbox';
 import { logger } from './logger';
+import { configuredDirectory } from './configured-path';
 
-let workspacesRoot = process.env.SANDBOX_WORKSPACES_DIR || '/workspaces';
+let workspacesRoot = configuredDirectory('SANDBOX_WORKSPACES_DIR', '/workspaces');
 
 /** Test-only override; production reads SANDBOX_WORKSPACES_DIR once at boot. */
 export function setWorkspacesRootForTests(dir: string): void {
@@ -915,18 +917,16 @@ export async function writeWorkspaceFile(
   // window between a check and the write for one to appear in.
   const { O_WRONLY, O_CREAT, O_EXCL, O_TRUNC, O_NOFOLLOW } = fsConstants;
   let created = true;
-  let handle;
   try {
-    handle = await open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644);
+    await writeFile(path, bytes, { flag: O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode: 0o644 });
   } catch (error) {
     if (errnoCode(error) !== 'EEXIST') throw error;
     created = false;
-    // Not a check-then-use: both opens carry O_NOFOLLOW, so a link slipped
-    // in between them is refused by the kernel; only `created` could be
-    // stale, and it is informational.
+    // Not a check-then-use: both writes open with O_NOFOLLOW, so a link
+    // slipped in between them is refused by the kernel; only `created`
+    // could be stale, and it is informational.
     try {
-      // codeql[js/file-system-race]
-      handle = await open(path, O_WRONLY | O_TRUNC | O_NOFOLLOW);
+      await writeFile(path, bytes, { flag: O_WRONLY | O_TRUNC | O_NOFOLLOW });
     } catch (inner) {
       const code = errnoCode(inner);
       if (code === 'ELOOP')
@@ -936,11 +936,6 @@ export async function writeWorkspaceFile(
       if (code === 'EISDIR') throw new WorkspacePathError(`${relativePath} is a directory.`);
       throw inner;
     }
-  }
-  try {
-    await handle.writeFile(bytes);
-  } finally {
-    await handle.close();
   }
   await chownIf(path, identity);
   return { created, sizeBytes: bytes.byteLength };

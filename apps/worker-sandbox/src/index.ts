@@ -106,6 +106,7 @@ import { ChartRenderer } from './charts';
 import { SecretVault } from './secret-vault';
 import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
+import { configuredDirectory } from './configured-path';
 import { watchLogLevel } from '@renkei/settings';
 
 /**
@@ -343,7 +344,7 @@ async function main(): Promise<void> {
     if (scriptsDecision.serve) {
       const runner = new ScriptRunner({
         db: dbResult.val,
-        runsRoot: (process.env.SANDBOX_RUNS_DIR ?? '').trim() || '/runs',
+        runsRoot: configuredDirectory('SANDBOX_RUNS_DIR', '/runs'),
         python,
         networkIsolation: isolation.mode,
         memoryBytes,

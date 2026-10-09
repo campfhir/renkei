@@ -24,8 +24,9 @@ import {
   stat,
 } from 'node:fs/promises';
 import { join } from 'node:path';
+import { configuredDirectory } from './configured-path';
 
-let dataRoot = process.env.SANDBOX_DATA_DIR || '/data';
+let dataRoot = configuredDirectory('SANDBOX_DATA_DIR', '/data');
 
 /** Test-only override; production always reads SANDBOX_DATA_DIR once at boot. */
 export function setDataRootForTests(dir: string): void {

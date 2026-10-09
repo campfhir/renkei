@@ -102,6 +102,11 @@ describe('the browser half speaks the node wire', () => {
       expect(back && Buffer.from(back).equals(raw)).toBe(true);
     }
     expect(base64ToBytes('not base64!')).toBeNull();
+    // Padding and whitespace are tolerated wherever a copy-paste puts them.
+    const padded = Buffer.from('ab');
+    expect(Buffer.from(base64ToBytes('YWI=\n')!).equals(padded)).toBe(true);
+    expect(Buffer.from(base64ToBytes(' YW I= = ')!).equals(padded)).toBe(true);
+    expect(Buffer.from(base64ToBytes('YWI')!).equals(padded)).toBe(true);
   });
 });
 
