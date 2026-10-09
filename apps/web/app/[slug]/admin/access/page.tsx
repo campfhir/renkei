@@ -10,6 +10,7 @@ import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
 import RevokeGrantButton from './revoke-grant-button';
 import ShredKeyButton from './shred-key-button';
+import RevokeSessionsButton from './revoke-sessions-button';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
@@ -154,8 +155,10 @@ export default async function AccessPage({
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Who is connected to what: everyone who has signed in or linked an account, and each
         connector they hold. Disconnecting cuts Renkei&apos;s access immediately — the person can
-        reconnect any time. Removing a person&apos;s encryption key is final: it is for someone who
-        is gone and whose key is lost. A person&apos;s usage, groups and agents are on{' '}
+        reconnect any time. Signing a person out ends every browser session and MCP client token
+        they hold — they sign in again and nothing of theirs is lost. Removing a person&apos;s
+        encryption key is final: it is for someone who is gone and whose key is lost. A
+        person&apos;s usage, groups and agents are on{' '}
         <Link
           href={`/${slug}/admin/usage`}
           className="text-blue-600 hover:underline dark:text-blue-400"
@@ -202,14 +205,20 @@ export default async function AccessPage({
                           {person.email}
                         </span>
                       )}
-                      {keyModeBySubject.has(person.subject) &&
-                      person.subject !== session.subject ? (
-                        <span className="mt-1 block">
-                          <ShredKeyButton
+                      {person.subject !== session.subject ? (
+                        <span className="mt-1 flex flex-wrap gap-1">
+                          <RevokeSessionsButton
                             slug={slug}
                             subject={person.subject}
                             displayName={person.name}
                           />
+                          {keyModeBySubject.has(person.subject) ? (
+                            <ShredKeyButton
+                              slug={slug}
+                              subject={person.subject}
+                              displayName={person.name}
+                            />
+                          ) : null}
                         </span>
                       ) : null}
                     </td>

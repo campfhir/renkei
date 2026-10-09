@@ -379,61 +379,137 @@ async function handleRefreshTokenGrant(
       );
     }
 
-    // Find the refresh token for this tenant. Matched on the digest — the
-    // presented token is never compared against anything stored in the clear.
+    // Rotation with reuse detection (migration 147), in one transaction so
+    // the presented token is retired exactly when its successor exists.
+    // The row is locked for the duration: two concurrent refreshes with the
+    // same token must serialize, and the second must see the first's
+    // rotation rather than both succeeding.
     const presentedHash = hashToken(refresh_token);
-    const token = await db
-      .selectFrom('oauth_refresh_tokens')
-      .selectAll()
-      .where('token_hash', '=', presentedHash)
-      .where('tenant_id', '=', tenantId)
-      .executeTakeFirst();
-
-    if (!token || !digestsMatch(token.token_hash, presentedHash)) {
-      return NextResponse.json(
-        { error: 'invalid_grant', error_description: 'Refresh token not found' },
-        { status: 400 }
-      );
-    }
-
-    if (token.client_id !== client_id) {
-      return NextResponse.json(
-        { error: 'invalid_grant', error_description: 'Client ID mismatch' },
-        { status: 400 }
-      );
-    }
-
-    if (new Date() > token.expires_at) {
-      await db.deleteFrom('oauth_refresh_tokens').where('token_id', '=', token.token_id).execute();
-      return NextResponse.json(
-        { error: 'invalid_grant', error_description: 'Refresh token expired' },
-        { status: 400 }
-      );
-    }
-
-    // Generate new access token
     const accessToken = generateSecret(32);
+    const nextRefreshToken = generateSecret(32);
     const tokenExpiresIn = settings.accessTokenTtlMinutes * 60;
 
-    // Carry the original grant's subject and roles forward — the refreshed
-    // token must act as the same person with the same roles, not as
-    // whoever holds the refresh token. Roles do not get re-checked against
-    // the IdP here; see the authorize route for where they were captured.
-    await storeAccessToken({
-      token: accessToken,
-      tenantId,
-      clientId: client_id,
-      subject: token.subject,
-      scope: token.scope,
-      roles: token.roles,
-      ttlSeconds: tokenExpiresIn,
+    const outcome = await db.transaction().execute(async (trx) => {
+      // Matched on the digest — the presented token is never compared
+      // against anything stored in the clear.
+      const token = await trx
+        .selectFrom('oauth_refresh_tokens')
+        .selectAll()
+        .where('token_hash', '=', presentedHash)
+        .where('tenant_id', '=', tenantId)
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!token || !digestsMatch(token.token_hash, presentedHash)) {
+        return { error: 'Refresh token not found' } as const;
+      }
+
+      if (token.client_id !== client_id) {
+        return { error: 'Client ID mismatch' } as const;
+      }
+
+      if (new Date() > token.expires_at) {
+        // The family's time is up: every rotated predecessor goes with it.
+        await trx
+          .deleteFrom('oauth_refresh_tokens')
+          .where('tenant_id', '=', tenantId)
+          .where('family_id', '=', token.family_id)
+          .execute();
+        return { error: 'Refresh token expired' } as const;
+      }
+
+      if (token.rotated_at !== null) {
+        // REUSE. This token was already exchanged for a successor, so two
+        // parties hold copies of the family's history — the client (a retry
+        // that lost its response) or whoever lifted the token from it. The
+        // server cannot tell which, so the whole family dies: every refresh
+        // token descended from this authorization, and the subject's access
+        // tokens for this client. A legitimate client re-authorizes through
+        // the browser; a thief's copies stop working now.
+        await trx
+          .deleteFrom('oauth_refresh_tokens')
+          .where('tenant_id', '=', tenantId)
+          .where('family_id', '=', token.family_id)
+          .execute();
+        await trx
+          .deleteFrom('oauth_access_tokens')
+          .where('tenant_id', '=', tenantId)
+          .where('client_id', '=', client_id)
+          .where('subject', '=', token.subject)
+          .where('application', '=', 'jira')
+          .execute();
+        logger.warn('Refresh token reuse detected; family revoked', {
+          component: 'auth/oauth-token',
+          tenantId,
+          client_id,
+          subject: token.subject,
+          familyId: token.family_id,
+        });
+        return { error: 'Refresh token reuse detected; authorize again' } as const;
+      }
+
+      // The roles the refreshed token acts with are re-derived from the
+      // subject's CURRENT browser session when one exists — the freshest
+      // thing the IdP has asserted about them, re-minted at every sign-in —
+      // rather than frozen at the original authorization. Without a live
+      // session the frozen roles stand, bounded by the family's lifetime
+      // below (there is no other durable store of a person's roles: the
+      // IdP asserts them only at sign-in).
+      const roles = await currentRolesFor(trx, tenantId, token.subject, token.roles);
+
+      await trx
+        .updateTable('oauth_refresh_tokens')
+        .set({ rotated_at: new Date() })
+        .where('token_id', '=', token.token_id)
+        .execute();
+      await trx
+        .insertInto('oauth_refresh_tokens')
+        .values({
+          token_id: randomUUID(),
+          tenant_id: tenantId,
+          client_id,
+          subject: token.subject,
+          scope: token.scope,
+          roles,
+          token_hash: hashToken(nextRefreshToken),
+          family_id: token.family_id,
+          // The family's absolute lifetime, fixed at the original
+          // authorization: rotation never extends it, so stale roles and a
+          // stolen copy alike can outlive sign-in by at most
+          // refreshTokenTtlDays.
+          expires_at: token.expires_at,
+        })
+        .execute();
+
+      // Carry the original grant's subject forward — the refreshed token
+      // must act as the same person, not as whoever holds the refresh token.
+      await storeAccessToken({
+        token: accessToken,
+        tenantId,
+        clientId: client_id,
+        subject: token.subject,
+        scope: token.scope,
+        roles,
+        ttlSeconds: tokenExpiresIn,
+        db: trx,
+      });
+
+      return { scope: token.scope } as const;
     });
+
+    if ('error' in outcome) {
+      return NextResponse.json(
+        { error: 'invalid_grant', error_description: outcome.error },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json({
       access_token: accessToken,
       token_type: 'Bearer',
       expires_in: tokenExpiresIn,
-      scope: token.scope || 'openid profile email',
+      refresh_token: nextRefreshToken,
+      scope: outcome.scope || 'openid profile email',
     });
   } catch (error) {
     logger.error('Refresh token grant error: {detail}', {
@@ -442,6 +518,30 @@ async function handleRefreshTokenGrant(
     });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
+}
+
+/**
+ * The subject's roles as of their most recent live browser session in this
+ * tenant, or `fallback` when they hold none. A session's roles are what the
+ * IdP asserted at that sign-in (lib/session.ts), so the newest one is the
+ * closest thing to "current" the server has.
+ */
+async function currentRolesFor(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string,
+  fallback: string[]
+): Promise<string[]> {
+  const live = await db
+    .selectFrom('sessions')
+    .select('roles')
+    .where('tenant_id', '=', tenantId)
+    .where('subject', '=', subject)
+    .where('expires_at', '>', new Date())
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return live ? live.roles : fallback;
 }
 
 function computeS256(codeVerifier: string): string {

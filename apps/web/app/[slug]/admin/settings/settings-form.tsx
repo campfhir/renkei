@@ -23,6 +23,7 @@ export interface EditableSettings {
   accessTokenTtlMinutes: number;
   authorizationCodeTtlSeconds: number;
   refreshTokenTtlDays: number;
+  sessionIdleTimeoutMinutes: number;
   agentMaxChainDepth: number;
   agentRunTimeoutMinutes: number;
   agentMaxStepAttempts: number;
@@ -372,6 +373,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How long the one-time code in the OAuth redirect stays valid."
         >
           {numberInput('authorizationCodeTtlSeconds', '30–600')}
+        </Row>
+        <Row
+          label="Browser session idle timeout (minutes)"
+          hint="How long a signed-in browser may sit unused before it is signed out. Default 12 hours; sessions end after 30 days regardless."
+        >
+          {numberInput('sessionIdleTimeoutMinutes', '15–43,200')}
         </Row>
       </Section>
 

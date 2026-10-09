@@ -1096,7 +1096,11 @@ export interface OauthRefreshTokens {
   client_id: string;
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
+  /** Every token descended from one authorization shares this (migration 147); reuse revokes the family. */
+  family_id: Generated<string>;
   roles: Generated<string[]>;
+  /** Set when this token was exchanged for its successor; presenting it again is reuse. */
+  rotated_at: Timestamp | null;
   scope: string | null;
   subject: string;
   tenant_id: string;

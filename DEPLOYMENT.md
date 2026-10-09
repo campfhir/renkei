@@ -845,6 +845,25 @@ things nobody else sees:
 Asking to create a tenant for a domain that is already claimed answers 409
 without the tenant's id.
 
+## Sessions, tokens and revocation
+
+- Browser sessions end after 30 days, or after the org's **Browser session
+  idle timeout** (admin → Settings, default 12 hours) without a request —
+  whichever comes first.
+- MCP refresh tokens rotate on every use (migration 147): each refresh
+  returns a new `refresh_token` and retires the presented one; presenting a
+  retired token again revokes that whole token family and the subject's
+  access tokens for the client. Rotation never extends the family's
+  lifetime (**Refresh token lifetime**, default 30 days), and a refreshed
+  token takes the roles of the subject's newest live browser session when
+  one exists, the original roles otherwise.
+- Operators end a person's access from admin → Access: **Sign out
+  everywhere** deletes their sessions, access tokens and refresh tokens and
+  writes a `user.sessions_revoked` audit event; disconnecting a connector
+  grant there also deletes that person's MCP tokens.
+- The legacy `/api/tenant/<id>/sessions` endpoint (it read the unused
+  `jira_sessions` table) is gone.
+
 ## Security Checklist
 
 - [x] HTTPS enabled (TLS 1.2+)

@@ -78,6 +78,14 @@ export interface OrgSettings {
   authorizationCodeTtlSeconds: number;
   refreshTokenTtlDays: number;
   /**
+   * How long a browser session may go unused before it is ended, in
+   * minutes (apps/web/lib/session.ts). The absolute 30-day lifetime still
+   * caps it. Twelve hours by default: a working day plus slack, so a
+   * laptop left signed in overnight on a shared desk is not a signed-in
+   * laptop in the morning.
+   */
+  sessionIdleTimeoutMinutes: number;
+  /**
    * Best-effort removal of identifiers from MCP tool results before they reach
    * a model (@renkei/redaction). On by default: the shipped detectors are
    * precise enough to run untuned, and a protection nobody switches on
@@ -281,6 +289,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   accessTokenTtlMinutes: 60,
   authorizationCodeTtlSeconds: 60,
   refreshTokenTtlDays: 30,
+  sessionIdleTimeoutMinutes: 720,
   redactionEnabled: true,
   redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],
   redactionMrnFormats: [],
@@ -397,6 +406,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     refreshTokenTtlDays: Number(
       coerce(stored.get('refresh_token_ttl_days'), d.refreshTokenTtlDays)
     ),
+    sessionIdleTimeoutMinutes: Number(
+      coerce(stored.get('session_idle_timeout_minutes'), d.sessionIdleTimeoutMinutes)
+    ),
     redactionEnabled: Boolean(coerce(stored.get('redaction_enabled'), d.redactionEnabled)),
     redactionDetectors: coerceStringList(stored.get('redaction_detectors'), d.redactionDetectors),
     // A new key rather than a reused one: the old `redaction_mrn_patterns`
@@ -479,6 +491,7 @@ export async function setOrgSettings(
     ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
     ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],
     ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
+    ['session_idle_timeout_minutes', updates.sessionIdleTimeoutMinutes],
     ['redaction_enabled', updates.redactionEnabled],
     ['redaction_detectors', updates.redactionDetectors],
     ['redaction_mrn_formats', updates.redactionMrnFormats],

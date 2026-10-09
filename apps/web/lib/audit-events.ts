@@ -21,6 +21,8 @@ import { logger } from '@/lib/logger';
 export type AuditAction =
   | 'user.signed_in'
   | 'user.signed_out'
+  /** An operator ended every session and MCP token of a person (details: subject, counts). */
+  | 'user.sessions_revoked'
   | 'connector.connected'
   | 'connector.disconnected'
   | 'connector.audience_updated'
