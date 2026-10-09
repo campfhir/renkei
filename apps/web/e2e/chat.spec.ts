@@ -468,7 +468,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     // CSS counter rather than a character the markup carries, so Copy
     // above and here both still return bare code, numbers or not.
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'theme', '{\"mode\":\"auto\",\"codeLineNumbers\":true}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'theme', '{"mode":"auto","codeLineNumbers":true}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
       [E2E_SUBJECT]
     );
     try {
@@ -494,7 +494,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
         );
     } finally {
       await client.query(
-        `UPDATE user_preferences SET value = '{\"mode\":\"auto\",\"codeLineNumbers\":false}'::jsonb\n         WHERE subject = $1 AND key = 'theme'`,
+        `UPDATE user_preferences SET value = '{"mode":"auto","codeLineNumbers":false}'::jsonb\n         WHERE subject = $1 AND key = 'theme'`,
         [E2E_SUBJECT]
       );
       await page.reload();

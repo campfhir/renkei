@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
 import { COACH_MARK_TOURS } from '../lib/coach-marks/tours';
-import { AGENT_RICH_ID, E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { AGENT_RICH_ID, E2E_SLUG, E2E_SUBJECT } from './seed';
 
 /** A project and a prompt library of the seed's person, made for the walk and removed after. */
 const WALK_PROJECT_ID = '77777777-7777-4777-8777-77777777c0a1';

@@ -276,7 +276,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
     async api(body, response) {
       const target = targetOf(body);
       if (!target)
-        return sendError(response, 'bad_request', 'tenantId, instanceId and subject are required');
+        return sendError(response, 'bad_request', 'instanceId and subject are required');
       const method = str(body.method).toUpperCase();
       const path = str(body.path);
       if (!isHttpMethod(method)) {
@@ -344,7 +344,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         return sendError(
           response,
           'bad_request',
-          'tenantId, instanceId and credentials are required'
+          'instanceId and credentials are required'
         );
       }
       const instance = await resolveOne(instanceId);
@@ -446,7 +446,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       // rather than leave it to idle out. Best-effort by contract.
       const target = targetOf(body);
       if (!target)
-        return sendError(response, 'bad_request', 'tenantId, instanceId and subject are required');
+        return sendError(response, 'bad_request', 'instanceId and subject are required');
       const cookie = sessionCookie(target.instanceId, target.subject);
       forgetSession(target.instanceId, target.subject);
       if (!cookie) return sendJson(response, 200, { loggedOut: false });

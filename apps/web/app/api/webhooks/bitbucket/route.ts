@@ -1,6 +1,6 @@
 /**
  * Bitbucket webhook receipt — same shape as
- * webhooks/github/[tenantId]/route.ts and webhooks/zoom/[tenantId]/route.ts
+ * webhooks/github/route.ts and webhooks/zoom/route.ts
  * (RENKEI.md Decision #17): verify, enqueue the raw delivery,
  * acknowledge. Matching and acting happens in the worker
  * (apps/worker/src/handlers/pr-pipeline-events.ts).
@@ -75,7 +75,6 @@ export async function POST(
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
-  const db = dbResult.val;
   const configResult = await readConnectorConfigCached(
     ATLASSIAN_BITBUCKET_CONNECTOR,
     keyResult.val

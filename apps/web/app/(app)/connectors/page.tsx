@@ -1,5 +1,5 @@
 import React from 'react';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { countPendingChangeRequests } from '@/lib/jira-admin/change-requests';
 import { getSessionFromCookies } from '@/lib/session';

@@ -54,7 +54,7 @@ beforeEach(() => {
 describe('GET', () => {
   test('a signed-out request is refused', async () => {
     getSessionFromRequest.mockResolvedValue(null);
-    const response = await GET();
+    const response = await GET(new NextRequest('http://x'));
     expect(response.status).toBe(401);
   });
 
@@ -73,7 +73,7 @@ describe('GET', () => {
         created_at: new Date('2026-09-01T00:00:00Z'),
       },
     ]);
-    const response = await GET();
+    const response = await GET(new NextRequest('http://x'));
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.schedules).toHaveLength(1);

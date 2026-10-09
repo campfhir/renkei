@@ -1,7 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import BackLink from '@/components/back-link';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';

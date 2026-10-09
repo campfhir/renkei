@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import { CURRENT_STEPS_VERSION, splitDetailForSealing } from '@renkei/agents';
 import { delegateClient } from '@renkei/delegate-client';
 import { useTestDelegate } from '@/lib/test-support/delegate';

@@ -47,8 +47,6 @@ const { resolveMicrosoftAccess: mockResolveMicrosoftAccess } = jest.requireMock<
 const { resolveWebexUserAccessBySubject: mockResolveWebexAccess } = jest.requireMock<{
   resolveWebexUserAccessBySubject: jest.Mock;
 }>('./webex-linked-user');
-
-const TENANT_ID = 'tenant-1';
 const OWNER_SUBJECT = 'owner-1';
 
 /** Any `.select(...).where(...).where(...).executeTakeFirst()` chain resolves to `rows[table]`. */

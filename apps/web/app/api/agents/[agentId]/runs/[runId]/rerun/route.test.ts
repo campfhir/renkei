@@ -30,8 +30,6 @@ const { createAgentRun: mockCreateAgentRun, findInProgressRun: mockFindInProgres
   jest.requireMock<{ createAgentRun: jest.Mock; findInProgressRun: jest.Mock }>(
     '@renkei/agents/runs'
   );
-
-const TENANT = 't-1';
 const AGENT_ID = '00000000-0000-4000-8000-000000000001';
 const RUN_ID = '00000000-0000-4000-8000-000000000002';
 
@@ -85,12 +83,16 @@ beforeEach(() => {
   mockFindInProgressRun.mockResolvedValue(null);
 });
 
+function params() {
+  return { params: Promise.resolve({ agentId: AGENT_ID, runId: RUN_ID }) };
+}
+
 describe('POST rerun — concurrency guard', () => {
   it('refuses a scheduled run’s rerun when another run is already in progress', async () => {
     stubDb(runRow('schedule'));
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
-    const response = await POST(request({}));
+    const response = await POST(request({}), params());
 
     expect(response.status).toBe(409);
     const body = await response.json();
@@ -102,7 +104,7 @@ describe('POST rerun — concurrency guard', () => {
     stubDb(runRow('event'));
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
-    const response = await POST(request({}));
+    const response = await POST(request({}), params());
 
     expect(response.status).toBe(200);
     expect(mockFindInProgressRun).not.toHaveBeenCalled();
@@ -113,7 +115,7 @@ describe('POST rerun — concurrency guard', () => {
     stubDb(runRow('schedule'));
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
-    const response = await POST(request({ confirm: true }));
+    const response = await POST(request({ confirm: true }), params());
 
     expect(response.status).toBe(200);
     expect(mockFindInProgressRun).not.toHaveBeenCalled();
@@ -123,7 +125,7 @@ describe('POST rerun — concurrency guard', () => {
   it('proceeds for a manual run when nothing else is in progress', async () => {
     stubDb(runRow('manual'));
 
-    const response = await POST(request({}));
+    const response = await POST(request({}), params());
 
     expect(response.status).toBe(200);
     expect(mockCreateAgentRun).toHaveBeenCalledTimes(1);

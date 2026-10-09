@@ -18,8 +18,6 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>(
   '@renkei/settings'
 );
-
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const HOUR = 60 * 60 * 1000;
 
 function stubDb(row: Record<string, unknown> | undefined) {

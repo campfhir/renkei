@@ -135,8 +135,6 @@ function fakeDb(seed: RunRow[]) {
   };
 }
 
-const TENANT = { id: 'tenant-1', slug: 'acme' };
-
 function reqOf(body: unknown): NextRequest {
   return new NextRequest(
     new Request('http://x/api/admin/acme/connectors/embeddings/reindex', {

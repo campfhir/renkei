@@ -68,7 +68,7 @@ async function seed(fixture: Fixture): Promise<void> {
       [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
   });

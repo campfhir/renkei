@@ -1,7 +1,7 @@
 /**
  * Start an OnBase Administration user-grant flow: "let Renkei configure
  * document types and keyword types on my organization's OnBase, as me."
- * A near-duplicate of ../../onbase/[tenantId]/authorize/route.ts rather
+ * A near-duplicate of ../../onbase/authorize/route.ts rather
  * than a shared implementation, because it really is a separate Hyland
  * OAuth client — see lib/onbase-app.ts's header for why the two connectors
  * are not merged.

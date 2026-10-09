@@ -273,9 +273,9 @@ export async function copyAgentNotes(
     // hand the recipient a note that search can only half-find.
     await sql`
       INSERT INTO knowledge_chunks
-        (id, tenant_id, provider, ref_id, metadata, content, embedding,
+        (id, provider, ref_id, metadata, content, embedding,
          keywords, search_text, source_at)
-      SELECT gen_random_uuid(), tenant_id, provider,
+      SELECT gen_random_uuid(), provider,
              replace(ref_id, ${oldBase}, ${newBase}),
              jsonb_set(metadata, '{agentId}', to_jsonb(${input.targetAgentId}::text)),
              content, embedding, keywords, search_text, source_at

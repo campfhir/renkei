@@ -9,7 +9,6 @@
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import {
-  E2E_SLUG,
   E2E_SUBJECT,
   AGENT_RICH_ID,
   AGENT_PLAIN_ID,

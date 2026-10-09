@@ -168,7 +168,7 @@ export async function sendPush(
             await deleteSubscriptionByEndpoint(db, subscription.endpoint);
             return;
           }
-          log?.('push send failed for tenant {tenantId}', {
+          log?.('push send failed', {
             component: '@renkei/notifications',
             statusCode,
             error: error instanceof Error ? error.message : String(error),
@@ -177,7 +177,7 @@ export async function sendPush(
       })
     );
   } catch (error) {
-    log?.('push send skipped for tenant {tenantId}', {
+    log?.('push send skipped', {
       component: '@renkei/notifications',
       error: error instanceof Error ? error.message : String(error),
     });

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { notFound, redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ChatFrame from '../chat/_components/chat-frame';

@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';

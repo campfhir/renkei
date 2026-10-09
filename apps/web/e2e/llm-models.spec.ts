@@ -88,7 +88,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     // Enrolled the way e2e/seed.ts enrolls the shared person: with a key

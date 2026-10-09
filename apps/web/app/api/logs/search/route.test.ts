@@ -73,7 +73,7 @@ function session(subject: string, roles: string[]) {
   };
 }
 
-describe('POST /api/tenant/{tenantId}/logs', () => {
+describe('POST /api/logs/search', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
     mockGetSession.mockReset();

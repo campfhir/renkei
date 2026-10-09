@@ -71,21 +71,23 @@ beforeEach(() => {
   deleteSchedule.mockResolvedValue(true);
 });
 
+const paramsOf = () => Promise.resolve({ scheduleId: SCHEDULE_ID });
+
 describe('GET', () => {
   test('a signed-out request is refused', async () => {
     getSessionFromRequest.mockResolvedValue(null);
-    const response = await GET(new NextRequest('http://x'));
+    const response = await GET(new NextRequest('http://x'), { params: paramsOf() });
     expect(response.status).toBe(401);
   });
 
   test('another subject\'s schedule is a 404', async () => {
     getSchedule.mockResolvedValue(existingSchedule({ subject: 'auth0|bob' }));
-    const response = await GET(new NextRequest('http://x'));
+    const response = await GET(new NextRequest('http://x'), { params: paramsOf() });
     expect(response.status).toBe(404);
   });
 
   test('returns the schedule', async () => {
-    const response = await GET(new NextRequest('http://x'));
+    const response = await GET(new NextRequest('http://x'), { params: paramsOf() });
     expect(response.status).toBe(200);
     expect((await response.json()).name).toBe('Nightly OCR');
   });
@@ -94,19 +96,19 @@ describe('GET', () => {
 describe('PUT', () => {
   test('a nonexistent schedule is a 404', async () => {
     getSchedule.mockResolvedValue(undefined);
-    const response = await PUT(reqOf({ name: 'New name' }));
+    const response = await PUT(reqOf({ name: 'New name' }), { params: paramsOf() });
     expect(response.status).toBe(404);
     expect(updateSchedule).not.toHaveBeenCalled();
   });
 
   test('an empty name is a 400', async () => {
-    const response = await PUT(reqOf({ name: '  ' }));
+    const response = await PUT(reqOf({ name: '  ' }), { params: paramsOf() });
     expect(response.status).toBe(400);
     expect(updateSchedule).not.toHaveBeenCalled();
   });
 
   test('renaming alone does not recompute next_run_at', async () => {
-    const response = await PUT(reqOf({ name: 'Renamed' }));
+    const response = await PUT(reqOf({ name: 'Renamed' }), { params: paramsOf() });
     expect(response.status).toBe(200);
     expect(nextRunAtFor).not.toHaveBeenCalled();
     expect(updateSchedule).toHaveBeenCalledWith(
@@ -118,7 +120,7 @@ describe('PUT', () => {
   });
 
   test('a new scheduleConfig recomputes next_run_at', async () => {
-    const response = await PUT(reqOf({ scheduleConfig: SCHEDULE_CONFIG }));
+    const response = await PUT(reqOf({ scheduleConfig: SCHEDULE_CONFIG }), { params: paramsOf() });
     expect(response.status).toBe(200);
     expect(nextRunAtFor).toHaveBeenCalled();
     expect(updateSchedule).toHaveBeenCalledWith(
@@ -131,27 +133,27 @@ describe('PUT', () => {
 
   test('re-enabling a disabled schedule recomputes next_run_at', async () => {
     getSchedule.mockResolvedValue(existingSchedule({ enabled: false }));
-    const response = await PUT(reqOf({ enabled: true }));
+    const response = await PUT(reqOf({ enabled: true }), { params: paramsOf() });
     expect(response.status).toBe(200);
     expect(nextRunAtFor).toHaveBeenCalled();
   });
 
   test('disabling a schedule does not recompute next_run_at', async () => {
-    const response = await PUT(reqOf({ enabled: false }));
+    const response = await PUT(reqOf({ enabled: false }), { params: paramsOf() });
     expect(response.status).toBe(200);
     expect(nextRunAtFor).not.toHaveBeenCalled();
   });
 
   test('changing the share requires it to be connected', async () => {
     listConnectedShares.mockResolvedValue({ ok: true, val: [] });
-    const response = await PUT(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }));
+    const response = await PUT(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), { params: paramsOf() });
     expect(response.status).toBe(400);
     expect(updateSchedule).not.toHaveBeenCalled();
   });
 
   test('a duplicate name is a 409', async () => {
     updateSchedule.mockRejectedValue(new Error('duplicate key value violates batch_job_schedules_tenant_name'));
-    const response = await PUT(reqOf({ name: 'Taken' }));
+    const response = await PUT(reqOf({ name: 'Taken' }), { params: paramsOf() });
     expect(response.status).toBe(409);
   });
 });
@@ -159,13 +161,13 @@ describe('PUT', () => {
 describe('DELETE', () => {
   test('another subject\'s schedule is a 404', async () => {
     getSchedule.mockResolvedValue(existingSchedule({ subject: 'auth0|bob' }));
-    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }));
+    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }), { params: paramsOf() });
     expect(response.status).toBe(404);
     expect(deleteSchedule).not.toHaveBeenCalled();
   });
 
   test('deletes the schedule', async () => {
-    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }));
+    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }), { params: paramsOf() });
     expect(response.status).toBe(200);
     expect(deleteSchedule).toHaveBeenCalledWith({}, SCHEDULE_ID, 'tenant-1');
   });

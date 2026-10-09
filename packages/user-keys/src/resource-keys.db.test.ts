@@ -11,7 +11,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import {
   decryptWithResourceKey,
   encryptWithResourceKey,

@@ -2,7 +2,7 @@
 
 /**
  * Browse a share and pick ONE folder — the same
- * /api/tenant/[tenantId]/fileshares/[shareId]/folder route the full file
+ * /api/fileshares/[shareId]/folder route the full file
  * manager (files-browser.tsx) uses, filtered client-side to directories.
  * That component is one large, tightly coupled file manager (upload,
  * rename, move, delete, sort) with nothing separately importable for "just

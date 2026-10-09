@@ -1,7 +1,7 @@
 /**
  * Bearer tokens for the MCP transport endpoint.
  *
- * Access tokens issued by /api/mcp/{tenantId}/oauth/token were previously
+ * Access tokens issued by /api/mcp/oauth/token were previously
  * generated and discarded, leaving the transport with no way to identify its
  * caller — it fell back to "first grant for the tenant", so every user of a
  * tenant acted as the same Atlassian account. Tokens are now persisted as a

@@ -640,7 +640,6 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     response: ServerResponse,
     url: URL
   ): Promise<void> {
-    const tenantId = url.searchParams.get('tenantId') ?? '';
     const uploadId = url.searchParams.get('uploadId') ?? '';
     const filePart = url.searchParams.get('filePart') ?? '1';
     // The token rides a header, never the query string — query strings end
@@ -654,7 +653,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       return sendError(
         response,
         'bad_request',
-        'tenantId, uploadId and x-onbase-token are required'
+        'uploadId and x-onbase-token are required'
       );
     }
     if (!/^\d+$/.test(filePart))

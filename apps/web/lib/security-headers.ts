@@ -48,9 +48,9 @@ export interface HeaderRule {
 export const FRAMED_ROUTES = [
   // The MCP widget card's HTML (app/(app)/chat/_components/widget-card.tsx,
   // app/(app)/approval-widget-card.tsx).
-  '/api/tenant/:tenantId/chat/widgets',
+  '/api/chat/widgets',
   // A chat mockup's document (app/(app)/chat/_components/mockup-viewer.tsx).
-  '/api/tenant/:tenantId/chat/chats/:chatId/mockups/:toolUseId',
+  '/api/chat/chats/:chatId/mockups/:toolUseId',
 ];
 
 const PERMISSIONS_POLICY = [

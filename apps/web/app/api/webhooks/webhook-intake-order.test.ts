@@ -25,8 +25,6 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{
   readConnectorConfigCached: jest.Mock;
 }>('@renkei/connector-config');
-
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const ACCOUNT = 'acct-1';
 const HEX64 = 'a'.repeat(64);
 

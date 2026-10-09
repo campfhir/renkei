@@ -1,6 +1,6 @@
 import React from 'react';
 import BackLink from '@/components/back-link';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import NewBatchJobForm from './new-batch-job-form';

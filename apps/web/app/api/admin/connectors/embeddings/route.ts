@@ -7,7 +7,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { parseMaxDistance } from '@renkei/knowledge';
 import {

@@ -13,7 +13,7 @@ import path from 'node:path';
 import { expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import type { VoiceInfo } from '@renkei/voice';
-import { E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
 
 export const RESULTS = path.join(import.meta.dirname, '..', 'test-results');

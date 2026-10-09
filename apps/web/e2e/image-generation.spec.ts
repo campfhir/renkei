@@ -31,6 +31,7 @@ import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { keyFor } from './keys';
 import { encodeGif } from '@renkei/document-render';
+import { deleteRowsOf } from './seed';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The first hit on a route compiles it (`next dev` builds lazily). */
@@ -136,7 +137,7 @@ async function seedTenant(f: Fixture): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    for (const table of [
+    await deleteRowsOf(client, [f.subject, f.otherSubject], [
       'image_usage',
       'chat_attachments',
       'chats',
@@ -144,9 +145,7 @@ async function seedTenant(f: Fixture): Promise<void> {
       'user_preferences',
       'sessions',
       'identities',
-    ]) {
-      await client.query(`DELETE FROM ${table}`);
-    }
+    ]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
       [f.sessionId, f.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
@@ -162,7 +161,7 @@ async function seedTenant(f: Fixture): Promise<void> {
     }
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [f.subject]
     );
   } finally {
@@ -183,13 +182,13 @@ async function addModels(f: Fixture, which: ('chat' | 'painter' | 'fox')[]): Pro
     }
     if (which.includes('painter')) {
       await client.query(
-        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Painter', 'openai', 'gpt-image-1', $2, '{\"apiSurface\":\"images\"}'::jsonb, true, false)`,
+        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Painter', 'openai', 'gpt-image-1', $2, '{"apiSurface":"images"}'::jsonb, true, false)`,
         [f.painterId, secret]
       );
     }
     if (which.includes('fox')) {
       await client.query(
-        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Fox', 'openai', 'FLUX.2-flex', $2, '{\"apiSurface\":\"flux\",\"apiVersion\":\"preview\"}'::jsonb, true, false)`,
+        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Fox', 'openai', 'FLUX.2-flex', $2, '{"apiSurface":"flux","apiVersion":"preview"}'::jsonb, true, false)`,
         [f.foxId, secret]
       );
     }

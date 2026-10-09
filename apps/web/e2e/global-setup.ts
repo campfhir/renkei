@@ -7,7 +7,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from 'pg';
-import { seed, E2E_SESSION_ID, E2E_TENANT_ID } from './seed';
+import { seed, E2E_SESSION_ID } from './seed';
 
 export const STORAGE_STATE_PATH = path.join(
   import.meta.dirname,

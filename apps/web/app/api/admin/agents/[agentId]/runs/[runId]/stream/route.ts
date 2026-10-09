@@ -1,6 +1,6 @@
 /**
  * The admin run detail page's live view — same mechanism as the owner
- * route (apps/web/app/api/tenant/[tenantId]/agents/[agentId]/runs/[runId]/stream):
+ * route (apps/web/app/api/agents/[agentId]/runs/[runId]/stream):
  * this route polls the database on the server, and only pushes an SSE
  * message to the browser when a re-read actually differs. Against the
  * admin's already-redacted projection (getRunForAdmin) and no pause card,

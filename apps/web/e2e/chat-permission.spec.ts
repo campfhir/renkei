@@ -17,7 +17,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 import { keyFor } from './keys';
 
 test.use({

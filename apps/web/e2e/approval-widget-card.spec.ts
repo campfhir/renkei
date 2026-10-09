@@ -80,15 +80,15 @@ async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>
     [fixture.subject, fixture.subject, 'E2E Tester']
   );
   await client.query(
-    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
     [fixture.subject]
   );
   await client.query(
-    `INSERT INTO agents (id, owner_subject, name, description_status, steps, enabled)\n     VALUES ($1, $2, 'Portfolio Updater', 'ready', '{\"version\":1,\"steps\":[]}'::jsonb, true)`,
+    `INSERT INTO agents (id, owner_subject, name, description_status, steps, enabled)\n     VALUES ($1, $2, 'Portfolio Updater', 'ready', '{"version":1,"steps":[]}'::jsonb, true)`,
     [fixture.agentId, fixture.subject]
   );
   await client.query(
-    `INSERT INTO agent_runs\n       (id, agent_id, owner_subject, trigger_kind, steps_snapshot, status, started_at, created_at)\n     VALUES ($1, $2, $3, 'manual', '{\"version\":1,\"steps\":[]}'::jsonb, 'waiting', NOW(), NOW())`,
+    `INSERT INTO agent_runs\n       (id, agent_id, owner_subject, trigger_kind, steps_snapshot, status, started_at, created_at)\n     VALUES ($1, $2, $3, 'manual', '{"version":1,"steps":[]}'::jsonb, 'waiting', NOW(), NOW())`,
     [fixture.runId, fixture.agentId, fixture.subject]
   );
 }

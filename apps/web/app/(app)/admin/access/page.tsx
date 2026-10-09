@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { sql } from 'kysely';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';

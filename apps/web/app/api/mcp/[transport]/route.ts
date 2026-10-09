@@ -141,8 +141,7 @@ async function resolveJsmGrant(
 }
 
 const handler = async (
-  request: NextRequest,
-  { params }: { params: Promise<{ transport: string }> }
+  request: NextRequest
 ): Promise<Response> => {
   const dbResult = getDatabase();
   if (!dbResult.ok) {

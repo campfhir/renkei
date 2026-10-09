@@ -351,7 +351,7 @@ function registerAllHandlers(handled: Handled[]): void {
   // publishes the mail.received trigger per new message and feeds the
   // embedding queue nothing — so the Microsoft stream is a third
   // interactive-latency stream here, not a saturation source.
-  registerHandler('microsoft', 'change-notification', async (event) => {
+  registerHandler('microsoft', 'change-notification', async () => {
     await runSubscriptionSync(microsoftAccess(), {
       id: 'sub-row-1',
       resource: "me/mailFolders('inbox')/messages",

@@ -12,7 +12,7 @@ import { getSessionFromRequest } from '@/lib/session';
  * enumerate account ids against it.
  *
  * The operator path was an `x-operator-key` header compared against
- * `OPERATOR_KEY_{tenantId}`. That env var name contains the hyphens of a UUID
+ * `OPERATOR_KEY`. That env var name contains the hyphens of a UUID
  * and so cannot be set by ordinary means; the branch always fell through to its
  * 403. It is replaced by the session role check the sibling logs and sessions
  * routes already use, rather than carrying a second auth scheme that never

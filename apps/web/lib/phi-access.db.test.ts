@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import { hashPath, listPhiAccessEvents, recordPhiAccess } from './phi-access';
 import { withRun } from './mcp-tools/run-context';
 

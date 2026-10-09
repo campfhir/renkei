@@ -5,7 +5,7 @@
  * new-batch-job-form.tsx: same source/grouping fields, plus the SAME
  * ScheduleEditor the agent builder uses for its own schedule triggers
  * (packages/agents' ScheduleConfig, computed next_run_at server-side on
- * save via /api/tenant/[tenantId]/batch-job-schedules).
+ * save via /api/batch-job-schedules).
  */
 
 import { useState } from 'react';

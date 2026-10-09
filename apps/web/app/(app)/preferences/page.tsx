@@ -1,5 +1,5 @@
 import React from 'react';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getImagePrefs, getNotificationPrefs, getThemePrefs } from '@renkei/user-prefs';
 import { actsByConnector, ACT_CATEGORIES } from '@renkei/tool-outcomes';

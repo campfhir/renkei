@@ -1394,7 +1394,6 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
    * The bytes land as they are, uncommitted, owned by the project's uid.
    */
   async function handleUpload(url: URL, bytes: Buffer, response: ServerResponse): Promise<void> {
-    const tenantId = url.searchParams.get('tenantId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     const id = url.searchParams.get('id') ?? '';
     if (!subject || !id) return sendError(response, 400, 'bad_request');

@@ -1,4 +1,3 @@
-import { notFound } from 'next/navigation';
 import { requireAuth } from '@/lib/require-auth';
 import { getUsageReport, getAvailableTools } from './actions';
 import UsageViewer from './usage-viewer';

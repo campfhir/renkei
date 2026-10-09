@@ -108,8 +108,7 @@ export async function hasRecentDuplicate(
         .where(
           sql<boolean>`EXISTS (
             SELECT 1 FROM knowledge_chunks kc
-            WHERE kc.tenant_id = email_classification_log.tenant_id
-              AND kc.provider = email_classification_log.provider
+            WHERE kc.provider = email_classification_log.provider
               AND (kc.ref_id = email_classification_log.ref_id
                    OR kc.ref_id LIKE email_classification_log.ref_id || '#%')
           )`

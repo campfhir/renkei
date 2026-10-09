@@ -105,7 +105,7 @@ async function seed(fixture: Fixture, options: { chat: boolean }): Promise<Buffe
       [fixture.subject, fixture.subject, 'E2E Tester']
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     await client.query(

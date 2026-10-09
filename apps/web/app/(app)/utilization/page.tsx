@@ -1,4 +1,3 @@
-import { notFound } from 'next/navigation';
 import { requireAuth } from '@/lib/require-auth';
 import { getUtilizationReport } from './actions';
 import { DEFAULT_PERIOD_KEY } from './window';

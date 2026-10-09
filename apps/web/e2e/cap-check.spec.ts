@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID, AGENT_RICH_ID } from './seed';
+import { AGENT_RICH_ID } from './seed';
 
 // Proves the BUILDER validates against the org ceiling rather than the
 // MAX_STEPS default: set the tenant ceiling to 1 and a multi-step agent must

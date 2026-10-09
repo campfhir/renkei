@@ -27,8 +27,6 @@ const { createAgentRun: mockCreateAgentRun, findInProgressRun: mockFindInProgres
   jest.requireMock<{ createAgentRun: jest.Mock; findInProgressRun: jest.Mock }>(
     '@renkei/agents/runs'
   );
-
-const TENANT = 't-1';
 const AGENT_ID = '00000000-0000-4000-8000-000000000001';
 
 const AGENT_ROW = {
@@ -73,10 +71,14 @@ beforeEach(() => {
   mockFindInProgressRun.mockResolvedValue(null);
 });
 
+function params() {
+  return { params: Promise.resolve({ agentId: AGENT_ID }) };
+}
+
 describe('POST invoke — manual concurrency guard', () => {
   it('refuses with already-in-progress when a run is queued or running, and never calls createAgentRun', async () => {
     mockFindInProgressRun.mockResolvedValue({ id: 'run-1', status: 'running' });
-    const response = await POST(request({}));
+    const response = await POST(request({}), params());
     expect(response.status).toBe(409);
     const body = await response.json();
     expect(body).toMatchObject({ code: 'already-in-progress', runId: 'run-1', status: 'running' });
@@ -84,14 +86,14 @@ describe('POST invoke — manual concurrency guard', () => {
   });
 
   it('proceeds normally when nothing is in progress', async () => {
-    const response = await POST(request({}));
+    const response = await POST(request({}), params());
     expect(response.status).toBe(202);
     expect(mockCreateAgentRun).toHaveBeenCalledTimes(1);
   });
 
   it('proceeds once confirm:true is sent, without re-checking', async () => {
     mockFindInProgressRun.mockResolvedValue({ id: 'run-1', status: 'running' });
-    const response = await POST(request({ confirm: true }));
+    const response = await POST(request({ confirm: true }), params());
     expect(response.status).toBe(202);
     expect(mockCreateAgentRun).toHaveBeenCalledTimes(1);
     expect(mockFindInProgressRun).not.toHaveBeenCalled();

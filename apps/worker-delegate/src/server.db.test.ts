@@ -43,7 +43,6 @@ describeDb('worker-delegate', () => {
   const API_KEY = 'test-delegate-key';
   const AGENTS_KEY = 'test-agents-key';
   const WORKER_KEY = 'test-worker-key';
-  const tenantId = randomUUID();
   const owner = `owner-${randomUUID()}@example.com`;
   const friend = `friend-${randomUUID()}@example.com`;
   const leaver = `leaver-${randomUUID()}@example.com`;

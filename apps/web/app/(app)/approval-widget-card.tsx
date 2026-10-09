@@ -7,7 +7,7 @@
  * agent's approval feed, per widget-card.tsx's own protocol but adapted:
  *
  * - The HTML comes from the SAME route chat's cards use
- *   (`/api/tenant/{tenantId}/chat/widgets`) — that route only ever checked
+ *   (`/api/chat/widgets`) — that route only ever checked
  *   for a signed-in tenant session, nothing chat-specific, so there is
  *   nothing to duplicate.
  * - `structuredContent` is built server-side, at render time, from the

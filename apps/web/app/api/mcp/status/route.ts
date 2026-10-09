@@ -4,7 +4,7 @@ import { getSessionFromRequest } from '@/lib/session';
 
 /**
  * Whether the signed-in caller has connected Jira, for the setup page at
- * /mcp/{tenantId}.
+ * /api/mcp.
  *
  * Answers only about the caller's own grant. This previously took the first
  * grant in the tenant with no subject filter and no authentication at all,

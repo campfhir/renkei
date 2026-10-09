@@ -77,7 +77,6 @@ export async function POST(
     // 500 so Zoom retries the delivery instead of dropping it.
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
-  const db = dbResult.val;
   const configResult = await readConnectorConfigCached(ZOOM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });

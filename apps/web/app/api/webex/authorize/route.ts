@@ -1,6 +1,6 @@
 /**
  * Start a WebEx user-grant flow: "let Renkei read my WebEx as me."
- * Mirrors the Jira flow at /api/mcp/[tenantId]/authorize — signed-in caller,
+ * Mirrors the Jira flow at /api/mcp/authorize — signed-in caller,
  * single-use state carrying the subject, provider recorded so the shared
  * callback knows whose token endpoint to visit.
  */

@@ -5,8 +5,6 @@ import {
   connectStateCookieName,
   isConnectFlowBound,
 } from './connect-flow-binding';
-
-const TENANT = '00000000-0000-4000-8000-000000000001';
 const STATE = 'f6a1c4b2-0d3e-4f5a-8b6c-7d8e9f0a1b2c';
 
 function callbackWith(cookies: Record<string, string>): NextRequest {

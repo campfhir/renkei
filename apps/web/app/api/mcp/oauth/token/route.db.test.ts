@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import { NextRequest } from 'next/server';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import { hashToken } from '@/lib/mcp-token';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { POST } from './route';

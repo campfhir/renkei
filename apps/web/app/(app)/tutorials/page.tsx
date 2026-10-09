@@ -1,5 +1,5 @@
 import React from 'react';
-import { notFound, redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getCoachMarkPrefs } from '@renkei/user-prefs';
 import { getOrgSettings } from '@renkei/settings';

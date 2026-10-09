@@ -63,7 +63,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
       [fixture.subject, fixture.subject, 'E2E Tester']
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     // Enrolled like e2e/seed.ts's shared person, so the KeyGuard shows no dialog.

@@ -11,7 +11,7 @@ import { buildManifest } from '@/lib/app-manifest';
  * asks for that runtime in the first place.
  *
  * This is the fallback manifest, `start_url: '/'` — the home-realm sign-in
- * page, correct only when installed from there. Every `/[slug]/*` page
+ * page, correct only when installed from there. Every `/*` page
  * links a tenant-scoped manifest instead (app/api/manifest/[slug]/route.ts,
  * wired up in app/(app)/layout.tsx's generateMetadata) so an icon added
  * from inside a tenant launches back into that tenant, not here: landing on

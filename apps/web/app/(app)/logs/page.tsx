@@ -1,4 +1,3 @@
-import { notFound } from 'next/navigation';
 import { requireAuth } from '@/lib/require-auth';
 import { searchLogs } from './actions';
 import LogsViewer from './logs-viewer';

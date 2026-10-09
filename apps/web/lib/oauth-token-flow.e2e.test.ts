@@ -130,7 +130,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
   });
 
   it('should complete full OAuth flow: receive → store → retrieve → use', async () => {
-    const tenantId = '00000000-0000-4000-8000-000000000001';
     const accountId = '5b10a2844c20165700ede21g';
     const clientId = 'test-atlassian-client-id';
 
@@ -180,7 +179,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
   });
 
   it('should handle token refresh by storing new tokens', async () => {
-    const tenantId = '00000000-0000-4000-8000-000000000001';
     const accountId = '5b10a2844c20165700ede21g';
 
     // Store initial grant
@@ -223,7 +221,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
   });
 
   it('should prevent decryption with wrong key', async () => {
-    const tenantId = '00000000-0000-4000-8000-000000000001';
     const accountId = '5b10a2844c20165700ede21g';
 
     // Store with correct key
@@ -255,7 +252,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
   });
 
   it('should handle concurrent token retrievals', async () => {
-    const tenantId = '00000000-0000-4000-8000-000000000001';
     const accountId = '5b10a2844c20165700ede21g';
 
     const grant = {
@@ -288,8 +284,6 @@ describe('OAuth token flow (E2E with mock DB)', () => {
   });
 
   it('should isolate grants by tenantId and accountId', async () => {
-    const tenantId1 = 'tenant-1';
-    const tenantId2 = 'tenant-2';
     const accountId1 = 'account-1';
     const accountId2 = 'account-2';
 

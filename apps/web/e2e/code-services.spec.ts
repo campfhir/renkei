@@ -13,8 +13,6 @@
 
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
-import { E2E_SLUG } from './seed';
-
 test.use({
   browserName: 'chromium',
   launchOptions: {

@@ -79,8 +79,6 @@ const { WebexClient: MockWebexClient } = jest.requireMock<{ WebexClient: jest.Mo
 );
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
-
-const TENANT_ID = 'tenant-1';
 const OWNER_SUBJECT = 'owner-1';
 const AGENT_ID = 'agent-1';
 

@@ -4,7 +4,7 @@
  * Start a document-ocr-pipeline batch — the plain-form twin of the
  * batch_start_document_pipeline MCP tool, for someone who would rather
  * click through a form than ask an agent. POSTs to
- * /api/tenant/[tenantId]/batch-jobs, which shares startDocumentOcrPipeline
+ * /api/batch-jobs, which shares startDocumentOcrPipeline
  * with the MCP tool.
  */
 

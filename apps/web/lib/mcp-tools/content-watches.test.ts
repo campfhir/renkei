@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase, closeDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import { upsertWatch, repairWatch } from './content-watches';
 
@@ -16,7 +16,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('watch repair and cursor inheritance', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const scopeKey = `ENG-${randomUUID().slice(0, 8)}`;
   const cursor = '2026-08-01T00:00:00.000Z';
 

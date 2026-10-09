@@ -3,7 +3,7 @@
 /**
  * The browser's keeper of the person's encryption key
  * (docs/delegate-key-design.md). Mounted on every tenant page; it reads
- * GET /api/tenant/[tenantId]/keys and does whatever the moment needs, with
+ * GET /api/keys and does whatever the moment needs, with
  * as little ceremony as the design allows:
  *
  *   - not enrolled           → enroll now, silently, and keep the key on

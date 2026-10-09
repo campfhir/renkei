@@ -441,7 +441,6 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     url: URL,
     response: ServerResponse
   ): Promise<void> {
-    const tenantId = url.searchParams.get('tenantId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     const named = validateFilename(url.searchParams.get('filename') ?? '');
     if (!subject || !named.ok) {

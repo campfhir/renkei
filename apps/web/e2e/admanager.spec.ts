@@ -94,7 +94,7 @@ async function baseSeed(client: Client, fixture: Fixture): Promise<void> {
   );
   // No coach marks tour stealing focus mid-screenshot.
   await client.query(
-    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
     [fixture.subject]
   );
   // Enrolled already (docs/delegate-key-design.md), so the first-sign-in
@@ -137,7 +137,7 @@ async function seedUserTenant(fixture: Fixture): Promise<{ instanceId: string }>
                 ), 'Jamie Lee', ['accounts.read']]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"admanager\"]}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["admanager"]}'::jsonb)`,
       [fixture.subject]
     );
     return { instanceId };

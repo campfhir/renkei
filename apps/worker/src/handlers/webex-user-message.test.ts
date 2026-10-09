@@ -21,7 +21,6 @@ import { authedFetch } from '@renkei/delegate-client';
 const auth = authedFetch(async () => new Response(), 'webex:tenant-1:watcher');
 
 const WATCHER_ACCOUNT = 'watcher-account-id';
-const TENANT = 'tenant-1';
 
 function event(messageId: string): ClaimedEvent {
   // Only the fields the handler reads; the queue row carries more.

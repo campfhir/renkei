@@ -1,7 +1,7 @@
 /**
  * Disconnect the caller's own OnBase Administration grant. Subject-scoped:
  * the session decides whose grant dies, never a parameter. A near-duplicate
- * of ../../onbase/[tenantId]/grant/route.ts — see lib/onbase-app.ts's
+ * of ../../onbase/grant/route.ts — see lib/onbase-app.ts's
  * header for why the two connectors are not merged.
  *
  * Revocation at the Hyland IdP is best-effort and runs from the delegate

@@ -1,6 +1,6 @@
 /**
  * GitHub webhook receipt — deliberately thin, the same shape as
- * webhooks/zoom/[tenantId]/route.ts (RENKEI.md Decision #17): verify,
+ * webhooks/zoom/route.ts (RENKEI.md Decision #17): verify,
  * enqueue the raw delivery, acknowledge. All matching and acting —
  * finding which pr_subscriptions this delivery is about, re-fetching
  * the authoritative run state, merging or noting a fix — happens in the
@@ -74,7 +74,6 @@ export async function POST(
     // 500 so GitHub retries the delivery instead of dropping it.
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
-  const db = dbResult.val;
   const configResult = await readConnectorConfigCached(GITHUB_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });

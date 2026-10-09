@@ -9,7 +9,6 @@ jest.mock('@/lib/access', () => ({
   checkAccess: jest.fn(),
   ROLE_OPERATOR: 'renkei-operator',
 }));
-jest.mock('@/lib/tenant-slug', () => ({ tenantForSlug: jest.fn() }));
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/agent-llm', () => ({
   ...jest.requireActual('@renkei/agent-llm'),
@@ -23,9 +22,6 @@ import { DELETE, PUT } from './route';
 
 const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mock }>(
   '@/lib/access'
-);
-const { tenantForSlug: mockTenantForSlug } = jest.requireMock<{ tenantForSlug: jest.Mock }>(
-  '@/lib/tenant-slug'
 );
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 
@@ -118,7 +114,7 @@ function fakeDb(seed: ModelConfigRow[]) {
   };
 }
 
-const TENANT = { id: 'tenant-1', slug: 'acme' };
+const paramsOf = (modelId = 'row-1') => Promise.resolve({ modelId });
 const ENCRYPTION_KEY = randomBytes(32).toString('base64');
 const keyResult = parseEncryptionKey(ENCRYPTION_KEY);
 if (!keyResult.ok) throw new Error('test setup: bad encryption key');
@@ -154,7 +150,7 @@ describe('PUT .../llm-models/[modelId]', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(
-      reqOf({ label: 'Prod Claude (renamed)', provider: 'anthropic', model: 'claude-sonnet-5' }));
+      reqOf({ label: 'Prod Claude (renamed)', provider: 'anthropic', model: 'claude-sonnet-5' }), { params: paramsOf() });
 
     expect(response.status).toBe(200);
     const stored = db.rows[0]!.encrypted_secrets!;
@@ -173,7 +169,7 @@ describe('PUT .../llm-models/[modelId]', () => {
         provider: 'anthropic',
         model: 'claude-sonnet-5',
         apiKey: 'rotated-secret',
-      }));
+      }), { params: paramsOf() });
 
     expect(response.status).toBe(200);
     const decrypted = decrypt(db.rows[0]!.encrypted_secrets!, KEY_BUFFER);
@@ -197,7 +193,7 @@ describe('PUT .../llm-models/[modelId]', () => {
         provider: 'anthropic',
         model: 'claude-sonnet-5',
         apiKeyFromId: 'row-2',
-      }));
+      }), { params: paramsOf() });
 
     expect(response.status).toBe(200);
     expect(db.rows[0]!.encrypted_secrets).toBe(sibling.encrypted_secrets);
@@ -208,7 +204,7 @@ describe('PUT .../llm-models/[modelId]', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(
-      reqOf({ label: 'Prod Claude', provider: 'anthropic', model: 'claude-sonnet-5' }));
+      reqOf({ label: 'Prod Claude', provider: 'anthropic', model: 'claude-sonnet-5' }), { params: paramsOf() });
     expect(response.status).toBe(400);
   });
 
@@ -217,7 +213,7 @@ describe('PUT .../llm-models/[modelId]', () => {
     mockGetDatabase.mockReturnValue(db);
 
     const response = await PUT(
-      reqOf({ label: 'x', provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'k' }));
+      reqOf({ label: 'x', provider: 'anthropic', model: 'claude-sonnet-5', apiKey: 'k' }), { params: paramsOf() });
     expect(response.status).toBe(404);
   });
 });
@@ -227,7 +223,7 @@ describe('DELETE .../llm-models/[modelId]', () => {
     const db = fakeDb([{ ...baseRow }]);
     mockGetDatabase.mockReturnValue(db);
 
-    const response = await DELETE(reqOf(undefined, 'DELETE'));
+    const response = await DELETE(reqOf(undefined, 'DELETE'), { params: paramsOf() });
     expect(response.status).toBe(200);
     expect(db.rows).toHaveLength(0);
   });

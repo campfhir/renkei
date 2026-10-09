@@ -21,8 +21,6 @@ const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings
   '@renkei/settings'
 );
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
-
 function registration(redirectUris = ['https://client.example/cb']): NextRequest {
   return new NextRequest(`http://localhost/api/mcp/oauth/register`, {
     method: 'POST',
@@ -31,7 +29,7 @@ function registration(redirectUris = ['https://client.example/cb']): NextRequest
   });
 }
 
-describe('POST /api/mcp/{tenantId}/oauth/register policy', () => {
+describe('POST /api/mcp/oauth/register policy', () => {
   beforeEach(() => {
     resetInboundLimits();
     mockGetOrgSettings.mockReset().mockResolvedValue({ ok: true, val: { enableDcr: true } });
@@ -64,7 +62,7 @@ describe('POST /api/mcp/{tenantId}/oauth/register policy', () => {
   });
 });
 
-describe('POST /api/mcp/{tenantId}/oauth/register throttle', () => {
+describe('POST /api/mcp/oauth/register throttle', () => {
   beforeEach(() => {
     resetInboundLimits();
     mockGetOrgSettings.mockReset().mockResolvedValue({ ok: true, val: { enableDcr: true } });

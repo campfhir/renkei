@@ -284,7 +284,7 @@ export class Grants {
     if (!provider || (!subject && !accountId && !pendingHandle)) {
       return fail(
         'bad_request',
-        'the grant needs tenantId, provider and a subject, accountId or pending handle'
+        'the grant needs a provider and a subject, accountId or pending handle'
       );
     }
     const spec = providerSpec(provider);

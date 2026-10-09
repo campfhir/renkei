@@ -340,12 +340,12 @@ async function describeFailure(response: Response): Promise<Failure> {
 
 /**
  * The grant behind an `AuthedFetch`, read off its `grantKey`
- * (`provider:tenant:account-or-subject`) for log context. Never a token:
+ * (`provider:account-or-subject`) for log context. Never a token:
  * these records are persisted by the Postgres log adapter and are readable
  * over HTTP.
  */
 function grantScope(auth: AuthedFetch): { accountId?: string } {
-  const [, tenantId, accountId] = auth.grantKey.split(':');
+  const [, accountId] = auth.grantKey.split(':');
   return { accountId: accountId || undefined };
 }
 

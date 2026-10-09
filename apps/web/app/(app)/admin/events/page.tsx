@@ -1,6 +1,6 @@
 import React from 'react';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import type { Json } from '@renkei/db';
 import EventsList, { type EventRow, type EventStatus } from './events-list';

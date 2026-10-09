@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import { claimResumableTurns, interruptExhaustedTurns, suspendTurn, getTurn } from './turns';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;

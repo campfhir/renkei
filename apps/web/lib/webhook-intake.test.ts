@@ -11,9 +11,6 @@ import {
   hasSignatureShape,
   readWebhookBody,
 } from './webhook-intake';
-
-const TENANT = '00000000-0000-4000-8000-000000000001';
-
 describe('readWebhookBody', () => {
   it('returns the body text when it is under the cap', async () => {
     const request = new NextRequest('http://localhost/api/webhooks/x', {

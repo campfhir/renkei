@@ -250,6 +250,71 @@ describe('fsReadFile', () => {
     expect(JSON.parse(String(init.body))).toEqual({ ...TARGET, path: '/a.txt', maxBytes: 1024 });
   });
 });
+
+describe('fsWriteFile', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('answers unconfigured without any network call when the worker is not set up', async () => {
+    delete process.env.DELEGATE_WORKER_API_KEY;
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+
+    const result = await fsWriteFile(TARGET, '/new.txt', new Uint8Array([1]));
+
+    expect(result).toEqual({ ok: false, err: { kind: 'unconfigured' } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('puts the target + path on the query string and the raw bytes as the body', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ path: '/new.txt' }), { status: 200 }));
+
+    const bytes = new Uint8Array([104, 105]); // "hi"
+    const result = await fsWriteFile(TARGET, '/new.txt', bytes);
+
+    expect(result).toEqual({ ok: true, val: { path: '/new.txt' } });
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/forward/fileshares/write?');
+    const query = new URL(url).searchParams;
+    expect(query.get('shareId')).toBe(TARGET.shareId);
+    expect(query.get('subject')).toBe(TARGET.subject);
+    expect(query.get('path')).toBe('/new.txt');
+    expect((init.headers as Record<string, string>)['content-type']).toBe(
+      'application/octet-stream'
+    );
+    expect(new Uint8Array(init.body as ArrayBuffer)).toEqual(bytes);
+  });
+
+  it('falls back to the requested path when the response has no usable body', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('not json', { status: 200 }));
+
+    const result = await fsWriteFile(TARGET, '/new.txt', new Uint8Array([1]));
+
+    expect(result).toEqual({ ok: true, val: { path: '/new.txt' } });
+  });
+
+  it('maps a non-2xx response to a typed op error', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: 'access_denied', message: 'no' } }), {
+        status: 403,
+      })
+    );
+
+    const result = await fsWriteFile(TARGET, '/new.txt', new Uint8Array([1]));
+
+    expect(result).toEqual({
+      ok: false,
+      err: { kind: 'op', type: 'access_denied', message: 'no', status: 403 },
+    });
+  });
+});
+
 describe('clientFailure', () => {
   it('maps unconfigured and unreachable without an op type', () => {
     expect(clientFailure({ kind: 'unconfigured' }).status).toBe(503);

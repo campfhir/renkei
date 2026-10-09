@@ -25,7 +25,7 @@ export interface GitHubApp {
   redirectUri: string;
   /** The App's public slug (github.com/apps/<slug>), for the install link. Empty until set. */
   appSlug: string;
-  /** Verifies inbound webhook deliveries (app/api/webhooks/github/[tenantId]/route.ts); null until an operator sets one. */
+  /** Verifies inbound webhook deliveries (app/api/webhooks/github/route.ts); null until an operator sets one. */
   webhookSecret: string | null;
 }
 

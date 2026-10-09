@@ -97,8 +97,6 @@ describe('parseBitbucketRepoFullName', () => {
   });
 });
 
-const TENANT_ID = 'tenant-1';
-
 function workflowRunEvent(prNumbers: number[]): ClaimedEvent {
   return {
     id: 'evt-1',

@@ -5,7 +5,7 @@
  *
  * A `jira_admin_propose_*` tool writes a row here and changes nothing in
  * Jira. The owner applies it from a signed-in browser session
- * (app/api/tenant/[tenantId]/jira-admin/changes/[changeId]/apply), and only
+ * (app/api/jira-admin/changes/[changeId]/apply), and only
  * the owner: every read and write below is scoped by (tenant, subject), so
  * someone else's request is "not found" rather than refused — an id alone
  * is not an existence oracle.

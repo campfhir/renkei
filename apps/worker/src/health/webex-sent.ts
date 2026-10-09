@@ -23,8 +23,8 @@ const RETENTION_BATCH = 1000;
 export function createWebexSentSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
     const deleted = await sql<{ message_id: string }>`
-      DELETE FROM webex_sent_messages WHERE (tenant_id, message_id) IN (
-        SELECT tenant_id, message_id FROM webex_sent_messages
+      DELETE FROM webex_sent_messages WHERE message_id IN (
+        SELECT message_id FROM webex_sent_messages
         WHERE created_at < NOW() - make_interval(days => ${RETENTION_DAYS})
         ORDER BY created_at
         LIMIT ${RETENTION_BATCH}

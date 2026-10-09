@@ -1,13 +1,3 @@
-/**
- * Store round-trip against a real Postgres with the migrated schema —
- * FILESHARE_TEST_DATABASE_URL (or DATABASE_URL) points at it; without one
- * the suite skips itself. Live SQL is the point: the connection upsert
- * leans on a named PK constraint for ON CONFLICT, and share deletion leans
- * on the connections FK cascade — behaviors a mocked chain would just
- * restate rather than verify.
- */
-
-import { randomUUID } from 'node:crypto';
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
 import type { DB } from '@renkei/db';

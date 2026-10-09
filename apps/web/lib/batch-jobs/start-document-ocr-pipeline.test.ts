@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The one place batch_start_document_pipeline (an agent's MCP tool call)
- * and POST /api/tenant/[tenantId]/batch-jobs (a human's form submit) meet:
+ * and POST /api/batch-jobs (a human's form submit) meet:
  * both must produce the identical createBatch config shape and enqueue the
  * discovery message the same way, or the two paths silently diverge.
  */

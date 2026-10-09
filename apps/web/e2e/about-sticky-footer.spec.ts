@@ -6,8 +6,6 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { E2E_SLUG } from './seed';
-
 test('about page — version footer is visible without scrolling', async ({ page }) => {
   await page.goto(`/about`);
   await expect(page.getByRole('heading', { name: /changed/ })).toBeVisible();

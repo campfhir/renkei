@@ -9,7 +9,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import {
   decrypt,
   encrypt,
@@ -24,7 +24,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('rewrap under the current key of the ring', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const oldEncoded = randomBytes(32).toString('base64');
   const newEncoded = randomBytes(32).toString('base64');
   const strangerEncoded = randomBytes(32).toString('base64');

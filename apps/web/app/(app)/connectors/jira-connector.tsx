@@ -10,7 +10,7 @@ import WatchManager from './watch-manager';
 
 /**
  * The user's Jira grant: status, connect, disconnect. Disconnecting talks to
- * the existing /api/mcp/[tenantId]/grant route.
+ * the existing /api/mcp/grant route.
  *
  * Before connecting, the user may narrow the org's scope ceiling — hide the
  * capabilities they don't want Renkei to have. The authorize route enforces
@@ -18,7 +18,7 @@ import WatchManager from './watch-manager';
  *
  * Connection state arrives as a prop from the page, same as its JSM,
  * Confluence and Bitbucket siblings — this used to probe
- * `/api/mcp/[tenantId]/status` client-side on mount instead (a "Checking…"
+ * `/api/mcp/status` client-side on mount instead (a "Checking…"
  * flicker on every load for data the page already had from the same
  * `provider_grants` row it reads for the other three products).
  */

@@ -211,7 +211,7 @@ Three identifiers name a connector, and `apps/web/lib/connector-catalog.ts` is w
 
 Two surfaces are built on it. `/[slug]/connectors` shows a person what they added or connected (added ∪ connected, from `lib/connectors/user-catalog.ts`; the selection is a `connectors` key in `user_preferences`, never an input to tool registration) and offers the rest of what the org provisions for them behind a searchable "Add connector". `/[slug]/admin/connectors` is the org's catalog: every connector, its status, its org-wide switches, and a page per config key at `/admin/connectors/<configKey>`.
 
-An admin can scope a connector to an **audience** — people whose sign-in carried one of the named IdP group values (`OrgSettings.connectorAudiences`, keyed by capability key; `tenant_oidc.groups_claim` names the claim, `identities.idp_groups` records it). Enforced as a gate of the capability projection, resolved per subject from recorded identity by `lib/connectors/audience.ts`, failing closed. See [`connector-catalog-design.md`](./connector-catalog-design.md).
+An admin can scope a connector to an **audience** — people whose sign-in carried one of the named IdP group values (`OrgSettings.connectorAudiences`, keyed by capability key; `oidc_config.groups_claim` names the claim, `identities.idp_groups` records it). Enforced as a gate of the capability projection, resolved per subject from recorded identity by `lib/connectors/audience.ts`, failing closed. See [`connector-catalog-design.md`](./connector-catalog-design.md).
 
 ## Adding a connector
 

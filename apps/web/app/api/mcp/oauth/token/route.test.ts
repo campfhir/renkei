@@ -16,8 +16,6 @@ const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings
   '@renkei/settings'
 );
 
-const TENANT = '00000000-0000-4000-8000-000000000001';
-
 function tokenRequest(ip: string): NextRequest {
   return new NextRequest(`http://localhost/api/mcp/oauth/token`, {
     method: 'POST',
@@ -29,7 +27,7 @@ function tokenRequest(ip: string): NextRequest {
   });
 }
 
-describe('POST /api/mcp/{tenantId}/oauth/token throttle', () => {
+describe('POST /api/mcp/oauth/token throttle', () => {
   beforeEach(() => {
     resetInboundLimits();
     mockGetOrgSettings.mockReset().mockResolvedValue({ ok: false, err: 'DB_ERROR' });

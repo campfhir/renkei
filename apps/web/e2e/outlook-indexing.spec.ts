@@ -4,7 +4,7 @@
  * only wires new mail to the "An email arrives" agent trigger (and says
  * so), NO Tasks or Calendar toggle, and no indexing progress or re-index
  * control, since nothing in Outlook indexes. Driven against the real
- * /api/microsoft/[tenantId]/indexing route — a PUT writes the grant's
+ * /api/microsoft/indexing route — a PUT writes the grant's
  * metadata and enqueues the bootstrap event; neither touches Microsoft for
  * a grant whose token is a placeholder, since the worker is not running
  * here — and the saved shape is read back from Postgres.
@@ -90,7 +90,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     // Microsoft 365 is set up for the org and connected for this person.
@@ -105,7 +105,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       [fixture.accountId, fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), ['Mail.Read', 'Tasks.Read', 'offline_access'], { tid: 'e2e-dir', upn: 'e2e@example.com', indexing: { calendar: true, tasks: true } }]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"microsoft\"]}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["microsoft"]}'::jsonb)`,
       [fixture.subject]
     );
     // Subscription rows as the worker would have left them: the inbox

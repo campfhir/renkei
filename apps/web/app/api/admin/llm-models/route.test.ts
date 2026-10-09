@@ -127,7 +127,6 @@ function fakeDb(seed: ModelConfigRow[]) {
   };
 }
 
-const TENANT = { id: 'tenant-1', slug: 'acme' };
 const ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
 function reqOf(body: unknown): NextRequest {

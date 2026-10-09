@@ -1,4 +1,4 @@
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgUsageReport } from './actions';

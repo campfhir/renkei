@@ -74,7 +74,7 @@ function session(subject: string) {
   };
 }
 
-describe('GET /api/mcp/{tenantId}/status', () => {
+describe('GET /api/mcp/status', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
     mockGetSession.mockReset();

@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { notFound, redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';

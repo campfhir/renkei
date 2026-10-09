@@ -165,7 +165,7 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
    * Bitbucket only: a shared secret checked against the
    * `X-Renkei-Webhook-Secret` header (or, for older registrations, a
    * `?secret=` query parameter) of a repo webhook someone registers by hand
-   * pointing at app/api/webhooks/bitbucket/[tenantId]/route.ts — Bitbucket
+   * pointing at app/api/webhooks/bitbucket/route.ts — Bitbucket
    * Cloud has no HMAC-signed delivery the way a GitHub App does.
    */
   showWebhookSecret?: boolean;

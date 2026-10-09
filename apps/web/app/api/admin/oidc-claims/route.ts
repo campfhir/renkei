@@ -3,7 +3,7 @@
  * roles, which values make an operator or a user, and which claim carries
  * groups. Operator-only, and deliberately not the full OIDC config —
  * changing a claim name should not require re-entering the client secret,
- * which is what POST /api/tenant/[tenantId]/oidc demands.
+ * which is what POST /api/oidc demands.
  *
  * Takes effect at each person's NEXT sign-in: groups are recorded from the
  * token, so nothing here rewrites what anyone already has on record.

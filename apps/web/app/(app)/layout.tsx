@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { headers } from 'next/headers';
-import { notFound, redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
@@ -50,7 +50,7 @@ export async function generateMetadata(): Promise<Metadata> {
  * the browser. The redirect then arrives as a client-side hop, and what the
  * person sees is a flash of the app before the sign-in page. The layout
  * sits above that boundary: a redirect thrown here is a plain 307 and
- * nothing renders first. Every `/[slug]/*` page requires a session, so
+ * nothing renders first. Every `/*` page requires a session, so
  * there is no allowlist to keep.
  *
  * The pages keep their own guards regardless. A layout does not re-render

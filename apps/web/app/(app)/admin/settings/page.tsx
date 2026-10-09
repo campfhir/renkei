@@ -1,7 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { SizeRequests } from './size-requests';

@@ -8,7 +8,7 @@
  *
  * There is no dedicated "toggle" endpoint: it PUTs the same full payload
  * the builder saves, with only `enabled` flipped, through
- * `/api/tenant/{tenantId}/agents/{agentId}`. Every field that route persists
+ * `/api/agents/{agentId}`. Every field that route persists
  * has to ride along — omitting one here would make the switch silently wipe
  * it, so this takes a `StoredAgent` and rebuilds the whole payload from it.
  */

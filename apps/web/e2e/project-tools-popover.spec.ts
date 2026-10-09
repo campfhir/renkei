@@ -79,7 +79,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     );
     // No coach marks tour stealing focus mid-test.
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     // This person's own personal chat default — deliberately just 'cards',
@@ -90,7 +90,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
     // embedding provider is configured org-wide, which this fixture does
     // not set up; 'agents'/'cards'/'sandbox' need no such provisioning.)
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'chatTools', '{\"connectors\": [\"cards\"]}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'chatTools', '{"connectors": ["cards"]}'::jsonb)`,
       [fixture.subject]
     );
     // The project's own toolset: agents only, no cards or sandbox —

@@ -497,7 +497,7 @@ to set it). Each service is a plain container: no privileges,
 restart policy, no published ports; it is stopped and removed with its
 data a day after the project last ran a command, or when the chat
 stops it. **The allow-list** is the organization's, at Organization →
-Code services: every tenant starts with a handful of public images
+Code services: the deployment starts with a handful of public images
 (Postgres, pgvector, Redis, Valkey, MySQL, MariaDB, MongoDB, RabbitMQ,
 SQL Server, Azurite) and an operator adds a whole private registry
 (`myorg.azurecr.io`), a namespace on one (`myorg.azurecr.io/platform/*`)
@@ -963,27 +963,55 @@ pg_dump -U jira_mcp jira_mcp_db | gzip > /backups/jira_mcp_$(date +%Y%m%d).sql.g
 find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
 ```
 
-## Onboarding a new organization
+## First-run setup
 
-Self-service onboarding (`/create-organization`) mints a tenant for an email
-domain nobody has claimed and, since migration 146, hands the creator two
-things nobody else sees:
+A Renkei deployment serves exactly one organization. Until its identity
+provider is configured nobody can sign in, and operator identity is itself
+derived from OIDC — so the first configuration cannot be gated by a session.
+It is gated by a **one-time setup secret** instead:
 
-- a **one-time onboarding secret**, valid 24 hours, that the first
-  (unauthenticated) identity-provider save must present
-  (`X-Renkei-Bootstrap-Secret`); it is spent on use. A tenant that exists
-  with no identity provider and no secret — one created before the
-  migration, or whose secret expired — cannot be claimed through the form;
-  an operator configures it directly (`tenant_oidc`) or deletes it and the
-  creator starts again;
-- a **DNS TXT record** `renkei-verify=<token>` to publish on the domain.
-  Until `POST /api/tenant/<id>/verify-domain` sees it, the home page does
-  not route that domain's addresses to the tenant (the creator can still
-  sign in by the direct `/api/auth/oidc/login?tenantId=` link). Every
-  tenant that existed at the migration is marked verified.
+1. Start the web app with the database migrated and open `/setup` (a
+   signed-out visit to any page redirects there while no provider exists).
+   Opening the page mints the secret and writes it to the **server log**
+   (`First-run setup: … enter the setup secret …`) — the one place it ever
+   appears in the clear. Only the digest is stored (`settings`), and the
+   secret dies on use or after 24 hours; reloading the page after it expired
+   mints a fresh one.
+2. Enter the OpenID Connect discovery URL, client id and secret, the claim
+   mapping that decides who is an operator (role claim and the values that
+   mean operator and user), and the secret from the log. The form posts to
+   `POST /api/oidc` with the `X-Renkei-Setup-Secret` header; the secret is
+   spent on success.
+3. Sign in with an account that carries the operator value. Every later
+   change to the provider is operator-only (Settings → Identity), and `/setup`
+   redirects home once a provider exists.
 
-Asking to create a tenant for a domain that is already claimed answers 409
-without the tenant's id.
+The organization's name, shown on the consent page, is the `organizationName`
+org setting (default "Renkei").
+
+### Upgrading a deployment that was multi-tenant
+
+Migration `153-single-organization` removes the tenant model: it refuses to
+run while the database holds more than one row in `tenants` (move the others
+out or delete them first), then drops the `tenant_id` column from every table
+and the `tenants` and `tenant_domains` tables, renames `settings`,
+`oidc_config` and `jira_sites` to `settings`, `oidc_config` and
+`jira_sites`, and records the organization's former id as the
+`legacy_key_domain` setting. That setting is how keys and storage paths that
+were derived with the organization id keep working: pre-enrollment
+key-encryption keys (`USER_KEY_ENCRYPTION_KEY`), the sandbox worker's sealed
+browser sessions, held secret keys and exec uids, and chat attachment blob
+keys (`chat/<domain>/<id>`) all read it. Do not delete the row.
+
+URLs lose their organization segment: pages move from `/<slug>/…` to `/…`,
+API routes from `/api/tenant/<id>/…` to `/api/…` and `/api/admin/<slug>/…` to
+`/api/admin/…`, the MCP endpoint from `/api/mcp/<id>/<transport>` to
+`/api/mcp/<transport>` with issuer `<base>/api/mcp`, and webhook receivers
+drop their `<id>` segment (re-register WebEx, Microsoft Graph, Zoom, GitHub
+and Bitbucket webhooks after upgrading, or let the workers' health sweeps
+re-create the ones they manage). MCP clients re-register against the new
+issuer; the browser session cookie is `renkei_session`, so everyone signs in
+again once.
 
 ## Sessions, tokens and revocation
 
@@ -1001,8 +1029,8 @@ without the tenant's id.
   everywhere** deletes their sessions, access tokens and refresh tokens and
   writes a `user.sessions_revoked` audit event; disconnecting a connector
   grant there also deletes that person's MCP tokens.
-- The legacy `/api/tenant/<id>/sessions` endpoint (it read the unused
-  `jira_sessions` table) is gone.
+- The legacy sessions endpoint (it read the unused `jira_sessions` table) is
+  gone.
 - Connecting an MCP client (migration 151) stops at a **consent page**
   (`/oauth/consent`) that names the client, where its access would go and
   as whom it would act; the code is minted only when the same browser
@@ -1026,7 +1054,7 @@ without the tenant's id.
 - [x] Regular database backups
 - [x] PostgreSQL firewall rules (only app can connect)
 - [x] Failed login attempts logged
-- [x] Rate limiting: app-level, in-process fixed windows (`apps/web/lib/inbound-rate-limit.ts`; per forwarded client address AND a per-endpoint ceiling, so a spoofed address cannot widen the budget; N replicas multiply the ceiling). Tenant creation 5/h per client, 20/h total; OIDC sign-in start 30/min per client, 600/min per tenant; OAuth token endpoint 60/min per client, 1,200/min per tenant; dynamic client registration 10 per 10 min per client, 100 per 10 min per tenant (and per the system-level endpoint); inbound webhooks 600/min per client, 6,000/min per provider+tenant; voice 120/min per person. Webhook routes also refuse a missing or malformed signature header before any config or database read, and cap bodies at 1 MiB (413). Add nginx `limit_req` in front for a ceiling that holds across replicas.
+- [x] Rate limiting: app-level, in-process fixed windows (`apps/web/lib/inbound-rate-limit.ts`; per forwarded client address AND a per-endpoint ceiling, so a spoofed address cannot widen the budget; N replicas multiply the ceiling). OIDC sign-in start 30/min per client, 600/min overall; OAuth token endpoint 60/min per client, 1,200/min overall; dynamic client registration 10 per 10 min per client, 100 per 10 min overall (and per the system-level endpoint); inbound webhooks 600/min per client, 6,000/min per provider; voice 120/min per person. Webhook routes also refuse a missing or malformed signature header before any config or database read, and cap bodies at 1 MiB (413). Add nginx `limit_req` in front for a ceiling that holds across replicas.
 - [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https, `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; review reports before enforcing.
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)
@@ -1046,7 +1074,7 @@ content, never a search's text, never a path. A Mirth read or search also
 posts Mirth's own `_auditAccessedPHIMessage` / `_auditQueriedPHIMessage`
 event on the instance, best effort, so Mirth's event log agrees.
 
-Operators read it at `GET /api/admin/{slug}/phi-access?subject=<oidc
+Operators read it at `GET /api/admin/phi-access?subject=<oidc
 subject>&limit=100&before=<ISO date-time>` (operator role; without
 `subject` the org's whole trail, newest first).
 
@@ -1170,7 +1198,7 @@ names it:
    ```
 
    It walks `connector_configs.encrypted_secrets`,
-   `llm_model_configs.encrypted_secrets`, `tenant_oidc.client_secret`,
+   `llm_model_configs.encrypted_secrets`, `oidc_config.client_secret`,
    `platform_settings.vapid_keys`, `knowledge_chunks.content`,
    `sandbox_env_secrets.sealed` and
    `code_service_image_rules.registry_sealed` in batches of 200, opens
@@ -1284,7 +1312,7 @@ The chat's read-aloud and voice conversation need no environment variables: an o
 Two deployment details do matter:
 
 - **The microphone needs a secure context.** Browsers only expose `getUserMedia` on `https://` origins (or `localhost`), so voice conversations work behind the TLS setup above and not over plain `http://` on a LAN address. Reading replies aloud has no such requirement.
-- **Outbound access to the speech service.** The web app calls `https://{region}.tts.speech.microsoft.com` and `https://{region}.stt.speech.microsoft.com` (or the configured custom endpoint) from the server, never from the browser; allow those hosts from wherever `web` runs. The browser only ever talks to the app's own `/api/tenant/…/voice/*` routes, which are session-guarded and rate-limited per person.
+- **Outbound access to the speech service.** The web app calls `https://{region}.tts.speech.microsoft.com` and `https://{region}.stt.speech.microsoft.com` (or the configured custom endpoint) from the server, never from the browser; allow those hosts from wherever `web` runs. The browser only ever talks to the app's own `/api/voice/*` routes, which are session-guarded and rate-limited per person.
 
 The microphone tap is an audio worklet served as a static file (`apps/web/public/voice-capture-worklet.js`); a reverse proxy that serves `/public` assets must serve it with a JavaScript content type, which Next.js does by default.
 
@@ -1304,7 +1332,7 @@ The microphone tap is an audio worklet served as a static file (`apps/web/public
 
 ## Chat attachments (object storage)
 
-Files people upload into the chat (`/[slug]/chat`) are the one thing the
+Files people upload into the chat (`/chat`) are the one thing the
 web app stores as bytes at rest, and they live in an object store behind
 `packages/blob-store`, never on the app's disk. The store is chosen by
 `BLOB_STORE_PROVIDER`; today the only backend is Azure Blob Storage
@@ -1416,7 +1444,7 @@ step that failed and who refused it:
   Renkei never sent (Front Door's object chunking). Turn caching off on
   the route. Otherwise look for a rewritten path (an origin path on the
   route) or a stripped or added `x-ms-*` header, comparing the quoted
-  string with the path Renkei sent (`/{container}/probe/{tenant}/{time}`
+  string with the path Renkei sent (`/{container}/probe/{time}`
   for the test).
 - _Azure Blob 403 AuthorizationFailure_ — the account's network rules
   refused the source (public access off without the private link

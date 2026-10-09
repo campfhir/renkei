@@ -57,7 +57,7 @@ function session(subject: string, roles: string[]) {
   };
 }
 
-describe('GET /api/tenant/{tenantId}/audit', () => {
+describe('GET /api/audit', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
     mockGetSession.mockReset();

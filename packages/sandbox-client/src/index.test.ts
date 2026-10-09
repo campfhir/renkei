@@ -512,6 +512,72 @@ describe('sbReadFile', () => {
     expect(result.val.filename).toBe('a report.pdf');
   });
 });
+
+describe('sbWriteFile', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('answers unconfigured without any network call when the worker is not set up', async () => {
+    delete process.env.SANDBOX_WORKER_API_KEY;
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+
+    const result = await sbWriteFile(TARGET, { filename: 'x.md' }, new Uint8Array([1]));
+
+    expect(result).toEqual({ ok: false, err: { kind: 'unconfigured' } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('puts target + metadata on the query string and the raw bytes as the body', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify(WIRE_FILE), { status: 200 }));
+
+    const bytes = new Uint8Array([104, 105]); // "hi"
+    const result = await sbWriteFile(
+      TARGET,
+      {
+        filename: 'report.pdf',
+        contentType: 'application/pdf',
+        source: 'document-ocr-pipeline',
+        batchId: 'batch-1',
+      },
+      bytes
+    );
+
+    expect(result).toEqual({ ok: true, val: WIRE_FILE });
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/v1/write?');
+    const query = new URL(url).searchParams;
+    expect(query.get('subject')).toBe(TARGET.subject);
+    expect(query.get('filename')).toBe('report.pdf');
+    expect(query.get('contentType')).toBe('application/pdf');
+    expect(query.get('source')).toBe('document-ocr-pipeline');
+    expect(query.get('batchId')).toBe('batch-1');
+    expect((init.headers as Record<string, string>)['content-type']).toBe(
+      'application/octet-stream'
+    );
+    expect(new Uint8Array(init.body as ArrayBuffer)).toEqual(bytes);
+  });
+
+  it('maps a non-2xx response to a typed op error', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { type: 'quota_exceeded', message: 'full' } }), {
+        status: 429,
+      })
+    );
+
+    const result = await sbWriteFile(TARGET, { filename: 'x.md' }, new Uint8Array([1]));
+
+    expect(result).toEqual({
+      ok: false,
+      err: { kind: 'op', type: 'quota_exceeded', message: 'full', status: 429 },
+    });
+  });
+});
+
 describe('clientFailure', () => {
   it('maps unconfigured and unreachable without an op type', () => {
     expect(clientFailure({ kind: 'unconfigured' }).status).toBe(503);

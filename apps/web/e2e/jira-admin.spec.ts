@@ -93,7 +93,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     // Everyday Jira is set up and connected — the usual state for someone
@@ -106,7 +106,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       [fixture.subject, new Date(Date.now() + 365 * 24 * 3_600_000), ['read:issue:jira', 'offline_access'], { cloudId: 'e2e-cloud', siteUrl: 'https://e2e.atlassian.net' }]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"jira\", \"jira-admin\"]}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["jira", "jira-admin"]}'::jsonb)`,
       [fixture.subject]
     );
   });

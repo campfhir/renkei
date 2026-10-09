@@ -99,7 +99,7 @@ describe('runDriveWatchSync', () => {
     const result = await runDriveWatchSync(access(), row());
 
     expect(result.items).toBe(1);
-    const [tenantId, type, payload, orderingKey] = eventsOfType('ingest.document')[0]!;
+    const [type, payload, orderingKey] = eventsOfType('ingest.document')[0]!;
     expect(type).toBe('ingest.document');
     expect(payload).toMatchObject({
       provider: 'sharepoint',

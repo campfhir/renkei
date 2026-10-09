@@ -5,7 +5,7 @@
  * to seal to, and the wrapped keys the browser opens with the user key it
  * holds. Nothing here is a key: public keys, wrappings and dates only.
  *
- * Served by GET /api/tenant/[tenantId]/keys and rendered on the
+ * Served by GET /api/keys and rendered on the
  * preferences page; the KeyGuard decides from it what the browser must do.
  * The shape itself lives in shared.ts, which client code imports; this
  * module is server-only (it reads the database).
@@ -71,7 +71,7 @@ export async function setAutomationDays(
 /**
  * The asks still open for a person's key: when each was made and from what
  * browser, never the code — the approver types that off the asking screen
- * (app/api/tenant/[tenantId]/keys/devices).
+ * (app/api/keys/devices).
  */
 export async function pendingDevicesOf(
   db: Kysely<DB>,

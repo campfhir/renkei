@@ -1,5 +1,5 @@
 import React from 'react';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { readStorage } from '@/lib/storage-admin';
 import StorageForm from './storage-form';

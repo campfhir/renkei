@@ -14,6 +14,7 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
 import { enrollForE2E } from './keys';
+import { deleteRowsOf } from './seed';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 
@@ -67,15 +68,13 @@ async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
 
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
-    for (const table of [
+    await deleteRowsOf(client, fixture.subject, [
       'audit_events',
       'user_preferences',
       'settings',
       'sessions',
       'identities',
-    ]) {
-      await client.query(`DELETE FROM ${table}`);
-    }
+    ]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
       [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
@@ -85,7 +84,7 @@ async function seed(fixture: Fixture): Promise<void> {
       [fixture.subject, fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     if (fixture.workspacesOn) {

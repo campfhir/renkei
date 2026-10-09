@@ -119,7 +119,6 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
-const params = Promise.resolve({ });
 
 function postRequest(url: string, body: unknown): NextRequest {
   return new NextRequest(url, {
@@ -147,7 +146,11 @@ describe('POST /watches — sharepoint', () => {
     routes = [SITE, DRIVES];
 
     const response = await postWatch(
-      { params }
+      postRequest('https://renkei.example.com/api/watches', {
+        provider: 'sharepoint',
+        site: 'site-1',
+        scopeKey: 'drive-2',
+      })
     );
 
     expect(response.status).toBe(200);
@@ -173,7 +176,11 @@ describe('POST /watches — sharepoint', () => {
     routes = [SITE, DRIVES];
 
     const response = await postWatch(
-      { params }
+      postRequest('https://renkei.example.com/api/watches', {
+        provider: 'sharepoint',
+        site: 'site-1',
+        scopeKey: 'drive-from-another-site',
+      })
     );
 
     expect(response.status).toBe(400);
@@ -182,7 +189,10 @@ describe('POST /watches — sharepoint', () => {
 
   it('refuses a library named without its site', async () => {
     const response = await postWatch(
-      { params }
+      postRequest('https://renkei.example.com/api/watches', {
+        provider: 'sharepoint',
+        scopeKey: 'drive-2',
+      })
     );
 
     expect(response.status).toBe(400);
@@ -200,7 +210,9 @@ describe('GET /watches/options — sharepoint', () => {
     ];
 
     const response = await getOptions(
-      { params }
+      new NextRequest(
+        'https://renkei.example.com/api/watches/options?provider=sharepoint'
+      )
     );
 
     await expect(response.json()).resolves.toEqual({
@@ -212,7 +224,9 @@ describe('GET /watches/options — sharepoint', () => {
     routes = [{ match: '/sites?search=', body: { value: [] } }];
 
     await getOptions(
-      { params }
+      new NextRequest(
+        'https://renkei.example.com/api/watches/options?provider=sharepoint&q=policies'
+      )
     );
 
     expect(requests[0]).toContain('/sites?search=policies');
@@ -222,7 +236,9 @@ describe('GET /watches/options — sharepoint', () => {
     routes = [SITE, DRIVES];
 
     const response = await getOptions(
-      { params }
+      new NextRequest(
+        'https://renkei.example.com/api/watches/options?provider=sharepoint&site=site-1'
+      )
     );
 
     await expect(response.json()).resolves.toMatchObject({
@@ -239,13 +255,16 @@ describe('GET /watches/options — sharepoint', () => {
 describe('POST /watches/reindex — sharepoint', () => {
   it('discards the ingest.document work that would rebuild what it purged', async () => {
     const response = await postReindex(
-      { params }
+      postRequest('https://renkei.example.com/api/watches/reindex', {
+        provider: 'sharepoint',
+        scopeKey: 'drive-2',
+      })
     );
 
     expect(response.status).toBe(200);
     // The message type and the scope path both differ from Jira/Confluence,
     // and a mismatch on either silently discards nothing.
-    expect(discardPending).toHaveBeenCalledWith('tenant-1', 'ingest.document', [
+    expect(discardPending).toHaveBeenCalledWith('ingest.document', [
       { path: ['provider'], value: 'sharepoint' },
       { path: ['scopeKey'], value: 'drive-2' },
     ]);

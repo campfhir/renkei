@@ -7,7 +7,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import {
   getConnectorConfig,
@@ -103,7 +102,7 @@ export async function PUT(
     );
   }
   // Optional: verifies inbound webhook deliveries
-  // (app/api/webhooks/bitbucket/[tenantId]/route.ts) — a repo webhook is
+  // (app/api/webhooks/bitbucket/route.ts) — a repo webhook is
   // registered by hand in Bitbucket's own repository settings with this
   // same value as an `X-Renkei-Webhook-Secret` header (or, for older
   // registrations, a `?secret=` query parameter), since Bitbucket Cloud

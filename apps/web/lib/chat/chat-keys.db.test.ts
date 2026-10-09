@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import { isResourceEncrypted } from '@renkei/crypto';
 import { listResourceKeyHolders, openResourceKey } from '@renkei/user-keys';
 import {

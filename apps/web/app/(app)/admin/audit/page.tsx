@@ -1,6 +1,6 @@
 import React from 'react';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import AuditList, { type AuditEventRow } from './audit-list';
 import CoachTarget from '@/components/coach-marks/anchor';

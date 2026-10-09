@@ -12,6 +12,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
+import { deleteRowsOf } from './seed';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 /** A port no real listener holds; the callback is intercepted with page.route. */
@@ -60,7 +61,7 @@ async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
     // Nothing an OAuth client owns cascades from the tenant, so the previous
     // run's rows go first, newest dependency first.
-    for (const table of [
+    await deleteRowsOf(client, fixture.subject, [
       'audit_events',
       'oauth_access_tokens',
       'oauth_refresh_tokens',
@@ -70,9 +71,7 @@ async function seed(fixture: Fixture): Promise<void> {
       'sessions',
       'identities',
       'settings',
-    ]) {
-      await client.query(`DELETE FROM ${table}`);
-    }
+    ]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
       [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 3_600_000)]

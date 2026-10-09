@@ -17,8 +17,6 @@ import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import pg from 'pg';
 import {
-  E2E_SLUG,
-  E2E_TENANT_ID,
   E2E_SUBJECT,
   AGENT_DEEP_ID,
   DEEP_LOOP_NAME,

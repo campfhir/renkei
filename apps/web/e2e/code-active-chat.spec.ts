@@ -11,7 +11,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_SUBJECT, E2E_TENANT_ID } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 test.use({
   // The mobile project's device descriptor asks for WebKit, which is not

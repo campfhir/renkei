@@ -80,7 +80,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
     );
     // No coach marks tour stealing focus mid-screenshot.
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     // Zoom and WebEx: the two single-catalog OAuth cards, the shape most
@@ -94,7 +94,7 @@ async function seedTenant(fixture: Fixture): Promise<void> {
       );
     }
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"zoom\", \"webex\"]}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["zoom", "webex"]}'::jsonb)`,
       [fixture.subject]
     );
   } finally {

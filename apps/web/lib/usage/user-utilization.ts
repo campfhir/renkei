@@ -439,7 +439,7 @@ export async function getFailureSignatures(
       MAX(f.created_at) AS last_at,
       (ARRAY_AGG(f.error ORDER BY f.created_at DESC))[1] AS last_error
     FROM agent_run_log f
-    JOIN agents a ON a.id = f.agent_id AND a.tenant_id = f.tenant_id
+    JOIN agents a ON a.id = f.agent_id
     WHERE f.owner_subject = ${subject}
       AND f.status = 'failed'
       AND a.enabled

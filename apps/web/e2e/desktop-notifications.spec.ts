@@ -16,7 +16,7 @@
 
 import { test, expect } from '@playwright/test';
 import pg from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID, E2E_SUBJECT } from './seed';
+import { E2E_SUBJECT } from './seed';
 
 test.use({
   launchOptions: {

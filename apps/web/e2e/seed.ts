@@ -343,6 +343,51 @@ function attemptDetail(input: {
   return JSON.stringify(input);
 }
 
+/**
+ * The column that names a person on each table a spec seeds for itself.
+ * Specs run concurrently against one database, so a spec clears only ITS
+ * person's rows before seeding; a table missing here holds organization-wide
+ * rows (settings, connector configs, model configs, OAuth clients) that no
+ * subject owns, and is cleared whole — a spec that writes one of those
+ * shares it with every other spec in the run.
+ */
+const SUBJECT_COLUMN: Record<string, string> = {
+  agent_notifications: 'subject',
+  agent_runs: 'owner_subject',
+  agents: 'owner_subject',
+  audit_events: 'actor_subject',
+  chat_attachments: 'owner_subject',
+  chat_projects: 'owner_subject',
+  chats: 'owner_subject',
+  identities: 'subject',
+  image_usage: 'subject',
+  jira_admin_change_requests: 'subject',
+  jira_admin_space_templates: 'created_by',
+  oauth_access_tokens: 'subject',
+  oauth_authorization_codes: 'subject',
+  oauth_consent_requests: 'subject',
+  oauth_refresh_tokens: 'subject',
+  provider_grants: 'subject',
+  sandbox_size_requests: 'subject',
+  sessions: 'subject',
+  user_encryption_keys: 'subject',
+  user_preferences: 'subject',
+};
+
+/** Clear a spec's own rows (the subjects it seeds) from `tables`, in the order given. */
+export async function deleteRowsOf(
+  client: Client,
+  subjects: string | readonly string[],
+  tables: readonly string[]
+): Promise<void> {
+  const owners = typeof subjects === 'string' ? [subjects] : [...subjects];
+  for (const table of tables) {
+    const column = SUBJECT_COLUMN[table];
+    if (column) await client.query(`DELETE FROM ${table} WHERE ${column} = ANY($1)`, [owners]);
+    else await client.query(`DELETE FROM ${table}`);
+  }
+}
+
 export async function seed(client: Client): Promise<void> {
   // Delete in FK-dependency order, then insert fresh.
   await client.query('DELETE FROM events');
@@ -411,7 +456,7 @@ export async function seed(client: Client): Promise<void> {
   // tours switched off, so no card lands on a page a screenshot is about
   // to capture. coach-marks.spec.ts signs in as a subject of its own.
   await client.query(
-    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
     [E2E_SUBJECT]
   );
 

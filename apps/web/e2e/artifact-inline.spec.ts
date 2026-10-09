@@ -34,6 +34,7 @@ import { Client } from 'pg';
 import { keyFor } from './keys';
 import { renderDocument } from '@renkei/document-render';
 import { sheetFromXlsx } from '../lib/chat/sheet-preview';
+import { deleteRowsOf } from './seed';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The first hit on a route compiles it (`next dev` builds lazily). */
@@ -176,16 +177,14 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    for (const table of [
+    await deleteRowsOf(client, f.subject, [
       'chat_attachments',
       'chats',
       'llm_model_configs',
       'user_preferences',
       'sessions',
       'identities',
-    ]) {
-      await client.query(`DELETE FROM ${table}`);
-    }
+    ]);
     await client.query(
       `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
       [f.sessionId, f.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
@@ -195,7 +194,7 @@ async function seed(f: Fixture, files: Seeded[]): Promise<void> {
       [f.subject, f.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [f.subject]
     );
     await client.query(

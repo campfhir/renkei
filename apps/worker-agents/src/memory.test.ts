@@ -30,7 +30,7 @@ jest.mock('@renkei/delegate-client', () => ({
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import {
   appendAgentMemory,
   countAgentMemory,
@@ -58,8 +58,6 @@ maybe('agent memory', () => {
   // this suite is skipped for lack of DATABASE_URL) would throw at collection
   // and fail the whole file instead of skipping it.
   let db: Kysely<DB>;
-
-  const tenantId = randomUUID();
   let agentId: string;
 
   beforeAll(async () => {

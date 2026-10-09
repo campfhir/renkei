@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID, AGENT_RICH_ID } from './seed';
+import { AGENT_RICH_ID } from './seed';
 
 // Knowledge notes are not seeded (they normally need an embedding provider),
 // so this writes chunks directly — enough for the panel, which only reads

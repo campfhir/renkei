@@ -127,11 +127,11 @@ async function seedTenant(fixture: Fixture, scopes = ALL_SCOPES): Promise<string
       [fixture.subject, fixture.subject, 'E2E Jira Admin']
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
       [fixture.subject]
     );
     await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{\"added\": [\"jira-admin\"]}'::jsonb)`,
+      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'connectors', '{"added": ["jira-admin"]}'::jsonb)`,
       [fixture.subject]
     );
     await client.query(

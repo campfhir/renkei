@@ -14,7 +14,7 @@ import { LABEL_MRN, LABEL_SSN } from './detect';
 import type { DisclosurePolicy } from '@renkei/gates';
 
 const key = deriveRedactionKey(Buffer.from('a'.repeat(32)));
-const opts = (tenant = 'tenant-1', policy: DisclosurePolicy = DEFAULT_MCP_POLICY) => ({
+const opts = (_tenant = 'tenant-1', policy: DisclosurePolicy = DEFAULT_MCP_POLICY) => ({
   policy,
   pseudonymizer: createPseudonymizer(key),
 });

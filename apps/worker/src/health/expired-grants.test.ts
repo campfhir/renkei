@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import { sweepExpiredGrants, GRANT_STALE_DAYS } from './expired-grants';
 
@@ -13,7 +13,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('sweepExpiredGrants', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
   const staleAccount = `stale-${randomUUID().slice(0, 8)}`;
   const freshAccount = `fresh-${randomUUID().slice(0, 8)}`;
 

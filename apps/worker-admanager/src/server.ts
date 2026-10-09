@@ -296,7 +296,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
     async api(body, response) {
       const target = targetOf(body);
       if (!target)
-        return sendError(response, 'bad_request', 'tenantId, instanceId and subject are required');
+        return sendError(response, 'bad_request', 'instanceId and subject are required');
       const method = str(body.method).toUpperCase();
       const path = str(body.path);
       if (!isHttpMethod(method)) {
@@ -334,7 +334,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         return sendError(
           response,
           'bad_request',
-          'tenantId, instanceId and credentials are required'
+          'instanceId and credentials are required'
         );
       }
       const instance = await resolveOne(instanceId);

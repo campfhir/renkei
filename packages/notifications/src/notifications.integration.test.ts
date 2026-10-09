@@ -7,7 +7,7 @@
  * encryption headers to whatever endpoint a subscription names.
  */
 
-import { randomUUID, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

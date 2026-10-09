@@ -1,3 +1,10 @@
+> **Status (2026-10):** historical brief. The `/[slug]/*` tree it proposes was
+> built and has since become the root tree: a deployment serves one
+> organization, so there is no slug, no home-realm sign-in page and no
+> organization creation. Sign-in starts at `/api/auth/oidc/login`, first-run
+> setup at `/setup` (see `DEPLOYMENT.md`), and the MCP endpoint is
+> `/api/mcp/[transport]`. Paths below are as they were when this was written.
+
 # UI shell brief — app nav, routing, and connector self-service
 
 Working brief, captured so the conversation can be picked up from another

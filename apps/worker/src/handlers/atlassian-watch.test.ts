@@ -281,7 +281,7 @@ describe('runWatchSync — confluence', () => {
       },
     ];
     await runWatchSync(access(), confluenceRow(null));
-    const [tenantId, type, input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
+    const [type, input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
     expect(type).toBe('ingest.object');
     expect(input.provider).toBe('confluence');
     expect(input.refId).toBe('9');

@@ -1,5 +1,5 @@
 import React from 'react';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';

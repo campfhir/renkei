@@ -224,7 +224,7 @@ export class Forwarder {
         ok: false,
         status: 400,
         type: 'bad_request',
-        message: 'tenantId and subject are required',
+        message: 'subject is required',
       };
     }
     if (connector === 'onbase') {
@@ -300,7 +300,6 @@ export class Forwarder {
     request: IncomingMessage,
     response: ServerResponse
   ): Promise<void> {
-    const tenantId = url.searchParams.get('tenantId') ?? '';
     const shareId = url.searchParams.get('shareId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     if (!shareId || !subject) return fail(response, 400, 'bad_request');
@@ -329,11 +328,10 @@ export class Forwarder {
     request: IncomingMessage,
     response: ServerResponse
   ): Promise<void> {
-    const tenantId = url.searchParams.get('tenantId') ?? str(request.headers['x-onbase-tenant']);
     const subject = str(request.headers['x-onbase-subject']);
     const connectorName = str(request.headers['x-onbase-connector']) || 'onbase';
     if (!subject) {
-      return fail(response, 400, 'bad_request', 'tenantId and x-onbase-subject are required');
+      return fail(response, 400, 'bad_request', 'x-onbase-subject is required');
     }
     const access = await this.grants.accessFor(connectorName, { subject });
     if (!access.ok) return fail(response, access.status, access.error);

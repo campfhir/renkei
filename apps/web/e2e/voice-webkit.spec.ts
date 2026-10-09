@@ -8,7 +8,6 @@
 
 import { test, expect } from '@playwright/test';
 import { Client } from 'pg';
-import { E2E_SLUG } from './seed';
 import {
   CHAT_ID,
   CHAT_TITLE,

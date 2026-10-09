@@ -2,8 +2,8 @@
  * The image ledger against a real database (skipped without DATABASE_URL):
  * one row per picture is written content-free and attributed to a person;
  * totals read back org-wide or for one person within a span; the per-user
- * rows carry names for the leaderboard; and a row outside the span, or
- * another org's, is not counted.
+ * rows carry names for the leaderboard; and a row outside the span is not
+ * counted.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -17,18 +17,15 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('image usage ledger', () => {
   let db: Kysely<DB>;
-  const tenantId = randomUUID();
-  const otherTenantId = randomUUID();
-  const ann = `ann-${tenantId.slice(0, 8)}`;
-  const bo = `bo-${tenantId.slice(0, 8)}`;
+  const runId = randomUUID();
+  const ann = `ann-${runId.slice(0, 8)}`;
+  const bo = `bo-${runId.slice(0, 8)}`;
   const span = { days: 7, endOffsetDays: 0 };
 
   beforeAll(async () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    for (const id of [tenantId, otherTenantId]) {
-    }
     await db
       .insertInto('identities')
       .values({
@@ -66,25 +63,16 @@ maybe('image usage ledger', () => {
       width: 1024,
       height: 1024,
     });
-    // Another org's picture is not this org's.
-    await recordImageUsage(db, {
-      ...base,
-      subject: ann,
-      imageBytes: 9_000_000,
-    });
     // A picture from long ago is outside the span.
     await sql`
-      INSERT INTO image_usage (tenant_id, subject, surface, images, image_bytes, created_at)
-      VALUES (${tenantId}, ${ann}, 'images', 1, 7000000, NOW() - interval '60 days')
+      INSERT INTO image_usage (subject, surface, images, image_bytes, created_at)
+      VALUES (${ann}, 'images', 1, 7000000, NOW() - interval '60 days')
     `.execute(db);
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM image_usage WHERE tenant_id IN (${tenantId}, ${otherTenantId})`.execute(
-      db
-    );
-    await sql`DELETE FROM identities`.execute(db);
-    await sql`DELETE FROM tenants WHERE id IN (${tenantId}, ${otherTenantId})`.execute(db);
+    await sql`DELETE FROM image_usage WHERE subject IN (${ann}, ${bo})`.execute(db);
+    await sql`DELETE FROM identities WHERE subject IN (${ann}, ${bo})`.execute(db);
     await closeDatabase();
   });
 
@@ -122,7 +110,7 @@ maybe('image usage ledger', () => {
     );
   });
 
-  it('totals the org over the span, leaving out other orgs and old pictures', async () => {
+  it('totals the org over the span, leaving out old pictures', async () => {
     const totals = await getImageTotals(db, span, 'UTC');
     expect(totals).toEqual({ images: 3, bytes: 4_500_000, inputTokens: 101, outputTokens: 5160 });
   });
@@ -220,14 +208,14 @@ maybe('image usage ledger', () => {
   });
 
   it('never throws when a row cannot be written', async () => {
-    // A tenant that does not exist breaks the foreign key; the picture must still reach the person.
+    // A size the column cannot hold breaks the insert; the picture must still reach the person.
     await expect(
       recordImageUsage(db, {
         surface: 'images',
         provider: 'openai',
         model: 'm',
         subject: ann,
-        imageBytes: 1,
+        imageBytes: Number.NaN,
       })
     ).resolves.toBeUndefined();
   });

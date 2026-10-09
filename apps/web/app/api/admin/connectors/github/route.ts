@@ -6,7 +6,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import {
   getConnectorConfig,
@@ -95,7 +94,7 @@ export async function PUT(
     );
   }
   // Optional: unset until an operator sets one, in which case the webhook
-  // receiver (app/api/webhooks/github/[tenantId]/route.ts) has nothing to
+  // receiver (app/api/webhooks/github/route.ts) has nothing to
   // verify deliveries against and refuses them.
   const mergedWebhookSecret =
     typeof webhookSecret === 'string' && webhookSecret.length > 0

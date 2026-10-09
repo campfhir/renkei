@@ -83,7 +83,7 @@ export async function reindexLexicalBatch(
   const db = dbResult.val;
 
   return wrapAsync(async () => {
-    let query = db
+    const query = db
       .selectFrom('knowledge_chunks')
       .select(['id', 'content', 'metadata', 'keywords'])
       .where('search_text', 'is', null)

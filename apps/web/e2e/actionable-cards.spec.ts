@@ -75,7 +75,7 @@ async function seedTenant(client: Client, fixture: ReturnType<typeof fixtureFor>
   );
   // No welcome-tour overlay stealing focus mid-screenshot (coach-marks.spec.ts).
   await client.query(
-    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{\"autoStart\": false}'::jsonb)`,
+    `INSERT INTO user_preferences (subject, key, value)\n     VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
     [fixture.subject]
   );
 }
