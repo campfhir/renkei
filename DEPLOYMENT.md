@@ -859,6 +859,40 @@ UPDATE, DELETE ON phi_access_events FROM <app role>;` so the guarantee no
 longer rests on the trigger alone. A failed insert is logged at `warn`
 (`component=phi-access`); the read it describes still returns.
 
+### Sealed agent content
+
+An agent run's attempt detail (`agent_run_steps.detail`: the prompt, the
+model's summary, tool-call previews, saved results) and the agent's
+memory (`agent_memories.content`) are sealed under the run owner's
+**automation key** — the key their agents already run with — as one
+`uenc1:` envelope per row, sealed and opened by the delegate. The run
+page, the debug export and the memory panel open them as the owner; when
+the owner's automation delegation is not live (they have not signed in
+within their window, or paused their agents) those views show the same
+"content unavailable" marker the chat shows for a locked row, and an
+agent run that cannot seal or open its own rows is parked for retry
+rather than written in the clear.
+
+Memory rows written before this build are read as they are until moved.
+After deploying, from the agents worker's environment (it needs
+`DATABASE_URL`, `DELEGATE_WORKER_URL`, `DELEGATE_WORKER_API_KEY`):
+
+```
+pnpm --filter @renkei/worker-agents rekey-agent-memories            # seal every plaintext row
+pnpm --filter @renkei/worker-agents rekey-agent-memories --dry-run  # count them first
+```
+
+Rows of an owner whose automation delegation is not live are skipped and
+counted; run it again after they sign in, until it reports nothing left.
+Existing plaintext attempt details are left as they are (runs are pruned
+by `agentRunRetentionDays`; every new attempt is sealed).
+
+`AGENT_LLM_DEBUG_WIRE=true` on `worker-agents` makes a model-error log
+line carry the verbatim provider request body (wrapped for encryption at
+rest). Off — the default — the line carries only a content-free summary
+of the request (field names, sizes, roles, the URL). Turn it on for a
+reproduction, never leave it on.
+
 ## Troubleshooting
 
 ### Database Connection Failed

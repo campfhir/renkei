@@ -1673,6 +1673,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const memory = await readAgentMemory(dbResult.val, context.tenantId, agent.id, {
         maxEntries: 100,
       });
+      if (memory.unavailable) {
+        return errText(
+          `"${agent.name}"'s memory is sealed under its owner's encryption key, which is not ` +
+            'connected right now — the owner signing in again makes it readable.'
+        );
+      }
       if (!memory.summary && memory.entries.length === 0) {
         return textResult(`"${agent.name}" remembers nothing yet.`);
       }
@@ -2126,7 +2132,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     'and timed-out apart, or a later step can read why}. At most one tool per step. At runtime',
     '(not something you author on the node) every action step attempt may also call a free',
     '`remember` tool to record ONE fact future runs of the agent need and could not',
-    'rediscover — a deliberate, standalone call, never a side effect of declaring the step\'s',
+    "rediscover — a deliberate, standalone call, never a side effect of declaring the step's",
     'outcome. When a step should do this, say so explicitly in its instruction (e.g. "remember',
     'which ticket this was so a later run does not reopen it"); most steps have nothing worth',
     'remembering, and their instruction should say nothing about it.',

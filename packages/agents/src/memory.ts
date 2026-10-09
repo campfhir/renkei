@@ -4,6 +4,18 @@
  * everything here is plain SQL shared by the engine, the sweep, and the
  * owner-facing web views.
  *
+ * Content is SEALED: every entry and the summary are `uenc1:` envelopes
+ * under the agent owner's automation key (docs/delegate-key-design.md),
+ * sealed and opened by the delegate — the same key the owner's agent runs
+ * and connector credentials live under, so a run reads its memory
+ * unattended while a database copy shows nothing of what the agent
+ * remembered. The owner is read off the `agents` row, so the callers'
+ * shape (tenant, agent) is unchanged. A row still in plaintext — from
+ * before sealing, until the rekey sweep (`pnpm --filter
+ * @renkei/worker-agents rekey-agent-memories`) has moved it — is read as
+ * it is, so nothing goes dark on deploy; nothing new is ever written in
+ * the clear.
+ *
  * The context-window guarantee lives in renderAgentMemory: whatever the
  * table holds, a prompt receives at most MEMORY_INJECT_MAX_CHARS —
  * summary first (the compacted long tail), then the newest entries that
@@ -15,7 +27,8 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { contentEncryptionKey, revealContent } from '@renkei/crypto';
+import { contentEncryptionKey, isUserSealed, revealContent } from '@renkei/crypto';
+import { delegateClient, type KeyOpError } from '@renkei/delegate-client';
 
 /** One memory entry's ceiling — a note, not a document. */
 export const MEMORY_ENTRY_MAX_CHARS = 500;
@@ -42,9 +55,86 @@ export interface AgentMemoryEntry {
 
 export interface AgentMemory {
   summary: string | null;
+  /** When the summary was last compacted; null without a summary. */
+  summaryUpdatedAt: Date | null;
   /** Newest first, as read; renderers reverse for chronology. */
   entries: AgentMemoryEntry[];
+  /**
+   * Set when the owner's key is not available to open the sealed rows
+   * (not delegated, not enrolled, the delegate down): `summary` is null
+   * and `entries` empty, and a view says why instead of showing nothing.
+   */
+  unavailable: KeyOpError | null;
 }
+
+/** The agent's owner — whose automation key the memory is sealed under. */
+async function ownerSubjectOf(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<string | null> {
+  const row = await db
+    .selectFrom('agents')
+    .select('owner_subject')
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', agentId)
+    .executeTakeFirst();
+  return row?.owner_subject ?? null;
+}
+
+/**
+ * Stored contents opened as the owner, in one delegate call: a sealed
+ * value through the delegate, a plaintext row (pre-sealing) as it is.
+ * Fails as a whole when the owner's key is not available — a memory half
+ * read would be a memory the run acts on without knowing it is partial.
+ */
+async function openContents(
+  tenantId: string,
+  ownerSubject: string,
+  stored: string[]
+): Promise<{ ok: true; contents: string[] } | { ok: false; reason: KeyOpError }> {
+  const sealedIndexes = stored.flatMap((value, index) => (isUserSealed(value) ? [index] : []));
+  if (sealedIndexes.length === 0) return { ok: true, contents: stored };
+  const opened = await delegateClient().openForSubject(
+    tenantId,
+    ownerSubject,
+    sealedIndexes.map((index) => stored[index])
+  );
+  if (!opened.ok) return { ok: false, reason: opened.err.type };
+  const contents = [...stored];
+  sealedIndexes.forEach((index, position) => {
+    const plaintext = opened.val[position];
+    if (plaintext === null || plaintext === undefined) {
+      contents[index] = '[memory entry unavailable: it did not open under the owner\u2019s key]';
+    } else {
+      contents[index] = plaintext;
+    }
+  });
+  return { ok: true, contents };
+}
+
+/** One value sealed under the owner's automation key, or the delegate's verdict. */
+async function sealContent(
+  tenantId: string,
+  ownerSubject: string,
+  content: string
+): Promise<{ ok: true; sealed: string } | { ok: false; reason: KeyOpError }> {
+  const sealed = await delegateClient().sealForSubject(
+    tenantId,
+    ownerSubject,
+    [content],
+    'automation'
+  );
+  if (!sealed.ok) return { ok: false, reason: sealed.err.type };
+  return { ok: true, sealed: sealed.val[0] };
+}
+
+const NO_MEMORY: AgentMemory = {
+  summary: null,
+  summaryUpdatedAt: null,
+  entries: [],
+  unavailable: null,
+};
 
 /** Entry ids are uuids; see forgetAgentMemory for why the shape matters. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -63,7 +153,7 @@ export async function readAgentMemory(
   const maxEntries = limits.maxEntries ?? MEMORY_INJECT_MAX_ENTRIES;
   const rows = await db
     .selectFrom('agent_memories')
-    .select(['id', 'kind', 'content', 'created_at'])
+    .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .orderBy('created_at', 'desc')
@@ -71,28 +161,40 @@ export async function readAgentMemory(
     .limit(maxEntries + 1)
     .execute();
 
-  let summary: string | null = null;
-  const entries: AgentMemoryEntry[] = [];
-  for (const row of rows) {
-    if (row.kind === 'summary') {
-      summary = row.content;
-    } else if (entries.length < maxEntries) {
-      entries.push({ id: row.id, content: row.content, createdAt: row.created_at });
-    }
-  }
+  let summaryRow = rows.find((row) => row.kind === 'summary') ?? null;
   // The summary sorts by its last-compaction time and may fall outside the
   // newest-N window once entries pile up — fetch it explicitly then.
-  if (summary === null) {
-    const summaryRow = await db
-      .selectFrom('agent_memories')
-      .select(['content'])
-      .where('tenant_id', '=', tenantId)
-      .where('agent_id', '=', agentId)
-      .where('kind', '=', 'summary')
-      .executeTakeFirst();
-    summary = summaryRow?.content ?? null;
+  if (summaryRow === null) {
+    summaryRow =
+      (await db
+        .selectFrom('agent_memories')
+        .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
+        .where('tenant_id', '=', tenantId)
+        .where('agent_id', '=', agentId)
+        .where('kind', '=', 'summary')
+        .executeTakeFirst()) ?? null;
   }
-  return { summary, entries };
+  const entryRows = rows.filter((row) => row.kind === 'entry').slice(0, maxEntries);
+  if (summaryRow === null && entryRows.length === 0) return { ...NO_MEMORY };
+
+  const owner = await ownerSubjectOf(db, tenantId, agentId);
+  if (owner === null) return { ...NO_MEMORY, unavailable: 'NO_USER_KEY' };
+  const opened = await openContents(tenantId, owner, [
+    ...(summaryRow ? [summaryRow.content] : []),
+    ...entryRows.map((row) => row.content),
+  ]);
+  if (!opened.ok) return { ...NO_MEMORY, unavailable: opened.reason };
+  const offset = summaryRow ? 1 : 0;
+  return {
+    summary: summaryRow ? opened.contents[0] : null,
+    summaryUpdatedAt: summaryRow ? summaryRow.updated_at : null,
+    entries: entryRows.map((row, index) => ({
+      id: row.id,
+      content: opened.contents[index + offset],
+      createdAt: row.created_at,
+    })),
+    unavailable: null,
+  };
 }
 
 /**
@@ -113,16 +215,18 @@ export async function appendAgentMemory(
 ): Promise<{ inserted: boolean }> {
   const content = clip(input.content.trim(), MEMORY_ENTRY_MAX_CHARS);
   if (!content) return { inserted: false };
-  const existing = await db
-    .selectFrom('agent_memories')
-    .select('id')
-    .where('tenant_id', '=', input.tenantId)
-    .where('agent_id', '=', input.agentId)
-    .where('kind', '=', 'entry')
-    .where('content', '=', content)
-    .limit(1)
-    .executeTakeFirst();
-  if (existing) return { inserted: false };
+  const owner = await ownerSubjectOf(db, input.tenantId, input.agentId);
+  if (owner === null) return { inserted: false };
+  // The duplicate check reads the agent's entries back through the owner's
+  // key: two seals of one text differ byte for byte, so equality has to be
+  // judged on the plaintext. Bounded by MEMORY_HARD_CAP, one delegate call.
+  const existing = await readAgentMemory(db, input.tenantId, input.agentId, {
+    maxEntries: MEMORY_HARD_CAP,
+  });
+  if (existing.unavailable !== null) return { inserted: false };
+  if (existing.entries.some((entry) => entry.content === content)) return { inserted: false };
+  const sealed = await sealContent(input.tenantId, owner, content);
+  if (!sealed.ok) return { inserted: false };
   await db
     .insertInto('agent_memories')
     .values({
@@ -130,7 +234,7 @@ export async function appendAgentMemory(
       tenant_id: input.tenantId,
       agent_id: input.agentId,
       kind: 'entry',
-      content,
+      content: sealed.sealed,
       run_id: input.runId ?? null,
     })
     .execute();
@@ -145,6 +249,10 @@ export async function writeAgentMemorySummary(
   content: string
 ): Promise<void> {
   const clipped = clip(content.trim(), MEMORY_SUMMARY_MAX_CHARS);
+  const owner = await ownerSubjectOf(db, tenantId, agentId);
+  if (owner === null) throw new Error('agent not found: no owner to seal the summary for');
+  const sealed = await sealContent(tenantId, owner, clipped);
+  if (!sealed.ok) throw new Error(`memory summary could not be sealed: ${sealed.reason}`);
   await db
     .insertInto('agent_memories')
     .values({
@@ -152,16 +260,30 @@ export async function writeAgentMemorySummary(
       tenant_id: tenantId,
       agent_id: agentId,
       kind: 'summary',
-      content: clipped,
+      content: sealed.sealed,
     })
     .onConflict((oc) =>
       // The partial unique index (agent_id WHERE kind='summary').
       oc
         .column('agent_id')
         .where('kind', '=', 'summary')
-        .doUpdateSet({ content: clipped, updated_at: sql`NOW()` })
+        .doUpdateSet({ content: sealed.sealed, updated_at: sql`NOW()` })
     )
     .execute();
+}
+
+/**
+ * Stored memory contents opened as the owner — for the compaction sweep,
+ * which reads the rows it is about to fold directly. Plaintext rows pass
+ * through; a key that is not available fails the batch (the sweep tries
+ * again next pass).
+ */
+export async function openAgentMemoryContents(
+  tenantId: string,
+  ownerSubject: string,
+  stored: string[]
+): Promise<{ ok: true; contents: string[] } | { ok: false; reason: KeyOpError }> {
+  return openContents(tenantId, ownerSubject, stored);
 }
 
 /** What a run's prompt may carry of the agent's knowledge notes. */

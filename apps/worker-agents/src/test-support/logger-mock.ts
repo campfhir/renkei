@@ -64,3 +64,17 @@ export const logger = {
 };
 
 export function attachPersistentLogging(): void {}
+
+/**
+ * bored-logs' `secure()` marks a value for encryption at rest; the engine
+ * reaches for it when a credential or a verbatim request body goes into a
+ * log line. A visibly wrapped stand-in, so a test can tell a value that
+ * was marked from one written in the clear.
+ */
+export function secure(value: unknown): { secure: unknown } {
+  return { secure: value };
+}
+
+export function redact(value: unknown): { redact: unknown } {
+  return { redact: value };
+}

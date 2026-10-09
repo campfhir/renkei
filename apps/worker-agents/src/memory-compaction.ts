@@ -24,6 +24,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import {
+  openAgentMemoryContents,
   writeAgentMemorySummary,
   MEMORY_COMPACT_THRESHOLD,
   MEMORY_KEEP_RECENT,
@@ -125,15 +126,28 @@ async function compactOne(
   }
   const llm = llmResult.val;
 
+  // The rows are sealed under the owner's automation key (memory.ts);
+  // opened here as the owner, in one call, or the pass is left for the
+  // next sweep — a summary folded from envelopes would be garbage.
+  const opened = await openAgentMemoryContents(tenantId, ownerSubject, [
+    ...(summaryRow ? [summaryRow.content] : []),
+    ...entries.map((entry) => entry.content),
+  ]);
+  if (!opened.ok) {
+    throw new Error(`memory could not be opened under the owner's key (${opened.reason})`);
+  }
+  const summaryText = summaryRow ? opened.contents[0] : null;
+  const entryTexts = opened.contents.slice(summaryRow ? 1 : 0);
+
   // Oldest first, so the model reads a timeline.
   const noteLines = [...entries]
+    .map((entry, index) => ({ at: entry.created_at, text: entryTexts[index] }))
     .reverse()
-    .map((entry) => `- [${entry.created_at.toISOString().slice(0, 10)}] ${entry.content}`)
+    .map((entry) => `- [${entry.at.toISOString().slice(0, 10)}] ${entry.text}`)
     .join('\n');
   const prompt =
-    (summaryRow?.content
-      ? `Standing summary:\n${summaryRow.content}\n\n`
-      : 'Standing summary: (none yet)\n\n') + `Notes to fold in, oldest first:\n${noteLines}`;
+    (summaryText ? `Standing summary:\n${summaryText}\n\n` : 'Standing summary: (none yet)\n\n') +
+    `Notes to fold in, oldest first:\n${noteLines}`;
 
   const completion = await llm.provider.complete({
     system: COMPACTION_SYSTEM_PROMPT,

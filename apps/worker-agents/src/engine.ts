@@ -88,6 +88,7 @@ import {
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
 import { recordAgentRunOutcome, recordLlmCall } from '@renkei/agents/runs';
+import { mergeOpenedDetail, sealedDetailOf, splitDetailForSealing } from '@renkei/agents';
 import {
   ASK_PERSON_DEF,
   ASK_PERSON_TOOL,
@@ -525,24 +526,103 @@ function detailJson(detail: Record<string, unknown>): string {
 const PROMPT_DETAIL_CHARS = 40_000;
 
 /**
- * The `url`/`headers`/`request` fields for a model-error log line: the
- * whole outgoing request, unclipped — the logging pipeline already
- * handles an oversized value, and a rejected request is the whole point
- * of the log line, so clipping it would risk cutting off the very tool
- * definitions or settings most likely to be the actual cause. Plain text
- * throughout except the credential-bearing header (authorization /
- * api-key), which is the one thing here actually worth secure()'s
- * encrypt-at-rest treatment — see wireRequestCauseOf's doc. `{}` when the
- * error carries no cause (a codepath that predates it, or a kind —
- * aborted, timeout — with no specific request to blame).
+ * A finished attempt's detail, sealed for the row (step-detail.ts in
+ * @renkei/agents): the content fields — prompt, summary, tool-call
+ * previews, saved result — as one `uenc1:` envelope under the run
+ * OWNER's automation key, the structure beside it in the clear. The
+ * delegate seals; the run holds that delegation already (handleRun
+ * parks a run whose owner has none), so a seal that fails here is the
+ * delegation lapsing mid-run: a transient, retried by the queue rather
+ * than written around — this row is what a re-entry rebuilds the run's
+ * variables from, and an attempt stored in the clear would be exactly
+ * the leak this exists to close.
  */
-function requestLogFieldOf(cause: unknown): Record<string, unknown> {
+async function sealedDetailJson(run: RunRow, detail: Record<string, unknown>): Promise<string> {
+  const { clear, plaintext } = splitDetailForSealing(detail);
+  if (plaintext === null) return detailJson(clear);
+  const sealed = await delegateClient().sealForSubject(
+    run.tenant_id,
+    run.owner_subject,
+    [plaintext],
+    'automation'
+  );
+  if (!sealed.ok) {
+    throw new TransientFailure(`attempt detail could not be sealed: ${sealed.err.type}`);
+  }
+  return detailJson({ ...clear, sealed: sealed.val[0] });
+}
+
+/**
+ * Attempt rows with their sealed content opened as the run's owner, in
+ * one delegate call — for the re-entry paths that rebuild variables from
+ * the rows. A row without an envelope (a pause, a row from before
+ * sealing) is returned as it is. An envelope that will not open is the
+ * owner's delegation lapsing: transient, like a failed seal — the
+ * alternative is a resumed run reading a shorter memory than it wrote.
+ */
+async function openAttemptDetails<T extends { detail: Json | null }>(
+  run: Pick<RunRow, 'tenant_id' | 'owner_subject'>,
+  rows: T[]
+): Promise<T[]> {
+  const envelopes = rows.map((row) => sealedDetailOf(row.detail));
+  const stored = envelopes.flatMap((envelope) => (envelope === null ? [] : [envelope]));
+  if (stored.length === 0) return rows;
+  const opened = await delegateClient().openForSubject(run.tenant_id, run.owner_subject, stored);
+  if (!opened.ok) {
+    throw new TransientFailure(`attempt detail could not be opened: ${opened.err.type}`);
+  }
+  let next = 0;
+  return rows.map((row, index) => {
+    if (envelopes[index] === null) return row;
+    const plaintext = opened.val[next] ?? null;
+    next += 1;
+    if (plaintext === null) {
+      throw new TransientFailure('attempt detail could not be opened: envelope did not open');
+    }
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    return { ...row, detail: mergeOpenedDetail(row.detail, plaintext, '') as Json };
+  });
+}
+
+/**
+ * Set to `true` to log the VERBATIM provider request body on a model error
+ * (encrypted at rest through secure()). Off, the line carries only the
+ * content-free summary — field names, sizes, roles, the URL.
+ */
+const WIRE_DEBUG_ENV = 'AGENT_LLM_DEBUG_WIRE';
+
+function wireDebugOn(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[WIRE_DEBUG_ENV]?.trim().toLowerCase() === 'true';
+}
+
+/**
+ * The request fields for a model-error log line. Always: the URL and
+ * `summarizeWireRequest`'s summary — every field NAME and structural
+ * value that could be wrong (model, token-limit field, temperature,
+ * reasoning effort, tool_choice, message roles and sizes) with the
+ * content replaced by lengths, so the line can be read by anyone who
+ * reads logs. The verbatim body is a run's whole prompt — tool results,
+ * saved values, whatever the step read — and is written ONLY when
+ * AGENT_LLM_DEBUG_WIRE=true, and then wrapped in secure() so it sits
+ * encrypted at rest beside the credential header it travels with. `{}`
+ * when the error carries no cause (a codepath that predates it, or a
+ * kind — aborted, timeout — with no specific request to blame).
+ */
+export function requestLogFieldOf(
+  cause: unknown,
+  env: NodeJS.ProcessEnv = process.env
+): Record<string, unknown> {
   const parsed = wireRequestCauseOf(cause);
   if (!parsed) return {};
   return {
     url: parsed.url,
-    headers: maskCredentialHeaders(parsed.headers, secure),
-    request: JSON.stringify(parsed.request),
+    requestSummary: parsed.summary,
+    ...(wireDebugOn(env)
+      ? {
+          headers: maskCredentialHeaders(parsed.headers, secure),
+          request: secure(JSON.stringify(parsed.request)),
+        }
+      : {}),
   };
 }
 
@@ -1244,15 +1324,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       // Resume state: prior attempt rows rebuild position, budgets, and the
       // saveAs bindings recorded on succeeded attempts.
-      const priorAttempts = await db
-        .selectFrom('agent_run_steps')
-        .select(['step_id', 'attempt', 'status', 'detail', 'iteration'])
-        .where('run_id', '=', runId)
-        // Iteration-major so a looped step's LATEST iteration wins the
-        // recovered binding, matching live last-write-wins.
-        .orderBy('iteration')
-        .orderBy('attempt')
-        .execute();
+      const priorAttempts = await openAttemptDetails(
+        run,
+        await db
+          .selectFrom('agent_run_steps')
+          .select(['step_id', 'attempt', 'status', 'detail', 'iteration'])
+          .where('run_id', '=', runId)
+          // Iteration-major so a looped step's LATEST iteration wins the
+          // recovered binding, matching live last-write-wins.
+          .orderBy('iteration')
+          .orderBy('attempt')
+          .execute()
+      );
       const { vars, lists } = await baseVariables(run);
       recoverSavedVars(nodes, priorAttempts, vars, lists);
       // Steps whose saveAs feeds a loop get nudged toward saveItems.
@@ -1704,7 +1787,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const source = flattenActionSteps(frame.loop.steps).find((step) => step.saveAs === collectFrom);
     if (!source) return;
 
-    const row = await db
+    const stored = await db
       .selectFrom('agent_run_steps')
       .select('detail')
       .where('run_id', '=', run.id)
@@ -1712,7 +1795,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .where('iteration', '=', frame.iteration)
       .where('status', '=', 'succeeded')
       .executeTakeFirst();
-    if (!row) return;
+    if (!stored) return;
+    const [row] = await openAttemptDetails(run, [stored]);
     const detail: { saveValue?: unknown; saveItems?: unknown } =
       typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
         ? row.detail
@@ -1915,7 +1999,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         modelCalls: outcome.modelCalls,
         usage: outcome.usage,
       };
-      const detailText = detailJson(detail);
+      const detailText = await sealedDetailJson(run, detail);
 
       await db
         .updateTable('agent_run_steps')
@@ -4383,21 +4467,48 @@ export function createAgentRunHandler(deps: EngineDeps) {
     };
   }
 
+  /**
+   * The newest attempt row of one status for a step's round, its sealed
+   * content opened as the run's owner (sealedDetailJson's counterpart).
+   * The owner is read off the run row by id, so the callers — one of them
+   * inside the approval gate — keep passing the run id alone.
+   */
+  async function openedAttemptRow(
+    runId: string,
+    stepId: string,
+    iteration: number,
+    status: 'failed' | 'retired'
+  ): Promise<{ detail: Json | null; outcome_code: string | null } | undefined> {
+    const row = await db
+      .selectFrom('agent_run_steps')
+      .select(['detail', 'outcome_code'])
+      .where('run_id', '=', runId)
+      .where('step_id', '=', stepId)
+      .where('iteration', '=', iteration)
+      .where('status', '=', status)
+      .orderBy('attempt', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    if (!row || sealedDetailOf(row.detail) === null) return row;
+    const owner = await db
+      .selectFrom('agent_runs')
+      .select(['tenant_id', 'owner_subject'])
+      .where('id', '=', runId)
+      .executeTakeFirst();
+    if (!owner) return row;
+    const [opened] = await openAttemptDetails(
+      { tenant_id: owner.tenant_id, owner_subject: owner.owner_subject },
+      [row]
+    );
+    return opened;
+  }
+
   async function lastFailureText(
     runId: string,
     stepId: string,
     iteration: number
   ): Promise<string | undefined> {
-    const row = await db
-      .selectFrom('agent_run_steps')
-      .select('detail')
-      .where('run_id', '=', runId)
-      .where('step_id', '=', stepId)
-      .where('iteration', '=', iteration)
-      .where('status', '=', 'failed')
-      .orderBy('attempt', 'desc')
-      .limit(1)
-      .executeTakeFirst();
+    const row = await openedAttemptRow(runId, stepId, iteration, 'failed');
     const detail: { llmSummary?: unknown } =
       typeof row?.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
         ? row.detail
@@ -4417,16 +4528,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     stepId: string,
     iteration: number
   ): Promise<{ previousFailure?: string }> {
-    const row = await db
-      .selectFrom('agent_run_steps')
-      .select(['detail', 'outcome_code'])
-      .where('run_id', '=', runId)
-      .where('step_id', '=', stepId)
-      .where('iteration', '=', iteration)
-      .where('status', '=', 'retired')
-      .orderBy('attempt', 'desc')
-      .limit(1)
-      .executeTakeFirst();
+    const row = await openedAttemptRow(runId, stepId, iteration, 'retired');
     if (!row) return {};
     const detail: { llmSummary?: unknown } =
       typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
