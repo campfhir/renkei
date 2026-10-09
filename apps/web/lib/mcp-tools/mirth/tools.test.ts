@@ -14,6 +14,10 @@
 jest.mock('@/lib/mirth/service-client', () => ({
   mirthApi: jest.fn(),
 }));
+jest.mock('@/lib/phi-access', () => ({
+  ...jest.requireActual<typeof import('@/lib/phi-access')>('@/lib/phi-access'),
+  recordPhiAccess: jest.fn().mockResolvedValue(true),
+}));
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -30,6 +34,7 @@ import { PLAIN_ID_ARGS, REF_ARGS, type Directory } from './resolve';
 import type { MCPToolContext } from '../common';
 
 const { mirthApi } = jest.requireMock<{ mirthApi: jest.Mock }>('@/lib/mirth/service-client');
+const { recordPhiAccess } = jest.requireMock<{ recordPhiAccess: jest.Mock }>('@/lib/phi-access');
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: { text: string }[];
@@ -844,10 +849,142 @@ describe('names in place of ids', () => {
       channelId: 'ADT In',
       includedMetaDataId: ['To Lab', 0],
     });
-    expect(mirthApi).toHaveBeenLastCalledWith(TARGET, {
+    // Not the LAST call: a search is followed by Mirth's own PHI audit POST.
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
       method: 'GET',
       path: '/channels/c1/messages',
       query: { includedMetaDataId: ['1', '0'], includeContent: false, limit: 20 },
     });
+  });
+});
+
+describe('PHI access trail', () => {
+  const PHI_MESSAGE = {
+    message: {
+      messageId: 4711,
+      receivedDate: { time: 1_700_000_000_000 },
+      processed: true,
+      connectorMessages: {
+        entry: [
+          {
+            int: 0,
+            connectorMessage: {
+              metaDataId: 0,
+              connectorName: 'Source',
+              status: 'SENT',
+              sendAttempts: 1,
+              raw: { dataType: 'HL7V2', content: 'MSH|^~\\&|LAB||PID|1||123^^^MRN||DOE^JANE' },
+            },
+          },
+        ],
+      },
+    },
+  };
+
+  it('records exactly one event for a message read — ids only, never content — and tells Mirth', async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, PHI_MESSAGE));
+    mirthApi.mockResolvedValueOnce(answer(204, ''));
+    const result = await register().get('mirth_get_message')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'ADT In',
+      messageId: 4711,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('DOE^JANE');
+
+    expect(recordPhiAccess).toHaveBeenCalledTimes(1);
+    const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
+    expect(event).toEqual({
+      tenantId: 'tenant-1',
+      subject: 'auth0|alice',
+      agentId: null,
+      connector: 'mirth',
+      instanceId: INSTANCE_ID,
+      action: 'read',
+      toolName: 'mirth_get_message',
+      channelId: 'c1',
+      messageId: '4711',
+    });
+    expect(JSON.stringify(event)).not.toContain('DOE');
+    expect(JSON.stringify(event)).not.toContain('MSH');
+
+    // Mirth's own event log hears about it too: the accessed-PHI route,
+    // with the ids as audit attributes.
+    expect(mirthApi).toHaveBeenLastCalledWith(TARGET, {
+      method: 'POST',
+      path: '/channels/_auditAccessedPHIMessage',
+      body: '<map><entry><string>channelId</string><string>c1</string></entry><entry><string>messageId</string><string>4711</string></entry><entry><string>tool</string><string>mirth_get_message</string></entry></map>',
+      contentType: 'application/xml',
+    });
+  });
+
+  it('a search records one search event (the channel, never the text searched) and the queried-PHI audit', async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, { list: '' }));
+    mirthApi.mockResolvedValueOnce(answer(204, ''));
+    await register().get('mirth_search_messages')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      textSearch: 'DOE^JANE',
+    });
+    expect(recordPhiAccess).toHaveBeenCalledTimes(1);
+    const [event] = recordPhiAccess.mock.calls[0] as [Record<string, unknown>];
+    expect(event).toMatchObject({
+      action: 'search',
+      toolName: 'mirth_search_messages',
+      channelId: 'c1',
+    });
+    expect(JSON.stringify(event)).not.toContain('DOE');
+    expect(mirthApi).toHaveBeenLastCalledWith(
+      TARGET,
+      expect.objectContaining({ method: 'POST', path: '/channels/_auditQueriedPHIMessage' })
+    );
+  });
+
+  it('the read is still returned when Mirth refuses the audit event', async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, PHI_MESSAGE));
+    mirthApi.mockResolvedValueOnce(opError('unreachable', 'no route', 502));
+    const result = await register().get('mirth_get_message')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      messageId: 4711,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('Message #4711');
+    expect(recordPhiAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed read records nothing', async () => {
+    mirthApi.mockResolvedValueOnce(answer(404, 'no such message'));
+    const result = await register().get('mirth_get_message')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      messageId: 1,
+    });
+    expect(result.isError).toBe(true);
+    expect(recordPhiAccess).not.toHaveBeenCalled();
+  });
+
+  it('the generated message tools record too: attachments and exports, by id', async () => {
+    mirthApi.mockResolvedValueOnce(answer(200, { list: '' }));
+    mirthApi.mockResolvedValueOnce(answer(204, ''));
+    await register().get('mirth_get_message_attachments')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      messageId: 9,
+    });
+    expect(recordPhiAccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connector: 'mirth',
+        action: 'read',
+        toolName: 'mirth_get_message_attachments',
+        channelId: 'c1',
+        messageId: 9,
+      })
+    );
+    // A status-only tool (counting) is not a PHI read: nothing recorded.
+    recordPhiAccess.mockClear();
+    mirthApi.mockResolvedValueOnce(answer(200, 3));
+    await register().get('mirth_count_messages')!({ instanceId: INSTANCE_ID, channelId: 'c1' });
+    expect(recordPhiAccess).not.toHaveBeenCalled();
   });
 });

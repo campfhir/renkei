@@ -219,3 +219,11 @@ export {
 } from './resolve-time';
 
 export { friendlyToolName } from './tool-name';
+export {
+  SEALED_DETAIL_FIELDS,
+  SEALED_DETAIL_KEY,
+  mergeOpenedDetail,
+  outlineToolCalls,
+  sealedDetailOf,
+  splitDetailForSealing,
+} from './step-detail';

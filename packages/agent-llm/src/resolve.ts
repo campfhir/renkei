@@ -22,6 +22,7 @@ import { IMAGE_SURFACES, type ImageModelConfig, type ImageSurface } from './imag
 import { AnthropicProvider } from './anthropic';
 import { OpenAiProvider } from './openai';
 import { OpenAiResponsesProvider } from './openai-responses';
+import { dataHandlingOf, type LlmDataHandling } from './data-handling';
 
 export interface ResolvedLlm {
   provider: LlmProvider;
@@ -31,6 +32,8 @@ export interface ResolvedLlm {
   model: string;
   maxOutputTokens: number;
   temperature?: number;
+  /** The operator's statement of where this model's data goes (settings jsonb); absent = unknown. */
+  dataHandling?: LlmDataHandling;
 }
 
 export type ResolveLlmError = 'NO_MODEL' | 'UNSUPPORTED_PROVIDER' | 'CONFIG_ERROR' | 'DB_ERROR';
@@ -218,6 +221,7 @@ export async function resolveAgentLlm(
     providerName: row.provider,
     model: row.model,
     ...settingsOf(row),
+    dataHandling: dataHandlingOf(row.settings),
   };
   cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
   return ok(resolved);

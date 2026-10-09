@@ -53,6 +53,7 @@ import { getDatabase } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import { createUploadSlot } from '../upload-slots';
 import type { OnBaseAuth } from './onbase-auth';
+import { phiActorOf, recordPhiAccess, type PhiAction } from '@/lib/phi-access';
 
 /** The connector key the OnBase capabilities register under. */
 export const ONBASE_MCP_CONNECTOR = 'onbase';
@@ -159,7 +160,8 @@ const catalogCache = new CatalogCache<NamedThing[]>();
 export async function loadCatalog(
   context: MCPToolContext,
   auth: OnBaseAuth,
-  kind: 'keyword-types' | 'document-types' | 'document-type-groups' | 'custom-queries' | 'note-types'
+  kind:
+    'keyword-types' | 'document-types' | 'document-type-groups' | 'custom-queries' | 'note-types'
 ): Promise<NamedThing[] | string> {
   const cacheKey = `${context.tenantId}:${kind}`;
   const cached = catalogCache.get(cacheKey);
@@ -221,7 +223,13 @@ async function resolveConstraints(
 ): Promise<OnBaseQueryKeyword[] | { refusal: string }> {
   const resolved: OnBaseQueryKeyword[] = [];
   for (const constraint of constraints) {
-    const typeId = await resolveRef(context, auth, 'keyword-types', constraint.type, 'keyword type');
+    const typeId = await resolveRef(
+      context,
+      auth,
+      'keyword-types',
+      constraint.type,
+      'keyword type'
+    );
     if (typeof typeId !== 'string') return typeId;
     resolved.push({
       typeId,
@@ -270,7 +278,8 @@ async function runQuery(
     'fetch the query results'
   );
   if (typeof results === 'string') return results;
-  const items = isRecord(results.json) && Array.isArray(results.json.items) ? results.json.items : [];
+  const items =
+    isRecord(results.json) && Array.isArray(results.json.items) ? results.json.items : [];
   if (items.length === 0) {
     return 'No documents matched. (OnBase only returns documents your account may see.)';
   }
@@ -299,6 +308,29 @@ export function registerOnbaseTools(
   context: MCPToolContext,
   auth: OnBaseAuth
 ): void {
+  /**
+   * The PHI access trail (lib/phi-access.ts): which document a person — or
+   * their agent — read, downloaded or searched for, by id. Written after
+   * the API answered and never in the way of the answer; the insert logs
+   * its own failure. A search records the scope it ran over (a document
+   * type, type group or custom query id), never the keyword values.
+   */
+  const actor = phiActorOf(context);
+  const recordAccess = async (input: {
+    action: PhiAction;
+    toolName: string;
+    documentId?: string | null;
+  }): Promise<void> => {
+    if (!actor) return;
+    await recordPhiAccess({
+      ...actor,
+      connector: 'onbase',
+      action: input.action,
+      toolName: input.toolName,
+      documentId: input.documentId ?? null,
+    });
+  };
+
   server.registerTool(
     'onbase_search_documents',
     {
@@ -315,7 +347,10 @@ export function registerOnbaseTools(
           .string()
           .optional()
           .describe('Scope: a document type name or id (this OR documentTypeGroup is required).'),
-        documentTypeGroup: z.string().optional().describe('Scope: a document type group name or id.'),
+        documentTypeGroup: z
+          .string()
+          .optional()
+          .describe('Scope: a document type group name or id.'),
         keywords: z
           .array(keywordConstraintSchema)
           .optional()
@@ -335,7 +370,13 @@ export function registerOnbaseTools(
     }) => {
       const targets: { kind: QueryTargetKind; ids: string[] }[] = [];
       if (args.documentType) {
-        const id = await resolveRef(context, auth, 'document-types', args.documentType, 'document type');
+        const id = await resolveRef(
+          context,
+          auth,
+          'document-types',
+          args.documentType,
+          'document type'
+        );
         if (typeof id !== 'string') return errText(id.refusal);
         targets.push({ kind: 'DocumentType', ids: [id] });
       }
@@ -367,9 +408,15 @@ export function registerOnbaseTools(
         documentDateRange: { start: args.documentDateStart, end: args.documentDateEnd },
         maxResults: args.maxResults ?? 25,
       });
-      return rendered.startsWith('Could not') || rendered.startsWith('The query')
-        ? errText(rendered)
-        : textResult(rendered);
+      if (rendered.startsWith('Could not') || rendered.startsWith('The query')) {
+        return errText(rendered);
+      }
+      await recordAccess({
+        action: 'search',
+        toolName: 'onbase_search_documents',
+        documentId: targets.map((target) => `${target.kind}:${target.ids.join(',')}`).join(';'),
+      });
+      return textResult(rendered);
     }
   );
 
@@ -398,7 +445,13 @@ export function registerOnbaseTools(
       documentDateEnd?: string;
       maxResults?: number;
     }) => {
-      const id = await resolveRef(context, auth, 'custom-queries', args.customQuery, 'custom query');
+      const id = await resolveRef(
+        context,
+        auth,
+        'custom-queries',
+        args.customQuery,
+        'custom query'
+      );
       if (typeof id !== 'string') return errText(id.refusal);
       const keywords = args.keywords
         ? await resolveConstraints(context, auth, args.keywords)
@@ -411,7 +464,13 @@ export function registerOnbaseTools(
         documentDateRange: { start: args.documentDateStart, end: args.documentDateEnd },
         maxResults: args.maxResults ?? 25,
       });
-      return rendered.startsWith('Could not') ? errText(rendered) : textResult(rendered);
+      if (rendered.startsWith('Could not')) return errText(rendered);
+      await recordAccess({
+        action: 'search',
+        toolName: 'onbase_run_custom_query',
+        documentId: `CustomQuery:${id}`,
+      });
+      return textResult(rendered);
     }
   );
 
@@ -437,6 +496,11 @@ export function registerOnbaseTools(
       ]);
       if (typeof meta === 'string') return errText(meta);
       if (typeof keywords === 'string') return errText(keywords);
+      await recordAccess({
+        action: 'read',
+        toolName: 'onbase_get_document',
+        documentId: args.documentId,
+      });
       const record = isRecord(meta.json) ? meta.json : {};
 
       const lines = [
@@ -497,6 +561,11 @@ export function registerOnbaseTools(
         `/documents/${id}/revisions/latest/renditions/default/content`
       );
       if (typeof content === 'string') return errText(content);
+      await recordAccess({
+        action: 'read',
+        toolName: 'onbase_read_document',
+        documentId: args.documentId,
+      });
 
       const maxBytes = Math.min(
         DEFAULT_MAX_INPUT_BYTES,
@@ -535,12 +604,19 @@ export function registerOnbaseTools(
       annotations: { readOnlyHint: true },
       inputSchema: z.object({ documentId: z.string().min(1) }),
     },
-    (args: { documentId: string }) => {
+    async (args: { documentId: string }) => {
       const id = idSegment(args.documentId);
       if (!id) return errText('That is not a usable document id.');
       if (!context.origin) {
         return errText('This deployment has no public base URL, so no download link can be made.');
       }
+      // The link is the access: whoever follows it reads the bytes on
+      // their own session, so the handing-out is what the trail records.
+      await recordAccess({
+        action: 'download',
+        toolName: 'onbase_download_document',
+        documentId: args.documentId,
+      });
       return textResult(
         `Download (requires this org's sign-in): ${context.origin}/api/tenant/${context.tenantId}/onbase/documents/${id}/content`
       );
@@ -590,7 +666,11 @@ export function registerOnbaseTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const result = await apiJson(auth, { method: 'GET', path: '/keyword-types' }, 'list keyword types');
+      const result = await apiJson(
+        auth,
+        { method: 'GET', path: '/keyword-types' },
+        'list keyword types'
+      );
       if (typeof result === 'string') return errText(result);
       const items = namedList(result.json);
       if (items.length === 0) return textResult('No keyword types are visible to your account.');
@@ -623,9 +703,17 @@ export function registerOnbaseTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const result = await apiJson(auth, { method: 'GET', path: '/custom-queries' }, 'list custom queries');
+      const result = await apiJson(
+        auth,
+        { method: 'GET', path: '/custom-queries' },
+        'list custom queries'
+      );
       if (typeof result === 'string') return errText(result);
-      if (!isRecord(result.json) || !Array.isArray(result.json.items) || result.json.items.length === 0) {
+      if (
+        !isRecord(result.json) ||
+        !Array.isArray(result.json.items) ||
+        result.json.items.length === 0
+      ) {
         return textResult('No custom queries are visible to your account.');
       }
       const lines: string[] = [];
@@ -666,7 +754,8 @@ export function registerOnbaseTools(
         'list the notes'
       );
       if (typeof result === 'string') return errText(result);
-      const items = isRecord(result.json) && Array.isArray(result.json.items) ? result.json.items : [];
+      const items =
+        isRecord(result.json) && Array.isArray(result.json.items) ? result.json.items : [];
       if (items.length === 0) return textResult('No notes on this document revision.');
       const lines: string[] = [];
       for (const item of items) {
@@ -708,7 +797,8 @@ export function registerOnbaseTools(
         'read the document history'
       );
       if (typeof result === 'string') return errText(result);
-      const items = isRecord(result.json) && Array.isArray(result.json.items) ? result.json.items : [];
+      const items =
+        isRecord(result.json) && Array.isArray(result.json.items) ? result.json.items : [];
       if (items.length === 0) return textResult('No history entries for this document.');
       const lines = items
         .filter(isRecord)
@@ -733,7 +823,10 @@ export function registerOnbaseTools(
         'and check_file_upload confirms, onbase_archive_document files it under a document ' +
         'type with keywords.',
       inputSchema: z.object({
-        filename: z.string().min(1).describe('Name with extension — the extension picks the OnBase file type.'),
+        filename: z
+          .string()
+          .min(1)
+          .describe('Name with extension — the extension picks the OnBase file type.'),
         contentType: z.string().optional(),
       }),
     },
@@ -758,7 +851,7 @@ export function registerOnbaseTools(
       description:
         'Step 2 of archiving: file a completed upload (from onbase_request_document_upload) ' +
         'into OnBase under a document type, with keyword values. Keyword and document-type ' +
-        'names are resolved to ids. Starts from the document type\'s default keywords and ' +
+        "names are resolved to ids. Starts from the document type's default keywords and " +
         'merges yours over them.',
       inputSchema: z.object({
         uploadId: z.string().uuid().describe('The Renkei upload id whose bytes were uploaded.'),
@@ -803,7 +896,13 @@ export function registerOnbaseTools(
         return errText('This upload never reached OnBase staging; request a new upload slot.');
       }
 
-      const typeId = await resolveRef(context, auth, 'document-types', args.documentType, 'document type');
+      const typeId = await resolveRef(
+        context,
+        auth,
+        'document-types',
+        args.documentType,
+        'document type'
+      );
       if (typeof typeId !== 'string') return errText(typeId.refusal);
 
       // The archive payload requires the COMPLETE keyword collection, so
@@ -910,7 +1009,8 @@ export function registerOnbaseTools(
       );
       if (typeof current === 'string') return errText(current);
       const collection = collectionOf(current.json);
-      if (!collection) return errText('OnBase returned no usable keyword collection to merge into.');
+      if (!collection)
+        return errText('OnBase returned no usable keyword collection to merge into.');
 
       const updates = await resolveKeywordUpdates(context, auth, args.keywords);
       if (!Array.isArray(updates)) return errText(updates.refusal);
@@ -940,7 +1040,12 @@ export function registerOnbaseTools(
         documentId: z.string().min(1),
         noteType: z.string().min(1).describe('Note type name or id.'),
         text: z.string().optional().describe("The note text; omitted uses the type's default."),
-        page: z.number().int().positive().optional().describe('Page to pin the note to (default 1).'),
+        page: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Page to pin the note to (default 1).'),
         revisionId: z.string().optional().describe('Default "latest".'),
       }),
     },
@@ -1030,7 +1135,9 @@ export function registerOnbaseTools(
             'Repeat with storeAsNew: true to force it.'
         );
       }
-      return textResult(`Document ${args.documentId} reindexed into type ${args.targetDocumentType}.`);
+      return textResult(
+        `Document ${args.documentId} reindexed into type ${args.targetDocumentType}.`
+      );
     }
   );
 }

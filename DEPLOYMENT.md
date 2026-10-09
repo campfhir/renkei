@@ -976,6 +976,69 @@ without the tenant's id.
 - [x] SQL injection prevention (using Kysely ORM)
 - [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`)
 - [x] XSS protection (React escaping; `dangerouslySetInnerHTML` only for the theme bootstrap script in `components/theme-script.tsx`, whose content is a constant)
+- [x] PHI access trail append-only (`phi_access_events`, below)
+
+### PHI access trail
+
+Every read, search, export or download through the Mirth, OnBase and
+file-share tools — by a person or by one of their agents — writes one row
+to `phi_access_events` (migration 141): who (OIDC subject, and the agent
+and run when an agent called), which connector and instance or share,
+which tool, and the record reached **by identifier only** — channel and
+message id, OnBase document id, a SHA-256 of the share path. Never
+content, never a search's text, never a path. A Mirth read or search also
+posts Mirth's own `_auditAccessedPHIMessage` / `_auditQueriedPHIMessage`
+event on the instance, best effort, so Mirth's event log agrees.
+
+Operators read it at `GET /api/admin/{slug}/phi-access?subject=<oidc
+subject>&limit=100&before=<ISO date-time>` (operator role; without
+`subject` the org's whole trail, newest first).
+
+The table is **append-only by trigger**: `UPDATE` and `DELETE` are refused
+whatever role connects, because the migration runs as the application's
+own database user, which owns the table, and a `REVOKE` on an owner would
+be a no-op. Retention is therefore a deliberate DBA act, never the
+application's: as a superuser, `ALTER TABLE phi_access_events DISABLE
+TRIGGER phi_access_events_no_update_delete;`, prune, then `ENABLE` it
+again — and prefer archiving the pruned rows first. If the application
+connects as a role that does not own the table, additionally `REVOKE
+UPDATE, DELETE ON phi_access_events FROM <app role>;` so the guarantee no
+longer rests on the trigger alone. A failed insert is logged at `warn`
+(`component=phi-access`); the read it describes still returns.
+
+### Sealed agent content
+
+An agent run's attempt detail (`agent_run_steps.detail`: the prompt, the
+model's summary, tool-call previews, saved results) and the agent's
+memory (`agent_memories.content`) are sealed under the run owner's
+**automation key** — the key their agents already run with — as one
+`uenc1:` envelope per row, sealed and opened by the delegate. The run
+page, the debug export and the memory panel open them as the owner; when
+the owner's automation delegation is not live (they have not signed in
+within their window, or paused their agents) those views show the same
+"content unavailable" marker the chat shows for a locked row, and an
+agent run that cannot seal or open its own rows is parked for retry
+rather than written in the clear.
+
+Memory rows written before this build are read as they are until moved.
+After deploying, from the agents worker's environment (it needs
+`DATABASE_URL`, `DELEGATE_WORKER_URL`, `DELEGATE_WORKER_API_KEY`):
+
+```
+pnpm --filter @renkei/worker-agents rekey-agent-memories            # seal every plaintext row
+pnpm --filter @renkei/worker-agents rekey-agent-memories --dry-run  # count them first
+```
+
+Rows of an owner whose automation delegation is not live are skipped and
+counted; run it again after they sign in, until it reports nothing left.
+Existing plaintext attempt details are left as they are (runs are pruned
+by `agentRunRetentionDays`; every new attempt is sealed).
+
+`AGENT_LLM_DEBUG_WIRE=true` on `worker-agents` makes a model-error log
+line carry the verbatim provider request body (wrapped for encryption at
+rest). Off — the default — the line carries only a content-free summary
+of the request (field names, sizes, roles, the URL). Turn it on for a
+reproduction, never leave it on.
 
 ## Troubleshooting
 

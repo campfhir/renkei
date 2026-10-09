@@ -5,6 +5,28 @@
  */
 
 jest.mock('@renkei/agent-llm', () => ({ resolveAgentLlm: jest.fn() }));
+/**
+ * The delegate's `user-sealed` ops, faked as a reversible, visibly marked
+ * transform: what the rows hold is then checkable as "not plaintext" and
+ * still readable by the test. The real envelope is the delegate's.
+ */
+const FAKE_SEAL = 'uenc1:test:';
+jest.mock('@renkei/delegate-client', () => ({
+  delegateClient: () => ({
+    sealForSubject: async (_tenantId: string, _subject: string, values: string[]) => ({
+      ok: true,
+      val: values.map((value) => FAKE_SEAL + Buffer.from(value, 'utf8').toString('base64')),
+    }),
+    openForSubject: async (_tenantId: string, _subject: string, stored: string[]) => ({
+      ok: true,
+      val: stored.map((value) =>
+        value.startsWith(FAKE_SEAL)
+          ? Buffer.from(value.slice(FAKE_SEAL.length), 'base64').toString('utf8')
+          : null
+      ),
+    }),
+  }),
+}));
 
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
@@ -111,7 +133,44 @@ maybe('agent memory', () => {
       .where('kind', '=', 'summary')
       .execute();
     expect(rows).toHaveLength(1);
-    expect(rows[0].content).toBe('second');
+    // Sealed at rest: the row is an envelope, not the text.
+    expect(rows[0].content).toMatch(/^uenc1:/);
+    expect(rows[0].content).not.toContain('second');
+    expect((await readAgentMemory(db, tenantId, agentId)).summary).toBe('second');
+  });
+
+  it('writes no entry in plaintext, and still reads a plaintext row from before the sweep', async () => {
+    await appendAgentMemory(db, { tenantId, agentId, content: 'patient 123 was discharged' });
+    const stored = await db
+      .selectFrom('agent_memories')
+      .select(['content'])
+      .where('agent_id', '=', agentId)
+      .execute();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].content).toMatch(/^uenc1:/);
+    expect(stored[0].content).not.toContain('discharged');
+
+    // A row the rekey sweep has not reached yet reads as it is — nothing
+    // goes dark on deploy — and the duplicate check sees it too.
+    await db
+      .insertInto('agent_memories')
+      .values({
+        id: randomUUID(),
+        tenant_id: tenantId,
+        agent_id: agentId,
+        kind: 'entry',
+        content: 'legacy plaintext note',
+      })
+      .execute();
+    const memory = await readAgentMemory(db, tenantId, agentId);
+    expect(memory.unavailable).toBeNull();
+    expect(memory.entries.map((entry) => entry.content).sort()).toEqual([
+      'legacy plaintext note',
+      'patient 123 was discharged',
+    ]);
+    expect(
+      await appendAgentMemory(db, { tenantId, agentId, content: 'legacy plaintext note' })
+    ).toEqual({ inserted: false });
   });
 
   it('renders within the injection budget however much is stored', async () => {
@@ -199,7 +258,12 @@ maybe('agent memory', () => {
     const result = await forgetAgentMemory(db, tenantId, agentId, { kind: 'all' });
 
     expect(result).toEqual({ entriesDeleted: 2, summaryCleared: true, missingIds: [] });
-    expect(await readAgentMemory(db, tenantId, agentId)).toEqual({ summary: null, entries: [] });
+    expect(await readAgentMemory(db, tenantId, agentId)).toEqual({
+      summary: null,
+      summaryUpdatedAt: null,
+      entries: [],
+      unavailable: null,
+    });
   });
 
   it('compaction folds old entries into the summary via the agent model', async () => {

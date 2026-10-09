@@ -176,3 +176,10 @@ How the seam is cut:
 - Audit: admin share CRUD writes `fileshare.created/updated/deleted`;
   connects and disconnects write `fileshare.connected/disconnected`
   (exposure choice included, never a credential).
+- PHI access trail (migration 141, `apps/web/lib/phi-access.ts`):
+  `fileshare_read_file`, `fileshare_download_file` and `fileshare_stat`
+  each write one `phi_access_events` row — subject, agent and run, share,
+  tool, and the path as a SHA-256 only, since a path on a clinical share
+  is as often as not a patient's name. Operators read it at
+  `GET /api/admin/{slug}/phi-access?subject=…` (DEPLOYMENT.md, "PHI
+  access trail").

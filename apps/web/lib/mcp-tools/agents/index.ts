@@ -1684,6 +1684,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const memory = await readAgentMemory(dbResult.val, context.tenantId, agent.id, {
         maxEntries: 100,
       });
+      if (memory.unavailable) {
+        return errText(
+          `"${agent.name}"'s memory is sealed under its owner's encryption key, which is not ` +
+            'connected right now — the owner signing in again makes it readable.'
+        );
+      }
       if (!memory.summary && memory.entries.length === 0) {
         return textResult(`"${agent.name}" remembers nothing yet.`);
       }

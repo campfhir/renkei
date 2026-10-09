@@ -178,8 +178,7 @@ function errorKindOf(status: number, body = ''): LlmErrorKind {
  *  "failed"` response even with a 200 status, unlike the chat-completions
  *  dialect where a failure is always a non-2xx HTTP status. */
 function responseErrorMessage(value: unknown): string | null {
-  const error: { message?: unknown } =
-    typeof value === 'object' && value !== null ? value : {};
+  const error: { message?: unknown } = typeof value === 'object' && value !== null ? value : {};
   return typeof error.message === 'string' && error.message ? error.message : null;
 }
 
@@ -242,7 +241,11 @@ function fromWireOutputItem(item: unknown): LlmContentBlock[] {
         : [];
     });
   }
-  if (row.type === 'function_call' && typeof row.call_id === 'string' && typeof row.name === 'string') {
+  if (
+    row.type === 'function_call' &&
+    typeof row.call_id === 'string' &&
+    typeof row.name === 'string'
+  ) {
     let input: unknown = {};
     if (typeof row.arguments === 'string' && row.arguments.trim()) {
       try {
@@ -286,11 +289,17 @@ export class OpenAiResponsesProvider implements LlmProvider {
   private body(request: LlmRequest, stream: boolean): Record<string, unknown> {
     return {
       model: this.config.model,
+      // Never persist the exchange on the provider's side: prompts and tool
+      // results here can carry PHI, and Responses API requests are stored
+      // for retrieval by default unless told otherwise.
+      store: false,
       instructions: request.system,
       input: request.messages.flatMap(toWireItems),
       max_output_tokens: request.maxTokens,
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-      ...(this.config.reasoningEffort ? { reasoning: { effort: this.config.reasoningEffort } } : {}),
+      ...(this.config.reasoningEffort
+        ? { reasoning: { effort: this.config.reasoningEffort } }
+        : {}),
       ...(stream ? { stream: true } : {}),
       ...(request.tools.length > 0
         ? {
@@ -538,7 +547,11 @@ function fromWireOutputItemSkeleton(item: unknown): LlmContentBlock | null {
   if (typeof item !== 'object' || item === null) return null;
   const row: { type?: unknown; call_id?: unknown; name?: unknown } = item;
   if (row.type === 'message') return { type: 'text', text: '' };
-  if (row.type === 'function_call' && typeof row.call_id === 'string' && typeof row.name === 'string') {
+  if (
+    row.type === 'function_call' &&
+    typeof row.call_id === 'string' &&
+    typeof row.name === 'string'
+  ) {
     return { type: 'tool_use', id: row.call_id, name: row.name, input: {} };
   }
   return null;

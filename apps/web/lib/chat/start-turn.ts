@@ -21,6 +21,7 @@ import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
+  phiCoveredModelRefusal,
   resolveAgentLlm,
   type LlmContentBlock,
   type LlmUsage,
@@ -384,6 +385,12 @@ export interface ExecuteTurnInput {
 /** How often the turn row is touched before the runner's own heartbeat takes over. */
 const PREPARING_HEARTBEAT_MS = 2_000;
 
+/**
+ * A turn the org's policy stops before the model runs — the message is for
+ * the person, verbatim, where an unexpected failure gets a generic line.
+ */
+export class TurnRefused extends Error {}
+
 export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): Promise<void> {
   // Going down already: nothing here should start. The row is marked for
   // the sweep the way a turn suspended mid-loop is.
@@ -587,6 +594,17 @@ async function executeTurnBody(
         });
       }
     }
+    // Org policy on PHI connectors (phiConnectorsRequireCoveredModel): with
+    // Mirth, OnBase or file-share tools in reach — offered up front or
+    // behind find_tools — the model must be one the org records a BAA for.
+    // Checked here, where the surface is first known; a refusal ends the
+    // turn with the reason, never a generic failure.
+    const phiRefusal = phiCoveredModelRefusal(
+      input.settings?.phiConnectorsRequireCoveredModel ?? false,
+      [...surface.tools.map((tool) => tool.name), ...surface.discoverable.map((t) => t.def.name)],
+      input.llm
+    );
+    if (phiRefusal) throw new TurnRefused(phiRefusal);
     const chatSummary = await latestChatSummary(db, input.tenantId, input.chat.id, input.cipher);
     const localContext = {
       db,
@@ -802,14 +820,16 @@ async function executeTurnBody(
     log('chat turn failed before the model ran: {message}', {
       message: error instanceof Error ? error.message : String(error),
     });
+    const failure =
+      error instanceof TurnRefused ? error.message : 'The reply could not be started.';
     try {
       await store.flushAssistant(input.assistantMessage.id, [], {
         status: 'failed',
-        error: 'The reply could not be started.',
+        error: failure,
       });
       await finishTurn(db, input.turnId, {
         status: 'failed',
-        error: 'The reply could not be started.',
+        error: failure,
         iterations: 0,
         inputTokens: 0,
         outputTokens: 0,
@@ -821,7 +841,7 @@ async function executeTurnBody(
       type: 'turn_end',
       turnId: input.turnId,
       status: 'failed',
-      error: 'The reply could not be started.',
+      error: failure,
     });
     channel.close();
   } finally {

@@ -260,6 +260,15 @@ complicated — the connector is single-instance per tenant, exactly the
 schema change was additive: `pending_oidc_signin.code_verifier`
 (migration 063) so the PKCE verifier survives the authorize redirect.
 
+**PHI access trail** (migration 141, `apps/web/lib/phi-access.ts`):
+`onbase_get_document`, `onbase_read_document` and `onbase_download_document`
+write one `phi_access_events` row each with the document id;
+`onbase_search_documents` and `onbase_run_custom_query` record the scope
+they ran over (document type, type group or custom query id), never the
+keyword values. Subject, agent and run ride along; content never does.
+Operators read it at `GET /api/admin/{slug}/phi-access?subject=…`
+(DEPLOYMENT.md, "PHI access trail").
+
 ## OnBase sessions and licences (added after the guide surfaced)
 
 The original design was written without Hyland's "Authentication & the

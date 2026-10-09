@@ -806,6 +806,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../db
+      '@renkei/delegate-client':
+        specifier: workspace:*
+        version: link:../delegate-client
       '@renkei/queue':
         specifier: workspace:*
         version: link:../queue

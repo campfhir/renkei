@@ -20,7 +20,9 @@ const provider = new OpenAiResponsesProvider({ apiKey: 'sk-test', model: 'gpt-6-
 
 const request: LlmRequest = {
   system: 'You are executing one step.',
-  messages: [{ role: 'user', content: [{ type: 'text', text: 'What is the weather in Seattle?' }] }],
+  messages: [
+    { role: 'user', content: [{ type: 'text', text: 'What is the weather in Seattle?' }] },
+  ],
   tools: [
     {
       name: 'get_weather',
@@ -77,7 +79,12 @@ describe('OpenAiResponsesProvider.complete', () => {
     if (!result.ok) throw new Error(`expected ok, got ${result.err.type}`);
     expect(result.val).toEqual({
       content: [
-        { type: 'tool_use', id: 'call_pfU2ZgAo9RhFNajU0AUll4Qd', name: 'get_weather', input: { city: 'Seattle' } },
+        {
+          type: 'tool_use',
+          id: 'call_pfU2ZgAo9RhFNajU0AUll4Qd',
+          name: 'get_weather',
+          input: { city: 'Seattle' },
+        },
       ],
       stopReason: 'tool_use',
       usage: { inputTokens: 53, outputTokens: 18, cacheReadInputTokens: 0 },
@@ -93,8 +100,11 @@ describe('OpenAiResponsesProvider.complete', () => {
       tool_choice?: unknown;
       reasoning?: unknown;
       max_output_tokens?: unknown;
+      store?: unknown;
     } = JSON.parse(String(init.body));
     expect(body.model).toBe('gpt-6-astra-1');
+    // Prompts and tool results may carry PHI: the provider must not keep the exchange.
+    expect(body.store).toBe(false);
     expect(body.instructions).toBe('You are executing one step.');
     expect(body.input).toEqual([
       { role: 'user', content: [{ type: 'input_text', text: 'What is the weather in Seattle?' }] },
@@ -104,7 +114,11 @@ describe('OpenAiResponsesProvider.complete', () => {
         type: 'function',
         name: 'get_weather',
         description: 'Get the current weather for a city',
-        parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+        parameters: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+          required: ['city'],
+        },
       },
     ]);
     expect(body.tool_choice).toBe('required');
@@ -122,10 +136,16 @@ describe('OpenAiResponsesProvider.complete', () => {
             type: 'message',
             status: 'completed',
             role: 'assistant',
-            content: [{ type: 'output_text', annotations: [], text: 'It’s 72°F and sunny in Seattle.' }],
+            content: [
+              { type: 'output_text', annotations: [], text: 'It’s 72°F and sunny in Seattle.' },
+            ],
           },
         ],
-        usage: { input_tokens: 86, output_tokens: 20, output_tokens_details: { reasoning_tokens: 0 } },
+        usage: {
+          input_tokens: 86,
+          output_tokens: 20,
+          output_tokens_details: { reasoning_tokens: 0 },
+        },
       })
     );
     const result = await provider.complete(request);
@@ -154,7 +174,11 @@ describe('OpenAiResponsesProvider.complete', () => {
         {
           role: 'user',
           content: [
-            { type: 'tool_result', toolUseId: 'call_pfU2ZgAo9RhFNajU0AUll4Qd', content: '72F and sunny' },
+            {
+              type: 'tool_result',
+              toolUseId: 'call_pfU2ZgAo9RhFNajU0AUll4Qd',
+              content: '72F and sunny',
+            },
           ],
         },
       ],

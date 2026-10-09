@@ -107,6 +107,8 @@ export function buildRequestBody(
   const today = request.today ?? new Date().toISOString().slice(0, 10);
   return {
     model: config.model,
+    // A search query is a person's own words; the provider is not to keep it.
+    store: false,
     ...(config.reasoningEffort ? { reasoning: { effort: config.reasoningEffort } } : {}),
     instructions:
       `Today is ${today}. Search the web to answer the user's query — always call the ` +

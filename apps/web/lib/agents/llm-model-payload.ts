@@ -4,6 +4,8 @@
  * shapes what came in.
  */
 
+import { isProviderRetention, type ProviderRetention } from '@renkei/agent-llm';
+
 export const SUPPORTED_PROVIDERS = ['anthropic', 'openai'] as const;
 
 /**
@@ -38,6 +40,15 @@ export interface ModelPayload {
     apiVersion?: string;
     reasoningEffort?: string;
     apiSurface?: string;
+    /**
+     * Data handling (@renkei/agent-llm's LlmDataHandling): operator-entered,
+     * stored verbatim so the roster and the PHI-connector gate read one
+     * record. Absent means unknown / not covered.
+     */
+    dataResidency?: string;
+    providerRetention?: ProviderRetention;
+    baaCovered?: boolean;
+    notes?: string;
   };
   apiKey: string | null;
   /**
@@ -63,6 +74,10 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
     apiVersion?: unknown;
     reasoningEffort?: unknown;
     apiSurface?: unknown;
+    dataResidency?: unknown;
+    providerRetention?: unknown;
+    baaCovered?: unknown;
+    notes?: unknown;
     apiKey?: unknown;
     apiKeyFromId?: unknown;
     enabled?: unknown;
@@ -114,6 +129,19 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
       ...(typeof payload.apiSurface === 'string' &&
       API_SURFACES.some((surface) => surface === payload.apiSurface)
         ? { apiSurface: payload.apiSurface }
+        : {}),
+      ...(typeof payload.dataResidency === 'string' && payload.dataResidency.trim()
+        ? { dataResidency: payload.dataResidency.trim().slice(0, 200) }
+        : {}),
+      // A closed list, unlike reasoningEffort: these are OUR categories for
+      // what a provider keeps, not a provider vocabulary. Anything else
+      // reads as unknown — which is also what an unset field means.
+      ...(isProviderRetention(payload.providerRetention) && payload.providerRetention !== 'unknown'
+        ? { providerRetention: payload.providerRetention }
+        : {}),
+      ...(payload.baaCovered === true ? { baaCovered: true } : {}),
+      ...(typeof payload.notes === 'string' && payload.notes.trim()
+        ? { notes: payload.notes.trim().slice(0, 2_000) }
         : {}),
     },
     apiKey: typeof payload.apiKey === 'string' && payload.apiKey ? payload.apiKey : null,

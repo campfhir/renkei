@@ -116,6 +116,7 @@ const BOOLEAN_KEYS = [
   'enableDcr',
   'knowledgeKeywordEnrichment',
   'coachMarksEnabled',
+  'phiConnectorsRequireCoveredModel',
 ] as const;
 
 type EditableKey =
@@ -155,6 +156,7 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     coachMarksEnabled: settings.coachMarksEnabled,
+    phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
   };

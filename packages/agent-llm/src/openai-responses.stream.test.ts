@@ -19,7 +19,9 @@ global.fetch = fetchSpy as unknown as typeof fetch;
 
 const request: LlmRequest = {
   system: 'You are a helpful assistant.',
-  messages: [{ role: 'user', content: [{ type: 'text', text: 'What is the weather in Seattle?' }] }],
+  messages: [
+    { role: 'user', content: [{ type: 'text', text: 'What is the weather in Seattle?' }] },
+  ],
   tools: [
     {
       name: 'get_weather',
@@ -32,9 +34,7 @@ const request: LlmRequest = {
 };
 
 function sse(events: { event: string; data: unknown }[]): Response {
-  const text = events
-    .map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`)
-    .join('');
+  const text = events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join('');
   return new Response(text, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
@@ -49,11 +49,19 @@ describe('OpenAiResponsesProvider.stream', () => {
       sse([
         {
           event: 'response.created',
-          data: { type: 'response.created', response: { status: 'in_progress' }, sequence_number: 0 },
+          data: {
+            type: 'response.created',
+            response: { status: 'in_progress' },
+            sequence_number: 0,
+          },
         },
         {
           event: 'response.in_progress',
-          data: { type: 'response.in_progress', response: { status: 'in_progress' }, sequence_number: 1 },
+          data: {
+            type: 'response.in_progress',
+            response: { status: 'in_progress' },
+            sequence_number: 1,
+          },
         },
         {
           event: 'response.output_item.added',
@@ -194,6 +202,7 @@ describe('OpenAiResponsesProvider.stream', () => {
 
     const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.stream).toBe(true);
+    expect(body.store).toBe(false);
   });
 
   it('streams plain text into one block (inferred shape — no real capture)', async () => {
@@ -204,7 +213,13 @@ describe('OpenAiResponsesProvider.stream', () => {
           event: 'response.output_item.added',
           data: {
             type: 'response.output_item.added',
-            item: { id: 'msg_1', type: 'message', status: 'in_progress', role: 'assistant', content: [] },
+            item: {
+              id: 'msg_1',
+              type: 'message',
+              status: 'in_progress',
+              role: 'assistant',
+              content: [],
+            },
             output_index: 0,
             sequence_number: 0,
           },
@@ -242,7 +257,11 @@ describe('OpenAiResponsesProvider.stream', () => {
           event: 'response.completed',
           data: {
             type: 'response.completed',
-            response: { status: 'completed', output: [], usage: { input_tokens: 5, output_tokens: 2 } },
+            response: {
+              status: 'completed',
+              output: [],
+              usage: { input_tokens: 5, output_tokens: 2 },
+            },
             sequence_number: 4,
           },
         },
@@ -263,7 +282,10 @@ describe('OpenAiResponsesProvider.stream', () => {
           event: 'response.failed',
           data: {
             type: 'response.failed',
-            response: { status: 'failed', error: { message: 'The model failed to produce a response.' } },
+            response: {
+              status: 'failed',
+              error: { message: 'The model failed to produce a response.' },
+            },
             sequence_number: 0,
           },
         },
@@ -292,7 +314,11 @@ describe('OpenAiResponsesProvider.stream', () => {
       sse([
         {
           event: 'response.created',
-          data: { type: 'response.created', response: { status: 'in_progress' }, sequence_number: 0 },
+          data: {
+            type: 'response.created',
+            response: { status: 'in_progress' },
+            sequence_number: 0,
+          },
         },
       ])
     );

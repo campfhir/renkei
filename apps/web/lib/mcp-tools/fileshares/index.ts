@@ -46,6 +46,7 @@ import {
 } from '../widgets';
 import { NO_SUCH_SHARE } from './fileshare-auth';
 import type { FileshareAuth } from './fileshare-auth';
+import { hashPath, phiActorOf, recordPhiAccess, type PhiAction } from '@/lib/phi-access';
 
 /** The connector key the fileshare capabilities register under. */
 export const FILESHARES_MCP_CONNECTOR = 'fileshares';
@@ -179,6 +180,32 @@ export function registerFileshareTools(
     return null;
   };
 
+  /**
+   * The PHI access trail (lib/phi-access.ts): which file a person — or
+   * their agent — read, downloaded or inspected, on which share. The path
+   * is stored as its SHA-256 only: on a clinical share a path is as often
+   * as not a patient's name, and the trail must not become a second copy
+   * of those. Written after the file server answered, never in the way of
+   * the answer; the insert logs its own failure.
+   */
+  const actor = phiActorOf(context);
+  const recordAccess = async (input: {
+    shareId: string;
+    action: PhiAction;
+    toolName: string;
+    path: string;
+  }): Promise<void> => {
+    if (!actor) return;
+    await recordPhiAccess({
+      ...actor,
+      connector: 'fileshare',
+      instanceId: input.shareId,
+      action: input.action,
+      toolName: input.toolName,
+      pathHash: hashPath(input.path),
+    });
+  };
+
   server.registerTool(
     'fileshare_list_shares',
     {
@@ -262,6 +289,12 @@ export function registerFileshareTools(
 
       const stats = await fsStatEntry({ ...target, shareId: str(args.shareId) }, path.path);
       if (!stats.ok) return errText(clientMessage('read that path', stats.err));
+      await recordAccess({
+        shareId: str(args.shareId),
+        action: 'read',
+        toolName: 'fileshare_stat',
+        path: path.path,
+      });
 
       const entry = stats.val;
       const lines = [
@@ -313,6 +346,12 @@ export function registerFileshareTools(
         maxBytes
       );
       if (!content.ok) return errText(clientMessage('read the file', content.err));
+      await recordAccess({
+        shareId: str(args.shareId),
+        action: 'read',
+        toolName: 'fileshare_read_file',
+        path: path.path,
+      });
 
       const fileName = path.path.slice(path.path.lastIndexOf('/') + 1);
       const maxChars = typeof args.maxChars === 'number' ? args.maxChars : 60_000;
@@ -360,11 +399,19 @@ export function registerFileshareTools(
 
       const base = context.origin;
       if (!base) return errText('This deployment has no public URL configured for links.');
+      // The link is the access: whoever follows it reads the bytes on
+      // their own credentials, so the handing-out is what the trail records.
+      await recordAccess({
+        shareId: str(args.shareId),
+        action: 'download',
+        toolName: 'fileshare_download_file',
+        path: path.path,
+      });
       const url = `${base}/api/tenant/${context.tenantId}/fileshares/${stats.val.share.id}/file?path=${encodeURIComponent(path.path)}`;
       return textResult(
         `Download link for "${path.path}" (${stats.val.size ?? 'unknown'} bytes):\n${url}\n` +
           'Opening it requires being signed in to this Renkei org in the browser; the ' +
-          'download runs on that person\'s own share credentials.'
+          "download runs on that person's own share credentials."
       );
     }
   );
@@ -488,9 +535,7 @@ export function registerFileshareTools(
       );
       if (!moved.ok) return errText(clientMessage('move it', moved.err));
       if (moved.val.unchanged) return errText('That is already where it lives.');
-      return textResult(
-        `Moved ${source.path} to ${moved.val.path} on "${moved.val.share.name}".`
-      );
+      return textResult(`Moved ${source.path} to ${moved.val.path} on "${moved.val.share.name}".`);
     }
   );
 

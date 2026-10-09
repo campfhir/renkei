@@ -23,6 +23,7 @@ type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number]['value'];
 export interface EditableSettings {
   readOnly: boolean;
   coachMarksEnabled: boolean;
+  phiConnectorsRequireCoveredModel: boolean;
   enableDcr: boolean;
   logLevel: LogLevel;
   maxJqlResults: number;
@@ -256,6 +257,16 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
             on={values.coachMarksEnabled}
             onChange={(next) => set('coachMarksEnabled', next)}
             label="Guided tours"
+          />
+        </Row>
+        <Row
+          label="Require a BAA-covered model for PHI connectors"
+          hint="When on, a chat turn or agent run that can reach Mirth, OnBase or file-share tools must run on a model whose Data handling (Agent models) records a BAA; otherwise it is refused with the reason. Does not change what the model does with the data — it keeps PHI off models you have no agreement for."
+        >
+          <Toggle
+            on={values.phiConnectorsRequireCoveredModel}
+            onChange={(next) => set('phiConnectorsRequireCoveredModel', next)}
+            label="Require a BAA-covered model for PHI connectors"
           />
         </Row>
       </Section>

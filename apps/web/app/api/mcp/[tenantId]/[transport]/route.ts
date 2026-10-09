@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@renkei/db';
 import { attemptFromHeaders, withAttempt } from '@/lib/mcp-tools/attempt-context';
+import { runIdFromHeaders, withRun } from '@/lib/mcp-tools/run-context';
 import { getOrgSettings } from '@renkei/settings';
 import { getOrigin } from '@/lib/get-origin';
 import {
@@ -632,7 +633,11 @@ const handler = async (
     // The attempt rides in AsyncLocalStorage rather than on the context the
     // handler closed over: handlers are cached and shared, and this value
     // changes on every retry. See lib/mcp-tools/attempt-context.ts.
-    return await withAttempt(attemptFromHeaders(request.headers), () => cachedHandler(request));
+    // The run id rides the same way (run-context.ts), read by the PHI
+    // access trail when an agent's call reaches a clinical record.
+    return await withRun(runIdFromHeaders(request.headers), () =>
+      withAttempt(attemptFromHeaders(request.headers), () => cachedHandler(request))
+    );
   } catch (error) {
     logger.error('{error}', {
       component: 'mcp/transport',

@@ -17,10 +17,12 @@ import {
   isAgentStepsDoc,
   type AgentStepNode,
   type AgentStepsDoc,
+  mergeOpenedDetail,
+  sealedDetailOf,
 } from '@renkei/agents';
 import { setNotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '@renkei/user-prefs';
 import { setOrgSettings } from '@renkei/settings';
-import { createAgentRunHandler } from './engine';
+import { createAgentRunHandler, requestLogFieldOf } from './engine';
 import { MessageReleased } from '@renkei/worker-loop';
 import { resumeAgentRun } from '@renkei/agents/runs';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
@@ -36,8 +38,28 @@ import { recordedLogs, renderLog, resetRecordedLogs } from './test-support/logge
  */
 let ownerDelegated = true;
 let keyServiceUp = true;
+/**
+ * A stand-in for the delegate's `user-sealed` ops: a reversible, visibly
+ * marked transform, so a test can both check a row is NOT plaintext and
+ * read what it says. The real envelope is the delegate's business.
+ */
+const FAKE_SEAL = 'uenc1:test:';
+const fakeSeal = (value: string): string =>
+  FAKE_SEAL + Buffer.from(value, 'utf8').toString('base64');
+const fakeOpen = (stored: string): string | null =>
+  stored.startsWith(FAKE_SEAL)
+    ? Buffer.from(stored.slice(FAKE_SEAL.length), 'base64').toString('utf8')
+    : null;
 jest.mock('@renkei/delegate-client', () => ({
   delegateClient: () => ({
+    sealForSubject: async (_tenantId: string, _subject: string, values: string[]) =>
+      ownerDelegated
+        ? { ok: true, val: values.map(fakeSeal) }
+        : { ok: false, err: { type: 'NEEDS_DELEGATION' } },
+    openForSubject: async (_tenantId: string, _subject: string, stored: string[]) =>
+      ownerDelegated
+        ? { ok: true, val: stored.map(fakeOpen) }
+        : { ok: false, err: { type: 'NEEDS_DELEGATION' } },
     keyStatus: async () =>
       keyServiceUp
         ? {
@@ -83,6 +105,22 @@ function stubLlm(script: Scripted): ResolvedLlm {
     model: 'stub-model',
     maxOutputTokens: 512,
   };
+}
+
+/**
+ * A stored attempt detail with its content half opened through the fake
+ * seal — what the engine's own readers and the web app's run page do with
+ * the real delegate. Rows without an envelope come back as they are.
+ */
+function unsealed(detail: unknown): Record<string, unknown> {
+  const envelope = sealedDetailOf(detail);
+  const merged =
+    envelope === null ? detail : mergeOpenedDetail(detail, fakeOpen(envelope), '[locked]');
+  return isRecord(merged) ? merged : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function stubMcp(tools: string[], callTool: (name: string) => McpToolResult): McpClient {
@@ -389,12 +427,13 @@ maybe('agent run engine', () => {
     expect(attempts[0].input_tokens).toBe(20);
     expect(attempts[0].cache_read_input_tokens).toBeNull();
     expect(attempts[0].cache_write_input_tokens).toBeNull();
-    const detail: { saveValue?: unknown; resolvedInstruction?: unknown } =
-      typeof attempts[0].detail === 'object' &&
-      attempts[0].detail !== null &&
-      !Array.isArray(attempts[0].detail)
-        ? attempts[0].detail
-        : {};
+    // The row itself carries no content — the prompt, the saved value and
+    // the tool-call previews sit in one envelope under the owner's key.
+    expect(JSON.stringify(attempts[0].detail)).not.toContain('PROJ-42');
+    expect(sealedDetailOf(attempts[0].detail)).toMatch(/^uenc1:/);
+    const detail: { saveValue?: unknown; resolvedInstruction?: unknown } = unsealed(
+      attempts[0].detail
+    );
     expect(detail.saveValue).toBe('PROJ-42');
     // Chips rendered: the var chip became the trigger value, the tool chip
     // its canonical name.
@@ -538,10 +577,12 @@ maybe('agent run engine', () => {
       .select(['kind', 'content'])
       .where('agent_id', '=', agentId)
       .execute();
-    // One entry for two identical remember calls, and no run breadcrumb.
-    expect(memory).toEqual([
-      { kind: 'entry', content: 'Replied to message 123 about the outage.' },
-    ]);
+    // One entry for two identical remember calls, and no run breadcrumb —
+    // sealed at rest under the owner's key, so the row is an envelope and
+    // the fact is readable only through it.
+    expect(memory.map((row) => row.kind)).toEqual(['entry']);
+    expect(memory[0].content).toMatch(/^uenc1:/);
+    expect(fakeOpen(memory[0].content)).toBe('Replied to message 123 about the outage.');
     // Before the first step's remember call resolves, the fact isn't there yet...
     expect(seen[0].system).not.toContain('Replied to message 123');
     // ...but it is by that same attempt's next turn (finish_step)...
@@ -1396,7 +1437,7 @@ maybe('agent run engine', () => {
     // Still recorded as a skip for the timeline, just not run-terminal.
     expect(JSON.stringify(attempts[0].detail)).toContain('skipped');
     expect(attempts[1].status).toBe('succeeded');
-    expect(JSON.stringify(attempts[1].detail)).toContain('ticket updated');
+    expect(JSON.stringify(unsealed(attempts[1].detail))).toContain('ticket updated');
 
     expect(finalized[0]).toMatchObject({ status: 'succeeded' });
   });
@@ -1741,10 +1782,7 @@ maybe('agent run engine', () => {
       .where('run_id', '=', runId)
       .where('step_id', '=', saver.id)
       .executeTakeFirstOrThrow();
-    const detail: { saveValue?: unknown } =
-      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-        ? row.detail
-        : {};
+    const detail: { saveValue?: unknown } = unsealed(row.detail);
     expect(detail.saveValue).toBe('n'.repeat(12_000) + '… [truncated]');
   });
 
@@ -1809,9 +1847,7 @@ maybe('agent run engine', () => {
       .where('run_id', '=', runId)
       .executeTakeFirstOrThrow();
     const detail: { toolCalls?: Array<{ resultPreview?: string; resultChars?: number }> } =
-      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
-        ? row.detail
-        : {};
+      unsealed(row.detail);
     expect(detail.toolCalls?.[0]?.resultChars).toBe(long.length);
     expect(detail.toolCalls?.[0]?.resultPreview?.length).toBeLessThan(long.length);
     expect(detail.toolCalls?.[1]?.resultChars).toBe(huge.length);
@@ -1900,6 +1936,75 @@ maybe('agent run engine', () => {
     expect(attempt.status).toBe('failed');
     expect(attempt.outcome).toBe('tool_error');
     expect(attempt.outcome_code).toBe('not-found');
+  });
+
+  it('refuses a run that reaches a PHI connector on a model without a recorded BAA, when the org requires one', async () => {
+    await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: true });
+    try {
+      const phiStep = singleStep({
+        tool: 'mirth_get_message',
+        instruction: [
+          { t: 'text', v: 'Read the message with ' },
+          { t: 'tool', name: 'mirth_get_message' },
+        ],
+        failureHandling: [],
+      });
+      const uncovered = await seedRun(phiStep);
+      const llm = stubLlm(() => finish('success'));
+      const mcp = stubMcp(['mirth_get_message'], () => okToolResult);
+      await handlerWith(llm, mcp)({ payload: { runId: uncovered.runId } });
+      const refused = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error_kind', 'error'])
+        .where('id', '=', uncovered.runId)
+        .executeTakeFirstOrThrow();
+      expect(refused.status).toBe('failed');
+      expect(refused.error_kind).toBe('config');
+      expect(refused.error).toContain('BAA-covered model');
+      expect(refused.error).toContain('Mirth');
+      expect(refused.error).toContain('"stub-model"');
+      // A config refusal spends nothing: no attempt row, no model call.
+      const attempts = await db
+        .selectFrom('agent_run_steps')
+        .select('id')
+        .where('run_id', '=', uncovered.runId)
+        .execute();
+      expect(attempts).toHaveLength(0);
+
+      // The same step on a covered model runs.
+      const covered = await seedRun(phiStep);
+      const coveredLlm: ResolvedLlm = {
+        ...stubLlm(() => finish('success')),
+        dataHandling: {
+          dataResidency: null,
+          providerRetention: 'none',
+          baaCovered: true,
+          notes: null,
+        },
+      };
+      await handlerWith(coveredLlm, mcp)({ payload: { runId: covered.runId } });
+      const ran = await db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', covered.runId)
+        .executeTakeFirstOrThrow();
+      expect(ran.status).toBe('succeeded');
+
+      // A run with no PHI tool in reach is untouched by the setting.
+      const plain = await seedRun(singleStep());
+      await handlerWith(
+        llm,
+        stubMcp(['jira_get_issue'], () => okToolResult)
+      )({ payload: { runId: plain.runId } });
+      const untouched = await db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', plain.runId)
+        .executeTakeFirstOrThrow();
+      expect(untouched.status).toBe('succeeded');
+    } finally {
+      await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: false });
+    }
   });
 
   it('fails a run as config when the step tool is not in the owner projection', async () => {
@@ -2375,12 +2480,7 @@ maybe('agent run engine', () => {
       .select('detail')
       .where('run_id', '=', runId)
       .executeTakeFirstOrThrow();
-    const detail: { saveValue?: unknown; llmSummary?: unknown } =
-      typeof attempt.detail === 'object' &&
-      attempt.detail !== null &&
-      !Array.isArray(attempt.detail)
-        ? attempt.detail
-        : {};
+    const detail: { saveValue?: unknown; llmSummary?: unknown } = unsealed(attempt.detail);
     expect(detail.saveValue).toBe('PROJ-42 is the ticket');
     expect(detail.llmSummary).toBe('Found it.');
   });
@@ -3437,7 +3537,7 @@ maybe('agent run engine', () => {
         .executeTakeFirstOrThrow();
       expect(gateRow.status).toBe('succeeded');
       expect(gateRow.outcome).toBe('tool_ok');
-      expect(JSON.stringify(gateRow.detail)).toContain('Approved');
+      expect(JSON.stringify(unsealed(gateRow.detail))).toContain('Approved');
     });
 
     it('on approval with an edited card, fires the call with every edit merged in except the call identity', async () => {
@@ -3577,8 +3677,8 @@ maybe('agent run engine', () => {
         .where('run_id', '=', runId)
         .where('step_id', '=', gateId)
         .executeTakeFirstOrThrow();
-      expect(JSON.stringify(gateRow.detail)).toContain('Edited from the card.');
-      expect(JSON.stringify(gateRow.detail)).not.toContain('Original text.');
+      expect(JSON.stringify(unsealed(gateRow.detail))).toContain('Edited from the card.');
+      expect(JSON.stringify(unsealed(gateRow.detail))).not.toContain('Original text.');
     });
 
     it('on denial, skips the tool call and advances when there is no recovery path', async () => {
@@ -4799,5 +4899,39 @@ maybe('resolve_time — the free, deterministic clock', () => {
     expect(complaint).toBeDefined();
     // And it says the retry is free, so the model re-asks rather than guesses.
     expect(complaint).toContain('it is free');
+  });
+});
+
+describe('requestLogFieldOf', () => {
+  const cause = {
+    summary: 'POST …/responses model=gpt-6 input=2 items (41 chars) tools=1',
+    url: 'https://api.openai.com/v1/responses',
+    headers: { authorization: 'Bearer sk-secret', 'content-type': 'application/json' },
+    request: { model: 'gpt-6', input: [{ role: 'user', content: 'patient Jane Doe, MRN 123' }] },
+  };
+
+  it('logs the content-free summary and the URL by default — never the body', () => {
+    const fields = requestLogFieldOf(cause, {});
+    expect(fields).toEqual({ url: cause.url, requestSummary: cause.summary });
+    expect(JSON.stringify(fields)).not.toContain('Jane Doe');
+    expect(JSON.stringify(fields)).not.toContain('sk-secret');
+    expect(requestLogFieldOf({ not: 'a cause' }, {})).toEqual({});
+  });
+
+  it('adds the verbatim body only under AGENT_LLM_DEBUG_WIRE=true, and only wrapped for encryption at rest', () => {
+    const fields = requestLogFieldOf(cause, { AGENT_LLM_DEBUG_WIRE: 'true' });
+    expect(fields.url).toBe(cause.url);
+    expect(fields.requestSummary).toBe(cause.summary);
+    // secure() hands back a wrapper, not the string: the plaintext is not
+    // what reaches the log sink in the clear.
+    expect(typeof fields.request).not.toBe('string');
+    expect(fields.request).toBeDefined();
+    const headers: Record<string, unknown> = isRecord(fields.headers) ? fields.headers : {};
+    expect(headers['content-type']).toBe('application/json');
+    expect(typeof headers.authorization).not.toBe('string');
+    expect(requestLogFieldOf(cause, { AGENT_LLM_DEBUG_WIRE: 'yes' })).toEqual({
+      url: cause.url,
+      requestSummary: cause.summary,
+    });
   });
 });

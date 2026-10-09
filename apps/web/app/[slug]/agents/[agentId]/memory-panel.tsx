@@ -1,6 +1,9 @@
 import React from 'react';
 import { getDatabase } from '@renkei/db';
+import { readAgentMemory } from '@renkei/agents/memory';
 import ClearMemoryButton from './clear-memory-button';
+import { unavailableMarker } from '@/lib/chat/content-crypto';
+import { unavailableReasonOf } from '@/lib/chat/chat-keys';
 
 /**
  * What this agent currently remembers: the rolling summary (compaction's
@@ -23,18 +26,28 @@ export default async function MemoryPanel({
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
 
-  const rows = await dbResult.val
-    .selectFrom('agent_memories')
-    .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-    .where('tenant_id', '=', tenantId)
-    .where('agent_id', '=', agentId)
-    .orderBy('created_at', 'desc')
-    .orderBy('id', 'desc')
-    .limit(MAX_SHOWN_ENTRIES + 1)
-    .execute();
-
-  const summary = rows.find((row) => row.kind === 'summary');
-  const entries = rows.filter((row) => row.kind === 'entry').slice(0, MAX_SHOWN_ENTRIES);
+  // Sealed under the owner's automation key; opened through the delegate
+  // (readAgentMemory). A key that is not available renders the chat's
+  // locked-row marker rather than envelopes.
+  const memory = await readAgentMemory(dbResult.val, tenantId, agentId, {
+    maxEntries: MAX_SHOWN_ENTRIES,
+  });
+  if (memory.unavailable) {
+    return (
+      <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="memory-unavailable">
+        {unavailableMarker(unavailableReasonOf(memory.unavailable))}
+      </p>
+    );
+  }
+  const summary =
+    memory.summary !== null
+      ? { content: memory.summary, updated_at: memory.summaryUpdatedAt ?? new Date() }
+      : null;
+  const entries = memory.entries.map((entry) => ({
+    id: entry.id,
+    content: entry.content,
+    created_at: entry.createdAt,
+  }));
 
   if (!summary && entries.length === 0) {
     return (

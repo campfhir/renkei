@@ -50,6 +50,8 @@ describe('buildRequestBody', () => {
     expect(body.input).toBe('renewable energy trends');
     expect(body.tools).toEqual([{ type: 'web_search' }]);
     expect(body.reasoning).toBeUndefined();
+    // The query is a person's own words: never stored on the provider's side.
+    expect(body.store).toBe(false);
     expect(String(body.instructions)).toContain('2026-09-04');
   });
 
