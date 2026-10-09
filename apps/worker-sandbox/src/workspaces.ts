@@ -335,14 +335,33 @@ export interface RunInput {
   signal?: AbortSignal;
   /**
    * Start the process in a network namespace of its own — a loopback
-   * that is down and nothing else, so it can reach no host at all
-   * (`unshare --net`, which needs this worker to be root). A script over
-   * a caller's files (scripts.ts) runs this way; a workspace command,
-   * whose installs and tests need the internet, does not. Ignored
-   * without an identity: an unprivileged worker cannot unshare.
+   * that is down and nothing else, so it can reach no host at all. A
+   * script over a caller's files (scripts.ts) runs this way; a workspace
+   * command, whose installs and tests need the internet, does not. Which
+   * way the namespace is made is the boot probe's finding
+   * (verifyNetworkIsolation); null is no isolation.
    */
-  isolateNetwork?: boolean;
+  networkIsolation?: NetworkIsolation | null;
 }
+
+/**
+ * How a process is cut off from the network:
+ *  - `netns` — `unshare --net` as root, BEFORE the uid drop, so the dropped
+ *    process holds no capability to undo it. Needs CAP_SYS_ADMIN, which
+ *    Docker's default profile withholds.
+ *  - `userns` — `unshare -Un` AFTER the drop, as the caller's uid: a user
+ *    namespace of the caller's own (their uid mapped to itself inside) and
+ *    a network namespace it owns. Needs unprivileged user namespaces, which
+ *    the kernel allows by default but Docker's default seccomp profile
+ *    also blocks; works without root too, so a developer's checkout can
+ *    run scripts offline.
+ * The boot probe tries them in this order and the first that proves out
+ * is the one every run gets.
+ */
+export type NetworkIsolation = 'netns' | 'userns';
+
+/** The modes the probe tries, most contained first. */
+export const NETWORK_ISOLATION_MODES: readonly NetworkIsolation[] = ['netns', 'userns'];
 
 /** The environment a caller's process starts with, built from nothing. */
 export function childEnvironment(input: RunInput): Record<string, string> {
@@ -385,16 +404,34 @@ export function childEnvironment(input: RunInput): Record<string, string> {
 /**
  * How a process is started: dropped to the caller's uid when this worker
  * can, plainly otherwise; and, when asked, inside its own empty network
- * namespace first — unshare runs as root, THEN setpriv drops the uid, so
- * the dropped process can neither reach a host nor undo the namespace.
+ * namespace — made as root before the drop (`netns`: unshare, THEN
+ * setpriv, so the dropped process can neither reach a host nor undo the
+ * namespace), or as the caller after it (`userns`: setpriv, THEN
+ * `unshare -Un` with the caller's uid mapped to itself, so the script
+ * still sees its own uid). `netns` needs root and is ignored without an
+ * identity; `userns` works either way.
  */
 export function wrapCommand(
   identity: ExecIdentity | null,
   file: string,
   args: string[],
-  isolateNetwork = false
+  networkIsolation: NetworkIsolation | null = null
 ): { file: string; args: string[] } {
-  if (!identity) return { file, args };
+  const inner =
+    networkIsolation === 'userns'
+      ? {
+          file: 'unshare',
+          args: [
+            '-Un',
+            `--map-user=${identity?.uid ?? process.getuid?.() ?? PROBE_UID}`,
+            `--map-group=${identity?.gid ?? process.getgid?.() ?? PROBE_UID}`,
+            '--',
+            file,
+            ...args,
+          ],
+        }
+      : { file, args };
+  if (!identity) return inner;
   const dropped = [
     'setpriv',
     `--reuid=${identity.uid}`,
@@ -404,23 +441,49 @@ export function wrapCommand(
     '--bounding-set=-all',
     '--inh-caps=-all',
     '--',
-    file,
-    ...args,
+    inner.file,
+    ...inner.args,
   ];
-  if (isolateNetwork) return { file: 'unshare', args: ['--net', '--', ...dropped] };
+  if (networkIsolation === 'netns') return { file: 'unshare', args: ['--net', '--', ...dropped] };
   return { file: dropped[0]!, args: dropped.slice(1) };
 }
 
+/** What the boot probe found: the mode every run gets, or why none works. */
+export interface NetworkIsolationProbe {
+  mode: NetworkIsolation | null;
+  /** Each mode that failed, with what it said — for the operator and the log. */
+  problems: string[];
+}
+
 /**
- * Prove, once at boot, that a command can be started with no network
- * here: `unshare --net` needs CAP_SYS_ADMIN, which Docker's default
- * profile withholds, so on a stock deployment this says so and scripts
- * run on the container's network with the honest note in the result.
- * Null when it works (the namespace holds a loopback and nothing else);
- * otherwise what went wrong, for the operator and the log.
+ * Prove, once at boot, how a command can be started with no network
+ * here, trying each mode in NETWORK_ISOLATION_MODES order: a namespace
+ * holding a loopback and nothing else is the proof. On a stock Docker
+ * deployment neither works (`unshare --net` needs CAP_SYS_ADMIN and the
+ * default seccomp profile blocks user namespaces too), and the result
+ * says so per mode; what the worker then does with that is index.ts's
+ * decision (fail closed, or the operator's explicit opt-in).
  */
-export async function verifyNetworkIsolation(): Promise<string | null> {
-  if (!canIsolateByUid()) return 'this process is not root';
+export async function verifyNetworkIsolation(): Promise<NetworkIsolationProbe> {
+  const problems: string[] = [];
+  const identity = canIsolateByUid() ? { uid: PROBE_UID, gid: PROBE_UID } : null;
+  for (const mode of NETWORK_ISOLATION_MODES) {
+    if (mode === 'netns' && !identity) {
+      problems.push('netns: this process is not root');
+      continue;
+    }
+    const problem = await probeNetworkIsolation(mode, identity);
+    if (problem === null) return { mode, problems };
+    problems.push(`${mode}: ${problem}`);
+  }
+  return { mode: null, problems };
+}
+
+/** One mode's proof: null when a namespace held only a loopback, else what went wrong. */
+export async function probeNetworkIsolation(
+  mode: NetworkIsolation,
+  identity: ExecIdentity | null
+): Promise<string | null> {
   // /proc/self/net is the probe's OWN namespace; /sys/class/net would
   // still show the container's interfaces, since sysfs was mounted
   // from the namespace the container started in.
@@ -428,10 +491,10 @@ export async function verifyNetworkIsolation(): Promise<string | null> {
     {
       cwd: '/',
       home: '/',
-      identity: { uid: PROBE_UID, gid: PROBE_UID },
+      identity,
       env: {},
       timeoutMs: 15_000,
-      isolateNetwork: true,
+      networkIsolation: mode,
     },
     'cat',
     ['/proc/self/net/dev']
@@ -512,7 +575,7 @@ function collect(
 
 /** Spawn one process, kill its whole group on timeout, and answer both streams. */
 export function runProcess(input: RunInput, file: string, args: string[]): Promise<RunResult> {
-  const wrapped = wrapCommand(input.identity, file, args, input.isolateNetwork === true);
+  const wrapped = wrapCommand(input.identity, file, args, input.networkIsolation ?? null);
   const started = Date.now();
   return new Promise((resolvePromise) => {
     let truncated = false;

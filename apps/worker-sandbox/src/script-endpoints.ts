@@ -7,7 +7,9 @@
  * what it was given and what it left behind, already staged.
  *
  * Closed when not enabled (503 `scripts_unavailable`), like every other
- * optional family. A caller that goes away before the answer — the chat
+ * optional family — and closed the same way, with the reason, when the
+ * worker cannot isolate a run's network and the operator has not opted in
+ * (scripts.ts, decideScripts). A caller that goes away before the answer — the chat
  * turn behind the call was stopped — takes the script with it: its
  * process tree is killed rather than left to run to its timeout unseen.
  */
@@ -26,8 +28,10 @@ import { ScriptRunError, type ScriptRunner } from './scripts';
 
 export interface ScriptHandlerDeps {
   db: Kysely<DB>;
-  /** The runner, or null when SANDBOX_SCRIPTS_ENABLED is off. */
+  /** The runner, or null when SANDBOX_SCRIPTS_ENABLED is off or the boot decision closed it. */
   runner: ScriptRunner | null;
+  /** Why the runner is null when it is for a reason beyond the flag (decideScripts), for the 503's message. */
+  unavailable?: string | null;
 }
 
 type Body = Record<string, unknown>;
@@ -79,7 +83,7 @@ export function createScriptHandlers(deps: ScriptHandlerDeps) {
         response,
         503,
         'scripts_unavailable',
-        'Scripts are not enabled on this deployment.'
+        deps.unavailable ?? 'Scripts are not enabled on this deployment.'
       );
     }
     const target = targetOf(body);

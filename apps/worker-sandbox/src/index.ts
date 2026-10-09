@@ -58,9 +58,17 @@
  *     own staged files (scripts.ts) behind sandbox_run_python; unset
  *     answers the script verb "not enabled". As with workspaces, the
  *     process should run as root so each run can be dropped to its
- *     caller's own uid — and, where the kernel allows this container to
- *     unshare, started with no network at all; without root it still
- *     works, unisolated, and says so below.
+ *     caller's own uid; without root it still works, unisolated by uid,
+ *     and says so below. A run is started with NO network — `unshare
+ *     --net` as root (CAP_SYS_ADMIN), else a user namespace of the
+ *     caller's own (`unshare -Un`, unprivileged user namespaces). Where
+ *     neither works the verb is CLOSED (503 `scripts_unavailable`, and
+ *     /health says `unavailable` so the web app withholds the tool),
+ *     because the tool promises the model there is no network.
+ *   SANDBOX_SCRIPTS_ALLOW_NETWORK — `true` to serve scripts anyway where no
+ *     network isolation works, on the container's network: an explicit
+ *     operator decision, read by BOTH this worker and the web app, which
+ *     then says so in the tool's description; every result says so too.
  *   SANDBOX_RUNS_DIR — where a run's throwaway directory is made,
  *     default /runs (no volume: nothing here outlives its run).
  *   SANDBOX_PYTHON — the interpreter; by default the image's own
@@ -80,7 +88,15 @@ import {
   verifyUidIsolation,
 } from './workspaces';
 import { envSecretsEnabled } from './env-secrets';
-import { ScriptRunner, probePython, resolvePython, scriptMemoryBytes } from './scripts';
+import {
+  ALLOW_NETWORK_ENV,
+  ScriptRunner,
+  decideScripts,
+  probePython,
+  resolvePython,
+  scriptMemoryBytes,
+  type ScriptsDecision,
+} from './scripts';
 import { probeLanguageServers } from './lsp-sessions';
 import { createSandboxServer, orgMaxFileBytes } from './server';
 import { DockerClient, parseDockerHost, parseMemoryBytes } from './docker';
@@ -278,11 +294,17 @@ async function main(): Promise<void> {
   }
 
   // Scripts over staged files: a caller's Python, run as their uid in a
-  // throwaway directory with — where this container may unshare — no
-  // network. The interpreter and its libraries are checked now, so a
-  // missing one is a boot failure with a cause rather than a traceback
-  // on the first script anyone runs.
+  // throwaway directory with no network. The interpreter and its
+  // libraries are checked now, so a missing one is a boot failure with a
+  // cause rather than a traceback on the first script anyone runs; and
+  // whether a run can be started without a network is decided now, once,
+  // closed by default (decideScripts) and logged either way.
   let scripts: ScriptRunner | null = null;
+  let scriptsDecision: ScriptsDecision = decideScripts({
+    enabled: false,
+    networkIsolation: null,
+    allowNetwork: false,
+  });
   if (scriptsEnabled) {
     const python = await resolvePython(process.env.SANDBOX_PYTHON);
     if (!python) {
@@ -302,37 +324,53 @@ async function main(): Promise<void> {
     } catch (error) {
       fatal(error instanceof Error ? error.message : String(error));
     }
-    const networkProblem = await verifyNetworkIsolation();
-    if (networkProblem) {
+    const isolation = await verifyNetworkIsolation();
+    scriptsDecision = decideScripts({
+      enabled: true,
+      networkIsolation: isolation.mode,
+      allowNetwork: envFlag(ALLOW_NETWORK_ENV),
+    });
+    if (isolation.mode === null) {
+      // Said once, here, whichever way the decision went: an operator
+      // reading the boot log sees the cause and the remedy.
       logger.warn(
-        'scripts are enabled but a run cannot be started without a network ({problem}): scripts run on this container’s network, and every result says so — give the container CAP_SYS_ADMIN (docker-compose.yaml, worker-sandbox) to close that',
-        { component: 'worker-sandbox/scripts', problem: networkProblem }
+        scriptsDecision.serve
+          ? `scripts are enabled but no run can be started without a network ({problems}); ${ALLOW_NETWORK_ENV} is set, so scripts run on this container’s network and every result and the tool’s description say so`
+          : `scripts are enabled but no run can be started without a network ({problems}): sandbox_run_python is CLOSED (503 scripts_unavailable) rather than run with network access it promises not to have — give the container CAP_SYS_ADMIN or allow unprivileged user namespaces (docker-compose.yaml, worker-sandbox), or set ${ALLOW_NETWORK_ENV}=true to accept runs on the container’s network`,
+        { component: 'worker-sandbox/scripts', problems: isolation.problems.join('; ') }
       );
     }
-    const runner = new ScriptRunner({
-      db: dbResult.val,
-      runsRoot: (process.env.SANDBOX_RUNS_DIR ?? '').trim() || '/runs',
-      python,
-      isolateNetwork: networkProblem === null,
-      memoryBytes,
-      maxFileBytes: orgMaxFileBytes,
-    });
-    const removed = await runner.prepare();
-    logger.info(
-      'scripts enabled: {python} {version} with {libraries}; network {network}; memory {memory} bytes per run{removed}',
-      {
-        component: 'worker-sandbox/scripts',
+    if (scriptsDecision.serve) {
+      const runner = new ScriptRunner({
+        db: dbResult.val,
+        runsRoot: (process.env.SANDBOX_RUNS_DIR ?? '').trim() || '/runs',
         python,
-        version: probed.version,
-        libraries: probed.libraries.length ? probed.libraries.join(', ') : 'no data libraries',
-        network: networkProblem === null ? 'none per run' : 'the container’s (UNISOLATED)',
-        memory: memoryBytes,
-        removed: removed
-          ? `; ${removed} stale run director${removed === 1 ? 'y' : 'ies'} removed`
-          : '',
-      }
-    );
-    scripts = runner;
+        networkIsolation: isolation.mode,
+        memoryBytes,
+        maxFileBytes: orgMaxFileBytes,
+      });
+      const removed = await runner.prepare();
+      logger.info(
+        'scripts enabled: {python} {version} with {libraries}; network {network}; memory {memory} bytes per run{removed}',
+        {
+          component: 'worker-sandbox/scripts',
+          python,
+          version: probed.version,
+          libraries: probed.libraries.length ? probed.libraries.join(', ') : 'no data libraries',
+          network:
+            isolation.mode === 'netns'
+              ? 'none per run (network namespace, as root)'
+              : isolation.mode === 'userns'
+                ? 'none per run (user namespace, as the caller)'
+                : 'the container’s (NOT ISOLATED, by operator opt-in)',
+          memory: memoryBytes,
+          removed: removed
+            ? `; ${removed} stale run director${removed === 1 ? 'y' : 'ies'} removed`
+            : '',
+        }
+      );
+      scripts = runner;
+    }
   }
 
   const port = Number(process.env.SANDBOX_WORKER_PORT ?? '8092');
@@ -389,6 +427,8 @@ async function main(): Promise<void> {
     workspaces: workspacesEnabled,
     services,
     scripts,
+    scriptsStatus: scriptsDecision.status,
+    scriptsUnavailable: scriptsDecision.unavailable,
   });
   server.listen(port, '0.0.0.0', () => {
     logger.info(
@@ -405,10 +445,10 @@ async function main(): Promise<void> {
           : 'disabled',
         services: services ? 'enabled' : 'disabled',
         scripts: scripts
-          ? canIsolateByUid()
-            ? 'enabled, per-caller uids'
-            : 'enabled, UNISOLATED'
-          : 'disabled',
+          ? `${canIsolateByUid() ? 'enabled, per-caller uids' : 'enabled, UNISOLATED by uid'}${scriptsDecision.status === 'network_shared' ? ', WITH NETWORK' : ''}`
+          : scriptsDecision.status === 'unavailable'
+            ? 'UNAVAILABLE (no network isolation)'
+            : 'disabled',
       }
     );
   });

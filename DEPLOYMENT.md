@@ -412,12 +412,26 @@ formats, with what the script writes staged back under the same quota as
 any other file. Independent of workspaces (no checkout is involved), but
 with the same arrangement for who runs it: with the flag set the
 entrypoint keeps the worker root so each run is dropped to its caller's
-own uid, and — where the kernel lets this container make a network
-namespace — started with no network at all. Docker's default profile
-withholds that (`unshare` needs `CAP_SYS_ADMIN`); the worker says so at
-boot and in every result, and a deployment that wants scripts fully
-offline adds `cap_add: [SYS_ADMIN]` to `worker-sandbox` in compose,
-weighing that capability against the rest of what the container holds.
+own uid, and started with **no network at all** — in a network namespace
+made as root (`unshare --net`, needs `CAP_SYS_ADMIN`) or, failing that, a
+user namespace of the caller's own (`unshare -Un`, needs unprivileged
+user namespaces). Docker's default profile withholds both (the
+capability, and the default seccomp profile blocks `unshare`), so on a
+stock deployment the worker proves at boot that neither works and then
+**closes the verb**: `sandbox_run_python` answers 503
+`scripts_unavailable`, `/health` reports `scripts: unavailable` and the
+web app stops offering the tool — because the tool tells the model there
+is no network, and running with one anyway would make that a lie. To
+have scripts fully offline, give `worker-sandbox` in compose
+`cap_add: [SYS_ADMIN]` (the namespace is then made as root, before the
+uid drop, and the script holds nothing to undo it), or a seccomp profile
+that allows `unshare`/`clone` with `CLONE_NEWUSER|CLONE_NEWNET` (the
+userns route, no extra capability) — weighing either against the rest of
+what the container holds. To accept scripts running on the container's
+network instead, set `SANDBOX_SCRIPTS_ALLOW_NETWORK=true` in `.env` (read
+by BOTH the worker and the web app): the verb is served, the tool's
+description tells the model the script has the worker's network, and
+every result says so too.
 The image carries the interpreter at `/opt/sandbox-python` (pandas,
 numpy, openpyxl, XlsxWriter, pinned in `docker/Dockerfile`);
 `SANDBOX_PYTHON` points at another. A run's directory is made under

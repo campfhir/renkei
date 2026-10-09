@@ -24,6 +24,10 @@ import {
   sbWorkspaceExec,
   sbRunScript,
   sandboxScriptsEnabled,
+  sandboxScriptsAllowNetwork,
+  sandboxScriptsServed,
+  sbScriptsStatus,
+  resetScriptsStatusForTests,
   setRetryDelayForTests,
 } from './index';
 
@@ -305,6 +309,59 @@ describe('sbRunScript', () => {
     expect(sandboxScriptsEnabled()).toBe(true);
     delete process.env.SANDBOX_WORKER_API_KEY;
     expect(sandboxScriptsEnabled()).toBe(false);
+  });
+
+  it('reads the operator’s network opt-in from its own flag', () => {
+    expect(sandboxScriptsAllowNetwork()).toBe(false);
+    process.env.SANDBOX_SCRIPTS_ALLOW_NETWORK = 'true';
+    expect(sandboxScriptsAllowNetwork()).toBe(true);
+  });
+
+  it('reads what the worker does with scripts from /health, and nothing from an unreadable answer', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, scripts: 'unavailable' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })))
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    expect(await sbScriptsStatus()).toBe('unavailable');
+    expect(fetchSpy.mock.calls[0]![0]).toBe('http://sandbox.internal:8092/health');
+    expect(await sbScriptsStatus()).toBeNull();
+    expect(await sbScriptsStatus()).toBeNull();
+  });
+
+  it('withholds the tool once the worker has said scripts are unavailable, and offers it until then', async () => {
+    resetScriptsStatusForTests();
+    process.env.SANDBOX_SCRIPTS_ENABLED = 'true';
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, scripts: 'unavailable' })));
+    // The first call has no answer yet: the flag decides, and the probe is kicked off once.
+    expect(sandboxScriptsServed()).toBe(true);
+    expect(sandboxScriptsServed()).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(sandboxScriptsServed()).toBe(false);
+    // Without the flag nothing is asked at all.
+    delete process.env.SANDBOX_SCRIPTS_ENABLED;
+    expect(sandboxScriptsServed()).toBe(false);
+    resetScriptsStatusForTests();
+  });
+
+  it('keeps offering the tool where the worker isolates or shares the network, or cannot be asked', async () => {
+    process.env.SANDBOX_SCRIPTS_ENABLED = 'true';
+    for (const answer of [
+      new Response(JSON.stringify({ ok: true, scripts: 'isolated' })),
+      new Response(JSON.stringify({ ok: true, scripts: 'network_shared' })),
+      new Response('not json', { status: 500 }),
+    ]) {
+      resetScriptsStatusForTests();
+      fetchSpy?.mockRestore();
+      fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(answer);
+      sandboxScriptsServed();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(sandboxScriptsServed()).toBe(true);
+    }
+    resetScriptsStatusForTests();
   });
 
   it('POSTs to /v1/scripts/run with the target merged in and reads the outcome back', async () => {

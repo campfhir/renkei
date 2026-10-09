@@ -575,13 +575,23 @@ over a person's data needs nothing a repository's test suite needs:
   run is the worker's own user, logged at boot and named in every
   result.
 - **No network.** The interpreter starts in a network namespace of its
-  own (`unshare --net`, as root, _before_ the uid drop) holding a down
-  loopback and nothing else — the gap a workspace command has to leave
-  open, closed. `unshare` needs `CAP_SYS_ADMIN`, which Docker's default
-  profile withholds; the worker proves at boot whether it has it, says
-  so when not, and every result carries `networkIsolated` so the model
-  can say so too. A deployment adds the capability in compose when it
-  wants scripts fully offline (`DEPLOYMENT.md`).
+  own holding a down loopback and nothing else — the gap a workspace
+  command has to leave open, closed. Two ways to make one, tried in
+  order at boot (`verifyNetworkIsolation`): `unshare --net` as root,
+  _before_ the uid drop, so the dropped process holds nothing to undo
+  it (needs `CAP_SYS_ADMIN`); else `unshare -Un` _after_ the drop, a
+  user namespace of the caller's own with their uid mapped to itself
+  (needs unprivileged user namespaces, and works on a developer's
+  checkout without root). Docker's default profile withholds both, and
+  then the worker **fails closed** (`decideScripts`): the verb answers
+  503 `scripts_unavailable` with the reason, `/health` says `scripts:
+unavailable` and the web app withholds the tool — a tool that tells
+  the model "there is NO network" must not quietly run with one. An
+  operator who accepts runs on the container's network says so with
+  `SANDBOX_SCRIPTS_ALLOW_NETWORK=true` (both sides); the description
+  then tells the model the script has the worker's network, and every
+  result carries `networkIsolated` so each one says so too
+  (`DEPLOYMENT.md`).
 - **How much.** A process ceiling (64, per uid), an address-space
   ceiling (`SANDBOX_SCRIPT_MEMORY`, default 2 GB — a `MemoryError`, not
   a dead container), a file-size ceiling, no core dumps, a wall clock

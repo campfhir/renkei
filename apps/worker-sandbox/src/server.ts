@@ -74,7 +74,7 @@ import { createServiceHandlers } from './service-endpoints';
 import { createScriptHandlers } from './script-endpoints';
 import { expiryFromNow, quotaHeadroom } from './staging';
 import type { ServiceManager } from './services';
-import type { ScriptRunner } from './scripts';
+import type { ScriptRunner, ScriptsStatus } from './scripts';
 import type { LspSessions } from './lsp-sessions';
 import { logger } from './logger';
 
@@ -143,6 +143,13 @@ export interface SandboxServerDeps {
    * which answers the script verb 503.
    */
   scripts?: ScriptRunner | null;
+  /**
+   * What `/health` says about scripts — the boot decision (scripts.ts,
+   * decideScripts) the web app reads to offer or withhold sandbox_run_python.
+   * `disabled` when not given; `unavailable` also carries the 503's message.
+   */
+  scriptsStatus?: ScriptsStatus;
+  scriptsUnavailable?: string | null;
   /**
    * How `/v1/fetch` reaches a URL: the guarded fetch by default — every
    * redirect re-checked, every hop dialled at the address it verified
@@ -301,7 +308,11 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   let draining = false;
   const vault = deps.vault ?? new SecretVault();
   const services = createServiceHandlers({ db: deps.db, manager: deps.services ?? null });
-  const scripts = createScriptHandlers({ db: deps.db, runner: deps.scripts ?? null });
+  const scripts = createScriptHandlers({
+    db: deps.db,
+    runner: deps.scripts ?? null,
+    unavailable: deps.scriptsUnavailable ?? null,
+  });
   const workspaces = createWorkspaceHandlers({
     db: deps.db,
     enabled: deps.workspaces === true,
@@ -912,7 +923,10 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       );
     }
     if (request.method === 'GET' && url.pathname === '/health') {
-      return sendJson(response, 200, { ok: true });
+      return sendJson(response, 200, {
+        ok: true,
+        scripts: deps.scriptsStatus ?? (deps.scripts ? 'isolated' : 'disabled'),
+      });
     }
     if (!authorized(request, deps.apiKeys)) {
       return sendError(response, 401, 'unauthorized');

@@ -101,15 +101,36 @@ describe('wrapCommand', () => {
     expect(wrapCommand(null, 'bash', ['-c', 'id'])).toEqual({ file: 'bash', args: ['-c', 'id'] });
   });
 
-  it('enters an empty network namespace before the drop when asked, and never without an identity', () => {
-    const wrapped = wrapCommand({ uid: 100_007, gid: 100_007 }, 'python3', ['main.py'], true);
+  it('enters an empty network namespace before the drop for netns, and never without an identity', () => {
+    const wrapped = wrapCommand({ uid: 100_007, gid: 100_007 }, 'python3', ['main.py'], 'netns');
     expect(wrapped.file).toBe('unshare');
     expect(wrapped.args.slice(0, 3)).toEqual(['--net', '--', 'setpriv']);
     expect(wrapped.args.slice(-2)).toEqual(['python3', 'main.py']);
-    expect(wrapCommand(null, 'python3', ['main.py'], true)).toEqual({
+    expect(wrapCommand(null, 'python3', ['main.py'], 'netns')).toEqual({
       file: 'python3',
       args: ['main.py'],
     });
+  });
+
+  it('enters a user namespace of the caller’s own AFTER the drop for userns, mapping the uid to itself', () => {
+    const wrapped = wrapCommand({ uid: 100_007, gid: 100_007 }, 'python3', ['main.py'], 'userns');
+    expect(wrapped.file).toBe('setpriv');
+    expect(wrapped.args.slice(0, 2)).toEqual(['--reuid=100007', '--regid=100007']);
+    expect(wrapped.args.slice(-7)).toEqual([
+      'unshare',
+      '-Un',
+      '--map-user=100007',
+      '--map-group=100007',
+      '--',
+      'python3',
+      'main.py',
+    ]);
+    // Without an identity (an unprivileged worker) the namespace is still made, as this process.
+    const own = wrapCommand(null, 'python3', ['main.py'], 'userns');
+    expect(own.file).toBe('unshare');
+    expect(own.args[0]).toBe('-Un');
+    expect(own.args[1]).toBe(`--map-user=${process.getuid?.() ?? 65534}`);
+    expect(own.args.slice(-2)).toEqual(['python3', 'main.py']);
   });
 
   it('builds the environment from nothing and points git at the proxy as config, not argv', () => {
@@ -197,14 +218,19 @@ describe('a command that never starts', () => {
     }
   });
 
-  it('proves at boot whether a command can start with no network, and says why when it cannot', async () => {
-    const problem = await verifyNetworkIsolation();
-    if (typeof process.getuid === 'function' && process.getuid() === 0) {
-      // Root: either the namespace held only a loopback, or the kernel
-      // (a container without CAP_SYS_ADMIN) said no in so many words.
-      expect(problem === null || (typeof problem === 'string' && problem !== '')).toBe(true);
+  it('proves at boot how a command can start with no network, and says why per mode when it cannot', async () => {
+    const probe = await verifyNetworkIsolation();
+    if (probe.mode === null) {
+      // Neither way worked: each mode said so in so many words.
+      expect(probe.problems).toHaveLength(2);
+      for (const problem of probe.problems) expect(problem).toMatch(/^(netns|userns): .+/);
     } else {
-      expect(problem).toBe('this process is not root');
+      expect(['netns', 'userns']).toContain(probe.mode);
+      // netns is tried first and needs root; a non-root worker can only reach userns.
+      if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+        expect(probe.mode).toBe('userns');
+        expect(probe.problems).toEqual(['netns: this process is not root']);
+      }
     }
   });
 });
