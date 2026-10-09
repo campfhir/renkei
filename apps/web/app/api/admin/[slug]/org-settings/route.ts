@@ -109,6 +109,7 @@ const BOOLEAN_KEYS = [
   'enableDcr',
   'knowledgeKeywordEnrichment',
   'coachMarksEnabled',
+  'phiConnectorsRequireCoveredModel',
 ] as const;
 
 type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number] | 'logLevel';
@@ -141,6 +142,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number |
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
     coachMarksEnabled: settings.coachMarksEnabled,
+    phiConnectorsRequireCoveredModel: settings.phiConnectorsRequireCoveredModel,
     chatReplyPresenceWindowSeconds: settings.chatReplyPresenceWindowSeconds,
     sandboxWorkspaceMaxBytes: settings.sandboxWorkspaceMaxBytes,
   };

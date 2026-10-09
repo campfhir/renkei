@@ -18,6 +18,26 @@ const inputClass =
 const labelClass = 'block text-sm font-medium mb-1';
 const hintClass = 'mt-1 text-xs text-gray-500 dark:text-gray-400';
 
+/** The same categories @renkei/agent-llm's PROVIDER_RETENTIONS names (kept local: this is a client component). */
+const PROVIDER_RETENTION_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Unknown — not yet confirmed with the provider' },
+  { value: 'none', label: 'None — zero data retention' },
+  { value: 'abuse-monitoring', label: 'Abuse monitoring only (short-lived, e.g. 30 days)' },
+  { value: 'stored', label: 'Stored — the provider keeps requests' },
+];
+
+/**
+ * The roster's warning: no BAA recorded, or the retention left unknown.
+ * Mirrors dataHandlingWarning in @renkei/agent-llm, which the server-side
+ * gate reads; the wording here is what an operator sees on the row.
+ */
+function dataHandlingWarningOf(row: ModelRow): string | null {
+  if (row.settings?.baaCovered !== true) return 'Not BAA-covered';
+  const retention = row.settings?.providerRetention;
+  if (!retention || retention === 'unknown') return 'Retention unknown';
+  return null;
+}
+
 /** Common model ids per provider, offered as suggestions — any id is accepted. */
 const MODEL_SUGGESTIONS: Record<string, string[]> = {
   anthropic: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
@@ -49,6 +69,10 @@ interface ModelRow {
     apiVersion?: string;
     reasoningEffort?: string;
     apiSurface?: string;
+    dataResidency?: string;
+    providerRetention?: string;
+    baaCovered?: boolean;
+    notes?: string;
   } | null;
   enabled: boolean;
   isDefault: boolean;
@@ -70,6 +94,16 @@ interface ModelDraft {
    * Azure AI Foundry — image generation models, not chat ones.
    */
   apiSurface: string;
+  /**
+   * Data handling — the operator's statement, stored on the row's settings
+   * and read by the roster badge and the PHI-connector gate (org setting
+   * "Require a BAA-covered model for PHI connectors").
+   */
+  dataResidency: string;
+  /** '' = unknown (the stored default); else one of PROVIDER_RETENTIONS. */
+  providerRetention: string;
+  baaCovered: boolean;
+  notes: string;
   apiKey: string;
   /** '' = type/keep a key; a config id = reuse that config's stored key. */
   apiKeyFromId: string;
@@ -87,6 +121,10 @@ const emptyDraft: ModelDraft = {
   apiVersion: '',
   reasoningEffort: '',
   apiSurface: '',
+  dataResidency: '',
+  providerRetention: '',
+  baaCovered: false,
+  notes: '',
   apiKey: '',
   apiKeyFromId: '',
   enabled: true,
@@ -113,6 +151,12 @@ function draftOf(row: ModelRow): ModelDraft {
     reasoningEffort:
       typeof row.settings?.reasoningEffort === 'string' ? row.settings.reasoningEffort : '',
     apiSurface: typeof row.settings?.apiSurface === 'string' ? row.settings.apiSurface : '',
+    dataResidency:
+      typeof row.settings?.dataResidency === 'string' ? row.settings.dataResidency : '',
+    providerRetention:
+      typeof row.settings?.providerRetention === 'string' ? row.settings.providerRetention : '',
+    baaCovered: row.settings?.baaCovered === true,
+    notes: typeof row.settings?.notes === 'string' ? row.settings.notes : '',
     apiKey: '',
     apiKeyFromId: '',
     enabled: row.enabled,
@@ -274,6 +318,10 @@ export default function ModelForms({ slug }: { slug: string }) {
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
       ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
       ...(draft.apiSurface ? { apiSurface: draft.apiSurface } : {}),
+      ...(draft.dataResidency.trim() ? { dataResidency: draft.dataResidency.trim() } : {}),
+      ...(draft.providerRetention ? { providerRetention: draft.providerRetention } : {}),
+      baaCovered: draft.baaCovered,
+      ...(draft.notes.trim() ? { notes: draft.notes.trim() } : {}),
       ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
       ...(draft.apiKeyFromId && !draft.apiKey ? { apiKeyFromId: draft.apiKeyFromId } : {}),
       enabled: draft.enabled,
@@ -346,6 +394,14 @@ export default function ModelForms({ slug }: { slug: string }) {
                 {!row.enabled ? (
                   <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400">
                     Disabled
+                  </span>
+                ) : null}
+                {dataHandlingWarningOf(row) ? (
+                  <span
+                    className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-300"
+                    title="Data handling: the organization has not recorded a BAA and a retention term for this model. Fill them in under Edit → Data handling."
+                  >
+                    ⚠ {dataHandlingWarningOf(row)}
                   </span>
                 ) : null}
               </p>
@@ -817,6 +873,69 @@ export default function ModelForms({ slug }: { slug: string }) {
               </p>
             ) : null}
           </div>
+
+          <fieldset className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+            <legend className="px-1 text-sm font-medium">Data handling</legend>
+            <p className={hintClass}>
+              Where this model processes requests and what the provider keeps. Recorded by you, not
+              checked by Renkei: it is what the roster&apos;s warning badge and the &quot;Require a
+              BAA-covered model for PHI connectors&quot; setting go by.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className={labelClass} htmlFor="model-data-residency">
+                  Data residency <span className="font-normal text-gray-500">(optional)</span>
+                </label>
+                <input
+                  id="model-data-residency"
+                  className={inputClass}
+                  value={draft.dataResidency}
+                  placeholder="e.g. Azure East US, DataZone"
+                  onChange={(event) => setDraft({ ...draft, dataResidency: event.target.value })}
+                />
+              </div>
+              <div>
+                <label className={labelClass} htmlFor="model-provider-retention">
+                  Data retention
+                </label>
+                <select
+                  id="model-provider-retention"
+                  className={inputClass}
+                  value={draft.providerRetention}
+                  onChange={(event) =>
+                    setDraft({ ...draft, providerRetention: event.target.value })
+                  }
+                >
+                  {PROVIDER_RETENTION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={draft.baaCovered}
+                onChange={(event) => setDraft({ ...draft, baaCovered: event.target.checked })}
+              />
+              Covered by a Business Associate Agreement (BAA)
+            </label>
+            <div className="mt-3">
+              <label className={labelClass} htmlFor="model-data-notes">
+                Notes <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <textarea
+                id="model-data-notes"
+                className={inputClass}
+                rows={2}
+                value={draft.notes}
+                placeholder="Contract reference, date confirmed, who to ask"
+                onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+              />
+            </div>
+          </fieldset>
 
           <div className="flex flex-wrap gap-4 text-sm">
             <label className="flex items-center gap-2">

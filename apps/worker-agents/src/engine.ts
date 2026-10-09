@@ -58,6 +58,7 @@ import {
 import {
   resolveAgentLlm,
   maskCredentialHeaders,
+  phiCoveredModelRefusal,
   wireRequestCauseOf,
   type LlmContentBlock,
   type LlmMessage,
@@ -1206,6 +1207,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // not name can be reached even by mistake.
     const blockedTools = blockedToolsOf(agentRow.blocked_tools);
     const runTools = [...referencedTools(nodes, blockedTools), ...NOTIFIER_TOOLS];
+    // Org policy on PHI connectors (phiConnectorsRequireCoveredModel): a
+    // run whose steps name Mirth, OnBase or file-share tools must resolve
+    // to a model the org records a BAA for. A config failure like a
+    // missing model — nothing is minted, no attempt row is spent.
+    const phiRefusal = phiCoveredModelRefusal(
+      settings.phiConnectorsRequireCoveredModel,
+      runTools,
+      llm
+    );
+    if (phiRefusal) {
+      await finalizeRun(run, 'failed', 'config', phiRefusal, {});
+      return;
+    }
     const token = await mint(db, {
       tenantId,
       subject: run.owner_subject,

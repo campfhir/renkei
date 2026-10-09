@@ -1893,6 +1893,75 @@ maybe('agent run engine', () => {
     expect(attempt.outcome_code).toBe('not-found');
   });
 
+  it('refuses a run that reaches a PHI connector on a model without a recorded BAA, when the org requires one', async () => {
+    await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: true });
+    try {
+      const phiStep = singleStep({
+        tool: 'mirth_get_message',
+        instruction: [
+          { t: 'text', v: 'Read the message with ' },
+          { t: 'tool', name: 'mirth_get_message' },
+        ],
+        failureHandling: [],
+      });
+      const uncovered = await seedRun(phiStep);
+      const llm = stubLlm(() => finish('success'));
+      const mcp = stubMcp(['mirth_get_message'], () => okToolResult);
+      await handlerWith(llm, mcp)({ payload: { runId: uncovered.runId } });
+      const refused = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error_kind', 'error'])
+        .where('id', '=', uncovered.runId)
+        .executeTakeFirstOrThrow();
+      expect(refused.status).toBe('failed');
+      expect(refused.error_kind).toBe('config');
+      expect(refused.error).toContain('BAA-covered model');
+      expect(refused.error).toContain('Mirth');
+      expect(refused.error).toContain('"stub-model"');
+      // A config refusal spends nothing: no attempt row, no model call.
+      const attempts = await db
+        .selectFrom('agent_run_steps')
+        .select('id')
+        .where('run_id', '=', uncovered.runId)
+        .execute();
+      expect(attempts).toHaveLength(0);
+
+      // The same step on a covered model runs.
+      const covered = await seedRun(phiStep);
+      const coveredLlm: ResolvedLlm = {
+        ...stubLlm(() => finish('success')),
+        dataHandling: {
+          dataResidency: null,
+          providerRetention: 'none',
+          baaCovered: true,
+          notes: null,
+        },
+      };
+      await handlerWith(coveredLlm, mcp)({ payload: { runId: covered.runId } });
+      const ran = await db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', covered.runId)
+        .executeTakeFirstOrThrow();
+      expect(ran.status).toBe('succeeded');
+
+      // A run with no PHI tool in reach is untouched by the setting.
+      const plain = await seedRun(singleStep());
+      await handlerWith(
+        llm,
+        stubMcp(['jira_get_issue'], () => okToolResult)
+      )({ payload: { runId: plain.runId } });
+      const untouched = await db
+        .selectFrom('agent_runs')
+        .select(['status'])
+        .where('id', '=', plain.runId)
+        .executeTakeFirstOrThrow();
+      expect(untouched.status).toBe('succeeded');
+    } finally {
+      await setOrgSettings(tenantId, { phiConnectorsRequireCoveredModel: false });
+    }
+  });
+
   it('fails a run as config when the step tool is not in the owner projection', async () => {
     const { runId } = await seedRun(singleStep());
     const llm = stubLlm(() => finish('success'));

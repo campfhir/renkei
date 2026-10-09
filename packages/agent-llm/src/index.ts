@@ -46,6 +46,18 @@ export {
   type TestConnectionError,
 } from './test-connection';
 export {
+  DEFAULT_DATA_HANDLING,
+  PROVIDER_RETENTIONS,
+  dataHandlingOf,
+  dataHandlingWarning,
+  isPhiConnectorTool,
+  isProviderRetention,
+  phiCoveredModelRefusal,
+  PHI_CONNECTOR_TOOL_PREFIXES,
+  type LlmDataHandling,
+  type ProviderRetention,
+} from './data-handling';
+export {
   chatModelsOnly,
   imageModelsOnly,
   imageSurfaceOf,

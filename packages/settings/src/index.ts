@@ -140,6 +140,15 @@ export interface OrgSettings {
    */
   agentOptimizerWindowDays: number;
   /**
+   * When on, a chat turn or agent run whose tool set reaches a PHI
+   * connector (Mirth, OnBase, file shares) must run on a model whose
+   * configuration records `baaCovered` (admin → Agent models → Data
+   * handling); otherwise the turn or run is refused with a message that
+   * says which model and why. Off by default: an org without those
+   * connectors has nothing to gate.
+   */
+  phiConnectorsRequireCoveredModel: boolean;
+  /**
    * How deep an agent-triggers-agent chain may go. The queue's attempt
    * budget bounds retries, not fan-out; this is the fan-out bound.
    */
@@ -285,6 +294,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentUsageRetentionDays: 365,
   chatRetentionDays: 0,
   agentOptimizerWindowDays: 30,
+  phiConnectorsRequireCoveredModel: false,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
   agentMaxStepAttempts: 10,
@@ -415,6 +425,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     agentOptimizerWindowDays: Number(
       coerce(stored.get('agent_optimizer_window_days'), d.agentOptimizerWindowDays)
     ),
+    phiConnectorsRequireCoveredModel: Boolean(
+      coerce(stored.get('phi_connectors_require_covered_model'), d.phiConnectorsRequireCoveredModel)
+    ),
     agentMaxChainDepth: Number(coerce(stored.get('agent_max_chain_depth'), d.agentMaxChainDepth)),
     agentRunTimeoutMinutes: Number(
       coerce(stored.get('agent_run_timeout_minutes'), d.agentRunTimeoutMinutes)
@@ -483,6 +496,7 @@ export async function setOrgSettings(
     ['agent_usage_retention_days', updates.agentUsageRetentionDays],
     ['chat_retention_days', updates.chatRetentionDays],
     ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
+    ['phi_connectors_require_covered_model', updates.phiConnectorsRequireCoveredModel],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_max_step_attempts', updates.agentMaxStepAttempts],
