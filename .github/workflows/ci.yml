@@ -105,15 +105,16 @@ jobs:
     name: dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # The action needs the repository's Dependency graph (Settings →
-    # Security analysis), which is not on yet; until it is, the job reports
-    # but does not block. Delete this line once the graph is enabled so the
-    # review gates merges as intended.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The action needs the repository's Dependency graph (Settings →
+      # Security analysis), which is not on yet; until it is, the step
+      # reports but does not fail the job. Delete the continue-on-error
+      # line once the graph is enabled so the review gates merges as
+      # intended.
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        continue-on-error: true
         with:
           fail-on-severity: high
           deny-licenses: AGPL-3.0, AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0
