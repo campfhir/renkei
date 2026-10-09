@@ -37,7 +37,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { Client } from 'pg';
-import { sealForSubject } from './keys';
+import { enrollForE2E, sealForSubject } from './keys';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -85,6 +85,7 @@ async function baseSeed(client: Client, fixture: Fixture): Promise<void> {
   ]);
   await client.query('DELETE FROM admanager_instances WHERE tenant_id = $1', [fixture.tenantId]);
   await client.query('DELETE FROM user_preferences WHERE tenant_id = $1', [fixture.tenantId]);
+  await client.query('DELETE FROM user_encryption_keys WHERE tenant_id = $1', [fixture.tenantId]);
   await client.query('DELETE FROM sessions WHERE tenant_id = $1', [fixture.tenantId]);
   await client.query('DELETE FROM identities WHERE tenant_id = $1', [fixture.tenantId]);
   await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
@@ -114,6 +115,9 @@ async function baseSeed(client: Client, fixture: Fixture): Promise<void> {
      VALUES ($1, $2, 'coach_marks', '{"autoStart": false}'::jsonb)`,
     [fixture.tenantId, fixture.subject]
   );
+  // Enrolled already (docs/delegate-key-design.md), so the first-sign-in
+  // "your encryption key is ready" dialog does not sit over the forms.
+  await enrollForE2E(client, fixture.tenantId, fixture.subject);
 }
 
 async function seedAdminTenant(fixture: Fixture): Promise<void> {
@@ -271,6 +275,63 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   await page.getByRole('button', { name: 'Delete instance' }).click();
   await expect(page).toHaveURL(new RegExp(`/${fixture.slug}/admin/admanager$`));
   await expect(page.getByText('No instances registered yet.')).toBeVisible();
+});
+
+test('admin: transport security off is refused for production or a public host, allowed for a private lab host, and shown as a banner', async ({
+  page,
+}, testInfo) => {
+  const fixture = fixtureFor(`${testInfo.project.name}-insecure`);
+  await seedAdminTenant(fixture);
+  await signIn(page, fixture);
+
+  await page.goto(`/${fixture.slug}/admin/admanager`);
+  await expect(page.getByText('No instances registered yet.')).toBeVisible();
+  await page.getByRole('button', { name: '+ New instance' }).click();
+  await page.getByLabel('Name').fill('ADManager Plus lab');
+  await page.getByLabel('Server URL').fill('http://127.0.0.1:8080');
+  await page.getByLabel(/Allow insecure HTTP/).check();
+
+  // The default label is "prod": a production instance never gets plaintext.
+  await page.getByRole('button', { name: 'Create instance' }).click();
+  await expect(page.getByText(/production instance must use https/)).toBeVisible();
+  await shot(page, testInfo, 'admanager-insecure-01-production-refused');
+
+  // A lab label, but a public host: refused too — the real route resolves
+  // the name, so a public IP literal is the deterministic stand-in here.
+  await page.getByLabel('Environment').fill('lab');
+  await page.getByLabel('Server URL').fill('http://203.0.113.9:8080');
+  await page.getByRole('button', { name: 'Create instance' }).click();
+  await expect(page.getByText(/only allowed for a host on a private network/)).toBeVisible();
+
+  // A lab label on a loopback host is what the exception is for.
+  await page.getByLabel('Server URL').fill('http://127.0.0.1:8080');
+  await page.getByRole('button', { name: 'Create instance' }).click();
+  await expect(page.getByText('ADManager Plus lab')).toBeVisible();
+
+  // The instance page carries the warning for as long as the setting is on.
+  await page.getByRole('link', { name: 'Manage', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'ADManager Plus lab' })).toBeVisible();
+  const banner = page.getByTestId('insecure-transport-banner');
+  await expect(banner).toContainText('Transport security is off');
+  await expect(banner).toContainText('plaintext HTTP allowed');
+  await shot(page, testInfo, 'admanager-insecure-02-banner');
+
+  // Relabelling it production while insecure is refused by the real PATCH route.
+  await page.getByLabel('Environment').fill('prod');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText(/production instance must use https/)).toBeVisible();
+
+  // Turning the protection back on clears the banner.
+  await page.getByLabel('Environment').fill('lab');
+  await page.getByLabel('Server URL').fill('https://127.0.0.1:8443');
+  await page.getByLabel(/Allow insecure HTTP/).uncheck();
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Saved.')).toBeVisible();
+  await expect(banner).toHaveCount(0);
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
+  await shot(page, testInfo, 'admanager-insecure-03-mobile');
 });
 
 test('user: an already-connected ADManager Plus card — real permission persistence, disconnect, and the fail-closed reconnect message', async ({

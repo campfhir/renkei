@@ -50,13 +50,24 @@ export type AuditAction =
   | 'mirth.instance.created'
   | 'mirth.instance.updated'
   | 'mirth.instance.deleted'
+  /**
+   * An admin saved an instance with transport security switched off —
+   * certificate verification off and/or plaintext HTTP allowed (details:
+   * modes, baseUrl, environment). Only a non-production instance on a
+   * private host gets this far (lib/insecure-transport.ts); the event is
+   * written on every save that keeps it on.
+   */
+  | 'mirth.instance.insecure_transport_enabled'
   | 'mirth.connected'
   | 'mirth.disconnected'
   | 'admanager.instance.created'
   | 'admanager.instance.updated'
   | 'admanager.instance.deleted'
+  | 'admanager.instance.insecure_transport_enabled'
   | 'admanager.connected'
   | 'admanager.disconnected'
+  /** The OnBase or OnBase Administration connector was saved with plaintext HTTP allowed (details: connector, modes, urls). */
+  | 'onbase.insecure_transport_enabled'
   /**
    * A person's encryption key (docs/delegate-key-design.md): enrolled on
    * their first sign-in, replaced by rotation, their agents' delegation

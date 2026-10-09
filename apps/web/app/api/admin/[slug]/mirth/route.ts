@@ -10,6 +10,11 @@ import { createInstance, listInstances } from '@renkei/connector-mirth';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { recordAuditEvent } from '@/lib/audit-events';
+import {
+  checkInsecureTransport,
+  insecureTransportModes,
+  isProductionLabel,
+} from '@/lib/insecure-transport';
 import { parseInstancePayload } from '@/lib/mirth/parse';
 
 export async function GET(
@@ -53,6 +58,17 @@ export async function POST(
   const parsed = parseInstancePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
+  // Transport security off (certificate verification, or plaintext HTTP)
+  // is a recorded decision for a lab server on a private network and
+  // nothing else: never for a production instance, never for a public host.
+  const insecureModes = insecureTransportModes(parsed.input);
+  const transport = await checkInsecureTransport({
+    modes: insecureModes,
+    production: isProductionLabel(parsed.input.environment),
+    urls: [parsed.input.baseUrl],
+  });
+  if (!transport.ok) return NextResponse.json({ error: transport.error }, { status: 400 });
+
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
@@ -72,5 +88,19 @@ export async function POST(
     targetLabel: parsed.input.name,
     details: { environment: parsed.input.environment, baseUrl: parsed.input.baseUrl },
   });
+  if (insecureModes.length) {
+    recordAuditEvent({
+      tenantId: tenant.id,
+      actorSubject: session.subject,
+      action: 'mirth.instance.insecure_transport_enabled',
+      targetKind: 'mirth-instance',
+      targetLabel: parsed.input.name,
+      details: {
+        modes: insecureModes,
+        baseUrl: parsed.input.baseUrl,
+        environment: parsed.input.environment,
+      },
+    });
+  }
   return NextResponse.json({ id: created.val }, { status: 201 });
 }

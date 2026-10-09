@@ -48,7 +48,7 @@ on-prem, and it has a real per-technician auth model already:
 ADManager Plus's own authtoken already carries a **scope** (`user:read`,
 `user:modify`, `group:modify`, …, see the reference doc's "Scopes"
 table) that a technician's authtoken can be limited to when it is
-generated. Renkei's permissions narrow what the *tools* may attempt with
+generated. Renkei's permissions narrow what the _tools_ may attempt with
 a credential the person already holds; ADManager Plus's own scope on that
 authtoken, and the technician's own delegated rights inside ADManager
 Plus, are the actual authority on every request — RENKEI.md Decision #2
@@ -73,14 +73,14 @@ field instead of two.
 
 ## Permissions: named, matching the four requested capabilities plus read
 
-| Permission             | What it lets the tools attempt                                             |
-| ----------------------- | ---------------------------------------------------------------------- |
-| `accounts.read`         | Look up a user's attributes, account status and group membership; search users by name/department/etc. Needed before every write below, to resolve who is being acted on and preview it. |
-| `accounts.unlock`       | Unlock a locked-out account.                                            |
-| `accounts.reset_password` | Reset a user's password, by default forcing "must change at next logon" through the instance's configured reset-password template (see "Password reset is a two-step flow" below). |
-| `accounts.create`       | Create a new user account, optionally from an ADManager Plus template. |
-| `accounts.edit`         | Update an existing user's attributes (department, title, phone, manager, description, …), optionally reapplying a template. |
-| `groups.modify`         | Add or remove security-group membership, or copy another user's group memberships onto a target. |
+| Permission                | What it lets the tools attempt                                                                                                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts.read`           | Look up a user's attributes, account status and group membership; search users by name/department/etc. Needed before every write below, to resolve who is being acted on and preview it. |
+| `accounts.unlock`         | Unlock a locked-out account.                                                                                                                                                             |
+| `accounts.reset_password` | Reset a user's password, by default forcing "must change at next logon" through the instance's configured reset-password template (see "Password reset is a two-step flow" below).       |
+| `accounts.create`         | Create a new user account, optionally from an ADManager Plus template.                                                                                                                   |
+| `accounts.edit`           | Update an existing user's attributes (department, title, phone, manager, description, …), optionally reapplying a template.                                                              |
+| `groups.modify`           | Add or remove security-group membership, or copy another user's group memberships onto a target.                                                                                         |
 
 Presets on the connect card: **Read only** (`accounts.read`),
 **Helpdesk** (read + unlock + reset password — the two highest-volume
@@ -98,7 +98,7 @@ without changing what it protects.
 ## Every write is preview + confirm, not just the permanent ones
 
 `connector-mirth` reserves the shared issue-preview card for operations
-that are *permanent* (a DELETE, a purge, a server restore). Everything
+that are _permanent_ (a DELETE, a purge, a server restore). Everything
 this connector does is nominally reversible in AD terms — a password can
 be reset again, a lockout re-triggers, a group can be re-added — so
 strictly following that rule would make every write here an ordinary
@@ -198,7 +198,7 @@ the real server exposes two distinct, older generations —
 - **`/RestAPI/*`** (legacy, query-param-driven, no request body) — every
   other write: `POST /RestAPI/UnlockUser`, `POST /RestAPI/ResetPwd`,
   `POST /RestAPI/CreateUser`, `POST /RestAPI/ModifyUser`, `POST
-  /RestAPI/DisableUser`/`EnableUser`. Every argument travels as a query
+/RestAPI/DisableUser`/`EnableUser`. Every argument travels as a query
   parameter — an `inputFormat` key holding a JSON-stringified array of
   one object per account acted on — and the response is either that same
   array shape (per-account `status`/`statusMessage`) on success or a
@@ -294,7 +294,7 @@ original `filterClause` built `(COLUMN op "value")`, modeled on the vendor's gen
 rather than a confirmed caller. Diffed against the same confirmed-working reference implementation
 cited throughout this doc — running against this exact production domain — every one of its filter
 clauses is instead `(COLUMN op (value))`: the value in its own parens, no quotes. The quoted form
-isn't rejected by the server; it's accepted and evaluated *literally*, so a filter for `"jdoe"`
+isn't rejected by the server; it's accepted and evaluated _literally_, so a filter for `"jdoe"`
 (quotes included) never matches a real `jdoe` and silently returns zero rows rather than erroring.
 That is why `admanager_get_user` and `admanager_search_users` both came back empty for every input
 tried, including accounts and searches confirmed to exist — nothing was wrong with the columns or
@@ -343,6 +343,12 @@ and the `node:https` dialer are otherwise a direct copy of Mirth's
 `upstream.ts` — same reasoning, ADManager Plus ships behind whatever
 certificate (often self-signed) an IT department set up, and `fetch`
 still can't express per-request TLS policy.
+Switching verification off or allowing plaintext is accepted only for a
+non-production instance whose host resolves to a private network, refused
+for a production label, audited on every save
+(`admanager.instance.insecure_transport_enabled`) and shown as a
+persistent banner on the instance's admin page
+(`apps/web/lib/insecure-transport.ts`).
 
 `test-connection` (the connect flow's live validation, before anything is
 stored) and `probe` (the admin form's unauthenticated reachability check)
