@@ -79,7 +79,7 @@ function storeFailure(message: string | undefined): string {
 }
 
 export function reindexOrderingKey(runId: string): string {
-  return `reindex/${tenantId}/${runId}`;
+  return `reindex/${runId}`;
 }
 
 export interface ReindexHandlerDeps {
@@ -102,7 +102,6 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         ? payload.skip.filter((entry): entry is string => typeof entry === 'string')
         : []
     );
-    const tenantId = event.tenant_id;
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');

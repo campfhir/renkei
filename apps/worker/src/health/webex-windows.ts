@@ -95,7 +95,7 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
         'ingest.webex-window',
         { provider: 'webex', roomId: row.room_id, day: row.day, subject },
         // Rebuilds of one room stay serial; different rooms embed in parallel.
-        `webex/${row.tenant_id}/${row.room_id}`,
+        `webex/${row.room_id}`,
         { strict: true }
       );
     } catch (error) {

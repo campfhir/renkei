@@ -50,7 +50,7 @@ export interface QueueMessageInput {
    */
   orderingKey?: string | null;
   /**
-   * Skip this message when one of the same tenant, source, type and
+   * Skip this message when one of the same source, type and
    * ordering key is still waiting to be claimed. For a message that is a
    * bare "go look" (a change notification whose handler runs a delta round
    * that catches up on everything anyway), a second copy behind an unclaimed

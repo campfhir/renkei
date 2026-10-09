@@ -84,7 +84,7 @@ export async function POST(
     source: 'agents',
     type: 'draft',
     payload: { draftId },
-    orderingKey: `draft:${tenantId}:${session.subject}`,
+    orderingKey: `draft:${session.subject}`,
   });
   if (!enqueued.ok) {
     logger.error('could not enqueue optimizer draft {draftId}: {error}', {

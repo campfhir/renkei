@@ -12,9 +12,9 @@ import { isUuid } from '@/lib/uuid';
 
 export async function POST(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; agentId: string; runId: string }> }
+  { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<NextResponse> {
-  const { slug, agentId, runId } = await params;
+  const { agentId, runId } = await params;
   if (!isUuid(agentId) || !isUuid(runId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }

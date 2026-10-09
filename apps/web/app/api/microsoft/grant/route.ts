@@ -23,8 +23,7 @@ import { deleteObjectChunks } from '@renkei/knowledge';
 import { logger } from '@/lib/logger';
 
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {

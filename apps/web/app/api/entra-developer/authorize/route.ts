@@ -17,8 +17,7 @@ import { ENTRA_DEVELOPER_REQUIRED_SCOPES } from '@/lib/entra-developer-scopes';
 import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -83,7 +82,7 @@ export async function GET(
     .execute();
 
   const authUrl = new URL(
-    `https://login.microsoftonline.com/${encodeURIComponent()}/oauth2/v2.0/authorize`
+    `https://login.microsoftonline.com/${encodeURIComponent(app.directoryTenantId)}/oauth2/v2.0/authorize`
   );
   authUrl.searchParams.append('client_id', app.clientId);
   authUrl.searchParams.append('redirect_uri', app.redirectUri);

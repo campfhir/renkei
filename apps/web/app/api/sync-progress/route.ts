@@ -38,8 +38,7 @@ function iso(value: Date | string | null): string | null {
 }
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   const session = await getSessionFromRequest(request);

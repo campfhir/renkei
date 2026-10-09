@@ -10,7 +10,7 @@ test('builder honours the org step ceiling', async ({ page }) => {
   await client.connect();
   try {
     await client.query(
-      `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1, 'agent_max_steps', '1'::jsonb)
+      `INSERT INTO settings (tenant_id, key, value) VALUES ($1, 'agent_max_steps', '1'::jsonb)
        ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value`,
       [E2E_TENANT_ID]
     );
@@ -20,7 +20,7 @@ test('builder honours the org step ceiling', async ({ page }) => {
     await expect(page.getByText(/Keep the agent to 1 steps or fewer/)).toBeVisible();
   } finally {
     await client.query(
-      `DELETE FROM tenant_settings WHERE key = 'agent_max_steps'`,
+      `DELETE FROM settings WHERE key = 'agent_max_steps'`,
       [E2E_TENANT_ID]
     );
     await client.end();

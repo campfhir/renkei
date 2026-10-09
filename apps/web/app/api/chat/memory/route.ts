@@ -18,8 +18,7 @@ import {
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
@@ -37,8 +36,7 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
@@ -58,8 +56,7 @@ export async function POST(
 }
 
 export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
@@ -82,8 +79,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

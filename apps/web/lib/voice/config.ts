@@ -65,7 +65,7 @@ interface VoicesCacheEntry {
   fingerprint: string;
 }
 
-const voicesCache = new Map<string, VoicesCacheEntry>();
+let voicesCache: VoicesCacheEntry | null = null;
 
 function fingerprintOf(config: VoiceConfig): string {
   return `${config.provider} ${config.region} ${config.endpoint ?? ''} ${config.apiKey.slice(-6)}`;
@@ -80,23 +80,25 @@ export async function listVoicesCached(
   resolved: { config: VoiceConfig; provider: VoiceProvider }
 ): Promise<VoiceOutcome<VoiceInfo[]>> {
   const fingerprint = fingerprintOf(resolved.config);
-  const cached = voicesCache.get();
-  if (cached && cached.fingerprint === fingerprint && cached.expiresAt > Date.now()) {
-    return { ok: true, val: cached.voices };
+  if (
+    voicesCache &&
+    voicesCache.fingerprint === fingerprint &&
+    voicesCache.expiresAt > Date.now()
+  ) {
+    return { ok: true, val: voicesCache.voices };
   }
   const result = await resolved.provider.listVoices();
   if (result.ok) {
-    voicesCache.set({
+    voicesCache = {
       voices: result.val,
       fingerprint,
       expiresAt: Date.now() + VOICES_CACHE_TTL_MS,
-    });
+    };
   }
   return result;
 }
 
 /** Drop the cached voice list — after the admin form saves. */
 export function invalidateVoicesCache(): void {
-  if (tenantId) voicesCache.delete();
-  else voicesCache.clear();
+  voicesCache = null;
 }

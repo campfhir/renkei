@@ -131,8 +131,7 @@ export async function ensureMicrosoftSubscriptions(
   const db = dbResult.val;
 
   const notificationUrl =
-    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/microsoft/` +
-    `${encodeURIComponent()}/${encodeURIComponent(access.accountId)}`;
+    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/microsoft/${encodeURIComponent(access.accountId)}`;
 
   const resources = desiredResources(access);
   for (const resource of resources) {
@@ -348,7 +347,7 @@ export async function runSubscriptionSync(
     // The Graph status and URL ride along — "delta round failed" alone once
     // hid a permanent 410 behind five retries per notification.
     throw new Error(
-      `delta round failed for ${row.resource} (tenant ${tenantId}): ${round.err.message ?? 'unknown'}`
+      `delta round failed for ${row.resource}: ${round.err.message ?? 'unknown'}`
     );
   }
 
@@ -390,7 +389,7 @@ export async function runSubscriptionSync(
         messageId: objectId,
       },
       occurredAt: receivedAt,
-      orderingKey: `microsoft/${tenantId}/${access.accountId}`,
+      orderingKey: `microsoft/${access.accountId}`,
     });
   }
   await persistCursor(db, row.id, round.val, changed);

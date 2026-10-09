@@ -29,9 +29,9 @@ function knownKey(capabilityKey: string): boolean {
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; capabilityKey: string }> }
+  { params }: { params: Promise<{ capabilityKey: string }> }
 ): Promise<NextResponse> {
-  const { slug, capabilityKey } = await params;
+  const { capabilityKey } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -47,9 +47,9 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; capabilityKey: string }> }
+  { params }: { params: Promise<{ capabilityKey: string }> }
 ): Promise<NextResponse> {
-  const { slug, capabilityKey } = await params;
+  const { capabilityKey } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!knownKey(capabilityKey)) {

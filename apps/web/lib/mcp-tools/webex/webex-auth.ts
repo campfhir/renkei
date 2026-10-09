@@ -52,7 +52,7 @@ export interface WebexAccess {
  * all this reads.
  */
 export async function resolveWebexAccess(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject'>
+  context: Pick<MCPToolContext, 'subject'>
 ): Promise<WebexAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
   const grant = { provider: WEBEX_USER, subject: context.subject };

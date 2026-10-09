@@ -8,10 +8,10 @@ import {
 
 /**
  * Keys that define a query's scope rather than narrowing it. A caller typing
- * `tenantId:other-tenant` is asking to read someone else's logs, so these are
+ * `accountId:someone-else` is asking to read someone else's logs, so these are
  * stripped from whatever they typed and re-applied from the session.
  */
-const RESTRICTED_KEYS = ['tenantId', 'accountId', 'userId'];
+const RESTRICTED_KEYS = ['accountId', 'userId'];
 
 /** Level names are the keys of the level-rank map, so membership is the check. */
 const isKnownLevel = (level: string): level is LogLevel => level in LOG_LEVELS;
@@ -21,7 +21,7 @@ const isKnownLevel = (level: string): level is LogLevel => level in LOG_LEVELS;
  * parse. Handles `&&` / `||` and parenthesised grouping.
  *
  *   "level:error && tool:list_issues"
- *   "(level:error || level:warn) && tenantId:abc123"
+ *   "(level:error || level:warn) && tool:list_issues"
  */
 export function parseLogQueryExpr(query: string): FilterExpr | null {
   if (!query || !query.trim()) return null;
@@ -39,13 +39,8 @@ function scopeLeaf(key: string, value: string): FilterExpr {
 }
 
 /**
- * Build a filter tree with the tenant — and, when given, the Jira account —
- * enforced: `(whatever the caller asked for) && tenantId && accountId`.
- *
- * Enforcing the tenant is also what keeps the viewer readable. Records written
- * outside a tenant's request path (schema migration, adapter registration at
- * boot) carry no `tenantId` attribute, so scoping to one excludes them instead
- * of mixing deployment noise into a tenant's activity.
+ * Build a filter tree with the Jira account, when given, enforced:
+ * `(whatever the caller asked for) && accountId`.
  *
  * Accepts either a raw query string or an already-parsed tree, since the
  * `LogSearchBar` component hands back a tree directly.
@@ -60,8 +55,7 @@ export function buildEnforcedLogQuery(
   // Splice the caller's own AND-ed branches in rather than nesting their whole
   // tree, so the result stays in the parser's normal form.
   const userNodes = scrubbed ? (scrubbed.type === 'and' ? scrubbed.nodes : [scrubbed]) : [];
-  const scope = [scopeLeaf('tenantId')];
-  if (accountId) scope.push(scopeLeaf('accountId', accountId));
+  const scope = accountId ? [scopeLeaf('accountId', accountId)] : [];
 
   return { type: 'and', nodes: [...userNodes, ...scope] };
 }
@@ -100,8 +94,7 @@ export interface LogQueryWindow {
  *
  * The tree goes in `attributeFilter` — the option the adapter actually reads.
  * It was previously passed as `filter`, which the adapter ignores, so every
- * query ran unscoped and returned the whole table: one tenant's operator saw
- * other tenants' activity plus the gateway's own boot and migration records.
+ * query ran unscoped and returned the whole table.
  */
 export function buildLogQueryOptions(
   userQuery: string | FilterExpr | null,

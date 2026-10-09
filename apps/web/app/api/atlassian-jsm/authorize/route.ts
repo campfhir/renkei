@@ -17,8 +17,7 @@ import { logger } from '@/lib/logger';
  * provider + scopes for the shared callback.
  */
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {

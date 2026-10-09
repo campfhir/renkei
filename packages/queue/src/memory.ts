@@ -85,7 +85,6 @@ export class InMemoryQueue implements Queue {
         this.rows.some(
           (row) =>
             row.status === 'pending' &&
-            row.tenant_id === message.tenantId &&
             row.source === message.source &&
             row.type === message.type &&
             row.orderingKey === key
@@ -235,7 +234,7 @@ export class InMemoryQueue implements Queue {
       let removed = 0;
       for (let i = this.rows.length - 1; i >= 0; i -= 1) {
         const row = this.rows[i];
-        if (!row || row.tenant_id !== tenantId || row.type !== type) continue;
+        if (!row || row.type !== type) continue;
         if (row.status !== 'pending') continue;
         if (!match.every((entry) => matches(row.payload, entry.path) === entry.value)) continue;
         this.rows.splice(i, 1);

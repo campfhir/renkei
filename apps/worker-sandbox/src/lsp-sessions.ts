@@ -328,7 +328,7 @@ export class LspSessions {
   private owned(id: string, owner: LspOwner): Session | null {
     const session = this.sessions.get(id);
     if (!session) return null;
-    if (session.owner.tenantId !== owner.tenantId || session.owner.subject !== owner.subject) {
+    if (session.owner.subject !== owner.subject) {
       return null;
     }
     return session;
@@ -353,7 +353,6 @@ export class LspSessions {
   async open(input: OpenSessionInput): Promise<OpenOutcome> {
     const existing = [...this.sessions.values()].find(
       (session) =>
-        session.owner.tenantId === input.owner.tenantId &&
         session.owner.subject === input.owner.subject &&
         session.workspaceId === input.workspaceId &&
         session.server === input.server &&

@@ -26,10 +26,8 @@ import {
 import { ONBASE_ADMIN_CONNECTOR } from '@/lib/onbase-app';
 
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -85,10 +83,8 @@ function validBaseUrl(value: unknown, allowInsecureHttp: boolean): value is stri
 }
 
 export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

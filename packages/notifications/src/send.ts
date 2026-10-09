@@ -104,7 +104,6 @@ export interface PushWirePayload {
  * how to open it, nothing more.
  */
 export function pushClickTarget(input: {
-  slug: string;
   refUrl: string | null;
   notificationId?: string;
   appPath?: string;
@@ -113,7 +112,7 @@ export function pushClickTarget(input: {
   const appUrl =
     input.appPath && input.appPath.startsWith('/') && !input.appPath.startsWith('//')
       ? input.appPath
-      : `/${input.slug}/notifications`;
+      : '/notifications';
   const external = input.openInSourceApp && isExternalNotificationUrl(input.refUrl);
   const openUrl = input.notificationId
     ? `/api/notifications/${input.notificationId}/open`
@@ -135,27 +134,16 @@ export async function sendPush(
     const subscriptions = await listSubscriptions(db, subject);
     if (subscriptions.length === 0) return;
 
-    const [{ publicKey, privateKey }, tenant, prefs] = await Promise.all([
+    const [{ publicKey, privateKey }, prefs] = await Promise.all([
       getVapidKeys(db, encryptionKey),
-      db
-        .selectFrom('tenants')
-        .select('slug')
-        .where('id', '=')
-        .executeTakeFirst()
-        .catch(() => undefined),
       getNotificationPrefs(subject),
     ]);
-    // No slug means no tenant to land in; the click falls back to the
-    // app's root, the same as a payload with no link at all.
-    const target = tenant
-      ? pushClickTarget({
-          slug: tenant.slug,
-          refUrl: payload.refUrl,
-          ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
-          ...(payload.appPath ? { appPath: payload.appPath } : {}),
-          openInSourceApp: prefs.openInSourceApp,
-        })
-      : { appUrl: '/', openUrl: '/', external: false };
+    const target = pushClickTarget({
+      refUrl: payload.refUrl,
+      ...(payload.notificationId ? { notificationId: payload.notificationId } : {}),
+      ...(payload.appPath ? { appPath: payload.appPath } : {}),
+      openInSourceApp: prefs.openInSourceApp,
+    });
     const wire: PushWirePayload = {
       title: payload.title,
       body: payload.body,

@@ -39,13 +39,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const verdict = checkInboundLimit(`voice/speech:${tenantId}:${session.subject}`, request, LIMITS);
+  const verdict = checkInboundLimit(`voice/speech:${session.subject}`, request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
       { error: 'Too many speech requests; slow down a little.' },

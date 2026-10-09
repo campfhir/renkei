@@ -15,10 +15,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -27,7 +25,7 @@ export async function POST(
   if (!isRecord(body))
     return NextResponse.json({ error: 'A JSON body is required' }, { status: 400 });
 
-  let target: Parameters<typeof mirthProbe>[1];
+  let target: Parameters<typeof mirthProbe>[0];
   if (typeof body.instanceId === 'string' && body.instanceId) {
     target = { instanceId: body.instanceId };
   } else {

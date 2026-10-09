@@ -1,5 +1,5 @@
 /**
- * @renkei/connector-config — per-tenant connector configuration, stored in
+ * @renkei/connector-config — the organization's connector configuration, stored in
  * the database rather than the environment (RENKEI.md Decision #13: which
  * connectors an org runs, and with what credentials, is org-admin policy).
  *
@@ -135,26 +135,18 @@ export async function readConnectorConfigCached(
   connector: string,
   encryptionKey: Buffer
 ): Promise<Result<ConnectorConfig | null, ConnectorConfigError>> {
-  const key = `${tenantId}:${connector}`;
-  const cached = configCache.get(key);
+  const cached = configCache.get(connector);
   if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
 
   const result = await getConnectorConfig(connector, encryptionKey);
   if (result.ok) {
-    configCache.set(key, { value: result.val, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
+    configCache.set(connector, { value: result.val, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
   }
   return result;
 }
 
 /** Drop a cached entry — used after setConnectorConfig and by tests. */
 export function invalidateConnectorConfigCache(connector?: string): void {
-  if (!tenantId) {
-    configCache.clear();
-    return;
-  }
-  for (const key of configCache.keys()) {
-    if (key.startsWith(`${tenantId}:`) && (!connector || key === `${tenantId}:${connector}`)) {
-      configCache.delete(key);
-    }
-  }
+  if (!connector) configCache.clear();
+  else configCache.delete(connector);
 }

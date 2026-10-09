@@ -43,8 +43,7 @@ import {
 const eventsQueue = webhookEventsQueue();
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   // Throttle, then the credential's shape, then a bounded body — all before
@@ -127,7 +126,7 @@ export async function POST(
     type: payload.val.type,
     payload: isRecord(body) ? body : {},
     // One meeting's transcript/summary events process in order.
-    orderingKey: payload.val.meetingUuid ? `zoom/${tenantId}/${payload.val.meetingUuid}` : null,
+    orderingKey: payload.val.meetingUuid ? `zoom/${payload.val.meetingUuid}` : null,
   });
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {

@@ -93,7 +93,7 @@ async function seed(fixture: Fixture): Promise<void> {
   try {
     const t = fixture.tenantId;
     await client.query('DELETE FROM sandbox_size_requests', [t]);
-    await client.query('DELETE FROM tenant_settings', [t]);
+    await client.query('DELETE FROM settings', [t]);
     await client.query('DELETE FROM chat_projects', [t]);
     await client.query('DELETE FROM sessions', [t]);
     await client.query('DELETE FROM identities', [t]);
@@ -271,7 +271,7 @@ test('checkout limit: org setting, request, approve, deny', async ({ page }, tes
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
   const stored = await dbRows<{ value: string }>(
-    `SELECT value FROM tenant_settings WHERE key = 'sandbox_workspace_max_bytes'`,
+    `SELECT value FROM settings WHERE key = 'sandbox_workspace_max_bytes'`,
     [fixture.tenantId]
   );
   expect(Number(stored[0]?.value)).toBe(12 * GB);

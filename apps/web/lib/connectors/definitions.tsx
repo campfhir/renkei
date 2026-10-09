@@ -15,7 +15,7 @@
  * Plus instances are registered one at a time on their own pages).
  *
  * User cards are deliberately NOT bound here: they are suite cards with
- * server-built props, wired by `suite` in `[slug]/connectors/page.tsx`.
+ * server-built props, wired by `suite` in `(app)/connectors/page.tsx`.
  * Binding them by reference would be a fiction the page could not use.
  */
 
@@ -43,7 +43,6 @@ import { VoiceForm } from '@/app/(app)/admin/connectors/forms/voice-form';
 
 /** Every admin form takes the same props, so the detail page can render any. */
 export interface AdminFormProps {
-  slug: string;
   origin: string | null;
 }
 
@@ -57,7 +56,7 @@ export interface ConnectorDefinition {
   /** The form editing this config's credentials and settings, when it has any. */
   adminForm?: ComponentType<AdminFormProps>;
   /** Where the connector is really managed, when not on its own page here. */
-  manageHref?: (slug: string) => string;
+  manageHref?: () => string;
 }
 
 /** The forms, by the configKey whose row they edit. Add a form here and it has a page. */
@@ -86,10 +85,10 @@ const CONFIG_LABELS: Record<string, string> = {
   microsoft: 'Microsoft 365',
 };
 
-const MANAGE_ELSEWHERE: Record<string, (slug: string) => string> = {
-  fileshares: (slug) => `/admin/file-shares`,
-  mirth: (slug) => `/admin/mirth`,
-  admanager: (slug) => `/admin/admanager`,
+const MANAGE_ELSEWHERE: Record<string, () => string> = {
+  fileshares: () => '/admin/file-shares',
+  mirth: () => '/admin/mirth',
+  admanager: () => '/admin/admanager',
 };
 
 function build(): ConnectorDefinition[] {

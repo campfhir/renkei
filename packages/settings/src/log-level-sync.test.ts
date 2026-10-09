@@ -12,7 +12,7 @@ import { invalidateSettingsCache } from './index';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 
-/** Stubs both `tenants` (a plain id list) and `tenant_settings` (log_level per tenant). */
+/** Stubs both `tenants` (a plain id list) and `settings` (log_level per tenant). */
 function stubDb(tenantIds: string[], levels: Record<string, string> = {}): void {
   const settingsRows = new Map<string, unknown>();
   for (const [tenantId, level] of Object.entries(levels)) {

@@ -575,7 +575,7 @@ async function sealedDetailJson(run: RunRow, detail: Record<string, unknown>): P
  * alternative is a resumed run reading a shorter memory than it wrote.
  */
 async function openAttemptDetails<T extends { detail: Json | null }>(
-  run: Pick<RunRow, 'tenant_id' | 'owner_subject'>,
+  run: Pick<RunRow, 'owner_subject'>,
   rows: T[]
 ): Promise<T[]> {
   const envelopes = rows.map((row) => sealedDetailOf(row.detail));
@@ -3275,13 +3275,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
    * push's `appPath`) should land on. No base URL needed, so this works
    * even when `getPublicBaseUrl()` is unconfigured.
    */
-  async function runPagePath(run: RunRow): Promise<string | null> {
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('slug')
-      .where('id', '=')
-      .executeTakeFirst();
-    return tenant ? `/agents/${run.agent_id}/runs/${run.id}` : null;
+  function runPagePath(run: RunRow): string {
+    return `/agents/${run.agent_id}/runs/${run.id}`;
   }
 
   /** The owner-facing run link approval cards and notifications carry —

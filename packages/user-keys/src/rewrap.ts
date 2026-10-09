@@ -82,7 +82,7 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     ring: 'token',
   },
   // apps/web/lib/tenant-operations.ts: the OIDC client secret.
-  { table: 'tenant_oidc', idColumns: ['id'], column: 'client_secret', prefix: '', ring: 'token' },
+  { table: 'oidc_config', idColumns: ['id'], column: 'client_secret', prefix: '', ring: 'token' },
   // packages/knowledge: chunk bodies, `renc1:` + envelope (packages/crypto content.ts).
   {
     table: 'knowledge_chunks',

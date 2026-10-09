@@ -19,10 +19,8 @@ import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { knownDetectors, describeFormatProblem } from '@renkei/redaction';
 
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -39,10 +37,8 @@ export async function GET(
 }
 
 export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -52,7 +48,7 @@ export async function PUT(
     return NextResponse.json({ error: 'JSON body required' }, { status: 400 });
   }
 
-  const updates: Parameters<typeof setOrgSettings>[1] = {};
+  const updates: Parameters<typeof setOrgSettings>[0] = {};
 
   if ('enabled' in body) {
     if (typeof body.enabled !== 'boolean') {

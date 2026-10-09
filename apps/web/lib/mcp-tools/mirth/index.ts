@@ -474,7 +474,7 @@ export function registerMirthTools(
     options.directory ??
     createDirectory(
       call,
-      typeof scope === 'string' ? 'denied' : `${scope.tenantId}|${scope.subject}`
+      typeof scope === 'string' ? 'denied' : scope.subject
     );
   const server = withReferenceResolution(rawServer, {
     listConnected: () => auth.listConnected(),

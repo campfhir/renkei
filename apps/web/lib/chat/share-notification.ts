@@ -40,12 +40,7 @@ export function notifyChatShared(input: {
     if (wanted.app) {
       const dbResult = getDatabase();
       if (dbResult.ok) {
-        const tenant = await dbResult.val
-          .selectFrom('tenants')
-          .select('slug')
-          .where('id', '=')
-          .executeTakeFirst();
-        const refUrl = tenant ? `/chat/${input.chatId}` : null;
+        const refUrl = `/chat/${input.chatId}`;
         const id = randomUUID();
         await dbResult.val
           .insertInto('agent_notifications')

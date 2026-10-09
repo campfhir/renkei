@@ -109,7 +109,7 @@ export async function recordCoachMarkEvent(
   record: CoachMarkRecord
 ): Promise<Result<CoachMarkProgressView, 'DB_ERROR'>> {
   const now = new Date().toISOString();
-  const lockKey = `coach_mark_progress:${tenantId}:${subject}:${record.tourId}`;
+  const lockKey = `coach_mark_progress:${subject}:${record.tourId}`;
 
   const written = await wrapAsync(
     () =>

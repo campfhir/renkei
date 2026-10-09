@@ -97,10 +97,8 @@ export function createChatRetentionSweep(
 ) {
   return async function sweep(): Promise<void> {
     await deleteAbandonedChats(db);
-    const tenants = await db.selectFrom('tenants').select('id').execute();
-    for (const tenant of tenants) {
-      const settings = await getOrgSettings();
-      if (!settings.ok || settings.val.chatRetentionDays <= 0) continue;
+    const settings = await getOrgSettings();
+    if (settings.ok && settings.val.chatRetentionDays > 0) {
       const days = settings.val.chatRetentionDays;
       const expired = await db
         .selectFrom('chats')
@@ -108,29 +106,27 @@ export function createChatRetentionSweep(
         .where('updated_at', '<', sql<Date>`NOW() - make_interval(days => ${days})`)
         .limit(RETENTION_BATCH)
         .execute();
-      if (expired.length === 0) continue;
       const chatIds = expired.map((row) => row.id);
-      const deletable = await deleteAttachmentBlobs(db, chatIds, await store());
-      if (deletable.length === 0) continue;
-      await db
-        .deleteFrom('chats')
-        .where('id', 'in', deletable)
-        .execute();
-      await db
-        .deleteFrom('resource_access_grants')
-        .where('resource_kind', '=', 'chat')
-        .where('resource_id', 'in', deletable)
-        .execute();
-      logger.info('chat retention removed {count} chat(s)', {
-        component: 'worker-agents/chat-retention',
-        count: deletable.length,
-      });
+      const deletable =
+        chatIds.length > 0 ? await deleteAttachmentBlobs(db, chatIds, await store()) : [];
+      if (deletable.length > 0) {
+        await db.deleteFrom('chats').where('id', 'in', deletable).execute();
+        await db
+          .deleteFrom('resource_access_grants')
+          .where('resource_kind', '=', 'chat')
+          .where('resource_id', 'in', deletable)
+          .execute();
+        logger.info('chat retention removed {count} chat(s)', {
+          component: 'worker-agents/chat-retention',
+          count: deletable.length,
+        });
+      }
     }
     await pruneOrphanGrants(db);
   };
 }
 
-/** Empty chats past the grace period, every org alike; their grants go with the orphan prune. */
+/** Empty chats past the grace period; their grants go with the orphan prune. */
 async function deleteAbandonedChats(db: Kysely<DB>): Promise<void> {
   const deleted = await sql<{ id: string }>`
     DELETE FROM chats c

@@ -8,7 +8,7 @@
  * off, tools' files are not kept, and the model is told not to produce
  * any.
  *
- * Stores are built once per configuration and kept on globalThis like
+ * The store is built once per configuration and kept on globalThis like
  * the environment singleton; the connector-config cache bounds how long
  * a saved change takes to reach a running process (its TTL), and the
  * admin route drops that cache in the process that saved.
@@ -31,11 +31,7 @@ interface TenantStoreState {
 }
 
 declare global {
-  var __renkeiTenantBlobStores: Map<string, TenantStoreState> | undefined;
-}
-
-function stores(): Map<string, TenantStoreState> {
-  return (globalThis.__renkeiTenantBlobStores ??= new Map());
+  var __renkeiTenantBlobStore: TenantStoreState | undefined;
 }
 
 /** The store's settings as the admin page reads and writes them (no secret). */
@@ -88,10 +84,10 @@ export async function resolveTenantBlobStore(
   const config = await resolveTenantBlobConfig();
   if (!config.ok) return config;
   const fingerprint = JSON.stringify(config.val);
-  const known = stores().get();
+  const known = globalThis.__renkeiTenantBlobStore;
   if (known && known.fingerprint === fingerprint) return ok(known.store);
   const store = blobStoreFor(config.val);
-  stores().set({ store, fingerprint });
+  globalThis.__renkeiTenantBlobStore = { store, fingerprint };
   return ok(store);
 }
 
@@ -102,7 +98,7 @@ export async function tenantBlobStoreConfigured(): Promise<boolean> {
 
 /** Test hook. */
 export function resetTenantBlobStores(): void {
-  globalThis.__renkeiTenantBlobStores = undefined;
+  globalThis.__renkeiTenantBlobStore = undefined;
 }
 
 export function tenantBlobStoreUnavailable(): Result<never, 'BLOB_UNCONFIGURED'> {

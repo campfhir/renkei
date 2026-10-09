@@ -6,14 +6,11 @@ import { securityHeaderRules } from './lib/security-headers';
  *
  * RFC 8414 and RFC 9728 both define well-known URIs relative to the origin, and
  * clients construct those URLs rather than being told where to look. The App
- * Router serves `app/api/.well-known/x/route.ts` at `/api/.well-known/x`, which
- * is not where anyone looks, so every discovery document 404'd and MCP clients
- * could not find the registration endpoint at all.
- *
- * Both spellings are served. For an issuer carrying a path component -- ours is
- * `{base}/api/mcp/{tenantId}` -- RFC 8414 inserts the well-known segment before
- * that path, while the MCP specification also permits appending it. Clients
- * differ over which they try, and serving both costs nothing.
+ * Router serves `app/api/mcp/.well-known/x/route.ts` at `/api/mcp/.well-known/x`,
+ * which is not where anyone looks, so the rewrites below serve every spelling a
+ * client may try: the origin-root form, and the path-insert form for an issuer
+ * that carries a path component (`{base}/api/mcp`), with and without the
+ * transport segment. Serving them all costs nothing.
  */
 const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`: it names the framework to every client for
@@ -81,37 +78,19 @@ const nextConfig: NextConfig = {
     });
   },
   async rewrites() {
-    return [
-      // RFC 8414 path-insert form for the per-tenant authorization server,
-      // with and without the transport segment the client was handed (a
-      // client that built this URL from the resource's own address, which
-      // includes /{transport}, needs the same match the protected-resource
-      // rules below already give it — otherwise it falls through to the
-      // catch-all and gets the system-level, tenant-less document instead).
-      {
-        source: '/.well-known/oauth-authorization-server/api/mcp/:tenantId',
-        destination: '/api/mcp/:tenantId/.well-known/oauth-authorization-server',
-      },
-      {
-        source: '/.well-known/oauth-authorization-server/api/mcp/:tenantId/:transport',
-        destination: '/api/mcp/:tenantId/.well-known/oauth-authorization-server',
-      },
-      // RFC 9728 path-insert form for the per-tenant protected resource, with
-      // and without the transport segment the client was handed.
-      {
-        source: '/.well-known/oauth-protected-resource/api/mcp/:tenantId',
-        destination: '/api/mcp/:tenantId/.well-known/oauth-protected-resource',
-      },
-      {
-        source: '/.well-known/oauth-protected-resource/api/mcp/:tenantId/:transport',
-        destination: '/api/mcp/:tenantId/.well-known/oauth-protected-resource',
-      },
-      // The system-level documents.
-      {
-        source: '/.well-known/:path*',
-        destination: '/api/.well-known/:path*',
-      },
-    ];
+    const documents = ['oauth-authorization-server', 'oauth-protected-resource'];
+    return documents.flatMap((document) => {
+      const destination = `/api/mcp/.well-known/${document}`;
+      return [
+        // The origin-root form both RFCs define.
+        { source: `/.well-known/${document}`, destination },
+        // RFC 8414 path-insert form for an issuer carrying a path (ours is
+        // `{base}/api/mcp`), with and without the transport segment a client
+        // was handed as the resource address.
+        { source: `/.well-known/${document}/api/mcp`, destination },
+        { source: `/.well-known/${document}/api/mcp/:transport`, destination },
+      ];
+    });
   },
 };
 

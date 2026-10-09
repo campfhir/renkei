@@ -20,15 +20,14 @@ const LIMITS = {
 };
 
 /**
- * Tenant-scoped Dynamic Client Registration endpoint (RFC 7591)
- * Clients register themselves for a specific tenant's MCP server.
+ * Dynamic Client Registration endpoint (RFC 7591)
+ * Clients register themselves for this deployment's MCP server.
  */
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
-  const verdict = checkInboundLimit(`oauth/register:${tenantId}`, request, LIMITS);
+  const verdict = checkInboundLimit('oauth/register', request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
       { error: 'slow_down', error_description: 'Too many registration requests' },

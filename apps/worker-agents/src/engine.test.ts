@@ -214,7 +214,7 @@ maybe('agent run engine', () => {
     await sql`DELETE FROM agent_triggers`.execute(db);
     await sql`DELETE FROM agents`.execute(db);
     await sql`DELETE FROM identities`.execute(db);
-    await sql`DELETE FROM tenant_settings`.execute(db);
+    await sql`DELETE FROM settings`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });

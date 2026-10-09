@@ -12,8 +12,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, keyMaterialOf, sealedDelegationsOf } from '@/lib/keys/status';
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

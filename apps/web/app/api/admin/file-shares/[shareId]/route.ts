@@ -13,9 +13,9 @@ import { parseSharePayload } from '@/lib/file-shares/parse';
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
-  const { slug, shareId } = await params;
+  const { shareId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -34,9 +34,9 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
-  const { slug, shareId } = await params;
+  const { shareId } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -69,9 +69,9 @@ export async function PATCH(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; shareId: string }> }
+  { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
-  const { slug, shareId } = await params;
+  const { shareId } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

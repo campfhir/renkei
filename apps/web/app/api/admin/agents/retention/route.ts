@@ -1,7 +1,7 @@
 /**
  * The org's agent-run retention window (agentRunRetentionDays) — how long
  * run history (content included) lives before the worker's sweep prunes
- * it. An org policy in tenant_settings, like every other limit.
+ * it. An org policy in settings, like every other limit.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,10 +11,8 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 const ALLOWED_DAYS = [7, 14, 30, 90];
 
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -24,10 +22,8 @@ export async function GET(
 }
 
 export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

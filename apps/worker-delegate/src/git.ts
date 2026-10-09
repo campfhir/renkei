@@ -106,11 +106,10 @@ export class GitTickets {
 
   /** `grant/git-ticket` */
   async issue(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const tenantId = str();
     const provider = str(body.provider);
     const subject = str(body.subject);
     const write = body.write === true;
-    if (!tenantId || !provider || !subject) {
+    if (!provider || !subject) {
       return sendJson(response, 400, { error: { type: 'bad_request' } });
     }
     const host = Object.prototype.hasOwnProperty.call(HOSTS, provider) ? HOSTS[provider] : null;

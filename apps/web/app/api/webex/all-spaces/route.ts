@@ -28,8 +28,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

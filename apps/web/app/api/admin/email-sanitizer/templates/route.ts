@@ -12,10 +12,8 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { listTemplateHealth } from '@renkei/email-sanitizer';
 
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

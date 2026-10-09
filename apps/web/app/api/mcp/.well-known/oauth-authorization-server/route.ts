@@ -2,49 +2,31 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getOrigin } from '@/lib/get-origin';
-import { getDatabase } from '@renkei/db';
 import { CODE_CHALLENGE_METHODS } from '@/lib/oauth-pkce';
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
-): Promise<NextResponse> {
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
+/**
+ * OAuth Authorization Server Metadata (RFC 8414) for this deployment's MCP
+ * server. Served at the origin root and in the path-insert form by the
+ * rewrites in next.config.ts; the issuer carries the `/api/mcp` path so it
+ * matches the `authorization_servers` entry of the protected-resource
+ * document exactly.
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=', tenantId)
-      .executeTakeFirst();
-
-
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
-    const baseUrl = originResult.val;
-    const tenantPath = `/api/mcp`;
-    const settingsResult = await getOrgSettings(tenantId);
+    const issuer = `${originResult.val}/api/mcp`;
+    const settingsResult = await getOrgSettings();
     const dcrEnabled = (settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS).enableDcr;
 
     const metadata = {
-      // The issuer is per-tenant, matching the entry this tenant's protected
-      // resource metadata lists in `authorization_servers`. Declaring the bare
-      // origin here contradicted that document and pointed clients at the
-      // system-level metadata, whose registration endpoint has no tenant to
-      // register against and answers "Tenant not found".
-      issuer: `${baseUrl}${tenantPath}`,
-      authorization_endpoint: `${baseUrl}${tenantPath}/oauth/authorize`,
-      token_endpoint: `${baseUrl}${tenantPath}/oauth/token`,
+      issuer,
+      authorization_endpoint: `${issuer}/oauth/authorize`,
+      token_endpoint: `${issuer}/oauth/token`,
       ...(dcrEnabled && {
-        registration_endpoint: `${baseUrl}${tenantPath}/oauth/register`,
+        registration_endpoint: `${issuer}/oauth/register`,
       }),
       response_types_supported: ['code'],
       response_modes_supported: ['query', 'fragment'],

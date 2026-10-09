@@ -11,8 +11,7 @@ import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

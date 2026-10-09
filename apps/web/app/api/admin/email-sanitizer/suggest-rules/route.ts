@@ -11,10 +11,8 @@ import { getDatabase } from '@renkei/db';
 import { suggestSanitizerRules } from '@/lib/email-sanitizer/suggest-rules';
 
 export async function POST(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

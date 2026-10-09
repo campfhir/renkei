@@ -42,7 +42,7 @@ export {
 
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, { value: ChatToolPermissionPrefs; expiresAt: number }>();
-const cacheKey = (subject: string) => `${tenantId} ${subject}`;
+const cacheKey = (subject: string) => subject;
 
 /**
  * Never fails loudly: a database problem reads as "nothing decided", which

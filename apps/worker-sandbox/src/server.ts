@@ -247,9 +247,8 @@ function summaryWire(summary: SandboxFileSummary) {
 }
 
 function targetOf(body: Record<string, unknown>): store.SandboxTarget | null {
-  const tenantId = str();
   const subject = str(body.subject);
-  if (!tenantId || !subject) return null;
+  if (!subject) return null;
   return { subject };
 }
 
@@ -445,7 +444,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     const tenantId = url.searchParams.get('tenantId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     const named = validateFilename(url.searchParams.get('filename') ?? '');
-    if (!tenantId || !subject || !named.ok) {
+    if (!subject || !named.ok) {
       return sendError(response, 400, 'bad_request');
     }
     const target = { subject };

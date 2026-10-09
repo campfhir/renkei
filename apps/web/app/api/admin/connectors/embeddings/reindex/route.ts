@@ -98,10 +98,8 @@ async function listRuns(): Promise<ReindexRunView[]> {
 }
 
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -123,10 +121,8 @@ async function unmetPrerequisite(kind: ReindexKind): Promise<string | null> {
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -204,7 +200,7 @@ export async function POST(
       source: 'knowledge:reindex',
       type: 'reindex.batch',
       payload: { provider: 'reindex', runId, kind, ...(run.cursor ? { cursor: run.cursor } : {}) },
-      orderingKey: `reindex/${tenant.id}/${runId}`,
+      orderingKey: `reindex/${runId}`,
     });
     if (!enqueued.ok) {
       await db
@@ -247,7 +243,7 @@ export async function POST(
     source: 'knowledge:reindex',
     type: 'reindex.batch',
     payload: { provider: 'reindex', runId: newRunId, kind },
-    orderingKey: `reindex/${tenant.id}/${newRunId}`,
+    orderingKey: `reindex/${newRunId}`,
   });
   if (!enqueued.ok) {
     await db

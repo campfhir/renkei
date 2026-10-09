@@ -24,8 +24,7 @@ import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -91,7 +90,7 @@ export async function POST(
     payload: { draftId },
     // Drafts for one person stay serial: two at once would race for the
     // same builder and cost double the model time for one usable answer.
-    orderingKey: `draft:${tenantId}:${session.subject}`,
+    orderingKey: `draft:${session.subject}`,
   });
   if (!enqueued.ok) {
     logger.error('could not enqueue draft job {draftId}: {error}', {
@@ -117,8 +116,7 @@ export async function POST(
  * for the next new one.
  */
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

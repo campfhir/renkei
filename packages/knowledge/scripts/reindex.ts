@@ -2,18 +2,17 @@
  * Reindex sweep over knowledge_chunks, from the command line — the same
  * batches the admin buttons on the Embeddings card run through the
  * embedding queue (src/reindex.ts holds the work; this is a loop around
- * it), for operators who would rather run it from a shell, or across every
- * tenant at once.
+ * it), for operators who would rather run it from a shell.
  *
  *   --lexical   Backfill `search_text` (migration 079) for rows that have
  *               none. Needs only the content key. Resumable: touches only
  *               NULL rows.
  *   --keywords  Extract search keywords (migration 080) for objects that
- *               have none, with each tenant's default model — one call per
- *               object. Honours the org's keyword settings: an org with
- *               enrichment off is skipped.
+ *               have none, with the org's default model — one call per
+ *               object. Honours the org's keyword settings: with
+ *               enrichment off it is skipped.
  *   --embed     Recompute the vector of every multi-chunk row with its
- *               contextual header. Calls each tenant's embeddings endpoint.
+ *               contextual header. Calls the org's embeddings endpoint.
  *
  * Run from packages/knowledge with DATABASE_URL, the content key
  * (CONTENT_ENCRYPTION_KEY or the TOKEN_ENCRYPTION_KEY fallback) and, for
@@ -21,8 +20,8 @@
  * configs are encrypted with it):
  *
  *   DATABASE_URL=postgres://… pnpm reindex --lexical
- *   DATABASE_URL=postgres://… pnpm reindex --keywords [--tenant <uuid>]
- *   DATABASE_URL=postgres://… pnpm reindex --embed [--tenant <uuid>]
+ *   DATABASE_URL=postgres://… pnpm reindex --keywords
+ *   DATABASE_URL=postgres://… pnpm reindex --embed
  *   DATABASE_URL=postgres://… pnpm reindex --lexical --keywords --embed
  */
 
@@ -44,20 +43,16 @@ interface Args {
   lexical: boolean;
   keywords: boolean;
   embed: boolean;
-  tenant: string | null;
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { lexical: false, keywords: false, embed: false, tenant: null };
+  const args: Args = { lexical: false, keywords: false, embed: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--lexical') args.lexical = true;
     else if (arg === '--keywords') args.keywords = true;
     else if (arg === '--embed') args.embed = true;
-    else if (arg === '--tenant') {
-      args.tenant = argv[index + 1] ?? null;
-      index += 1;
-    } else {
+    else {
       console.error(`unknown argument: ${arg}`);
       process.exit(2);
     }
@@ -69,19 +64,11 @@ function parseArgs(argv: readonly string[]): Args {
   return args;
 }
 
-async function tenantsWithChunks(tenant: string | null): Promise<string[]> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  let query = dbResult.val.selectFrom('knowledge_chunks').distinct();
-  if (tenant) query = query;
-  return (await query.execute()).map((row) => row.tenant_id);
-}
-
-async function lexical(key: Buffer, tenant: string | null): Promise<void> {
+async function lexical(key: Buffer): Promise<void> {
   let processed = 0;
   let skipped = 0;
   for (;;) {
-    const batch = await reindexLexicalBatch(tenant, key, LEXICAL_BATCH);
+    const batch = await reindexLexicalBatch(key, LEXICAL_BATCH);
     if (!batch.ok) {
       throw new Error(
         `lexical: the knowledge store could not be updated: ${batch.err.message ?? ''}`
@@ -98,12 +85,12 @@ async function lexical(key: Buffer, tenant: string | null): Promise<void> {
   );
 }
 
-async function keywords(key: Buffer, tenant: string | null): Promise<void> {
-  for (const tenantId of await tenantsWithChunks(tenant)) {
+async function keywords(key: Buffer): Promise<void> {
+  {
     const extractor = await resolveKeywordExtractor();
     if (!extractor) {
-      console.log(`keywords [${tenantId}]: enrichment off, or no default model — skipped`);
-      continue;
+      console.log('keywords: enrichment off, or no default model — skipped');
+      return;
     }
     const skip = new Set<string>();
     let processed = 0;
@@ -111,27 +98,27 @@ async function keywords(key: Buffer, tenant: string | null): Promise<void> {
       const batch = await extractKeywordsBatch(extractor, key, KEYWORD_BATCH, skip);
       if (!batch.ok) {
         throw new Error(
-          `keywords [${tenantId}]: the knowledge store could not be updated: ${batch.err.message ?? ''}`
+          `keywords: the knowledge store could not be updated: ${batch.err.message ?? ''}`
         );
       }
       for (const entry of batch.val.skip) skip.add(entry);
       processed += batch.val.processed;
-      console.log(`keywords [${tenantId}]: ${processed} object(s) enriched…`);
+      console.log(`keywords: ${processed} object(s) enriched…`);
       if (batch.val.done) break;
     }
     console.log(
-      `keywords [${tenantId}]: done — ${processed} object(s) enriched` +
+      `keywords: done — ${processed} object(s) enriched` +
         (skip.size > 0 ? `, ${skip.size} failed (re-run to retry)` : '')
     );
   }
 }
 
-async function embed(key: Buffer, tenant: string | null): Promise<void> {
-  for (const tenantId of await tenantsWithChunks(tenant)) {
+async function embed(key: Buffer): Promise<void> {
+  {
     const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
-      console.log(`embed [${tenantId}]: no embedding provider configured — skipped`);
-      continue;
+      console.log('embed: no embedding provider configured — skipped');
+      return;
     }
     let cursor: string | null = null;
     let processed = 0;
@@ -140,17 +127,17 @@ async function embed(key: Buffer, tenant: string | null): Promise<void> {
       const batch = await reembedBatch(embedder, key, cursor, EMBED_BATCH);
       if (!batch.ok) {
         throw new Error(
-          `embed [${tenantId}]: ${batch.err.type === 'EMBEDDING_FAILED' ? 'embedding failed' : 'the knowledge store could not be updated'}: ${batch.err.message ?? ''}`
+          `embed: ${batch.err.type === 'EMBEDDING_FAILED' ? 'embedding failed' : 'the knowledge store could not be updated'}: ${batch.err.message ?? ''}`
         );
       }
       processed += batch.val.processed;
       skipped += batch.val.skipped;
       cursor = batch.val.cursor;
-      console.log(`embed [${tenantId}]: ${processed} row(s) re-embedded…`);
+      console.log(`embed: ${processed} row(s) re-embedded…`);
       if (batch.val.done) break;
     }
     console.log(
-      `embed [${tenantId}]: done — ${processed} row(s) re-embedded` +
+      `embed: done — ${processed} row(s) re-embedded` +
         (skipped > 0 ? `, ${skipped} undecryptable row(s) skipped` : '')
     );
   }
@@ -173,9 +160,9 @@ async function main(): Promise<void> {
 
   // Keywords before lexical: a row the keyword pass rebuilds already
   // carries its tsvector, so the lexical pass then has less to do.
-  if (args.keywords) await keywords(key, args.tenant);
-  if (args.lexical) await lexical(key, args.tenant);
-  if (args.embed) await embed(key, args.tenant);
+  if (args.keywords) await keywords(key);
+  if (args.lexical) await lexical(key);
+  if (args.embed) await embed(key);
 
   await closeDatabase();
 }

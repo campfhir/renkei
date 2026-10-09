@@ -14,8 +14,7 @@ import { CHAT_SEARCH_MIN_CHARS, normalizeQuery, searchChatMessages } from '@/lib
 import { chatCiphersFor } from '@/lib/chat/chat-keys';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

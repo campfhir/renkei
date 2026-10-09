@@ -18,9 +18,9 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; subject: string }> }
+  { params }: { params: Promise<{ subject: string }> }
 ): Promise<NextResponse> {
-  const { slug, subject: encoded } = await params;
+  const { subject: encoded } = await params;
   const subject = decodeURIComponent(encoded);
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

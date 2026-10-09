@@ -17,9 +17,9 @@ import { isUuid } from '@/lib/uuid';
 
 export async function POST(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; agentId: string }> }
+  { params }: { params: Promise<{ agentId: string }> }
 ): Promise<NextResponse> {
-  const { slug, agentId } = await params;
+  const { agentId } = await params;
   if (!isUuid(agentId)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

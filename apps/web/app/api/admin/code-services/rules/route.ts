@@ -16,7 +16,7 @@ import {
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
 
-async function operatorTenant(slug: string): Promise<{ id: string } | NextResponse> {
+async function operatorGate(): Promise<NextResponse | null> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -26,16 +26,14 @@ async function operatorTenant(slug: string): Promise<{ id: string } | NextRespon
       { status: 503 }
     );
   }
-  return { id: tenant.id };
+  return null;
 }
 
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
-  const tenant = await operatorTenant(slug);
-  if (tenant instanceof NextResponse) return tenant;
+  const denied = await operatorGate();
+  if (denied) return denied;
   const listed = await sbImageRulesList();
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
@@ -45,12 +43,10 @@ export async function GET(
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
-  const tenant = await operatorTenant(slug);
-  if (tenant instanceof NextResponse) return tenant;
+  const denied = await operatorGate();
+  if (denied) return denied;
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseImageRulePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });

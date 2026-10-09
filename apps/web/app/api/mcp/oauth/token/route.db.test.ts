@@ -97,7 +97,7 @@ maybe('refresh-token rotation', () => {
     await db.deleteFrom('oauth_access_tokens').execute();
     await db.deleteFrom('oauth_refresh_tokens').execute();
     await db.deleteFrom('oauth_clients').execute();
-    await db.deleteFrom('tenant_settings').execute();
+    await db.deleteFrom('settings').execute();
     await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });

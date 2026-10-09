@@ -29,14 +29,13 @@ const LIMITS = {
 };
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const verdict = checkInboundLimit(
-    `voice/transcribe:${tenantId}:${session.subject}`,
+    `voice/transcribe:${session.subject}`,
     request,
     LIMITS
   );

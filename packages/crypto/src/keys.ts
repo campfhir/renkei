@@ -74,16 +74,20 @@ export function generateUserKeySalt(): Buffer {
 }
 
 /**
- * A person's KEK: HKDF-SHA256(master, salt, info = version ‖ tenant ‖ subject).
- * Deterministic for one (master, salt, tenant, subject); the salt is what
- * makes it rotatable without touching anyone else's keys.
+ * A person's KEK: HKDF-SHA256(master, salt, info = version ‖ domain ‖ subject).
+ * Deterministic for one (master, salt, domain, subject); the salt is what
+ * makes it rotatable without touching anyone else's keys. The domain is
+ * the organization id these rows were first derived under (the
+ * `legacy_key_domain` setting): it has to stay what it was, or no
+ * pre-enrollment row opens again.
  */
 export function deriveUserKek(
   master: Buffer,
   salt: Buffer,
+  domain: string,
   subject: string
 ): Buffer {
-  const info = Buffer.from(`${KEK_INFO_VERSION}\0${tenantId}\0${subject}`, 'utf8');
+  const info = Buffer.from(`${KEK_INFO_VERSION}\0${domain}\0${subject}`, 'utf8');
   return Buffer.from(hkdfSync('sha256', master, salt, info, DATA_KEY_BYTES));
 }
 
@@ -180,6 +184,7 @@ export const OWN_KEY_PASSPHRASE_MAX_CHARS = 256;
 export function deriveOwnKek(
   passphrase: string,
   salt: Buffer,
+  domain: string,
   subject: string
 ): Buffer {
   const ikm = scryptSync(
@@ -188,7 +193,7 @@ export function deriveOwnKek(
     DATA_KEY_BYTES,
     SCRYPT
   );
-  const info = Buffer.from(`${OWN_KEK_INFO_VERSION}\0${tenantId}\0${subject}`, 'utf8');
+  const info = Buffer.from(`${OWN_KEK_INFO_VERSION}\0${domain}\0${subject}`, 'utf8');
   return Buffer.from(hkdfSync('sha256', ikm, salt, info, DATA_KEY_BYTES));
 }
 
@@ -201,9 +206,10 @@ export function deriveOwnKek(
 export function deriveUnlockKey(
   master: Buffer,
   salt: Buffer,
+  domain: string,
   subject: string
 ): Buffer {
-  const info = Buffer.from(`${UNLOCK_KEY_INFO_VERSION}\0${tenantId}\0${subject}`, 'utf8');
+  const info = Buffer.from(`${UNLOCK_KEY_INFO_VERSION}\0${domain}\0${subject}`, 'utf8');
   return Buffer.from(hkdfSync('sha256', master, salt, info, DATA_KEY_BYTES));
 }
 

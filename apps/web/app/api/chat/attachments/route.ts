@@ -20,8 +20,7 @@ import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 export const runtime = 'nodejs';
 
 export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

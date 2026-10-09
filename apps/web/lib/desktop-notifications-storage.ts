@@ -13,7 +13,7 @@
  * than one tenant from the same browser, and each has its own answer.
  */
 function storageKey(): string {
-  return `renkei:desktop-notifications-enabled:${tenantId}`;
+  return 'renkei:desktop-notifications-enabled';
 }
 
 export function getDesktopNotificationsEnabled(): boolean {

@@ -51,7 +51,7 @@ async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void>
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query('DELETE FROM tenant_settings', [fixture.tenantId]);
+    await client.query('DELETE FROM settings', [fixture.tenantId]);
     await client.query('DELETE FROM sessions', [fixture.tenantId]);
     await client.query('DELETE FROM identities', [fixture.tenantId]);
     await client.query('DELETE FROM tenants WHERE id = $1', [fixture.tenantId]);
@@ -92,7 +92,7 @@ async function storedValue(): Promise<unknown> {
   await client.connect();
   try {
     const result = await client.query<{ value: unknown }>(
-      `SELECT value FROM tenant_settings WHERE key = 'phi_connectors_require_covered_model'`,
+      `SELECT value FROM settings WHERE key = 'phi_connectors_require_covered_model'`,
       [tenantId]
     );
     return result.rows[0]?.value;

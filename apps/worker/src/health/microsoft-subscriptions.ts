@@ -108,14 +108,14 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
 
   // Rows whose grant vanished (deleted outside the disconnect route) serve
   // nobody and would never renew — drop them.
-  const grantKeys = new Set(grants.map((g) => `${g.tenant_id}:${g.provider_account_id}`));
+  const grantKeys = new Set(grants.map((g) => g.provider_account_id));
   const allRows = await db
     .selectFrom('webhook_subscriptions')
     .select(['id', 'account_id'])
     .where('provider', '=', MICROSOFT)
     .execute();
   for (const row of allRows) {
-    if (!grantKeys.has(`${row.tenant_id}:${row.account_id}`)) {
+    if (!grantKeys.has(row.account_id)) {
       await db.deleteFrom('webhook_subscriptions').where('id', '=', row.id).execute();
       logger.warn('dropped orphaned subscription row (grant gone)', {
         component: COMPONENT,

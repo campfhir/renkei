@@ -59,7 +59,7 @@ export async function POST(
     source: 'agents',
     type: 'optimize',
     payload: { optimizationId },
-    orderingKey: `optimize:${tenantId}:${session.subject}`,
+    orderingKey: `optimize:${session.subject}`,
   });
   if (!enqueued.ok) {
     logger.error('could not enqueue optimization {optimizationId}: {error}', {

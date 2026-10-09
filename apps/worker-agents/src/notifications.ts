@@ -197,10 +197,7 @@ export interface Notifier {
  * `NotifierContext` (prefs, an MCP session): a card raised while pausing a
  * run, for instance, has the run's identity but no reason to carry those.
  */
-type NotificationRowContext = Pick<
-  NotifierContext,
-  'tenantId' | 'subject' | 'agentId' | 'agentName' | 'runId'
->;
+type NotificationRowContext = Pick<NotifierContext, 'subject' | 'agentId' | 'agentName' | 'runId'>;
 
 /**
  * The whole reason this never throws — one place, one swallow. Resolves

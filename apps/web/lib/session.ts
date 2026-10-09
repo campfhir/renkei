@@ -16,7 +16,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { logger } from '@/lib/logger';
 
-const COOKIE_PREFIX = 'renkei_session_';
+const COOKIE_NAME = 'renkei_session';
 
 /**
  * How long a signed-in browser stays signed in. Deliberately independent of
@@ -45,9 +45,9 @@ async function idleTimeoutMs(): Promise<number> {
   return minutes * 60 * 1000;
 }
 
-/** Sessions are per-tenant so one browser can hold several without collision. */
+/** The one session cookie this deployment sets. */
 export function sessionCookieName(): string {
-  return `${COOKIE_PREFIX}${tenantId}`;
+  return COOKIE_NAME;
 }
 
 export interface Session {

@@ -20,8 +20,7 @@ import { logger } from '@/lib/logger';
  * installed yet — one click either way.
  */
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {

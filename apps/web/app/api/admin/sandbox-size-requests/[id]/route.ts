@@ -9,9 +9,9 @@ import { decideSizeRequest } from '@/lib/code/size-requests';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; id: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
-  const { slug, id } = await params;
+  const { id } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!/^[0-9a-f-]{36}$/i.test(id)) {

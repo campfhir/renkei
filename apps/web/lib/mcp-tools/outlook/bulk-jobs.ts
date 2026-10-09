@@ -256,7 +256,7 @@ export function registerBulkJobTools(
         type: 'bulk-action',
         payload: { jobId },
         // Jobs for one mailbox stay serial; different mailboxes run freely.
-        orderingKey: `mailjob:${context.tenantId}:${access.accountId}`,
+        orderingKey: `mailjob:${access.accountId}`,
       });
       if (!enqueued.ok) {
         // Don't leave a zombie 'queued' row nothing will ever pick up.

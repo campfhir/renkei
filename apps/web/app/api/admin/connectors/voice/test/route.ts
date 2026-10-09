@@ -12,10 +12,8 @@ import { getConnectorConfig } from '@renkei/connector-config';
 import { VOICE_CONNECTOR, createVoiceProvider, parseVoiceConfig } from '@renkei/voice';
 
 export async function POST(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

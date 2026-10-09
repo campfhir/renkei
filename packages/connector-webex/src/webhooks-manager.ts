@@ -50,8 +50,7 @@ export function webexUserWebhookTargetUrl(
   accountId: string
 ): string {
   return (
-    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/webex/` +
-    `${encodeURIComponent()}/user/${encodeURIComponent(accountId)}`
+    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/webex/user/${encodeURIComponent(accountId)}`
   );
 }
 

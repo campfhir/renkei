@@ -39,7 +39,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const accountIdCache = new Map<string, CacheEntry>();
 
 function cacheKey(email: string): string {
-  return `${tenantId}:${email.toLowerCase()}`;
+  return email.toLowerCase();
 }
 
 export function looksLikeEmail(input: string): boolean {

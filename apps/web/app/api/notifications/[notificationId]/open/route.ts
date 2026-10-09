@@ -54,16 +54,13 @@ export async function GET(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const [row, tenant] = await Promise.all([
-    db
-      .selectFrom('agent_notifications')
-      .select(['id', 'kind', 'ref_url', 'agent_id', 'run_id', 'meta'])
-      .where('subject', '=', session.subject)
-      .where('id', '=', notificationId)
-      .executeTakeFirst(),
-    db.selectFrom('tenants').select('slug').where('id', '=').executeTakeFirst(),
-  ]);
-  if (!row || !tenant) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const row = await db
+    .selectFrom('agent_notifications')
+    .select(['id', 'kind', 'ref_url', 'agent_id', 'run_id', 'meta'])
+    .where('subject', '=', session.subject)
+    .where('id', '=', notificationId)
+    .executeTakeFirst();
+  if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   await db
     .updateTable('agent_notifications')
@@ -74,7 +71,6 @@ export async function GET(
 
   const prefs = await getNotificationPrefs(session.subject, { fresh: true });
   const target = notificationTarget(
-    tenant.slug,
     {
       kind: row.kind,
       refUrl: row.ref_url,

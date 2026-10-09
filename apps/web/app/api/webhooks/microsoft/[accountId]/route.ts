@@ -110,7 +110,7 @@ export async function POST(
       // health sweep is what actually ends it, by deleting the orphan at
       // Graph; this only stops it from shouting meanwhile.
       const verdict = throttleLog(
-        `microsoft/webhook/unknown:${tenantId}:${subscriptionId ?? 'none'}`,
+        `microsoft/webhook/unknown:${subscriptionId ?? 'none'}`,
         60 * 60 * 1000
       );
       if (verdict.log) {

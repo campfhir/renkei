@@ -47,7 +47,7 @@ function stubDb(): FakeStore {
         return value === undefined ? undefined : { value };
       },
     };
-    return table === 'tenant_settings' || table === 'platform_settings' ? chain : chain;
+    return table === 'settings' || table === 'platform_settings' ? chain : chain;
   };
 
   mockGetDatabase.mockReturnValue({
@@ -59,7 +59,7 @@ function stubDb(): FakeStore {
           onConflict: () => ({
             execute: async () => {
               const value = JSON.parse(String(row.value));
-              if (table === 'tenant_settings') {
+              if (table === 'settings') {
                 store.tenantRows.set(`${String()}:${String(row.key)}`, value);
               } else {
                 store.platformRows.set(String(row.key), value);

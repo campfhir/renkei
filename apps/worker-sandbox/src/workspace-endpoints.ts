@@ -176,9 +176,8 @@ function envWire(summary: envStore.EnvSecretSummary) {
 }
 
 function targetOf(body: Body): store.WorkspaceTarget | null {
-  const tenantId = str();
   const subject = str(body.subject);
-  if (!tenantId || !subject) return null;
+  if (!subject) return null;
   return { subject };
 }
 
@@ -1398,7 +1397,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const tenantId = url.searchParams.get('tenantId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     const id = url.searchParams.get('id') ?? '';
-    if (!tenantId || !subject || !id) return sendError(response, 400, 'bad_request');
+    if (!subject || !id) return sendError(response, 400, 'bad_request');
     if (!(await enabled(response))) return;
     const target = { subject };
     const path = validateWorkspacePath(url.searchParams.get('path'), { forWrite: true });

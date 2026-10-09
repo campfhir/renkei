@@ -11,8 +11,7 @@ import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { widgetHtmlForUri } from '@/lib/mcp-tools/widgets';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

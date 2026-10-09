@@ -32,9 +32,9 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { NextRequest, NextResponse } from 'next/server';
 
-/** Per-tenant so one browser can hold several tenants' flows without collision. */
+/** The cookie that binds a connect flow to the browser that started it. */
 export function connectStateCookieName(): string {
-  return `connect_state_${tenantId}`;
+  return 'connect_state';
 }
 
 /** Matches the pending row's own ten-minute expiry. */

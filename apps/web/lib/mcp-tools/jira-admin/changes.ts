@@ -394,7 +394,7 @@ export async function registerChangeTools(
         );
       }
 
-      const link = `${await reviewPrefix(context)}${change.id}`;
+      const link = `${reviewPrefix(context)}${change.id}`;
       const { operations, reach } = describeChange(change);
       const lines = [
         'Proposed — nothing has changed in Jira yet.',
@@ -459,7 +459,7 @@ export async function registerChangeTools(
               )
             : operationLines(operations)),
           '',
-          `${await reviewPrefix(context)}${change.id}`,
+          `${reviewPrefix(context)}${change.id}`,
         ];
         return textResult(lines.join('\n'));
       }
@@ -475,7 +475,7 @@ export async function registerChangeTools(
             : 'No Jira admin change requests yet.'
         );
       }
-      const prefix = await reviewPrefix(context);
+      const prefix = reviewPrefix(context);
       return textResult(
         changes.map((change) => changeLine(change, `${prefix}${change.id}`)).join('\n')
       );

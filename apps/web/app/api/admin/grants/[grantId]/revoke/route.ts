@@ -19,9 +19,9 @@ import { grantProviderLabel, GRANT_PROVIDER_LABELS } from '@/lib/provider-labels
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; grantId: string }> }
+  { params }: { params: Promise<{ grantId: string }> }
 ): Promise<NextResponse> {
-  const { slug, grantId } = await params;
+  const { grantId } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

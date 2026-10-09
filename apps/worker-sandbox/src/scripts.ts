@@ -236,7 +236,7 @@ export function scriptEnvironment(home: string): Record<string, string> {
 }
 
 function targetKey(target: store.SandboxTarget): string {
-  return `${target.tenantId}\n${target.subject}`;
+  return target.subject;
 }
 
 /**

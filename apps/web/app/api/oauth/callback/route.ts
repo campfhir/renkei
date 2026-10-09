@@ -213,18 +213,18 @@ function logExchanged(label: string, outcome: ExchangeOutcome): void {
 /**
  * The browser binding (lib/connect-flow-binding.ts) is checked inside; this
  * wrapper exists so the binding cookie is cleared on EVERY response once the
- * state has named its tenant — success, refusal, or a provider handler's
+ * state has been recognised — success, refusal, or a provider handler's
  * own error — without threading the cookie through each provider branch.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const flow: { } = { };
+  const flow = { stateKnown: false };
   const response = await handleCallback(request, flow);
-  return flow.tenantId ? clearConnectFlow(response) : response;
+  return flow.stateKnown ? clearConnectFlow(response) : response;
 }
 
 async function handleCallback(
   request: NextRequest,
-  flow: { }
+  flow: { stateKnown: boolean }
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -262,7 +262,7 @@ async function handleCallback(
     if (!pendingSignIn) {
       return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
     }
-    flow.tenantId = pendingSignIn.tenant_id;
+    flow.stateKnown = true;
 
     // CSRF / grant-planting defense (lib/connect-flow-binding.ts): the state
     // must match the cookie the authorize route set in THIS browser, and the
@@ -317,7 +317,6 @@ async function handleCallback(
     if (pendingSignIn.provider === 'webex-user') {
       return handleWebexUserCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
@@ -326,7 +325,6 @@ async function handleCallback(
     if (pendingSignIn.provider === 'atlassian-jsm') {
       return handleAtlassianJsmCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
@@ -335,7 +333,6 @@ async function handleCallback(
     if (pendingSignIn.provider === 'atlassian-confluence') {
       return handleAtlassianConfluenceCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
@@ -344,7 +341,6 @@ async function handleCallback(
     if (pendingSignIn.provider === 'atlassian-admin') {
       return handleAtlassianAdminCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
@@ -353,7 +349,6 @@ async function handleCallback(
     if (pendingSignIn.provider === 'atlassian-bitbucket') {
       return handleAtlassianBitbucketCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
@@ -362,7 +357,6 @@ async function handleCallback(
     if (pendingSignIn.provider === 'github') {
       return handleGitHubCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
@@ -371,7 +365,6 @@ async function handleCallback(
     if (pendingSignIn.provider === 'microsoft') {
       return handleMicrosoftCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
@@ -384,19 +377,17 @@ async function handleCallback(
       // Microsoft 365 grant's indexing bootstrap.
       return handleEntraDeveloperCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes
       );
     }
     if (pendingSignIn.provider === 'zoom') {
-      return handleZoomCallback(request, tenant, pendingSignIn.subject, code, pendingSignIn.scopes);
+      return handleZoomCallback(request, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
     if (pendingSignIn.provider === 'onbase') {
       return handleOnBaseCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
@@ -410,7 +401,6 @@ async function handleCallback(
       // logic with a different connector key, grant provider and label.
       return handleOnBaseCallback(
         request,
-        tenant,
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
@@ -711,7 +701,6 @@ async function priorCloudId(
  */
 async function handleAtlassianJsmCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string,
   code: string,
   requestedScopes: string | null
@@ -801,7 +790,6 @@ async function handleAtlassianJsmCallback(
  */
 async function handleAtlassianConfluenceCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string,
   code: string,
   requestedScopes: string | null
@@ -901,7 +889,6 @@ async function handleAtlassianConfluenceCallback(
  */
 async function handleAtlassianAdminCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string,
   code: string,
   requestedScopes: string | null
@@ -994,7 +981,6 @@ async function handleAtlassianAdminCallback(
  */
 async function handleAtlassianBitbucketCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string,
   code: string,
   requestedScopes: string | null
@@ -1075,7 +1061,6 @@ async function handleAtlassianBitbucketCallback(
  */
 async function handleWebexUserCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string | null,
   code: string,
   requestedScopes: string | null
@@ -1180,7 +1165,6 @@ async function handleWebexUserCallback(
  */
 async function handleGitHubCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string | null,
   code: string,
   requestedScopes: string | null
@@ -1266,7 +1250,6 @@ async function handleGitHubCallback(
  */
 async function handleMicrosoftCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string | null,
   code: string,
   requestedScopes: string | null
@@ -1451,7 +1434,6 @@ async function exchangeMicrosoftCode(
  */
 async function handleEntraDeveloperCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string | null,
   code: string,
   requestedScopes: string | null
@@ -1528,7 +1510,6 @@ async function handleEntraDeveloperCallback(
  */
 async function handleZoomCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string | null,
   code: string,
   requestedScopes: string | null
@@ -1691,7 +1672,6 @@ const ONBASE_ADMIN_SPEC: OnBaseCallbackSpec = {
  */
 async function handleOnBaseCallback(
   request: NextRequest,
-  tenant: { id: string; slug: string },
   subject: string | null,
   code: string,
   requestedScopes: string | null,

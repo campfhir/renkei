@@ -19,8 +19,7 @@ import { getSessionFromRequest } from '@/lib/session';
  * worked.
  */
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   // Roles come from the server-side session, never from a client-supplied
@@ -46,7 +45,7 @@ export async function GET(
         type: 'tenant',
         message: 'Audit logs are stored with @campfhir/bored-logs',
         logsProvider: 'bored-logs',
-        logContext: `mcp:${tenantId}`,
+        logContext: 'mcp',
       });
     }
 
@@ -83,7 +82,7 @@ export async function GET(
         accountId,
         message: 'Audit logs are stored with @campfhir/bored-logs',
         logsProvider: 'bored-logs',
-        logContext: `mcp:${tenantId}:${accountId}`,
+        logContext: `mcp:${accountId}`,
       });
     }
 

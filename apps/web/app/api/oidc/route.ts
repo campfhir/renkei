@@ -4,32 +4,20 @@ import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import { safeFetch, assertSafeHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
-import { BOOTSTRAP_SECRET_HEADER, verifyBootstrapSecret } from '@/lib/tenant-bootstrap';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import {
+  SETUP_SECRET_HEADER,
+  clearSetupSecret,
+  identityProviderConfigured,
+  verifySetupSecret,
+} from '@/lib/setup-secret';
 
-/**
- * Confirm the caller is an operator *of this tenant*.
- *
- * checkAccess is tenant-scoped by construction — the session cookie is
- * per-tenant — so an operator of one tenant cannot reconfigure another's
- * identity provider.
- */
-async function requireTenantOperator(): Promise<NextResponse | null> {
+/** Confirm the caller is an operator. */
+async function requireOperator(): Promise<NextResponse | null> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   return null;
-}
-
-/** Whether this tenant already has an identity provider configured. */
-async function hasOidcConfig(db: Kysely<DB>): Promise<boolean> {
-  const existing = await db
-    .selectFrom('tenant_oidc')
-    .select('client_id')
-    .executeTakeFirst();
-  return Boolean(existing);
 }
 
 interface OidcConfigRequest {
@@ -54,8 +42,7 @@ function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -64,30 +51,20 @@ export async function POST(
   const db = dbResult.val;
 
   try {
-    // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select(['id', 'bootstrap_secret_hash', 'bootstrap_secret_expires_at'])
-      .where('id', '=')
-      .executeTakeFirst();
-
-
-    // First configuration needs the one-time bootstrap secret; every change
+    // First configuration needs the one-time setup secret; every change
     // after it is operator-only.
     //
     // The first write cannot require a session because operator identity is
-    // itself derived from OIDC: until a tenant has an identity provider,
-    // nobody can hold an operator session for it. It used to be open to
-    // anyone holding the tenant id — which travels in the creator's URL and
-    // in the create response — so whoever posted an IdP first owned the
-    // tenant. The secret minted at creation (lib/tenant-bootstrap.ts) and
-    // shown once to the creator is what stands in for a session here. Once
-    // a provider is set an operator can exist, and from then on only they
-    // may change it -- which is the part that matters, since whoever
-    // controls this record controls who becomes an operator.
-    const configured = await hasOidcConfig(db);
+    // itself derived from OIDC: until the deployment has an identity
+    // provider, nobody can hold an operator session. The secret the setup
+    // page mints into the server log (lib/setup-secret.ts) is what stands in
+    // for a session here. Once a provider is set an operator can exist, and
+    // from then on only they may change it -- which is the part that
+    // matters, since whoever controls this record controls who becomes an
+    // operator.
+    const configured = await identityProviderConfigured(db);
     if (configured) {
-      const denied = await requireTenantOperator();
+      const denied = await requireOperator();
       if (denied) {
         logger.warn('Rejected unauthorised attempt to change identity provider', {
           component: 'auth/oidc',
@@ -96,9 +73,9 @@ export async function POST(
         return denied;
       }
     } else {
-      const verdict = verifyBootstrapSecret(request.headers.get(BOOTSTRAP_SECRET_HEADER), tenant);
+      const verdict = await verifySetupSecret(db, request.headers.get(SETUP_SECRET_HEADER));
       if (verdict !== 'ok') {
-        logger.warn('Rejected identity-provider bootstrap without a valid secret ({verdict})', {
+        logger.warn('Rejected identity-provider setup without a valid secret ({verdict})', {
           component: 'auth/oidc',
           verdict,
         });
@@ -106,10 +83,10 @@ export async function POST(
           {
             error:
               verdict === 'none-issued'
-                ? 'This organization has no onboarding secret; an operator must configure its identity provider directly.'
+                ? 'No setup secret has been issued. Open the setup page first; it writes one to the server log.'
                 : verdict === 'expired'
-                  ? 'The onboarding secret has expired. Create the organization again.'
-                  : 'The onboarding secret is missing or wrong. Use the one shown when the organization was created.',
+                  ? 'The setup secret has expired. Reload the setup page for a fresh one in the server log.'
+                  : 'The setup secret is missing or wrong. Use the one in the server log.',
           },
           { status: 401 }
         );
@@ -129,8 +106,8 @@ export async function POST(
       );
     }
 
-    // The discovery endpoint is caller-supplied (and on an unconfigured tenant
-    // this whole POST is unauthenticated), so the fetch is SSRF-guarded: https
+    // The discovery endpoint is caller-supplied (and before the first
+    // configuration this whole POST carries no session), so the fetch is SSRF-guarded: https
     // only, no localhost/private/metadata targets. Without it, this endpoint
     // could be pointed at 169.254.169.254 or an internal service.
     try {
@@ -221,7 +198,7 @@ export async function POST(
       return NextResponse.json({ success: true });
     }
 
-    // Unauthenticated bootstrap. Insert-only, so a configuration created while
+    // First configuration. Insert-only, so a configuration created while
     // the discovery fetch above was in flight is not overwritten by this
     // caller; they are told to authenticate instead.
     const createResult = await createTenantOidcIfAbsent(config);
@@ -234,29 +211,25 @@ export async function POST(
     }
 
     if (!createResult.val) {
-      logger.warn('Bootstrap lost a race with an existing configuration', {
+      logger.warn('Setup lost a race with an existing configuration', {
         component: 'auth/oidc',
       });
       return NextResponse.json(
         {
           error:
-            'This tenant already has an identity provider. Changing it requires an operator session.',
+            'This deployment already has an identity provider. Changing it requires an operator session.',
         },
         { status: 409 }
       );
     }
 
     // Spent: the secret was for exactly this write.
-    await db
-      .updateTable('tenants')
-      .set({ bootstrap_secret_hash: null, bootstrap_secret_expires_at: null })
-      .where('id', '=')
-      .execute();
+    await clearSetupSecret(db);
 
     // Worth a record of its own: this is the one write to this table that
-    // no session authenticated — only the creator's one-time secret — and it
+    // no session authenticated — only the one-time setup secret — and it
     // decides who can become an operator.
-    logger.warn('Identity provider claimed for previously unconfigured tenant', {
+    logger.warn('Identity provider configured for a previously unconfigured deployment', {
       component: 'auth/oidc',
       issuer,
       clientId: body.clientId,
@@ -274,16 +247,13 @@ export async function POST(
   }
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
-): Promise<NextResponse> {
+export async function GET(): Promise<NextResponse> {
 
   // Operator-only, and checked before anything is read. This returns the
   // issuer, client id and the claim mapping that decides who becomes an
   // operator — which is the reconnaissance for an attack on POST, so it is
   // gated even though no secret is in the response.
-  const denied = await requireTenantOperator();
+  const denied = await requireOperator();
   if (denied) return denied;
 
   const dbResult = getDatabase();
@@ -293,17 +263,9 @@ export async function GET(
   const db = dbResult.val;
 
   try {
-    // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=')
-      .executeTakeFirst();
-
-
     // Get OIDC configuration
     const oidc = await db
-      .selectFrom('tenant_oidc')
+      .selectFrom('oidc_config')
       .select([
         'issuer',
         'client_id',

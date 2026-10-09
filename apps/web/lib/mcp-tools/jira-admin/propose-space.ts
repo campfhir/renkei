@@ -375,7 +375,7 @@ export async function registerProposeSpaceTools(
         );
       }
 
-      const link = `${await reviewPrefix(context)}${change.id}`;
+      const link = `${reviewPrefix(context)}${change.id}`;
       const { operations, reach } = describeChange(change);
       const lines = [
         'Proposed — nothing has been created in Jira yet.',

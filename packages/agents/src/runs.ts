@@ -489,11 +489,11 @@ export async function recordAgentRunOutcome(
 
     await sql`
       INSERT INTO agent_run_log (
-        run_id, tenant_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at,
+        run_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at,
         step_id, step_name, error_kind, outcome_code, error,
         input_tokens, output_tokens, tool_calls, attempts, steps_version
       ) VALUES (
-        ${input.runId}, ${input.tenantId}, ${input.agentId}, ${input.ownerSubject},
+        ${input.runId}, ${input.agentId}, ${input.ownerSubject},
         ${run?.trigger_kind ?? 'manual'}, ${input.status}, ${run?.created_at ?? sql`NOW()`}, NOW(),
         ${stepId}, ${stepName}, ${errorKind}, ${outcomeCode}, ${error},
         ${inputTokens}, ${outputTokens}, ${toolCalls}, ${attempts}, ${stepsVersion}

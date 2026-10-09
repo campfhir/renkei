@@ -20,8 +20,7 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
  * request a plain 401 that sends the client back through authorization.
  */
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   const session = await getSessionFromRequest(request);

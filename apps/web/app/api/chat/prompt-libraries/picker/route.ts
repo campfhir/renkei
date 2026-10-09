@@ -4,8 +4,7 @@ import { chatRequestContext } from '@/lib/chat/route-support';
 import { listPickerPrompts } from '@/lib/chat/prompts';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

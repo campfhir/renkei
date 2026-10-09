@@ -15,8 +15,7 @@ import { getSessionFromRequest } from '@/lib/session';
  * first, so the page hid the connect button from someone who had no grant.
  */
 export const GET = async (
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> => {
 
   // Before any lookup: a session proves both who is asking and that the tenant

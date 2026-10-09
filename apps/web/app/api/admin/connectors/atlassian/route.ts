@@ -16,26 +16,9 @@ import {
 } from '@renkei/connector-config';
 import { ATLASSIAN_CONNECTOR, DEFAULT_ATLASSIAN_SCOPES } from '@/lib/atlassian-app';
 
-async function tenantIdForSlug(slug: string): Promise<string | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const tenant = await dbResult.val
-    .selectFrom('tenants')
-    .select('id')
-    .where('slug', '=', slug)
-    .executeTakeFirst();
-  return tenant?.id ?? null;
-}
-
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  _request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
-  const tenantId = await tenantIdForSlug(slug);
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -69,14 +52,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
-  const tenantId = await tenantIdForSlug(slug);
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-  }
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

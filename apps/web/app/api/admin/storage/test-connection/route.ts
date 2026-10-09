@@ -10,10 +10,8 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseStorageInput, testStorage } from '@/lib/storage-admin';
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const input = parseStorageInput(await request.json().catch(() => null));

@@ -51,8 +51,7 @@ const QUEUED_WORK: Record<string, { type: string; scopePath: string[] }> = {
 };
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

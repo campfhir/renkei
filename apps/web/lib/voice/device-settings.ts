@@ -17,7 +17,7 @@
  * alone and the reply is interrupted with Stop instead of a voice.
  */
 
-const storageKey = () => `renkei:${tenantId}:voice:echo-cancellation`;
+const storageKey = () => `renkei:voice:echo-cancellation`;
 
 export function getEchoCancellation(): boolean {
   try {
@@ -44,8 +44,8 @@ export function setEchoCancellation(enabled: boolean): void {
   used, never an error.
 */
 
-const microphoneKey = () => `renkei:${tenantId}:voice:microphone`;
-const outputKey = () => `renkei:${tenantId}:voice:output`;
+const microphoneKey = () => `renkei:voice:microphone`;
+const outputKey = () => `renkei:voice:output`;
 
 function readDevice(key: string): string | null {
   try {

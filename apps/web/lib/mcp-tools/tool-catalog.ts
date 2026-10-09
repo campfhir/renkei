@@ -193,23 +193,19 @@ const catalogCache = new Map<string, CacheEntry>();
 // not a user's, and one subject can be asked about under both (a session
 // versus a run token). Sorted so order never mints a second entry.
 const cacheKey = (subject: string, roles: readonly string[] = []) =>
-  `${tenantId} ${subject} ${[...roles].sort().join(',')}`;
+  `${subject} ${[...roles].sort().join(',')}`;
 
 /**
  * Drop cached catalogs — used after a connector connects or disconnects for
- * some caller, and by tests. Omitting `subject` clears every cached caller
- * in that tenant; omitting `tenantId` too clears everything.
+ * some caller, and by tests. Omitting `subject` clears every cached caller.
  */
 export function invalidateToolCatalogCache(subject?: string): void {
-  if (!tenantId) {
+  if (!subject) {
     catalogCache.clear();
     return;
   }
-  const prefix = `${tenantId} `;
   for (const key of catalogCache.keys()) {
-    if (key.startsWith(prefix) && (!subject || key.startsWith(`${tenantId} ${subject} `))) {
-      catalogCache.delete(key);
-    }
+    if (key.startsWith(`${subject} `)) catalogCache.delete(key);
   }
 }
 

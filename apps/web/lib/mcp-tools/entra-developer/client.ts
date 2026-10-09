@@ -40,7 +40,8 @@ export interface EntraAccess {
   accountId: string;
   /** The person's user principal name, for "connected as". */
   upn: string;
-  /** The directory the grant was minted in. */
+  /** The Entra directory (Microsoft tenant) the grant was minted in. */
+  tenantId: string;
 }
 
 /** What the request wrapper needs of its caller — an MCPToolContext satisfies it. */
@@ -71,6 +72,7 @@ export async function resolveEntraAccess(context: EntraCallContext): Promise<Ent
     auth: grantFetch(grant),
     accountId: described.val.accountId,
     upn: typeof metadata.upn === 'string' ? metadata.upn : '',
+    tenantId: typeof metadata.tid === 'string' ? metadata.tid : '',
   };
 }
 

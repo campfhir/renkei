@@ -17,9 +17,9 @@ import { parseModelPayload } from '@/lib/agents/llm-model-payload';
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; modelId: string }> }
+  { params }: { params: Promise<{ modelId: string }> }
 ): Promise<NextResponse> {
-  const { slug, modelId } = await params;
+  const { modelId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -106,9 +106,9 @@ export async function PUT(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; modelId: string }> }
+  { params }: { params: Promise<{ modelId: string }> }
 ): Promise<NextResponse> {
-  const { slug, modelId } = await params;
+  const { modelId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

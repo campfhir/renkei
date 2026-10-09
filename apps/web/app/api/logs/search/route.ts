@@ -14,8 +14,7 @@ function logCipherOptions() {
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {

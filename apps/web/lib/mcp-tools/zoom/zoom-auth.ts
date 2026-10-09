@@ -44,7 +44,7 @@ export interface ZoomAccess {
  * collectors AND for the two ZoomClient-based tools in index.ts.
  */
 export async function resolveZoomAccess(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject'>
+  context: Pick<MCPToolContext, 'subject'>
 ): Promise<ZoomAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
   const grant = { provider: ZOOM, subject: context.subject };

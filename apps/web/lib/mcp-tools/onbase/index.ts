@@ -163,7 +163,7 @@ export async function loadCatalog(
   kind:
     'keyword-types' | 'document-types' | 'document-type-groups' | 'custom-queries' | 'note-types'
 ): Promise<NamedThing[] | string> {
-  const cacheKey = `${context.tenantId}:${kind}`;
+  const cacheKey = kind;
   const cached = catalogCache.get(cacheKey);
   if (cached) return cached;
   const result = await apiJson(auth, { method: 'GET', path: `/${kind}` }, `list ${kind}`);

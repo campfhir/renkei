@@ -50,7 +50,7 @@ export interface GitHubAccess {
 
 /** The caller's GitHub grant as a fetcher, plus who it is. */
 export async function resolveGitHubAccess(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
+  context: Pick<MCPToolContext, 'subject' | 'origin'>
 ): Promise<GitHubAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
 

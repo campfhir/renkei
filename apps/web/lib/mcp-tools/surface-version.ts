@@ -33,7 +33,7 @@
  * tool closed over:
  *
  *   - `provider_grants`  — which connectors this caller has, and their scopes
- *   - `tenant_settings`  — read-only mode, disabled connectors, redaction
+ *   - `settings`  — read-only mode, disabled connectors, redaction
  *   - `connector_configs`— embeddings (the knowledge tools) and per-connector setup
  *   - `file_shares`      — which shares exist for the tenant
  *   - `file_share_connections` — this caller's per-share credentials and opt-ins
@@ -67,7 +67,7 @@ export async function toolSurfaceVersion(
         SELECT MAX(updated_at) AS t FROM provider_grants
           WHERE subject = ${subject}
         UNION ALL
-        SELECT MAX(updated_at) FROM tenant_settings
+        SELECT MAX(updated_at) FROM settings
         UNION ALL
         SELECT MAX(updated_at) FROM connector_configs
         UNION ALL

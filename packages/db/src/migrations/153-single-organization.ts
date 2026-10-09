@@ -284,6 +284,18 @@ export async function up(db: Kysely<unknown>): Promise<void> {
   for (const statement of INDEXES) {
     await sql.raw(statement).execute(db);
   }
+  // One identity provider per deployment: the row's former key was the
+  // organization, and without one an insert needs something to conflict on.
+  await sql`CREATE UNIQUE INDEX oidc_config_single ON oidc_config ((true))`.execute(db);
+
+  // The pre-enrollment key-encryption keys (packages/user-keys/src/legacy.ts)
+  // were derived with the organization id in the HKDF info. The row stays
+  // readable only if that id is still known, so it becomes a setting.
+  await sql`
+    INSERT INTO settings (key, value)
+    SELECT 'legacy_key_domain', to_jsonb(id::text) FROM tenants
+    ON CONFLICT (key) DO NOTHING
+  `.execute(db);
 
   await sql`DROP TABLE tenants`.execute(db);
 }

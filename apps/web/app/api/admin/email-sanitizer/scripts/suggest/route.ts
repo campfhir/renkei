@@ -13,10 +13,8 @@ import { suggestCleanerScript } from '@/lib/email-sanitizer/suggest-script';
 import { isContentKind } from '@/lib/email-sanitizer/content-kinds';
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  const { slug } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

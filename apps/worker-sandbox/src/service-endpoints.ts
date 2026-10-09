@@ -140,8 +140,6 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
   }
 
   async function handleRules(op: string, body: Body, response: ServerResponse): Promise<void> {
-    const tenantId = str();
-    if (!tenantId) return sendError(response, 400, 'bad_request');
     switch (op) {
       case 'list':
         return sendJson(response, 200, {
@@ -246,8 +244,6 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
   async function handleServices(op: string, body: Body, response: ServerResponse): Promise<void> {
     const manager = deps.manager;
     if (!manager) return unavailable(response, 'deployment');
-    const tenantId = str();
-    if (!tenantId) return sendError(response, 400, 'bad_request');
     if (!(await deps.enabledFor())) return unavailable(response, 'organization');
     if (op.startsWith('rules/')) {
       return guarded(response, () => handleRules(op.slice('rules/'.length), body, response));

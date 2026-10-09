@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrigin } from '@/lib/get-origin';
-import { getDatabase } from '@renkei/db';
 
 /**
- * Protected Resource Metadata for one tenant's MCP server (RFC 9728).
+ * Protected Resource Metadata for this deployment's MCP server (RFC 9728).
  *
  * This is what the `resource_metadata` parameter of the 401 challenge points
  * at. It previously pointed at the authorization server metadata instead, which
@@ -16,33 +15,16 @@ import { getDatabase } from '@renkei/db';
  * authorization server metadata exactly, or a client will reject it as a
  * mix-up.
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
-): Promise<NextResponse> {
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
-  const tenant = await db
-    .selectFrom('tenants')
-    .select('id')
-    .where('id', '=', tenantId)
-    .executeTakeFirst();
-
-
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const tenantIssuer = `${originResult.val}/api/mcp`;
+  const issuer = `${originResult.val}/api/mcp`;
 
   return NextResponse.json({
-    resource: tenantIssuer,
-    authorization_servers: [tenantIssuer],
+    resource: issuer,
+    authorization_servers: [issuer],
     scopes_supported: ['openid', 'profile', 'email'],
     bearer_methods_supported: ['header'],
     resource_documentation: 'https://github.com/campfhir/renkei',

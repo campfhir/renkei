@@ -48,8 +48,7 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-const cacheKey = (subject: string, kind: ToolDefaultsKind) =>
-  `${tenantId} ${subject} ${kind}`;
+const cacheKey = (subject: string, kind: ToolDefaultsKind) => `${subject} ${kind}`;
 
 /**
  * This person's saved default toolset, or null when they have never set one

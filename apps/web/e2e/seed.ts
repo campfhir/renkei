@@ -371,7 +371,7 @@ export async function seed(client: Client): Promise<void> {
   // Org settings do not cascade from the tenant: migration 151 writes one row
   // (the registration default) for every tenant that exists when it runs,
   // and the rows below put more there.
-  await client.query('DELETE FROM tenant_settings', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM settings', [E2E_TENANT_ID]);
   await client.query('DELETE FROM tenants WHERE id = $1', [E2E_TENANT_ID]);
 
   // Verified at creation: the sign-in page routes a domain only to a tenant
@@ -392,7 +392,7 @@ export async function seed(client: Client): Promise<void> {
     'sandbox_services_enabled',
   ]) {
     await client.query(
-      `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1, $2, 'true'::jsonb)`,
+      `INSERT INTO settings (tenant_id, key, value) VALUES ($1, $2, 'true'::jsonb)`,
       [E2E_TENANT_ID, key]
     );
   }

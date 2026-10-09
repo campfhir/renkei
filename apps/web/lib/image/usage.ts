@@ -53,7 +53,7 @@ export async function recordImageUsage(
       })
       .execute();
   } catch (error) {
-    logger.warn('image usage not recorded for tenant {tenantId}', {
+    logger.warn('image usage not recorded', {
       component: 'web/image-usage',
       error: error instanceof Error ? error.message : String(error),
     });

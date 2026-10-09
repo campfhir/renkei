@@ -71,7 +71,7 @@ async function seed(fixture: Fixture): Promise<void> {
     for (const table of [
       'audit_events',
       'user_preferences',
-      'tenant_settings',
+      'settings',
       'sessions',
       'identities',
     ]) {
@@ -103,7 +103,7 @@ async function seed(fixture: Fixture): Promise<void> {
     );
     if (fixture.workspacesOn) {
       await client.query(
-        `INSERT INTO tenant_settings (tenant_id, key, value)
+        `INSERT INTO settings (tenant_id, key, value)
          VALUES ($1, 'sandbox_workspaces_enabled', 'true'::jsonb)`,
         [t]
       );
@@ -138,7 +138,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 async function storedSetting(fixture: Fixture, key: string): Promise<unknown> {
   const stored = await withDb((client) =>
     client.query<{ value: unknown }>(
-      `SELECT value FROM tenant_settings WHERE key = $2`,
+      `SELECT value FROM settings WHERE key = $2`,
       [fixture.tenantId, key]
     )
   );

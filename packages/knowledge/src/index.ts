@@ -521,8 +521,7 @@ export async function searchKnowledge(
   const filters = filterFragments(options);
   const owner = ownerScopeFragment(options.verifiers, options.userEmail);
   const where = sql`
-        tenant_id = ${options.tenantId}
-          AND ${filters.source}
+        ${filters.source}
           AND ${owner}
           AND ${filters.after}
           AND ${filters.before}

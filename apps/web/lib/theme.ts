@@ -3,11 +3,6 @@
  * browser, how 'auto' resolves to an actual light/dark, and how the shell
  * hears about a change made somewhere other than the server.
  *
- * Scoped by tenant, matching every other per-browser cache in this app (see
- * desktop-notifications-storage.ts): one person can sign into more than one
- * tenant from the same browser, and `@renkei/user-prefs` already keys the
- * server-side row the same way.
- *
  * `<html data-theme>` is what everything actually renders against — see the
  * `@custom-variant dark` and the `[data-theme='dark']` blocks in
  * globals.css. This module never leaves it as 'auto': that would ask every
@@ -35,7 +30,7 @@ function isThemeMode(value: unknown): value is ThemeMode {
   return value === 'auto' || value === 'light' || value === 'dark';
 }
 
-/** Whatever this browser last knew, for this tenant — or null if nothing valid is cached. */
+/** Whatever this browser last knew — or null if nothing valid is cached. */
 export function getStoredThemeMode(): ThemeMode | null {
   try {
     const stored = window.localStorage.getItem(themeStorageKey());
@@ -57,7 +52,7 @@ export function setStoredThemeMode(mode: ThemeMode): void {
 }
 
 /**
- * Calls `onChange` whenever this tenant's cached mode moves: a pick in this
+ * Calls `onChange` whenever the cached mode moves: a pick in this
  * tab (setStoredThemeMode above) or a pick or save in another tab of the
  * same browser (the `storage` event). Returns the unsubscribe.
  */
@@ -65,9 +60,7 @@ export function subscribeStoredThemeMode(
   onChange: (mode: ThemeMode) => void
 ): () => void {
   const key = themeStorageKey();
-  const onLocal = (changed: string, mode: ThemeMode) => {
-    if (changed === tenantId) onChange(mode);
-  };
+  const onLocal = (mode: ThemeMode) => onChange(mode);
   const onStorage = (event: StorageEvent) => {
     // A null key is `localStorage.clear()`, which took this key with it.
     if (event.key !== null && event.key !== key) return;

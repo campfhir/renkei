@@ -227,11 +227,6 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     body: Record<string, unknown>,
     response: ServerResponse
   ): Promise<OnBaseTenantConfig | null> {
-    const tenantId = str();
-    if (!tenantId) {
-      sendError(response, 'bad_request', 'tenantId is required');
-      return null;
-    }
     // Which connector_configs row: 'onbase' (default, Document API) or
     // 'onbase-admin' (Administration API) — see the top-of-file note.
     const connector = str(body.connector) || ONBASE_CONNECTOR;
@@ -299,7 +294,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     // `subject` the cookie cannot be attributed safely, so the call goes
     // out without one rather than risk reusing someone else's session.
     const subject = withSession ? str(body.subject) : '';
-    const cookie = subject ? sessionCookie(str(), subject) : undefined;
+    const cookie = subject ? sessionCookie(subject) : undefined;
 
     const upstream = await timedFetch(
       url.toString(),
@@ -329,8 +324,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       // 401 is ambiguous between a dead token and a dead session; dropping
       // the cookie makes the web side's retry build a fresh session rather
       // than present a stale one again.
-      if (upstream.status === 401) forgetSession(str(), subject);
-      else rememberSession(str(), subject, setCookies(upstream));
+      if (upstream.status === 401) forgetSession(subject);
+      else rememberSession(subject, setCookies(upstream));
     }
     // An envelope, not passthrough: the web side needs the upstream status
     // (401 drives its refresh-and-retry) without confusing it with this
@@ -496,7 +491,6 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     async disconnect(body, response) {
       const config = await configFor(body, response);
       if (!config) return;
-      const tenantId = str();
       const subject = str(body.subject);
       const accessToken = str(body.accessToken);
       if (!subject || !accessToken) {
@@ -545,7 +539,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       const connector = str(body.connector) || ONBASE_CONNECTOR;
       const contentSubject = connector === ONBASE_CONNECTOR ? str(body.subject) : '';
       const contentCookie = contentSubject
-        ? sessionCookie(str(), contentSubject)
+        ? sessionCookie(contentSubject)
         : undefined;
 
       const upstream = await timedFetch(
@@ -563,8 +557,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
       }
       if (contentSubject) {
-        if (upstream.status === 401) forgetSession(str(), contentSubject);
-        else rememberSession(str(), contentSubject, setCookies(upstream));
+        if (upstream.status === 401) forgetSession(contentSubject);
+        else rememberSession(contentSubject, setCookies(upstream));
       }
       if (!upstream.ok) {
         const detail = await upstream.text().catch(() => '');
@@ -574,7 +568,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
           error: { type: 'api_error', status: upstream.status, message: detail.slice(0, 500) },
         });
       }
-      const limit = await transferLimit(str());
+      const limit = await transferLimit();
       const bytes = Buffer.from(await upstream.arrayBuffer());
       if (bytes.byteLength > limit) {
         return sendError(response, 'too_large', `The content exceeds the ${limit}-byte limit.`);
@@ -590,8 +584,6 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     },
 
     async 'test-connection'(body, response) {
-      const tenantId = str();
-      if (!tenantId) return sendError(response, 'bad_request', 'tenantId is required');
       const connector = str(body.connector) || ONBASE_CONNECTOR;
       const stored = await resolveConfig(connector);
       const unsaved = isRecord(body.unsaved) ? body.unsaved : {};
@@ -658,7 +650,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     // optional so an older caller keeps working (it just gets its own
     // session, as it does today).
     const uploadSubject = str(request.headers['x-onbase-subject']);
-    if (!tenantId || !uploadId || !accessToken) {
+    if (!uploadId || !accessToken) {
       return sendError(
         response,
         'bad_request',

@@ -55,7 +55,7 @@ export function hashPath(path: string): string {
 
 /** A tool's caller as the trail names them: the owner's subject and the agent, if any. */
 export function phiActorOf(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'agent'>
+  context: Pick<MCPToolContext, 'subject' | 'agent'>
 ): { subject: string; agentId: string | null } | null {
   if (!context.subject) return null;
   return {

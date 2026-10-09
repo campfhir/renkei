@@ -18,8 +18,7 @@ import { logger } from '@/lib/logger';
  * carries) but never travels to Bitbucket.
  */
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {

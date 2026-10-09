@@ -33,17 +33,17 @@ const MAX_STATE_BYTES = 64 * 1024;
 /** Small in-memory burst brake; the daily cap in createAgentRun is the law. */
 const BURST_WINDOW_MS = 60_000;
 const BURST_MAX = 30;
-const recentInvokes = new Map<string, number[]>();
+let recentInvokes: number[] = [];
 
 function overBurst(): boolean {
   const now = Date.now();
-  const stamps = (recentInvokes.get() ?? []).filter((at) => now - at < BURST_WINDOW_MS);
+  const stamps = recentInvokes.filter((at) => now - at < BURST_WINDOW_MS);
   if (stamps.length >= BURST_MAX) {
-    recentInvokes.set(stamps);
+    recentInvokes = stamps;
     return true;
   }
   stamps.push(now);
-  recentInvokes.set(stamps);
+  recentInvokes = stamps;
   return false;
 }
 

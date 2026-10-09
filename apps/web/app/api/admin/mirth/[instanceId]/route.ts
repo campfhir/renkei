@@ -19,9 +19,9 @@ import { parseInstancePayload } from '@/lib/mirth/parse';
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; instanceId: string }> }
+  { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
-  const { slug, instanceId } = await params;
+  const { instanceId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -42,9 +42,9 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; instanceId: string }> }
+  { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
-  const { slug, instanceId } = await params;
+  const { instanceId } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -99,9 +99,9 @@ export async function PATCH(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; instanceId: string }> }
+  { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
-  const { slug, instanceId } = await params;
+  const { instanceId } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

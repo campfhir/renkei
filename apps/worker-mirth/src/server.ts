@@ -142,10 +142,9 @@ function sendError(response: ServerResponse, type: WorkerErrorType, message?: st
 }
 
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
-  const tenantId = str();
   const instanceId = str(body.instanceId);
   const subject = str(body.subject);
-  if (!tenantId || !instanceId || !subject) return null;
+  if (!instanceId || !subject) return null;
   return { instanceId, subject };
 }
 
@@ -339,10 +338,9 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       // trust boundary, and is tried against the STORED instance before the
       // web app seals and saves it. The session it creates is closed
       // again: nothing is remembered for a credential not yet stored.
-      const tenantId = str();
       const instanceId = str(body.instanceId);
       const credentials = parseMirthCredentials(body.credentials);
-      if (!tenantId || !instanceId || !credentials) {
+      if (!instanceId || !credentials) {
         return sendError(
           response,
           'bad_request',
@@ -386,8 +384,6 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       // 401 IS the healthy answer — it proves a Mirth REST API is listening
       // and demanding a login. The unsaved form wins over the stored row,
       // so an operator tests what they are ABOUT to save.
-      const tenantId = str();
-      if (!tenantId) return sendError(response, 'bad_request', 'tenantId is required');
       let instance: InstanceRow;
       const unsaved = isRecord(body.unsaved) ? body.unsaved : null;
       if (unsaved) {

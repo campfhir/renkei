@@ -38,7 +38,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
   const [settingsResult, oidc, observedGroups, sizeRequests] = await Promise.all([
     getOrgSettings(),
     dbResult.val
-      .selectFrom('tenant_oidc')
+      .selectFrom('oidc_config')
       .select(['issuer', 'role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
       .executeTakeFirst(),
     observedIdpGroups(dbResult.val, '', 10_000),

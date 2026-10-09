@@ -1,5 +1,6 @@
 import { encrypt, decrypt, loadKeyring } from '@renkei/crypto';
 import { randomUUID } from 'crypto';
+import { sql } from 'kysely';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getDatabase } from '@renkei/db';
@@ -21,7 +22,7 @@ export interface TenantOidc {
   groupsClaim?: string | null;
 }
 
-/** What sign-in reads for groups when the tenant has not said otherwise. */
+/** What sign-in reads for groups when the organization has not said otherwise. */
 export const DEFAULT_GROUPS_CLAIM = 'groups';
 
 /** The claim-mapping half of the OIDC config: editable without the client secret. */
@@ -33,17 +34,15 @@ export interface TenantOidcClaims {
 }
 
 /**
- * Store OIDC configuration for a tenant.
- * Client secret is encrypted with the deployment key.
- */
-/**
- * Configure a tenant's identity provider only if it has none.
+ * Configure the identity provider only if there is none.
  *
  * Resolves to false when a configuration already existed, leaving it
- * untouched. The unauthenticated bootstrap path needs this rather than
+ * untouched. The first-run setup path needs this rather than
  * `setTenantOidc`: that one upserts, so two racing callers would both pass a
  * "not configured yet" check and the later write would silently replace the
- * earlier. Letting the database decide makes first-write-wins actually true.
+ * earlier. Letting the database decide makes first-write-wins actually true:
+ * `oidc_config` holds one row (a unique index on a constant), so the second
+ * insert conflicts and does nothing.
  */
 export async function createTenantOidcIfAbsent(
   oidc: TenantOidc
@@ -58,7 +57,7 @@ export async function createTenantOidcIfAbsent(
   const result = await wrapAsync(
     () =>
       db
-        .insertInto('tenant_oidc')
+        .insertInto('oidc_config')
         .values({
           id: randomUUID(),
           issuer: oidc.issuer,
@@ -69,7 +68,7 @@ export async function createTenantOidcIfAbsent(
           user_idp_value: oidc.userIdpValue || null,
           created_at: new Date().toISOString(),
         })
-        .onConflict((oc) => oc.column('tenant_id').doNothing())
+        .onConflict((oc) => oc.expression(sql`(true)`).doNothing())
         .executeTakeFirst(),
     'DB_ERROR' as const
   );
@@ -95,7 +94,7 @@ export async function setTenantOidc(
   const result = await wrapAsync(
     () =>
       db
-        .insertInto('tenant_oidc')
+        .insertInto('oidc_config')
         .values({
           id: randomUUID(),
           issuer: oidc.issuer,
@@ -108,7 +107,7 @@ export async function setTenantOidc(
           created_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
-          oc.column('tenant_id').doUpdateSet({
+          oc.expression(sql`(true)`).doUpdateSet({
             issuer: oidc.issuer,
             client_id: oidc.clientId,
             client_secret: encryptedSecret,
@@ -185,8 +184,7 @@ export async function getOidcRoleMapping(
 }
 
 /**
- * Get OIDC configuration for a tenant.
- * Client secret is automatically decrypted.
+ * The identity provider configuration, client secret decrypted.
  */
 export async function getTenantOidc(
 ): Promise<Result<TenantOidc | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
@@ -200,7 +198,7 @@ export async function getTenantOidc(
   const rowResult = await wrapAsync(
     () =>
       db
-        .selectFrom('tenant_oidc')
+        .selectFrom('oidc_config')
         .select([
           'issuer',
           'client_id',
@@ -235,8 +233,8 @@ export async function getTenantOidc(
 
 /**
  * The claim mappings alone, for the admin settings page. The full
- * setTenantOidc needs the client secret and is what the organization
- * bootstrap uses; changing which claim carries groups should not demand
+ * setTenantOidc needs the client secret and is what first-run setup uses;
+ * changing which claim carries groups should not demand
  * re-entering a secret or re-running discovery.
  */
 export async function getTenantOidcClaims(
@@ -246,7 +244,7 @@ export async function getTenantOidcClaims(
   const rowResult = await wrapAsync(
     () =>
       dbResult.val
-        .selectFrom('tenant_oidc')
+        .selectFrom('oidc_config')
         .select(['role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -262,7 +260,7 @@ export async function getTenantOidcClaims(
   });
 }
 
-/** Update only the claim mappings; false when the tenant has no OIDC row to update. */
+/** Update only the claim mappings; false when there is no OIDC row to update. */
 export async function setTenantOidcClaims(
   claims: TenantOidcClaims
 ): Promise<Result<boolean, 'DB_ERROR'>> {
@@ -271,7 +269,7 @@ export async function setTenantOidcClaims(
   const result = await wrapAsync(
     () =>
       dbResult.val
-        .updateTable('tenant_oidc')
+        .updateTable('oidc_config')
         .set({
           role_claim: claims.roleClaim || null,
           operator_idp_value: claims.operatorIdpValue || null,

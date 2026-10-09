@@ -243,7 +243,7 @@ export async function obPutBytes(input: {
   filePart: number;
   bytes: Uint8Array;
 }): Promise<OnBaseClientResult<{ status: number }>> {
-  const query = `?tenantId=${encodeURIComponent()}&uploadId=${encodeURIComponent(
+  const query = `?uploadId=${encodeURIComponent(
     input.uploadId
   )}&filePart=${input.filePart}`;
   const called = await callOp('put-bytes', undefined, {

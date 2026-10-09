@@ -45,8 +45,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   // Throttle, then the credential's shape, then a bounded body — all before
@@ -125,7 +124,7 @@ export async function POST(
     source: 'github',
     type: 'workflow_run',
     payload: body,
-    orderingKey: repoFullName ? `github/${tenantId}/${repoFullName}` : null,
+    orderingKey: repoFullName ? `github/${repoFullName}` : null,
   });
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {

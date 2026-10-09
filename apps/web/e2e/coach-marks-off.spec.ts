@@ -74,8 +74,8 @@ let client: Client;
 let ids: ReturnType<typeof idsFor>;
 
 async function removeTenant(): Promise<void> {
-  // tenant_settings does not cascade from tenants; sessions does not either.
-  await client.query('DELETE FROM tenant_settings', [ids.tenantId]);
+  // settings does not cascade from tenants; sessions does not either.
+  await client.query('DELETE FROM settings', [ids.tenantId]);
   await client.query('DELETE FROM sessions', [ids.tenantId]);
   await client.query('DELETE FROM tenants WHERE id = $1', [ids.tenantId]);
 }
@@ -88,7 +88,7 @@ test.beforeAll(async ({}, testInfo) => {
   await removeTenant();
   await client.query('INSERT INTO tenants (id, slug) VALUES ($1, $2)', [ids.tenantId, ids.slug]);
   await client.query(
-    `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1, 'coach_marks_enabled', 'false'::jsonb)`,
+    `INSERT INTO settings (tenant_id, key, value) VALUES ($1, 'coach_marks_enabled', 'false'::jsonb)`,
     [ids.tenantId]
   );
   await client.query(

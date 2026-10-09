@@ -13,7 +13,7 @@ import type { LlmContentBlock } from '@renkei/agent-llm';
 import { chatAttachmentKey, resolveTenantBlobStore } from '@renkei/blob-store';
 import { extractText, isExtractableCandidate } from '@renkei/document-text';
 import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
-import { getOrgSettings } from '@renkei/settings';
+import { getOrgSettings, getKeyDomain } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
 import { openText, sealText, type ContentCipher } from './content-crypto';
@@ -275,7 +275,7 @@ export async function createAttachment(
   const store = await resolveTenantBlobStore();
   if (!store.ok) return err('UNCONFIGURED' as const);
   const id = randomUUID();
-  const key = chatAttachmentKey(id);
+  const key = chatAttachmentKey(await getKeyDomain(), id);
   if (!key.ok) return err('STORE' as const);
 
   const filename = cleanFilename(input.filename);

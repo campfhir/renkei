@@ -51,8 +51,7 @@ const SCOPE_TYPE: Record<WatchProvider, 'project' | 'space' | 'drive'> = {
 
 /** GET — the caller's watches for one provider. */
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -78,8 +77,7 @@ export async function GET(
  * the list never has to call out again to render.
  */
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -121,8 +119,7 @@ export async function POST(
 
 /** DELETE — stop watching. Disables rather than deletes, keeping the cursor. */
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

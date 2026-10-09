@@ -174,7 +174,7 @@ export async function testStorage(
       detail: `Creating or reaching the container failed: ${why(container.err)} ${at}`,
     };
   }
-  const probeKey = `probe/${tenantId}/${Date.now()}`;
+  const probeKey = `probe/${Date.now()}`;
   const probe = new TextEncoder().encode('renkei storage probe');
   const put = await store.putObject(probeKey, probe, 'text/plain');
   if (!put.ok) return { ok: false, detail: `Writing a probe failed: ${why(put.err)} ${at}` };

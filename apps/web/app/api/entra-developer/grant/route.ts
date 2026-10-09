@@ -15,8 +15,7 @@ import { ENTRA_DEVELOPER } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
 
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {

@@ -11,9 +11,9 @@ import {
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; templateId: string }> }
+  { params }: { params: Promise<{ templateId: string }> }
 ): Promise<NextResponse> {
-  const { slug, templateId } = await params;
+  const { templateId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -34,9 +34,9 @@ export async function PUT(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; templateId: string }> }
+  { params }: { params: Promise<{ templateId: string }> }
 ): Promise<NextResponse> {
-  const { slug, templateId } = await params;
+  const { templateId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

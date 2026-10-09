@@ -219,7 +219,6 @@ export function createGitHubPrPipelineHandler(): EventHandler {
   return async (event: ClaimedEvent) => {
     const parsed = parseGitHubWorkflowRun(rec(event.payload));
     if (!parsed || parsed.prNumbers.length === 0) return 'skipped';
-    const tenantId = event.tenant_id;
 
     const candidates = (
       await Promise.all(
@@ -275,7 +274,6 @@ export function createBitbucketPrPipelineHandler(): EventHandler {
   return async (event: ClaimedEvent) => {
     const repoFullName = parseBitbucketRepoFullName(rec(event.payload));
     if (!repoFullName) return 'skipped';
-    const tenantId = event.tenant_id;
 
     const candidates = await activeSubscriptions(ATLASSIAN_BITBUCKET, repoFullName);
     if (candidates.length === 0) return 'skipped';

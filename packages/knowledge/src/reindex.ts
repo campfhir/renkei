@@ -89,7 +89,6 @@ export async function reindexLexicalBatch(
       .where('search_text', 'is', null)
       .orderBy('id')
       .limit(limit);
-    if (tenantId) query = query;
     const rows = await query.execute();
 
     let skipped = 0;

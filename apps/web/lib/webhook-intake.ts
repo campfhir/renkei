@@ -48,7 +48,7 @@ export function checkWebhookLimit(
   provider: string,
   request: Request
 ): RateLimitVerdict {
-  return checkInboundLimit(`webhooks/${provider}:${tenantId}`, request, WEBHOOK_LIMITS);
+  return checkInboundLimit(`webhooks/${provider}`, request, WEBHOOK_LIMITS);
 }
 
 /** 429 with Retry-After; the body says nothing about which limit tripped. */

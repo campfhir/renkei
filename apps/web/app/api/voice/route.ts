@@ -12,8 +12,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

@@ -60,9 +60,8 @@ function sendError(response: ServerResponse, status: number, type: string, messa
 }
 
 function targetOf(body: Body): store.SandboxTarget | null {
-  const tenantId = str();
   const subject = str(body.subject);
-  if (!tenantId || !subject) return null;
+  if (!subject) return null;
   return { subject };
 }
 

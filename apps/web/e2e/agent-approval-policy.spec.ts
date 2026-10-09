@@ -57,7 +57,7 @@ async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
 async function seed(fixture: Fixture): Promise<void> {
   await withDb(async (client) => {
     const t = fixture.tenantId;
-    await client.query('DELETE FROM tenant_settings', [t]);
+    await client.query('DELETE FROM settings', [t]);
     await client.query('DELETE FROM sessions', [t]);
     await client.query('DELETE FROM identities', [t]);
     await client.query('DELETE FROM tenants WHERE id = $1', [t]);
@@ -127,7 +127,7 @@ test('act-step approval policy: default, change, save, API clamp', async ({ page
   await expect(page.getByText('Saved.')).toBeVisible();
   const stored = await withDb((client) =>
     client.query<{ value: string }>(
-      `SELECT value FROM tenant_settings WHERE key = 'agent_act_steps_require_approval'`,
+      `SELECT value FROM settings WHERE key = 'agent_act_steps_require_approval'`,
       [fixture.tenantId]
     )
   );

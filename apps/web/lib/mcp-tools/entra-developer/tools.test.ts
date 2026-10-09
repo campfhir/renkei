@@ -65,6 +65,7 @@ const stubAuth: EntraAuth = {
     auth: authedFetch((url, init) => fetch(url, init), 'entra-developer:tenant-1:oid-me'),
     accountId: 'oid-me',
     upn: 'dana@contoso.com',
+    tenantId: 'tenant-dir',
   }),
 };
 

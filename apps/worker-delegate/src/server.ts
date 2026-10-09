@@ -117,10 +117,9 @@ function kindOf(value: unknown): ResourceKeyKind | null {
 }
 
 function refOf(body: Record<string, unknown>): ResourceRef | null {
-  const tenantId = str();
   const kind = kindOf(body.kind);
   const resourceId = str(body.resourceId);
-  if (!tenantId || !kind || !resourceId) return null;
+  if (!kind || !resourceId) return null;
   return { kind, resourceId };
 }
 
@@ -164,12 +163,11 @@ function dateOf(value: unknown): Date | null {
 
 /** The delegation half of an enroll/delegate/rotate body, or null when malformed. */
 function delegationInputOf(body: Record<string, unknown>): DelegationInput | null {
-  const tenantId = str();
   const subject = str(body.subject);
   const sessionId = str(body.sessionId);
   const session = sealedDelegationsOf(body.session ?? []);
   const automation = sealedDelegationsOf(body.automation ?? []);
-  if (!tenantId || !subject || !sessionId || !session || !automation) return null;
+  if (!subject || !sessionId || !session || !automation) return null;
   return {
     subject,
     sessionId,
@@ -226,7 +224,6 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
    */
   function guarded(op: string, handler: Handler): JsonRpcHandler {
     return async (body, response, context) => {
-      const tenantId = str();
       const subject = subjectOf(body);
       const sessionId = str(body.sessionId);
       const scope: KeyRequestScope = {
@@ -258,7 +255,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
         }
       }
       if (sessionId) {
-        if (!tenantId || !subject || !(await verifySession(db, subject, sessionId))) {
+        if (!subject || !(await verifySession(db, subject, sessionId))) {
           sendError(response, 'SESSION_MISMATCH', "the session named is not this person's");
           return finish();
         }
@@ -284,9 +281,8 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       });
     },
     'keys/status': async (body, response) => {
-      const tenantId = str();
       const subject = str(body.subject);
-      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      if (!subject) return sendError(response, 'bad_request');
       const status = await delegationStatus(
         db,
         subject,
@@ -328,9 +324,8 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       sendJson(response, 200, { ok: true });
     },
     'keys/revoke-automation': async (body, response) => {
-      const tenantId = str();
       const subject = str(body.subject);
-      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      if (!subject) return sendError(response, 'bad_request');
       sendJson(response, 200, { revoked: await revokeAutomation(db, subject) });
     },
     'keys/rotate': async (body, response) => {
@@ -349,13 +344,12 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       sendJson(response, 200, rotated.val);
     },
     'keys/shred': async (body, response) => {
-      const tenantId = str();
       const subject = str(body.subject);
-      if (!tenantId || !subject) return sendError(response, 'bad_request');
+      if (!subject) return sendError(response, 'bad_request');
       sendJson(response, 200, { shredded: await shredUserKey(db, subject) });
     },
     'keys/census': async (body, response) => {
-      sendJson(response, 200, await enrollmentCensus(db, str() || undefined));
+      sendJson(response, 200, await enrollmentCensus(db));
     },
 
     // ── resource keys ──────────────────────────────────────────────────────
@@ -388,9 +382,8 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       sendJson(response, 200, keyView(key.val));
     },
     'resource-key/open-many': async (body, response) => {
-      const tenantId = str();
       const kind = kindOf(body.kind);
-      if (!tenantId || !kind || !Array.isArray(body.entries)) {
+      if (!kind || !Array.isArray(body.entries)) {
         return sendError(response, 'bad_request');
       }
       const entries: { resourceId: string; subject: string }[] = [];
@@ -462,11 +455,10 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
 
     // ── person-only values ─────────────────────────────────────────────────
     'user-sealed/seal': async (body, response) => {
-      const tenantId = str();
       const subject = str(body.subject);
       const values = strings(body.values);
       const scope: SealScope = body.scope === 'session' ? 'session' : 'automation';
-      if (!tenantId || !subject || !values) return sendError(response, 'bad_request');
+      if (!subject || !values) return sendError(response, 'bad_request');
       const sealed: string[] = [];
       for (const value of values) {
         const result = await sealForSubject(db, subject, value, scope);
@@ -476,10 +468,9 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       sendJson(response, 200, { sealed });
     },
     'user-sealed/open': async (body, response) => {
-      const tenantId = str();
       const subject = str(body.subject);
       const stored = strings(body.stored);
-      if (!tenantId || !subject || !stored) return sendError(response, 'bad_request');
+      if (!subject || !stored) return sendError(response, 'bad_request');
       // A value that will not open is null in its slot; a key that is
       // missing or not delegated fails the whole batch, since nothing would open.
       const opened: (string | null)[] = [];

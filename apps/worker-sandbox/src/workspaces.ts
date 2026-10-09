@@ -132,9 +132,16 @@ export interface ExecIdentity {
   gid: number;
 }
 
+/** The key domain uids derive under; set once at boot (configureExecDomain). */
+let execDomain = 'renkei';
+
+export function configureExecDomain(domain: string): void {
+  execDomain = domain;
+}
+
 export function identityFor(target: { subject: string }): ExecIdentity | null {
   if (!canIsolateByUid()) return null;
-  const uid = execUidFor(target.subject);
+  const uid = execUidFor(execDomain, target.subject);
   return { uid, gid: uid };
 }
 

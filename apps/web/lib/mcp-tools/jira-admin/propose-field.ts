@@ -464,7 +464,7 @@ export async function registerProposeFieldTools(
         );
       }
 
-      const link = `${await reviewPrefix(context)}${change.id}`;
+      const link = `${reviewPrefix(context)}${change.id}`;
       const { operations: described, reach } = describeChange(change);
       const lines = [
         'Proposed — nothing has changed in Jira yet.',

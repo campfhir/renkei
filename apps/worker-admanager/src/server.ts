@@ -153,10 +153,9 @@ function sendError(response: ServerResponse, type: WorkerErrorType, message?: st
 }
 
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
-  const tenantId = str();
   const instanceId = str(body.instanceId);
   const subject = str(body.subject);
-  if (!tenantId || !instanceId || !subject) return null;
+  if (!instanceId || !subject) return null;
   return { instanceId, subject };
 }
 
@@ -329,10 +328,9 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       // crosses the authenticated seam once, is re-validated here at the
       // trust boundary, and is tried against the STORED instance before
       // the web app seals and saves it.
-      const tenantId = str();
       const instanceId = str(body.instanceId);
       const credentials: AdManagerCredentials | null = parseAdManagerCredentials(body.credentials);
-      if (!tenantId || !instanceId || !credentials) {
+      if (!instanceId || !credentials) {
         return sendError(
           response,
           'bad_request',
@@ -380,8 +378,6 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       // is listening and demanding a token. The unsaved form wins over
       // the stored row, so an operator tests what they are ABOUT to
       // save.
-      const tenantId = str();
-      if (!tenantId) return sendError(response, 'bad_request', 'tenantId is required');
       let instance: InstanceRow;
       const unsaved = isRecord(body.unsaved) ? body.unsaved : null;
       if (unsaved) {

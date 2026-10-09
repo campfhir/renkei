@@ -22,7 +22,7 @@ export interface WorkspaceGitAccess {
   username: string;
 }
 
-type GitContext = Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'> & {
+type GitContext = Pick<MCPToolContext, 'subject' | 'origin'> & {
   provider: string;
   bitbucketScopes?: string[];
   githubScopes?: string[];

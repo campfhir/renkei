@@ -31,8 +31,7 @@ import { generateSecret, sha256Hex } from '@renkei/crypto';
 export type RunTokenApplication = 'agent' | 'widget';
 
 function runnerClientId(): string {
-  // client_id is a GLOBAL primary key, so the tenant is part of the name.
-  return `agent-runner-${tenantId}`;
+  return 'agent-runner';
 }
 
 export async function ensureAgentRunnerClient(db: Kysely<DB>): Promise<string> {

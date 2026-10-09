@@ -63,8 +63,7 @@ function redirectWithError(
 }
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   const dbResult = getDatabase();
@@ -137,12 +136,11 @@ export async function GET(
       // proxy (e.g. localhost:3000), unreachable for the user's browser;
       // getOrigin resolves the public one.
       const loginUrl = new URL('/api/auth/oidc/login', originResult.val);
-      loginUrl.searchParams.set('tenantId');
       loginUrl.searchParams.set('redirect', `${request.nextUrl.pathname}${request.nextUrl.search}`);
       return NextResponse.redirect(loginUrl);
     }
 
-    // Abandoned consent pages leave rows behind; sweep this tenant's on the
+    // Abandoned consent pages leave rows behind; sweep them on the
     // way past rather than carrying a scheduled job for a few bytes.
     await db
       .deleteFrom('oauth_consent_requests')
@@ -191,11 +189,10 @@ export function submittedFromThisOrigin(request: NextRequest, ourOrigin: string)
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
-  const verdict = checkInboundLimit(`oauth/consent:${tenantId}`, request, POST_LIMITS);
+  const verdict = checkInboundLimit('oauth/consent', request, POST_LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
       { error: 'slow_down', error_description: 'Too many consent answers' },

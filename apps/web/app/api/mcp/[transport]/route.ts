@@ -159,20 +159,6 @@ const handler = async (
   const origin = originResult.val;
 
   try {
-    // Verify tenant exists
-    const tenant = await db
-      .selectFrom('tenants')
-      .select('id')
-      .where('id', '=')
-      .executeTakeFirst();
-
-    if (!tenant) {
-      return new Response(JSON.stringify({ error: 'Tenant not found' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
     // Identify the caller. Without this the server cannot tell one user of a
     // tenant from another and previously acted as whichever grant came back
     // first — attributing every comment, transition and worklog to that account.
@@ -244,7 +230,7 @@ const handler = async (
     // The token class rides in the key too: a widget token and a run token
     // naming the same one tool must not share a handler, since only the
     // first may have that tool registered at all.
-    const cacheKey = `${tenantId}:${subject}:${tokenRecord.application}:${agentId ?? 'none'}:${roles.join(',')}:${allowListKey}:${surfaceVersion}`;
+    const cacheKey = `${subject}:${tokenRecord.application}:${agentId ?? 'none'}:${roles.join(',')}:${allowListKey}:${surfaceVersion}`;
 
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to

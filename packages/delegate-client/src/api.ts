@@ -27,7 +27,7 @@ export interface GrantRef {
 
 /**
  * `fetch` with the credential supplied by whoever built it, plus a stable
- * name for the grant behind it (`provider:tenant:account-or-subject`),
+ * name for the grant behind it (`provider:account-or-subject`),
  * for the per-grant gates and caches that used to key on the token.
  */
 export interface AuthedFetch {
@@ -37,7 +37,7 @@ export interface AuthedFetch {
 
 /** The stable name of a grant: what the fetch layers gate and cache by. */
 export function grantKeyOf(grant: GrantRef): string {
-  return `${grant.provider}:${grant.tenantId}:${grant.accountId ?? grant.subject ?? grant.pending ?? ''}`;
+  return `${grant.provider}:${grant.accountId ?? grant.subject ?? grant.pending ?? ''}`;
 }
 
 /** An `AuthedFetch` from any fetch-shaped function and a grant name. */

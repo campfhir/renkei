@@ -46,8 +46,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   // Throttle, then the credential's presence, then a bounded body — all
@@ -124,7 +123,7 @@ export async function POST(
     source: 'atlassian-bitbucket',
     type: 'repo:commit_status_updated',
     payload: body,
-    orderingKey: repoFullName ? `bitbucket/${tenantId}/${repoFullName}` : null,
+    orderingKey: repoFullName ? `bitbucket/${repoFullName}` : null,
   });
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {

@@ -82,6 +82,7 @@ import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
 import {
   canIsolateByUid,
+  configureExecDomain,
   ensureWorkspacesRoot,
   verifyNetworkIsolation,
   verifyUidIsolation,
@@ -99,7 +100,7 @@ import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
 import { configuredDirectory } from './configured-path';
 import type { SandboxCapabilities } from './features';
-import { watchLogLevel } from '@renkei/settings';
+import { getKeyDomain, watchLogLevel } from '@renkei/settings';
 
 /**
  * The most a shutdown may take end to end. Inside the 30s stop grace
@@ -372,7 +373,12 @@ async function main(): Promise<void> {
   // expiry — on the shared data disk, sealed, so every replica can type
   // it and a restart does not lock it; in this process's memory when
   // there is no key to seal with.
-  const secretKeys = createSecretKeyStore(getDataRoot());
+  // Sealing keys and exec uids derive from the key domain: the id of the
+  // organization this deployment had while multi-tenant, so what is already
+  // on the data disk still opens and still belongs to its owner.
+  const keyDomain = await getKeyDomain();
+  configureExecDomain(keyDomain);
+  const secretKeys = createSecretKeyStore(getDataRoot(), keyDomain);
   if (!secretKeys) {
     logger.warn(
       'unlocked browser secrets live in this process only (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal them on disk): another replica, or this one after a restart, sees them locked',
@@ -382,7 +388,7 @@ async function main(): Promise<void> {
   const vault = new SecretVault({ store: secretKeys });
   // Sessions are kept on the data disk between calls so a replica that
   // did not open one can carry it on; sealed, so only with a key.
-  const state = createBrowserStateStore(getDataRoot());
+  const state = createBrowserStateStore(getDataRoot(), keyDomain);
   if (!state) {
     logger.warn(
       'browser sessions live in this process only (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal them on disk): a call that lands on another replica, or after a restart, starts over',

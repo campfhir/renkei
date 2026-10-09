@@ -58,7 +58,7 @@ async function main(): Promise<void> {
     // One delegate call per owner in the batch.
     const byOwner = new Map<string, typeof rows>();
     for (const row of rows) {
-      const key = `${row.tenant_id}\u0000${row.owner}`;
+      const key = row.owner;
       byOwner.set(key, [...(byOwner.get(key) ?? []), row]);
     }
     for (const [key, owned] of byOwner) {

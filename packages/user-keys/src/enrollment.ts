@@ -48,7 +48,7 @@ import {
   type KeyError,
   type KeyRing,
 } from './keyring';
-import { legacyKekOf, type LegacyKekError } from './legacy';
+import { legacyKekOf, legacyKeyDomain, type LegacyKekError } from './legacy';
 import { verifySession } from './request-scope';
 import { PRIVATE_ENVELOPE_PREFIX } from './user-sealed';
 import { keyVault } from './vault';
@@ -450,7 +450,7 @@ export async function enroll(
     const version = (existing?.version ?? 0) + 1;
     let migrated = { grants: 0, values: 0 };
     if (existing) {
-      const legacy = legacyKekOf(existing, input.subject, input.passphrase);
+      const legacy = legacyKekOf(existing, await legacyKeyDomain(trx), input.subject, input.passphrase);
       if (!legacy.ok) return legacy;
       const moved = await moveSealedRows(
         trx,
@@ -653,12 +653,11 @@ export async function shredUserKey(
 export async function enrollmentCensus(
   db: Kysely<DB>
 ): Promise<{ held: number; managed: number; own: number }> {
-  let query = db
+  const rows = await db
     .selectFrom('user_encryption_keys')
     .select(['mode', (eb) => eb.fn.countAll<string>().as('count')])
-    .groupBy('mode');
-  if (tenantId) query = query;
-  const rows = await query.execute();
+    .groupBy('mode')
+    .execute();
   const census = { held: 0, managed: 0, own: 0 };
   for (const row of rows) {
     if (row.mode === 'held') census.held = Number(row.count);

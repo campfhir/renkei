@@ -58,7 +58,6 @@ import * as rules from './image-rules-store';
 import { logger } from './logger';
 
 export const SERVICE_LABEL = 'renkei.sandbox.service';
-const LABEL_TENANT = 'renkei.sandbox.tenant';
 const LABEL_SUBJECT = 'renkei.sandbox.subject';
 const LABEL_ID = 'renkei.sandbox.id';
 const LABEL_NAME = 'renkei.sandbox.name';
@@ -245,7 +244,6 @@ export class ServiceManager {
         env: input.env,
         labels: {
           [SERVICE_LABEL]: '1',
-          [LABEL_TENANT]: target.tenantId,
           [LABEL_SUBJECT]: subjectSegmentOf(target.subject),
           [LABEL_ID]: row.id,
           [LABEL_NAME]: input.name,

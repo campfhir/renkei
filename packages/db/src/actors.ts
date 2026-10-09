@@ -42,7 +42,7 @@ export async function describeActor(
   subject: string | null | undefined
 ): Promise<Actor> {
   if (!subject) return { subject: '(none)', displayName: '(none)' };
-  const key = `${tenantId}:${subject}`;
+  const key = subject;
   const now = Date.now();
   const hit = cache.get(key);
   if (hit && hit.expiresAt > now) return hit.actor;
@@ -74,7 +74,7 @@ export async function describeAccountActor(
   accountId: string | null | undefined
 ): Promise<Actor> {
   if (!accountId) return { subject: '(none)', displayName: '(none)' };
-  const key = `${tenantId}:account:${accountId}`;
+  const key = `account:${accountId}`;
   const now = Date.now();
   const hit = cache.get(key);
   if (hit && hit.expiresAt > now) return hit.actor;

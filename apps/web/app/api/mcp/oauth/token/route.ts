@@ -27,15 +27,14 @@ const LIMITS = {
 };
 
 /**
- * Tenant-scoped OAuth 2.0 Token endpoint (RFC 6749)
+ * OAuth 2.0 Token endpoint (RFC 6749)
  * Exchanges authorization codes for access tokens and refresh tokens.
  */
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
-  const verdict = checkInboundLimit(`oauth/token:${tenantId}`, request, LIMITS);
+  const verdict = checkInboundLimit('oauth/token', request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
       { error: 'slow_down', error_description: 'Too many token requests' },

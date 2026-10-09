@@ -9,8 +9,7 @@ import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {

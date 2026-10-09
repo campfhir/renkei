@@ -69,7 +69,7 @@ async function seed(fixture: Fixture): Promise<void> {
       'oauth_clients',
       'sessions',
       'identities',
-      'tenant_settings',
+      'settings',
     ]) {
       await client.query(`DELETE FROM ${table}`, [fixture.tenantId]);
     }

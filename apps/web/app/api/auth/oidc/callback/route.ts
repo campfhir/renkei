@@ -90,21 +90,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
 
-    const tenantId = pendingSignIn.tenant_id;
-
     // CSRF / session-fixation defense: the state must match the cookie the login
     // route set in THIS browser. A state+code pair captured elsewhere and
     // replayed into a victim's browser carries no matching cookie, so it is
     // rejected here before any session is minted. The cookie is cleared on the
     // response below regardless of outcome.
-    const stateCookie = request.cookies.get(`oidc_state_${tenantId}`)?.value;
+    const stateCookie = request.cookies.get('oidc_state')?.value;
     if (!stateCookie || stateCookie !== state) {
       await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
       logger.warn('OIDC state cookie missing or mismatched; rejecting callback', {
         component: 'auth/oidc',
       });
       const response = NextResponse.json({ error: 'Invalid state' }, { status: 400 });
-      response.cookies.delete(`oidc_state_${tenantId}`);
+      response.cookies.delete('oidc_state');
       return response;
     }
 
@@ -247,7 +245,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         detail: claimError,
       });
       const response = NextResponse.json({ error: 'Invalid id_token' }, { status: 400 });
-      response.cookies.delete(`oidc_state_${tenantId}`);
+      response.cookies.delete('oidc_state');
       return response;
     }
 
@@ -273,12 +271,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const recorded = await upsertIdentity(subject, identityClaims);
       if (!recorded.ok) {
         console.warn(
-          `[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`
+          `[OIDC] could not record identity for subject; gates will fail closed`
         );
       }
     } else {
       console.warn(
-        `[OIDC ${tenantId}] id_token carries no email claim; gates will fail closed for this user`
+        `[OIDC] id_token carries no email claim; gates will fail closed for this user`
       );
     }
 
@@ -303,10 +301,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         // Require user to have at least one renkei role
         if (userRoles.size === 0) {
           console.error(
-            `[OIDC ${tenantId}] User has no authorized roles. IDP claim "${oidc.roleClaim}": ${JSON.stringify(idpClaim)}`
+            `[OIDC] User has no authorized roles. IDP claim "${oidc.roleClaim}": ${JSON.stringify(idpClaim)}`
           );
           return NextResponse.json(
-            { error: 'User role not authorized for this tenant' },
+            { error: 'User role not authorized' },
             { status: 403 }
           );
         }
@@ -316,18 +314,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Delete used state token
     await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
 
-    // Get redirect target from cookie; without one, land on the tenant's home
-    // page — the slug tree, not the retired /mcp/[tenantId] page.
-    const redirectCookie = request.cookies.get(`oidc_redirect_${tenantId}`)?.value;
-    let redirect = redirectCookie || '';
-    if (!redirect) {
-      const tenantRow = await db
-        .selectFrom('tenants')
-        .select('slug')
-        .where('id', '=')
-        .executeTakeFirst();
-      redirect = tenantRow ? `/` : '/';
-    }
+    // Get redirect target from cookie; without one, land on the home page.
+    const redirect = request.cookies.get('oidc_redirect')?.value || '/';
 
     // Create a server-side session. Subject and roles are stored in the database
     // and never sent to the client; the cookie holds only an opaque id. Previously
@@ -355,11 +343,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
 
     // Retire the forgeable cookies from the previous scheme.
-    response.cookies.delete(`oidc_token_${tenantId}`);
-    response.cookies.delete(`oidc_roles_${tenantId}`);
-    response.cookies.delete(`oidc_redirect_${tenantId}`);
+    response.cookies.delete('oidc_token');
+    response.cookies.delete('oidc_roles');
+    response.cookies.delete('oidc_redirect');
     // The one-time CSRF binding cookie has done its job.
-    response.cookies.delete(`oidc_state_${tenantId}`);
+    response.cookies.delete('oidc_state');
 
     return response;
   } catch (error) {

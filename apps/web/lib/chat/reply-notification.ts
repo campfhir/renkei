@@ -64,13 +64,6 @@ export function notifyChatReplyDesktop(input: {
       if (watchedLive) return;
     }
 
-    const tenant = await dbResult.val
-      .selectFrom('tenants')
-      .select('slug')
-      .where('id', '=')
-      .executeTakeFirst();
-    if (!tenant) return;
-
     const title = input.chatTitle || 'New chat';
     const headline = `“${title}” has a new reply`;
     const refUrl = `/chat/${input.chatId}`;

@@ -15,8 +15,7 @@ import { WEBEX_REQUIRED_SCOPES } from '@/lib/webex-scopes';
 import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {

@@ -15,7 +15,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
 import { isUuid } from '@/lib/uuid';
 
-async function operatorTenant(slug: string): Promise<{ id: string } | NextResponse> {
+async function operatorGate(): Promise<NextResponse | null> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -25,16 +25,16 @@ async function operatorTenant(slug: string): Promise<{ id: string } | NextRespon
       { status: 503 }
     );
   }
-  return { id: tenant.id };
+  return null;
 }
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; ruleId: string }> }
+  { params }: { params: Promise<{ ruleId: string }> }
 ): Promise<NextResponse> {
-  const { slug, ruleId } = await params;
-  const tenant = await operatorTenant(slug);
-  if (tenant instanceof NextResponse) return tenant;
+  const { ruleId } = await params;
+  const denied = await operatorGate();
+  if (denied) return denied;
   if (!isUuid(ruleId)) return NextResponse.json({ error: 'Rule not found' }, { status: 404 });
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseImageRulePayload(body);
@@ -49,11 +49,11 @@ export async function PUT(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; ruleId: string }> }
+  { params }: { params: Promise<{ ruleId: string }> }
 ): Promise<NextResponse> {
-  const { slug, ruleId } = await params;
-  const tenant = await operatorTenant(slug);
-  if (tenant instanceof NextResponse) return tenant;
+  const { ruleId } = await params;
+  const denied = await operatorGate();
+  if (denied) return denied;
   if (!isUuid(ruleId)) return NextResponse.json({ error: 'Rule not found' }, { status: 404 });
   const deleted = await sbImageRuleDelete(ruleId);
   if (!deleted.ok) {

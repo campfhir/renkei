@@ -54,13 +54,14 @@ export type LegacyKekError =
 /** The KEK a pre-enrollment row yields, for the one read that moves everything off it. */
 export function legacyKekOf(
   row: LegacyKeyRow,
+  domain: string,
   subject: string,
   passphrase?: string
 ): Result<Buffer, LegacyKekError> {
   const salt = Buffer.from(row.salt, 'base64');
   if (row.mode === 'own') {
     if (passphrase && row.verifier) {
-      const kek = deriveOwnKek(passphrase, salt, subject);
+      const kek = deriveOwnKek(passphrase, salt, domain, subject);
       return verifierMatches(kek, row.verifier) ? ok(kek) : err('WRONG_PASSPHRASE' as const);
     }
     const master = userKeyMaster();
@@ -74,13 +75,29 @@ export function legacyKekOf(
     }
     const unsealed = unwrapKey(
       row.sealed_kek,
-      deriveUnlockKey(master.val, salt, subject)
+      deriveUnlockKey(master.val, salt, domain, subject)
     );
     return unsealed.ok ? ok(unsealed.val) : err('KEY_LOCKED' as const);
   }
   const master = userKeyMaster();
   if (!master.ok) return err('MIGRATION_UNAVAILABLE' as const);
-  return ok(deriveUserKek(master.val, salt, subject));
+  return ok(deriveUserKek(master.val, salt, domain, subject));
+}
+
+/**
+ * The domain the pre-enrollment KEKs were derived under: the id of the
+ * organization row this deployment had while it was multi-tenant, kept in
+ * the `legacy_key_domain` setting by the migration that removed tenants.
+ * A deployment born single-organization has no such rows and no setting;
+ * the empty string then derives nothing anyone stored.
+ */
+export async function legacyKeyDomain(db: Kysely<DB>): Promise<string> {
+  const row = await db
+    .selectFrom('settings')
+    .select('value')
+    .where('key', '=', 'legacy_key_domain')
+    .executeTakeFirst();
+  return typeof row?.value === 'string' ? row.value : '';
 }
 
 /** Is the master present, so managed rows can still be moved? */
@@ -111,7 +128,7 @@ export async function legacyManagedKek(
     .executeTakeFirstOrThrow();
   if (row.mode !== 'managed') return err('NOT_MANAGED' as const);
   return ok({
-    key: deriveUserKek(master.val, Buffer.from(row.salt, 'base64'), subject),
+    key: deriveUserKek(master.val, Buffer.from(row.salt, 'base64'), await legacyKeyDomain(db), subject),
     version: row.version,
   });
 }

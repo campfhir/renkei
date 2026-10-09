@@ -21,9 +21,9 @@ const POLL_MS = 2_000;
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; agentId: string; runId: string }> }
+  { params }: { params: Promise<{ agentId: string; runId: string }> }
 ): Promise<Response> {
-  const { slug, agentId, runId } = await params;
+  const { agentId, runId } = await params;
   if (!isUuid(agentId) || !isUuid(runId)) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }

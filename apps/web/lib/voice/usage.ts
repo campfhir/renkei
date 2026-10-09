@@ -61,7 +61,7 @@ export async function recordVoiceUsage(
       })
       .execute();
   } catch (error) {
-    logger.warn('voice usage not recorded for tenant {tenantId}', {
+    logger.warn('voice usage not recorded', {
       component: 'web/voice-usage',
       kind: input.kind,
       error: error instanceof Error ? error.message : String(error),

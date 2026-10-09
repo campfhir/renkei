@@ -8,7 +8,6 @@
  * OnBase refreshes fail closed as REFRESH_FAILED.
  */
 
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { OnBaseRefresh, RefreshedTokens, RefreshError } from '@renkei/provider-grants';
@@ -85,20 +84,3 @@ export function onbaseWorkerRefresh(connector: string): OnBaseRefresh {
   };
 }
 
-/*
-  The generic ProviderAdapter.refreshTokens(clientId, refreshToken) has no
-  tenant parameter; the worker needs one to find the IdP registration. The
-  refresh runs inside `withTenant`, which the grant module wraps every
-  OnBase refresh in — async-local, so concurrent refreshes for different
-  tenants never see each other's — and the adapter contract every other
-  provider satisfies stays as it is.
-*/
-const tenantStore = new AsyncLocalStorage<string>();
-
-export function currentTenant(): string {
-  return tenantStore.getStore() ?? '';
-}
-
-export function withTenant<T>(run: () => Promise<T>): Promise<T> {
-  return tenantStore.run(run);
-}

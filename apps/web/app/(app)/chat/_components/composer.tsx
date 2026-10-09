@@ -185,7 +185,7 @@ export default function Composer({
       onUtterance: (wav) => {
         void (async () => {
           setHearing(false);
-          const result = await voiceClient.transcribe(tenant, wav, { locale, detectLanguage });
+          const result = await voiceClient.transcribe(wav, { locale, detectLanguage });
           if (result.error) {
             setDictationError(result.error);
             return;

@@ -218,9 +218,8 @@ export class Forwarder {
     connector: Connector,
     body: Record<string, unknown>
   ): Promise<{ ok: true } | { ok: false; status: number; type: string; message?: string }> {
-    const tenantId = str();
     const subject = str(body.subject);
-    if (!tenantId || !subject) {
+    if (!subject) {
       return {
         ok: false,
         status: 400,
@@ -304,7 +303,7 @@ export class Forwarder {
     const tenantId = url.searchParams.get('tenantId') ?? '';
     const shareId = url.searchParams.get('shareId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
-    if (!tenantId || !shareId || !subject) return fail(response, 400, 'bad_request');
+    if (!shareId || !subject) return fail(response, 400, 'bad_request');
     const ciphertext = await readShareCiphertext(this.db, shareId, subject);
     if (!ciphertext.ok) return fail(response, 500, 'store');
     if (ciphertext.val === null) return fail(response, 403, 'not_connected');
@@ -333,7 +332,7 @@ export class Forwarder {
     const tenantId = url.searchParams.get('tenantId') ?? str(request.headers['x-onbase-tenant']);
     const subject = str(request.headers['x-onbase-subject']);
     const connectorName = str(request.headers['x-onbase-connector']) || 'onbase';
-    if (!tenantId || !subject) {
+    if (!subject) {
       return fail(response, 400, 'bad_request', 'tenantId and x-onbase-subject are required');
     }
     const access = await this.grants.accessFor(connectorName, { subject });

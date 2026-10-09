@@ -89,20 +89,18 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     return;
   }
 
-  // The org dial: each tenant's webexWebhookHealthMinutes decides how long a
-  // grant may go unchecked. Settings are cached (60s) per tenant, so this
-  // costs one read per tenant per pass, not per grant.
-  const dueMsByTenant = new Map<string, number>();
+  // The org dial: webexWebhookHealthMinutes decides how long a grant may go
+  // unchecked. Read once per pass, not per grant.
+  let dueMsCached: number | undefined;
   const dueMsFor = async (): Promise<number> => {
-    const cached = dueMsByTenant.get();
-    if (cached !== undefined) return cached;
+    if (dueMsCached !== undefined) return dueMsCached;
     const floorMinutes = MIN_CHECK_DUE_MS / 60_000;
     const settings = await getOrgSettings();
     const minutes = settings.ok
       ? Math.max(floorMinutes, settings.val.webexWebhookHealthMinutes)
       : floorMinutes;
     const ms = minutes * 60_000;
-    dueMsByTenant.set(ms);
+    dueMsCached = ms;
     return ms;
   };
 

@@ -104,8 +104,8 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
           // insert in one statement; two producers racing can still both
           // insert, which costs one redundant round, never a lost one.
           await sql`
-            INSERT INTO ${live()} (id, tenant_id, source, type, payload, ordering_key)
-            SELECT gen_random_uuid(), ${message.tenantId}, ${message.source}, ${message.type},
+            INSERT INTO ${live()} (id, source, type, payload, ordering_key)
+            SELECT gen_random_uuid(), ${message.source}, ${message.type},
                    ${JSON.stringify(message.payload)}::jsonb, ${key}
             WHERE NOT EXISTS (
               SELECT 1 FROM ${live()} q
@@ -118,8 +118,8 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
           return ok();
         }
         await sql`
-          INSERT INTO ${live()} (id, tenant_id, source, type, payload, ordering_key)
-          VALUES (gen_random_uuid(), ${message.tenantId}, ${message.source}, ${message.type},
+          INSERT INTO ${live()} (id, source, type, payload, ordering_key)
+          VALUES (gen_random_uuid(), ${message.source}, ${message.type},
                   ${JSON.stringify(message.payload)}::jsonb, ${key})
         `.execute(dbResult.val);
         return ok();
@@ -162,7 +162,7 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         LIMIT 1
         FOR UPDATE OF c SKIP LOCKED
       )
-      RETURNING id, tenant_id, source, type, payload, attempts
+      RETURNING id, source, type, payload, attempts
     `.execute(db);
     return result.rows[0] ?? null;
   };
@@ -243,11 +243,11 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         await sql`
           WITH moved AS (
             DELETE FROM ${live()} WHERE id = ${message.id}
-            RETURNING id, tenant_id, source, type, payload, ordering_key, attempts, created_at
+            RETURNING id, source, type, payload, ordering_key, attempts, created_at
           )
           INSERT INTO ${dead()}
-            (id, tenant_id, source, type, payload, ordering_key, attempts, last_error, created_at)
-          SELECT id, tenant_id, source, type, payload, ordering_key, attempts, ${error}, created_at
+            (id, source, type, payload, ordering_key, attempts, last_error, created_at)
+          SELECT id, source, type, payload, ordering_key, attempts, ${error}, created_at
           FROM moved
         `.execute(dbResult.val);
       } else {
@@ -269,7 +269,7 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
       if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
       try {
         const result = await sql<DeadLetterRow>`
-          SELECT id, tenant_id, source, type, payload, ordering_key, attempts, last_error, dead_at
+          SELECT id, source, type, payload, ordering_key, attempts, last_error, dead_at
           FROM ${dead()}
           ORDER BY dead_at DESC
           LIMIT ${options.limit ?? 100}
@@ -304,11 +304,11 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
         const result = await sql`
           WITH moved AS (
             DELETE FROM ${dead()} WHERE id IN (${sql.join(ids.map((id) => sql`${id}`))})
-            RETURNING id, tenant_id, source, type, payload, ordering_key, created_at
+            RETURNING id, source, type, payload, ordering_key, created_at
           )
           INSERT INTO ${live()}
-            (id, tenant_id, source, type, payload, ordering_key, status, attempts, run_after, created_at)
-          SELECT id, tenant_id, source, type, payload, ordering_key, 'pending', 0, NOW(), created_at
+            (id, source, type, payload, ordering_key, status, attempts, run_after, created_at)
+          SELECT id, source, type, payload, ordering_key, 'pending', 0, NOW(), created_at
           FROM moved
         `.execute(dbResult.val);
         return ok(Number(result.numAffectedRows ?? 0));

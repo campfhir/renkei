@@ -73,13 +73,7 @@ const cache = new Map<string, CacheEntry>();
 
 /** Test hook, and the admin routes' invalidation on config writes. */
 export function invalidateLlmCache(): void {
-  if (tenantId === undefined) {
-    cache.clear();
-    return;
-  }
-  for (const key of cache.keys()) {
-    if (key.startsWith(`${tenantId}:`)) cache.delete(key);
-  }
+  cache.clear();
 }
 
 interface ModelRow {
@@ -177,7 +171,7 @@ export async function resolveAgentLlm(
   db: Kysely<DB>,
   agentModelConfigId: string | null
 ): Promise<Result<ResolvedLlm, ResolveLlmError>> {
-  const cacheKey = `${tenantId}:${agentModelConfigId ?? 'default'}`;
+  const cacheKey = agentModelConfigId ?? 'default';
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
 

@@ -54,7 +54,7 @@ export interface JiraAdminAccess {
  * resolves the same grant the same way.
  */
 export async function resolveJiraAdminAccess(
-  context: Pick<MCPToolContext, 'tenantId' | 'subject' | 'origin'>
+  context: Pick<MCPToolContext, 'subject' | 'origin'>
 ): Promise<JiraAdminAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
 

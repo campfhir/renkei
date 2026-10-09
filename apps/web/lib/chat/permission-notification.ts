@@ -35,13 +35,6 @@ export function notifyChatToolPermission(input: {
     const dbResult = getDatabase();
     if (!dbResult.ok) return;
 
-    const tenant = await dbResult.val
-      .selectFrom('tenants')
-      .select('slug')
-      .where('id', '=')
-      .executeTakeFirst();
-    if (!tenant) return;
-
     const title = input.chatTitle || 'New chat';
     const headline = `“${title}” is waiting for your permission to ${friendlyToolName(
       input.toolName,

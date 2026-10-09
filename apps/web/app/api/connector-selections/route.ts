@@ -27,7 +27,6 @@ async function connectorFrom(request: NextRequest): Promise<string | null> {
 
 async function change(
   request: NextRequest,
-  params: Promise<{ }>,
   apply: (added: string[], connector: string) => string[]
 ): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -57,17 +56,15 @@ async function change(
 }
 
 export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  return change(request, params, (added, connector) =>
+  return change(request, (added, connector) =>
     added.includes(connector) ? added : [...added, connector]
   );
 }
 
 export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
-  return change(request, params, (added, connector) => added.filter((key) => key !== connector));
+  return change(request, (added, connector) => added.filter((key) => key !== connector));
 }

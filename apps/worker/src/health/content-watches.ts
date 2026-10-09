@@ -94,18 +94,16 @@ export async function sweepContentWatches(): Promise<void> {
     return;
   }
 
-  // The org dial: each tenant's contentPollMinutes decides how stale its
-  // watches may get. Settings are cached (60s) per tenant, so this costs one
-  // read per tenant per pass, not per watch. An unreadable settings row
+  // The org dial: contentPollMinutes decides how stale watches may get.
+  // Read once per pass, not per watch. An unreadable settings row
   // falls back to the floor — polling too often beats silently never.
-  const dueMsByTenant = new Map<string, number>();
+  let dueMsCached: number | undefined;
   const dueMsFor = async (): Promise<number> => {
-    const cached = dueMsByTenant.get();
-    if (cached !== undefined) return cached;
+    if (dueMsCached !== undefined) return dueMsCached;
     const settings = await getOrgSettings();
     const minutes = settings.ok ? Math.max(5, settings.val.contentPollMinutes) : 5;
     const ms = minutes * 60_000;
-    dueMsByTenant.set(ms);
+    dueMsCached = ms;
     return ms;
   };
   const watches: WatchRow[] = [];

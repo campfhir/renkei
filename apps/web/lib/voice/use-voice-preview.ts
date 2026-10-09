@@ -48,7 +48,7 @@ export function useVoicePreview(
       queue.dispose();
       queueRef.current = null;
     };
-  }, [tenantId]);
+  }, []);
   useEffect(() => {
     queueRef.current?.setOutputDevice(outputDevice);
   }, [outputDevice]);

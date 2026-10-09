@@ -173,7 +173,7 @@ export function createWebexUserMessageHandler(
         parentId: message.parentId ?? '',
       },
       occurredAt: message.created ?? undefined,
-      orderingKey: `webex/${event.tenant_id}/${payload.accountId}/${message.roomId}`,
+      orderingKey: `webex/${payload.accountId}/${message.roomId}`,
     });
   };
 }

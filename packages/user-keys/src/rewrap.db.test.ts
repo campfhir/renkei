@@ -49,7 +49,7 @@ maybe('rewrap under the current key of the ring', () => {
       .execute();
     // v1 under the old key (a bare key writes v1, as every row from before rings is).
     await db
-      .insertInto('tenant_oidc')
+      .insertInto('oidc_config')
       .values({
         id: oidcId,
         issuer: 'https://idp.test',
@@ -116,14 +116,14 @@ maybe('rewrap under the current key of the ring', () => {
     await db.deleteFrom('sandbox_env_secrets').execute();
     await db.deleteFrom('connector_configs').execute();
     await db.deleteFrom('llm_model_configs').execute();
-    await db.deleteFrom('tenant_oidc').execute();
+    await db.deleteFrom('oidc_config').execute();
     await db.deleteFrom('tenants').where('id', '=').execute();
     await closeDatabase();
   });
 
   async function stored() {
     const oidc = await db
-      .selectFrom('tenant_oidc')
+      .selectFrom('oidc_config')
       .select('client_secret')
       .where('id', '=', oidcId)
       .executeTakeFirstOrThrow();
@@ -153,7 +153,7 @@ maybe('rewrap under the current key of the ring', () => {
   it('a dry run counts and changes nothing', async () => {
     const before = await stored();
     const report = await rewrapAll(db, rings, { dryRun: true });
-    expect(report.targets['tenant_oidc.client_secret']?.rewrapped).toBe(1);
+    expect(report.targets['oidc_config.client_secret']?.rewrapped).toBe(1);
     expect(report.targets['llm_model_configs.encrypted_secrets']?.rewrapped).toBe(1);
     expect(report.targets['connector_configs.encrypted_secrets']?.rewrapped).toBe(1);
     expect(report.targets['sandbox_env_secrets.sealed']?.rewrapped).toBe(1);
@@ -167,7 +167,7 @@ maybe('rewrap under the current key of the ring', () => {
   it('moves v1 and old-kid rows under the current key, and they still open', async () => {
     const lines: string[] = [];
     const report = await rewrapAll(db, rings, { log: (line) => lines.push(line) });
-    expect(report.targets['tenant_oidc.client_secret']).toEqual({
+    expect(report.targets['oidc_config.client_secret']).toEqual({
       rewrapped: 1,
       skipped: 0,
       unreadable: [],

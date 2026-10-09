@@ -20,8 +20,7 @@ import { listForOwner, countByCategoryForOwner } from '@renkei/email-sanitizer';
 const MAX_PAGE_SIZE = 5;
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<NextResponse> {
 
   const session = await getSessionFromRequest(request);

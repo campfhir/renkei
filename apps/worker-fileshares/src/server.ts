@@ -110,10 +110,9 @@ function sendServiceError(
  * credential itself.
  */
 function targetOf(body: Record<string, unknown>): SubjectTarget | null {
-  const tenantId = str();
   const shareId = str(body.shareId);
   const subject = str(body.subject);
-  if (!tenantId || !shareId || !subject) return null;
+  if (!shareId || !subject) return null;
   return { shareId, subject, credentials: parseShareCredentials(body.credentials) };
 }
 
@@ -258,10 +257,9 @@ function makeJsonHandlers(
       // crosses the authenticated seam once, is re-validated here at the
       // trust boundary, and is tried against the STORED share before the
       // web app seals and saves it.
-      const tenantId = str();
       const shareId = str(body.shareId);
       const credentials = parseShareCredentials(body.credentials);
-      if (!tenantId || !shareId || !credentials) {
+      if (!shareId || !credentials) {
         return sendJson(response, 400, { error: { type: 'bad_request' } });
       }
       const tested = await serviceTestConnection(deps, shareId, credentials);
@@ -301,7 +299,7 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
         credentials: credentialsFromHeader(request.headers['x-fileshare-credentials']),
       };
       const path = url.searchParams.get('path') ?? '';
-      if (!target.tenantId || !target.shareId || !target.subject || !path) {
+      if (!target.shareId || !target.subject || !path) {
         return sendJson(response, 400, { error: { type: 'bad_request' } });
       }
       const limit = await transferLimit();

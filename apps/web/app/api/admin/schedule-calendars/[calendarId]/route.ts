@@ -13,9 +13,9 @@ import { parseCalendarPayload } from '@/lib/agents/calendar-payload';
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string; calendarId: string }> }
+  { params }: { params: Promise<{ calendarId: string }> }
 ): Promise<NextResponse> {
-  const { slug, calendarId } = await params;
+  const { calendarId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -51,9 +51,9 @@ export async function PUT(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; calendarId: string }> }
+  { params }: { params: Promise<{ calendarId: string }> }
 ): Promise<NextResponse> {
-  const { slug, calendarId } = await params;
+  const { calendarId } = await params;
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

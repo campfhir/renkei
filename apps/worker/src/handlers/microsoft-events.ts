@@ -80,7 +80,6 @@ export function createMicrosoftGrantConnectedHandler(): EventHandler {
   return async (event) => {
     const payload = payloadOf(event);
     const accountId = requireString(payload, 'accountId');
-    const tenantId = event.tenant_id;
 
     const baseUrl = getPublicBaseUrl();
     if (!baseUrl) {
@@ -112,7 +111,6 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
     const payload = payloadOf(event);
     const accountId = requireString(payload, 'accountId');
     const subscriptionId = requireString(payload, 'subscriptionId');
-    const tenantId = event.tenant_id;
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
@@ -149,7 +147,6 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
     const accountId = requireString(payload, 'accountId');
     const subscriptionId = requireString(payload, 'subscriptionId');
     const lifecycleEvent = typeof payload.lifecycleEvent === 'string' ? payload.lifecycleEvent : '';
-    const tenantId = event.tenant_id;
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
@@ -209,7 +206,6 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     const objectId = requireString(payload, 'objectId');
     const refId = requireString(payload, 'refId');
     const override = requireOverride(payload);
-    const tenantId = event.tenant_id;
 
     // The same mailbox-kind ordering key runSubscriptionSync uses — refIds
     // are `${upn}/${kind}/${objectId}`, so the first two segments name the

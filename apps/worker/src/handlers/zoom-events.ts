@@ -61,7 +61,6 @@ export function createZoomTranscriptHandler(
 
   return async (event) => {
     const facts = factsOf(event);
-    const tenantId = event.tenant_id;
 
     const access = await resolveZoomHostAccess(facts.hostId, facts.hostEmail);
     if (!access) {
@@ -173,7 +172,6 @@ export function createZoomSummaryHandler(
 
   return async (event) => {
     const facts = factsOf(event);
-    const tenantId = event.tenant_id;
 
     const access = await resolveZoomHostAccess(facts.hostId, facts.hostEmail);
     if (!access) {

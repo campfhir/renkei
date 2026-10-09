@@ -6,9 +6,9 @@ import { recordAuditEvent } from '@/lib/audit-events';
 /** Delete a cleaner script. Edits go through POST on the collection. */
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ slug: string; id: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
-  const { slug, id } = await params;
+  const { id } = await params;
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

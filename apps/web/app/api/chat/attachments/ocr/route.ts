@@ -20,8 +20,7 @@ export const runtime = 'nodejs';
 const MAX_IDS_PER_REQUEST = 12;
 
 export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ }> }
+  request: NextRequest
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;

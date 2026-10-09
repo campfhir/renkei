@@ -135,7 +135,7 @@ async function syncJira(
     });
     if (!response.ok) {
       throw new Error(
-        `jira search failed for ${row.scope_key} (tenant ${tenantId}): ${response.status} ${response.error}`
+        `jira search failed for ${row.scope_key}: ${response.status} ${response.error}`
       );
     }
 
@@ -206,7 +206,7 @@ async function syncConfluence(
     });
     if (!response.ok) {
       throw new Error(
-        `confluence page list failed for space ${row.scope_key} (tenant ${tenantId}): ` +
+        `confluence page list failed for space ${row.scope_key}: ` +
           `${response.status} ${response.error}`
       );
     }

@@ -93,7 +93,7 @@ export async function POST(
     payload: { ...payload.val.data, accountId },
     // One room's messages process in order per WATCHER — two opted-in
     // users in one space are separate, independently-ordered streams.
-    orderingKey: payload.val.roomId ? `webex/${tenantId}/${accountId}/${payload.val.roomId}` : null,
+    orderingKey: payload.val.roomId ? `webex/${accountId}/${payload.val.roomId}` : null,
   });
   if (!enqueued.ok) {
     logger.error('Event NOT accepted: {error}', {
